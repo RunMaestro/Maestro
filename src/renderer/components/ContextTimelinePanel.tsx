@@ -19,13 +19,14 @@
  * "Clear" wipes the focused session's recorded points.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Gauge, Minus, X, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useContextTimelineStore,
 	selectPoints,
 	type ContextTimelinePoint,
+	type TimelineAnchorRect,
 } from '../stores/contextTimelineStore';
 import { useSessionStore } from '../stores/sessionStore';
 // IMPORTANT: the context-backed accessor, NOT hooks/ui/useLayerStack (which
@@ -33,10 +34,46 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { getContextColor } from '../utils/theme';
 import { formatTokensCompact, formatCost } from '../../shared/formatters';
+import { useEventListener } from '../hooks/utils/useEventListener';
 
 interface ContextTimelinePanelProps {
 	theme: Theme;
 }
+
+const PANEL_WIDTH = 360;
+const PANEL_MAX_HEIGHT = 600;
+const VIEWPORT_MARGIN = 8;
+const ANCHOR_GAP = 8;
+/** The header context gauge that opens this panel; re-queried for its live rect. */
+const HEADER_CONTEXT_WIDGET_SELECTOR = '[data-testid="header-context-widget"]';
+
+/** Position the panel near the element that opened it, clamped to the viewport. */
+function anchoredStyle(anchor: TimelineAnchorRect): CSSProperties {
+	const vw = window.innerWidth;
+	const vh = window.innerHeight;
+	const width = Math.min(PANEL_WIDTH, vw - VIEWPORT_MARGIN * 2);
+	const height = Math.min(PANEL_MAX_HEIGHT, Math.round(vh * 0.7));
+	// Right-align the panel under the trigger and open downward by default.
+	let left = anchor.right - width;
+	let top = anchor.bottom + ANCHOR_GAP;
+	// If it would run off the bottom, flip to open above the trigger instead.
+	if (top + height > vh - VIEWPORT_MARGIN) {
+		top = anchor.top - ANCHOR_GAP - height;
+	}
+	left = Math.max(VIEWPORT_MARGIN, Math.min(left, vw - width - VIEWPORT_MARGIN));
+	top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - height - VIEWPORT_MARGIN));
+	return { top, left, width, height };
+}
+
+/** Default dock (bottom-left) used when the panel was opened without an anchor. */
+const FALLBACK_STYLE: CSSProperties = {
+	bottom: 16,
+	left: 16,
+	width: PANEL_WIDTH,
+	maxWidth: 'calc(100vw - 2rem)',
+	height: '70vh',
+	maxHeight: PANEL_MAX_HEIGHT,
+};
 
 /** Time-of-day stamp for a turn (e.g. "3:42:07 PM"). */
 function formatPointTime(ts: number): string {
@@ -60,6 +97,7 @@ function TokenChip({ label, value, color }: { label: string; value: number; colo
 
 export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const panelSessionId = useContextTimelineStore((s) => s.panelSessionId);
+	const anchorRect = useContextTimelineStore((s) => s.anchorRect);
 	const minimized = useContextTimelineStore((s) => s.minimized);
 	const points = useContextTimelineStore(selectPoints(panelSessionId));
 	const buffer = useContextTimelineStore((s) =>
@@ -68,6 +106,12 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const minimizePanel = useContextTimelineStore((s) => s.minimizePanel);
 	const closePanel = useContextTimelineStore((s) => s.closePanel);
 	const clearSession = useContextTimelineStore((s) => s.clearSession);
+
+	// Reclamp the anchored position on viewport resize so an open panel never ends
+	// up partly offscreen after the Electron window changes size (anchoredStyle
+	// reads the live window dimensions, so a re-render is all it needs).
+	const [, bumpResizeTick] = useState(0);
+	useEventListener('resize', () => bumpResizeTick((n) => n + 1));
 
 	const sessionName = useSessionStore((s) =>
 		panelSessionId ? s.sessions.find((sess) => sess.id === panelSessionId)?.name : undefined
@@ -107,14 +151,19 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 
 	const label = sessionName || panelSessionId.slice(0, 8);
 
+	// Prefer the gauge's LIVE rect so the panel stays attached to it through layout
+	// shifts and resizes (the resize listener above forces this re-render); fall
+	// back to the click-time rect if the gauge is no longer in the DOM.
+	const liveAnchor: TimelineAnchorRect | null = anchorRect
+		? (document.querySelector(HEADER_CONTEXT_WIDGET_SELECTOR)?.getBoundingClientRect() ??
+			anchorRect)
+		: null;
+
 	return (
 		<div
-			className="fixed bottom-4 left-4 z-[9997] flex flex-col rounded-lg border shadow-2xl select-none"
+			className="fixed z-[9997] flex flex-col rounded-lg border shadow-2xl select-none"
 			style={{
-				width: 360,
-				maxWidth: 'calc(100vw - 2rem)',
-				height: '70vh',
-				maxHeight: 600,
+				...(liveAnchor ? anchoredStyle(liveAnchor) : FALLBACK_STYLE),
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 			}}

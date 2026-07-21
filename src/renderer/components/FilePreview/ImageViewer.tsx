@@ -11,7 +11,7 @@ interface ImageViewerProps {
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
-/** Zoom sensitivity — smaller = slower. Trackpads send small deltas, mice send large ones. */
+/** Zoom sensitivity - smaller = slower. Trackpads send small deltas, mice send large ones. */
 const ZOOM_SENSITIVITY = 0.002;
 
 /**

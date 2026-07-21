@@ -17,17 +17,65 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { LogEntry } from '../../types';
+import type { LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
-import { inferContextStrategy, selectContextWindow } from '../../../shared/crossAgentContext';
+import {
+	deriveConsultSubject,
+	inferContextStrategy,
+	selectContextWindow,
+} from '../../../shared/crossAgentContext';
+import { parseSynopsis } from '../../../shared/synopsis';
 import type {
 	CrossAgentResponseChunk,
 	CrossAgentTranscriptEntry,
 } from '../../../shared/crossAgentTypes';
+
+/**
+ * The subset of `spawnBackgroundSynopsis` (see `useAgentExecution`) this hook
+ * needs to condense a finished consult. Kept as a local structural type so the
+ * dispatch hook doesn't take a dependency on the agent-execution module.
+ */
+export type SpawnBackgroundSynopsisFn = (
+	sessionId: string,
+	cwd: string,
+	resumeAgentSessionId: string,
+	prompt: string,
+	toolType?: ToolType,
+	sessionConfig?: {
+		customArgs?: string;
+		customEnvVars?: Record<string, string>;
+		customModel?: string;
+		customContextWindow?: number;
+		enableMaestroP?: boolean;
+		maestroPMode?: 'interactive' | 'dynamic';
+		maestroPPath?: string;
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		};
+	}
+) => Promise<{ success: boolean; response?: string }>;
+
+/**
+ * Prompt for the post-consult summary pass. Resumes the consulted agent's own
+ * session (so it still has the full Q&A in context) and asks it to condense its
+ * OWN answer into the `**Summary:** / **Details:**` shape `parseSynopsis`
+ * understands. We deliberately do NOT reuse the Auto Run synopsis prompt: that
+ * one synopsizes "work done in a session" and returns NOTHING_TO_REPORT for an
+ * advice-only turn (no tools) - exactly the common consult case - which would
+ * leave the detail view showing the raw response we're trying to condense.
+ */
+const CONSULT_SUMMARY_PROMPT =
+	'You were just consulted by another agent and gave the response above. ' +
+	'Summarize YOUR OWN response for a history log, in EXACTLY this format:\n\n' +
+	'**Summary:** [one sentence naming what you advised or concluded]\n' +
+	'**Details:** [2-4 sentences capturing the key points, recommendations, and any caveats]\n\n' +
+	'Do not restate the question. Do not add anything outside those two sections.';
 
 /** Options for a single cross-agent dispatch (one resolved target). */
 export interface SendCrossAgentRequestOptions {
@@ -225,15 +273,32 @@ interface TrackedRequest {
 	targetLogEntryId: string;
 	/** The calling agent's display name (for the target's history entry). */
 	sourceAgentName?: string;
+	/**
+	 * A short subject derived from the user's question (mentions stripped), used
+	 * for the history entry's list line + attribution pill so repeat consults are
+	 * distinguishable. Absent when a chunk lands before dispatch registered it.
+	 */
+	subject?: string;
 	accumulated: string;
 }
 
 /**
  * Record a durable History entry on the TARGET agent for a finished consult,
  * attributed to the calling agent (so the target's History shows who consulted
- * it). Best-effort: a failure here never disrupts response streaming.
+ * it) AND what it was consulted about. Best-effort: a failure here never
+ * disrupts response streaming.
+ *
+ * The entry is written immediately with the raw response as the detail-view
+ * fallback, then `enrichConsultDetail` patches in a condensed summary once a
+ * background synopsis pass returns (so the detail reads as a summary, not the
+ * whole answer). The raw answer is never lost - it stays in the consult tab the
+ * attribution pill jumps to.
  */
-function recordConsultHistory(tracked: TrackedRequest, chunk: CrossAgentResponseChunk): void {
+function recordConsultHistory(
+	tracked: TrackedRequest,
+	chunk: CrossAgentResponseChunk,
+	spawnBackgroundSynopsis?: SpawnBackgroundSynopsisFn
+): void {
 	if (!tracked.targetTabId) return; // No consult tab -> nothing to attribute.
 	const state = useSessionStore.getState();
 	const target = state.sessions.find((s) => s.id === chunk.targetSessionId);
@@ -244,17 +309,33 @@ function recordConsultHistory(tracked: TrackedRequest, chunk: CrossAgentResponse
 		state.sessions.find((s) => s.id === chunk.sourceSessionId)?.name ??
 		'another agent';
 	const consultTab = target.aiTabs.find((t) => t.id === tracked.targetTabId);
+	const subject = tracked.subject?.trim() || '';
+
+	// List body names WHO consulted and ABOUT WHAT; the pill carries the subject
+	// so multiple consults from the same agent are distinguishable at a glance.
+	// The actual consult TAB stays named after the source agent (it's the reused
+	// container for every consult from that tab) - only this per-consult entry
+	// gets the subject.
+	const summary = subject
+		? `Consulted by ${sourceAgentName}: ${subject}`
+		: `Consulted by ${sourceAgentName}`;
+	const sessionName = subject ? `↩ ${subject}` : (consultTab?.name ?? target.name ?? undefined);
+
+	const entryId = generateId();
+	const historySessionId = chunk.targetSessionId;
 
 	void window.maestro.history
 		.add({
-			id: generateId(),
+			id: entryId,
 			type: 'AUTO',
 			timestamp: Date.now(),
-			summary: `Consulted by ${sourceAgentName}`,
+			summary,
+			// Raw response is the immediate fallback for the detail view; replaced
+			// with a condensed summary by enrichConsultDetail once it returns.
 			fullResponse: tracked.accumulated || undefined,
 			agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
-			sessionId: chunk.targetSessionId,
-			sessionName: consultTab?.name ?? target.name ?? undefined,
+			sessionId: historySessionId,
+			sessionName,
 			projectPath: target.cwd,
 			sourceAgentName,
 			success: !chunk.error,
@@ -262,13 +343,84 @@ function recordConsultHistory(tracked: TrackedRequest, chunk: CrossAgentResponse
 		.catch((err) => {
 			logger.warn('[useCrossAgentDispatch] Failed to record consult history', undefined, err);
 		});
+
+	void enrichConsultDetail({
+		spawnBackgroundSynopsis,
+		target,
+		resumeAgentSessionId: chunk.targetAgentSessionId,
+		success: !chunk.error,
+		entryId,
+		historySessionId,
+	});
+}
+
+/**
+ * Replace a consult history entry's detail body with a condensed summary of the
+ * response. Resumes the consulted agent's provider session (SSH/token-mode
+ * honored by `spawnBackgroundSynopsis` itself) and asks it to summarize its own
+ * answer, then patches `fullResponse`. Fully best-effort: on any miss (no
+ * summarizer wired, a failed consult, no resumable session, synopsis failure, or
+ * NOTHING_TO_REPORT) the entry keeps the raw-response fallback already stored.
+ */
+async function enrichConsultDetail(opts: {
+	spawnBackgroundSynopsis?: SpawnBackgroundSynopsisFn;
+	target: Session;
+	resumeAgentSessionId?: string;
+	success: boolean;
+	entryId: string;
+	historySessionId: string;
+}): Promise<void> {
+	const {
+		spawnBackgroundSynopsis,
+		target,
+		resumeAgentSessionId,
+		success,
+		entryId,
+		historySessionId,
+	} = opts;
+	// A failed consult never captures a resumable session id, and without a
+	// summarizer or that id there is nothing to condense - keep the raw fallback.
+	if (!spawnBackgroundSynopsis || !success || !resumeAgentSessionId) return;
+	try {
+		const result = await spawnBackgroundSynopsis(
+			historySessionId,
+			target.cwd,
+			resumeAgentSessionId,
+			CONSULT_SUMMARY_PROMPT,
+			target.toolType,
+			{
+				customArgs: target.customArgs,
+				customEnvVars: target.customEnvVars,
+				customModel: target.customModel,
+				customContextWindow: target.customContextWindow,
+				enableMaestroP: target.enableMaestroP,
+				maestroPMode: target.maestroPMode,
+				maestroPPath: target.maestroPPath,
+				sessionSshRemoteConfig: target.sessionSshRemoteConfig,
+			}
+		);
+		if (!result.success || !result.response) return;
+		const parsed = parseSynopsis(result.response);
+		if (parsed.nothingToReport) return;
+		const detail = parsed.fullSynopsis?.trim() || parsed.shortSummary?.trim();
+		if (!detail) return;
+		await window.maestro.history.update(entryId, { fullResponse: detail }, historySessionId);
+	} catch (err) {
+		logger.warn('[useCrossAgentDispatch] Consult detail summary failed', undefined, err);
+	}
 }
 
 export interface UseCrossAgentDispatchResult {
 	sendCrossAgentRequest: (opts: SendCrossAgentRequestOptions) => void;
 }
 
-export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
+export function useCrossAgentDispatch(
+	spawnBackgroundSynopsis?: SpawnBackgroundSynopsisFn
+): UseCrossAgentDispatchResult {
+	// Held on a ref so `applyChunk` (a stable, deps-[] callback) always reads the
+	// latest summarizer without being torn down and re-subscribed each render.
+	const spawnSynopsisRef = useRef(spawnBackgroundSynopsis);
+	spawnSynopsisRef.current = spawnBackgroundSynopsis;
 	// requestId -> tracking state. A ref (not state): chunk handling mutates it
 	// between renders and must not itself trigger a re-render.
 	const pendingRef = useRef<Map<string, TrackedRequest>>(new Map());
@@ -355,8 +507,8 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 
 		if (chunk.done) {
 			// The target now has a durable record of the consult, attributed to the
-			// caller so its History shows who consulted it.
-			recordConsultHistory(tracked, chunk);
+			// caller so its History shows who consulted it (and about what).
+			recordConsultHistory(tracked, chunk, spawnSynopsisRef.current);
 			map.delete(chunk.requestId);
 			completedRef.current.add(chunk.requestId);
 			// Drop it from the live "N agents responding…" indicator.
@@ -371,6 +523,9 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 
 	const sendCrossAgentRequest = useCallback((opts: SendCrossAgentRequestOptions): void => {
 		const strategy = inferContextStrategy(opts.userPrompt);
+		// Subject for the target's History entry + attribution pill. Derived once,
+		// synchronously, from the user's question (mentions stripped).
+		const subject = deriveConsultSubject(opts.userPrompt);
 		const windowed = selectContextWindow(opts.sourceLogs, strategy);
 		const transcript: CrossAgentTranscriptEntry[] = windowed.map((l) => ({
 			source: l.source,
@@ -408,8 +563,14 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 				// The terminal chunk already landed (fast failure/short response that
 				// beat this resolution) - don't resurrect a finished request.
 				if (completedRef.current.has(requestId)) return;
-				// Pre-register so streamed chunks reuse one stable LogEntry id.
-				if (!pendingRef.current.has(requestId)) {
+				// Pre-register so streamed chunks reuse one stable LogEntry id. If a
+				// chunk already created a fallback entry (it lacks the source name +
+				// subject, which only the send side knows), backfill them.
+				const existing = pendingRef.current.get(requestId);
+				if (existing) {
+					existing.sourceAgentName ??= opts.sourceAgentName;
+					existing.subject ??= subject;
+				} else {
 					pendingRef.current.set(requestId, {
 						sourceSessionId: opts.sourceSessionId,
 						sourceTabId: opts.sourceTabId,
@@ -418,6 +579,7 @@ export function useCrossAgentDispatch(): UseCrossAgentDispatchResult {
 						targetTabId: consult?.targetTabId,
 						targetLogEntryId: generateId(),
 						sourceAgentName: opts.sourceAgentName,
+						subject,
 						accumulated: '',
 					});
 				}

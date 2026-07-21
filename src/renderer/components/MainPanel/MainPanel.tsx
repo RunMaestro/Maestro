@@ -20,6 +20,7 @@ import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import { getTabDerivedState } from '../../hooks/tabs/useTabHandlers';
 import {
 	breakApartGroup,
 	collectLeafTabRefs,
@@ -33,7 +34,12 @@ import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingB
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
-import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	computeQueuedTabIds,
+	computeUnreadGroupIds,
+} from '../../utils/tabHelpers';
+import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -75,13 +81,15 @@ function EmptyMainPanel({ theme }: { theme: Theme }) {
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
 	forwardRef<MainPanelHandle, MainPanelProps>(function MainPanel(props, ref) {
+		// PERF: Self-source the full active Session so streaming log/token updates
+		// re-render MainPanel without requiring MaestroConsoleInner to re-render.
+		const activeSession = useSessionStore(selectActiveSession);
+
 		const {
 			logViewerOpen,
 			agentSessionsOpen,
 			memoryViewerOpen,
 			activeAgentSessionId,
-			activeSession,
-			thinkingItems,
 			theme,
 			stagedImages,
 			commandHistoryOpen,
@@ -288,11 +296,7 @@ export const MainPanel = React.memo(
 			onCloseOtherTabs,
 			onCloseTabsLeft,
 			onCloseTabsRight,
-			// Unified tab system props (Phase 4)
-			unifiedTabs,
-			activeFileTabId,
-			activeFileTab,
-			activeBrowserTabId,
+			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
 			onNewFileTab,
@@ -312,6 +316,24 @@ export const MainPanel = React.memo(
 			onTerminalTabConfigureStartupCommand,
 		} = props;
 
+		// PERF: Tab strip / file-nav paint derived here from the full session this
+		// panel already subscribes to - not from App chrome equality (which would
+		// wake MaestroConsoleInner on every busy/tab-state flip).
+		const {
+			activeTab: derivedActiveTab,
+			unifiedTabs,
+			activeFileTab,
+			fileTabBackHistory,
+			fileTabForwardHistory,
+			fileTabCanGoBack,
+			fileTabCanGoForward,
+			activeFileTabNavIndex,
+		} = useMemo(() => getTabDerivedState(activeSession), [activeSession]);
+		const activeFileTabId = activeSession?.activeFileTabId ?? null;
+		const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
+		const fileGistUrls = useTabStore((s) => s.fileGistUrls);
+		const hasGist = activeFileTab ? !!fileGistUrls[activeFileTab.path] : false;
+
 		// Coworking browser responder - answers browser-op requests by resolving
 		// the target tab's live (or kept-alive hidden) webview handle. It never
 		// switches the user's visible tab. No-ops when the `coworking` Encore flag
@@ -319,16 +341,8 @@ export const MainPanel = React.memo(
 		useCoworkingBrowserResponder(browserViewRefs);
 
 		// Get the active tab for header display
-		// The header should show the active tab's data (UUID, name, cost, context), not session-level data
-		// PERF: Memoize the lookup to avoid O(n) search on every render - will still update when
-		// aiTabs array or activeTabId changes (which happens when tabs change, not on every keystroke)
-		const activeTab = useMemo(
-			() =>
-				activeSession?.aiTabs?.find((tab) => tab.id === activeSession.activeTabId) ??
-				activeSession?.aiTabs?.[0] ??
-				null,
-			[activeSession?.aiTabs, activeSession?.activeTabId]
-		);
+		// Prefer local derivation from the full session (includes live usage/cost).
+		const activeTab = useMemo(() => derivedActiveTab ?? null, [derivedActiveTab]);
 		const activeTabError = activeTab?.agentError;
 
 		// SSH remote name for header display
@@ -462,7 +476,7 @@ export const MainPanel = React.memo(
 				.then((config) => {
 					if (stale) return;
 					setAgentDefaultModel(config?.model || '');
-					setAgentDefaultEffort(config?.effort || config?.reasoningEffort || '');
+					setAgentDefaultEffort(readEffortFromConfig(config) ?? '');
 				})
 				.catch(() => {
 					if (stale) return;
@@ -849,14 +863,25 @@ export const MainPanel = React.memo(
 			[showUnreadOnly, activeSession]
 		);
 
+		// Ids of AI tabs with queued execution items, so the TabBar keeps them visible under
+		// the unread filter (pending queued work needs attention). Undefined outside the filter.
+		// Depend on the executionQueue array (not the full session) so streaming/token updates
+		// that leave the queue untouched preserve the Set identity and TabBar's memoization.
+		const executionQueue = activeSession?.executionQueue;
+		const queuedTabIds = useMemo(
+			() => (showUnreadOnly && executionQueue ? computeQueuedTabIds(executionQueue) : undefined),
+			[showUnreadOnly, executionQueue]
+		);
+
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
+			props.onComposerFocus?.();
 			if (activeSession) {
 				setActiveSessionId(activeSession.id);
 				useUIStore.getState().setActiveFocus('main');
 			}
-		}, [activeSession, setActiveSessionId]);
+		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
 		// Memoized session click handler for InputArea's ThinkingStatusPill
 		// Avoids creating new function reference on every render
@@ -1077,6 +1102,7 @@ export const MainPanel = React.memo(
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
@@ -1156,6 +1182,7 @@ export const MainPanel = React.memo(
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
@@ -1318,7 +1345,6 @@ export const MainPanel = React.memo(
 									handleInputKeyDown={handleInputKeyDown}
 									handlePaste={handlePaste}
 									handleDrop={handleDrop}
-									thinkingItems={thinkingItems}
 									onStopBatchRun={onStopBatchRun}
 									onRemoveQueuedItem={onRemoveQueuedItem}
 									onTogglePauseQueuedItem={onTogglePauseQueuedItem}
@@ -1359,19 +1385,19 @@ export const MainPanel = React.memo(
 									refreshFileTree={props.refreshFileTree}
 									onOpenSavedFileInTab={props.onOpenSavedFileInTab}
 									onShowAgentErrorModal={props.onShowAgentErrorModal}
-									canGoBack={props.canGoBack}
-									canGoForward={props.canGoForward}
+									canGoBack={fileTabCanGoBack}
+									canGoForward={fileTabCanGoForward}
 									onNavigateBack={props.onNavigateBack}
 									onNavigateForward={props.onNavigateForward}
-									backHistory={props.backHistory}
-									forwardHistory={props.forwardHistory}
-									currentHistoryIndex={props.currentHistoryIndex}
+									backHistory={fileTabBackHistory}
+									forwardHistory={fileTabForwardHistory}
+									currentHistoryIndex={activeFileTabNavIndex}
 									onNavigateToIndex={props.onNavigateToIndex}
 									onOpenFuzzySearch={props.onOpenFuzzySearch}
 									onShortcutUsed={props.onShortcutUsed}
 									ghCliAvailable={props.ghCliAvailable}
 									onPublishGist={props.onPublishGist}
-									hasGist={props.hasGist}
+									hasGist={hasGist}
 									onOpenInGraph={props.onOpenInGraph}
 									onOpenInBrowser={props.onOpenInBrowser}
 									onPublishMessageGist={props.onPublishMessageGist}

@@ -20,7 +20,7 @@
  *     watch+filter, github.pull_request repo+poll_minutes,
  *     time.heartbeat interval_minutes) must round-trip exactly.
  *
- *   - Double round-trip is structurally idempotent — guards drift bugs
+ *   - Double round-trip is structurally idempotent - guards drift bugs
  *     where save→reload→save mutates fields.
  *
  * Test invariants:
@@ -28,7 +28,7 @@
  *     compared. Auto-layout regenerates positions; ids regenerate on load.
  *   - Per-edge `mode` (autorun/debate) is INTENTIONALLY NOT TESTED here:
  *     edge modes are persisted as YAML comments by `pipelineToYaml`, and
- *     `yaml.load()` strips comments — so they are recovered separately
+ *     `yaml.load()` strips comments - so they are recovered separately
  *     from the editor-side `pipelineLayout.json` sidecar, not from the
  *     YAML body. A round-trip test through `yaml.load()` would correctly
  *     show "lost" and create a misleading assertion. See pipelineToYaml.ts
@@ -102,7 +102,7 @@ function pipeline(
  * Drives the same pipelinesToYaml → YAML parse → subscriptionsToPipelines
  * cycle that the runtime uses. Mirrors the normalizer's prompt-file inlining
  * so tests don't need to know about external prompt files. Handles BOTH
- * `prompt_file` (single) and `fan_out_prompt_files` (array) — both shapes
+ * `prompt_file` (single) and `fan_out_prompt_files` (array) - both shapes
  * are emitted by `pipelineToYaml` depending on whether the trigger feeds
  * one target or fans out to many.
  */
@@ -244,7 +244,7 @@ describe('round-trip: trigger fan-out preserves all downstream agents', () => {
 
 		const [reconstructed] = roundTrip(pipelines, sessions);
 
-		// Two distinct agent nodes, both pointing at sess-a — NOT merged.
+		// Two distinct agent nodes, both pointing at sess-a - NOT merged.
 		const agents = reconstructed.nodes.filter((n) => n.type === 'agent');
 		expect(agents).toHaveLength(2);
 		expect(agents.every((n) => (n.data as AgentNodeData).sessionId === 'sess-a')).toBe(true);
@@ -289,7 +289,7 @@ describe('round-trip: multi-agent linear chain', () => {
 		// Walk the topology by following edges from the trigger and assert the
 		// agent visitation order. Edge prompts on chain edges intentionally
 		// land on the target agent's `inputPrompt` (chain subs emit the prompt
-		// at the SUB level, not the edge level — see yamlToPipeline.ts:1030),
+		// at the SUB level, not the edge level - see yamlToPipeline.ts:1030),
 		// so we assert the per-agent sequence rather than per-edge.
 		const triggerNode = reconstructed.nodes.find((n) => n.type === 'trigger')!;
 		const visitedAgents: string[] = [];
@@ -496,7 +496,7 @@ describe('round-trip: double round-trip is structurally idempotent', () => {
 // when the user builds Trigger (app.startup) → Command (shell, owner=Claude) →
 // Agent (Claude) and saves, reload must reconstruct three distinct nodes. The
 // historical failure mode collapsed the command + agent (which share an owning
-// session) into a single agent — yielding `agent (1) → agent (2)` after reload.
+// session) into a single agent - yielding `agent (1) → agent (2)` after reload.
 // Both code paths through this topology must work: with explicit nodeKeys
 // (the editor's drag-drop path) and without (hand-written cue.yaml).
 
@@ -592,7 +592,7 @@ describe('round-trip: trigger → command → agent shape', () => {
 	it('preserves topology even when command and agent lack nodeKeys (legacy YAML)', () => {
 		// Pre-9ab11ce02 YAML and hand-written YAML will not have nodeKeys.
 		// The legacy dedup-by-sessionName path must still produce a distinct
-		// command and agent — they have different node types so the agent
+		// command and agent - they have different node types so the agent
 		// dedup loop should skip the command.
 		const t1 = trigger('t1', 'time.heartbeat', { interval_minutes: 5 });
 		const cmd = command('cmd1', 'Mail Ingest', 'sess-claude', 'Claude', 'python ingest.py');

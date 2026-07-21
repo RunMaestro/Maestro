@@ -19,10 +19,10 @@ import {
  * Recovery sessions are ONLY ever minted with a timestamp suffix (see
  * group-chat-router.ts respawnParticipantWithRecovery), so the recovery
  * suffix is stripped exclusively in the timestamp branch. The UUID branch
- * does not strip "-recovery" — doing so would silently truncate a
+ * does not strip "-recovery" - doing so would silently truncate a
  * legitimate participant name that happens to end with "-recovery".
  *
- * groupChatId is ALWAYS a uuidv4() — the regex patterns in constants.ts
+ * groupChatId is ALWAYS a uuidv4() - the regex patterns in constants.ts
  * enforce this so a participant name containing "-participant-" (or any
  * other sentinel) can no longer cause a mis-parse that routes output to
  * the wrong owner.
@@ -44,8 +44,8 @@ export function parseParticipantSessionId(
 	}
 
 	// Try matching with UUID suffix first (36 chars: 8-4-4-4-12 format).
-	// Production never combines UUID suffix + recovery — recovery sessions
-	// always use the timestamp shape — so the participant name is taken
+	// Production never combines UUID suffix + recovery - recovery sessions
+	// always use the timestamp shape - so the participant name is taken
 	// verbatim here. See the timestamp branch below for recovery handling.
 	const uuidMatch = sessionId.match(REGEX_PARTICIPANT_UUID);
 	if (uuidMatch) {

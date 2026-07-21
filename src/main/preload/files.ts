@@ -111,7 +111,7 @@ export function createHistoryApi() {
 		delete: (entryId: string, sessionId?: string) =>
 			ipcRenderer.invoke('history:delete', entryId, sessionId),
 
-		update: (entryId: string, updates: { validated?: boolean }, sessionId?: string) =>
+		update: (entryId: string, updates: Partial<HistoryEntry>, sessionId?: string) =>
 			ipcRenderer.invoke('history:update', entryId, updates, sessionId),
 
 		updateSessionName: (agentSessionId: string, sessionName: string) =>
@@ -122,7 +122,7 @@ export function createHistoryApi() {
 		listSessions: () => ipcRenderer.invoke('history:listSessions'),
 
 		// Cached graph buckets for a single session. The lookback parameter
-		// controls the window — `null` for "all time", or hours back from
+		// controls the window - `null` for "all time", or hours back from
 		// "now". Each (bucketCount, lookback) pair gets its own cached
 		// aggregate keyed by source-file fingerprint.
 		getGraphData: (

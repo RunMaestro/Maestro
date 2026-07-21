@@ -13,6 +13,12 @@ import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	ConcertoDesignerFrameSnapshot,
+	ConcertoHtmlSurface,
+} from '../../shared/concerto-html';
 
 // Re-export for consumers that import from preload
 export type { UsageStats } from '../../shared/types';
@@ -400,7 +406,8 @@ export function createProcessApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -411,7 +418,8 @@ export function createProcessApi() {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
@@ -420,9 +428,10 @@ export function createProcessApi() {
 					tabId,
 					force,
 					imageCount: images?.length ?? 0,
+					background,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId, force, images);
+					callback(sessionId, command, inputMode, tabId, force, images, background);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -640,10 +649,23 @@ export function createProcessApi() {
 		 * the CLI/web interface. The renderer applies them to the movement store and
 		 * opens the movement view.
 		 */
-		onRemoteMovement: (callback: (params: MovementPayload) => void): (() => void) => {
-			const handler = (_: unknown, params: MovementPayload) => callback(params);
+		onRemoteMovement: (
+			callback: (params: MovementPayload, responseChannel?: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: MovementPayload, responseChannel?: string) =>
+				callback(params, responseChannel);
 			ipcRenderer.on('remote:movement', handler);
 			return () => ipcRenderer.removeListener('remote:movement', handler);
+		},
+
+		/** Ack a movement mutation after the renderer has committed it. */
+		sendMovementAppliedResponse: (responseChannel: string, applied: boolean): void => {
+			ipcRenderer.send(responseChannel, applied);
+		},
+
+		/** Release an isolated HTML document after its owning UI view is closed. */
+		releaseConcertoHtmlDocument: (surface: ConcertoHtmlSurface, id: string): void => {
+			ipcRenderer.send('concerto-html:release', surface, id);
 		},
 
 		/**
@@ -663,6 +685,52 @@ export function createProcessApi() {
 			snapshot: MovementStateSnapshot | null
 		): void => {
 			ipcRenderer.send(responseChannel, snapshot);
+		},
+
+		/** Ask the renderer for a live HTML Movement frame's crop and diagnostics. */
+		onRequestMovementDesignerInspection: (
+			callback: (id: string, expectedRevision: number, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, id: string, expectedRevision: number, responseChannel: string) =>
+				callback(id, expectedRevision, responseChannel);
+			ipcRenderer.on('remote:getMovementDesignerInspection', handler);
+			return () => ipcRenderer.removeListener('remote:getMovementDesignerInspection', handler);
+		},
+
+		/** Reply with frame geometry and runtime diagnostics for screenshot capture. */
+		sendMovementDesignerInspectionResponse: (
+			responseChannel: string,
+			snapshot: ConcertoDesignerFrameSnapshot | null
+		): void => {
+			ipcRenderer.send(responseChannel, snapshot);
+		},
+
+		/** Ask the sandboxed HTML Movement to perform a selector-scoped action. */
+		onRequestMovementDesignerInteraction: (
+			callback: (
+				id: string,
+				action: ConcertoDesignerAction,
+				expectedRevision: number,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				id: string,
+				action: ConcertoDesignerAction,
+				expectedRevision: number,
+				responseChannel: string
+			) => callback(id, action, expectedRevision, responseChannel);
+			ipcRenderer.on('remote:interactMovementDesigner', handler);
+			return () => ipcRenderer.removeListener('remote:interactMovementDesigner', handler);
+		},
+
+		/** Reply with the outcome of a sandboxed designer action. */
+		sendMovementDesignerInteractionResponse: (
+			responseChannel: string,
+			result: ConcertoDesignerActionResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**
@@ -806,11 +874,22 @@ export function createProcessApi() {
 		 * doesn't wait for the 5s response timeout.
 		 */
 		onRemoteNewAITabWithPrompt: (
-			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, prompt: string, responseChannel: string) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => {
 				try {
-					callback(sessionId, prompt, responseChannel);
+					callback(sessionId, prompt, responseChannel, background);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;
@@ -822,7 +901,7 @@ export function createProcessApi() {
 
 		/**
 		 * Send response for remote "new AI tab with prompt".
-		 * `tabId` is the id of the freshly-created tab — surfaced so
+		 * `tabId` is the id of the freshly-created tab - surfaced so
 		 * `maestro-cli dispatch --new-tab` can return an addressable id to its
 		 * caller without owning a persistent channel.
 		 */
@@ -832,6 +911,116 @@ export function createProcessApi() {
 			tabId?: string
 		): void => {
 			ipcRenderer.send(responseChannel, { success, tabId });
+		},
+
+		/**
+		 * Subscribe to remote "enqueue command" from the CLI (`dispatch --queue`).
+		 * The renderer decides queue-vs-dispatch and must ack via
+		 * sendRemoteEnqueueCommandResponse. Ack failure before rethrowing
+		 * synchronous callback errors so the CLI doesn't wait for the timeout.
+		 */
+		onRemoteEnqueueCommand: (
+			callback: (
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => {
+				try {
+					callback(sessionId, command, responseChannel, inputMode, tabId, images, background);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:enqueueCommand', handler);
+			return () => ipcRenderer.removeListener('remote:enqueueCommand', handler);
+		},
+
+		/**
+		 * Send response for remote "enqueue command". Carries the queue outcome
+		 * (queued vs dispatched now, position, item id) so `maestro-cli dispatch
+		 * --queue` can report status to its caller.
+		 */
+		sendRemoteEnqueueCommandResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				tabId?: string;
+				queued?: boolean;
+				queuePosition?: number;
+				queueLength?: number;
+				itemId?: string;
+				error?: string;
+			}
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "list queue" from the CLI (`queue list`). Renderer
+		 * replies via sendRemoteListQueueResponse.
+		 */
+		onRemoteListQueue: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string | undefined, responseChannel: string) => {
+				try {
+					callback(sessionId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, queues: [] });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:listQueue', handler);
+			return () => ipcRenderer.removeListener('remote:listQueue', handler);
+		},
+
+		sendRemoteListQueueResponse: (
+			responseChannel: string,
+			result: { success: boolean; queues: unknown[]; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "remove queue item" from the CLI (`queue remove`).
+		 * Renderer replies via sendRemoteRemoveQueueItemResponse.
+		 */
+		onRemoteRemoveQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					callback(sessionId, itemId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false, removed: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:removeQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:removeQueueItem', handler);
+		},
+
+		sendRemoteRemoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; removed: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**
@@ -1074,7 +1263,7 @@ export function createProcessApi() {
 
 		/**
 		 * Subscribe to remote reset auto-run document tasks
-		 * (request-response — renderer reads/writes the document via existing autorun IPC).
+		 * (request-response - renderer reads/writes the document via existing autorun IPC).
 		 *
 		 * On failure we ack the channel with a fallback (so the web client doesn't hang)
 		 * and then rethrow so the unhandled rejection reaches Sentry via the global handler.
@@ -1184,7 +1373,7 @@ export function createProcessApi() {
 		 * fallback (`[]` / `null` / `false`) so the web client doesn't hang on a
 		 * regression, and rethrows the error so Sentry's global unhandled-rejection
 		 * hook still reports the cause. The web UI currently can't distinguish a
-		 * legitimate empty list from a transport failure with this shape — a
+		 * legitimate empty list from a transport failure with this shape - a
 		 * follow-up will move these to the structured `{ success, error }` payload
 		 * used by `onRemoteSetAutoRunFolder` (tracked in the AutoRun follow-up gist).
 		 */

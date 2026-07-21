@@ -1,5 +1,5 @@
 /**
- * useWindowScopedActiveSession — keep a window's active agent to one it owns.
+ * useWindowScopedActiveSession - keep a window's active agent to one it owns.
  *
  * The store's `activeSessionId` is a single, globally-persisted value, but agent
  * ownership is per-window (see {@link WindowContext}). Every window's renderer
@@ -31,7 +31,9 @@ export function useWindowScopedActiveSession(): void {
 	const ctx = useWindowContextOptional();
 	const ownsSession = ctx?.ownsSession;
 	const scopeActiveSessionId = ctx?.activeSessionId ?? null;
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Id-list signature only - streaming log/token flushes must not wake App.
+	// Ownership reconciliation cares about which agents exist, not live session fields.
+	const sessionIdsKey = useSessionStore((s) => s.sessions.map((sess) => sess.id).join('\n'));
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 
@@ -44,7 +46,7 @@ export function useWindowScopedActiveSession(): void {
 		if (activeSessionId && ownsSession(activeSessionId)) return;
 		// The active agent lives in another window. Fall back to an agent THIS window
 		// owns; if it owns none, leave the (correct) empty state in place.
-		const owned = sessions.filter((s) => ownsSession(s.id));
+		const owned = useSessionStore.getState().sessions.filter((s) => ownsSession(s.id));
 		if (owned.length === 0) return;
 		const next =
 			scopeActiveSessionId && owned.some((s) => s.id === scopeActiveSessionId)
@@ -53,5 +55,5 @@ export function useWindowScopedActiveSession(): void {
 		if (next && next !== activeSessionId) {
 			useSessionStore.getState().hydrateActiveSessionId(next);
 		}
-	}, [ownsSession, scopeActiveSessionId, sessions, activeSessionId, sessionsLoaded]);
+	}, [ownsSession, scopeActiveSessionId, sessionIdsKey, activeSessionId, sessionsLoaded]);
 }

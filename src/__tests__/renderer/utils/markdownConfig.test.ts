@@ -735,7 +735,7 @@ describe('shared markdown presets', () => {
 });
 
 // ---------------------------------------------------------------------------
-// createMarkdownComponents — link handling (Fixes MAESTRO-F4, MAESTRO-E5, etc.)
+// createMarkdownComponents - link handling (Fixes MAESTRO-F4, MAESTRO-E5, etc.)
 // ---------------------------------------------------------------------------
 
 describe('createMarkdownComponents link handling', () => {

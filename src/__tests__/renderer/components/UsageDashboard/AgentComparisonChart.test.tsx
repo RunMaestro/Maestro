@@ -530,7 +530,7 @@ describe('AgentComparisonChart', () => {
 		});
 
 		it('falls back to byAgent aggregation when sessions prop is not provided', () => {
-			// Without sessions, no worktree info — should render exactly the
+			// Without sessions, no worktree info - should render exactly the
 			// providers in byAgent without "(Worktree)" suffixes.
 			render(<AgentComparisonChart data={mockData} theme={theme} />);
 
@@ -539,7 +539,7 @@ describe('AgentComparisonChart', () => {
 	});
 
 	describe('Drill-Down Filtering', () => {
-		// `[role="listitem"]` targets the outer bar row only — the inner count/
+		// `[role="listitem"]` targets the outer bar row only - the inner count/
 		// duration labels share `.flex.items-center.gap-3` but have no role.
 		const BAR_ROW_SELECTOR = '[role="listitem"][aria-label]';
 
@@ -705,7 +705,7 @@ describe('AgentComparisonChart', () => {
 
 	describe('Session Name Resolution', () => {
 		it('uses the user-assigned session name when a single session matches the provider', () => {
-			// One session of toolType "claude-code" — buildNameMap should pick
+			// One session of toolType "claude-code" - buildNameMap should pick
 			// the session's name ("Backend API") for the bar label.
 			const session = makeSession({
 				id: 'backend-api',
@@ -726,7 +726,7 @@ describe('AgentComparisonChart', () => {
 		});
 
 		it('falls back to prettified type when multiple sessions share the same provider', () => {
-			// Two distinct claude-code sessions — buildNameMap can't pick one,
+			// Two distinct claude-code sessions - buildNameMap can't pick one,
 			// so it should use the prettified type name.
 			const a = makeSession({ id: 'a', name: 'Frontend', toolType: 'claude-code' });
 			const b = makeSession({ id: 'b', name: 'Backend', toolType: 'claude-code' });
@@ -762,7 +762,7 @@ describe('AgentComparisonChart', () => {
 		});
 
 		it('uses prettified type for providers with no matching session', () => {
-			// Sessions present but none with matching toolType — falls through
+			// Sessions present but none with matching toolType - falls through
 			// to prettifyAgentType.
 			const session = makeSession({
 				id: 'unrelated',

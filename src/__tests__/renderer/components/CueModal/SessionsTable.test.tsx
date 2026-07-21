@@ -125,7 +125,7 @@ describe('SessionsTable', () => {
 		expect(onTrigger).toHaveBeenCalledWith('subB');
 	});
 
-	it('Run Now fires only ONE sub per pipeline_name group — not all N', () => {
+	it('Run Now fires only ONE sub per pipeline_name group - not all N', () => {
 		const onTrigger = vi.fn();
 		const session = makeSession('s1');
 		// Three subs, all in the same pipeline group "Deploy"
@@ -144,7 +144,7 @@ describe('SessionsTable', () => {
 			/>
 		);
 		fireEvent.click(screen.getByText('Run Now'));
-		// Engine fires the whole group via anchor-group logic — only fire the first sub once
+		// Engine fires the whole group via anchor-group logic - only fire the first sub once
 		expect(onTrigger).toHaveBeenCalledTimes(1);
 		expect(onTrigger).toHaveBeenCalledWith('sub1');
 	});
@@ -157,7 +157,7 @@ describe('SessionsTable', () => {
 			makeSub('a2', 'Pipeline-A'),
 			makeSub('b1', 'Pipeline-B'),
 			makeSub('b2', 'Pipeline-B'),
-			makeSub('c1'), // ungrouped — fires individually
+			makeSub('c1'), // ungrouped - fires individually
 		]);
 		render(
 			<SessionsTable
@@ -179,7 +179,7 @@ describe('SessionsTable', () => {
 	it('Run Now fires both subs when same pipeline_name and same event but different interval', () => {
 		const onTrigger = vi.fn();
 		const session = makeSession('s1');
-		// Same pipeline_name, same event — but different interval_minutes → different composite keys
+		// Same pipeline_name, same event - but different interval_minutes → different composite keys
 		const gs = makeGraphSession('s1', [
 			{
 				name: 'fast',

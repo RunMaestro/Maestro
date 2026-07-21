@@ -4,11 +4,11 @@
  * A plugin-contributed panel renders in an Electron `<webview>` guest that is
  * isolated per plugin:
  *
- * - **Partition** `plugin:<pluginId>` — a NON-persist (in-memory) session per
+ * - **Partition** `plugin:<pluginId>` - a NON-persist (in-memory) session per
  *   plugin, so panels of different plugins can never see each other's storage
  *   (cookies, localStorage, caches), nor the app's, and everything is wiped on
  *   relaunch.
- * - **Document URL** `plugin-panel://panel/<encodeURIComponent(panelId)>` — a
+ * - **Document URL** `plugin-panel://panel/<encodeURIComponent(panelId)>` - a
  *   non-standard scheme served by a per-session `protocol.handle` in the main
  *   process, which reads the panel HTML from the plugin dir (grant-gated) and
  *   serves it with a restrictive CSP header. Non-standard scheme ⇒ opaque
@@ -27,21 +27,21 @@ export const PLUGIN_PANEL_SCHEME = 'plugin-panel';
 export const PLUGIN_PANEL_URL_HOST = 'panel';
 
 /**
- * Per-plugin session partition prefix. Deliberately NOT `persist:` — the
+ * Per-plugin session partition prefix. Deliberately NOT `persist:` - the
  * session is in-memory and dies with the app, so a panel can never accumulate
  * durable state outside the brokered `storage:*` capabilities.
  */
 export const PLUGIN_PANEL_PARTITION_PREFIX = 'plugin:';
 
 /**
- * The single restrictive CSP applied to every panel document — served as a
+ * The single restrictive CSP applied to every panel document - served as a
  * response header by the protocol handler AND injected as a meta tag
  * (belt-and-suspenders). Inline script/style is allowed (panel UIs run
  * inline), everything else is denied: `connect-src 'none'` blocks
  * fetch/XHR/WebSocket/beacon, `img/font` allow only inline `data:`,
  * `child-src/frame-src 'none'` block subframes entirely, `form-action 'none'`
  * blocks form posts and `base-uri 'none'` blocks base hijacks. Network egress
- * is ALSO denied at the session level (webRequest) — CSP is defense in depth.
+ * is ALSO denied at the session level (webRequest) - CSP is defense in depth.
  */
 export const PANEL_CSP_CONTENT =
 	"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
@@ -85,7 +85,7 @@ export function pluginPanelUrl(panelId: string): string {
 
 /**
  * Parse a panel document URL back to its panel id. Returns null for anything
- * that is not EXACTLY `plugin-panel://panel/<single-encoded-segment>` — wrong
+ * that is not EXACTLY `plugin-panel://panel/<single-encoded-segment>` - wrong
  * scheme, wrong host, extra path segments, or an empty id all fail closed.
  */
 export function panelIdFromPluginPanelUrl(rawUrl: string): string | null {

@@ -27,6 +27,12 @@ import type {
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	NewAITabWithPromptCallback,
+	EnqueueCommandCallback,
+	EnqueueCommandResult,
+	ListQueueCallback,
+	ListQueueResult,
+	RemoveQueueItemCallback,
+	RemoveQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	SetSessionAutoRunFolderCallback,
@@ -100,6 +106,8 @@ import type {
 	CadenzaViewCallback,
 	MovementViewCallback,
 	GetMovementStateCallback,
+	GetMovementDesignerInspectionCallback,
+	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
@@ -146,6 +154,9 @@ export interface WebServerCallbacks {
 	openBrowserTab: OpenBrowserTabCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
+	enqueueCommand: EnqueueCommandCallback | null;
+	listQueue: ListQueueCallback | null;
+	removeQueueItem: RemoveQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
@@ -200,6 +211,8 @@ export interface WebServerCallbacks {
 	cadenzaView: CadenzaViewCallback | null;
 	movementView: MovementViewCallback | null;
 	getMovementState: GetMovementStateCallback | null;
+	getMovementDesignerInspection: GetMovementDesignerInspectionCallback | null;
+	interactMovementDesigner: InteractMovementDesignerCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
 	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
@@ -233,6 +246,9 @@ export class CallbackRegistry {
 		openBrowserTab: null,
 		openTerminalTab: null,
 		newAITabWithPrompt: null,
+		enqueueCommand: null,
+		listQueue: null,
+		removeQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		setSessionAutoRunFolder: null,
@@ -287,6 +303,8 @@ export class CallbackRegistry {
 		cadenzaView: null,
 		movementView: null,
 		getMovementState: null,
+		getMovementDesignerInspection: null,
+		interactMovementDesigner: null,
 		notifyCenterFlash: null,
 		getMarketplaceManifest: null,
 		getMarketplaceDocument: null,
@@ -328,10 +346,19 @@ export class CallbackRegistry {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		force?: boolean,
-		images?: string[]
+		images?: string[],
+		background?: boolean
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId, force, images);
+		return this.callbacks.executeCommand(
+			sessionId,
+			command,
+			inputMode,
+			tabId,
+			force,
+			images,
+			background
+		);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {
@@ -405,10 +432,34 @@ export class CallbackRegistry {
 
 	async newAITabWithPrompt(
 		sessionId: string,
-		prompt: string
+		prompt: string,
+		background?: boolean
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt);
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
+	}
+
+	async enqueueCommand(
+		sessionId: string,
+		command: string,
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		images?: string[],
+		background?: boolean
+	): Promise<EnqueueCommandResult> {
+		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
+		return this.callbacks.enqueueCommand(sessionId, command, inputMode, tabId, images, background);
+	}
+
+	async listQueue(sessionId?: string): Promise<ListQueueResult> {
+		if (!this.callbacks.listQueue) return { success: false, queues: [], error: 'not configured' };
+		return this.callbacks.listQueue(sessionId);
+	}
+
+	async removeQueueItem(sessionId: string, itemId: string): Promise<RemoveQueueItemResult> {
+		if (!this.callbacks.removeQueueItem)
+			return { success: false, removed: false, error: 'not configured' };
+		return this.callbacks.removeQueueItem(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
@@ -792,6 +843,26 @@ export class CallbackRegistry {
 		return this.callbacks.getMovementState();
 	}
 
+	async getMovementDesignerInspection(id: string) {
+		if (!this.callbacks.getMovementDesignerInspection) return null;
+		return this.callbacks.getMovementDesignerInspection(id);
+	}
+
+	async interactMovementDesigner(
+		id: string,
+		action: Parameters<InteractMovementDesignerCallback>[1]
+	) {
+		if (!this.callbacks.interactMovementDesigner) {
+			return {
+				ok: false,
+				action: action.kind,
+				selector: action.selector,
+				message: 'Movement designer interaction is not configured',
+			};
+		}
+		return this.callbacks.interactMovementDesigner(id, action);
+	}
+
 	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
 		if (!this.callbacks.notifyCenterFlash) return false;
 		return this.callbacks.notifyCenterFlash(params);
@@ -933,6 +1004,18 @@ export class CallbackRegistry {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbacks.newAITabWithPrompt = callback;
+	}
+
+	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
+		this.callbacks.enqueueCommand = callback;
+	}
+
+	setListQueueCallback(callback: ListQueueCallback): void {
+		this.callbacks.listQueue = callback;
+	}
+
+	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
+		this.callbacks.removeQueueItem = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1149,6 +1232,14 @@ export class CallbackRegistry {
 
 	setGetMovementStateCallback(callback: GetMovementStateCallback): void {
 		this.callbacks.getMovementState = callback;
+	}
+
+	setGetMovementDesignerInspectionCallback(callback: GetMovementDesignerInspectionCallback): void {
+		this.callbacks.getMovementDesignerInspection = callback;
+	}
+
+	setInteractMovementDesignerCallback(callback: InteractMovementDesignerCallback): void {
+		this.callbacks.interactMovementDesigner = callback;
 	}
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {

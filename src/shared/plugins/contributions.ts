@@ -240,27 +240,109 @@ export interface KeybindingContribution {
 	description?: string;
 }
 
-/** Where a `ui:contribute` item renders. The renderer maps each surface to a
- * concrete region (status bar, menus, sidebar/activity bar, toolbar). */
-export type UiSurface = 'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar';
-
-export const UI_SURFACES: readonly UiSurface[] = [
+/**
+ * Host-mediated regions a plugin may target with a declarative `uiItem`.
+ * Add a future surface by appending one literal here; the union and all
+ * allowlist checks derive from this registry.
+ */
+export const UI_SURFACES = [
 	'status-bar',
 	'menu',
 	'sidebar',
 	'activity-bar',
 	'toolbar',
-];
+	'tabBar',
+	'sessionRowBadge',
+	'groupHeaderBadge',
+	'settingsSection',
+	'rightPanelTab',
+	'contextMenuItem',
+	'emptyState',
+] as const;
 
-/** Type guard: is `value` one of the known UI surfaces? */
-export function isUiSurface(value: unknown): value is UiSurface {
+/** Public union of the host-owned slots available to `ui:contribute`. */
+export type PluginUiSurface = (typeof UI_SURFACES)[number];
+
+/** Compatibility name retained for existing plugin authors. */
+export type UiSurface = PluginUiSurface;
+
+/**
+ * Host-owned chrome that is permanently unavailable to every plugin render
+ * tier. Keep these semantic targets separate from contribution ids: ids are
+ * only provenance/uniqueness, never an authority to mount into a region.
+ */
+export const PROTECTED_UI_SURFACES = [
+	'plugin-management',
+	'permission-consent',
+	'uninstall-grant-revoke',
+	'security-indicators',
+] as const;
+
+export type ProtectedUiSurface = (typeof PROTECTED_UI_SURFACES)[number];
+export type HostUiSurface = PluginUiSurface | ProtectedUiSurface;
+export type PluginUiMountTier = 'ui:contribute' | 'ui:render-unsafe';
+
+export interface PluginUiMountAttempt {
+	pluginId: string;
+	tier: PluginUiMountTier;
+	target: unknown;
+}
+
+export type PluginUiMountValidation =
+	| { allowed: true }
+	| {
+			allowed: false;
+			error: string;
+	  };
+
+/** Is `value` a host zone that plugins may never target or nest beneath? */
+export function isProtectedUiSurface(value: unknown): value is ProtectedUiSurface {
+	return typeof value === 'string' && (PROTECTED_UI_SURFACES as readonly string[]).includes(value);
+}
+
+/** Type guard for the positive allowlist of plugin-contributable host slots. */
+export function isPluginUiSurface(value: unknown): value is PluginUiSurface {
 	return typeof value === 'string' && (UI_SURFACES as readonly string[]).includes(value);
+}
+
+/** Host-internal target guard; unknown strings fail closed. */
+export function isHostUiSurface(value: unknown): value is HostUiSurface {
+	return isPluginUiSurface(value) || isProtectedUiSurface(value);
+}
+
+/** Backward-compatible name for the original public surface guard. */
+export const isUiSurface = isPluginUiSurface;
+
+/**
+ * Shared trusted-chrome admission policy for declarative items and the
+ * high-trust `ui:render-unsafe` tier. The latter has no current mount API, but
+ * any future unsafe renderer must use this exact registry-level check before it
+ * selects a host slot.
+ */
+export function validatePluginUiMount({
+	pluginId,
+	tier,
+	target,
+}: PluginUiMountAttempt): PluginUiMountValidation {
+	if (isProtectedUiSurface(target)) {
+		return {
+			allowed: false,
+			error: `[${pluginId}] ${tier} surface "${target}" is protected chrome and was dropped`,
+		};
+	}
+	if (!isPluginUiSurface(target)) {
+		return {
+			allowed: false,
+			error: `[${pluginId}] ${tier} surface "${String(target)}" is invalid or unavailable`,
+		};
+	}
+	return { allowed: true };
 }
 
 /**
  * A declarative UI item a (tier-1) plugin renders into a host surface. The item
- * is pure data (label / icon / placement) the host renders; activating it invokes
- * one of the plugin's OWN commands through the broker. Gated by the
+ * is pure data (label / icon / tooltip / placement) the host renders; activating
+ * it invokes one of the plugin's OWN commands through the broker. Gated by the
  * `ui:contribute` capability (see `gateContributions`), so an enabled plugin
  * WITHOUT that grant contributes none.
  */
@@ -268,12 +350,14 @@ export interface UiItemContribution {
 	id: string;
 	localId: string;
 	pluginId: string;
-	surface: UiSurface;
+	surface: PluginUiSurface;
 	label: string;
 	/** Plugin-local command id invoked on activation. */
 	command: string;
 	/** Optional icon keyword the renderer maps to its icon set. */
 	icon?: string;
+	/** Optional host-rendered tooltip; provenance is always appended by the host. */
+	tooltip?: string;
 	/** Optional grouping / ordering hints within the surface. */
 	group?: string;
 	priority?: number;
@@ -550,7 +634,7 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
  * (should be impossible since ids are plugin-scoped, but defended anyway) the
  * first wins and the duplicate is recorded as an error. Pass `hasCapabilityFor`
  * (the verified per-plugin grants) to gate capability-scoped contributions
- * (`ui:contribute` items, `ui:panel` panels) DURING aggregation — the secure
+ * (`ui:contribute` items, `ui:panel` panels) DURING aggregation - the secure
  * default for the production path, so a render host can't forget to filter.
  */
 export function aggregateContributions(
@@ -613,7 +697,22 @@ export function aggregateContributions(
 		c.agents.forEach((agent) => pushUnique('agents', agg.agents, agent));
 		c.tools.forEach((t) => pushUnique('tools', agg.tools, t));
 		c.keybindings.forEach((k) => pushUnique('keybindings', agg.keybindings, k));
-		c.uiItems.forEach((u) => pushUnique('uiItems', agg.uiItems, u));
+		c.uiItems.forEach((item) => {
+			// Defense in depth: collection already validates the raw surface, but
+			// aggregation is the last shared registry boundary before IPC exposes
+			// these records to every renderer. Never trust a forged intermediate
+			// object or a future collection path to have done that validation.
+			const mount = validatePluginUiMount({
+				pluginId: item.pluginId,
+				tier: 'ui:contribute',
+				target: item.surface,
+			});
+			if (!mount.allowed) {
+				(agg.errorsByPlugin[item.pluginId] ??= []).push(mount.error);
+				return;
+			}
+			pushUnique('uiItems', agg.uiItems, item);
+		});
 		c.hostViews.forEach((view) => pushUnique('hostViews', agg.hostViews, view));
 		c.groupings.forEach((grouping) => pushUnique('groupings', agg.groupings, grouping));
 	}
@@ -1112,8 +1211,13 @@ function parseUiItem(pluginId: string, raw: unknown, errors: string[]): UiItemCo
 	}
 	const localId = parseLocalId(pluginId, raw, errors);
 	if (!localId) return null;
-	if (!isUiSurface(raw.surface)) {
-		errors.push(`[${pluginId}] uiItem "${localId}" has an invalid or missing surface`);
+	const mount = validatePluginUiMount({
+		pluginId,
+		tier: 'ui:contribute',
+		target: raw.surface,
+	});
+	if (!mount.allowed) {
+		errors.push(mount.error);
 		return null;
 	}
 	if (!isNonEmptyString(raw.label)) {
@@ -1130,10 +1234,11 @@ function parseUiItem(pluginId: string, raw: unknown, errors: string[]): UiItemCo
 		id: namespaced(pluginId, localId),
 		localId,
 		pluginId,
-		surface: raw.surface,
+		surface: raw.surface as PluginUiSurface,
 		label: raw.label.trim(),
 		command: raw.command.trim(),
 		...(isNonEmptyString(raw.icon) ? { icon: raw.icon.trim() } : {}),
+		...(isNonEmptyString(raw.tooltip) ? { tooltip: raw.tooltip.trim() } : {}),
 		...(isNonEmptyString(raw.group) ? { group: raw.group.trim() } : {}),
 		...(priority !== undefined ? { priority } : {}),
 	};

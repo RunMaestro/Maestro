@@ -174,7 +174,7 @@ describe('mergePipelinesWithSavedLayout', () => {
 		// Name still flows from layout JSON (user rename without YAML re-save).
 		expect(result.pipelines[0].name).toBe('My Custom Name');
 		expect(result.pipelines[1].name).toBe('Another Name');
-		// Color is YAML-authoritative — live values win.
+		// Color is YAML-authoritative - live values win.
 		expect(result.pipelines[0].color).toBe('#06b6d4');
 		expect(result.pipelines[1].color).toBe('#8b5cf6');
 	});
@@ -188,7 +188,7 @@ describe('mergePipelinesWithSavedLayout', () => {
 
 		const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
 
-		// No matching ID in saved layout — live values preserved
+		// No matching ID in saved layout - live values preserved
 		expect(result.pipelines[0].name).toBe('Brand New');
 		expect(result.pipelines[0].color).toBe('#3b82f6');
 	});
@@ -281,7 +281,7 @@ describe('mergePipelinesWithSavedLayout', () => {
 				selectedPipelineId: 'pipeline-Pipeline 1',
 			};
 
-			// Live pipeline (post-reload) has yamlToPipeline-generated ids —
+			// Live pipeline (post-reload) has yamlToPipeline-generated ids -
 			// completely different from the timestamp ids on disk.
 			const livePipelines: CuePipeline[] = [
 				{
@@ -433,7 +433,7 @@ describe('mergePipelinesWithSavedLayout', () => {
 			// Two pipelines each with their own trigger-0. Saved layout has
 			// pipeline "A" with a timer trigger at {100,100}. Live pipeline
 			// "B" also has a timer trigger. The merge must NOT steal pipeline
-			// A's position for pipeline B's trigger — the pipeline NAME gates
+			// A's position for pipeline B's trigger - the pipeline NAME gates
 			// the lookup.
 			const savedLayout: PipelineLayoutState = {
 				pipelines: [
@@ -593,7 +593,7 @@ describe('mergePipelinesWithSavedLayout', () => {
 			const livePipelines: CuePipeline[] = [
 				{
 					id: 'pipeline-Pipeline 1',
-					name: 'Pipeline 1', // from YAML — rename was never saved
+					name: 'Pipeline 1', // from YAML - rename was never saved
 					color: '#06b6d4',
 					nodes: [
 						{

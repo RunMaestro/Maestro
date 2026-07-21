@@ -1,6 +1,6 @@
 /**
  * Lazy `highlight.js`-based language auto-detection. Only used when a code
- * fence arrives without an explicit language tag — Shiki has no built-in
+ * fence arrives without an explicit language tag - Shiki has no built-in
  * guesser, and `highlight.js`'s `highlightAuto` is the industry standard.
  *
  * Cost: `highlight.js` is ~40 KB gzipped. We pay it once, on first detection,
@@ -53,7 +53,7 @@ function loadHljs(): Promise<HighlightJsApi> {
  * heuristic isn't confident enough, or if hljs's pick doesn't map to a
  * grammar Shiki ships.
  *
- * The `relevance` field from hljs is a rough confidence signal — anything
+ * The `relevance` field from hljs is a rough confidence signal - anything
  * under 5 tends to be noise on small snippets. We pass that threshold up so
  * callers can decide whether to render plain or highlight on a weak guess.
  */

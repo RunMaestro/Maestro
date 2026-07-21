@@ -76,7 +76,6 @@ const createDeps = (
 	state: ReturnType<typeof createSessionsState>,
 	overrides: Partial<UseFileTreeManagementDeps> = {}
 ): UseFileTreeManagementDeps => ({
-	sessions: state.getSessions(),
 	sessionsRef: state.sessionsRef,
 	setSessions: state.setSessions,
 	activeSessionId: state.getSessions()[0]?.id ?? null,
@@ -417,7 +416,7 @@ describe('useFileTreeManagement', () => {
 				sshRemoteId: 'my-ssh-remote',
 			})
 		);
-		// Recursive loadFileTree must NOT be called for SSH refreshes — the whole
+		// Recursive loadFileTree must NOT be called for SSH refreshes - the whole
 		// point of the batched loader is to skip the per-directory round-trips.
 		expect(loadFileTree).not.toHaveBeenCalled();
 	});
@@ -697,7 +696,7 @@ describe('useFileTreeManagement', () => {
 			vi.advanceTimersByTime(6000);
 		});
 
-		// initialFileTreeReady should still be false — gated timer hasn't started yet
+		// initialFileTreeReady should still be false - gated timer hasn't started yet
 		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
 
 		// Now mark sessions as loaded
@@ -725,7 +724,7 @@ describe('useFileTreeManagement', () => {
 	it('absolute backstop fires at 8s even if sessionsLoaded is never set', () => {
 		vi.useFakeTimers();
 
-		// sessionsLoaded stays false — simulates a stuck session restoration
+		// sessionsLoaded stays false - simulates a stuck session restoration
 		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
 
 		const state = createSessionsState([createMockSession({ fileTree: [] })]);
@@ -733,13 +732,13 @@ describe('useFileTreeManagement', () => {
 
 		renderHook(() => useFileTreeManagement(deps));
 
-		// At 7.9s — backstop hasn't fired yet
+		// At 7.9s - backstop hasn't fired yet
 		act(() => {
 			vi.advanceTimersByTime(7900);
 		});
 		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
 
-		// At 8s — backstop fires
+		// At 8s - backstop fires
 		act(() => {
 			vi.advanceTimersByTime(200);
 		});
@@ -783,5 +782,41 @@ describe('useFileTreeManagement', () => {
 		if (originalFs) {
 			window.maestro.fs = originalFs;
 		}
+	});
+
+	it('repaints filteredFileTree when store fileTree refreshes without an injected activeSession', () => {
+		const initialTree: FileNode[] = [{ name: 'old.txt', type: 'file' }];
+		const nextTree: FileNode[] = [{ name: 'new.txt', type: 'file' }];
+		const session = createMockSession({ fileTree: initialTree });
+
+		useSessionStore.setState({
+			sessions: [session],
+			activeSessionId: session.id,
+			sessionsLoaded: true,
+		});
+
+		const state = createSessionsState([session]);
+		const { result } = renderHook(() =>
+			useFileTreeManagement({
+				sessionsRef: state.sessionsRef,
+				setSessions: state.setSessions,
+				activeSessionId: session.id,
+				// Omit activeSession: exercise the self-sourced store path.
+				rightPanelRef: {
+					current: { refreshHistoryPanel: vi.fn() },
+				} as RefObject<RightPanelHandle | null>,
+			})
+		);
+
+		expect(result.current.filteredFileTree).toEqual(initialTree);
+
+		act(() => {
+			useSessionStore.setState({
+				sessions: [{ ...session, fileTree: nextTree }],
+				activeSessionId: session.id,
+			});
+		});
+
+		expect(result.current.filteredFileTree).toEqual(nextTree);
 	});
 });

@@ -46,7 +46,7 @@ const TRAILING_SEP_RE = new RegExp(`${path.sep.replace('\\', '\\\\')}+$`);
 /**
  * Candidate OpenCode data base directories, in preference order.
  *
- * OpenCode (Go binary) uses XDG-style paths on all platforms — including
+ * OpenCode (Go binary) uses XDG-style paths on all platforms - including
  * Windows, where `opencode db path` resolves to `%USERPROFILE%\.local\share\opencode`
  * rather than `%APPDATA%`. We keep `%APPDATA%\opencode` as a Windows-only
  * fallback for any legacy/alternate installs.
@@ -844,7 +844,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 			const normalizedPath = path.resolve(projectPath).replace(TRAILING_SEP_RE, '');
 
-			// Find matching project(s) — exact match or subdirectory match
+			// Find matching project(s) - exact match or subdirectory match
 			const projects = db.prepare('SELECT id, worktree FROM project').all() as Array<{
 				id: string;
 				worktree: string;
@@ -853,7 +853,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			const matchingProjectIds: string[] = [];
 			let hasGlobalProject = false;
 			for (const proj of projects) {
-				// Skip the 'global' project (worktree '/') from project-level matching —
+				// Skip the 'global' project (worktree '/') from project-level matching -
 				// it matches everything. Its sessions are filtered by directory below.
 				if (proj.id === 'global') {
 					hasGlobalProject = true;
@@ -1276,7 +1276,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		projectPath: string,
 		sshConfig?: SshRemoteConfig
 	): Promise<AgentSessionInfo[]> {
-		// Use SSH remote access if config provided (JSON only for SSH — no remote SQLite)
+		// Use SSH remote access if config provided (JSON only for SSH - no remote SQLite)
 		if (sshConfig) {
 			return this.listSessionsRemote(projectPath, sshConfig);
 		}
@@ -1305,7 +1305,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			return sqliteSessions;
 		}
 
-		// SQLite unavailable or empty — use JSON results
+		// SQLite unavailable or empty - use JSON results
 		return jsonSessions;
 	}
 

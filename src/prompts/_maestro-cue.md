@@ -314,7 +314,7 @@ subscriptions:
 **`cli.trigger`:**
 `{{CUE_CLI_PROMPT}}`, `{{CUE_SOURCE_AGENT_ID}}`
 
-**`time.once`:** `{{CUE_FIRE_AT}}` (the originally-scheduled fire timestamp, ISO-8601 with timezone — handy for "you asked me to remind you at {{CUE_FIRE_AT}}" phrasing in notify messages or prompts)
+**`time.once`:** `{{CUE_FIRE_AT}}` (the originally-scheduled fire timestamp, ISO-8601 with timezone - handy for "you asked me to remind you at {{CUE_FIRE_AT}}" phrasing in notify messages or prompts)
 
 ### CLI
 

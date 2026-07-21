@@ -1,5 +1,5 @@
 /**
- * useQuickActionsHandlers — extracted from App.tsx
+ * useQuickActionsHandlers - extracted from App.tsx
  *
  * Provides stable callbacks for the Quick Actions modal (Cmd+K):
  *   - Toggle read-only mode
@@ -16,7 +16,7 @@
 import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
-import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import { resolveQueuedItemTarget, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
 import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -132,9 +132,9 @@ export function useQuickActionsHandlers(
 		handlePublishTabGist,
 	} = deps;
 
-	// --- Reactive subscriptions ---
-	const activeSession = useSessionStore(selectActiveSession);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. All Quick Actions handlers resolve the active
+	// agent at event time via getState().
 	const markdownEditMode = useSettingsStore((s) => s.markdownEditMode);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 
@@ -144,6 +144,7 @@ export function useQuickActionsHandlers(
 	const { setSuccessFlashNotification } = useUIStore.getState();
 
 	const handleQuickActionsToggleReadOnlyMode = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
 			setSessions((prev) =>
 				prev.map((s) => {
@@ -151,15 +152,16 @@ export function useQuickActionsHandlers(
 					return {
 						...s,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+							tab.id === s.activeTabId ? { ...tab, ...toggleReadOnlyModeFields(tab) } : tab
 						),
 					};
 				})
 			);
 		}
-	}, [activeSession]);
+	}, []);
 
 	const handleQuickActionsToggleTabEnterToSend = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode !== 'ai' || !activeSession.activeTabId) return;
 		const globalDefault = useSettingsStore.getState().enterToSendAI;
 		setSessions((prev) =>
@@ -175,9 +177,10 @@ export function useQuickActionsHandlers(
 				};
 			})
 		);
-	}, [activeSession]);
+	}, []);
 
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
 			// Cycle through: off -> on -> sticky -> off
 			const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
@@ -207,19 +210,22 @@ export function useQuickActionsHandlers(
 				})
 			);
 		}
-	}, [activeSession]);
+	}, []);
 
 	const handleQuickActionsRefreshGitFileState = useCallback(async () => {
+		const activeSessionId = useSessionStore.getState().activeSessionId;
 		if (activeSessionId) {
 			await Promise.all([refreshGitFileState(activeSessionId), refreshWorktreeState()]);
 			await mainPanelRef.current?.refreshGitInfo();
 			setSuccessFlashNotification('Files, Git, History Refreshed');
 			setTimeout(() => setSuccessFlashNotification(null), 2000);
 		}
-	}, [activeSessionId, refreshGitFileState, refreshWorktreeState]);
+	}, [refreshGitFileState, refreshWorktreeState]);
 
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
-		if (!activeSession) return;
+		const { activeSessionId } = useSessionStore.getState();
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (!activeSession || !activeSessionId) return;
 		const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
 			activeSession.executionQueue
 		);
@@ -263,19 +269,20 @@ export function useQuickActionsHandlers(
 			})
 		);
 		// Process the item
-		processQueuedItem(activeSessionId!, nextItem);
-	}, [activeSession, activeSessionId, processQueuedItem]);
+		processQueuedItem(activeSessionId, nextItem);
+	}, [processQueuedItem]);
 
 	const handleQuickActionsToggleMarkdownEditMode = useCallback(() => {
 		// Toggle the appropriate mode based on context:
 		// - If file tab is active: toggle file edit mode (markdownEditMode)
 		// - If no file tab: toggle chat raw text mode (chatRawTextMode)
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.activeFileTabId) {
 			setMarkdownEditMode(!markdownEditMode);
 		} else {
 			setChatRawTextMode(!chatRawTextMode);
 		}
-	}, [activeSession?.activeFileTabId, markdownEditMode, chatRawTextMode]);
+	}, [markdownEditMode, chatRawTextMode]);
 
 	const handleQuickActionsSummarizeAndContinue = useCallback(
 		() => handleSummarizeAndContinue(),
@@ -303,6 +310,7 @@ export function useQuickActionsHandlers(
 	}, [handleCloseCurrentTab]);
 
 	const handleQuickActionsMoveTabToFirst = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		// Find the active tab's index in the unified tab order (supports AI, file, and terminal tabs)
 		const activeRef = getActiveUnifiedRef(activeSession);
@@ -313,9 +321,10 @@ export function useQuickActionsHandlers(
 		if (idx > 0) {
 			handleUnifiedTabReorder(idx, 0);
 		}
-	}, [activeSession, handleUnifiedTabReorder]);
+	}, [handleUnifiedTabReorder]);
 
 	const handleQuickActionsMoveTabToLast = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		const activeRef = getActiveUnifiedRef(activeSession);
 		if (!activeRef) return;
@@ -325,7 +334,7 @@ export function useQuickActionsHandlers(
 		if (idx >= 0 && idx < activeSession.unifiedTabOrder.length - 1) {
 			handleUnifiedTabReorder(idx, activeSession.unifiedTabOrder.length - 1);
 		}
-	}, [activeSession, handleUnifiedTabReorder]);
+	}, [handleUnifiedTabReorder]);
 
 	const handleQuickActionsCopyTabContext = useCallback(
 		(tabId: string) => handleCopyContext(tabId),

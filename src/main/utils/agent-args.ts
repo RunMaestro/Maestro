@@ -1,4 +1,5 @@
 import type { AgentConfig, AgentDefinition } from '../agents';
+import type { AdditionalDirectory } from '../../shared/types';
 import { logger } from './logger';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -17,12 +18,18 @@ type BuildAgentArgsOptions = {
 	permissionMode?: 'full' | 'standard' | 'readonly';
 	agentSessionId?: string;
 	/**
+	 * The session's Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` turn these into native grant flags; the rest
+	 * ignore them here and rely on the system-prompt block instead.
+	 */
+	additionalDirectories?: AdditionalDirectory[];
+	/**
 	 * Force the agent's batch-mode args (batchModePrefix / batchModeArgs /
 	 * jsonOutputArgs) to be applied even when `prompt` is an empty string. The
 	 * default behavior gates these on `options.prompt` being truthy so that a
 	 * bare interactive launch (no prompt) doesn't accidentally enable batch
-	 * mode. Callers that NEVER launch interactive mode — e.g. Cue, which spawns
-	 * with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY — must set this so an
+	 * mode. Callers that NEVER launch interactive mode - e.g. Cue, which spawns
+	 * with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY - must set this so an
 	 * empty-after-substitution prompt (e.g. `{{CUE_SOURCE_OUTPUT}}` resolving
 	 * to `""` when the upstream run produced no parseable stdout) doesn't
 	 * silently fall back to interactive mode and fail with
@@ -79,7 +86,7 @@ function hasJsonOutputFlag(haystack: string[], jsonOutputArgs: string[]): boolea
 	}
 
 	// Also check if the flag key (e.g., --format, --output-format) is already
-	// present with a different value — avoid appending a conflicting duplicate
+	// present with a different value - avoid appending a conflicting duplicate
 	// that the dedup step would mangle.
 	const flagKey = jsonOutputArgs[0];
 	if (flagKey?.startsWith('-') && jsonOutputArgs.length > 1) {
@@ -140,7 +147,7 @@ export function buildAgentArgs(
 
 	if (agent.workingDirArgs && options.cwd) {
 		// Prepend so the directory flag lands before any subcommand (e.g. Codex
-		// `exec`). Codex treats `-C` as a root-level global flag — placing it
+		// `exec`). Codex treats `-C` as a root-level global flag - placing it
 		// after the subcommand makes it silently ignored (#959).
 		finalArgs = [...agent.workingDirArgs(options.cwd), ...finalArgs];
 	}
@@ -187,7 +194,33 @@ export function buildAgentArgs(
 		dedupedArgs.push(arg);
 	}
 
-	return dedupedArgs;
+	// Additional Directories are appended AFTER the dedupe on purpose. Every
+	// provider expresses a multi-directory grant by repeating its flag
+	// (`--add-dir a --add-dir b`), and the dedupe above drops repeated flag
+	// tokens - it would keep the first `--add-dir`, delete the second, and leave
+	// the orphaned path behind as a stray positional that the CLI would read as
+	// the prompt. Emitting them last also keeps them ahead of the prompt, which
+	// callers append after this function returns.
+	return [...dedupedArgs, ...buildAdditionalDirArgs(agent, options.additionalDirectories)];
+}
+
+/**
+ * Translate the session's directory grants into provider-native CLI args.
+ *
+ * Returns [] for providers that have no native mechanism - they still receive
+ * the grants through the `{{ADDITIONAL_DIRECTORIES}}` system-prompt block, which
+ * is built independently of this path. Exported so the CLI spawner
+ * (`src/cli/services/agent-spawner.ts`), which assembles args itself rather than
+ * calling `buildAgentArgs`, produces byte-identical flags.
+ */
+export function buildAdditionalDirArgs(
+	agent: Pick<AgentConfig, 'additionalDirArgs'> | AgentDefinition | null | undefined,
+	dirs: AdditionalDirectory[] | undefined
+): string[] {
+	if (!agent?.additionalDirArgs || !dirs?.length) {
+		return [];
+	}
+	return agent.additionalDirArgs(dirs);
 }
 
 /** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */
@@ -220,8 +253,12 @@ export function applyAgentConfigOverrides(
 				}
 			} else if (
 				(option.key === 'effort' || option.key === 'reasoningEffort') &&
-				overrides.sessionCustomEffort !== undefined
+				overrides.sessionCustomEffort !== undefined &&
+				overrides.sessionCustomEffort !== ''
 			) {
+				// Empty means "cleared" and falls through to the agent-level config, the
+				// same rule `model` uses above - and the same order the effort pill shows
+				// (tab > agent override > agent config).
 				value = overrides.sessionCustomEffort;
 			} else {
 				value =

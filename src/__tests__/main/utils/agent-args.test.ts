@@ -12,6 +12,7 @@ import {
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
+import { getAgentDefinition } from '../../../main/agents/definitions';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -186,7 +187,7 @@ describe('buildAgentArgs', () => {
 
 	// -- workingDirArgs --
 	it('prepends workingDirArgs when cwd provided', () => {
-		// Codex treats `-C` as a root-level global flag — it must appear before
+		// Codex treats `-C` as a root-level global flag - it must appear before
 		// any subcommand (e.g. `exec`) or it is silently ignored (#959).
 		const agent = makeAgent({
 			workingDirArgs: (dir: string) => ['-C', dir],
@@ -444,7 +445,7 @@ describe('buildAgentArgs', () => {
 			agentSessionId: 'abc',
 		});
 
-		// batchModeArgs (--skip-git) is omitted when readOnlyMode is true —
+		// batchModeArgs (--skip-git) is omitted when readOnlyMode is true -
 		// batch mode args grant write/approval permissions that conflict with read-only.
 		// workingDirArgs (-C /tmp) is prepended so the directory flag lands before
 		// the batchModePrefix subcommand (#959).
@@ -785,6 +786,104 @@ describe('buildAgentArgs', () => {
 			expect(result).toContain('stream-json');
 		});
 
+		// Grok desktop spawn composition, using the REAL definition rather than a
+		// hand-rolled mock. The desktop path (src/main/ipc/handlers/process.ts)
+		// composes args as buildAgentArgs -> applyAgentConfigOverrides, then
+		// ChildProcessSpawner appends promptArgs last. Grok's clap hard-errors on
+		// repeated value flags ("cannot be used multiple times"), so every value
+		// flag must appear exactly once in the final invocation.
+		describe('Grok: desktop spawn path composition (real definition)', () => {
+			const grokDef = getAgentDefinition('grok');
+			const grok = {
+				...grokDef,
+				available: true,
+				capabilities: {} as AgentConfig['capabilities'],
+			} as AgentConfig;
+
+			/** Mirror the desktop handler: buildAgentArgs -> config overrides -> promptArgs. */
+			function composeDesktopArgs(options: {
+				prompt: string;
+				cwd?: string;
+				agentSessionId?: string;
+				readOnlyMode?: boolean;
+				yoloMode?: boolean;
+				sessionCustomModel?: string;
+			}): string[] {
+				const built = buildAgentArgs(grok, {
+					baseArgs: grok.args,
+					prompt: options.prompt,
+					cwd: options.cwd,
+					readOnlyMode: options.readOnlyMode,
+					yoloMode: options.yoloMode,
+					agentSessionId: options.agentSessionId,
+				});
+				const resolved = applyAgentConfigOverrides(grok, built, {
+					sessionCustomModel: options.sessionCustomModel,
+				});
+				return [...resolved.args, ...grok.promptArgs!(options.prompt)];
+			}
+
+			it('composes --cwd, --resume, -m, and -p together in one legal invocation', () => {
+				const result = composeDesktopArgs({
+					prompt: 'hello',
+					cwd: '/project',
+					agentSessionId: 'sess-uuid',
+					sessionCustomModel: 'grok-composer-2.5-fast',
+				});
+
+				expect(result).toEqual([
+					'--cwd',
+					'/project',
+					'--always-approve',
+					'--output-format',
+					'streaming-json',
+					'--resume',
+					'sess-uuid',
+					'-m',
+					'grok-composer-2.5-fast',
+					'-p',
+					'hello',
+				]);
+
+				// clap rejects repeated flags: every flag token must be unique
+				const flags = result.filter((a) => a.startsWith('-'));
+				expect(new Set(flags).size).toBe(flags.length);
+			});
+
+			it('read-only mode emits exactly one --permission-mode and drops --always-approve', () => {
+				const result = composeDesktopArgs({
+					prompt: 'inspect only',
+					cwd: '/project',
+					readOnlyMode: true,
+				});
+
+				// batchModeArgs (--always-approve) conflicts with read-only intent
+				// and is skipped; readOnlyArgs supplies --permission-mode plan.
+				expect(result).not.toContain('--always-approve');
+				expect(result.filter((a) => a === '--permission-mode')).toHaveLength(1);
+				expect(result[result.indexOf('--permission-mode') + 1]).toBe('plan');
+			});
+
+			it('yolo + batch mode dedupes --always-approve to a single occurrence', () => {
+				// batchModeArgs === yoloModeArgs === ['--always-approve'] by design;
+				// a repeated boolean flag would make grok's clap exit 2.
+				const result = composeDesktopArgs({
+					prompt: 'do it',
+					cwd: '/project',
+					yoloMode: true,
+				});
+
+				expect(result.filter((a) => a === '--always-approve')).toHaveLength(1);
+			});
+
+			it('default config emits no -m or --reasoning-effort (empty defaults build no args)', () => {
+				const result = composeDesktopArgs({ prompt: 'hi' });
+
+				expect(result).not.toContain('-m');
+				expect(result).not.toContain('--reasoning-effort');
+			});
+		});
+
 		it('Factory Droid: readOnly works without extra flags (exec is read-only by default)', () => {
 			const droidAgent = makeAgent({
 				id: 'factory-droid',
@@ -887,6 +986,68 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		expect(r3.args).toEqual(['--model', 'session-model']);
 		expect(r3.modelSource).toBe('session');
+	});
+
+	// -- effort precedence --
+	// Effort follows the same rules as model, which is also what the effort pill
+	// shows (tab > agent override > agent config). An empty session override means
+	// "cleared", not "no effort at all".
+	it('effort precedence: session overrides agent config, empty falls back', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'effort',
+					type: 'select',
+					label: 'Effort',
+					description: 'Effort',
+					options: ['', 'low', 'high', 'max'],
+					default: '',
+					argBuilder: (val: any) => (val ? ['--effort', String(val)] : []),
+				},
+			],
+		});
+
+		// agent config value is used when the session has no override
+		const r1 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+		});
+		expect(r1.args).toEqual(['--effort', 'high']);
+
+		// session override wins
+		const r2 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: 'max',
+		});
+		expect(r2.args).toEqual(['--effort', 'max']);
+
+		// cleared session override falls back to the agent config
+		const r3 = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { effort: 'high' },
+			sessionCustomEffort: '',
+		});
+		expect(r3.args).toEqual(['--effort', 'high']);
+	});
+
+	it('reasoningEffort honors the session override (Codex-style agents)', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'reasoningEffort',
+					type: 'select',
+					label: 'Reasoning Effort',
+					description: 'Reasoning Effort',
+					options: ['low', 'high'],
+					default: 'low',
+					argBuilder: (val: any) => (val ? ['-c', `model_reasoning_effort="${val}"`] : []),
+				},
+			],
+		});
+
+		const result = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { reasoningEffort: 'low' },
+			sessionCustomEffort: 'high',
+		});
+		expect(result.args).toEqual(['-c', 'model_reasoning_effort="high"']);
 	});
 
 	it('uses agentConfigValues for non-model config options', () => {
@@ -1175,5 +1336,62 @@ describe('getContextWindowValue', () => {
 
 		const result = getContextWindowValue(agent, { contextWindow: 50000 }, undefined);
 		expect(result).toBe(50000);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Additional Directories -> native provider grant flags
+// ---------------------------------------------------------------------------
+describe('buildAgentArgs: additionalDirectories', () => {
+	const RO = { path: '/ref/docs', read: true, write: false };
+	const WO = { path: '/out/drop', read: false, write: true };
+	const RW = { path: '/shared/src', read: true, write: true };
+	const INERT = { path: '/ignored', read: false, write: false };
+
+	/** Stand-in for a provider whose flag means "allow access" (Claude, Copilot). */
+	const accessAgent = makeAgent({
+		additionalDirArgs: (dirs) =>
+			dirs.filter((d) => d.read || d.write).flatMap((d) => ['--add-dir', d.path]),
+	});
+
+	it('emits nothing for a provider with no native mechanism', () => {
+		const agent = makeAgent(); // no additionalDirArgs
+		expect(buildAgentArgs(agent, { baseArgs: [], additionalDirectories: [RW] })).toEqual([]);
+	});
+
+	it('emits nothing when the session has no grants', () => {
+		expect(buildAgentArgs(accessAgent, { baseArgs: [], additionalDirectories: [] })).toEqual([]);
+		expect(buildAgentArgs(accessAgent, { baseArgs: [] })).toEqual([]);
+	});
+
+	it('lets the provider decide which grants its flag can express', () => {
+		expect(
+			buildAgentArgs(accessAgent, { baseArgs: [], additionalDirectories: [RO, WO, RW, INERT] })
+		).toEqual(['--add-dir', '/ref/docs', '--add-dir', '/out/drop', '--add-dir', '/shared/src']);
+	});
+
+	it('survives the repeated-flag dedupe', () => {
+		// buildAgentArgs dedupes repeated flag tokens, which would keep the first
+		// --add-dir, drop the second, and leave the orphaned path behind as a stray
+		// positional the CLI would read as the prompt. Regression guard.
+		const args = buildAgentArgs(accessAgent, {
+			baseArgs: [],
+			additionalDirectories: [RO, RW],
+		});
+
+		expect(args.filter((a) => a === '--add-dir')).toHaveLength(2);
+		expect(args).toEqual(['--add-dir', '/ref/docs', '--add-dir', '/shared/src']);
+	});
+
+	it('keeps the grant flags ahead of a trailing prompt positional', () => {
+		// Callers append the prompt AFTER buildAgentArgs returns, so the last thing
+		// we emit must still be a flag/value pair, never a dangling flag.
+		const args = buildAgentArgs(accessAgent, {
+			baseArgs: ['--print'],
+			additionalDirectories: [RW],
+		});
+
+		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
+		expect(args[args.length - 1]).not.toMatch(/^-/);
 	});
 });

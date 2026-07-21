@@ -37,7 +37,12 @@ function pt(overrides: Partial<ContextTimelinePointInput> = {}): ContextTimeline
 }
 
 function reset() {
-	useContextTimelineStore.setState({ panelSessionId: null, minimized: false, buffers: {} });
+	useContextTimelineStore.setState({
+		panelSessionId: null,
+		minimized: false,
+		anchorRect: null,
+		buffers: {},
+	});
 }
 
 describe('contextTimelineStore', () => {
@@ -89,6 +94,26 @@ describe('contextTimelineStore', () => {
 		store.appendPoint(SID, pt());
 		store.openPanel(SID);
 		expect(selectPoints(SID)(useContextTimelineStore.getState())).toHaveLength(1);
+	});
+
+	it('openPanel stores the anchor rect it was given', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
+		useContextTimelineStore.getState().openPanel(SID, rect);
+		expect(useContextTimelineStore.getState().anchorRect).toEqual(rect);
+	});
+
+	it('openPanel with no anchor clears any previous anchor (dock fallback)', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
+		useContextTimelineStore.getState().openPanel(SID, rect);
+		useContextTimelineStore.getState().openPanel(SID);
+		expect(useContextTimelineStore.getState().anchorRect).toBeNull();
+	});
+
+	it('closePanel clears the anchor rect', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
+		useContextTimelineStore.getState().openPanel(SID, rect);
+		useContextTimelineStore.getState().closePanel();
+		expect(useContextTimelineStore.getState().anchorRect).toBeNull();
 	});
 
 	it('minimize then restore toggles the minimized flag without touching history', () => {

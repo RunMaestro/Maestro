@@ -41,7 +41,7 @@ export function useTerminalMounting(activeSession: Session | null) {
 				return prev.includes(activeSession.id) ? prev : [...prev, activeSession.id];
 			});
 		} else if (mountedTerminalSessionsRef.current.has(activeSession.id)) {
-			// Last terminal tab was closed — remove from mounted set.
+			// Last terminal tab was closed - remove from mounted set.
 			mountedTerminalSessionsRef.current.delete(activeSession.id);
 			setMountedTerminalSessionIds((prev) => prev.filter((id) => id !== activeSession.id));
 		}

@@ -70,6 +70,11 @@ function getCustomEnvVars(value: unknown): Record<string, unknown> {
 		: {};
 }
 
+function isSshEnabled(value: unknown): boolean {
+	if (value === true || value === 1) return true;
+	return typeof value === 'string' && (value === '1' || value.toLowerCase() === 'true');
+}
+
 function isLocalSession(session: Record<string, unknown>): boolean {
 	if (typeof session.sshRemoteId === 'string' && session.sshRemoteId.length > 0) {
 		return false;
@@ -79,7 +84,7 @@ function isLocalSession(session: Record<string, unknown>): boolean {
 		sshRemoteConfig &&
 		typeof sshRemoteConfig === 'object' &&
 		'enabled' in sshRemoteConfig &&
-		sshRemoteConfig.enabled === true
+		isSshEnabled(sshRemoteConfig.enabled)
 	) {
 		return false;
 	}
@@ -153,7 +158,7 @@ function discoverCopilotSlashCommands(): { name: string; description: string }[]
  *    Windows: %LOCALAPPDATA%/opencode/)
  *
  * Built-in commands (init, review, undo, redo, share, help, models) are excluded
- * because they only work in OpenCode's interactive TUI mode — they have no prompt
+ * because they only work in OpenCode's interactive TUI mode - they have no prompt
  * .md file and cannot be executed via batch mode (`opencode run`).
  *
  * Unlike Claude Code (which emits commands via init event), OpenCode commands
@@ -200,7 +205,7 @@ async function readClaudeSkillDescriptions(cwd: string): Promise<Map<string, str
 		try {
 			entries = await fs.promises.readdir(dir, { withFileTypes: true });
 		} catch (error) {
-			// Missing skills directory is the norm — skip. Anything else
+			// Missing skills directory is the norm - skip. Anything else
 			// (permission errors, IO errors) should surface to Sentry.
 			if (isMissingEntryError(error)) continue;
 			throw error;
@@ -330,7 +335,7 @@ export interface AgentsHandlerDependencies {
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
 	settingsStore?: Store<MaestroSettings>;
 	/**
-	 * Sessions store — required for handlers that need to read or persist
+	 * Sessions store - required for handlers that need to read or persist
 	 * per-session state (e.g. resolving the Batch Mode usage snapshot for a
 	 * specific tab). Optional so registration doesn't break for legacy boot
 	 * paths that wire only the read-only handlers.
@@ -363,11 +368,17 @@ function getSshRemoteById(
 	return config;
 }
 
+/** Drop every function-valued property so the object survives structured clone. */
+function withoutFunctionProps(obj: any) {
+	return Object.fromEntries(Object.entries(obj).filter(([, value]) => typeof value !== 'function'));
+}
+
 /**
  * Helper to strip non-serializable functions from agent configs.
- * Agent configs can have function properties that cannot be sent over IPC:
- * - argBuilder in configOptions
- * - resumeArgs, modelArgs, workingDirArgs, imageArgs, imagePromptBuilder, promptArgs on the agent config
+ * Agent definitions carry arg builders (resumeArgs, modelArgs, additionalDirArgs,
+ * argBuilder in configOptions, ...) that cannot be sent over IPC - a single one left
+ * behind makes the whole detect response fail to clone, so this drops them by type
+ * rather than by name.
  *
  * Also attaches the current capability snapshot (if any) for the requested
  * environment so renderer code can render status pills directly from the
@@ -376,25 +387,11 @@ function getSshRemoteById(
 function stripAgentFunctions(agent: any, sshRemoteId?: string) {
 	if (!agent) return null;
 
-	// Destructure to remove function properties from agent config
-	const {
-		resumeArgs: _resumeArgs,
-		modelArgs: _modelArgs,
-		workingDirArgs: _workingDirArgs,
-		imageArgs: _imageArgs,
-		imagePromptBuilder: _imagePromptBuilder,
-		promptArgs: _promptArgs,
-		...serializableAgent
-	} = agent;
-
 	const snapshot = agent.id ? capabilitySnapshots.get(agent.id, sshRemoteId) : undefined;
 
 	return {
-		...serializableAgent,
-		configOptions: agent.configOptions?.map((opt: any) => {
-			const { argBuilder: _argBuilder, ...serializableOpt } = opt;
-			return serializableOpt;
-		}),
+		...withoutFunctionProps(agent),
+		configOptions: agent.configOptions?.map(withoutFunctionProps),
 		...(snapshot ? { snapshot } : {}),
 	};
 }
@@ -475,7 +472,7 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 
 			// Mirror remote detection into the snapshot store, keyed by the
 			// stable SSH remote UUID so each host has its own readiness pill.
-			// Skip when the observed state matches the existing snapshot —
+			// Skip when the observed state matches the existing snapshot -
 			// otherwise an `agents:reprobe` for a single agent would emit
 			// snapshot-updated broadcasts for every other agent on the host.
 			if (agentDef.id !== 'terminal') {
@@ -758,7 +755,7 @@ async function discoverModelsRemote(
 
 		return models;
 	} catch (error) {
-		// Timeout is an expected SSH failure — return empty gracefully
+		// Timeout is an expected SSH failure - return empty gracefully
 		if (error instanceof Error && error.message.includes('SSH model discovery timed out')) {
 			logger.warn(
 				`Timed out discovering models for "${agentDef.name}" on ${sshRemote.host}`,
@@ -1648,7 +1645,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Get the persisted capability snapshot for a single agent in a given
 	// environment (local or per-SSH-remote). Returns null when no snapshot
-	// has been written yet — callers should fall back to detection.
+	// has been written yet - callers should fall back to detection.
 	ipcMain.handle(
 		'agents:getSnapshot',
 		withIpcErrorLogging(
@@ -1661,7 +1658,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
 	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
-	// Returns null when no bundled script can be located — usually means the user
+	// Returns null when no bundled script can be located - usually means the user
 	// is running a dev build without `npm run build` having produced
 	// `dist/cli/maestro-p.js`.
 	ipcMain.handle(
@@ -1704,7 +1701,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
-	// Get every persisted snapshot — used by the renderer at startup to
+	// Get every persisted snapshot - used by the renderer at startup to
 	// hydrate the agents store before the first live detection completes.
 	ipcMain.handle(
 		'agents:getAllSnapshots',
@@ -1720,7 +1717,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	ipcMain.handle(
 		'agents:reprobe',
 		withIpcErrorLogging(handlerOpts('reprobe'), async (agentId: string, sshRemoteId?: string) => {
-			// `terminal` is internal — detection paths intentionally skip it,
+			// `terminal` is internal - detection paths intentionally skip it,
 			// so a probe call would leave the snapshot stuck at `probing` forever.
 			if (agentId === 'terminal') {
 				return null;
@@ -1797,11 +1794,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
 	// the boot path calls, so the dashboard / settings refresh button takes the
 	// exact same code path that populated the store on launch. Returns a count
-	// of how many account snapshots are now in the store after sampling — the
+	// of how many account snapshots are now in the store after sampling - the
 	// renderer surfaces this in the optimistic spinner state.
 	//
 	// Reports `{ refreshed: 0 }` (rather than throwing) when a required dep is
-	// missing on this boot path — keeps the renderer's optimistic refresh flow
+	// missing on this boot path - keeps the renderer's optimistic refresh flow
 	// from blowing up in dev/test contexts where the agents handler was wired
 	// without the full main dependency set.
 	ipcMain.handle(
@@ -1812,7 +1809,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const agentDetector = getAgentDetector();
 				if (!agentDetector || !sessionsStore || !settingsStore) {
 					logger.warn(
-						'Skipping claude:usage:refresh-all — agents handler missing required deps',
+						'Skipping claude:usage:refresh-all - agents handler missing required deps',
 						LOG_CONTEXT,
 						{
 							hasDetector: !!agentDetector,
@@ -1867,7 +1864,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const agentDetector = getAgentDetector();
 				if (!agentDetector || !sessionsStore) {
 					logger.warn(
-						'Skipping codex:usage:refresh-all — agents handler missing required deps',
+						'Skipping codex:usage:refresh-all - agents handler missing required deps',
 						LOG_CONTEXT,
 						{
 							hasDetector: !!agentDetector,

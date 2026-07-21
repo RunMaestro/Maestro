@@ -37,8 +37,8 @@ export interface SearchHitOptions {
  * Pluggable search source supplied by a tier component. The hook calls
  * `findHits` once per query change and `scrollToMatch` once per navigation.
  *
- * Implementations MUST be pure with respect to `findHits` — no side effects,
- * no caching of stale state — because the hook may call it concurrently with
+ * Implementations MUST be pure with respect to `findHits` - no side effects,
+ * no caching of stale state - because the hook may call it concurrently with
  * tier remounts. `scrollToMatch` is allowed (and expected) to mutate the
  * viewport. `scrollToLine` (optional) jumps the viewport to a 1-based source
  * line for the bar's line-number search mode.

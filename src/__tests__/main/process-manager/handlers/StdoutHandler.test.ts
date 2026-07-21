@@ -52,8 +52,15 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
+import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import { logger } from '../../../../main/utils/logger';
+import type { AgentOutputParser } from '../../../../main/parsers/agent-output-parser';
+import {
+	setOmpModelCatalog,
+	computeOmpCatalogKey,
+	__resetOmpModelCatalogForTests,
+} from '../../../../main/agents/omp-model-catalog';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -421,7 +428,7 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, JSON.stringify({ type: 'assistant.turn_start' }));
 
-			// First (intermediate) assistant.message — narration before delegation.
+			// First (intermediate) assistant.message - narration before delegation.
 			handler.handleData(
 				sessionId,
 				JSON.stringify({
@@ -509,7 +516,7 @@ describe('StdoutHandler', () => {
 
 			// Session ID should still be extracted from bare exit-code result events
 			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-error');
-			// Bare exit codes without error text should NOT trigger an inline error —
+			// Bare exit codes without error text should NOT trigger an inline error -
 			// the richer detectErrorFromExit() runs at process exit with stderr context
 			expect(errorSpy).not.toHaveBeenCalled();
 		});
@@ -694,6 +701,49 @@ describe('StdoutHandler', () => {
 			);
 			expect(resultCalls).toHaveLength(1);
 			expect(resultCalls[0][1]).toBe('First answer.');
+		});
+
+		it('does not mark resultEmitted for an omp agent_end whose final message has empty text', () => {
+			// Regression: an omp turn that reaches agent_end but whose final assistant
+			// message carries no text must NOT be recorded as a real result. Emitting an
+			// empty result would flip resultEmitted with nothing shown, silently
+			// defeating the ExitHandler omp silent-exit guard (which keys off
+			// !resultEmitted) - the reported "done after a second, nothing happened" turn.
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				outputParser: new OmpOutputParser(),
+			});
+
+			sendJsonLine(handler, sessionId, {
+				type: 'agent_end',
+				messages: [
+					{ role: 'user', content: [{ type: 'text', text: 'hi' }] },
+					{ role: 'assistant', content: [{ type: 'text', text: '' }] },
+				],
+			});
+
+			expect(proc.resultEmitted).toBe(false);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('marks resultEmitted and emits text for an omp agent_end with a real final answer', () => {
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				outputParser: new OmpOutputParser(),
+			});
+
+			sendJsonLine(handler, sessionId, {
+				type: 'agent_end',
+				messages: [
+					{ role: 'user', content: [{ type: 'text', text: 'hi' }] },
+					{ role: 'assistant', content: [{ type: 'text', text: 'the answer' }] },
+				],
+			});
+
+			expect(proc.resultEmitted).toBe(true);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'the answer');
 		});
 
 		it('should extract session_id and emit session-id event', () => {
@@ -960,6 +1010,7 @@ describe('StdoutHandler', () => {
 				costUsd?: number;
 				contextWindow?: number;
 				reasoningTokens?: number;
+				model?: string;
 			} | null
 		) {
 			return {
@@ -1149,6 +1200,108 @@ describe('StdoutHandler', () => {
 				cacheCreationInputTokens: 180,
 				reasoningTokens: 0,
 			});
+		});
+
+		it('resolves the omp model window from the local catalog and flags it authoritative', () => {
+			__resetOmpModelCatalogForTests();
+			const catalogKey = computeOmpCatalogKey('/usr/local/bin/omp', undefined);
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }], catalogKey);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				// Agent-level configured fallback (the misleading 200k default).
+				contextWindow: 200000,
+				ompModelCatalogKey: catalogKey,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(1_000_000);
+			expect(stats.contextWindowResolved).toBe(true);
+		});
+
+		it('does not resolve a mismatched-identity catalog (different binary/env)', () => {
+			__resetOmpModelCatalogForTests();
+			// Catalog primed for one identity...
+			setOmpModelCatalog(
+				[{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }],
+				computeOmpCatalogKey('/opt/other/omp', undefined)
+			);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+			// ...but this process ran a DIFFERENT binary, so it must not reuse it.
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				contextWindow: 200000,
+				ompModelCatalogKey: computeOmpCatalogKey('/usr/local/bin/omp', undefined),
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(200000);
+			expect(stats.contextWindowResolved).toBeUndefined();
+		});
+
+		it('keeps the configured window for an SSH omp process (local catalog not trusted remotely)', () => {
+			__resetOmpModelCatalogForTests();
+			const catalogKey = computeOmpCatalogKey('/usr/local/bin/omp', undefined);
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }], catalogKey);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+
+			// Even with a matching catalog + key, an SSH remote must NOT resolve from
+			// the local catalog and keeps the configured window.
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				contextWindow: 200000,
+				sshRemoteId: 'remote-1',
+				ompModelCatalogKey: catalogKey,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(200000);
+			expect(stats.contextWindowResolved).toBeUndefined();
 		});
 
 		it('should detect non-monotonic decrease and switch to raw mode', () => {
@@ -1997,7 +2150,7 @@ function createMinimalOutputParser(usageReturn: {
 
 // ── Performance: single JSON.parse per NDJSON line ──────────────────────
 
-describe('StdoutHandler — single JSON parse per line', () => {
+describe('StdoutHandler - single JSON parse per line', () => {
 	it('parses JSON exactly once per NDJSON line (output parser path)', () => {
 		// Instrument JSON.parse to count calls
 		const originalParse = JSON.parse;
@@ -2090,6 +2243,181 @@ describe('StdoutHandler — single JSON parse per line', () => {
 		expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
 	});
 
+	describe('Grok thinking-chunk vs streamedText routing', () => {
+		it('emits thinking-chunk only for thought deltas; assistant text goes to streamedText', async () => {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const parser = new GrokOutputParser();
+			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			handler.handleData(sessionId, '{"type":"thought","data":"planning..."}\n');
+			handler.handleData(sessionId, '{"type":"text","data":"{\\"confidence\\":40"}\n');
+			handler.handleData(
+				sessionId,
+				'{"type":"text","data":",\\"ready\\":false,\\"message\\":\\"hi\\"}"}\n'
+			);
+			handler.handleData(
+				sessionId,
+				'{"type":"end","stopReason":"EndTurn","sessionId":"sess-1","requestId":"req-1"}\n'
+			);
+
+			// Only reasoning deltas hit thinking-chunk (not assistant JSON fragments)
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'planning...');
+			// Assistant text accumulates for the final result emit
+			expect(proc.streamedText).toBe('{"confidence":40,"ready":false,"message":"hi"}');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'{"confidence":40,"ready":false,"message":"hi"}'
+			);
+		});
+
+		it('still emits thinking-chunk for Factory Droid assistant partials without isReasoning', async () => {
+			const { FactoryDroidOutputParser } =
+				await import('../../../../main/parsers/factory-droid-output-parser');
+			const parser = new FactoryDroidOutputParser();
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'factory-droid',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'message', role: 'assistant', text: 'Hello from droid' }) + '\n'
+			);
+
+			// Factory Droid has no isReasoning split; keep live thinking-panel partials
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from droid');
+			expect(proc.streamedText).toBe('Hello from droid');
+		});
+	});
+
+	describe('SSH auth_expired login guidance by agentId', () => {
+		function mockAuthParser(agentId: string, message: string) {
+			return {
+				agentId,
+				parseJsonLine: vi.fn(() => null),
+				parseJsonObject: vi.fn(() => null),
+				isResultMessage: vi.fn(() => false),
+				extractSessionId: vi.fn(() => null),
+				extractUsage: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'auth_expired' as const,
+					message,
+					recoverable: true,
+					agentId,
+					timestamp: Date.now(),
+					raw: {},
+				})),
+				detectErrorFromExit: vi.fn(() => null),
+			};
+		}
+
+		it('uses the grok login command for grok on an SSH remote', () => {
+			const mockParser = mockAuthParser(
+				'grok',
+				'Not authenticated. Please run "grok login" to authenticate.'
+			);
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'grok',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'not authenticated' }) + '\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "grok login" to re-authenticate.'
+			);
+			expect(emitted.message).not.toContain('claude login');
+		});
+
+		it('uses claude login for claude-code even when the pattern message is generic', () => {
+			// Pattern-58 style message: no login command in the text. The
+			// agentId map must still produce "claude login" so Claude SSH
+			// users keep actionable guidance.
+			const mockParser = mockAuthParser(
+				'claude-code',
+				'Authentication failed. Please log in again.'
+			);
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'authentication failed' }) + '\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "claude login" to re-authenticate.'
+			);
+			expect(emitted.message).toContain('claude login');
+		});
+
+		it('omits a login command for agents without a known CLI login', () => {
+			const mockParser = mockAuthParser(
+				'opencode',
+				'Authentication required. Please configure your credentials.'
+			);
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'opencode',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'authentication' }) + '\n'
+			);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote to re-authenticate.'
+			);
+			expect(emitted.message).not.toContain('claude login');
+			expect(emitted.message).not.toContain('grok login');
+		});
+	});
+
 	describe('SSH error pattern false-positive prevention', () => {
 		it('should NOT check SSH patterns on valid JSON lines (prevents false positives from response text)', () => {
 			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
@@ -2170,7 +2498,7 @@ describe('StdoutHandler — single JSON parse per line', () => {
 			const errors: Array<[string, unknown]> = [];
 			emitter.on('agent-error', (sid: string, err: unknown) => errors.push([sid, err]));
 
-			// Send a plain text line (not JSON) — this is a real SSH error
+			// Send a plain text line (not JSON) - this is a real SSH error
 			handler.handleData(sessionId, 'bash: opencode: command not found\n');
 
 			// SSH pattern check SHOULD be called for non-JSON lines

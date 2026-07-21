@@ -1,5 +1,5 @@
 /**
- * AgentsLoadingView — shown while the initial agent list is still loading.
+ * AgentsLoadingView - shown while the initial agent list is still loading.
  *
  * On the desktop app the native splash screen covers startup until
  * `sessionsLoaded` flips true, so this view is rarely visible there. It exists
@@ -22,7 +22,7 @@ interface AgentsLoadingViewProps {
 export function AgentsLoadingView({ theme }: AgentsLoadingViewProps) {
 	return (
 		<div className="flex-1 flex flex-col" style={{ backgroundColor: theme.colors.bgMain }}>
-			{/* Top Bar — mirrors EmptyStateView so the transition is seamless */}
+			{/* Top Bar - mirrors EmptyStateView so the transition is seamless */}
 			<div
 				className="h-16 border-b flex items-center px-4 shrink-0"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}

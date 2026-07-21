@@ -1124,7 +1124,7 @@ Persistent PTY-backed terminal tabs that integrate into the unified tab bar alon
 
 ### Features
 
-- **Persistent PTY**: Each tab spawns a dedicated PTY via `process:spawnTerminalTab` IPC — the shell stays alive between tab switches
+- **Persistent PTY**: Each tab spawns a dedicated PTY via `process:spawnTerminalTab` IPC - the shell stays alive between tab switches
 - **xterm.js rendering**: Full terminal emulation via `XTerminal.tsx` (wraps `@xterm/xterm`); raw PTY data passes through unchanged
 - **Multi-tab**: Multiple independent shells per agent; tabs are closable and renameable
 - **State persistence**: `terminalTabs` array saved with the session; PTYs are re-spawned on restore

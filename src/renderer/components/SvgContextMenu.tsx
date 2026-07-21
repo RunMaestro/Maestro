@@ -1,10 +1,12 @@
 /**
- * SvgContextMenu - right-click menu for inline <svg> diagrams rendered in AI
- * chat markdown. Offers "Copy Image" (rasterized PNG to the clipboard) and
- * "Save Image" (standalone .svg download).
+ * SvgContextMenu - right-click menu for rendered SVG diagrams: agent-authored
+ * inline <svg> in chat markdown, and Mermaid charts. Offers "Copy Image"
+ * (rasterized PNG to the clipboard) and "Save Image" (a standalone .svg written
+ * into the project's `.maestro/diagrams/` folder).
  *
- * Mirrors LinkContextMenu / FileContextMenu: the shell (Markdown.tsx) owns the
- * menu state and renders this component; positioning is handled by
+ * Mirrors LinkContextMenu / FileContextMenu: the host (Markdown.tsx,
+ * MermaidRenderer, MarkdownPreviewFast) owns the menu state via
+ * useSvgContextMenu and renders this component; positioning is handled by
  * useContextMenuPosition.
  */
 
@@ -13,8 +15,11 @@ import { createPortal } from 'react-dom';
 import { Copy, Download } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
-import { copySvgToClipboard, downloadSvg } from '../utils/svgExport';
+import { copySvgToClipboard, downloadSvg, saveSvgToProject } from '../utils/svgExport';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { notifyToast } from '../stores/notificationStore';
+import { useActiveSession } from '../hooks/session/useActiveSession';
 
 export interface SvgContextMenuState {
 	x: number;
@@ -32,6 +37,10 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
+	// Diagrams are saved into the project they were rendered in. Every surface
+	// that shows an SVG lives inside the active agent's view, so the active
+	// session is the project - no host has to thread a path down to the menu.
+	const session = useActiveSession();
 
 	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
@@ -55,15 +64,49 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 	}, []);
 
 	const handleCopy = useCallback(async () => {
-		const ok = await copySvgToClipboard(menu.svg);
-		if (ok) flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
 		onDismiss();
+		const result = await copySvgToClipboard(menu.svg);
+		if (result === 'image') {
+			flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
+		} else if (result === 'markup') {
+			// The raster pass failed, so the clipboard holds SVG markup, not an
+			// image. Say so rather than claiming a paste-able image.
+			flashCopiedToClipboard('Rasterizing failed', 'SVG Markup Copied to Clipboard');
+		} else {
+			notifyCenterFlash({ message: 'Could Not Copy Image', color: 'red' });
+		}
 	}, [menu.svg, onDismiss]);
 
-	const handleSave = useCallback(() => {
-		downloadSvg(menu.svg);
+	const handleSave = useCallback(async () => {
 		onDismiss();
-	}, [menu.svg, onDismiss]);
+		const projectRoot = session?.projectRoot || session?.cwd;
+		if (!projectRoot) {
+			// No project to save into (e.g. a wizard preview) - fall back to a
+			// plain browser download rather than silently doing nothing.
+			downloadSvg(menu.svg);
+			return;
+		}
+
+		try {
+			const saved = await saveSvgToProject(menu.svg, {
+				projectRoot,
+				sshRemoteId: session.sshRemoteId,
+			});
+			notifyToast({
+				color: 'green',
+				title: 'Diagram Saved',
+				message: saved.relativePath,
+				sessionId: session.id,
+				clickAction: { kind: 'open-file', sessionId: session.id, path: saved.path },
+			});
+		} catch (e) {
+			notifyToast({
+				color: 'red',
+				title: 'Could Not Save Diagram',
+				message: e instanceof Error ? e.message : String(e),
+			});
+		}
+	}, [menu.svg, onDismiss, session]);
 
 	return createPortal(
 		<div

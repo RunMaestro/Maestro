@@ -1,5 +1,5 @@
 /**
- * Cue Log Payload — typed discriminated union for structured activity updates.
+ * Cue Log Payload - typed discriminated union for structured activity updates.
  *
  * Every `onLog(level, message, data?)` emission in the Cue engine should pass a
  * payload conforming to this union (or omit it entirely). The renderer narrows

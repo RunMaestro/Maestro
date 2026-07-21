@@ -19,13 +19,29 @@ import { getSshRemoteById } from '../stores';
 import { isImageRef, resolveToDataUrlSync } from '../storage/session-image-store';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
+import type {
+	WebPlaybook,
+	CueSubscriptionInfo,
+	CueActivityEntry,
+	QueueSessionSnapshot,
+} from './types';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	ConcertoDesignerFrameSnapshot,
+	MovementDesignerInspection,
+} from '../../shared/concerto-html';
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { getDefaultShell } from '../stores/defaults';
 import { buildWebSettingsSnapshot } from './web-settings-snapshot';
+import {
+	applyCadenzaHtmlPayload,
+	applyMovementHtmlPayload,
+	getConcertoHtmlDocumentRevision,
+} from '../concerto-html';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
@@ -44,9 +60,9 @@ import {
 function requestFromRenderer<T>(
 	win: BrowserWindow,
 	requestChannel: string,
-	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number }
+	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number; args?: unknown[] }
 ): Promise<T> {
-	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000 } = options;
+	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000, args = [] } = options;
 	return new Promise<T>((resolve) => {
 		const responseChannel = `${requestChannel}:response:${randomUUID()}`;
 		let settled = false;
@@ -59,7 +75,7 @@ function requestFromRenderer<T>(
 		};
 		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
 		ipcMain.once(responseChannel, onReply);
-		win.webContents.send(requestChannel, responseChannel);
+		win.webContents.send(requestChannel, ...args, responseChannel);
 		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
 	});
 }
@@ -130,13 +146,13 @@ export interface WebServerFactoryDependencies {
 	deliverCadenza?: (payload: CadenzaPayload) => boolean;
 	/** Function to get the process manager reference */
 	getProcessManager: () => ProcessManager | null;
-	/** Direct CUE subscription trigger — bypasses renderer IPC round-trip */
+	/** Direct CUE subscription trigger - bypasses renderer IPC round-trip */
 	triggerCueSubscription?: (
 		subscriptionName: string,
 		prompt?: string,
 		sourceAgentId?: string
 	) => boolean;
-	/** Direct CUE graph-data snapshot — bypasses renderer IPC round-trip.
+	/** Direct CUE graph-data snapshot - bypasses renderer IPC round-trip.
 	 *  Required by `setGetCueSubscriptionsCallback` to answer the CLI's
 	 *  `get_cue_subscriptions` message in-process instead of forwarding it
 	 *  to the renderer (which never registered a listener, so every CLI
@@ -145,13 +161,13 @@ export interface WebServerFactoryDependencies {
 	/** Direct toggle for a single subscription's `enabled` flag in YAML.
 	 *  `subscriptionId` follows the `${sessionId}::${pipeline}::${name}` shape
 	 *  emitted by `getCueGraphData` flattening (via `composeCueSubscriptionId`)
-	 *  — same dead-bridge fix as `getCueGraphData`. Returns `false` when the
+	 *  - same dead-bridge fix as `getCueGraphData`. Returns `false` when the
 	 *  id can't be resolved, the YAML can't be parsed, or the named
 	 *  subscription isn't present. Async because the engine serialises
 	 *  per-`projectRoot` writes via a promise chain to keep concurrent
 	 *  toggles from clobbering each other. */
 	setCueSubscriptionEnabled?: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
-	/** Direct CUE activity-log snapshot — bypasses renderer IPC round-trip.
+	/** Direct CUE activity-log snapshot - bypasses renderer IPC round-trip.
 	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
 	 *  Same dead-bridge fix as `getCueGraphData`. */
 	getCueActivityLog?: () => CueRunResult[];
@@ -200,7 +216,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				try {
 					settingsStore.set('webAuthToken', securityToken);
 				} catch {
-					// Persist failure is non-fatal — server starts with an ephemeral token
+					// Persist failure is non-fatal - server starts with an ephemeral token
 					logger.warn(
 						'Failed to persist new webAuthToken, URL will not survive restart',
 						'WebServerFactory'
@@ -210,6 +226,25 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		}
 
 		const server = new WebServer(port, securityToken);
+		// Movement updates and designer inspections both depend on the renderer's
+		// current HTML revision. Serialize them so an update cannot replace the
+		// document between an inspection request and its compositor capture.
+		let pendingMovementRendererOperation: Promise<void> | undefined;
+		const enqueueMovementRendererOperation = <T>(operation: () => Promise<T>): Promise<T> => {
+			const previousOperation = pendingMovementRendererOperation;
+			const operationPromise = previousOperation ? previousOperation.then(operation) : operation();
+			const completion = operationPromise.then(
+				() => undefined,
+				() => undefined
+			);
+			pendingMovementRendererOperation = completion;
+			void completion.finally(() => {
+				if (pendingMovementRendererOperation === completion) {
+					pendingMovementRendererOperation = undefined;
+				}
+			});
+			return operationPromise;
+		};
 
 		// Set up callback for web server to fetch sessions list
 		server.setGetSessionsCallback(() => {
@@ -291,7 +326,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					worktreeBranch: s.worktreeBranch || null,
 					isGitRepo: s.isGitRepo ?? false,
 					worktreeBasePath: s.worktreeConfig?.basePath || null,
-					// Auto Run folder — exposes the session's configured `.maestro/`
+					// Auto Run folder - exposes the session's configured `.maestro/`
 					// playbook folder to web clients so the folder picker can show
 					// the current selection.
 					autoRunFolderPath: s.autoRunFolderPath || null,
@@ -299,7 +334,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// `maestro-cli session list` — flatten all open AI tabs into addressable
+		// `maestro-cli session list` - flatten all open AI tabs into addressable
 		// entries. The CLI does not need group/cwd metadata; the structurally
 		// smaller payload keeps polling cheap. Reads straight from the persisted
 		// session store (same source the renderer pushes to via `sessions:save`),
@@ -328,7 +363,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return entries;
 		});
 
-		// `maestro-cli session show <tabId>` — return the tab's conversation
+		// `maestro-cli session show <tabId>` - return the tab's conversation
 		// history with optional `--since` (poll cursor) and `--tail` (cap)
 		// filters applied here so the CLI never receives more than it asked for.
 		// `LogEntry.source` values map to a coarse `role` for conversational
@@ -612,7 +647,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
@@ -626,11 +662,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				const agentSessionId = session?.agentSessionId || 'none';
 
 				// Forward to renderer - it will handle spawn, state, and everything else.
-				// Log metadata only at info level — remote commands can carry secrets,
+				// Log metadata only at info level - remote commands can carry secrets,
 				// proprietary code, or PII; the full prompt goes to debug, which is
 				// only enabled by users who have explicitly opted in.
 				logger.info(
-					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | Images: ${images?.length ?? 0} | CommandLength: ${command.length}`,
+					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Tab: ${tabId || 'active'} | Force: ${force ? 'yes' : 'no'} | Focus: ${background ? 'no' : 'yes'} | Images: ${images?.length ?? 0} | CommandLength: ${command.length}`,
 					'WebServer'
 				);
 				logger.debug(
@@ -648,7 +684,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					inputMode,
 					tabId,
 					force,
-					images
+					images,
+					background
 				);
 				return true;
 			}
@@ -936,6 +973,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			// opt-in feature stays fully inert (no invisible in-app store population).
 			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
 				return false;
+			applyCadenzaHtmlPayload(params);
 			// Prefer the desktop HUD window (floats over other apps). It buffers the
 			// payload internally until its renderer subscribes.
 			if (deliverCadenza?.(params)) return true;
@@ -958,19 +996,38 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// floating movement overlay. Gated by the Concerto Encore feature: when
 		// off, drop the payload so the opt-in feature stays fully inert.
 		server.setMovementViewCallback(async (params) => {
-			if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
-				return false;
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for movementView', 'WebServer');
-				return false;
-			}
-			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for movementView', 'WebServer');
-				return false;
-			}
-			mainWindow.webContents.send('remote:movement', params);
-			return true;
+			return enqueueMovementRendererOperation(async () => {
+				if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+					return false;
+				if (
+					params.id &&
+					params.viewType === 'html' &&
+					params.body === undefined &&
+					getConcertoHtmlDocumentRevision('movement', params.id) === null
+				) {
+					logger.warn(
+						`HTML movement '${params.id}' requires a body when changing view type`,
+						'WebServer'
+					);
+					return false;
+				}
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for movementView', 'WebServer');
+					return false;
+				}
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for movementView', 'WebServer');
+					return false;
+				}
+				const routedParams = applyMovementHtmlPayload(params);
+				return requestFromRenderer<boolean>(mainWindow, 'remote:movement', {
+					fallback: false,
+					parse: (raw) => raw === true,
+					timeoutMs: 4000,
+					args: [routedParams],
+				});
+			});
 		});
 
 		// `movement state` read: ask the renderer for the current snapshot (items +
@@ -986,6 +1043,86 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				{ fallback: null, parse: (raw) => (raw as MovementStateSnapshot) ?? null }
 			);
 		});
+
+		// Designer inspection asks the renderer for the exact live iframe crop,
+		// then captures that region from Chromium's compositor. The PNG stays in
+		// memory here and is returned to the CLI, which writes it using the agent's
+		// own filesystem permissions.
+		server.setGetMovementDesignerInspectionCallback(async (id) => {
+			return enqueueMovementRendererOperation(async () => {
+				if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+					return null;
+				const mainWindow = getMainWindow();
+				if (!mainWindow || !isWebContentsAvailable(mainWindow)) return null;
+				const expectedRevision = getConcertoHtmlDocumentRevision('movement', id);
+				if (expectedRevision === null) return null;
+				const frame = await requestFromRenderer<ConcertoDesignerFrameSnapshot | null>(
+					mainWindow,
+					'remote:getMovementDesignerInspection',
+					{
+						fallback: null,
+						parse: (raw) => (raw as ConcertoDesignerFrameSnapshot) ?? null,
+						timeoutMs: 4000,
+						args: [id, expectedRevision],
+					}
+				);
+				if (!frame) return null;
+				const image = await mainWindow.webContents.capturePage({
+					x: Math.max(0, Math.floor(frame.rect.x)),
+					y: Math.max(0, Math.floor(frame.rect.y)),
+					width: Math.max(1, Math.floor(frame.rect.width)),
+					height: Math.max(1, Math.floor(frame.rect.height)),
+				});
+				const imageSize = image.getSize();
+				const inspection: MovementDesignerInspection = {
+					id,
+					ready: frame.ready,
+					viewport: frame.viewport,
+					image: {
+						width: imageSize.width,
+						height: imageSize.height,
+						scaleFactor:
+							frame.viewport.width > 0
+								? Number((imageSize.width / frame.viewport.width).toFixed(3))
+								: 1,
+					},
+					logs: frame.logs,
+					imageDataUrl: image.toDataURL(),
+				};
+				return inspection;
+			});
+		});
+
+		server.setInteractMovementDesignerCallback(
+			async (id: string, action: ConcertoDesignerAction) => {
+				const unavailable = (message: string): ConcertoDesignerActionResult => ({
+					ok: false,
+					action: action.kind,
+					selector: action.selector,
+					message,
+				});
+				if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
+					return unavailable('Concerto is disabled');
+				const mainWindow = getMainWindow();
+				if (!mainWindow || !isWebContentsAvailable(mainWindow)) {
+					return unavailable('Maestro renderer is unavailable');
+				}
+				const expectedRevision = getConcertoHtmlDocumentRevision('movement', id);
+				if (expectedRevision === null) {
+					return unavailable(`HTML movement '${id}' is unavailable`);
+				}
+				return requestFromRenderer<ConcertoDesignerActionResult>(
+					mainWindow,
+					'remote:interactMovementDesigner',
+					{
+						fallback: unavailable('Designer action timed out'),
+						parse: (raw) => raw as ConcertoDesignerActionResult,
+						timeoutMs: 4000,
+						args: [id, action, expectedRevision],
+					}
+				);
+			}
+		);
 
 		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
 			const mainWindow = getMainWindow();
@@ -1065,58 +1202,229 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		);
 
-		server.setNewAITabWithPromptCallback(async (sessionId: string, prompt: string) => {
+		server.setNewAITabWithPromptCallback(
+			async (sessionId: string, prompt: string, background?: boolean) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
+					return { success: false };
+				}
+
+				return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
+					const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						// Renderer was updated to ack with `{ success, tabId? }`. Older
+						// renderers that still send a bare boolean stay supported via
+						// the `result === true` fallback.
+						if (typeof result === 'object' && result !== null) {
+							const r = result as { success?: unknown; tabId?: unknown };
+							resolve({
+								success: r.success === true,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							});
+						} else {
+							resolve({ success: result === true });
+						}
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:newAITabWithPrompt',
+						sessionId,
+						prompt,
+						responseChannel,
+						background
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(
+							`newAITabWithPrompt callback timed out for session ${sessionId}`,
+							'WebServer'
+						);
+						resolve({ success: false });
+					}, 5000);
+				});
+			}
+		);
+
+		// Round-trip the CLI's `dispatch --queue` into the renderer, which owns
+		// the authoritative execution queue. The renderer decides (busy -> queue,
+		// idle -> dispatch now) and replies with the queue outcome so the CLI can
+		// report position. Mirrors setNewAITabWithPromptCallback's responseChannel
+		// pattern (ipcMain.once + timeout).
+		server.setEnqueueCommandCallback(
+			async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for enqueueCommand', 'WebServer');
+					return { success: false, error: 'Desktop window unavailable' };
+				}
+
+				return new Promise<{
+					success: boolean;
+					tabId?: string;
+					queued?: boolean;
+					queuePosition?: number;
+					queueLength?: number;
+					itemId?: string;
+					error?: string;
+				}>((resolve) => {
+					const responseChannel = `remote:enqueueCommand:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'object' && result !== null) {
+							const r = result as Record<string, unknown>;
+							resolve({
+								success: r.success === true,
+								tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+								queued: typeof r.queued === 'boolean' ? r.queued : undefined,
+								queuePosition: typeof r.queuePosition === 'number' ? r.queuePosition : undefined,
+								queueLength: typeof r.queueLength === 'number' ? r.queueLength : undefined,
+								itemId: typeof r.itemId === 'string' ? r.itemId : undefined,
+								error: typeof r.error === 'string' ? r.error : undefined,
+							});
+						} else {
+							resolve({ success: false });
+						}
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for enqueueCommand', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, error: 'Desktop window unavailable' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:enqueueCommand',
+						sessionId,
+						command,
+						responseChannel,
+						inputMode,
+						tabId,
+						images,
+						background
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(`enqueueCommand callback timed out for session ${sessionId}`, 'WebServer');
+						resolve({ success: false, error: 'Renderer did not respond' });
+					}, 5000);
+				});
+			}
+		);
+
+		// Round-trip `maestro-cli queue list` into the renderer, which owns the
+		// authoritative execution queue. Mirrors the enqueue responseChannel pattern.
+		server.setListQueueCallback(async (sessionId?: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
-				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return { success: false };
+				logger.warn('mainWindow is null for listQueue', 'WebServer');
+				return { success: false, queues: [], error: 'Desktop window unavailable' };
 			}
+			return new Promise<{ success: boolean; queues: QueueSessionSnapshot[]; error?: string }>(
+				(resolve) => {
+					const responseChannel = `remote:listQueue:response:${randomUUID()}`;
+					let resolved = false;
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'object' && result !== null) {
+							const r = result as Record<string, unknown>;
+							// IPC boundary: the renderer builds QueueSessionSnapshot[]; trust the shape.
+							const queues = (Array.isArray(r.queues) ? r.queues : []) as QueueSessionSnapshot[];
+							resolve({
+								success: r.success === true,
+								queues,
+								error: typeof r.error === 'string' ? r.error : undefined,
+							});
+						} else {
+							resolve({ success: false, queues: [] });
+						}
+					};
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, queues: [], error: 'Desktop window unavailable' });
+						return;
+					}
+					mainWindow.webContents.send('remote:listQueue', sessionId, responseChannel);
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, queues: [], error: 'Renderer did not respond' });
+					}, 5000);
+				}
+			);
+		});
 
-			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
-				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
+		// Round-trip `maestro-cli queue remove <itemId>` into the renderer.
+		server.setRemoveQueueItemCallback(async (sessionId: string, itemId: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for removeQueueItem', 'WebServer');
+				return { success: false, removed: false, error: 'Desktop window unavailable' };
+			}
+			return new Promise<{ success: boolean; removed: boolean; error?: string }>((resolve) => {
+				const responseChannel = `remote:removeQueueItem:response:${randomUUID()}`;
 				let resolved = false;
-
 				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
 					if (resolved) return;
 					resolved = true;
 					clearTimeout(timeoutId);
-					// Renderer was updated to ack with `{ success, tabId? }`. Older
-					// renderers that still send a bare boolean stay supported via
-					// the `result === true` fallback.
 					if (typeof result === 'object' && result !== null) {
-						const r = result as { success?: unknown; tabId?: unknown };
+						const r = result as Record<string, unknown>;
 						resolve({
 							success: r.success === true,
-							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+							removed: r.removed === true,
+							error: typeof r.error === 'string' ? r.error : undefined,
 						});
 					} else {
-						resolve({ success: result === true });
+						resolve({ success: false, removed: false });
 					}
 				};
-
 				ipcMain.once(responseChannel, handleResponse);
 				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
 					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false });
+					resolve({ success: false, removed: false, error: 'Desktop window unavailable' });
 					return;
 				}
-				mainWindow.webContents.send(
-					'remote:newAITabWithPrompt',
-					sessionId,
-					prompt,
-					responseChannel
-				);
-
+				mainWindow.webContents.send('remote:removeQueueItem', sessionId, itemId, responseChannel);
 				const timeoutId = setTimeout(() => {
 					if (resolved) return;
 					resolved = true;
 					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`newAITabWithPrompt callback timed out for session ${sessionId}`,
-						'WebServer'
-					);
-					resolve({ success: false });
+					resolve({ success: false, removed: false, error: 'Renderer did not respond' });
 				}, 5000);
 			});
 		});
@@ -1359,7 +1667,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		);
 
 		// Set up callback for web server to read settings
-		// Reads directly from settingsStore — maps store keys to WebSettings shape
+		// Reads directly from settingsStore - maps store keys to WebSettings shape
 		server.setGetSettingsCallback(() => {
 			return {
 				theme: settingsStore.get('activeThemeId', 'dracula') as string,
@@ -1372,14 +1680,14 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 				colorBlindMode: settingsStore.get('colorBlindMode', 'none') as string,
 				conductorProfile: settingsStore.get('conductorProfile', '') as string,
-				// Infinity is JSON-serialized as null — web client maps null back to Infinity.
+				// Infinity is JSON-serialized as null - web client maps null back to Infinity.
 				maxOutputLines: settingsStore.get('maxOutputLines', null) as number | null,
 				shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
 			};
 		});
 
 		// Set up callback for web server to modify settings
-		// Uses IPC request-response pattern — forwards to renderer which applies via existing settings infrastructure
+		// Uses IPC request-response pattern - forwards to renderer which applies via existing settings infrastructure
 		// After a successful set, re-reads all settings and broadcasts the change to all web clients
 		server.setSetSettingCallback(async (key: string, value: unknown) => {
 			const mainWindow = getMainWindow();
@@ -1440,7 +1748,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		});
 
 		// Set up callback for web server to create a session
-		// Uses IPC request-response pattern — renderer creates the session and responds with sessionId
+		// Uses IPC request-response pattern - renderer creates the session and responds with sessionId
 		server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -1980,7 +2288,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Resolve a session's effective git execution context (local cwd + optional
 		// SSH remote). Used by both Run-in-Worktree callbacks below. When SSH is
-		// enabled but the configured remote can't be resolved we fail loudly —
+		// enabled but the configured remote can't be resolved we fail loudly -
 		// silently falling back to local git would return wrong branch/worktree
 		// data for an SSH-backed session and leak the run to the wrong machine.
 		const resolveSessionGitContext = (
@@ -2020,7 +2328,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			]);
 
 			// `execGit` returns `exitCode: number | string`. A string exit code (e.g.
-			// 'ENOENT', 'EPERM') means git never even ran — that's a real failure we
+			// 'ENOENT', 'EPERM') means git never even ran - that's a real failure we
 			// want surfaced to Sentry, not a fake "empty repo" result. A numeric
 			// non-zero exit code is a legitimate "not a git repo" / "no branches"
 			// signal and maps to empty results.
@@ -2045,7 +2353,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return { branches, currentBranch };
 		});
 
-		// List existing worktrees for a session — used by mobile Run-in-Worktree
+		// List existing worktrees for a session - used by mobile Run-in-Worktree
 		// to offer "use existing" alongside "create new". Same error-propagation
 		// contract as getGitBranchesForSession above.
 		server.setListWorktreesForSessionCallback(async (sessionId: string) => {
@@ -2063,12 +2371,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				sshRemote,
 				remoteCwd
 			);
-			// String exitCode = git never ran (ENOENT/EPERM/etc.) — surface to Sentry.
+			// String exitCode = git never ran (ENOENT/EPERM/etc.) - surface to Sentry.
 			if (typeof result.exitCode !== 'number') {
 				throw new Error(result.stderr || `git worktree list failed: ${String(result.exitCode)}`);
 			}
 			if (result.exitCode !== 0) {
-				// Numeric non-zero: not a git repo or worktrees unsupported — empty
+				// Numeric non-zero: not a git repo or worktrees unsupported - empty
 				// list is the right answer here.
 				return { worktrees: [] };
 			}
@@ -2122,7 +2430,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Helper to issue a request-response IPC roundtrip to the renderer with
 		// a timeout. Used for all the playbook + error-recovery + reset-tasks
-		// bridges below — they share the same shape.
+		// bridges below - they share the same shape.
 		const remoteRequest = <T>(
 			operation: string,
 			channel: string,
@@ -2216,7 +2524,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			)
 		);
 
-		// Playbook CRUD callbacks — list / create / update / delete.
+		// Playbook CRUD callbacks - list / create / update / delete.
 		// All forward to the renderer which calls window.maestro.playbooks.* IPC.
 		server.setListPlaybooksCallback(async (sessionId) =>
 			remoteRequest<WebPlaybook[]>(
@@ -2271,7 +2579,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// ============ Group Chat Callbacks ============
 
-		// Get all group chats — uses IPC request-response pattern
+		// Get all group chats - uses IPC request-response pattern
 		server.setGetGroupChatsCallback(async () => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2309,7 +2617,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Start a group chat — uses IPC request-response pattern
+		// Start a group chat - uses IPC request-response pattern
 		server.setStartGroupChatCallback(async (topic: string, participantIds: string[]) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2352,7 +2660,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Get group chat state — uses IPC request-response pattern
+		// Get group chat state - uses IPC request-response pattern
 		server.setGetGroupChatStateCallback(async (chatId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2390,7 +2698,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Stop group chat — uses IPC request-response pattern
+		// Stop group chat - uses IPC request-response pattern
 		server.setStopGroupChatCallback(async (chatId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2428,7 +2736,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Send message to group chat — uses IPC request-response pattern
+		// Send message to group chat - uses IPC request-response pattern
 		server.setSendGroupChatMessageCallback(async (chatId: string, message: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2473,7 +2781,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// ============ Context Management Callbacks ============
 
-		// Merge context — uses IPC request-response pattern
+		// Merge context - uses IPC request-response pattern
 		server.setMergeContextCallback(async (sourceSessionId: string, targetSessionId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2519,7 +2827,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Transfer context — uses IPC request-response pattern
+		// Transfer context - uses IPC request-response pattern
 		server.setTransferContextCallback(async (sourceSessionId: string, targetSessionId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2565,7 +2873,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Summarize context — uses IPC request-response pattern
+		// Summarize context - uses IPC request-response pattern
 		server.setSummarizeContextCallback(async (sessionId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2603,7 +2911,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Create gist — uses IPC request-response pattern. The renderer holds
+		// Create gist - uses IPC request-response pattern. The renderer holds
 		// the AI-tab transcripts in memory, so we forward to it and let it
 		// build the payload + call the existing `git:createGist` handler.
 		server.setCreateGistCallback(
@@ -2656,13 +2964,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// ============ Cue Automation Callbacks ============
 
-		// Get Cue subscriptions — calls engine directly in the main process.
+		// Get Cue subscriptions - calls engine directly in the main process.
 		// Previous implementation forwarded `remote:getCueSubscriptions` to
 		// the renderer and waited 30 s for a response, but no renderer code
 		// ever registered a handler for that channel. The CLI's 10 s timeout
 		// fired every time, surfacing as `cue list` hanging with
 		// `Command timed out waiting for cue_subscriptions`. Mirrors the same
-		// pattern as `triggerCueSubscription` below — the engine lives in
+		// pattern as `triggerCueSubscription` below - the engine lives in
 		// main process anyway, so the IPC bounce was never needed.
 		server.setGetCueSubscriptionsCallback(async (sessionId?: string) => {
 			if (!deps.getCueGraphData) {
@@ -2706,7 +3014,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return subs;
 		});
 
-		// Toggle Cue subscription — calls engine directly in the main process.
+		// Toggle Cue subscription - calls engine directly in the main process.
 		// Previous implementation forwarded `remote:toggleCueSubscription` to
 		// the renderer and waited 10 s for a response, but no renderer code
 		// ever registered a handler for that channel. Every web-UI toggle
@@ -2720,8 +3028,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return deps.setCueSubscriptionEnabled(subscriptionId, enabled);
 		});
 
-		// Get Cue activity log — calls engine directly in the main process.
-		// Previously forwarded to the renderer with no listener registered —
+		// Get Cue activity log - calls engine directly in the main process.
+		// Previously forwarded to the renderer with no listener registered -
 		// the 30 s timeout fired every time and the web UI's activity tab
 		// always rendered empty. Maps `CueRunResult[]` from the engine into
 		// the web-facing `CueActivityEntry[]` shape and applies the same
@@ -2738,7 +3046,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					: runs;
 			// `limit` is applied after sessionId filtering so the caller gets
 			// `N` matching entries rather than `N` total of which some may be
-			// filtered out — mirroring how `cueEngine.getActivityLog(limit)`
+			// filtered out - mirroring how `cueEngine.getActivityLog(limit)`
 			// would behave without the per-session filter.
 			const limited =
 				typeof limit === 'number' && limit > 0
@@ -2746,7 +3054,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					: filteredBySession;
 			const entries: CueActivityEntry[] = limited.map((r) => ({
 				id: r.runId,
-				// Same identity contract as the subscriptions list — the
+				// Same identity contract as the subscriptions list - the
 				// pipeline discriminator falls back to base-name stripping
 				// when the run record has no `pipelineName`, matching how
 				// `getCueGraphData`'s flatten emits ids.
@@ -2774,7 +3082,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return entries;
 		});
 
-		// Trigger a Cue subscription by name — calls engine directly in the main process.
+		// Trigger a Cue subscription by name - calls engine directly in the main process.
 		// Previous implementation routed through the renderer via IPC round-trip, which
 		// caused sourceAgentId to be dropped during Electron IPC serialization.
 		server.setTriggerCueSubscriptionCallback(
@@ -2789,7 +3097,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// ============ Usage Dashboard & Achievements Callbacks ============
 
-		// Get usage dashboard data — aggregates from session usage stats via IPC
+		// Get usage dashboard data - aggregates from session usage stats via IPC
 		server.setGetUsageDashboardCallback(async (timeRange: 'day' | 'week' | 'month' | 'all') => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2853,7 +3161,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
-		// Get achievements data — aggregates from settings store via IPC
+		// Get achievements data - aggregates from settings store via IPC
 		server.setGetAchievementsCallback(async () => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -2994,7 +3302,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		);
 
 		// =====================================================================
-		// Marketplace (Playbook Exchange) callbacks — main-process pure ops,
+		// Marketplace (Playbook Exchange) callbacks - main-process pure ops,
 		// no renderer round-trip. Mirrors the desktop IPC handlers in
 		// src/main/ipc/handlers/marketplace.ts.
 		// =====================================================================
@@ -3006,7 +3314,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		 * all. When SSH IS configured but the remote can't be resolved (the
 		 * remoteId is missing, points at no entry in `sshRemotes`, or the
 		 * matching entry is disabled), this throws so callers fail loudly
-		 * instead of silently downgrading to a local import — mirrors the
+		 * instead of silently downgrading to a local import - mirrors the
 		 * desktop IPC marketplace handler and the SSH-spawn pattern in
 		 * CLAUDE.md.
 		 *
@@ -3067,8 +3375,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 			// Resolve SSH up front so an unresolvable remote on an SSH-enabled
 			// session returns a typed failure instead of silently importing
-			// locally. Errors here aren't exceptional bugs — they're user
-			// misconfiguration — so we don't route them through the
+			// locally. Errors here aren't exceptional bugs - they're user
+			// misconfiguration - so we don't route them through the
 			// captureException catch below.
 			let sshConfig: SshRemoteConfig | undefined;
 			try {

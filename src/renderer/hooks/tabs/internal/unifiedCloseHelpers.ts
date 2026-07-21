@@ -29,8 +29,8 @@ export function getActiveUnifiedRef(
 
 /**
  * Resolve the pivot tab's index within the REPAIRED unified order (the exact
- * order the tab bar renders). Prefer an explicit pivot tab id — the tab whose
- * overlay menu the user clicked — and fall back to the active tab when none is
+ * order the tab bar renders). Prefer an explicit pivot tab id - the tab whose
+ * overlay menu the user clicked - and fall back to the active tab when none is
  * given (e.g. keyboard shortcuts and the command palette operate on the active
  * tab).
  *
@@ -40,7 +40,7 @@ export function getActiveUnifiedRef(
  * (the previous behavior) could close every tab except the pivot when the
  * pivot happened to sit at raw index 0 while rendering mid-strip. Both the menu
  * enable/disable guards and closeTab's neighbor math already use the repaired
- * order — this aligns the close operation with them.
+ * order - this aligns the close operation with them.
  */
 function resolvePivot(
 	session: Session,
@@ -97,7 +97,7 @@ export function getWizardTabIds(session: Session, refs: UnifiedTabRef[]): string
  * Drop refs for AI tabs that hold an unsent draft. Bulk close operations
  * (close-left / close-right / close-others) use this to PRESERVE any tab with
  * unsaved input rather than closing it. A draft tab is never destroyed by a
- * bulk action — the user keeps it and the rest close silently.
+ * bulk action - the user keeps it and the rest close silently.
  */
 export function excludeDraftRefs(session: Session, refs: UnifiedTabRef[]): UnifiedTabRef[] {
 	const draftAiIds = new Set(session.aiTabs.filter((tab) => hasDraft(tab)).map((tab) => tab.id));

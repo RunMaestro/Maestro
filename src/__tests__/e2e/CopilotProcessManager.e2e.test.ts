@@ -135,7 +135,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 	beforeAll(async () => {
 		copilotAvailable = await isCopilotAvailable();
 		if (!copilotAvailable) {
-			console.log('⚠️  Copilot CLI not available — tests will be skipped');
+			console.log('⚠️  Copilot CLI not available - tests will be skipped');
 		}
 	});
 
@@ -195,7 +195,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 
 			// Usage stats should arrive (from session.shutdown.modelMetrics).
 			// Copilot sometimes omits modelMetrics on ultra-short prompts; treat
-			// absence as non-fatal and just log — token stats are a nice-to-have,
+			// absence as non-fatal and just log - token stats are a nice-to-have,
 			// not a correctness invariant.
 			if (captured.usage.length === 0) {
 				console.log('ℹ️  No usage stats emitted for this run (ok for trivial prompts)');
@@ -329,7 +329,7 @@ describe.skipIf(SKIP_E2E)('Copilot-CLI E2E through ProcessManager', () => {
 			});
 
 			// If we accidentally took the PTY path, stdin would stay open and
-			// Copilot would hang — the timeout in waitForExit would fail the test.
+			// Copilot would hang - the timeout in waitForExit would fail the test.
 			const code = await exitPromise;
 			expect(code).toBe(0);
 			expect(captured.sessionIds.length).toBeGreaterThanOrEqual(1);

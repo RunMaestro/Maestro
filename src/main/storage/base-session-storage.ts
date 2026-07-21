@@ -6,15 +6,15 @@
  * match preview extraction, eliminating duplication across agents.
  *
  * Subclasses must implement:
- * - listSessions() — agent-specific session discovery and metadata parsing
- * - readSessionMessages() — agent-specific message loading and normalization
- * - getSessionPath() — agent-specific path resolution
- * - deleteMessagePair() — agent-specific message deletion
- * - getSearchableMessages() — load messages for search in agent-specific format
+ * - listSessions() - agent-specific session discovery and metadata parsing
+ * - readSessionMessages() - agent-specific message loading and normalization
+ * - getSessionPath() - agent-specific path resolution
+ * - deleteMessagePair() - agent-specific message deletion
+ * - getSearchableMessages() - load messages for search in agent-specific format
  *
  * Subclasses inherit:
- * - listSessionsPaginated() — cursor-based pagination over listSessions()
- * - searchSessions() — full-text search with configurable mode
+ * - listSessionsPaginated() - cursor-based pagination over listSessions()
+ * - searchSessions() - full-text search with configurable mode
  */
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';

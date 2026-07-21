@@ -1,5 +1,5 @@
 /**
- * PipelineSelector — Dropdown for selecting which pipeline to view/edit.
+ * PipelineSelector - Dropdown for selecting which pipeline to view/edit.
  *
  * Shows current selection with color dot, and a dropdown menu with
  * All Pipelines, individual pipelines (with rename/delete), and New Pipeline.

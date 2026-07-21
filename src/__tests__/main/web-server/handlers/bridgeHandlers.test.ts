@@ -19,7 +19,7 @@ type Handler = (event: unknown, ...args: unknown[]) => unknown;
 
 // Mock electron so we can drive the internal _invokeHandlers Map directly.
 // `vi.hoisted` runs before the module factory so the map is initialized in
-// time for vi.mock — top-level consts would be in the temporal dead zone
+// time for vi.mock - top-level consts would be in the temporal dead zone
 // at hoist time and the mock factory would throw.
 const { invokeHandlers } = vi.hoisted(() => ({
 	invokeHandlers: new Map<string, Handler>(),

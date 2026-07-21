@@ -1,5 +1,5 @@
 /**
- * AgentConfigPanel — Configuration panel for agent nodes in the pipeline.
+ * AgentConfigPanel - Configuration panel for agent nodes in the pipeline.
  *
  * Handles input/output prompts, single-trigger vs multi-trigger modes,
  * upstream output inclusion, and pipeline membership display.
@@ -112,11 +112,11 @@ export function AgentConfigPanel({
 
 	// Flush any pending prompt writes on unmount. Combined with the `key={node.id}`
 	// applied by the parent, this guarantees the user's last keystrokes commit to
-	// THIS node before the component is torn down on selection change — otherwise
+	// THIS node before the component is torn down on selection change - otherwise
 	// the 300ms debounce would race against React unmount and drop the edit.
 	//
 	// Also register with the pending-edits registry so `handleSave` can flush
-	// this panel's pending writes before it reads pipelineState — clicking Save
+	// this panel's pending writes before it reads pipelineState - clicking Save
 	// within 300ms of a keystroke would otherwise persist stale/empty prompts.
 	useEffect(() => {
 		const unregister = registerPendingEdit(() => {
@@ -154,7 +154,7 @@ export function AgentConfigPanel({
 	//     sessionId). The same agent can appear in multiple pipelines, so
 	//     this is a superset of `owningPipeline`.
 	// Previously these were two separate `useMemo` calls that each scanned
-	// `pipelines` independently — merging them halves the work.
+	// `pipelines` independently - merging them halves the work.
 	const { owningPipeline, agentPipelines } = useMemo(() => {
 		let owning: CuePipeline | undefined;
 		const matching: CuePipeline[] = [];
@@ -174,7 +174,7 @@ export function AgentConfigPanel({
 		return { owningPipeline: owning, agentPipelines: matching };
 	}, [pipelines, node.id, data.sessionId]);
 
-	// Forwarded upstream sources — these agents relay output through an
+	// Forwarded upstream sources - these agents relay output through an
 	// intermediate node rather than having a direct edge. The layout and
 	// input-prompt hints treat direct + forwarded identically (both expose
 	// per-source template variables and render the UpstreamSourcesPanel),
@@ -215,20 +215,20 @@ export function AgentConfigPanel({
 	//
 	// - Single-trigger input and the output textarea both use `flex: 1,
 	//   minHeight: 0` regardless of expanded/collapsed, so they grow to fill
-	//   the available column height — no more wasted whitespace in collapsed
+	//   the available column height - no more wasted whitespace in collapsed
 	//   single-trigger mode.
 	//
 	// - Multi-trigger left column has its OWN `overflowY: auto` and lays out
 	//   each EdgePromptRow at its intrinsic content size (no row-level flex).
 	//   This is what stops textareas from being squeezed under their own
 	//   labels, and what prevents the bottom row's title from overlapping the
-	//   row above when the parent runs out of vertical space — instead of
+	//   row above when the parent runs out of vertical space - instead of
 	//   collapsing rows below their min content size, the column scrolls.
 	//
 	// - The outer container does NOT add its own overflow: NodeConfigPanel's
 	//   content wrapper sets overflow: hidden on this branch, so we have a
 	//   single source of scrolling per axis (left rail in multi-trigger mode,
-	//   nothing for the rest in collapsed mode — both prompts fit). The
+	//   nothing for the rest in collapsed mode - both prompts fit). The
 	//   trailing fan-in / pipeline-pills section uses flexShrink: 0 so it
 	//   never steals space from the prompts.
 	return (
@@ -249,8 +249,8 @@ export function AgentConfigPanel({
 					// When upstream-sources or fan-in cards sit below, the prompts
 					// row must not greedily eat all available height. Use flex: 1
 					// with a sane minHeight so the row shrinks and the panel scrolls
-					// if needed, keeping the cards reachable. `hasAnyUpstream` —
-					// not just direct edges — because UpstreamSourcesPanel also
+					// if needed, keeping the cards reachable. `hasAnyUpstream` -
+					// not just direct edges - because UpstreamSourcesPanel also
 					// renders when only forwarded sources exist, and the layout
 					// must reserve space for it in that case too.
 					flex: 1,
@@ -333,11 +333,11 @@ export function AgentConfigPanel({
 								onChange={handleInputPromptChange}
 								placeholder={
 									hasIncomingAgentEdges && incomingAgentEdges?.some((e) => e.includeUpstreamOutput)
-										? 'Optional — upstream output is auto-included. Add instructions to guide how the agent processes it.'
+										? 'Optional - upstream output is auto-included. Add instructions to guide how the agent processes it.'
 										: hasAnyUpstream
 											? // Direct AND forwarded-only cases both show the upstream
 												// card below, so the "use per-source variables" hint
-												// applies equally — forwarded sources are reached via
+												// applies equally - forwarded sources are reached via
 												// {{CUE_FORWARDED_<NAME>}} vars listed in the card.
 												'Instructions for this agent. Use per-source variables from the card below.'
 											: hasGitHubTrigger
@@ -368,7 +368,7 @@ export function AgentConfigPanel({
 					</div>
 				)}
 
-				{/* Output Prompt — always flex: 1 so it fills the column even when
+				{/* Output Prompt - always flex: 1 so it fills the column even when
 				 *  the left side is in multi-trigger scroll mode. Previously this
 				 *  was `flex: hasMultipleTriggers ? 0 : 1` which collapsed the
 				 *  output to its content + minHeight, leaving the rest of the
@@ -436,7 +436,7 @@ export function AgentConfigPanel({
 				</div>
 			</div>
 
-			{/* Upstream Sources — per-source output controls. The panel self-gates
+			{/* Upstream Sources - per-source output controls. The panel self-gates
 			    when there are no direct OR forwarded sources, so an agent with
 			    only forwarded upstream still sees the box. We hand it the
 			    pre-computed `forwardedUpstream` list so the transitive graph
@@ -448,7 +448,7 @@ export function AgentConfigPanel({
 				forwardedSources={forwardedUpstream}
 			/>
 
-			{/* Fan-in Settings — full width below prompts */}
+			{/* Fan-in Settings - full width below prompts */}
 			{(incomingAgentEdgeCount ?? 0) > 1 && (
 				<div
 					style={{

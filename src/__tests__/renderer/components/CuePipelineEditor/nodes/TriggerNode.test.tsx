@@ -243,7 +243,7 @@ describe('TriggerNode', () => {
 			// GitHub PR all under "Pipeline 1") produce subscriptions named
 			// "Pipeline 1", "Pipeline 1-chain-1", "Pipeline 1-chain-2".
 			// Before this fix, every Play button sent "Pipeline 1" regardless
-			// of which trigger was clicked — chain triggers (including
+			// of which trigger was clicked - chain triggers (including
 			// GitHub PR/Issue polls) were unreachable from the UI.
 			const onTriggerPipeline = vi.fn();
 			const { container } = renderTriggerNode({

@@ -2,7 +2,7 @@
  * Tests for cue-notify-executor.
  *
  * Verifies that an `action: notify` subscription emits the toast via the
- * bridge and returns a synthesized `completed` CueRunResult — including when
+ * bridge and returns a synthesized `completed` CueRunResult - including when
  * the bridge can't deliver (so the terminal-status pipeline still runs and
  * `time.once` self-destruct fires).
  */
@@ -143,7 +143,7 @@ describe('executeCueNotify', () => {
 		});
 
 		// Returning `completed` is intentional: terminal-status drives
-		// time.once self-destruct, and notify is advisory — failing the run
+		// time.once self-destruct, and notify is advisory - failing the run
 		// here would leave one-shot reminders stuck in cue.yaml forever.
 		expect(result.status).toBe('completed');
 		expect(result.exitCode).toBe(0);

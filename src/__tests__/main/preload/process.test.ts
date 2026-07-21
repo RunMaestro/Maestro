@@ -307,7 +307,7 @@ describe('Process Preload API', () => {
 	});
 
 	describe('onRemoteCommand', () => {
-		it('should register listener and invoke callback with all parameters including tabId, force, and images', () => {
+		it('should register listener and invoke callback with all parameters including tabId, force, images, and background', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
 				event: unknown,
@@ -316,7 +316,8 @@ describe('Process Preload API', () => {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -327,7 +328,7 @@ describe('Process Preload API', () => {
 
 			api.onRemoteCommand(callback);
 			const images = ['data:image/png;base64,abc'];
-			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7', true, images);
+			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7', true, images, true);
 
 			expect(callback).toHaveBeenCalledWith(
 				'session-123',
@@ -335,11 +336,12 @@ describe('Process Preload API', () => {
 				'ai',
 				'tab-7',
 				true,
-				images
+				images,
+				true
 			);
 		});
 
-		it('forwards undefined tabId/force/images when the IPC sender omits them (legacy callers)', () => {
+		it('forwards undefined tabId/force/images/background when the IPC sender omits them (legacy callers)', () => {
 			const callback = vi.fn();
 			let registeredHandler: (
 				event: unknown,
@@ -348,7 +350,8 @@ describe('Process Preload API', () => {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -364,6 +367,7 @@ describe('Process Preload API', () => {
 				'session-123',
 				'test command',
 				'ai',
+				undefined,
 				undefined,
 				undefined,
 				undefined
@@ -392,6 +396,72 @@ describe('Process Preload API', () => {
 			registeredHandler!({}, 'Project', '📁', 'company', 'response-channel');
 
 			expect(callback).toHaveBeenCalledWith('Project', '📁', 'company', 'response-channel');
+		});
+	});
+
+	describe('Concerto designer requests', () => {
+		it('forwards the movement response channel and sends the commit ack', () => {
+			const callback = vi.fn();
+			const payload = { op: 'add' as const, id: 'mockup', revision: 11 };
+			let registeredHandler: (
+				event: unknown,
+				params: typeof payload,
+				responseChannel: string
+			) => void;
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:movement') registeredHandler = handler;
+			});
+
+			api.onRemoteMovement(callback);
+			registeredHandler!({}, payload, 'movement-response');
+			api.sendMovementAppliedResponse('movement-response', true);
+
+			expect(callback).toHaveBeenCalledWith(payload, 'movement-response');
+			expect(mockSend).toHaveBeenCalledWith('movement-response', true);
+		});
+
+		it('releases a closed Concerto HTML document', () => {
+			api.releaseConcertoHtmlDocument('cadenza', 'mini-mockup');
+
+			expect(mockSend).toHaveBeenCalledWith('concerto-html:release', 'cadenza', 'mini-mockup');
+		});
+
+		it('forwards the expected revision with inspection requests', () => {
+			const callback = vi.fn();
+			let registeredHandler: (
+				event: unknown,
+				id: string,
+				expectedRevision: number,
+				responseChannel: string
+			) => void;
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:getMovementDesignerInspection') registeredHandler = handler;
+			});
+
+			api.onRequestMovementDesignerInspection(callback);
+			registeredHandler!({}, 'mockup', 12, 'inspection-response');
+
+			expect(callback).toHaveBeenCalledWith('mockup', 12, 'inspection-response');
+		});
+
+		it('forwards the expected revision with interaction requests', () => {
+			const callback = vi.fn();
+			const action = { kind: 'click' as const, selector: '#continue' };
+			let registeredHandler: (
+				event: unknown,
+				id: string,
+				action: typeof action,
+				expectedRevision: number,
+				responseChannel: string
+			) => void;
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:interactMovementDesigner') registeredHandler = handler;
+			});
+
+			api.onRequestMovementDesignerInteraction(callback);
+			registeredHandler!({}, 'mockup', action, 13, 'interaction-response');
+
+			expect(callback).toHaveBeenCalledWith('mockup', action, 13, 'interaction-response');
 		});
 	});
 });

@@ -479,7 +479,7 @@ describe('CopilotOutputParser', () => {
 	});
 
 	it('attaches output token usage on intermediate tool-call messages too', () => {
-		// Tool-call assistant.messages also report outputTokens — capture them
+		// Tool-call assistant.messages also report outputTokens - capture them
 		// so per-turn usage isn't dropped on multi-turn responses.
 		const parser = new CopilotOutputParser();
 

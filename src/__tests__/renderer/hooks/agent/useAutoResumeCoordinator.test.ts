@@ -195,7 +195,7 @@ describe('probeAvailability', () => {
 });
 
 // ---------------------------------------------------------------------------
-// runAutoResumeTick — resume behavior
+// runAutoResumeTick - resume behavior
 // ---------------------------------------------------------------------------
 
 describe('runAutoResumeTick', () => {

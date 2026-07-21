@@ -65,6 +65,9 @@ interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// Session's Additional Directories. Providers that support it get native grant
+	// flags (--add-dir); all agents get the {{ADDITIONAL_DIRECTORIES}} prompt block.
+	sessionAdditionalDirectories?: import('../shared/types').AdditionalDirectory[];
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -230,7 +233,7 @@ interface MaestroAPI {
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
 		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
-		 * debounced flushes — avoids cloning + serializing the entire sessions
+		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
 		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
@@ -379,7 +382,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
@@ -427,7 +431,15 @@ interface MaestroAPI {
 			callback: (params: {
 				op: 'open' | 'update' | 'close';
 				id: string;
-				viewType?: 'tracker' | 'file' | 'markdown' | 'image' | 'code' | 'view' | 'decision';
+				viewType?:
+					| 'tracker'
+					| 'file'
+					| 'markdown'
+					| 'image'
+					| 'code'
+					| 'view'
+					| 'decision'
+					| 'html';
 				title?: string;
 				body?: string;
 				path?: string;
@@ -439,19 +451,42 @@ interface MaestroAPI {
 		onRemoteCadenzaFlash: (callback: (id: string) => void) => () => void;
 		flashCadenza: (id: string) => void;
 		onRemoteMovement: (
-			callback: (params: {
-				op: 'add' | 'update' | 'move' | 'remove' | 'clear';
-				id?: string;
-				x?: number;
-				y?: number;
-				width?: number;
-				height?: number;
-				title?: string;
-				body?: string;
-			}) => void
+			callback: (
+				params: {
+					op: 'add' | 'update' | 'move' | 'remove' | 'clear';
+					id?: string;
+					viewType?: 'view' | 'html';
+					x?: number;
+					y?: number;
+					width?: number;
+					height?: number;
+					title?: string;
+					body?: string;
+					sourcePlugin?: string;
+					revision?: number;
+				},
+				responseChannel?: string
+			) => void
 		) => () => void;
+		sendMovementAppliedResponse: (responseChannel: string, applied: boolean) => void;
+		releaseConcertoHtmlDocument: (surface: 'movement' | 'cadenza', id: string) => void;
 		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
 		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
+		onRequestMovementDesignerInspection: (
+			callback: (id: string, expectedRevision: number, responseChannel: string) => void
+		) => () => void;
+		sendMovementDesignerInspectionResponse: (responseChannel: string, snapshot: unknown) => void;
+		onRequestMovementDesignerInteraction: (
+			callback: (
+				id: string,
+				action:
+					| { kind: 'click'; selector: string }
+					| { kind: 'type'; selector: string; value: string },
+				expectedRevision: number,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendMovementDesignerInteractionResponse: (responseChannel: string, result: unknown) => void;
 		notifyCadenzaHudReady: () => void;
 		setCadenzaHudCardRects: (
 			rects: Array<{ x: number; y: number; width: number; height: number }>
@@ -479,12 +514,54 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteOpenTerminalTabResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteNewAITabWithPrompt: (
-			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
 			responseChannel: string,
 			success: boolean,
 			tabId?: string
+		) => void;
+		onRemoteEnqueueCommand: (
+			callback: (
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => void
+		) => () => void;
+		sendRemoteEnqueueCommandResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				tabId?: string;
+				queued?: boolean;
+				queuePosition?: number;
+				queueLength?: number;
+				itemId?: string;
+				error?: string;
+			}
+		) => void;
+		onRemoteListQueue: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		) => () => void;
+		sendRemoteListQueueResponse: (
+			responseChannel: string,
+			result: { success: boolean; queues: unknown[]; error?: string }
+		) => void;
+		onRemoteRemoveQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteRemoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; removed: boolean; error?: string }
 		) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
@@ -860,6 +937,31 @@ interface MaestroAPI {
 			}>;
 			delete: (id: string) => Promise<Record<string, never>>;
 		};
+		issues: {
+			list: () => Promise<{
+				issues: Array<{
+					number: number;
+					url: string;
+					title: string;
+					category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+					submittedAt: number;
+					state: 'open' | 'closed';
+					lastCheckedAt: number;
+				}>;
+			}>;
+			delete: (issueNumber: number) => Promise<Record<string, never>>;
+			refreshStates: () => Promise<{
+				issues: Array<{
+					number: number;
+					url: string;
+					title: string;
+					category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+					submittedAt: number;
+					state: 'open' | 'closed';
+					lastCheckedAt: number;
+				}>;
+			}>;
+		};
 	};
 	agentError: {
 		clearError: (sessionId: string) => Promise<{ success: boolean }>;
@@ -890,14 +992,14 @@ interface MaestroAPI {
 				currentDocumentIndex?: number;
 				totalTasksAcrossAllDocs?: number;
 				completedTasksAcrossAllDocs?: number;
-				// Error pause fields — surfaced to web/mobile so they can show recovery UI
+				// Error pause fields - surfaced to web/mobile so they can show recovery UI
 				errorPaused?: boolean;
 				errorMessage?: string;
 				errorType?: string;
 				errorRecoverable?: boolean;
 				errorDocumentIndex?: number;
 				errorTaskDescription?: string;
-				// Goal-Driven mode fields — surfaced so web/mobile show goal percent + iteration
+				// Goal-Driven mode fields - surfaced so web/mobile show goal percent + iteration
 				goalMode?: boolean;
 				goalProgress?: number;
 				goalRationale?: string;
@@ -1018,6 +1120,29 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string
 		) => Promise<{ count: number; error: string | null }>;
+		graph: (
+			cwd: string,
+			options?: { limit?: number },
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			nodes: Array<{
+				hash: string;
+				shortHash: string;
+				parents: string[];
+				author: string;
+				date: string;
+				refs: string[];
+				subject: string;
+			}>;
+			error: string | null;
+		}>;
+		switchBranch: (
+			cwd: string,
+			branchName: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; stdout: string; stderr: string }>;
 		show: (
 			cwd: string,
 			hash: string,
@@ -1304,7 +1429,7 @@ interface MaestroAPI {
 			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 
-		// Capability snapshots — persisted per-agent readiness + version info.
+		// Capability snapshots - persisted per-agent readiness + version info.
 		getSnapshot: (
 			agentId: string,
 			sshRemoteId?: string
@@ -1698,7 +1823,7 @@ interface MaestroAPI {
 				shift: boolean;
 			}) => void
 		) => () => void;
-		/** @see ParsedDeepLink in src/shared/types.ts — keep in sync */
+		/** @see ParsedDeepLink in src/shared/types.ts - keep in sync */
 		onDeepLink: (
 			callback: (deepLink: {
 				action: 'focus' | 'session' | 'group';
@@ -1992,7 +2117,12 @@ interface MaestroAPI {
 		delete: (entryId: string, sessionId?: string) => Promise<boolean>;
 		update: (
 			entryId: string,
-			updates: { validated?: boolean },
+			updates: {
+				validated?: boolean;
+				summary?: string;
+				fullResponse?: string;
+				sessionName?: string;
+			},
 			sessionId?: string
 		) => Promise<boolean>;
 		updateSessionName: (agentSessionId: string, sessionName: string) => Promise<number>;
@@ -3181,7 +3311,7 @@ interface MaestroAPI {
 		// Clear initialization result (after user has acknowledged the notification)
 		clearInitializationResult: () => Promise<boolean>;
 	};
-	// Cue Stats API (Phase 03 — Cue Dashboard aggregation query)
+	// Cue Stats API (Phase 03 - Cue Dashboard aggregation query)
 	// Throws 'CueStatsDisabled' when either encoreFeatures.usageStats or
 	// encoreFeatures.maestroCue is off; consumers should catch and render
 	// the "feature off" state.
@@ -3863,6 +3993,7 @@ interface MaestroAPI {
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		requestConsent: (id: string) => Promise<{ opened: boolean }>;
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		setAgentAllowlist: (id: string, agentIds: string[]) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
@@ -4030,7 +4161,7 @@ interface MaestroAPI {
 	browserSession: {
 		clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
 	};
-	// Multi-window API — enumerate/create/focus/close windows and inspect or
+	// Multi-window API - enumerate/create/focus/close windows and inspect or
 	// move the agents (sessions) each window owns. `sessionIds` are agent IDs.
 	windows: {
 		create: (

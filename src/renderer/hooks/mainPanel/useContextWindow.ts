@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { calculateContextDisplay } from '../../utils/contextUsage';
 import { resolveConfiguredContextWindow } from '../../utils/contextWindowResolver';
+import { getModelContextWindowOverride } from '../../../shared/agentConstants';
 import type { Session, AITab } from '../../types';
 
 /**
@@ -33,10 +34,27 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 	}, [activeSession?.toolType, activeSession?.customContextWindow]);
 
 	const activeTabContextWindow = useMemo(() => {
-		const configured = configuredContextWindow;
+		// Explicit per-session override always wins.
+		const sessionOverride = activeSession?.customContextWindow ?? 0;
+		if (sessionOverride > 0) return sessionOverride;
+		// A `[1m]` marker on the session's custom model is an explicit model choice
+		// and outranks a runtime-resolved window, matching useAgentUsageListener's
+		// precedence so the header gauge and the timeline never disagree.
+		const modelMarker = getModelContextWindowOverride(activeSession?.customModel) ?? 0;
+		if (modelMarker > 0) return modelMarker;
 		const reported = activeTab?.usageStats?.contextWindow ?? 0;
-		return configured > 0 ? configured : reported;
-	}, [configuredContextWindow, activeTab?.usageStats?.contextWindow]);
+		// A genuinely provider/model-resolved window (omp's per-turn model catalog,
+		// flagged via `contextWindowResolved`) is the ACTUAL window, so it beats the
+		// agent-level configured fallback (e.g. opus's 1M vs the 200k default).
+		if (activeTab?.usageStats?.contextWindowResolved && reported > 0) return reported;
+		return configuredContextWindow > 0 ? configuredContextWindow : reported;
+	}, [
+		configuredContextWindow,
+		activeTab?.usageStats?.contextWindow,
+		activeTab?.usageStats?.contextWindowResolved,
+		activeSession?.customContextWindow,
+		activeSession?.customModel,
+	]);
 
 	// Hold the last trustworthy result per tab so an untrustworthy frame
 	// (overflow without fallback, missing window) preserves the prior good

@@ -5,7 +5,7 @@
  * - Hook initialization and return shape
  * - Input state management (AI vs terminal mode)
  * - Staged images (get/set)
- * - (thinkingSessions removed — replaced by thinkingItems in App.tsx)
+ * - (thinkingSessions removed - replaced by thinkingItems in App.tsx)
  * - Completion suggestions (tab completion, @ mention)
  * - Tab switching effect (AI input persistence)
  * - Session switching effect (terminal input persistence)
@@ -294,6 +294,7 @@ describe('useInputHandlers', () => {
 			expect(result.current).toHaveProperty('processInput');
 			expect(result.current).toHaveProperty('processInputRef');
 			expect(result.current).toHaveProperty('handleInputKeyDown');
+			expect(result.current).toHaveProperty('handleMainPanelInputFocus');
 			expect(result.current).toHaveProperty('handleMainPanelInputBlur');
 			expect(result.current).toHaveProperty('handleReplayMessage');
 			expect(result.current).toHaveProperty('handlePaste');
@@ -583,7 +584,7 @@ describe('useInputHandlers', () => {
 
 			expect(inputVal()).toBe('tab1 text');
 
-			// Switch to tab-2 — this triggers the effect
+			// Switch to tab-2 - this triggers the effect
 			act(() => {
 				useSessionStore.setState({
 					sessions: [
@@ -1210,7 +1211,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			// The drop handler creates a FileReader — just verify it doesn't throw
+			// The drop handler creates a FileReader - just verify it doesn't throw
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
 		});
 	});
@@ -1248,6 +1249,7 @@ describe('useInputHandlers', () => {
 
 			const firstRender = {
 				handleInputKeyDown: result.current.handleInputKeyDown,
+				handleMainPanelInputFocus: result.current.handleMainPanelInputFocus,
 				handleMainPanelInputBlur: result.current.handleMainPanelInputBlur,
 				handleReplayMessage: result.current.handleReplayMessage,
 				syncFileTreeToTabCompletion: result.current.syncFileTreeToTabCompletion,
@@ -1256,6 +1258,7 @@ describe('useInputHandlers', () => {
 			rerender();
 
 			expect(result.current.handleInputKeyDown).toBe(firstRender.handleInputKeyDown);
+			expect(result.current.handleMainPanelInputFocus).toBe(firstRender.handleMainPanelInputFocus);
 			expect(result.current.handleMainPanelInputBlur).toBe(firstRender.handleMainPanelInputBlur);
 			expect(result.current.handleReplayMessage).toBe(firstRender.handleReplayMessage);
 			expect(result.current.syncFileTreeToTabCompletion).toBe(
@@ -2216,7 +2219,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			// Casing differs from projectRoot — relative match must NOT fire.
+			// Casing differs from projectRoot - relative match must NOT fire.
 			// The path is still emitted, just absolute, slash-normalised.
 			expect(inputVal()).toBe('@c:/users/alice/proj/src/index.ts ');
 		});
@@ -2271,7 +2274,10 @@ describe('useInputHandlers', () => {
 
 			// Draft should be restored after replay
 			expect(inputVal()).toBe('my draft message');
-			expect(mockProcessInput).toHaveBeenCalledWith('replayed message');
+			expect(mockProcessInput).toHaveBeenCalledWith('replayed message', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
 
 			// Clean up mock
 			mockProcessInput.mockReset();

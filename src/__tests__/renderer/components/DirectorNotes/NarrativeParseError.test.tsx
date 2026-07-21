@@ -1,5 +1,5 @@
 /**
- * Tests for NarrativeParseError — the OVERT failure surface for Rich Mode.
+ * Tests for NarrativeParseError - the OVERT failure surface for Rich Mode.
  *
  * Verifies it:
  * - renders a loud, unmissable banner (role="alert" + heading + the precise error)

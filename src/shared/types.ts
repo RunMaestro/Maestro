@@ -7,7 +7,7 @@ export type { AgentId } from './agentIds';
 
 /**
  * Union type of all valid agent IDs.
- * Derived from AGENT_IDS — the single source of truth in agentIds.ts.
+ * Derived from AGENT_IDS - the single source of truth in agentIds.ts.
  */
 export type ToolType = import('./agentIds').AgentId;
 
@@ -130,6 +130,18 @@ export interface AgentCapabilities {
 	supportsProjectMemory: boolean;
 
 	/**
+	 * Agent's CLI can grant access to directories outside the working directory
+	 * (e.g. `--add-dir`), so Maestro's Additional Directories are enforced by the
+	 * provider rather than by instructions alone.
+	 *
+	 * When true, the definition MUST also supply `additionalDirArgs` - the
+	 * completeness test fails otherwise. When false, the grants still reach the
+	 * agent through the `{{ADDITIONAL_DIRECTORIES}}` block in the system prompt;
+	 * they're just advisory. See `src/shared/additionalDirectories.ts`.
+	 */
+	supportsAdditionalDirectories: boolean;
+
+	/**
 	 * How images should be handled on resume when -i flag is not available.
 	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
 	 * undefined: Use default image handling (or no special resume handling needed).
@@ -167,6 +179,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	usesCombinedContextWindow: false,
 	supportsAppendSystemPrompt: false,
 	supportsProjectMemory: false,
+	supportsAdditionalDirectories: false,
 };
 
 // Session group
@@ -193,7 +206,7 @@ export function isWorktreeGroup(group: Group): boolean {
  *
  * Producer: `useCliActivityMonitoring` in
  * `renderer/hooks/remote/useCliActivityMonitoring.ts`. If a new field is added
- * here, the comparator must compare it too — TypeScript will flag the omission
+ * here, the comparator must compare it too - TypeScript will flag the omission
  * because both sites depend on this exact shape.
  */
 export interface SessionCliActivity {
@@ -211,6 +224,8 @@ export interface SessionInfo {
 	cwd: string;
 	projectRoot: string;
 	autoRunFolderPath?: string;
+	/** Extra directories granted beyond the working directory (prompt-level grants). */
+	additionalDirectories?: AdditionalDirectory[];
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */
@@ -236,18 +251,18 @@ export interface SessionInfo {
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential
-	 * backoff (30s→30m). Defaults ON — treat `undefined` as enabled via
+	 * backoff (30s→30m). Defaults ON - treat `undefined` as enabled via
 	 * {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnAvailabilityErrors?: boolean;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt when the plan quota is
 	 * exhausted (usage/quota limit). Waits until the parsed reset time, or 1h if
-	 * unknown, then retries hourly. Defaults ON — treat `undefined` as enabled
+	 * unknown, then retries hourly. Defaults ON - treat `undefined` as enabled
 	 * via {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnTokenExhaustion?: boolean;
-	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
+	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 	/**
 	 * Board worker pool (Board Phase 6): opt-in flag marking this agent as an
@@ -265,6 +280,15 @@ export interface UsageStats {
 	cacheCreationInputTokens: number;
 	totalCostUsd: number;
 	contextWindow: number;
+	/**
+	 * True when `contextWindow` is an authoritative, runtime-resolved value (the
+	 * model's real window discovered from the provider's own catalog) rather than
+	 * a static per-agent default/fallback. Consumers use this to let the real
+	 * window win over the agent-level configured fallback while still honoring an
+	 * explicit per-session override. Set by providers whose window is model-
+	 * dependent and reported per turn (currently Oh My Pi); undefined otherwise.
+	 */
+	contextWindowResolved?: boolean;
 	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
@@ -371,6 +395,24 @@ export interface BatchDocumentEntry {
 	resetOnCompletion: boolean;
 	isDuplicate: boolean;
 	isMissing?: boolean;
+}
+
+/**
+ * An extra directory an agent may touch beyond its working directory.
+ *
+ * Enforcement is prompt-level: the grants are rendered into the Maestro system
+ * prompt as {{ADDITIONAL_DIRECTORIES}} and the agent is instructed to honor
+ * them. Nothing sandboxes the agent process, so a grant is a statement of
+ * intent, not a hard boundary.
+ *
+ * `read` and `write` are independent - a directory can be read-only (reference
+ * material), write-only (a drop box the agent should never read back), or both.
+ * An entry with neither flag set is inert and is omitted from the prompt.
+ */
+export interface AdditionalDirectory {
+	path: string;
+	read: boolean;
+	write: boolean;
 }
 
 // Git worktree configuration for Auto Run
@@ -719,7 +761,7 @@ export interface AgentSshRemoteConfig {
 	 * Mirror every new history entry for this agent to
 	 * <projectRoot>/.maestro/history/history-<hostname>.jsonl on *this* machine's
 	 * local filesystem. Meant for agents that run here locally but are controlled
-	 * by another Maestro instance over SSH — the controller reads the project's
+	 * by another Maestro instance over SSH - the controller reads the project's
 	 * `.maestro/history/` dir and sees entries generated on this side.
 	 * Independent of `enabled` / `syncHistory`.
 	 */

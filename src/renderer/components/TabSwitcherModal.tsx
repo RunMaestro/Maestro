@@ -103,7 +103,7 @@ function getTabLastActivity(tab: AITab): number | undefined {
  * Returns `null` when no trustworthy reading is available (no usage yet, or
  * accumulated tokens overflow the window without a preserved fallback). Callers
  * should treat `null` as "no gauge to show" rather than rendering a misleading
- * 0% — see issue #762.
+ * 0% - see issue #762.
  */
 function getContextPercentage(tab: AITab, agentId?: ToolType): number | null {
 	if (!tab.usageStats) return null;
@@ -832,7 +832,7 @@ export function TabSwitcherModal({
 										</div>
 									</div>
 
-									{/* Context Gauge — hidden when no trustworthy reading is available
+									{/* Context Gauge - hidden when no trustworthy reading is available
 									    (overflow without a preserved fallback) so we don't surface a
 									    misleading 0%. */}
 									{contextPct !== null && (

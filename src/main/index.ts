@@ -58,8 +58,7 @@ import {
 	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
 import { PluginHostViewRegistry, type HostViewMutation } from './plugins/plugin-host-view-registry';
-import type { MovementPayload } from '../shared/movement-types';
-import type { CadenzaPayload } from '../shared/cadenza-types';
+import { forwardPluginHostViewToRenderer } from './plugins/plugin-host-view-forwarder';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
@@ -74,6 +73,7 @@ import {
 	isPluginCapability,
 	isHighRiskActCapability,
 	describeUnattendedConsent,
+	isValidAllowlistMember,
 } from '../shared/plugins/permissions';
 import {
 	createAuthorizationStore,
@@ -222,6 +222,8 @@ import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
 import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
+import { CONCERTO_HTML_SCHEME } from '../shared/concerto-html';
+import { createConcertoHtmlResponse } from './concerto-html';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -318,6 +320,10 @@ const IMAGE_SCHEME = 'maestro-image';
 			scheme: IMAGE_SCHEME,
 			privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
 		},
+		{
+			scheme: CONCERTO_HTML_SCHEME,
+			privileges: { standard: true, secure: true },
+		},
 	];
 	if (!isDevelopment) {
 		privilegedSchemes.push({
@@ -395,7 +401,7 @@ if (!installationId) {
 	logger.info('Generated new installation ID', 'Startup', { installationId });
 }
 
-// Run one-shot settings-store migrations (idempotent — each migration owns
+// Run one-shot settings-store migrations (idempotent - each migration owns
 // its own marker). Mirrors the installation-ID generator above as the
 // canonical "first thing we do after the settings store is up" hook.
 runSettingsMigrations(store);
@@ -696,63 +702,24 @@ function arePluginHostViewsEnabled(): boolean {
 function forwardPluginHostView(mutation: HostViewMutation): boolean {
 	if (!(mutation.kind === 'remove' && mutation.force) && !arePluginHostViewsEnabled()) return false;
 	if (!mainWindow || mainWindow.isDestroyed() || !isWebContentsAvailable(mainWindow)) return false;
+	const targetWindow = mainWindow;
 	const sourcePlugin =
 		pluginManager?.getRegistry().records.find((record) => record.id === mutation.view.pluginId)
 			?.manifest?.name ?? mutation.view.pluginId;
-	let body: string | undefined;
-	if (mutation.kind === 'upsert') {
-		try {
-			body = JSON.stringify(mutation.blocks);
-		} catch {
-			return false;
-		}
-	}
-
-	if (mutation.view.surface === 'movement') {
-		const payload: MovementPayload =
-			mutation.kind === 'upsert'
-				? {
-						op: 'add',
-						id: mutation.view.id,
-						title: mutation.view.title,
-						body,
-						sourcePlugin,
-					}
-				: { op: 'remove', id: mutation.view.id };
-		mainWindow.webContents.send('remote:movement', payload);
-		return true;
-	}
-
-	const payload: CadenzaPayload =
-		mutation.kind === 'upsert'
-			? {
-					op: 'open',
-					id: mutation.view.id,
-					viewType: 'view',
-					title: mutation.view.title,
-					body,
-					sourcePlugin,
-				}
-			: { op: 'close', id: mutation.view.id };
-
-	// Closing a view must never create a new always-on-top HUD. Deliver a close
-	// to an existing HUD (including its pre-ready queue) or the main fallback only.
-	if (mutation.kind === 'remove') {
-		if (deliverCadenzaToExistingHud(payload)) return true;
-		mainWindow.webContents.send('remote:cadenza', payload);
-		return true;
-	}
-
-	// Match the CLI cadenza bridge: open/upsert prefers the HUD and creates it
-	// lazily, then falls back to the main renderer.
-	if (store.get('encoreFeatures', {})?.concerto === true && deliverCadenza(payload)) return true;
-	mainWindow.webContents.send('remote:cadenza', payload);
-	return true;
+	return forwardPluginHostViewToRenderer(mutation, {
+		sourcePlugin,
+		isCadenzaEnabled: store.get('encoreFeatures', {})?.concerto === true,
+		sendToMain: (channel, payload) => targetWindow.webContents.send(channel, payload),
+		deliverCadenza,
+		deliverCadenzaToExistingHud,
+	});
 }
 
 const pluginHostViews = new PluginHostViewRegistry({
 	isEnabled: arePluginHostViewsEnabled,
 	getHostViews: () => pluginManager?.getContributions().hostViews ?? [],
+	isPluginRecordPresent: (pluginId) =>
+		pluginManager?.getRegistry().records.some((record) => record.id === pluginId) ?? false,
 	forward: forwardPluginHostView,
 });
 
@@ -941,6 +908,11 @@ if (!gotSingleInstanceLock) {
 app
 	.whenReady()
 	.then(async () => {
+		// Serve agent-authored Concerto mockups as real documents with their own
+		// CSP. A srcdoc frame would inherit Maestro's renderer CSP and block the
+		// inline scripts that make mockups interactive.
+		protocol.handle(CONCERTO_HTML_SCHEME, (request) => createConcertoHtmlResponse(request.url));
+
 		// Serve pasted conversation images relocated out of the sessions JSON by
 		// the session image store. `<img src="maestro-image://store/<sha>.<ext>">`
 		// resolves here to a file on disk - the bytes never live in the JSON blob
@@ -1018,7 +990,7 @@ app
 						headers: { 'content-type': contentType },
 					});
 				} catch (err) {
-					// Only swallow "file not found" — surface every other fs error
+					// Only swallow "file not found" - surface every other fs error
 					// (EACCES, EISDIR, etc.) so Sentry / the renderer can react
 					// instead of silently 404ing on a broken install.
 					if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
@@ -1134,7 +1106,7 @@ app
 		// Bring up the CLI server and publish the discovery file as early as
 		// possible. Done here (before initializePrompts / Cue / history / etc.)
 		// so an unhandled error later in startup can't silently leave maestro-cli
-		// without a discovery file — the symptom that previously forced users to
+		// without a discovery file - the symptom that previously forced users to
 		// toggle Live Mode on/off to coax the file into existence.
 		const cliServerDeps = {
 			getWebServer: () => webServer,
@@ -1225,7 +1197,7 @@ app
 		// Fire-and-forget: sample `maestro-p --status` for every CLAUDE_CONFIG_DIR
 		// account referenced by a recent Batch Mode-enabled Claude session so the
 		// context-window popover has fresh quota data on first turn. Failures here
-		// are non-fatal — the spawner's resolver tolerates a null snapshot by
+		// are non-fatal - the spawner's resolver tolerates a null snapshot by
 		// defaulting to interactive, and the next sampler refresh will repopulate.
 		void runStartupUsageSampling({
 			sessionsStore,
@@ -1250,7 +1222,7 @@ app
 			agentDetector,
 		});
 		// L5 usage-stats lift: the sampling loop is the feature's supervised
-		// `stats.sampler` background service — don't arm it when the user has
+		// `stats.sampler` background service - don't arm it when the user has
 		// explicitly disabled the Usage & Stats tile. `!== false` (not `=== true`)
 		// mirrors the renderer default (usageStats defaults ON and the merged
 		// flag map may never have been persisted main-side).
@@ -1333,7 +1305,7 @@ app
 				};
 
 				// `action: notify` surfaces a toast through the owning agent instead of
-				// spawning anything — handled before command/prompt so the spawn config,
+				// spawning anything - handled before command/prompt so the spawn config,
 				// SSH wrap, and history-recording paths below stay agent-only. The
 				// notify message is pre-resolved by the dispatch service via the
 				// fallback chain (notify.message → label → prompt → name); falling
@@ -1383,7 +1355,7 @@ app
 				}
 
 				// `action: command` runs a shell command or maestro-cli call instead of an
-				// AI prompt — skip agent path resolution and SSH wrapping.
+				// AI prompt - skip agent path resolution and SSH wrapping.
 				if (action === 'command') {
 					if (!command) {
 						// Should be unreachable post-validator, but guard anyway so a
@@ -1537,7 +1509,7 @@ app
 			},
 			onPreventSleep: (reason) => powerManager.addBlockReason(reason),
 			onAllowSleep: (reason) => powerManager.removeBlockReason(reason),
-			// Phase 01 — gate cue_events stats lineage writes on the
+			// Phase 01 - gate cue_events stats lineage writes on the
 			// `encoreFeatures.usageStats` flag. Read on every record so toggling
 			// the Encore flag at runtime takes effect without an app restart.
 			getUsageStatsEnabled: () => {
@@ -1609,7 +1581,7 @@ app
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
 		// on every event so toggling Cue or usageStats at runtime takes effect
 		// without an app restart. Same predicate as cue-stats.ts:isCueStatsEnabled
-		// — both flags required.
+		// - both flags required.
 		configureCueTelemetry({
 			getInstallationId: () => store.get('installationId') as string | null,
 			getAppVersion: () => app.getVersion(),
@@ -1703,7 +1675,7 @@ app
 		// (first-party = trusted by construction; the marketplace tile shows the
 		// permission list as disclosure); disable/revoke stop supervised work and
 		// clear the flag. Feature workers (L1..L5) look their bridge up via
-		// getFirstPartyBridge(flag) — this is the single construction site.
+		// getFirstPartyBridge(flag) - this is the single construction site.
 		const mintFirstPartyGrants = createFirstPartyGrantMinter(authStore);
 		const firstPartySupervisors: Partial<Record<FirstPartyEncoreFlag, FirstPartySupervisorHooks>> =
 			{
@@ -1714,7 +1686,7 @@ app
 				// [L3MaestroCue] cue engine lifecycle: reconcile (re)starts when the
 				// flag+grants hold; stopAll halts every watcher/poller/heartbeat.
 				maestroCue: createCueSupervisorHooks(() => cueEngine),
-				// L5 usage-stats: `stats.sampler` — the background provider-quota
+				// L5 usage-stats: `stats.sampler` - the background provider-quota
 				// sampling loop (UsageRefreshScheduler). Marketplace disable/revoke
 				// stops the timers; enable re-arms from the persisted intervals
 				// (start() is idempotent; it arms nothing until the user picks an
@@ -1739,6 +1711,12 @@ app
 		}
 		setFirstPartyBridges(firstPartyBridges);
 
+		// Issue #1250 visibility: throttle the "dispatch blocked" toast per plugin
+		// so a message loop hitting an out-of-date allowlist can't spam the user.
+		// The audit log (in onDecision) still records every denial.
+		const DISPATCH_DENY_TOAST_THROTTLE_MS = 60_000;
+		const dispatchDenyToastAt = new Map<string, number>();
+
 		const pluginBroker = new PermissionBroker({
 			getGrants: (pluginId) => grantsOf(pluginId),
 			// Structurally exclude the entire Maestro userData/config tree (grants,
@@ -1748,12 +1726,35 @@ app
 			// real path so no plugin fs scope can ever reach it.
 			protectedPaths: () => [app.getPath('userData')],
 			onDecision: (pluginId, method, decision) => {
-				if (!decision.allowed) {
-					logger.warn(
-						`[Plugins] denied ${method} for "${pluginId}": ${decision.reason ?? ''}`,
-						'[Plugins]'
-					);
+				if (decision.allowed) return;
+				logger.warn(
+					`[Plugins] denied ${method} for "${pluginId}": ${decision.reason ?? ''}`,
+					'[Plugins]'
+				);
+				// A denied agents.dispatch means an out-of-date allowlist: the plugin
+				// swallows the RPC error and nothing surfaces to the operator (the
+				// #1250 bug - 7 of 9 bound agents silently dead). Raise a throttled
+				// toast pointing at the host-managed fix.
+				if (method !== 'agents.dispatch') return;
+				// Only a stale ALLOW LIST is actionable in Settings. If the plugin holds
+				// no agents:dispatch grant at all (never consented, revoked, or invalid),
+				// the editor is hidden and an "add the agent" toast would point at a fix
+				// the user cannot perform - that denial is a consent problem, logged above.
+				if (!grantsOf(pluginId).some((g) => g.capability === 'agents:dispatch')) return;
+				const now = Date.now();
+				if (now - (dispatchDenyToastAt.get(pluginId) ?? 0) < DISPATCH_DENY_TOAST_THROTTLE_MS) {
+					return;
 				}
+				dispatchDenyToastAt.set(pluginId, now);
+				if (!mainWindow || !isWebContentsAvailable(mainWindow)) return;
+				const name =
+					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.manifest?.name ??
+					pluginId;
+				mainWindow.webContents.send('remote:notifyToast', {
+					title: 'Plugin dispatch blocked',
+					message: `"${name}" tried to dispatch to an agent that is not in its allow list. Add the agent in Settings -> Plugins.`,
+					color: 'orange' as const,
+				});
 			},
 		});
 
@@ -2254,7 +2255,7 @@ app
 		// this function; both closures read it lazily (never before app-ready use).
 		const backgroundSupervisor = new PluginBackgroundSupervisor({
 			// refresh() re-reads disk and reconciles sandboxes: it starts every
-			// runnable plugin that is not running — i.e. the crashed one.
+			// runnable plugin that is not running - i.e. the crashed one.
 			restartPlugin: () => pluginManager?.refresh(),
 			isPluginEnabled: (pluginId) =>
 				pluginManager?.getRegistry().records.some((r) => r.id === pluginId && r.enabled) ?? false,
@@ -2262,8 +2263,8 @@ app
 		pluginBackgroundSupervisor = backgroundSupervisor;
 
 		// Shared FC2/FC3 dispatch sink: resolve a runtime session FAIL-CLOSED
-		// (exact session id, else exact UNIQUE name — ambiguity is an error, never
-		// a guess), audit the resolved id, then hand the prompt to the renderer —
+		// (exact session id, else exact UNIQUE name - ambiguity is an error, never
+		// a guess), audit the resolved id, then hand the prompt to the renderer -
 		// the same single source of truth the web remote path uses. SYNCHRONOUS by
 		// design: resolution/renderer failures throw INTO the caller (the scheduler
 		// tick's try/catch, the handler's promise chain), never after a false
@@ -2282,7 +2283,7 @@ app
 			if (!target?.id) {
 				throw new Error(
 					byName.length > 1
-						? `agents.dispatch: "${agentId}" matches ${byName.length} sessions — use the session id`
+						? `agents.dispatch: "${agentId}" matches ${byName.length} sessions - use the session id`
 						: `agents.dispatch: no session "${agentId}"`
 				);
 			}
@@ -2298,7 +2299,7 @@ app
 			return { dispatched: true, sessionId: target.id };
 		};
 
-		// Host-owned spawn binary allowlist (FC2 / phase-4 §2). Ships EMPTY —
+		// Host-owned spawn binary allowlist (FC2 / phase-4 §2). Ships EMPTY -
 		// Maestro blesses no helper binaries by default. DEMO_MODE lets the e2e
 		// harness bless ONE binary ('e2e-selftest') via an env-supplied absolute
 		// path; the registry still enforces every invariant (absolute path, no
@@ -2443,7 +2444,7 @@ app
 				// paths) + ActionGuard high caps + audit-before-effect. These sinks
 				// are the LAST hop, not a gate.
 				// Trust source for assertTrustedActVerb: the live registry's verified
-				// signature status. Lazy — pluginManager is assigned below; handlers
+				// signature status. Lazy - pluginManager is assigned below; handlers
 				// only run once the sandbox is up. Fail-closed when absent.
 				isPluginTrusted: (pluginId) =>
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
@@ -2451,7 +2452,7 @@ app
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
-				// — the same grant source and check the time-based scheduler uses.
+				// - the same grant source and check the time-based scheduler uses.
 				dispatchUnattendedAllowed: (pluginId, agentId) =>
 					isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId),
 				spawn: async (pluginId, spec) => {
@@ -2701,7 +2702,7 @@ app
 				outcome.reason === 'conflict'
 					? `an untrusted plugin can't combine transcripts:read with net:fetch or process:spawn (only a trusted, signed plugin can).`
 					: outcome.reason === 'bad-nonce'
-						? `the consent request expired or was superseded — try again.`
+						? `the consent request expired or was superseded - try again.`
 						: `consent was rejected (${outcome.reason}).`;
 			logger.toast(
 				`Couldn't enable "${pluginId}": ${reasonMsg} Re-enable it to choose a different set.`,
@@ -2713,6 +2714,61 @@ app
 			closeConsentWindow();
 			return { ok: false, reason: 'cancelled' as const };
 		});
+
+		// Host-managed dispatch allowlist (issue #1250). The USER, a DIFFERENT
+		// principal from the plugin, edits which agents an already-consented
+		// agents:dispatch grant may target. The host re-mints the grant's SCOPE
+		// into the sealed ledger through the same authoritative path as
+		// consent/revoke; the plugin is never involved and can never reach this.
+		// Only the trusted main renderer may ask (like request-consent). The
+		// capability, the unattended flag, and the plugin identity are untouched -
+		// this only widens/narrows the scope of a capability the user already
+		// granted, so a new agent needs no plugin re-pack or re-sign.
+		ipcMain.handle(
+			'plugins:set-agent-allowlist',
+			async (event, pluginId: unknown, agentIds: unknown) => {
+				if (event.sender !== mainWindow?.webContents) {
+					throw new Error('UntrustedAllowlistRequester');
+				}
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				if (ef.plugins !== true) throw new Error('PluginsDisabled');
+				if (typeof pluginId !== 'string' || !PLUGIN_ID_PATTERN.test(pluginId)) {
+					throw new Error('InvalidPluginId');
+				}
+				if (!Array.isArray(agentIds)) throw new Error('InvalidAgentIds');
+				// The manifest must actually declare agents:dispatch - the host manages
+				// the SCOPE of a declared capability, never one the plugin never asked for.
+				const requested = pluginManager?.getRequestedPermissions(pluginId) ?? [];
+				if (!requested.some((r) => r.capability === 'agents:dispatch')) {
+					throw new Error('DispatchNotRequested');
+				}
+				// Intersect the submitted ids with the live session set (only a real
+				// agent is dispatchable) and drop any token that could corrupt the
+				// comma-joined scope. Deduped, order-stable.
+				const sessions = sessionsStore.get('sessions', []) as Array<{ id?: string }>;
+				const existing = new Set(
+					sessions.map((s) => s?.id).filter((id): id is string => typeof id === 'string')
+				);
+				const seen = new Set<string>();
+				const members: string[] = [];
+				for (const raw of agentIds) {
+					if (!isValidAllowlistMember(raw) || !existing.has(raw) || seen.has(raw)) continue;
+					seen.add(raw);
+					members.push(raw);
+				}
+				// Fails when the plugin holds no agents:dispatch grant yet (not
+				// consented) - the user must approve the capability at the consent
+				// window before its scope can be edited here.
+				if (!authStore.setAllowlistScope(pluginId, 'agents:dispatch', members)) {
+					throw new Error('DispatchNotGranted');
+				}
+				logger.info(
+					`[Plugins] agents:dispatch allowlist for "${pluginId}" set to ${members.length} agent(s): ${members.join(', ') || '(none)'}`,
+					'[PluginAudit]'
+				);
+				return { requested, granted: authStore.readGrants(pluginId) };
+			}
+		);
 
 		// Supervised plugin scheduler: fires plugins' declarative cue triggers
 		// (interval / daily-time) on a poll loop. Self-gates on the plugins flag.
@@ -2747,7 +2803,7 @@ app
 					throw new Error(`cue trigger "${trigger.id}" has no agentId to dispatch to`);
 				}
 				// Synchronous: a vanished/ambiguous session or missing renderer throws
-				// HERE, into the scheduler tick's try/catch — never a false success.
+				// HERE, into the scheduler tick's try/catch - never a false success.
 				dispatchPromptToSession(trigger.agentId, trigger.payload);
 			},
 			evaluateDispatch: (trigger) => {
@@ -2850,13 +2906,13 @@ app
 		// Start Cue engine if the Encore Feature flag is enabled
 		const encoreFeatures = store.get('encoreFeatures', {}) as Record<string, boolean>;
 		if (encoreFeatures.maestroCue && cueEngine) {
-			logger.info('Maestro Cue Encore Feature enabled — starting Cue engine', 'Startup');
+			logger.info('Maestro Cue Encore Feature enabled - starting Cue engine', 'Startup');
 			try {
 				cueEngine.start('system-boot');
 			} catch (err) {
 				void captureException(err);
 				logger.error(
-					`Cue engine failed to start at boot — will remain available for retry via Settings: ${err}`,
+					`Cue engine failed to start at boot - will remain available for retry via Settings: ${err}`,
 					'Startup'
 				);
 			}
@@ -2913,7 +2969,7 @@ app
 		if (isMacOS()) {
 			const template: Electron.MenuItemConstructorOptions[] = [
 				{
-					// Explicit appMenu — uses a custom Quit item instead of `role: 'quit'`
+					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
 					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
 					// quit role (as "Quit and Keep Windows"), and that keystroke sits
 					// one modifier away from Opt+Q (Maestro Cue), causing accidental
@@ -2946,11 +3002,11 @@ app
 					],
 				},
 				{
-					// Custom Edit menu — equivalent to `role: 'editMenu'` minus
+					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
 					// `undo` / `redo`. Those built-in roles register Cmd+Z /
 					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
 					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W — see the note
+					// (same trap as `role: 'close'` eating Cmd+W - see the note
 					// above the appMenu block). Removing them frees Cmd+Z for the
 					// image annotator's stroke-undo handler.
 					//
@@ -3062,7 +3118,7 @@ app
 	})
 	.catch(async (err) => {
 		// Without this, an unhandled rejection anywhere in the long startup chain
-		// silently aborts initialization — historically the cause of the missing
+		// silently aborts initialization - historically the cause of the missing
 		// CLI discovery file. Log loudly and report to Sentry so we can actually
 		// diagnose future regressions instead of guessing.
 		logger.error(`Fatal error during app startup: ${err}`, 'Startup');
@@ -3081,7 +3137,7 @@ app.on('window-all-closed', () => {
 		app.quit();
 	} else {
 		// On macOS the app stays alive after all windows close (dock click reopens).
-		// Kill all managed PTY/child processes now so they don't leak — session
+		// Kill all managed PTY/child processes now so they don't leak - session
 		// restoration will re-spawn fresh PTYs when the window is reopened.
 		processManager?.killAll();
 	}
@@ -3248,7 +3304,7 @@ function setupIpcHandlers() {
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {
-			// Always query the executor's active process map — processes may still be
+			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete
 			// independently of engine state).
 			const processList = getCueProcessList();

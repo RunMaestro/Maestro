@@ -378,7 +378,7 @@ describe('WakaTimeManager', () => {
 
 			await manager.sendHeartbeat('session-1', 'My Project');
 
-			// No API key found in cfg either — should skip
+			// No API key found in cfg either - should skip
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 
@@ -398,7 +398,7 @@ describe('WakaTimeManager', () => {
 
 			await manager.sendHeartbeat('session-1', 'My Project');
 
-			// Read error — should skip gracefully
+			// Read error - should skip gracefully
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 
@@ -422,7 +422,7 @@ describe('WakaTimeManager', () => {
 			await manager.sendHeartbeat('session-1', 'My Project');
 
 			expect(logger.warn).toHaveBeenCalledWith(
-				'WakaTime CLI not available — skipping heartbeat',
+				'WakaTime CLI not available - skipping heartbeat',
 				'[WakaTime]'
 			);
 		});
@@ -621,7 +621,7 @@ describe('WakaTimeManager', () => {
 			mockGithubApiResponse({ tag_name: 'v1.73.1' });
 
 			// Mock the download that doInstall will trigger (network error is fine, we just check it tries)
-			// https.get is already mocked for the API call — doInstall calls downloadFile which also uses https.get
+			// https.get is already mocked for the API call - doInstall calls downloadFile which also uses https.get
 			// Since the mock returns JSON for all calls, the download will fail, which is expected
 
 			await manager.ensureCliInstalled();
@@ -697,7 +697,7 @@ describe('WakaTimeManager', () => {
 			await manager.sendHeartbeat('session-1', 'My Project');
 			// Remove session (resets debounce)
 			manager.removeSession('session-1');
-			// Send again — should NOT be debounced since session was removed
+			// Send again - should NOT be debounced since session was removed
 			await manager.sendHeartbeat('session-1', 'My Project');
 
 			// detectCli (1, cached) + first heartbeat (1) + second heartbeat (1) = 3

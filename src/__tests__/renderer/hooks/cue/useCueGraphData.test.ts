@@ -91,7 +91,7 @@ describe('useCueGraphData', () => {
 		// Trigger a second fetch before first resolves
 		rerender({ tab: 'pipeline' });
 		await waitFor(() => expect(result.current.graphSessions).toEqual([{ sessionId: 'B' }]));
-		// Now resolve the stale first fetch — should be ignored
+		// Now resolve the stale first fetch - should be ignored
 		resolveFirst([{ sessionId: 'A' } as unknown as CueGraphSession]);
 		await new Promise((r) => setTimeout(r, 20));
 		expect(result.current.graphSessions).toEqual([{ sessionId: 'B' }]);
@@ -110,7 +110,7 @@ describe('useCueGraphData', () => {
 		unmount();
 		resolveFn([{ sessionId: 'late' } as unknown as CueGraphSession]);
 		await new Promise((r) => setTimeout(r, 20));
-		// No assertion needed — absence of act() warning is the signal
+		// No assertion needed - absence of act() warning is the signal
 	});
 
 	it('refreshGraphData triggers a fresh fetch', async () => {
@@ -145,7 +145,7 @@ describe('useCueGraphData', () => {
 		await waitFor(() =>
 			expect(result.current.graphSessions).toEqual([{ sessionId: 'refresh-won' }])
 		);
-		// Mount fetch resolves late — must be ignored
+		// Mount fetch resolves late - must be ignored
 		resolveMount([{ sessionId: 'mount-lost' } as unknown as CueGraphSession]);
 		await new Promise((r) => setTimeout(r, 20));
 		expect(result.current.graphSessions).toEqual([{ sessionId: 'refresh-won' }]);

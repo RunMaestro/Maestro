@@ -129,6 +129,7 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `getParentDir(path)`                   | `(string) => string`                   | Return the parent directory segment of a path.                                    |
 | `isAbsolutePath(path)`                 | `(string) => boolean`                  | True for Unix (`/x`), Windows drive (`C:\x`, `C:/x`), UNC paths.                  |
 | `getBasename(path)`                    | `(string) => string`                   | Final path segment; handles `/` and `\`, ignores trailing sep.                    |
+| `joinPath(base, ...segments)`          | `(string, ...string[]) => string`      | Join onto a base using the separator the base uses. Renderer-safe (no `path`).    |
 | `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.                                  |
 
 ---
@@ -169,6 +170,36 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `TEMPLATE_VARIABLES`                             | `Array<{variable, description, autoRunOnly?}>` | All available template variables with docs.                                                                     |
 | `TEMPLATE_VARIABLES_GENERAL`                     | Same array filtered                            | Excludes Auto Run-only variables.                                                                               |
 | `substituteTemplateVariables(template, context)` | `(string, TemplateContext) => string`          | Case-insensitive replacement of `{{VAR}}` placeholders. Handles agent, path, date/time, git, context variables. |
+
+---
+
+## Additional Directories (`src/shared/additionalDirectories.ts` - Both)
+
+Extra directories an agent may read from and/or write to beyond its working directory. Grants live on `Session.additionalDirectories` (`AdditionalDirectory[]`, from `src/shared/types.ts`) and are **enforced only by the system prompt** - nothing sandboxes the agent process.
+
+| Function                                         | Signature                                                                             | Purpose                                                                                                                           |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `normalizeAdditionalDirectories(dirs, homeDir?)` | `(AdditionalDirectory[] \| undefined, string?) => AdditionalDirectory[] \| undefined` | Call at save time in every form. Expands `~`, trims, drops blank paths, de-dupes (last row wins), returns `undefined` when empty. |
+| `formatAdditionalDirectoriesForPrompt(dirs)`     | `(AdditionalDirectory[] \| undefined) => string`                                      | Renders the `{{ADDITIONAL_DIRECTORIES}}` markdown block (heading + access table). Returns `''` when there are no grants.          |
+
+`read` and `write` are independent: read-only (reference material), write-only (a drop box the agent must never read back), or both. A row with neither flag is inert and never reaches the prompt.
+
+**Two enforcement layers, and they are not equivalent:**
+
+- **Prompt (every agent):** carries the full read/write nuance, including write-only. Only as good as the agent's obedience.
+- **Native (agents with `capabilities.supportsAdditionalDirectories`):** actually enforced by the provider via `--add-dir`, but coarser. No CLI today can express "write but never read", so a native grant opens the directory and the prompt holds the line on the finer rule.
+
+Providers translate grants to their own CLI vocabulary in `additionalDirArgs` (`src/main/agents/definitions.ts`) using these building blocks. The flags look identical across providers and are NOT: Claude Code / Copilot-CLI `--add-dir` grants tool access (read+write), Codex `--add-dir` adds a writable sandbox root.
+
+| Function                    | Signature                                                       | Purpose                                                                                           |
+| --------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `dirsWithAnyAccess(dirs)`   | `(AdditionalDirectory[] \| undefined) => AdditionalDirectory[]` | Grants the agent may touch at all. For access-style flags (Claude, Copilot).                      |
+| `dirsWithWriteAccess(dirs)` | `(AdditionalDirectory[] \| undefined) => AdditionalDirectory[]` | Grants the agent may write. For writable-root flags (Codex).                                      |
+| `repeatDirFlag(flag, dirs)` | `(string, AdditionalDirectory[]) => string[]`                   | Emit `<flag> <path>` once per dir. Never use a variadic list - it swallows the prompt positional. |
+
+Adding a provider? See [AGENT_SUPPORT.md → Step 3.5](../../AGENT_SUPPORT.md#step-35-additional-directories). `agent-completeness.test.ts` fails CI if `supportsAdditionalDirectories` and `additionalDirArgs` disagree.
+
+UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - do NOT hand-roll a row editor. It is already wired into NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen. Pass `nativelyEnforced` from the selected agent's capability so the copy doesn't promise enforcement the provider can't deliver.
 
 ---
 
@@ -407,6 +438,19 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | `agentSupportsContextTransfer(agentType)` | `(ToolType) => Promise<boolean>`                                                 | Check if agent supports receiving merged context.                                       |
 | `getSessionSshRemoteId(session)`          | `(SessionSshInfo?) => string \| undefined`                                       | Get effective SSH remote ID. Handles the sshRemoteId vs sessionSshRemoteConfig pitfall. |
 | `isSessionRemote(session)`                | `(SessionSshInfo?) => boolean`                                                   | Check if session is SSH remote. Works for both AI and terminal-only sessions.           |
+
+### Session Attention Filter (`src/renderer/utils/sessionAttention.ts`)
+
+Single source of truth for the Left Bar "unread agents only" (a.k.a. "needs attention") filter. Every surface that filters by unread MUST route through these so they never diverge: categorization (`useSessionCategories`), the bell badge + rendered worktree children (`SessionList`), the jump-badge / nav projection (`computeSortedSessions` via `SidebarNavSync`), the collapsed rail (`SkinnySidebar`), and keyboard cycling (`useCycleSession`). Do NOT re-inline the checks - a partial copy is how an auto-running worktree child ends up hidden while its parent stays visible. The active-session carve-out is intentionally NOT here: each surface keeps its own "always show the active agent (or its parent)" rule, since an active idle agent does not itself need attention.
+
+| Function / Type                                          | Signature                                                                       | Purpose                                                                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AttentionContext`                                       | `{ batchSessionIds: ReadonlySet<string>; stuckOutageIds: ReadonlySet<string> }` | Store-derived inputs the predicate can't read off the Session: Auto Run batch ids (batchStore) + stuck outage ids (retryStore).                 |
+| `sessionNeedsAttention(session, ctx)`                    | `(Session, AttentionContext) => boolean`                                        | True when an agent has an unread AI tab, is busy, is in an error state, is auto-running an Auto Run batch, or is stuck auto-retrying an outage. |
+| `sessionOrChildrenNeedAttention(session, children, ctx)` | `(Session, readonly Session[] \| undefined, AttentionContext) => boolean`       | Keep a parent visible when it or any worktree child needs attention.                                                                            |
+| `outageIdsFromSignature(signature)`                      | `(string) => Set<string>`                                                       | Parse the comma-joined outage signature (`useActiveOutageSessionSignature`) into a lookup set; guards the empty-string case.                    |
+
+For the event-time (non-reactive) path - `useCycleSession`'s `getState()` reads - build the outage set with `getActiveOutageSessionIds()` from `src/renderer/stores/retryStore.ts` and the batch set with `selectActiveBatchSessionIds(useBatchStore.getState())`.
 
 ### Sentry (`src/renderer/utils/sentry.ts`)
 

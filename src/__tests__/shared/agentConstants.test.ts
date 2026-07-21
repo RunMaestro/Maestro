@@ -1,5 +1,5 @@
 /**
- * Tests for shared/agentConstants.ts — Context windows and shared constants
+ * Tests for shared/agentConstants.ts - Context windows and shared constants
  */
 
 import { describe, it, expect } from 'vitest';

@@ -531,11 +531,11 @@ describe('CueEngine', () => {
 
 			vi.clearAllMocks();
 
-			// First completion — should not fire
+			// First completion - should not fire
 			engine.notifyAgentCompleted('agent-a');
 			expect(deps.onCueRun).not.toHaveBeenCalled();
 
-			// Second completion — should fire
+			// Second completion - should fire
 			engine.notifyAgentCompleted('agent-b');
 			expect(deps.onCueRun).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -574,7 +574,7 @@ describe('CueEngine', () => {
 
 			vi.clearAllMocks();
 
-			// Start again — should need both to fire again
+			// Start again - should need both to fire again
 			engine.notifyAgentCompleted('agent-a');
 			expect(deps.onCueRun).not.toHaveBeenCalled();
 		});
@@ -849,10 +849,10 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config — creates pending yaml watcher
+			// Delete config - creates pending yaml watcher
 			engine.refreshSession('session-1', '/projects/test');
 
-			// Stop engine — should clean up pending watcher
+			// Stop engine - should clean up pending watcher
 			engine.stop();
 			expect(pendingCleanup).toHaveBeenCalled();
 		});
@@ -876,10 +876,10 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config — creates pending yaml watcher
+			// Delete config - creates pending yaml watcher
 			engine.refreshSession('session-1', '/projects/test');
 
-			// Remove session — should clean up pending watcher
+			// Remove session - should clean up pending watcher
 			engine.removeSession('session-1');
 			expect(pendingCleanup).toHaveBeenCalled();
 		});
@@ -1184,7 +1184,7 @@ describe('CueEngine', () => {
 			//
 			// We model this with read-call ordering: the second call must
 			// `readCueConfigFile` AFTER the first call's `writeCueConfigFile`
-			// — i.e. it sees the first toggle's output as input.
+			// - i.e. it sees the first toggle's output as input.
 			const callLog: string[] = [];
 			mockReadCueConfigFile.mockImplementation(() => {
 				callLog.push('read');
@@ -1220,7 +1220,7 @@ describe('CueEngine', () => {
 			]);
 			expect(a).toBe(true);
 			expect(b).toBe(true);
-			// Strict alternation — the second read happens AFTER the first
+			// Strict alternation - the second read happens AFTER the first
 			// write. Interleaved `read, read, write, write` would surface a
 			// regression of the unguarded race window.
 			expect(callLog).toEqual(['read', 'write', 'read', 'write']);
@@ -1605,7 +1605,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			// Engine never started — getStatus should still find configs on disk
+			// Engine never started - getStatus should still find configs on disk
 
 			const status = engine.getStatus();
 			expect(status).toHaveLength(1);
@@ -1743,7 +1743,7 @@ describe('CueEngine', () => {
 
 			await vi.advanceTimersByTimeAsync(100);
 
-			// Only called once — output prompt skipped
+			// Only called once - output prompt skipped
 			expect(onCueRun).toHaveBeenCalledTimes(1);
 
 			engine.stop();
@@ -1824,7 +1824,7 @@ describe('CueEngine', () => {
 
 			await vi.advanceTimersByTimeAsync(100);
 
-			// Only one call — no output prompt
+			// Only one call - no output prompt
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 			engine.stop();
@@ -1933,7 +1933,7 @@ describe('CueEngine', () => {
 
 			const graph = engine.getGraphData();
 			expect(graph).toHaveLength(1);
-			// Only step-a (no agent_id, so unbound) is reported — step-b targets a
+			// Only step-a (no agent_id, so unbound) is reported - step-b targets a
 			// different session.
 			expect(graph[0].subscriptions.map((s) => s.name)).toEqual(['step-a']);
 
@@ -1962,11 +1962,11 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			// Engine never started — simulates disabled path
+			// Engine never started - simulates disabled path
 
 			const graph = engine.getGraphData();
 			expect(graph).toHaveLength(1);
-			// Only `trigger` (unbound) is reported — `downstream` is bound to a
+			// Only `trigger` (unbound) is reported - `downstream` is bound to a
 			// session that doesn't exist in this view.
 			expect(graph[0].subscriptions.map((s) => s.name)).toEqual(['trigger']);
 		});
@@ -2049,7 +2049,7 @@ describe('CueEngine', () => {
 			expect(date.getMinutes()).toBe(0);
 		});
 
-		it('respects days filter — skips non-matching days', () => {
+		it('respects days filter - skips non-matching days', () => {
 			// Monday 2026-03-09 at 10:00
 			vi.setSystemTime(new Date('2026-03-09T10:00:00'));
 			const result = calculateNextScheduledTime(['09:00'], ['wed']);
@@ -2063,7 +2063,7 @@ describe('CueEngine', () => {
 		it('returns null for invalid time strings', () => {
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 			const result = calculateNextScheduledTime(['25:99']);
-			// Out-of-bounds hour (25) and minute (99) must be rejected — the function
+			// Out-of-bounds hour (25) and minute (99) must be rejected - the function
 			// validates bounds before calling setHours, so no Date rollover occurs.
 			expect(result).toBeNull();
 		});
@@ -2107,21 +2107,21 @@ describe('CueEngine', () => {
 		// until the user toggled Cue or restarted. The fix bumped the
 		// bound to `<= 7` so weekly schedules always resolve.
 		it("resolves to same day next week when today's slot has passed", () => {
-			// Monday 2026-03-09 at 09:01 — schedule for Monday 09:00 has
+			// Monday 2026-03-09 at 09:01 - schedule for Monday 09:00 has
 			// already passed by one minute. Without the fix, this returned null.
 			vi.setSystemTime(new Date('2026-03-09T09:01:00'));
 			const result = calculateNextScheduledTime(['09:00'], ['mon']);
 			expect(result).not.toBeNull();
 			const date = new Date(result!);
 			expect(date.getDay()).toBe(1); // Monday
-			// Next Monday is 2026-03-16 — exactly 7 days later
+			// Next Monday is 2026-03-16 - exactly 7 days later
 			expect(date.getDate()).toBe(16);
 			expect(date.getHours()).toBe(9);
 			expect(date.getMinutes()).toBe(0);
 		});
 
 		it('resolves to same day next week with multi-day filter when today is the only matching day past its slot', () => {
-			// Wednesday 2026-03-11 at 23:59 — schedule fires Wed/Fri at 09:00.
+			// Wednesday 2026-03-11 at 23:59 - schedule fires Wed/Fri at 09:00.
 			// Wednesday's slot is past, Friday is offset 2 → that's the next
 			// fire, NOT next Wednesday. Verifies the picks-earliest semantic
 			// still holds with the extended bound.
@@ -2136,7 +2136,7 @@ describe('CueEngine', () => {
 
 	describe('time.scheduled subscriptions', () => {
 		it('fires when current time matches schedule_times', async () => {
-			// Set to Monday 2026-03-09 at 08:59:00 — interval fires at 09:00
+			// Set to Monday 2026-03-09 at 08:59:00 - interval fires at 09:00
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2155,7 +2155,7 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Advance past the 60s check interval — time becomes 09:00
+			// Advance past the 60s check interval - time becomes 09:00
 			await vi.advanceTimersByTimeAsync(60_000);
 
 			expect(deps.onCueRun).toHaveBeenCalledWith(
@@ -2173,7 +2173,7 @@ describe('CueEngine', () => {
 		});
 
 		it('does not fire when current time does not match', async () => {
-			// Set to Monday 2026-03-09 at 09:01:30 — neither the immediate check nor
+			// Set to Monday 2026-03-09 at 09:01:30 - neither the immediate check nor
 			// the first interval tick (at 09:02:30) matches the '09:00' schedule slot.
 			vi.setSystemTime(new Date('2026-03-09T09:01:30'));
 
@@ -2200,8 +2200,8 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('respects schedule_days filter — skips non-matching days', async () => {
-			// Saturday 2026-03-14 at 08:59:00 — interval fires at 09:00
+		it('respects schedule_days filter - skips non-matching days', async () => {
+			// Saturday 2026-03-14 at 08:59:00 - interval fires at 09:00
 			vi.setSystemTime(new Date('2026-03-14T08:59:00'));
 
 			const config = createMockConfig({
@@ -2229,7 +2229,7 @@ describe('CueEngine', () => {
 		});
 
 		it('fires when day matches schedule_days', async () => {
-			// Monday 2026-03-09 at 08:59:00 — interval fires at 09:00
+			// Monday 2026-03-09 at 08:59:00 - interval fires at 09:00
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2305,7 +2305,7 @@ describe('CueEngine', () => {
 		});
 
 		it('applies filter before firing', async () => {
-			// Monday at 08:59 — fires at 09:00
+			// Monday at 08:59 - fires at 09:00
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2316,7 +2316,7 @@ describe('CueEngine', () => {
 						enabled: true,
 						prompt: 'filtered task',
 						schedule_times: ['09:00'],
-						filter: { matched_day: 'tue' }, // Won't match — today is Monday
+						filter: { matched_day: 'tue' }, // Won't match - today is Monday
 					},
 				],
 			});
@@ -2334,7 +2334,7 @@ describe('CueEngine', () => {
 		});
 
 		it('event payload includes matched_time and matched_day', async () => {
-			// Monday at 08:59 — fires at 09:00
+			// Monday at 08:59 - fires at 09:00
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2375,7 +2375,7 @@ describe('CueEngine', () => {
 		});
 
 		it('tracks nextTriggers via calculateNextScheduledTime', () => {
-			// Monday 2026-03-09 at 08:00 — next trigger should be 09:00 today
+			// Monday 2026-03-09 at 08:00 - next trigger should be 09:00 today
 			vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 
 			const config = createMockConfig({
@@ -2404,7 +2404,7 @@ describe('CueEngine', () => {
 		});
 
 		it('refreshes nextTriggers after time.scheduled fires', async () => {
-			// Monday 2026-03-09 at 08:59 — next trigger should be 09:00 today
+			// Monday 2026-03-09 at 08:59 - next trigger should be 09:00 today
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2431,7 +2431,7 @@ describe('CueEngine', () => {
 			expect(nextBeforeDate.getHours()).toBe(9);
 			expect(nextBeforeDate.getMinutes()).toBe(0);
 
-			// Advance to 09:00 — the subscription fires
+			// Advance to 09:00 - the subscription fires
 			vi.advanceTimersByTime(60_000);
 			await vi.advanceTimersByTimeAsync(10);
 
@@ -2445,11 +2445,11 @@ describe('CueEngine', () => {
 		});
 
 		it('uses hydrated prompt content from materialized config', async () => {
-			// Monday at 08:59 — fires at 09:00
+			// Monday at 08:59 - fires at 09:00
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			// As of the Phase 2 cleanup, prompt_file no longer exists on the runtime
-			// CueSubscription contract — the normalizer resolves it into `prompt` at
+			// CueSubscription contract - the normalizer resolves it into `prompt` at
 			// load time. This test confirms that hydrated content flows through to
 			// onCueRun unchanged.
 			const config = createMockConfig({
@@ -2480,7 +2480,7 @@ describe('CueEngine', () => {
 		});
 
 		it('passes output_prompt through', async () => {
-			// Monday at 08:59 — fires at 09:00
+			// Monday at 08:59 - fires at 09:00
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -2608,14 +2608,14 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Advance to 09:00 — should fire once
+			// Advance to 09:00 - should fire once
 			vi.advanceTimersByTime(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 			// Simulate config refresh within the same minute (e.g., YAML hot reload)
 			engine.refreshSession(session.id, session.projectRoot);
 
-			// The new timer fires again in the same 09:00 minute — should NOT double-fire
+			// The new timer fires again in the same 09:00 minute - should NOT double-fire
 			vi.advanceTimersByTime(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
@@ -2641,15 +2641,15 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Advance to 09:00 — fires
+			// Advance to 09:00 - fires
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// 09:01 — no match, stale key for 09:00 is evicted
+			// 09:01 - no match, stale key for 09:00 is evicted
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// 09:02 — fires for the second scheduled time
+			// 09:02 - fires for the second scheduled time
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
 
@@ -2679,7 +2679,7 @@ describe('CueEngine', () => {
 			vi.advanceTimersByTime(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// Stop and restart — keys should be cleared
+			// Stop and restart - keys should be cleared
 			engine.stop();
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 			engine.start();
@@ -3047,7 +3047,7 @@ describe('CueEngine', () => {
 			await vi.advanceTimersByTimeAsync(0);
 			vi.clearAllMocks();
 
-			// Advance 5 minutes — only heartbeat-1 should fire
+			// Advance 5 minutes - only heartbeat-1 should fire
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 			expect(deps.onCueRun).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'first' }));
@@ -3097,7 +3097,7 @@ describe('CueEngine', () => {
 		});
 
 		it('scheduledFiredKeys are cleaned on refresh', async () => {
-			// Start at 08:59 — 1 minute before the scheduled time
+			// Start at 08:59 - 1 minute before the scheduled time
 			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 
 			const config = createMockConfig({
@@ -3123,11 +3123,11 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Advance to 09:00 — should fire
+			// Advance to 09:00 - should fire
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// Refresh session — scheduledFiredKeys are cleared in teardownSession
+			// Refresh session - scheduledFiredKeys are cleared in teardownSession
 			capturedOnChange!();
 
 			// Reset system time to 08:59 so the next 60s advance lands at 09:00 again
@@ -3196,7 +3196,7 @@ describe('CueEngine', () => {
 			await vi.advanceTimersByTimeAsync(0);
 			expect(onCueRun).toHaveBeenCalledTimes(1);
 
-			// Advance 1 minute — second heartbeat queued (max_concurrent=1, slot occupied)
+			// Advance 1 minute - second heartbeat queued (max_concurrent=1, slot occupied)
 			await vi.advanceTimersByTimeAsync(60_000);
 
 			// Reload with max_concurrent=2
@@ -3220,7 +3220,7 @@ describe('CueEngine', () => {
 			mockLoadCueConfig.mockReturnValue(config2);
 			capturedOnChange!();
 
-			// The config reload tears down and reinitializes — the immediate heartbeat fires again
+			// The config reload tears down and reinitializes - the immediate heartbeat fires again
 			// With max_concurrent=2, the new heartbeat can dispatch immediately
 			await vi.advanceTimersByTimeAsync(0);
 
@@ -3259,7 +3259,7 @@ describe('CueEngine', () => {
 				ok: true,
 				config,
 				warnings: [
-					'"missing-file-sub" has prompt_file "missing.md" but the file was not found — subscription will fail on trigger',
+					'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger',
 				],
 			});
 			const deps = createMockDeps();
@@ -3284,7 +3284,7 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			// No warnings — the loader successfully resolved the prompt file content.
+			// No warnings - the loader successfully resolved the prompt file content.
 			mockLoadCueConfigDetailed.mockReturnValue({
 				ok: true,
 				config,
@@ -3621,7 +3621,7 @@ describe('CueEngine', () => {
 		it('does NOT fire chain subs (agent.completed) even if they share pipeline_name', () => {
 			// Chain subs exist for every non-initial node in a pipeline.
 			// They must only fire on their upstream's completion, not on a
-			// manual pipeline trigger — otherwise a chain would dispatch
+			// manual pipeline trigger - otherwise a chain would dispatch
 			// with no upstream output and run its downstream agent blindly.
 			const config = createMockConfig({
 				settings: CONCURRENT_SETTINGS,

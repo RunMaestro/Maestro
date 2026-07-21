@@ -34,8 +34,20 @@ const MAX_DRAFT_ATTACHMENTS = 5;
 const MAX_DRAFT_MESSAGES = 200;
 const MAX_DRAFT_MESSAGE_LENGTH = 20000;
 const DRAFTS_FILE_NAME = 'feedback-drafts.json';
+const SUBMITTED_ISSUES_FILE_NAME = 'feedback-submitted-issues.json';
+const MAX_SUBMITTED_ISSUES = 100;
 
 type FeedbackCategory = 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+
+interface SubmittedIssue {
+	number: number;
+	url: string;
+	title: string;
+	category: FeedbackCategory;
+	submittedAt: number;
+	state: 'open' | 'closed';
+	lastCheckedAt: number;
+}
 
 const GH_NOT_INSTALLED_MESSAGE =
 	'GitHub CLI (gh) is not installed. Install it from https://cli.github.com';
@@ -254,6 +266,105 @@ async function writeDrafts(drafts: FeedbackDraft[]): Promise<void> {
 	const filePath = getDraftsFilePath();
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	await atomicWriteJson(filePath, { drafts });
+}
+
+/** Resolve the submitted-issue history file (mirrors getDraftsFilePath). */
+function getSubmittedIssuesFilePath(): string {
+	return path.join(app.getPath('userData'), SUBMITTED_ISSUES_FILE_NAME);
+}
+
+// Serialize read-modify-write cycles against the single history file so a
+// record-on-submit, a delete, and a state refresh cannot interleave and clobber
+// each other (mirrors the drafts write queue above).
+const submittedIssuesWriteQueue = createKeyedWriteQueue();
+const enqueueSubmittedIssuesWrite = <T>(fn: () => Promise<T>): Promise<T> =>
+	submittedIssuesWriteQueue.enqueue(SUBMITTED_ISSUES_FILE_NAME, fn);
+
+async function readSubmittedIssues(): Promise<SubmittedIssue[]> {
+	try {
+		const content = await fs.readFile(getSubmittedIssuesFilePath(), 'utf-8');
+		const data = JSON.parse(content);
+		return Array.isArray(data.issues) ? data.issues : [];
+	} catch {
+		return [];
+	}
+}
+
+async function writeSubmittedIssues(issues: SubmittedIssue[]): Promise<void> {
+	const filePath = getSubmittedIssuesFilePath();
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await atomicWriteJson(filePath, { issues });
+}
+
+/**
+ * Record a freshly-created issue in the submitted-issue history. Best-effort: a
+ * persistence failure must never fail the submit that produced it.
+ */
+async function recordSubmittedIssue(params: {
+	issueUrl: string;
+	title: string;
+	category: FeedbackCategory;
+}): Promise<void> {
+	const match = params.issueUrl.match(/\/issues\/(\d+)/);
+	if (!match) return;
+	const number = Number(match[1]);
+	if (!Number.isFinite(number)) return;
+	try {
+		await enqueueSubmittedIssuesWrite(async () => {
+			const issues = await readSubmittedIssues();
+			const now = Date.now();
+			const idx = issues.findIndex((i) => i.number === number);
+			const entry: SubmittedIssue = {
+				number,
+				url: params.issueUrl,
+				title: params.title,
+				category: params.category,
+				submittedAt: idx >= 0 ? issues[idx].submittedAt : now,
+				state: 'open',
+				lastCheckedAt: now,
+			};
+			if (idx >= 0) issues[idx] = entry;
+			else issues.push(entry);
+			issues.sort((a, b) => b.submittedAt - a.submittedAt);
+			await writeSubmittedIssues(issues.slice(0, MAX_SUBMITTED_ISSUES));
+		});
+	} catch (e) {
+		void captureException(e);
+		logger.warn(`Failed to record submitted issue: ${e}`, LOG_CONTEXT);
+	}
+}
+
+/**
+ * Fetch current open/closed state for the given issue numbers via a single
+ * `gh api graphql` call. Returns null on any gh/network/auth failure so callers
+ * can fall back to cached state.
+ */
+async function fetchIssueStates(numbers: number[]): Promise<Map<number, 'open' | 'closed'> | null> {
+	const unique = Array.from(new Set(numbers.filter((n) => Number.isFinite(n))));
+	if (unique.length === 0) return new Map();
+	const fields = unique.map((n) => `i${n}: issue(number: ${n}) { number state }`).join(' ');
+	const query = `query { repository(owner: "RunMaestro", name: "Maestro") { ${fields} } }`;
+	const result = await execFileNoThrow(
+		'gh',
+		['api', 'graphql', '-f', `query=${query}`],
+		undefined,
+		getExpandedEnv()
+	);
+	if (result.exitCode !== 0) return null;
+	try {
+		const repo = JSON.parse(result.stdout)?.data?.repository;
+		if (!repo || typeof repo !== 'object') return null;
+		const states = new Map<number, 'open' | 'closed'>();
+		for (const value of Object.values(repo)) {
+			const issue = value as { number?: number; state?: string } | null;
+			if (issue && typeof issue.number === 'number' && typeof issue.state === 'string') {
+				states.set(issue.number, issue.state.toUpperCase() === 'CLOSED' ? 'closed' : 'open');
+			}
+		}
+		return states;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -1050,6 +1161,15 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					return { success: false, error: issueCreate.stderr || 'Failed to create GitHub issue.' };
 				}
 
+				const issueUrl = issueCreate.stdout.trim();
+				if (issueUrl) {
+					await recordSubmittedIssue({
+						issueUrl,
+						title: buildIssueTitle(normalizedPayload.category, normalizedPayload.summary),
+						category: normalizedPayload.category,
+					});
+				}
+
 				return { success: true };
 			}
 		)
@@ -1251,6 +1371,9 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 
 					// gh issue create prints the issue URL to stdout
 					const issueUrl = issueCreate.stdout.trim();
+					if (issueUrl) {
+						await recordSubmittedIssue({ issueUrl, title, category: payload.category });
+					}
 					return { success: true, issueUrl: issueUrl || undefined };
 				} finally {
 					await fs.unlink(bodyFile).catch(() => {});
@@ -1355,6 +1478,65 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 					await writeDrafts(next);
 				});
 				return {};
+			}
+		)
+	);
+
+	// List submitted-issue history, most-recent-first.
+	ipcMain.handle(
+		'feedback:issues:list',
+		withIpcErrorLogging(
+			handlerOpts('issues-list'),
+			async (): Promise<{ issues: SubmittedIssue[] }> => {
+				const issues = await readSubmittedIssues();
+				issues.sort((a, b) => b.submittedAt - a.submittedAt);
+				return { issues };
+			}
+		)
+	);
+
+	// Delete one history record locally (does not touch GitHub).
+	ipcMain.handle(
+		'feedback:issues:delete',
+		withIpcErrorLogging(
+			handlerOpts('issues-delete'),
+			async (payload: { number?: number }): Promise<Record<string, never>> => {
+				const number = typeof payload?.number === 'number' ? payload.number : NaN;
+				await enqueueSubmittedIssuesWrite(async () => {
+					const issues = await readSubmittedIssues();
+					await writeSubmittedIssues(issues.filter((i) => i.number !== number));
+				});
+				return {};
+			}
+		)
+	);
+
+	// Refresh open/closed state for stored issues via one gh GraphQL call.
+	// Falls back to the cached list unchanged on any gh/network/auth error.
+	ipcMain.handle(
+		'feedback:issues:refresh-states',
+		withIpcErrorLogging(
+			handlerOpts('issues-refresh-states'),
+			async (): Promise<{ issues: SubmittedIssue[] }> => {
+				const stored = await readSubmittedIssues();
+				stored.sort((a, b) => b.submittedAt - a.submittedAt);
+				if (stored.length === 0) return { issues: stored };
+
+				const states = await fetchIssueStates(stored.map((i) => i.number));
+				if (!states) return { issues: stored };
+
+				const now = Date.now();
+				const next = stored.map((issue) => {
+					const state = states.get(issue.number);
+					return state ? { ...issue, state, lastCheckedAt: now } : issue;
+				});
+				// Re-read before persisting so a concurrent delete is not clobbered.
+				await enqueueSubmittedIssuesWrite(async () => {
+					const current = await readSubmittedIssues();
+					const byNumber = new Map(next.map((i) => [i.number, i]));
+					await writeSubmittedIssues(current.map((i) => byNumber.get(i.number) ?? i));
+				});
+				return { issues: next };
 			}
 		)
 	);

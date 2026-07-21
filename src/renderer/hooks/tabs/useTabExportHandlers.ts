@@ -1,5 +1,5 @@
 /**
- * useTabExportHandlers — extracted from App.tsx
+ * useTabExportHandlers - extracted from App.tsx
  *
  * Provides handlers for tab content export operations:
  *   - Copy tab context to clipboard
@@ -84,7 +84,7 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		if (!resolved) return;
 
 		const includeThinking = options?.includeThinking ?? false;
-		// Only claim "with reasoning" when the tab actually has reasoning entries —
+		// Only claim "with reasoning" when the tab actually has reasoning entries -
 		// the flag alone isn't enough, since a caller could opt in to thinking on
 		// a tab whose reasoning blocks have all been cleared.
 		const hadThinking = includeThinking && hasThinkingEntries(resolved.tab.logs);

@@ -1,5 +1,5 @@
 /**
- * Plugin authorization ledger (main process) — the security gate.
+ * Plugin authorization ledger (main process) - the security gate.
  *
  * Replaces the old plain-JSON enable-state + grants files with ONE sealed,
  * profile-wide ledger plus a freshness anchor held OUTSIDE the rollable file
@@ -14,7 +14,7 @@
  *    live in a NAMED OS credential entry. Every mint/revoke/uninstall bumps the
  *    epoch and writes it into both the ledger and the anchor. On load we require
  *    `ledger.epoch === anchor.epoch` and matching install secret, so restoring
- *    an OLD sealed ledger (a rollback) is rejected — its epoch is stale.
+ *    an OLD sealed ledger (a rollback) is rejected - its epoch is stale.
  *  - TOMBSTONES: uninstall/revoke records `{ pluginId, removedAtEpoch }`, so a
  *    re-appearing plugin folder is a fresh install (disabled, re-consent), never
  *    a silent re-enable.
@@ -33,6 +33,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
+import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
 
@@ -63,7 +64,7 @@ export interface LedgerEntry {
 	mintedAt: number;
 }
 
-/** A removed/revoked plugin — blocks silent re-enable of a restored folder. */
+/** A removed/revoked plugin - blocks silent re-enable of a restored folder. */
 export interface Tombstone {
 	pluginId: string;
 	removedAtEpoch: number;
@@ -157,7 +158,7 @@ export type VerifyReason = 'ok' | 'not-authorized' | 'identity-changed' | 'remov
 export interface VerifyResult {
 	authorized: boolean;
 	reason: VerifyReason;
-	/** Caps to hand the broker — empty unless `authorized`. */
+	/** Caps to hand the broker - empty unless `authorized`. */
 	caps: PermissionGrant[];
 }
 
@@ -345,7 +346,7 @@ export class AuthorizationStore {
 
 	/** Uninstall: an AUTHORITATIVE user removal. Always records a tombstone at a
 	 * fresh epoch (deduped) and drops any grant, even when the plugin was never
-	 * enabled — so a later restored folder is recognized as removed-by-user and a
+	 * enabled - so a later restored folder is recognized as removed-by-user and a
 	 * rolled-back ledger that still enables it fails the epoch check. */
 	uninstall(pluginId: string): void {
 		this.ensureLoaded();
@@ -359,7 +360,48 @@ export class AuthorizationStore {
 		this.persist();
 	}
 
-	/** The granted capabilities for a plugin — the broker's live source of truth.
+	/**
+	 * Host-managed allowlist edit: replace the member scope of an ALREADY-CONSENTED
+	 * allowlist-scoped grant (agents:dispatch / process:spawn) with a new set the
+	 * USER chose in Settings. The user is a DIFFERENT principal from the plugin;
+	 * the plugin can never reach this. It mutates ONLY the scope of a capability
+	 * the user already granted: it never adds a capability, never touches the
+	 * unattended flag, and never changes identity (the plugin's files are
+	 * unchanged, so a later verify() still matches). Authoritative like any mint:
+	 * bumps the epoch and persists (sealed + anchored, or the session-only fallback).
+	 *
+	 * `members` are exact tokens (agent ids / host-blessed binary names); an empty
+	 * set clears the scope to deny-all, a valid lockdown short of a full revoke.
+	 * Returns false when the capability is not allowlist-scoped, when the plugin
+	 * holds no grant for it (nothing to widen: the user must first consent to the
+	 * capability through the host-owned consent window), or when any member is not
+	 * a valid allowlist token.
+	 */
+	setAllowlistScope(
+		pluginId: string,
+		capability: PluginCapability,
+		members: readonly string[]
+	): boolean {
+		this.ensureLoaded();
+		if (!isAllowlistScoped(capability)) return false;
+		const entry = this.ledger.entries[pluginId];
+		if (!entry || !entry.enabled) return false;
+		const idx = entry.caps.findIndex((c) => c.capability === capability);
+		if (idx === -1) return false;
+		// Defense-in-depth: this is the authoritative sealed-ledger mutation, so it
+		// self-guards rather than trusting the caller. Refuse the whole edit if any
+		// member is invalid (empty, or a character that could split or smuggle
+		// through the comma-joined scope) - fail loud, never silently narrow.
+		if (!members.every(isValidAllowlistMember)) return false;
+		const scope = members.length > 0 ? [...members].join(',') : undefined;
+		this.bump();
+		entry.caps = entry.caps.map((c, i) => (i === idx ? { ...c, scope } : { ...c }));
+		entry.mintedAt = this.now();
+		this.persist();
+		return true;
+	}
+
+	/** The granted capabilities for a plugin - the broker's live source of truth.
 	 * Empty unless the plugin is currently enabled in the verified ledger. */
 	readGrants(pluginId: string): PermissionGrant[] {
 		this.ensureLoaded();
@@ -401,7 +443,7 @@ export class AuthorizationStore {
 	 * (plugin-manager.refresh) passes the plugin's CURRENT identity and the
 	 * manifest's requested capabilities; this returns the caps to honor, or a
 	 * reason the plugin must be disabled / re-consented. Pure given the loaded
-	 * ledger — no I/O.
+	 * ledger - no I/O.
 	 */
 	verify(
 		pluginId: string,
@@ -513,7 +555,7 @@ export function keyringAnchor(entryFactory: () => KeyringEntry | null): AnchorSt
 	};
 }
 
-/** A no-op anchor — `available() === false`, so the store runs session-only. */
+/** A no-op anchor - `available() === false`, so the store runs session-only. */
 export function noAnchor(): AnchorStore {
 	return {
 		available: () => false,

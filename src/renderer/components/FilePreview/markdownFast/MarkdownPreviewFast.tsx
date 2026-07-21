@@ -17,6 +17,8 @@ import { createMermaidRenderer } from './mermaidRenderer';
 import { findHits } from './searchHits';
 import { buildRangeAtOffset, scrollRangeIntoView } from '../search/scrollToOffset';
 import { FAST_BLOCK_CLASS, generateProseCss } from './proseStyles';
+import { SvgContextMenu } from '../../SvgContextMenu';
+import { useSvgContextMenu } from '../../../hooks/ui/useSvgContextMenu';
 import type { MarkdownBlock, MarkdownPreviewFastHandle, MarkdownPreviewFastProps } from './types';
 
 /**
@@ -104,7 +106,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 						const blockEls = root.querySelectorAll<HTMLElement>(`.${FAST_BLOCK_CLASS}`);
 						// Virtuoso renders only the visible window. The block at the
 						// matched index is the one we just scrolled to; it should now
-						// be present. If not (rare race), bail — the block-level
+						// be present. If not (rare race), bail - the block-level
 						// scroll already landed the user close enough.
 						const targetBlock = Array.from(blockEls).find(
 							(el) => el.getAttribute('data-block-index') === String(hit.blockIndex)
@@ -228,6 +230,11 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 
 		const proseCss = useMemo(() => generateProseCss(theme), [theme]);
 
+		// Mermaid diagrams in this tier are injected imperatively into the scroll
+		// root, so they get the same right-click Copy/Save menu as every other
+		// SVG surface via the shared container handler.
+		const { svgMenu, dismissSvgMenu, openSvgMenuFromContainer } = useSvgContextMenu();
+
 		// Lazy code-block syntax highlighter: observes the scroll container and
 		// fires Shiki on each code block as it scrolls into view. Disconnects on
 		// unmount so we don't leak the IntersectionObserver or the Shiki bundle.
@@ -238,7 +245,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 			const mermaid = createMermaidRenderer({ theme });
 			highlighter.observe(root);
 			mermaid.observe(root);
-			// Re-observe after the next paint — new Virtuoso items may have
+			// Re-observe after the next paint - new Virtuoso items may have
 			// mounted in the layout pass that just finished.
 			const rafId = requestAnimationFrame(() => {
 				highlighter.observe(root);
@@ -257,6 +264,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 				className="file-preview-content"
 				style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
 				onClick={onClick}
+				onContextMenu={openSvgMenuFromContainer}
 			>
 				<style>{proseCss}</style>
 				{blocks.length === 0 ? (
@@ -275,6 +283,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 						increaseViewportBy={{ top: VIRTUOSO_OVERSCAN_PX, bottom: VIRTUOSO_OVERSCAN_PX }}
 					/>
 				)}
+				{svgMenu && <SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />}
 			</div>
 		);
 	}

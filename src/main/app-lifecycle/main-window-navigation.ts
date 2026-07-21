@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
 import { blocksSubframeNavigation } from '../../shared/plugins/panel-navigation';
+import { parseConcertoHtmlUrl } from '../../shared/concerto-html';
 
 const ALLOWED_APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
 
@@ -10,6 +11,17 @@ export interface MainWindowNavigationOptions {
 	rendererProductionUrl: string;
 	/** Exact entry URL for this window (includes ?windowId= for secondary windows). */
 	entryUrl: string;
+}
+
+/** Allow only valid local Concerto documents through the general subframe deny rule. */
+export function blocksMainWindowSubframeNavigation(
+	isMainFrame: boolean,
+	targetUrl: string
+): boolean {
+	const isConcertoHtmlDocument = parseConcertoHtmlUrl(targetUrl);
+	if (!isMainFrame && isConcertoHtmlDocument) return false;
+	if (isMainFrame && isConcertoHtmlDocument) return true;
+	return blocksSubframeNavigation(isMainFrame, targetUrl);
 }
 
 /**
@@ -22,28 +34,27 @@ export function attachMainWindowNavigationGuards(
 ): void {
 	const { isDevelopment, devServerUrl, rendererProductionUrl, entryUrl } = options;
 
-	// Subframe egress guard (backstop). App-window `srcDoc` subframes (the
-	// file-preview renderer) have no business navigating anywhere: a meta CSP
-	// cannot stop such a frame from navigating ITSELF to a remote URL and
-	// leaking data through it, so block any subframe navigation away from its
-	// initial document here (the top frame is handled by `will-navigate`
-	// below). Plugin panels are NOT subframes anymore — they are <webview>
+	// Subframe egress guard (backstop). File-preview srcDoc frames have no
+	// business navigating anywhere. Concerto mockups are the one explicit
+	// exception: their initial valid maestro-concerto document is allowed, then
+	// the document CSP and this same guard block every external target. Plugin
+	// panels are NOT subframes anymore - they are <webview>
 	// guests with their own webContents, locked down separately in
-	// attachPluginPanelGuestSecurity (did-attach-webview) — but this guard
-	// stays as defense in depth for any srcDoc frame in the app window.
+	// attachPluginPanelGuestSecurity (did-attach-webview) - but this guard
+	// stays as defense in depth for every iframe in the app window.
 	browserWindow.webContents.on('will-frame-navigate', (event) => {
-		if (!blocksSubframeNavigation(event.isMainFrame, event.url)) return;
+		if (!blocksMainWindowSubframeNavigation(event.isMainFrame, event.url)) return;
 		event.preventDefault();
 		logger.warn(`Blocked subframe navigation to: ${event.url}`, 'Window');
 	});
 
-	// Deny all popup/new-window requests — external links use IPC shell:openExternal
+	// Deny all popup/new-window requests - external links use IPC shell:openExternal
 	browserWindow.webContents.setWindowOpenHandler(({ url }) => {
 		logger.warn(`Blocked window.open request: ${url}`, 'Window');
 		return { action: 'deny' };
 	});
 
-	// Restrict navigation to the app itself — prevent renderer from navigating away.
+	// Restrict navigation to the app itself - prevent renderer from navigating away.
 	// Both the dev-server URL and the renderer entry's file:// URL are constants
 	// for the lifetime of this window, so compute them once at setup time rather
 	// than on every navigation event. The production guard only allows the

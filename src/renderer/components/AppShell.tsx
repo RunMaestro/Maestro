@@ -25,7 +25,8 @@ import { CadenzaLayer } from './Cadenza';
 import { MovementOverlay } from './Movement';
 import { useCadenzaStore } from '../stores/cadenzaStore';
 import { useMovementStore } from '../stores/movementStore';
-import type { Group, GroupChat, Session, Theme } from '../types';
+import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
+import type { Group, GroupChat, Theme } from '../types';
 
 type SessionListProps = ComponentProps<typeof SessionList>;
 type MainPanelProps = ComponentProps<typeof MainPanel>;
@@ -45,7 +46,6 @@ export interface AppShellProps {
 	activeGroupChatId: string | null;
 	groupChats: GroupChat[];
 	groups: Group[];
-	activeSession: Session | null;
 
 	modals: ReactNode;
 	standaloneModals: ReactNode;
@@ -53,7 +53,7 @@ export interface AppShellProps {
 	logViewer: ReactNode | null;
 	groupChatView: ReactNode | null;
 
-	sessions: Session[];
+	hasSessions: boolean;
 	sessionsLoaded: boolean;
 	emptyStateProps: Omit<EmptyStateViewProps, 'theme'>;
 
@@ -87,13 +87,12 @@ export function AppShell({
 	activeGroupChatId,
 	groupChats,
 	groups,
-	activeSession,
 	modals,
 	standaloneModals,
 	logViewerOpen,
 	logViewer,
 	groupChatView,
-	sessions,
+	hasSessions,
 	sessionsLoaded,
 	emptyStateProps,
 	sessionListProps,
@@ -111,6 +110,23 @@ export function AppShell({
 	rightEdgeSwipeHandlers,
 	onToastSessionClick,
 }: AppShellProps) {
+	// PERF: Title chrome self-sources a narrow slice so App does not pass
+	// activeSession into the shell (busy/log flushes stay off this paint path when
+	// App's chrome equality ignores state).
+	const titleGroupId = useSessionStore((s) => selectActiveSession(s)?.groupId);
+	const titleSessionName = useSessionStore((s) => selectActiveSession(s)?.name);
+	const titleTabLabel = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		if (!sess) return null;
+		const activeTab = sess.aiTabs?.find((t) => t.id === sess.activeTabId);
+		if (!activeTab) return null;
+		return (
+			activeTab.name ||
+			(activeTab.agentSessionId ? activeTab.agentSessionId.split('-')[0].toUpperCase() : null)
+		);
+	});
+	const hasTitleSession = useSessionStore((s) => !!selectActiveSession(s));
+
 	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
 	// outside React. Clear both stores when the feature is disabled so stale views
 	// do not return if the user enables it again later.
@@ -157,30 +173,21 @@ export function AppShell({
 							{groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Unknown'}
 						</span>
 					) : (
-						activeSession && (
+						hasTitleSession &&
+						titleSessionName && (
 							<span
 								className="text-xs select-none opacity-50"
 								style={{ color: theme.colors.textDim }}
 							>
 								{(() => {
 									const parts: string[] = [];
-									const group = groups.find((g) => g.id === activeSession.groupId);
+									const group = groups.find((g) => g.id === titleGroupId);
 									if (group) {
 										parts.push(`${group.emoji} ${group.name}`);
 									}
-									parts.push(activeSession.name);
-									const activeTab = activeSession.aiTabs?.find(
-										(t) => t.id === activeSession.activeTabId
-									);
-									if (activeTab) {
-										const tabLabel =
-											activeTab.name ||
-											(activeTab.agentSessionId
-												? activeTab.agentSessionId.split('-')[0].toUpperCase()
-												: null);
-										if (tabLabel) {
-											parts.push(tabLabel);
-										}
+									parts.push(titleSessionName);
+									if (titleTabLabel) {
+										parts.push(titleTabLabel);
 									}
 									return parts.join(' | ');
 								})()}
@@ -193,15 +200,15 @@ export function AppShell({
 			{modals}
 			{standaloneModals}
 
-			{sessions.length === 0 && !sessionsLoaded && !isMobileLandscape ? (
+			{!hasSessions && !sessionsLoaded && !isMobileLandscape ? (
 				<AgentsLoadingView theme={theme} />
 			) : null}
 
-			{sessions.length === 0 && sessionsLoaded && !isMobileLandscape ? (
+			{!hasSessions && sessionsLoaded && !isMobileLandscape ? (
 				<EmptyStateView theme={theme} {...emptyStateProps} />
 			) : null}
 
-			{!isMobileLandscape && sessions.length > 0 && (
+			{!isMobileLandscape && hasSessions && (
 				<ErrorBoundary>
 					<SessionList {...sessionListProps} />
 				</ErrorBoundary>
@@ -213,7 +220,7 @@ export function AppShell({
 				className="flex flex-col shrink-0 overflow-hidden border-r w-[320px]"
 			/>
 
-			{isNarrowViewport && sessions.length > 0 && (leftSidebarOpen || rightPanelOpen) && (
+			{isNarrowViewport && hasSessions && (leftSidebarOpen || rightPanelOpen) && (
 				<div
 					className="maestro-mobile-backdrop"
 					onClick={onCloseDrawers}
@@ -241,7 +248,7 @@ export function AppShell({
 
 			{groupChatView}
 
-			{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+			{hasSessions && !activeGroupChatId && !logViewerOpen && (
 				<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 			)}
 
@@ -251,7 +258,7 @@ export function AppShell({
 				className="flex flex-col flex-1 min-w-0 overflow-hidden"
 			/>
 
-			{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+			{!isMobileLandscape && hasSessions && !activeGroupChatId && !logViewerOpen && (
 				<ErrorBoundary>
 					<RightPanel ref={rightPanelRef} {...rightPanelProps} />
 				</ErrorBoundary>

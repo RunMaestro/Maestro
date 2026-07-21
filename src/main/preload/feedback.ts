@@ -84,6 +84,16 @@ export interface FeedbackDraft {
 	lastResponse?: FeedbackDraftResponse | null;
 }
 
+export interface SubmittedIssue {
+	number: number;
+	url: string;
+	title: string;
+	category: FeedbackCategory;
+	submittedAt: number;
+	state: 'open' | 'closed';
+	lastCheckedAt: number;
+}
+
 export interface FeedbackSubmissionPayload {
 	sessionId: string;
 	category: FeedbackCategory;
@@ -169,6 +179,12 @@ export interface FeedbackApi {
 		save: (draft: FeedbackDraft) => Promise<{ draft: FeedbackDraft }>;
 		delete: (id: string) => Promise<Record<string, never>>;
 	};
+	/** Persisted history of issues the user has submitted (list / delete / refresh state) */
+	issues: {
+		list: () => Promise<{ issues: SubmittedIssue[] }>;
+		delete: (issueNumber: number) => Promise<Record<string, never>>;
+		refreshStates: () => Promise<{ issues: SubmittedIssue[] }>;
+	};
 }
 
 /**
@@ -209,6 +225,13 @@ export function createFeedbackApi(): FeedbackApi {
 				ipcRenderer.invoke('feedback:drafts:save', draft),
 			delete: (id: string): Promise<Record<string, never>> =>
 				ipcRenderer.invoke('feedback:drafts:delete', { id }),
+		},
+		issues: {
+			list: (): Promise<{ issues: SubmittedIssue[] }> => ipcRenderer.invoke('feedback:issues:list'),
+			delete: (issueNumber: number): Promise<Record<string, never>> =>
+				ipcRenderer.invoke('feedback:issues:delete', { number: issueNumber }),
+			refreshStates: (): Promise<{ issues: SubmittedIssue[] }> =>
+				ipcRenderer.invoke('feedback:issues:refresh-states'),
 		},
 	};
 }

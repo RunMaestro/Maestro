@@ -1,11 +1,11 @@
 /**
- * Unit tests for `removeSubscriptionFromYaml` — the rewriter that powers
+ * Unit tests for `removeSubscriptionFromYaml` - the rewriter that powers
  * `time.once` self-destruct after a fire.
  *
  * Uses a real temp directory so we exercise the actual on-disk write path
  * (atomic rename, leading-comment preservation). Filesystem failures are
  * simulated by `vi.spyOn(fs.promises, ...)` rather than full module mocks
- * so the rest of the module — path resolution, yaml dump — runs unmodified.
+ * so the rest of the module - path resolution, yaml dump - runs unmodified.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -179,7 +179,7 @@ describe('removeSubscriptionFromYaml', () => {
 
 	it('returns removed: false with a parse reason on malformed YAML', async () => {
 		const filePath = path.join(projectRoot, '.maestro', 'cue.yaml');
-		// Intentionally broken YAML — js-yaml will throw on load.
+		// Intentionally broken YAML - js-yaml will throw on load.
 		fs.writeFileSync(filePath, 'subscriptions:\n  - name: oops\n    bad: [unclosed\n', 'utf-8');
 
 		const result = await removeSubscriptionFromYaml(projectRoot, 'oops');

@@ -345,7 +345,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
       `}
 			style={tabStyle}
 			title={
-				(tab.cwd ? `${tab.shellType} — ${tab.cwd}` : tab.shellType) +
+				(tab.cwd ? `${tab.shellType} - ${tab.cwd}` : tab.shellType) +
 				(tab.startupCommand ? `\nStartup: ${tab.startupCommand}` : '')
 			}
 			onClick={handleTabSelect}
@@ -385,7 +385,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			{/* Terminal icon with state color */}
 			<Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: iconColor }} />
 
-			{/* Startup command marker — signals the tab will auto-run a command on
+			{/* Startup command marker - signals the tab will auto-run a command on
 				 next PTY spawn. Subtle accent-colored Play icon next to the terminal icon. */}
 			{tab.startupCommand && (
 				<Play
@@ -420,7 +420,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				</button>
 			)}
 
-			{/* Exit code badge — only when exited with non-zero code */}
+			{/* Exit code badge - only when exited with non-zero code */}
 			{tab.state === 'exited' && (tab.exitCode ?? 0) !== 0 && (
 				<span
 					className="px-1 rounded text-[9px] font-semibold shrink-0"
@@ -435,7 +435,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				</span>
 			)}
 
-			{/* Restart button — only for an exited terminal, so the tab is recoverable
+			{/* Restart button - only for an exited terminal, so the tab is recoverable
 				 (e.g. after an SSH drop) instead of being a dead husk. */}
 			{tab.state === 'exited' && (
 				<button
@@ -447,7 +447,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				</button>
 			)}
 
-			{/* Close button — visible on hover or active */}
+			{/* Close button - visible on hover or active */}
 			{(isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
@@ -550,7 +550,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									</button>
 								)}
 
-								{/* Buffer actions — operate on the terminal's full scrollback */}
+								{/* Buffer actions - operate on the terminal's full scrollback */}
 								{(onCopyBuffer || onSendBufferToAgent || onPublishBufferGist) && (
 									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 								)}

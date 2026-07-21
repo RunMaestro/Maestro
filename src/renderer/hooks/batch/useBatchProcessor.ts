@@ -12,6 +12,7 @@ import type {
 // Extracted batch processing modules
 import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
 import { useBatchStore } from '../../stores/batchStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
@@ -55,7 +56,6 @@ export interface PRResultInfo {
 }
 
 export interface UseBatchProcessorProps {
-	sessions: Session[];
 	groups: Group[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
 	onSpawnAgent: (
@@ -137,7 +137,6 @@ export { countUnfinishedTasks, uncheckAllTasks };
  * - Extracted hooks (useSessionDebounce, useTimeTracking) handle their own cleanup
  */
 export function useBatchProcessor({
-	sessions,
 	groups,
 	onUpdateSession,
 	onSpawnAgent,
@@ -170,9 +169,10 @@ export function useBatchProcessor({
 	// Refs for tracking stop requests per session
 	const stopRequestedRefs = useRef<Record<string, boolean>>({});
 
-	// Ref to always have access to latest sessions (fixes stale closure in startBatchRun)
-	const sessionsRef = useRef(sessions);
-	sessionsRef.current = sessions;
+	// PERF: Read sessions at event time via getState() so App (this hook's
+	// caller) does not re-render on streaming session updates. Downstream
+	// runners already fall back to the store when a session is missing.
+	const getSessions = useCallback(() => useSessionStore.getState().sessions, []);
 
 	// Refs to always have access to latest audio feedback settings (fixes stale closure during batch run)
 	// Without refs, toggling settings off during a batch run won't take effect until the next run
@@ -215,7 +215,7 @@ export function useBatchProcessor({
 			// Clear stop requested refs (though they should already be cleaned up per-session)
 			stopRequestedRefs.current = {};
 
-			// Drop any outstanding Auto Run flush state — nothing to flush against after unmount.
+			// Drop any outstanding Auto Run flush state - nothing to flush against after unmount.
 			autoRunFlushStateRefs.current = {};
 		};
 	}, []);
@@ -286,12 +286,12 @@ export function useBatchProcessor({
 
 	// Update ref to always have latest updateBatchStateAndBroadcast (fixes HMR stale closure
 	// in long-running async loops; safe across module boundaries because Vite invalidates
-	// per-module — keeping the ref in the coordinator is intentional).
+	// per-module - keeping the ref in the coordinator is intentional).
 	updateBatchStateAndBroadcastRef.current = updateBatchStateAndBroadcast;
 
 	// Document/task-driven Auto Run orchestrator.
 	const { startBatchRun: startDocumentBatchRun } = useBatchRunner({
-		sessionsRef,
+		getSessions,
 		audioFeedbackEnabledRef,
 		audioFeedbackCommandRef,
 		autoRunFlushStateRefs,
@@ -319,7 +319,7 @@ export function useBatchProcessor({
 	// Goal-Driven Auto Run orchestrator. Shares the same lifecycle dependency
 	// surface so stop/kill/pause controls and state behavior stay consistent.
 	const { startGoalRun } = useGoalRunner({
-		sessionsRef,
+		getSessions,
 		audioFeedbackEnabledRef,
 		audioFeedbackCommandRef,
 		autoRunFlushStateRefs,

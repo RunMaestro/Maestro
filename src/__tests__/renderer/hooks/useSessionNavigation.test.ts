@@ -1,10 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSessionNavigation } from '../../../renderer/hooks/session/useSessionNavigation';
 import type { NavHistoryEntry } from '../../../renderer/hooks/session/useNavigationHistory';
 import type { Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab, createMockFileTab } from '../../helpers/mockTab';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { resetStore } from '../../helpers/resetStores';
 
 /**
  * Codifies the breadcrumb restore behavior: navigateBack/navigateForward must
@@ -12,11 +14,17 @@ import { createMockAITab, createMockFileTab } from '../../helpers/mockTab';
  * terminal), not just AI tabs. Guards against regressing to AI-only restore.
  */
 describe('useSessionNavigation', () => {
+	beforeEach(() => {
+		resetStore(useSessionStore);
+	});
+
 	function setup(
 		sessions: Session[],
 		backEntry: NavHistoryEntry | null,
 		forwardEntry: NavHistoryEntry | null = null
 	) {
+		useSessionStore.setState({ sessions });
+
 		const navigateBack = vi.fn(() => backEntry);
 		const navigateForward = vi.fn(() => forwardEntry);
 		const setActiveSessionId = vi.fn();
@@ -33,7 +41,7 @@ describe('useSessionNavigation', () => {
 		const cyclePositionRef = { current: 0 };
 
 		const { result } = renderHook(() =>
-			useSessionNavigation(sessions, {
+			useSessionNavigation({
 				navigateBack,
 				navigateForward,
 				setActiveSessionId,
@@ -148,7 +156,7 @@ describe('useSessionNavigation', () => {
 				{ type: 'file', id: 'f1' },
 			],
 		});
-		// No tabKind — mimics an entry recorded before the tabKind field existed.
+		// No tabKind - mimics an entry recorded before the tabKind field existed.
 		const { result, getUpdated } = setup([session], { sessionId: 's1', tabId: 'ai-1' });
 
 		act(() => result.current.handleNavBack());

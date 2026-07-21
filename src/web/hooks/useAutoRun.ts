@@ -2,7 +2,7 @@
  * useAutoRun hook for Auto Run state management in the web interface.
  *
  * Provides document listing, content loading/saving, launch/stop controls,
- * playbook CRUD, task reset, and error-pause recovery — mirroring the desktop
+ * playbook CRUD, task reset, and error-pause recovery - mirroring the desktop
  * Auto Run capability surface so mobile/web users have feature parity.
  */
 
@@ -56,7 +56,7 @@ export interface SelectedDocument {
 }
 
 /**
- * Optional worktree dispatch config — when set, the desktop creates a git
+ * Optional worktree dispatch config - when set, the desktop creates a git
  * worktree, runs the Auto Run inside it, and (if requested) opens a PR on
  * completion. Mirrors the `worktree` field accepted by the
  * `configure_auto_run` WebSocket handler.
@@ -118,7 +118,7 @@ export interface WorktreeSummary {
 }
 
 /**
- * Saveable playbook payload (no id/timestamps — those are server-assigned).
+ * Saveable playbook payload (no id/timestamps - those are server-assigned).
  */
 export interface PlaybookDraft {
 	name: string;
@@ -278,7 +278,7 @@ export function useAutoRun(
 				if (KNOWN_TRANSPORT_ERRORS.has(message)) {
 					return { success: false, error: message };
 				}
-				// Anything else is unexpected — re-throw so it bubbles to the
+				// Anything else is unexpected - re-throw so it bubbles to the
 				// caller's catch (which still reverts the optimistic UI) and to
 				// any global unhandled-rejection / Sentry handler. Per
 				// `CLAUDE.md` → Error Handling & Sentry, only known/recoverable

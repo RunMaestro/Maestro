@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 import { registerGitHandlers } from '../../../../main/ipc/handlers/git';
 import * as execFile from '../../../../main/utils/execFile';
+import { captureException } from '../../../../main/utils/sentry';
 import path from 'path';
 
 // Mock electron's ipcMain
@@ -104,7 +105,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	readDirRemote: vi.fn(),
 }));
 
-// Mock the stores module — git.ts now imports getSshRemoteById from here
+// Mock the stores module - git.ts now imports getSshRemoteById from here
 // instead of receiving it via dependency injection. We delegate to the
 // mockSettingsStore so existing tests can still drive SSH remote lookups
 // by configuring `mockSettingsStore.get.mockReturnValue([...])`.
@@ -140,6 +141,11 @@ vi.mock('child_process', () => {
 	// Also expose as default for modules that import via CJS interop
 	return { ...mock, default: mock };
 });
+
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
 
 describe('Git IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -214,6 +220,8 @@ describe('Git IPC handlers', () => {
 				'git:unwatchWorktreeDirectory',
 				'git:removeWorktree',
 				'git:createGist',
+				'git:graph',
+				'git:switch',
 			];
 
 			expect(handlers.size).toBe(expectedChannels.length);
@@ -2204,7 +2212,7 @@ export function Component() {
 				'/worktrees/existing',
 				'already-exists',
 				undefined,
-				'rc' // baseBranch — ignored when branch already exists
+				'rc' // baseBranch - ignored when branch already exists
 			);
 
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
@@ -2485,8 +2493,8 @@ export function Component() {
 
 		it('should recover when branch is already checked out at another worktree', async () => {
 			// fs.access is called twice:
-			//  1) for the requested /worktrees/feature path (must reject — doesn't exist)
-			//  2) for the recovered /existing/wt/feature-branch path (must resolve — does exist)
+			//  1) for the requested /worktrees/feature path (must reject - doesn't exist)
+			//  2) for the recovered /existing/wt/feature-branch path (must resolve - does exist)
 			const fsPromises = await import('fs/promises');
 			vi.mocked(fsPromises.default.access).mockImplementation(async (p: any) => {
 				if (String(p) === '/existing/wt/feature-branch') return undefined;
@@ -4063,6 +4071,39 @@ branch refs/heads/bugfix-123
 			});
 		});
 
+		// Regression (MAESTRO-VQ): the parent path is user-supplied and can sit
+		// behind macOS TCC (Documents, Desktop) or simply carry permissions we
+		// don't hold, so readdir rejects with EPERM/EACCES. The renderer still
+		// needs scanFailed, but there is no bug of ours to report.
+		it.each(['EPERM', 'EACCES'])(
+			'reports scanFailed without a Sentry report when readdir fails with %s',
+			async (code) => {
+				vi.mocked(mockFs.readdir).mockRejectedValue(
+					Object.assign(new Error(`${code}: operation not permitted, scandir '/protected'`), {
+						code,
+					})
+				);
+
+				const handler = handlers.get('git:scanWorktreeDirectory');
+				const result = await handler!({} as any, '/protected');
+
+				expect(result).toEqual({ success: true, gitSubdirs: [], scanFailed: true });
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected scan failure to Sentry', async () => {
+			vi.mocked(mockFs.readdir).mockRejectedValue(
+				Object.assign(new Error('EIO: i/o error, scandir'), { code: 'EIO' })
+			);
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/failing/disk');
+
+			expect(result).toEqual({ success: true, gitSubdirs: [], scanFailed: true });
+			expect(captureException).toHaveBeenCalled();
+		});
+
 		it('should handle null branch when git branch command fails', async () => {
 			vi.mocked(mockFs.readdir).mockResolvedValue([
 				{ name: 'detached-repo', isDirectory: () => true },
@@ -4489,7 +4530,7 @@ branch refs/heads/bugfix-123
 
 			expect(result.gitSubdirs).toHaveLength(1);
 			expect((result.gitSubdirs as Array<{ name: string }>)[0].name).toBe('good-flat');
-			// Whole-scan failure must NOT be flagged — that would trigger the renderer's
+			// Whole-scan failure must NOT be flagged - that would trigger the renderer's
 			// removal-skip fallback; we only flag scanFailed for the top-level read.
 			expect(result.scanFailed).toBeFalsy();
 		});
@@ -5103,7 +5144,7 @@ branch refs/heads/bugfix-123
 			// Start unwatch (will await watcher.close() which we control)
 			const unwatchPromise = unwatchHandler!({} as any, 'race-session');
 
-			// Before unwatch resolves, start watch — this creates watcher B
+			// Before unwatch resolves, start watch - this creates watcher B
 			const watchPromise = watchHandler!({} as any, 'race-session', '/some/path');
 
 			// Now let watcher A's close resolve (unwatch resumes)
@@ -5111,7 +5152,7 @@ branch refs/heads/bugfix-123
 			await unwatchPromise;
 			await watchPromise;
 
-			// Watcher B should still be functional — the late-resolving unwatch
+			// Watcher B should still be functional - the late-resolving unwatch
 			// must NOT have removed it from the map
 			expect(mockWatcherB.close).not.toHaveBeenCalled();
 

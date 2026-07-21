@@ -21,7 +21,7 @@ import { logger } from '../utils/logger';
  * Deletes query_events, auto_run_sessions, auto_run_tasks, and session_lifecycle
  * records that are older than the specified number of days.
  *
- * All deletes run within a single transaction for atomicity — either all tables
+ * All deletes run within a single transaction for atomicity - either all tables
  * are cleaned or none are.
  *
  * @param olderThanDays - Delete records older than this many days

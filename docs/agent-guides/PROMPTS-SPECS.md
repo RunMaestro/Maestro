@@ -100,6 +100,7 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 | `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                                  |
 | `{{AGENT_SESSION_ID}}`   | Agent session ID (for conversation continuity)                   |
 | `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                                |
+| `{{TAB_ID}}`             | This conversation's AI tab ID (empty on headless CLI/Cue spawns) |
 | `{{TAB_NAME}}`           | Custom tab name (alias: `SESSION_NAME`)                          |
 | `{{TOOL_TYPE}}`          | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
 

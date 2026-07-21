@@ -655,6 +655,7 @@ describe('agent-detector', () => {
 			const claude = agents.find((a) => a.id === 'claude-code');
 			expect(claude?.available).toBe(true);
 			expect(claude?.path).toBe('/usr/bin/claude');
+			expect(claude?.customPath).toBeUndefined();
 
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('custom path not valid'),
@@ -679,7 +680,9 @@ describe('agent-detector', () => {
 		});
 
 		it('should log when falling back to PATH after invalid custom path', async () => {
-			vi.spyOn(fs.promises, 'stat').mockRejectedValue(new Error('ENOENT'));
+			vi.spyOn(fs.promises, 'stat').mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				if (args[0] === 'claude') {
 					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
@@ -1234,6 +1237,110 @@ describe('agent-detector', () => {
 			await detector.detectAgents();
 
 			const models = await detector.discoverModels('codex');
+			expect(models).toEqual([]);
+		});
+
+		it('should discover models for Grok from models_cache.json', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			// Grok's cache shape differs from Codex: models is an object map keyed by
+			// model ID, each entry wrapping an `info` object with a `hidden` flag.
+			const cacheData = JSON.stringify({
+				models: {
+					'grok-4.5': { info: { id: 'grok-4.5', hidden: false, context_window: 500000 } },
+					'grok-composer-2.5-fast': {
+						info: { id: 'grok-composer-2.5-fast', hidden: false, context_window: 200000 },
+					},
+					'grok-internal-preview': { info: { id: 'grok-internal-preview', hidden: true } },
+				},
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
+					return cacheData;
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('grok');
+			expect(models).toEqual(['grok-4.5', 'grok-composer-2.5-fast']);
+			expect(models).not.toContain('grok-internal-preview'); // hidden
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Discovered 2 models'),
+				'AgentDetector',
+				expect.any(Object)
+			);
+		});
+
+		it('should fall back to parsing `grok models` output when models_cache.json is missing', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/grok' && args[0] === 'models') {
+					// Captured from `grok models` v0.2.93
+					return {
+						stdout:
+							'You are logged in with grok.com.\n' +
+							'\n' +
+							'Default model: grok-4.5\n' +
+							'\n' +
+							'Available models:\n' +
+							'  * grok-4.5 (default)\n' +
+							'  - grok-composer-2.5-fast\n',
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('grok');
+			expect(models).toEqual(['grok-4.5', 'grok-composer-2.5-fast']);
+		});
+
+		it('should return empty array when Grok cache and CLI discovery both fail', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const models = await detector.discoverModels('grok');
 			expect(models).toEqual([]);
 		});
 
@@ -1882,6 +1989,64 @@ describe('agent-detector', () => {
 				'Could not read Codex models_cache.json for config option discovery',
 				'AgentDetector'
 			);
+		});
+
+		it('should discover Grok model options from models_cache.json with empty default first', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			// Include a model beyond the static fallback list to prove the values
+			// come from the cache, not the definition.
+			const cacheData = JSON.stringify({
+				models: {
+					'grok-4.5': { info: { id: 'grok-4.5', hidden: false } },
+					'grok-composer-2.5-fast': { info: { id: 'grok-composer-2.5-fast', hidden: false } },
+					'grok-5-preview': { info: { id: 'grok-5-preview', hidden: false } },
+				},
+			});
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
+					return cacheData;
+				}
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('grok', 'model');
+			expect(options).toEqual(['', 'grok-4.5', 'grok-composer-2.5-fast', 'grok-5-preview']);
+		});
+
+		it('falls back to static Grok model options when cache and CLI discovery both fail', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const binaryName = args[0];
+				if (binaryName === 'grok') {
+					return { stdout: '/usr/bin/grok\n', stderr: '', exitCode: 0 };
+				}
+				if (binaryName === 'bash') {
+					return { stdout: '/bin/bash\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			_readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+
+			detector.clearCache();
+			await detector.detectAgents();
+
+			const options = await detector.discoverConfigOptions('grok', 'model');
+			expect(options).toEqual(['', 'grok-4.5', 'grok-composer-2.5-fast']);
 		});
 
 		it('should fall back to static options for select config options without dynamic discovery', async () => {

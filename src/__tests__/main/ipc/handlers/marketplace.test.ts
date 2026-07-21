@@ -813,7 +813,7 @@ describe('marketplace IPC handlers', () => {
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
-			// Final release ≥ its own prerelease — should be allowed.
+			// Final release ≥ its own prerelease - should be allowed.
 			vi.mocked(mockApp.getVersion).mockReturnValue('0.16.17');
 
 			mockFetch
@@ -1130,7 +1130,7 @@ describe('marketplace IPC handlers', () => {
 				'session-123'
 			);
 
-			// Should have imported the second doc — and the persisted playbook
+			// Should have imported the second doc - and the persisted playbook
 			// should only reference docs that actually wrote to disk.
 			expect(result.importedDocs).toEqual(['phase-2']);
 			expect(result.playbook.documents.map((d: { filename: string }) => d.filename)).toEqual([
@@ -1141,7 +1141,7 @@ describe('marketplace IPC handlers', () => {
 		// Coderabbit feedback: the per-doc loop is intentionally tolerant so
 		// one bad file doesn't block the rest, but the previous code still
 		// persisted a playbook with `documents: []` and reported success when
-		// every doc failed — closing the marketplace sheet and leaving the
+		// every doc failed - closing the marketplace sheet and leaving the
 		// user with an unusable imported entry. The service must now throw
 		// a MarketplaceImportError so the import flow surfaces the failure.
 		it('should fail the import when all documents fail to fetch', async () => {
@@ -1188,7 +1188,7 @@ describe('marketplace IPC handlers', () => {
 
 		// Coderabbit feedback: the browse path falls back to a stale cache when
 		// fetchManifest() fails so the UI keeps working, but the import path
-		// previously left officialManifest null on the same failure — meaning a
+		// previously left officialManifest null on the same failure - meaning a
 		// playbook that was just visible to the user could disappear at import
 		// time. Both paths must share the stale-cache fallback.
 		it('should fall back to expired cache when network fetch fails during import', async () => {

@@ -293,6 +293,9 @@ export const MODAL_PRIORITIES = {
 	/** Git diff preview overlay */
 	GIT_DIFF: 200,
 
+	/** Branch switcher dropdown (opens from header branch chip) */
+	BRANCH_SWITCHER: 195,
+
 	/** Git log viewer overlay */
 	GIT_LOG: 190,
 

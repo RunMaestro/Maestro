@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session, SessionState, ThinkingMode } from '../../types';
+import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields, createTab, closeTab } from '../../utils/tabHelpers';
+import { aiTabFocusFields, createTab, closeTab, getActiveTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { generateId } from '../../utils/ids';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
@@ -12,6 +13,10 @@ import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore'
 import { applyMovementPayload, getMovementSnapshot } from '../../stores/movementStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import {
+	getConcertoDesignerFrameSnapshot,
+	interactWithConcertoDesignerFrame,
+} from '../../components/Concerto/concertoDesignerBridge';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -91,9 +96,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) => {
-				// Log metadata only at info level — remote commands can carry
+				// Log metadata only at info level - remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
 				// main process applies in web-server-factory; the truncated
 				// preview moves to debug, which only opted-in users enable.
@@ -156,9 +162,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					);
 				}
 
-				// Switch to the target session (for visual feedback)
-				setActiveSessionId(sessionId);
-				logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
+				// Switch to the target session (for visual feedback) unless this is a
+				// background dispatch. Background is the default for `dispatch`; passing
+				// `--focus` re-enables switching to the target agent/tab.
+				if (!background) {
+					setActiveSessionId(sessionId);
+					logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
+				}
 
 				// Dispatch event directly - handleRemoteCommand handles all the logic
 				// Don't set inputValue - we don't want command text to appear in the input bar
@@ -353,17 +363,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
-		// Handle remote "new AI tab with prompt" from CLI (send --live --new-tab).
-		// Atomically creates a fresh AI tab, makes it active, and dispatches the
-		// prompt through the same maestro:remoteCommand event path that --live
-		// uses — so downstream spawn/history/state flows are identical.
-		// flushSync forces React to commit the new tab as active before we fire
-		// the event; without it the downstream handler reads stale activeTabId
-		// and writes the prompt into the previously-active tab.
+		// Handle remote "new AI tab with prompt" from CLI (dispatch --new-tab).
+		// Atomically creates a fresh AI tab and dispatches the prompt through the
+		// same maestro:remoteCommand event path that a plain dispatch uses, so
+		// downstream spawn/history/state flows are identical. A background dispatch
+		// (the default) creates the new tab without focus so the user's current view
+		// is preserved; `dispatch --focus` makes the new tab active instead. flushSync
+		// forces React to commit the new tab into session state before we fire the event,
+		// so the downstream handler can resolve the freshly-created tabId (which we
+		// always pass explicitly) instead of racing on a stale snapshot.
 		// Ack the renderer result on responseChannel so the CLI only reports
 		// success when a tab was actually created.
 		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
-			(sessionId: string, prompt: string, responseChannel: string) => {
+			(sessionId: string, prompt: string, responseChannel: string, background?: boolean) => {
 				// Guard: the downstream maestro:remoteCommand handler drops commands
 				// for missing or busy sessions. Check here so we don't create an
 				// orphan tab and falsely ack success.
@@ -390,13 +402,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							const result = createTab(s, {
 								saveToHistory: defaultSaveToHistory,
 								showThinking: defaultShowThinking,
+								// Background dispatch is the default (`--focus` opts into the
+								// foreground): create the tab without making it active so the
+								// user's current view is preserved.
+								activate: !background,
 							});
 							if (!result) return s;
 							createdTabId = result.tab.id;
 							return result.session;
 						})
 					);
-					if (createdTabId) {
+					if (createdTabId && !background) {
 						setActiveSessionId(sessionId);
 					}
 				});
@@ -408,7 +424,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 				// Pass the new tab id explicitly so the renderer writes into the tab
-				// we just created — without it, useRemoteHandlers would fall back to
+				// we just created - without it, useRemoteHandlers would fall back to
 				// activeTabId, which is correct here but would race in any future
 				// caller that doesn't atomically setActiveSessionId.
 				window.dispatchEvent(
@@ -532,6 +548,198 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "enqueue command" from the CLI (`dispatch --queue`). The
+		// renderer owns the authoritative execution queue, so the queue-vs-dispatch
+		// decision lives here: a busy target joins `session.executionQueue` (FIFO);
+		// an idle target dispatches immediately through the same maestro:remoteCommand
+		// path as a plain dispatch. The ack carries the queue outcome so the CLI can
+		// report position. Enqueued items are byte-identical to UI-queued items, so
+		// they render in the ExecutionQueueBrowser/Indicator, are editable/reorderable/
+		// removable, and the closed-tab resolver (resolveQueuedItemTarget) applies at
+		// drain time.
+		const unsubscribeEnqueueCommand = window.maestro.process.onRemoteEnqueueCommand(
+			(
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				_inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => {
+				const reply = (result: {
+					success: boolean;
+					tabId?: string;
+					queued?: boolean;
+					queuePosition?: number;
+					queueLength?: number;
+					itemId?: string;
+					error?: string;
+				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
+
+				try {
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					if (!session) {
+						reply({ success: false, error: 'Session not found' });
+						return;
+					}
+
+					// Resolve the target tab. An explicit --tab that no longer exists is
+					// an error - never silently reroute to the active tab, which would
+					// mislead callers chaining the returned tabId. No --tab -> active tab.
+					const requestedTab = tabId ? session.aiTabs?.find((t) => t.id === tabId) : undefined;
+					if (tabId && !requestedTab) {
+						reply({ success: false, error: `Tab not found: ${tabId}` });
+						return;
+					}
+					const targetTab = requestedTab ?? getActiveTab(session);
+					if (!targetTab) {
+						reply({ success: false, error: 'Session has no AI tabs' });
+						return;
+					}
+					const resolvedTabId = targetTab.id;
+
+					// Idle target: no line to wait in, dispatch now through the shared
+					// remote-command path (identical to a plain `dispatch`). Respect the
+					// dispatch --focus opt-in via `background`.
+					if (session.state !== 'busy') {
+						if (!background) {
+							setActiveSessionId(sessionId);
+						}
+						window.dispatchEvent(
+							new CustomEvent('maestro:remoteCommand', {
+								detail: { sessionId, command, inputMode: 'ai', tabId: resolvedTabId, images },
+							})
+						);
+						reply({ success: true, tabId: resolvedTabId, queued: false });
+						return;
+					}
+
+					// Busy target: get in line. Append a message item to the authoritative
+					// execution queue (FIFO by insertion/timestamp), matching the shape the
+					// UI creates in useInputProcessing so it is a first-class queue citizen.
+					const isReadOnly =
+						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
+					const queuedItem: QueuedItem = {
+						id: generateId(),
+						timestamp: Date.now(),
+						tabId: resolvedTabId,
+						type: 'message',
+						text: command,
+						...(images && images.length > 0 ? { images: [...images] } : {}),
+						tabName:
+							targetTab.name ||
+							(targetTab.agentSessionId
+								? targetTab.agentSessionId.split('-')[0].toUpperCase()
+								: 'New'),
+						readOnlyMode: isReadOnly,
+					};
+
+					// Position is deterministic from the snapshot we already read: the item
+					// is appended to the tail, so it lands at length+1 (1-based). Computing
+					// it here (not inside the state updater) keeps the returned position
+					// independent of when the store applies the update.
+					const queueLength = (session.executionQueue?.length ?? 0) + 1;
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === sessionId ? { ...s, executionQueue: [...s.executionQueue, queuedItem] } : s
+						)
+					);
+
+					reply({
+						success: true,
+						tabId: resolvedTabId,
+						queued: true,
+						// 1-based position from the front; the item sits at the tail.
+						queuePosition: queueLength,
+						queueLength,
+						itemId: queuedItem.id,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteEnqueueCommand failed:', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "list queue" from the CLI (`queue list`). Read-only snapshot
+		// of the authoritative executionQueue(s) so scripts can inspect what is
+		// pending. Reads the store directly (useSessionStore.getState) so the snapshot
+		// is always current, per the store's outside-React contract.
+		const unsubscribeListQueue = window.maestro.process.onRemoteListQueue(
+			(sessionId: string | undefined, responseChannel: string) => {
+				try {
+					const sessions = useSessionStore.getState().sessions;
+					const relevant = sessionId
+						? sessions.filter((s) => s.id === sessionId)
+						: sessions.filter((s) => (s.executionQueue?.length ?? 0) > 0);
+					const queues = relevant.map((s) => ({
+						sessionId: s.id,
+						name: s.name,
+						state: s.state,
+						items: (s.executionQueue ?? []).map((item) => ({
+							id: item.id,
+							timestamp: item.timestamp,
+							tabId: item.tabId,
+							type: item.type,
+							...(item.text !== undefined ? { text: item.text } : {}),
+							...(item.command !== undefined ? { command: item.command } : {}),
+							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
+							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
+							...(item.paused !== undefined ? { paused: item.paused } : {}),
+						})),
+					}));
+					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
+						success: true,
+						queues,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteListQueue failed:', undefined, error);
+					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
+						success: false,
+						queues: [],
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "remove queue item" from the CLI (`queue remove`). Drops the
+		// item by id from the authoritative queue, exactly like the UI trash action.
+		const unsubscribeRemoveQueueItem = window.maestro.process.onRemoteRemoveQueueItem(
+			(sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					// Determine the outcome from the current store snapshot, then mutate.
+					// Keeps the returned `removed` independent of update timing.
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					const removed = !!session?.executionQueue?.some((i) => i.id === itemId);
+					if (removed) {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) }
+									: s
+							)
+						);
+					}
+					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
+						success: true,
+						removed,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteRemoveQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
+						success: false,
+						removed: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
@@ -542,6 +750,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
+			unsubscribeEnqueueCommand();
+			unsubscribeListQueue();
+			unsubscribeRemoveQueueItem();
 		};
 	}, [
 		sessionsRef,
@@ -602,7 +813,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				clickAction,
 			} = params;
 			// Resolve agent metadata for the header strip. Only stamp a tab on
-			// the toast when the caller explicitly passed one — otherwise the
+			// the toast when the caller explicitly passed one - otherwise the
 			// agent's currently-focused tab would leak onto every agent-scoped
 			// toast (e.g. cron-fired notifications), which is misleading.
 			// An explicit `sourceAgent` label wins over the store-resolved name:
@@ -685,8 +896,23 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// crashing the whole app into the error boundary.
 		const proc = window.maestro?.process;
 		if (typeof proc?.onRemoteMovement !== 'function') return;
-		const unsubscribe = proc.onRemoteMovement((params) => {
-			applyMovementPayload(params);
+		const unsubscribe = proc.onRemoteMovement((params, responseChannel) => {
+			const reply = (applied: boolean) => {
+				if (responseChannel) proc.sendMovementAppliedResponse?.(responseChannel, applied);
+			};
+			try {
+				flushSync(() => applyMovementPayload(params));
+			} catch {
+				reply(false);
+				return;
+			}
+			if (params.id && params.revision !== undefined) {
+				void getConcertoDesignerFrameSnapshot('movement', params.id, 3500, params.revision)
+					.then((snapshot) => reply(snapshot !== null))
+					.catch(() => reply(false));
+				return;
+			}
+			reply(true);
 		});
 		return () => {
 			unsubscribe();
@@ -701,6 +927,45 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribe = proc.onRequestMovementState((responseChannel: string) => {
 			proc.sendMovementStateResponse?.(responseChannel, getMovementSnapshot());
 		});
+		return () => unsubscribe();
+	}, []);
+
+	// Designer feedback for HTML Movements: report the live iframe crop and
+	// diagnostics so main can capture exactly what the user sees.
+	useEffect(() => {
+		const proc = window.maestro?.process;
+		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
+		const unsubscribe = proc.onRequestMovementDesignerInspection(
+			(id, expectedRevision, responseChannel) => {
+				void getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision)
+					.then((snapshot) =>
+						proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
+					)
+					.catch(() => proc.sendMovementDesignerInspectionResponse?.(responseChannel, null));
+			}
+		);
+		return () => unsubscribe();
+	}, []);
+
+	// Selector-scoped click/type actions stay inside the sandboxed mockup and
+	// let an agent verify interactive states before taking another screenshot.
+	useEffect(() => {
+		const proc = window.maestro?.process;
+		if (typeof proc?.onRequestMovementDesignerInteraction !== 'function') return;
+		const unsubscribe = proc.onRequestMovementDesignerInteraction(
+			(id, action, expectedRevision, responseChannel) => {
+				void interactWithConcertoDesignerFrame('movement', id, action, undefined, expectedRevision)
+					.then((result) => proc.sendMovementDesignerInteractionResponse?.(responseChannel, result))
+					.catch((error) =>
+						proc.sendMovementDesignerInteractionResponse?.(responseChannel, {
+							ok: false,
+							action: action.kind,
+							selector: action.selector,
+							message: error instanceof Error ? error.message : String(error),
+						})
+					);
+			}
+		);
 		return () => unsubscribe();
 	}, []);
 
@@ -791,7 +1056,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
-	// Handle remote set Auto Run folder from web interface — repoints a session
+	// Handle remote set Auto Run folder from web interface - repoints a session
 	// at a different `.maestro/` folder, mirroring desktop's `dialog.selectFolder`
 	// + `handleAutoRunFolderSelected` flow.
 	useEffect(() => {
@@ -1337,7 +1602,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				} catch (error) {
 					console.error('[Remote Cue Trigger] Failed:', subscriptionName, error);
 					logger.error('[Remote Cue Trigger] Failed:', undefined, [subscriptionName, error]);
-					// Never send the raw prompt to telemetry — remote-triggered
+					// Never send the raw prompt to telemetry - remote-triggered
 					// Cue prompts can carry user-authored content with PII or
 					// secrets. Send length/presence so we can correlate failures
 					// against payload size without leaking the body.
@@ -1411,7 +1676,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const message = error instanceof Error ? error.message : String(error);
 					// Known recoverable modes (session missing, empty history, `gh`
 					// not installed/authenticated) already returned above as
-					// structured results. Anything that lands here is unexpected —
+					// structured results. Anything that lands here is unexpected -
 					// report to Sentry without the transcript/description/filename,
 					// which can carry PII/secrets.
 					captureException(error, {

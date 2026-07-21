@@ -59,7 +59,7 @@ export type PluginCapability =
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:hostView' // contribute and update host-rendered BlockView data
 	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
-	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
+	| 'ui:render-unsafe'; // high-trust custom UI in host-approved, non-protected regions
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
@@ -140,7 +140,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
  * the arbitrary-code-execution-grade act verbs: a grant names EXACTLY which
  * agent ids / host-blessed binary names are permitted (set membership, never
  * substring or wildcard), and an unscoped grant is a wildcard and therefore
- * DENIED — the opposite of path/host, where unscoped means broadest.
+ * DENIED - the opposite of path/host, where unscoped means broadest.
  */
 type ScopeKind = 'path' | 'host' | 'allowlist' | 'none';
 
@@ -191,6 +191,18 @@ export function capabilityRisk(capability: PluginCapability): CapabilityRisk {
 	return CAPABILITY_RISK[capability];
 }
 
+/**
+ * Does this capability take an allowlist scope (the Phase-4 act verbs, whose
+ * grant names EXACTLY which agent ids / host-blessed binary names are permitted)?
+ * True for `agents:dispatch` and `process:spawn`. The host uses this to gate the
+ * user-managed allowlist editor: only allowlist-scoped grants have an editable
+ * member set, and an unscoped/empty one denies (never wildcard). Exposes the
+ * module-private scope-kind map to the main-process ledger, which cannot inline it.
+ */
+export function isAllowlistScoped(capability: PluginCapability): boolean {
+	return CAPABILITY_SCOPE_KIND[capability] === 'allowlist';
+}
+
 export function isPluginCapability(value: unknown): value is PluginCapability {
 	return typeof value === 'string' && (PLUGIN_CAPABILITIES as readonly string[]).includes(value);
 }
@@ -222,7 +234,7 @@ export interface PermissionRequest {
 	 * plugin asks for the unscoped (broadest) form, which the consent UI must
 	 * present as such. For allowlist capabilities the scope is a comma-separated
 	 * list of EXACT names (agent ids / host-blessed binary names) and is
-	 * REQUIRED — an unscoped act-verb request is a wildcard and is rejected.
+	 * REQUIRED - an unscoped act-verb request is a wildcard and is rejected.
 	 */
 	scope?: string;
 	/** Optional human-readable justification shown at the consent prompt. */
@@ -364,16 +376,32 @@ function hostScopeCovers(scope: string, target: string): boolean {
 }
 
 /**
- * Characters that could smuggle pattern semantics or confuse audit logs out of
- * an allowlist member name. Allowlist members are opaque EXACT tokens (agent
- * ids, host-blessed binary names) — never patterns, paths, or shell text.
+ * Characters that could smuggle pattern semantics, confuse audit logs, or split
+ * the comma-joined scope string out of an allowlist member name. Allowlist
+ * members are opaque EXACT tokens (agent ids, host-blessed binary names) - never
+ * patterns, paths, shell text, or the comma delimiter itself. (Manifest members
+ * are comma-split before this check, so forbidding comma here only guards the
+ * host's per-id validation of user-submitted allow-list edits.)
  */
-const ALLOWLIST_MEMBER_FORBIDDEN = /[*?[\]{}()|<>$`"'\\\/\s\0]/;
+const ALLOWLIST_MEMBER_FORBIDDEN = /[*?[\]{}()|<>$`"'\\\/\s\0,]/;
+
+/**
+ * Is `member` a valid allowlist member: a non-empty EXACT token free of the
+ * pattern/shell/whitespace characters that could smuggle semantics or split the
+ * comma-joined scope string? The host filters user-submitted allowlist ids
+ * (Settings-managed dispatch targets) through this before minting, so a stray
+ * token can never corrupt the scope. Single source of truth for member validity.
+ */
+export function isValidAllowlistMember(member: unknown): member is string {
+	return (
+		typeof member === 'string' && member.length > 0 && !ALLOWLIST_MEMBER_FORBIDDEN.test(member)
+	);
+}
 
 /**
  * Parse an allowlist scope string into its member set: comma-separated EXACT
  * names, trimmed, empties dropped. Returns null when the scope is absent or
- * yields no valid members (which callers must treat as deny — an act-verb
+ * yields no valid members (which callers must treat as deny - an act-verb
  * grant without named members is a wildcard and is forbidden).
  */
 export function parseAllowlistScope(scope: string | undefined): readonly string[] | null {
@@ -397,7 +425,7 @@ function validateAllowlistScope(capability: PluginCapability, scope: unknown): s
 		return `capability "${capability}" allowlist scope has no valid members`;
 	}
 	for (const member of members) {
-		if (ALLOWLIST_MEMBER_FORBIDDEN.test(member)) {
+		if (!isValidAllowlistMember(member)) {
 			return `capability "${capability}" allowlist member "${member}" contains forbidden characters (exact names only)`;
 		}
 	}
@@ -405,7 +433,7 @@ function validateAllowlistScope(capability: PluginCapability, scope: unknown): s
 }
 
 /**
- * Does an allowlist `scope` cover `target`? EXACT set membership only —
+ * Does an allowlist `scope` cover `target`? EXACT set membership only -
  * case-sensitive string equality against the parsed member set. No substring,
  * no prefix, no wildcard, no case folding. An absent/empty scope covers
  * nothing (an act-verb grant must name its targets).
@@ -485,7 +513,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
-			return 'Make the named agents run on its behalf — agents run with permissions skipped, so this is ARBITRARY CODE EXECUTION on your machine (not just "send a prompt")';
+			return 'Make the named agents run on its behalf - agents run with permissions skipped, so this is ARBITRARY CODE EXECUTION on your machine (not just "send a prompt")';
 		case 'notifications:toast':
 			return 'Show notifications';
 		case 'settings:read':
@@ -517,7 +545,7 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'shell:openExternal':
 			return 'Open URLs with the operating system';
 		case 'process:spawn':
-			return 'Run the named host-approved programs on your machine — this is ARBITRARY CODE EXECUTION (not just "run a command")';
+			return 'Run the named host-approved programs on your machine - this is ARBITRARY CODE EXECUTION (not just "run a command")';
 		case 'decisions:write':
 			return 'Record decisions in Maestro';
 		case 'power:preventSleep':
@@ -529,15 +557,15 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'transcripts:write':
 			return 'Write brokered entries into session transcripts';
 		case 'ui:contribute':
-			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
+			return "Add declarative items to Maestro's approved host surfaces";
 		case 'ui:panel':
-			return 'Show its own panels inside Maestro';
+			return 'Show its own panels inside approved Maestro regions';
 		case 'ui:hostView':
 			return 'Show and update host-rendered BlockView data in Maestro';
 		case 'ui:grouping':
 			return 'Organize session metadata into virtual sidebar groups';
 		case 'ui:render-unsafe':
-			return "Render its own custom UI with full access to Maestro's interface (advanced — only enable for authors you fully trust)";
+			return 'Render high-trust custom UI only in host-approved, non-protected regions (advanced - only enable authors you fully trust)';
 	}
 }
 

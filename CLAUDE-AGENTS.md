@@ -4,14 +4,15 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name          | Status     | Notes                                                                                                                               |
-| --------------- | ------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                      |
-| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                                                                                           |
-| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                    |
-| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                     |
-| `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker |
-| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                             |
+| ID              | Name          | Status     | Notes                                                                                                                                              |
+| --------------- | ------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                     |
+| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                                                                                                          |
+| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                   |
+| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
+| `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
+| `grok`          | Grok CLI      | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |
+| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
 
 ## Agent Capabilities
 
@@ -30,7 +31,7 @@ Each agent declares capabilities that control UI feature availability. See `src/
 | `supportsCostTracking`        | Reports token costs                      | Cost widget                |
 | `supportsUsageStats`          | Reports token counts                     | Context window widget      |
 | `supportsBatchMode`           | Runs per-message                         | Batch processing           |
-| `requiresPromptToStart`       | No eager spawn — needs prompt            | Deferred spawn             |
+| `requiresPromptToStart`       | No eager spawn - needs prompt            | Deferred spawn             |
 | `supportsStreaming`           | Streams output                           | Real-time display          |
 | `supportsModelSelection`      | Supports --model flag                    | Model dropdown             |
 | `supportsResultMessages`      | Distinguishes final result               | Message classification     |
@@ -56,8 +57,8 @@ Each agent declares capabilities that control UI feature availability. See `src/
 
 Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 
-- `getAgentDisplayName(agentId)` — human-readable name with fallback
-- `isBetaAgent(agentId)` — beta badge check
+- `getAgentDisplayName(agentId)` - human-readable name with fallback
+- `isBetaAgent(agentId)` - beta badge check
 
 The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-private. Use the functions above to access it.
 
@@ -105,6 +106,24 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 - **Model Discovery:** Fetches available models from [models.dev](https://models.dev) (github-copilot provider) with a 3s timeout, falling back to the user's configured model in `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
 - **Known Limitations:**
   - **SSH interactive mode:** PTY-based interactive Copilot sessions do not go through `wrapSpawnWithSsh()`, so interactive Copilot over SSH remote is not supported. Batch mode (`-p`) over SSH works correctly via the standard child-process spawner.
+
+### Grok CLI
+
+- **Binary:** `grok`
+- **JSON Output:** `--output-format streaming-json` (JSONL: `thought`, `text`, `end`, `error` events)
+- **Batch Mode:** `-p/--single <prompt>` (headless, no subcommand)
+- **Resume:** `--resume <session-id>` (session ID is a UUIDv7, emitted only on the final `end` event)
+- **Read-only:** `--permission-mode plan` (CLI-enforced)
+- **YOLO Mode:** `--always-approve` (also used for batch mode)
+- **Thinking Display:** Streams `thought` deltas into Maestro's thinking panel
+- **Session Storage:** `~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/` (local and SSH-remote)
+- **Model Discovery:** Reads `~/.grok/models_cache.json` (grok-4.5 at 500K context, grok-composer-2.5-fast at 200K), with a static fallback list
+- **Reasoning Effort:** `--reasoning-effort` with none, minimal, low, medium, high, xhigh, max (grok-4.5 rejects `none`)
+- **Known Limitations:**
+  - **No tool events on stdout:** tool activity exists only in on-disk session files, so live tool display is unavailable
+  - **No usage or cost in the stream:** context usage and cost widgets stay empty
+  - **Batch-only:** interactive PTY mode is not wired (same posture as Codex)
+  - **No image input**
 
 ## Adding New Agents
 

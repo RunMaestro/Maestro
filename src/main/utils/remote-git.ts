@@ -478,7 +478,7 @@ export async function worktreeSetupRemote(
 	}
 
 	if (createResult.exitCode !== 0) {
-		// Recover from "already used / already checked out" — the branch is
+		// Recover from "already used / already checked out" - the branch is
 		// attached to another worktree on the remote. Resolve that path so
 		// callers can open it instead of surfacing an opaque error.
 		const errMsg = createResult.stderr || '';

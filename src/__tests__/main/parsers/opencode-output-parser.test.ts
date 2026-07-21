@@ -75,7 +75,7 @@ describe('OpenCodeOutputParser', () => {
 
 		it('should parse step_finish messages with reason "stop" as system (usage only)', () => {
 			// Actual OpenCode format: reason and tokens in part
-			// step_finish is now always system — result text comes from the preceding text event
+			// step_finish is now always system - result text comes from the preceding text event
 			const line = JSON.stringify({
 				type: 'step_finish',
 				sessionID: 'oc-sess-123',

@@ -108,7 +108,7 @@ export function prettifyAgentType(type: string): string {
  *
  * Resolution order:
  *   1. Match the key against `Session.id` (with optional suffixes like tab IDs).
- *   2. Match the key against any session's `toolType` — if a session of that
+ *   2. Match the key against any session's `toolType` - if a session of that
  *      type exists, prefer that session's user-assigned name (single-instance
  *      case) and otherwise fall through to the prettified type.
  *   3. Fall back to `prettifyAgentType(key)`.

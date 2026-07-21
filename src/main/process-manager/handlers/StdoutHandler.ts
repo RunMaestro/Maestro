@@ -7,6 +7,8 @@ import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
+import { getAgentLoginCommand } from '../../../shared/agentMetadata';
+import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -375,7 +377,7 @@ export class StdoutHandler {
 		try {
 			parsed = JSON.parse(line);
 		} catch {
-			// Not valid JSON — handled in the else branch below
+			// Not valid JSON - handled in the else branch below
 		}
 
 		if (parsed !== null && toolType === 'copilot-cli') {
@@ -402,7 +404,14 @@ export class StdoutHandler {
 				}
 
 				if (agentError.type === 'auth_expired' && managedProcess.sshRemoteHost) {
-					agentError.message = `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "claude login" to re-authenticate.`;
+					// Choose the login command by agentId - error-pattern messages
+					// are often generic (no CLI name) and first-match-wins ordering
+					// can shadow the ones that do name a command. A small map keeps
+					// every agent correct without depending on pattern text/order.
+					const loginCmd = getAgentLoginCommand(toolType);
+					agentError.message = loginCmd
+						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${loginCmd}" to re-authenticate.`
+						: `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate.`;
 				}
 
 				this.emitter.emit('agent-error', sessionId, agentError);
@@ -410,7 +419,7 @@ export class StdoutHandler {
 			}
 		}
 
-		// ── SSH error detection (line-based — SSH patterns are plain text) ──
+		// ── SSH error detection (line-based - SSH patterns are plain text) ──
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
@@ -500,15 +509,30 @@ export class StdoutHandler {
 			this.emitter.emit('slash-commands', sessionId, slashCommands);
 		}
 
-		// Handle streaming text events (OpenCode, Codex reasoning)
+		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			// For Copilot, skip thinking-chunk emission — the parser's delta events
-			// accumulate in streamedText which is emitted once as the result at exit.
-			// Emitting thinking-chunks AND result would duplicate the content.
-			if (managedProcess.toolType !== 'copilot-cli') {
-				this.emitter.emit('thinking-chunk', sessionId, event.text);
+			// Thinking panel routing:
+			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
+			//   and flush once at exit).
+			// - Agents that split thought vs answer (Grok, Codex, Claude, OpenCode):
+			//   only isReasoning deltas → thinking-chunk. Grok streams the final
+			//   answer as partial `text` without isReasoning; dumping those into
+			//   the thinking panel makes the wizard look finished while tools
+			//   still run (Grok emits no tool events on the stream).
+			// - Factory Droid: streams assistant partials without isReasoning, so
+			//   keep the pre-Grok behavior of forwarding all partials.
+			const toolType = managedProcess.toolType;
+			if (toolType !== 'copilot-cli') {
+				const requiresReasoningTag =
+					toolType === 'grok' ||
+					toolType === 'codex' ||
+					toolType === 'claude-code' ||
+					toolType === 'opencode';
+				if (!requiresReasoningTag || event.isReasoning) {
+					this.emitter.emit('thinking-chunk', sessionId, event.text);
+				}
 			}
-			// Reasoning content is internal thinking — don't include it in the
+			// Reasoning content is internal thinking - don't include it in the
 			// final response text. Only message content should be in streamedText.
 			if (!event.isReasoning) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
@@ -583,12 +607,12 @@ export class StdoutHandler {
 		//   - assistant.turn_end fires after every LLM turn, including
 		//     narration turns ("I'll delegate this to..."), so it can't
 		//     mark session end.
-		//   - session.shutdown is NOT written to stdout in batch mode —
+		//   - session.shutdown is NOT written to stdout in batch mode -
 		//     it only goes to `~/.copilot/session-state/<id>/events.jsonl`,
 		//     and Copilot may keep writing to that file (via subagent
 		//     processes) AFTER our parent process exits.
 		// The authoritative completion signal lives on disk, so we defer
-		// the final flush to ExitHandler — which awaits the disk-side
+		// the final flush to ExitHandler - which awaits the disk-side
 		// shutdown marker before emitting the `exit` event. Legacy
 		// `phase: 'final_answer'` messages still flush immediately via
 		// the path below.
@@ -714,9 +738,10 @@ export class StdoutHandler {
 			costUsd?: number;
 			contextWindow?: number;
 			reasoningTokens?: number;
+			model?: string;
 		}
 	): UsageStats {
-		return {
+		const stats: UsageStats = {
 			inputTokens: usage.inputTokens,
 			outputTokens: usage.outputTokens,
 			cacheReadInputTokens: usage.cacheReadTokens || 0,
@@ -727,6 +752,25 @@ export class StdoutHandler {
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
 			reasoningTokens: usage.reasoningTokens,
 		};
+		// Oh My Pi's window is model-dependent and reported per turn, so resolve the
+		// per-turn model against the catalog primed for THIS process's binary + env
+		// (ompModelCatalogKey) and let that authoritative value win over the static
+		// per-agent fallback/config (e.g. so opus's 1M isn't masked by the 200k
+		// default). Local runs only; remotes have their own catalog and keep the
+		// configured/fallback window.
+		if (
+			managedProcess.toolType === 'omp' &&
+			!managedProcess.sshRemoteId &&
+			usage.model &&
+			managedProcess.ompModelCatalogKey
+		) {
+			const resolved = getOmpModelContextWindow(usage.model, managedProcess.ompModelCatalogKey);
+			if (resolved && resolved > 0) {
+				stats.contextWindow = resolved;
+				stats.contextWindowResolved = true;
+			}
+		}
+		return stats;
 	}
 
 	/** Emit session-id event at most once per managed process lifecycle. */

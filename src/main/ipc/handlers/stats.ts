@@ -73,7 +73,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	const safeSend = createSafeSend(getMainWindow);
 
 	// PR-B 1.5: flush any buffered query events synchronously before the app
-	// exits so we don't drop them. The handler is fire-and-forget — if it
+	// exits so we don't drop them. The handler is fire-and-forget - if it
 	// throws (e.g. DB already closed) the buffer module logs it; we don't
 	// want to block quit on stats persistence.
 	app.on('before-quit', () => {
@@ -81,7 +81,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			flushQueryEventsSync();
 		} catch (err) {
 			logger.warn('Failed to flush query event buffer on quit', LOG_CONTEXT, err);
-			// Surface to Sentry so we get a real signal in production —
+			// Surface to Sentry so we get a real signal in production -
 			// quit-time data loss is the worst time to lose telemetry, since
 			// we can't retry. Per CLAUDE.md §"Error Handling & Sentry".
 			void captureException(err instanceof Error ? err : new Error(String(err)), {
@@ -95,7 +95,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	// PR-B 1.5: events are buffered and flushed in a single transaction every
 	// 500ms or every 50 events (whichever first). This collapses many
 	// per-turn fsyncs into one, on the streaming hot path. The buffered
-	// id is generated synchronously and returned — callers don't need to
+	// id is generated synchronously and returned - callers don't need to
 	// wait for the actual write.
 	ipcMain.handle(
 		'stats:record-query',
@@ -167,7 +167,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				}
 				broadcastStatsUpdate(safeSend);
 
-				// Cue telemetry — autorun completion is the user's natural quiet
+				// Cue telemetry - autorun completion is the user's natural quiet
 				// window, so we flush the outbox here. Fire-and-forget: a failed
 				// flush leaves rows in the outbox for the next attempt and must
 				// not delay the IPC return. The submitter checks Encore flags
@@ -302,6 +302,14 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				}
 
 				const db = getStatsDB();
+				// Fire-and-forget analytics: an agent can be created (restored on boot,
+				// spawned by the wizard) before the stats DB has finished initializing.
+				// Skip that window rather than throwing "Database not initialized", an
+				// unactionable error that otherwise crosses the IPC bridge into Sentry.
+				// (MAESTRO-2S, same startup race as MAESTRO-SP below.)
+				if (!db.isReady()) {
+					return null;
+				}
 				const id = db.recordSessionCreated(event);
 				logger.debug(`Recorded session created: ${event.sessionId}`, LOG_CONTEXT, {
 					agentType: event.agentType,
@@ -320,6 +328,12 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			handlerOpts('recordSessionClosed'),
 			async (sessionId: string, closedAt: number) => {
 				const db = getStatsDB();
+				// Same fire-and-forget startup race as record-session-created: agents torn
+				// down during early boot would otherwise throw "Database not initialized".
+				// (MAESTRO-2Z)
+				if (!db.isReady()) {
+					return false;
+				}
 				const updated = db.recordSessionClosed(sessionId, closedAt);
 				if (updated) {
 					logger.debug(`Recorded session closed: ${sessionId}`, LOG_CONTEXT);
@@ -340,7 +354,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	);
 
 	// Record a keyboard shortcut firing. Buckets the event into the local-time
-	// day that contains `firedAt`. Idempotent at the call-site level only —
+	// day that contains `firedAt`. Idempotent at the call-site level only -
 	// every invocation increments the daily counter by 1.
 	ipcMain.handle(
 		'stats:record-shortcut-usage',

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-native-arch.sh — Verify native module binaries match the expected architecture.
+# verify-native-arch.sh - Verify native module binaries match the expected architecture.
 # Lightweight counterpart to rebuild-and-verify-native.sh (verify only, no clean/rebuild).
 #
 # Usage: ./verify-native-arch.sh <arch>

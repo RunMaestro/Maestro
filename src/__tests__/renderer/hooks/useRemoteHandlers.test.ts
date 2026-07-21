@@ -42,7 +42,7 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
-// Mock hasCapabilityCached — agents with batch mode support
+// Mock hasCapabilityCached - agents with batch mode support
 const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 	hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
@@ -1014,7 +1014,7 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			// Should NOT spawn — unknown slash command is early-returned
+			// Should NOT spawn - unknown slash command is early-returned
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 
 			// addLogToTab should have been called with an error log about the unknown command
@@ -1255,6 +1255,43 @@ describe('useRemoteHandlers', () => {
 			const spawnCall = (window.maestro.process.spawn as any).mock.calls[0][0];
 			expect(spawnCall.readOnlyMode).toBe(true);
 			expect(spawnCall.permissionMode).toBe('readonly');
+		});
+
+		it('sends permissionMode "full" for a remote AI command on a tab with no permissionMode set', async () => {
+			// Same queued/non-interactive drift as the input path: a fresh tab shows
+			// Full Access in the toolbar, so the remote spawn must resolve to 'full'
+			// too or Claude Code loses --dangerously-skip-permissions and deadlocks.
+			const session = createMockSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Tab 1',
+						inputValue: '',
+						data: [],
+						logs: [],
+						stagedImages: [],
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			const spawnCall = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(false);
+			expect(spawnCall.permissionMode).toBe('full');
 		});
 
 		it('sets session state to busy with busySource=ai for AI commands', async () => {

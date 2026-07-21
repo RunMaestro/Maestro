@@ -89,4 +89,27 @@ describe('group hierarchy', () => {
 			group('grandchild'),
 		]);
 	});
+
+	it('promotes every member of a persisted parent cycle to root', () => {
+		expect(normalizeGroupHierarchy([group('a', 'b'), group('b', 'a')])).toEqual([
+			group('a'),
+			group('b'),
+		]);
+	});
+
+	it('promotes every invalid link in chains longer than one parent-child edge', () => {
+		expect(
+			normalizeGroupHierarchy([
+				group('root'),
+				group('level-one', 'root'),
+				group('level-two', 'level-one'),
+				group('level-three', 'level-two'),
+			])
+		).toEqual([
+			group('root'),
+			group('level-one', 'root'),
+			group('level-two'),
+			group('level-three'),
+		]);
+	});
 });

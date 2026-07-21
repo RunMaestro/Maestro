@@ -11,7 +11,7 @@
  *   `Text.toString()` is the supported way to slice the whole document) and
  *   a query, it returns every match as a `SearchHit`. The GiantPreview
  *   component then dispatches a CM6 transaction to select + scroll the
- *   current match — CM6's selection rendering paints the active match for
+ *   current match - CM6's selection rendering paints the active match for
  *   free.
  *
  *   Trade-offs vs the panel:
@@ -43,7 +43,7 @@ export interface FindAllInDocOptions {
  * Case-insensitive by default (matches the Fast tier convention so the app's
  * search bar feels the same regardless of which tier is active).
  *
- * Giant tier has no logical "block" boundary — the whole doc is one stream —
+ * Giant tier has no logical "block" boundary - the whole doc is one stream -
  * so every hit reports `blockIndex: 0` and `offsetWithinBlock === sourceOffset`.
  * Keeping the shared shape means `useFilePreviewSearch` and the adapter
  * contract require no Giant-specific branching.

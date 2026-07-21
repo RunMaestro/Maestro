@@ -16,6 +16,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { seedSidebarNav, resetSidebarNavStore } from '../../helpers/seedSidebarNav';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -95,6 +96,11 @@ vi.mock('lucide-react', async (importOriginal) => ({
 	),
 }));
 
+vi.mock('../../../renderer/components/plugins/PluginUiItemsSlot', () => ({
+	PluginUiItemsSlot: ({ surface }: { surface: string }) =>
+		surface === 'groupHeaderBadge' ? <button type="button">Plugin group action</button> : null,
+}));
+
 // Mock gitService
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -130,7 +136,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 		refreshGitStatus: vi.fn().mockResolvedValue(undefined),
 	}),
 }));
-// Modal actions mock — replaces prop-passed modal setters
+// Modal actions mock - replaces prop-passed modal setters
 const mockModalActions = {
 	setShortcutsHelpOpen: vi.fn(),
 	setSettingsModalOpen: vi.fn(),
@@ -231,52 +237,74 @@ const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
 });
 
 // Create default handler props (state is read from stores)
-const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]> = {}) => ({
-	theme: defaultTheme,
-	sortedSessions: [] as Session[],
-	isLiveMode: false,
-	webInterfaceUrl: null,
-	showSessionJumpNumbers: false,
-	visibleSessions: [] as Session[],
-	starredItems: [],
-	activateStarredItem: vi.fn(),
-	toggleGlobalLive: vi.fn(),
-	restartWebServer: vi.fn().mockResolvedValue(null),
-	toggleGroup: vi.fn(),
-	handleDragStart: vi.fn(),
-	handleDragOver: vi.fn(),
-	handleDropOnGroup: vi.fn(),
-	handleDropOnUngrouped: vi.fn(),
-	finishRenamingGroup: vi.fn(),
-	finishRenamingSession: vi.fn(),
-	startRenamingGroup: vi.fn(),
-	startRenamingSession: vi.fn(),
-	showConfirmation: vi.fn(),
-	createNewGroup: vi.fn(),
-	setGroupParent: vi.fn(),
-	onCreateGroupAndMove: vi.fn(),
-	addNewSession: vi.fn(),
-	onDeleteWorktreeGroup: vi.fn(),
-	onEditAgent: vi.fn(),
-	onNewAgentSession: vi.fn(),
-	onToggleWorktreeExpanded: vi.fn(),
-	onOpenCreatePR: vi.fn(),
-	onQuickCreateWorktree: vi.fn(),
-	onOpenWorktreeConfig: vi.fn(),
-	onDeleteWorktree: vi.fn(),
-	openWizard: vi.fn(),
-	startTour: vi.fn(),
-	onOpenGroupChat: vi.fn(),
-	onNewGroupChat: vi.fn(),
-	onEditGroupChat: vi.fn(),
-	onRenameGroupChat: vi.fn(),
-	onDeleteGroupChat: vi.fn(),
-	...overrides,
-});
+type SessionListNavOverrides = {
+	sortedSessions?: Session[];
+	visibleSessions?: Session[];
+	starredItems?: any[];
+	activateStarredItem?: (...args: any[]) => any;
+};
+
+const createDefaultProps = (
+	overrides: Partial<Parameters<typeof SessionList>[0]> & SessionListNavOverrides = {}
+) => {
+	const {
+		sortedSessions = [],
+		visibleSessions = sortedSessions,
+		starredItems = [],
+		activateStarredItem = vi.fn(),
+		...rest
+	} = overrides;
+	seedSidebarNav({
+		sortedSessions,
+		visibleSessions,
+		navSessions: sortedSessions,
+		starredItems,
+		activateStarredItem,
+	});
+	return {
+		theme: defaultTheme,
+		isLiveMode: false,
+		webInterfaceUrl: null,
+		showSessionJumpNumbers: false,
+		toggleGlobalLive: vi.fn(),
+		restartWebServer: vi.fn().mockResolvedValue(null),
+		toggleGroup: vi.fn(),
+		handleDragStart: vi.fn(),
+		handleDragOver: vi.fn(),
+		handleDropOnGroup: vi.fn(),
+		handleDropOnUngrouped: vi.fn(),
+		finishRenamingGroup: vi.fn(),
+		finishRenamingSession: vi.fn(),
+		startRenamingGroup: vi.fn(),
+		startRenamingSession: vi.fn(),
+		showConfirmation: vi.fn(),
+		createNewGroup: vi.fn(),
+		setGroupParent: vi.fn(),
+		onCreateGroupAndMove: vi.fn(),
+		addNewSession: vi.fn(),
+		onDeleteWorktreeGroup: vi.fn(),
+		onEditAgent: vi.fn(),
+		onNewAgentSession: vi.fn(),
+		onToggleWorktreeExpanded: vi.fn(),
+		onOpenCreatePR: vi.fn(),
+		onQuickCreateWorktree: vi.fn(),
+		onOpenWorktreeConfig: vi.fn(),
+		onDeleteWorktree: vi.fn(),
+		openWizard: vi.fn(),
+		startTour: vi.fn(),
+		onOpenGroupChat: vi.fn(),
+		onNewGroupChat: vi.fn(),
+		onEditGroupChat: vi.fn(),
+		onRenameGroupChat: vi.fn(),
+		onDeleteGroupChat: vi.fn(),
+		...rest,
+	};
+};
 
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		resetSidebarNavStore();
 		vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
 		vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([]);
 		vi.mocked(window.maestro.plugins.onChanged).mockImplementation(() => () => {});
@@ -789,6 +817,63 @@ describe('SessionList', () => {
 		});
 	});
 
+	describe('Pianola Pinned Agent', () => {
+		const enablePianola = () =>
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
+			});
+
+		it('keeps Pianola pinned when the unread agents filter is active', () => {
+			enablePianola();
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			expect(screen.getByText('Maestro Pianola')).toBeInTheDocument();
+		});
+
+		it('renders Pianola above the unread-filter empty state so it is not pushed down', () => {
+			enablePianola();
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			const pianolaRow = screen.getByText('Maestro Pianola');
+			const emptyState = screen.getByText('No unread or working agents');
+			// Pianola (a plain block) must come before the flex-1 empty state in DOM
+			// order; otherwise the empty state grows and shoves Pianola to the bottom.
+			expect(
+				pianolaRow.compareDocumentPosition(emptyState) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('hides Pianola when the pianola Encore flag is off, even under the unread filter', () => {
+			const pianola = createMockSession({
+				id: 'pianola-1',
+				name: 'Maestro Pianola',
+				isPianola: true,
+			});
+			useSessionStore.setState({ sessions: [pianola] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
+
+			expect(screen.queryByText('Maestro Pianola')).toBeNull();
+		});
+	});
+
 	// ============================================================================
 	// Groups Section Tests
 	// ============================================================================
@@ -934,6 +1019,19 @@ describe('SessionList', () => {
 			expect(toggleGroup).toHaveBeenCalledWith('g1');
 		});
 
+		it.each(['Enter', ' '])('does not toggle a group for %s on a contributed action', (key) => {
+			const toggleGroup = vi.fn();
+			const group = createMockGroup({ id: 'g1', name: 'My Group', collapsed: false });
+			const sessions = [createMockSession({ id: 's1', name: 'Session', groupId: 'g1' })];
+			useSessionStore.setState({ sessions, groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions, toggleGroup })} />);
+
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Plugin group action' }), { key });
+			expect(toggleGroup).not.toHaveBeenCalled();
+		});
+
 		it('shows delete button for empty groups on hover', () => {
 			const group = createMockGroup({ id: 'g1', name: 'Empty Group' });
 			useSessionStore.setState({
@@ -1031,7 +1129,7 @@ describe('SessionList', () => {
 
 			// With every session in a group, the empty "Ungrouped Agents" folder
 			// header is replaced by a compact drop-zone container + New Group
-			// button — no orphan folder header.
+			// button - no orphan folder header.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 			// The New Group button still renders so the user can keep organizing.
 			expect(screen.getByText('New Group')).toBeInTheDocument();
@@ -1332,7 +1430,7 @@ describe('SessionList', () => {
 
 			// The session should be visible in the group
 			expect(screen.getByText('Grouped Session')).toBeInTheDocument();
-			// No empty "Ungrouped Agents" header — the drop zone / New Group
+			// No empty "Ungrouped Agents" header - the drop zone / New Group
 			// button takes over that space instead.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 		});
@@ -1701,7 +1799,7 @@ describe('SessionList', () => {
 
 		it('shows busy status with pulse animation', () => {
 			// Claude sessions without an agentSessionId render a static "no active Claude session"
-			// indicator regardless of state — provide one so the busy animation is exercised.
+			// indicator regardless of state - provide one so the busy animation is exercised.
 			const sessions = [
 				createMockSession({
 					id: 's1',

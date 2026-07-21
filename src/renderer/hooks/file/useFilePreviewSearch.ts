@@ -29,7 +29,7 @@ export type { SearchHit, FilePreviewSearchAdapter };
 // them per-tier (see `markdownFast/proseStyles.ts`, `textFast/proseStyles.ts`).
 
 /**
- * Class names whose subtree the search walker MUST skip — these are
+ * Class names whose subtree the search walker MUST skip - these are
  * preview-chrome containers (line-number gutters, etc.) that aren't user
  * content. Highlighting "42" against a line-number "42" would be a false
  * positive both visually and (in the Rich tier fallback) numerically.
@@ -77,7 +77,7 @@ function walkContainerForRanges(container: HTMLElement, pattern: string): Range[
 }
 
 function hasHighlightApi(): boolean {
-	// Guarded against CSS itself being undefined — happens in jsdom tests that
+	// Guarded against CSS itself being undefined - happens in jsdom tests that
 	// tear down globals between cases and means the React cleanup pass can
 	// fire after teardown.
 	return typeof CSS !== 'undefined' && 'highlights' in CSS;
@@ -265,7 +265,7 @@ export function useFilePreviewSearch({
 		}
 	}, [searchOpen, searchQuery]);
 
-	// In jq mode, text-based highlighting is disabled — jq filtering is handled by JsonlViewer
+	// In jq mode, text-based highlighting is disabled - jq filtering is handled by JsonlViewer
 	const isJqMode = searchMode === 'jq';
 
 	// Highlight search matches in syntax-highlighted code
@@ -281,7 +281,7 @@ export function useFilePreviewSearch({
 			isCsv ||
 			isJsonl ||
 			(isJson && isJqMode) ||
-			// Fast tier provides its own adapter — defer counting + scroll to
+			// Fast tier provides its own adapter - defer counting + scroll to
 			// the markdown/readable-text CSS-Highlight effect below, which has
 			// been widened to handle code Fast tier when an adapter is present.
 			searchAdapter
@@ -392,11 +392,11 @@ export function useFilePreviewSearch({
 	// Why two effects (count + navigate):
 	//   The earlier single-effect implementation listed `currentMatchIndex` in
 	//   its deps. That made every prev/next button press re-run `findHits` AND
-	//   re-walk the DOM — under heavy virtualization the resulting hit count
+	//   re-walk the DOM - under heavy virtualization the resulting hit count
 	//   could flicker between renders ("wobble"). Splitting into:
-	//     1. countEffect — runs ONCE per query/content/adapter/mode change.
+	//     1. countEffect - runs ONCE per query/content/adapter/mode change.
 	//        Calls findHits, walks DOM, sets totalMatches, resets currentMatchIndex.
-	//     2. navigateEffect — runs ONLY when currentMatchIndex or totalMatches
+	//     2. navigateEffect - runs ONLY when currentMatchIndex or totalMatches
 	//        changes. Reads precomputed hits / ranges from refs and dispatches
 	//        scroll + current-highlight swap. NEVER calls findHits.
 	//   …guarantees count stability across navigation while still updating
@@ -471,7 +471,7 @@ export function useFilePreviewSearch({
 
 	// Navigate effect: react to currentMatchIndex / totalMatches changes
 	// (count change clears + repaints; nav swaps the current highlight). Never
-	// re-runs findHits — that's the count effect's job.
+	// re-runs findHits - that's the count effect's job.
 	useEffect(() => {
 		const adapterActive = Boolean(searchAdapter);
 		const isTextLike = isMarkdown || isReadableText || adapterActive;
@@ -504,7 +504,7 @@ export function useFilePreviewSearch({
 			const safeIdx = Math.min(currentMatchIndex, hits.length - 1);
 			if (safeIdx < 0 || !hits[safeIdx]) return;
 			// Fast/Giant: tell the tier to scroll its virtualizer. After the
-			// next paint, re-walk the DOM (cheap — only mounted text nodes) and
+			// next paint, re-walk the DOM (cheap - only mounted text nodes) and
 			// refresh both Highlight registrations so the user sees up-to-date
 			// highlights in the newly-mounted block.
 			searchAdapter.scrollToMatch(hits[safeIdx]);
@@ -526,7 +526,7 @@ export function useFilePreviewSearch({
 		const ranges = rangesRef.current;
 		const targetRange = ranges[Math.min(currentMatchIndex, ranges.length - 1)] ?? null;
 		applyCurrentHighlight(targetRange);
-		// jsdom's Range lacks getBoundingClientRect — guard the scroll path so
+		// jsdom's Range lacks getBoundingClientRect - guard the scroll path so
 		// tests don't crash. Real browsers always have it.
 		if (targetRange && typeof targetRange.getBoundingClientRect === 'function') {
 			const rect = targetRange.getBoundingClientRect();
@@ -574,7 +574,7 @@ export function useFilePreviewSearch({
 		contentRef,
 	]);
 
-	// Handle search in edit mode — count matches, push CM6 decorations, and
+	// Handle search in edit mode - count matches, push CM6 decorations, and
 	// reveal the active match. Counting and decoration painting are owned
 	// here; the CodeMirror editor renders the highlight via its decoration
 	// pipeline (no DOM walking, no CSS Custom Highlight overlay).
@@ -625,13 +625,13 @@ export function useFilePreviewSearch({
 			return;
 		}
 
-		// Push the match decorations into the editor — paints all matches and
+		// Push the match decorations into the editor - paints all matches and
 		// emphasizes the active one. Re-runs on every dep change so typing into
 		// the query updates highlights in real time.
 		editor.setSearchMatches(matches, validIndex);
 
 		// Reveal the active match only when navigating (Enter / Shift+Enter).
-		// We detect navigation by an unchanged query with a changed index — that
+		// We detect navigation by an unchanged query with a changed index - that
 		// way typing doesn't yank scroll position or focus.
 		const isNavigating =
 			prevSearchQueryRef.current === searchQuery && prevMatchIndexRef.current !== currentMatchIndex;

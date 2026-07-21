@@ -1,5 +1,5 @@
 /**
- * Tests for terminalKeys.ts — the shared PTY escape sequences and the
+ * Tests for terminalKeys.ts - the shared PTY escape sequences and the
  * sticky-Ctrl control-code mapping used by the terminal touch key bar.
  */
 

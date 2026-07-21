@@ -45,7 +45,7 @@ export function getLocalManifestPath(app: App): string {
 /**
  * Whether `pathStr` references the local filesystem (absolute or `~`-prefixed)
  * rather than a GitHub manifest path. Exported so the IPC + WS callers can
- * gate access — only locally-trusted (IPC) flows may resolve local paths.
+ * gate access - only locally-trusted (IPC) flows may resolve local paths.
  */
 export function isLocalPath(pathStr: string): boolean {
 	if (path.isAbsolute(pathStr)) return true;
@@ -412,7 +412,7 @@ export interface ImportPlaybookOptions {
 	targetFolderName: string;
 	autoRunFolderPath: string;
 	sessionId: string;
-	/** Resolved SSH config — caller is responsible for looking it up. */
+	/** Resolved SSH config - caller is responsible for looking it up. */
 	sshConfig?: SshRemoteConfig;
 }
 
@@ -536,7 +536,7 @@ export async function importMarketplacePlaybook(
 		}
 	}
 
-	// Refuse to persist a playbook whose documents all failed to write —
+	// Refuse to persist a playbook whose documents all failed to write -
 	// the per-doc loop is intentionally tolerant so one bad file doesn't
 	// block the rest, but if every doc failed we'd otherwise create a
 	// playbook with `documents: []`, return success, close the marketplace
@@ -640,7 +640,7 @@ export async function importMarketplacePlaybook(
 		playbooks = Array.isArray(data.playbooks) ? data.playbooks : [];
 	} catch (error) {
 		// ENOENT is normal (first save). Anything else (corrupt JSON, EACCES,
-		// etc.) means there's existing user data we couldn't read — refuse
+		// etc.) means there's existing user data we couldn't read - refuse
 		// to silently overwrite it, since starting from [] would drop their
 		// previously-saved playbooks on the next write.
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

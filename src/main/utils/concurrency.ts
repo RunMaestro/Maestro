@@ -1,7 +1,7 @@
 /**
  * Bounded-concurrency helpers for fan-out work, primarily SSH-backed reads.
  *
- * Background: OpenSSH's default `MaxStartups` is 10:30:100 — past 10 unauthenticated
+ * Background: OpenSSH's default `MaxStartups` is 10:30:100 - past 10 unauthenticated
  * connections, sshd starts probabilistically dropping new attempts. Listing N remote
  * sessions naively via `Promise.all(sessions.map(...))` opens N×K simultaneous
  * connections (where K is the number of SSH calls per session) and silently loses
@@ -16,6 +16,14 @@
  * lose entries to rejected connections.
  */
 export const REMOTE_SESSION_READ_CONCURRENCY = 6;
+
+/**
+ * Cap on parallel per-session local filesystem reads when listing sessions.
+ * An unbounded `Promise.all` over a large history folder holds an open file
+ * descriptor per in-flight read and can brush against fd limits; libuv's
+ * threadpool serializes past ~4 ops anyway, so a modest cap costs nothing.
+ */
+export const LOCAL_SESSION_READ_CONCURRENCY = 16;
 
 /**
  * Map `items` with a bounded concurrency.

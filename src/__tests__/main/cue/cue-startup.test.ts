@@ -147,7 +147,7 @@ describe('CueEngine app.startup', () => {
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start(); // no argument — defaults to 'user-toggle'; app.startup does not fire
+		engine.start(); // no argument - defaults to 'user-toggle'; app.startup does not fire
 
 		expect(deps.onCueRun).not.toHaveBeenCalled();
 
@@ -190,7 +190,7 @@ describe('CueEngine app.startup', () => {
 		// Simulate YAML hot-reload
 		engine.refreshSession('session-1', '/projects/test');
 
-		// Should still be only 1 call — deduplication prevents re-fire
+		// Should still be only 1 call - deduplication prevents re-fire
 		expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 		engine.stop();
@@ -199,7 +199,7 @@ describe('CueEngine app.startup', () => {
 	it('does NOT re-fire when stop/start uses default user-toggle reason', async () => {
 		// This validates direct engine.start() calls that omit the reason argument
 		// (defaulting to 'user-toggle'). Note: the cue:enable IPC handler passes
-		// 'system-boot' explicitly, so the IPC-driven path DOES re-fire — see the
+		// 'system-boot' explicitly, so the IPC-driven path DOES re-fire - see the
 		// 'fires on IPC-driven user toggle' test above.
 		const config = createStartupConfig();
 		mockLoadCueConfig.mockReturnValue(config);
@@ -211,7 +211,7 @@ describe('CueEngine app.startup', () => {
 		expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 		engine.stop();
-		engine.start(); // no argument — 'user-toggle' reason; app.startup check is skipped
+		engine.start(); // no argument - 'user-toggle' reason; app.startup check is skipped
 
 		expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
@@ -231,7 +231,7 @@ describe('CueEngine app.startup', () => {
 		// Wait for the first run to complete so concurrency slot is free
 		await vi.advanceTimersByTimeAsync(100);
 
-		// Remove session — clears startup fired keys for that session
+		// Remove session - clears startup fired keys for that session
 		engine.removeSession('session-1');
 
 		// Simulate a new system boot cycle
@@ -256,7 +256,7 @@ describe('CueEngine app.startup', () => {
 		engine.stop();
 	});
 
-	it('respects agent_id binding — skips if agent_id does not match session', () => {
+	it('respects agent_id binding - skips if agent_id does not match session', () => {
 		const config = createStartupConfig({ agent_id: 'other-session' });
 		mockLoadCueConfig.mockReturnValue(config);
 
@@ -282,7 +282,7 @@ describe('CueEngine app.startup', () => {
 		engine.stop();
 	});
 
-	it('respects filter — does not fire when filter does not match', () => {
+	it('respects filter - does not fire when filter does not match', () => {
 		const config = createStartupConfig({
 			filter: { reason: 'nonexistent_reason' },
 		});
@@ -313,7 +313,7 @@ describe('CueEngine app.startup', () => {
 		engine.stop();
 	});
 
-	it('works with fan_out — dispatches to all targets', async () => {
+	it('works with fan_out - dispatches to all targets', async () => {
 		const session1 = createMockSession({ id: 'session-1', name: 'Main' });
 		const session2 = createMockSession({ id: 'session-2', name: 'Worker-A' });
 		const session3 = createMockSession({ id: 'session-3', name: 'Worker-B' });
@@ -547,7 +547,7 @@ describe('CueEngine app.startup', () => {
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		// Don't call start() — engine is disabled
+		// Don't call start() - engine is disabled
 
 		expect(deps.onCueRun).not.toHaveBeenCalled();
 	});
@@ -634,7 +634,7 @@ describe('CueEngine app.startup', () => {
 		const getSessions = vi.fn(() => [] as ReturnType<typeof createMockSession>[]);
 		const deps = createMockDeps({ getSessions });
 		const engine = new CueEngine(deps);
-		engine.start(); // user-toggle default — no startReason set
+		engine.start(); // user-toggle default - no startReason set
 
 		getSessions.mockReturnValue([session]);
 		engine.refreshSession('session-1', '/projects/test');

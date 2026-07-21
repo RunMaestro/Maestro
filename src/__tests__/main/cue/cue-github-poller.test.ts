@@ -55,13 +55,13 @@ vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `test-uuid-${++uuidCounter}`),
 }));
 
-// Mock child_process.execFile (safe — no shell injection via execFile)
+// Mock child_process.execFile (safe - no shell injection via execFile)
 vi.mock('child_process', () => ({
 	default: { execFile: mockExecFile },
 	execFile: mockExecFile,
 }));
 
-// Mock cliDetection — resolveGhPath returns 'gh', getExpandedEnv returns process.env
+// Mock cliDetection - resolveGhPath returns 'gh', getExpandedEnv returns process.env
 vi.mock('../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
 	getExpandedEnv: vi.fn().mockReturnValue(process.env),
@@ -249,7 +249,7 @@ describe('cue-github-poller', () => {
 		vi.useRealTimers();
 	});
 
-	it('gh CLI not available — warning logged, no events fired, no crash', async () => {
+	it('gh CLI not available - warning logged, no events fired, no crash', async () => {
 		const config = makeConfig();
 		setupExecFileReject('--version', 'gh not found');
 
@@ -267,7 +267,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('repo auto-detection — resolves from gh repo view', async () => {
+	it('repo auto-detection - resolves from gh repo view', async () => {
 		const config = makeConfig({ repo: undefined });
 		setupExecFile({
 			'--version': '2.0.0',
@@ -289,7 +289,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('repo auto-detection failure — warning logged, poll skipped', async () => {
+	it('repo auto-detection failure - warning logged, poll skipped', async () => {
 		const config = makeConfig({ repo: undefined });
 		setupExecFile({ '--version': '2.0.0' });
 		// repo view will hit the default reject
@@ -306,7 +306,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('PR polling — new items fire events', async () => {
+	it('PR polling - new items fire events', async () => {
 		const config = makeConfig();
 		setupExecFile({
 			'--version': '2.0.0',
@@ -321,7 +321,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('PR polling — seen items are skipped', async () => {
+	it('PR polling - seen items are skipped', async () => {
 		mockIsGitHubItemSeen.mockImplementation(((_subId: string, itemKey: string) => {
 			return itemKey === 'pr:owner/repo:2'; // PR #2 already seen
 		}) as (subId: string, key: string) => boolean);
@@ -340,7 +340,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('PR polling — marks items as seen with correct keys', async () => {
+	it('PR polling - marks items as seen with correct keys', async () => {
 		const config = makeConfig();
 		setupExecFile({
 			'--version': '2.0.0',
@@ -369,7 +369,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('issue polling — new items fire events with assignees', async () => {
+	it('issue polling - new items fire events with assignees', async () => {
 		const config = makeConfig({ eventType: 'github.issue' });
 		setupExecFile({
 			'--version': '2.0.0',
@@ -456,7 +456,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('body truncation — body exceeding 5000 chars is truncated', async () => {
+	it('body truncation - body exceeding 5000 chars is truncated', async () => {
 		const longBody = 'x'.repeat(6000);
 		const config = makeConfig();
 		setupExecFile({
@@ -473,7 +473,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('first-run seeding — no events on first poll', async () => {
+	it('first-run seeding - no events on first poll', async () => {
 		mockHasAnyGitHubSeen.mockReturnValue(false); // first run
 
 		const config = makeConfig();
@@ -561,14 +561,14 @@ describe('cue-github-poller', () => {
 
 		cleanup();
 
-		// Advance past poll interval — no new polls should occur
+		// Advance past poll interval - no new polls should occur
 		await vi.advanceTimersByTimeAsync(600000);
 		expect((config.onEvent as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
 			callCountAfterFirst
 		);
 	});
 
-	it('initial poll delay — first poll at 2s, not immediately', async () => {
+	it('initial poll delay - first poll at 2s, not immediately', async () => {
 		const config = makeConfig();
 		setupExecFile({
 			'--version': '2.0.0',
@@ -589,7 +589,7 @@ describe('cue-github-poller', () => {
 		expect(mockExecFile).toHaveBeenCalled();
 	});
 
-	it('poll interval — subsequent polls at configured interval', async () => {
+	it('poll interval - subsequent polls at configured interval', async () => {
 		const config = makeConfig({ pollMinutes: 2 });
 		let pollCount = 0;
 		mockExecFile.mockImplementation(
@@ -628,7 +628,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('gh parse error — invalid JSON from gh, error logged, no crash', async () => {
+	it('gh parse error - invalid JSON from gh, error logged, no crash', async () => {
 		const config = makeConfig();
 		setupExecFile({
 			'--version': '2.0.0',
@@ -644,7 +644,7 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
-	it('stopped during iteration — remaining items skipped', async () => {
+	it('stopped during iteration - remaining items skipped', async () => {
 		const config = makeConfig();
 
 		// Track onEvent calls to call cleanup mid-iteration
@@ -698,7 +698,7 @@ describe('cue-github-poller', () => {
 			const cleanup = createCueGitHubPoller(config);
 			await vi.advanceTimersByTimeAsync(2000);
 
-			// Seed marker doesn't carry a meaningful revision — the poller passes
+			// Seed marker doesn't carry a meaningful revision - the poller passes
 			// the raw item-key API which leaves lastRevision undefined.
 			expect(mockMarkGitHubItemSeen).toHaveBeenCalledWith(
 				'session-1:test-sub',
@@ -745,11 +745,11 @@ describe('cue-github-poller', () => {
 
 			const cleanup = createCueGitHubPoller(config);
 
-			// First poll at 2s — fails, seed marker placed
+			// First poll at 2s - fails, seed marker placed
 			await vi.advanceTimersByTimeAsync(2000);
 			expect(config.onEvent).not.toHaveBeenCalled();
 
-			// Second poll at 2s + 1min — succeeds, fires events
+			// Second poll at 2s + 1min - succeeds, fires events
 			await vi.advanceTimersByTimeAsync(60000);
 			expect(config.onEvent).toHaveBeenCalledTimes(1);
 			const event = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -999,7 +999,7 @@ describe('cue-github-poller', () => {
 			});
 
 			const cleanup = createCueGitHubPoller(config);
-			// Many successive rate-limited cycles — advance by a huge amount each time.
+			// Many successive rate-limited cycles - advance by a huge amount each time.
 			for (let i = 0; i < 25; i++) {
 				await vi.advanceTimersByTimeAsync(GITHUB_RATE_LIMIT_MAX_BACKOFF_MS + 5000);
 			}
@@ -1065,7 +1065,7 @@ describe('cue-github-poller', () => {
 
 			const cleanup = createCueGitHubPoller(config);
 
-			// Initial poll attempt while inactive — no gh call.
+			// Initial poll attempt while inactive - no gh call.
 			await vi.advanceTimersByTimeAsync(2100);
 			expect(mockExecFile).not.toHaveBeenCalled();
 

@@ -27,7 +27,7 @@ import { getAllInitialQuestions } from '../../../../../renderer/components/Wizar
 
 // Load actual prompt files from disk so generateSystemPrompt tests work with real content.
 // Mirror the {{INCLUDE:name}} and {{REF:name}} resolution that src/main/prompt-manager.ts
-// performs in production — without it, directives in wizard-system.md remain unresolved
+// performs in production - without it, directives in wizard-system.md remain unresolved
 // and the assertions below would never see their resolved content.
 const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', '..', '..', 'src', 'prompts');
 const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;

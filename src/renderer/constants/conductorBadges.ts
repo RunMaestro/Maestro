@@ -211,7 +211,7 @@ export const CONDUCTOR_BADGES: ConductorBadge[] = [
 		name: 'Titan of the Baton',
 		shortName: 'Titan',
 		description:
-			"The mythic peak—a once-in-a-generation artistic figure. Transformed the field's aesthetics, standards, and sound. Definitive recordings considered global references.",
+			"The mythic peak - a once-in-a-generation artistic figure. Transformed the field's aesthetics, standards, and sound. Definitive recordings considered global references.",
 		requiredTimeMs: 10 * 365 * DAY, // 10 years
 		exampleConductor: {
 			name: 'Leonard Bernstein',

@@ -92,7 +92,7 @@ function applyFilter(lines: ParsedLine[], expr: JqExpr | null): FilteredLine[] {
 				out.push({ line, results });
 			}
 		} catch {
-			// Filter evaluation error — skip line
+			// Filter evaluation error - skip line
 		}
 	}
 	return out;
@@ -422,7 +422,7 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 							const isExpanded = expandedLine === fl.line.index;
 
 							return (
-								// Fragment carries the key — when .map() returns a
+								// Fragment carries the key - when .map() returns a
 								// fragment, React inspects the fragment for the key, not
 								// the inner elements. The previous shorthand `<>` had
 								// no key slot, so React fell back to index keys and

@@ -99,7 +99,7 @@ type SpawnBackgroundSynopsisFn = (
 
 export interface UseGoalRunnerDeps {
 	// Refs (shared with useBatchRunner so lifecycle behavior stays consistent)
-	sessionsRef: MutableRefObject<Session[]>;
+	getSessions: () => Session[];
 	audioFeedbackEnabledRef: MutableRefObject<boolean | undefined>;
 	audioFeedbackCommandRef: MutableRefObject<string | undefined>;
 	autoRunFlushStateRefs: AutoRunFlushStateRefs;
@@ -188,13 +188,13 @@ function exitReasonLabel(reason: GoalExitReason): string {
  * instead of a document/task loop.
  *
  * Each iteration spawns the agent via the injected `onSpawnAgent` (which already
- * honors SSH and agent-config overrides — do NOT bypass it), parses the agent's
+ * honors SSH and agent-config overrides - do NOT bypass it), parses the agent's
  * self-reported `<!-- maestro:... -->` markers, feeds the running history into the
  * pure `evaluateGoalExit` decision function, and stops on
  * completion / deadlock / max-iterations / stall / user-stop.
  */
 export function useGoalRunner({
-	sessionsRef,
+	getSessions,
 	audioFeedbackEnabledRef,
 	audioFeedbackCommandRef,
 	autoRunFlushStateRefs,
@@ -215,7 +215,7 @@ export function useGoalRunner({
 }: UseGoalRunnerDeps): UseGoalRunnerReturn {
 	const startGoalRun = useCallback(
 		async (sessionId: string, config: BatchRunConfig, folderPath: string) => {
-			// Global Auto Run kill switch — same gate as the document runner.
+			// Global Auto Run kill switch - same gate as the document runner.
 			if (useSettingsStore.getState().autoRunDisabled) {
 				window.maestro.logger.log(
 					'warn',
@@ -240,14 +240,14 @@ export function useGoalRunner({
 				return;
 			}
 
-			// Resolve the session (sessionsRef first, then the store for just-created sessions).
+			// Prefer getSessions(), then the store for just-created sessions.
 			const session =
-				sessionsRef.current.find((s) => s.id === sessionId) ||
+				getSessions().find((s) => s.id === sessionId) ||
 				selectSessionById(sessionId)(useSessionStore.getState());
 			if (!session) {
 				window.maestro.logger.log('error', 'Session not found for goal run', 'GoalRunner', {
 					sessionId,
-					availableSessionIds: sessionsRef.current.map((s) => s.id),
+					availableSessionIds: getSessions().map((s) => s.id),
 				});
 				return;
 			}
@@ -284,7 +284,7 @@ export function useGoalRunner({
 			timeTracking.startTracking(sessionId);
 			stopRequestedRefs.current[sessionId] = false;
 
-			// Goal mode has no worktree — the agent runs in its own cwd. SSH remains
+			// Goal mode has no worktree - the agent runs in its own cwd. SSH remains
 			// honored inside onSpawnAgent regardless of the cwd override.
 			const effectiveCwd = session.cwd;
 
@@ -295,7 +295,7 @@ export function useGoalRunner({
 					const status = await gitService.getStatus(effectiveCwd);
 					gitBranch = status.branch;
 				} catch {
-					// Ignore git errors — branch stays empty.
+					// Ignore git errors - branch stays empty.
 				}
 			}
 
@@ -405,7 +405,7 @@ export function useGoalRunner({
 
 			// Start stats tracking. Record the goal as the document path behind a
 			// `Goal: ` prefix (trimmed to a readable length) so the run is
-			// recognizable — and distinguishable from document runs — in the Usage
+			// recognizable - and distinguishable from document runs - in the Usage
 			// Dashboard; progress maps onto the 0–100 task scale.
 			let statsAutoRunId: string | null = null;
 			try {
@@ -632,7 +632,7 @@ export function useGoalRunner({
 					: result.error || result.response || synopsis;
 				const fullResponse = stripMaestroMarkers(rawFullResponse);
 				const rationaleText = markers.rationale?.trim();
-				const iterationSummary = `Goal progress: ${displayProgress}% — ${rationaleText || synopsis}`;
+				const iterationSummary = `Goal progress: ${displayProgress}% - ${rationaleText || synopsis}`;
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
@@ -877,7 +877,7 @@ export function useGoalRunner({
 			onProcessQueueAfterCompletion,
 			onSpawnAgent,
 			spawnBackgroundSynopsis,
-			sessionsRef,
+			getSessions,
 			stopRequestedRefs,
 			timeTracking,
 			updateBatchStateAndBroadcastRef,

@@ -437,7 +437,7 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 		it('responds to sessionStore updates', () => {
 			const { unmount } = render(<AppModals {...createDefaultProps()} />);
 
-			// Update store after render — component should re-render
+			// Update store after render - component should re-render
 			act(() => {
 				useSessionStore.setState({
 					sessions: [createMockSession({ id: 's1' })],
@@ -475,7 +475,7 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 			const { openModal } = useModalStore.getState();
 			openModal('about');
 
-			// Render without passing aboutModalOpen as prop — component sources it from store
+			// Render without passing aboutModalOpen as prop - component sources it from store
 			const { unmount } = render(<AppModals {...createDefaultProps()} />);
 			unmount();
 		});
@@ -543,13 +543,13 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 				openModal(id);
 			}
 
-			// Should render without crash — all booleans sourced from store
+			// Should render without crash - all booleans sourced from store
 			const { unmount } = render(<AppModals {...createDefaultProps()} />);
 			unmount();
 		});
 
 		it('defaults modal booleans to false when not in modalStore', () => {
-			// Empty modal store — all booleans should be false
+			// Empty modal store - all booleans should be false
 			useModalStore.setState({ modals: new Map() });
 
 			const { unmount } = render(<AppModals {...createDefaultProps()} />);

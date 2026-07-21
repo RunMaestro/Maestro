@@ -1,5 +1,5 @@
 /**
- * useAppInitialization — extracted from App.tsx (Phase 2G)
+ * useAppInitialization - extracted from App.tsx (Phase 2G)
  *
  * Owns one-time startup effects that run on mount or when settings load.
  * Reads from Zustand stores via selectors for React-driven effects.

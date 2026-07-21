@@ -14,6 +14,7 @@ import { ChevronLeft, Power, Settings as SettingsIcon, Trash2, KeyRound } from '
 import type { EncoreFeatureFlags, Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { PermissionList, RISK_COLOR } from './PermissionList';
+import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import type {
 	AggregatedContributions,
@@ -83,7 +84,16 @@ export function ExtensionDetails({
 	getGrants,
 	settingsBody,
 }: ExtensionDetailsProps) {
-	const [grants, setGrants] = useState<PluginGrantsSnapshot | null>(null);
+	// Grants are tagged with the plugin they belong to, so switching plugins never
+	// reads the previous plugin's snapshot before the new plugin's async load
+	// resolves. `grants` is derived and stays null until THIS plugin's snapshot has
+	// loaded - a synchronous render guard that closes the stale-grant window (a
+	// plugin id could otherwise pair with the wrong grant for one render).
+	const [grantsState, setGrantsState] = useState<{
+		pluginId: string;
+		snapshot: PluginGrantsSnapshot;
+	} | null>(null);
+	const grants = grantsState?.pluginId === ext.id ? grantsState.snapshot : null;
 	const [configureOpen, setConfigureOpen] = useState(false);
 	const [settingValues, setSettingValues] = useState<Record<string, boolean | string | number>>({});
 	const [activeSubTab, setActiveSubTab] = useState<'settings' | 'permissions'>('settings');
@@ -97,16 +107,16 @@ export function ExtensionDetails({
 	// (grants are minted host-side on enable), so no ledger round-trip.
 	useEffect(() => {
 		if (!isPlugin) {
-			setGrants(null);
+			setGrantsState(null);
 			return;
 		}
 		let cancelled = false;
 		void getGrants(ext.id)
 			.then((snap) => {
-				if (!cancelled) setGrants(snap);
+				if (!cancelled) setGrantsState({ pluginId: ext.id, snapshot: snap });
 			})
 			.catch(() => {
-				if (!cancelled) setGrants(null);
+				if (!cancelled) setGrantsState(null);
 			});
 		return () => {
 			cancelled = true;
@@ -189,7 +199,7 @@ export function ExtensionDetails({
 
 	// First-party tiles surface their supervised background services; status
 	// derives from the definition + the bridge-written flag state (enable
-	// reconciles, disable stops) — no live process polling.
+	// reconciles, disable stops) - no live process polling.
 	const firstPartyServices =
 		!isPlugin && ext.firstParty && ext.flag && ext.flag in FIRST_PARTY_PLUGINS
 			? FIRST_PARTY_PLUGINS[ext.flag as keyof typeof FIRST_PARTY_PLUGINS].backgroundServices
@@ -258,7 +268,7 @@ export function ExtensionDetails({
 
 			{/* FC1 Option-B gate: code execution requires a trusted signature.
 			    unsigned/untrusted: code never runs, declarative contributions still
-			    apply. invalid (tampered): the plugin is fully inert — getActiveRecords
+			    apply. invalid (tampered): the plugin is fully inert - getActiveRecords
 			    excludes it, so even declarative contributions are dropped. */}
 			{isPlugin && isCodeTier && ext.trust === 'invalid' && (
 				<p
@@ -276,7 +286,7 @@ export function ExtensionDetails({
 					className="text-xs mt-2"
 					style={{ color: theme.colors.warning }}
 				>
-					Code execution requires a trusted signature — this plugin is{' '}
+					Code execution requires a trusted signature - this plugin is{' '}
 					{(ext.trust ?? 'unsigned') === 'unsigned' ? 'unsigned' : 'signed by an untrusted key'}.
 					Its code will not run; declarative contributions (themes, prompts) still apply.
 				</p>
@@ -475,10 +485,27 @@ export function ExtensionDetails({
 						</div>
 					)}
 
+					{/* Host-managed dispatch allow list (issue #1250): editable only once
+					    the plugin holds a consented agents:dispatch grant. Widening it
+					    re-mints the grant scope host-side - no plugin re-pack/re-sign. */}
+					{isPlugin &&
+						(() => {
+							const dispatchGrant = grants?.granted.find((g) => g.capability === 'agents:dispatch');
+							return dispatchGrant ? (
+								<AgentDispatchAllowlist
+									key={ext.id}
+									theme={theme}
+									pluginId={ext.id}
+									grant={dispatchGrant}
+									onSaved={(snap) => setGrantsState({ pluginId: ext.id, snapshot: snap })}
+								/>
+							) : null;
+						})()}
+
 					{/* First-party permission disclosure: the capabilities the feature's
 			    definition declares. Grants are minted host-side by the lifecycle
 			    bridge when the tile is enabled (trusted by construction), so this
-			    is static disclosure — no ledger round-trip. */}
+			    is static disclosure - no ledger round-trip. */}
 					{!isPlugin && (ext.permissions?.length ?? 0) > 0 && (
 						<div className="mt-5">
 							<div
@@ -533,7 +560,7 @@ export function ExtensionDetails({
 			)}
 
 			{/* Settings sub-tab: first-party config body, plugin config editor, or
-			    Pianola's modal entry — whichever applies to this extension. */}
+			    Pianola's modal entry - whichever applies to this extension. */}
 			{activeSubTab === 'settings' && (
 				<div className="mt-5" data-testid="extension-settings-panel">
 					{/* First-party feature with an inline config body */}

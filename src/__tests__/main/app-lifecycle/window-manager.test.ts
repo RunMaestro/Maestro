@@ -183,6 +183,10 @@ vi.mock('../../../main/auto-updater', () => ({
 	initAutoUpdater: (...args: unknown[]) => mockInitAutoUpdater(...args),
 }));
 
+vi.mock('../../../main/maestro-cli-manager', () => ({
+	resolveBundledCliPathSync: vi.fn(() => '/resolved/maestro-cli.js'),
+}));
+
 // Mock electron-devtools-installer (for development mode)
 vi.mock('electron-devtools-installer', () => ({
 	default: vi.fn().mockResolvedValue('React DevTools'),
@@ -307,6 +311,7 @@ describe('app-lifecycle/window-manager', () => {
 			windowManager.createWindow();
 
 			expect(lastBrowserWindowOptions?.webPreferences).toMatchObject({
+				additionalArguments: ['--maestro-cli-path=/resolved/maestro-cli.js'],
 				contextIsolation: true,
 				nodeIntegration: false,
 				sandbox: true,
@@ -1159,7 +1164,7 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			const navigateHandler = willNavigateCall![1];
 
-			// Anything not on the app:// renderer origin must be blocked — file://
+			// Anything not on the app:// renderer origin must be blocked - file://
 			// is now off-limits too because the renderer is served via app:// only.
 			const mockEvent = { preventDefault: vi.fn() };
 			navigateHandler(mockEvent, 'file:///etc/passwd');
@@ -1350,7 +1355,7 @@ describe('app-lifecycle/window-manager', () => {
 			);
 			expect(willNavigateCalls).toHaveLength(1);
 
-			// Drive the handler many times — behavior should be stable and the
+			// Drive the handler many times - behavior should be stable and the
 			// allowed URL should still match exactly on every invocation.
 			const navigateHandler = willNavigateCalls[0][1];
 			for (let i = 0; i < 5; i++) {
@@ -1469,7 +1474,7 @@ describe('app-lifecycle/window-manager', () => {
 			expect(mockGuestWebContents.on).toHaveBeenCalledWith('dom-ready', expect.any(Function));
 			expect(mockGuestWebContents.on).toHaveBeenCalledWith('did-navigate', expect.any(Function));
 
-			// Trigger dom-ready — should call executeJavaScript
+			// Trigger dom-ready - should call executeJavaScript
 			const domReadyHandler = mockGuestWebContents.on.mock.calls.find(
 				(call: unknown[]) => call[0] === 'dom-ready'
 			)?.[1];
@@ -1544,7 +1549,7 @@ describe('app-lifecycle/window-manager', () => {
 				(call: unknown[]) => call[0] === 'console-message'
 			)?.[1];
 
-			// Regular console message — should not forward
+			// Regular console message - should not forward
 			consoleHandler?.({}, 1, 'Hello world', 0, '');
 			expect(mockWebContents.send).not.toHaveBeenCalledWith(
 				'browser-tab:shortcutKey',

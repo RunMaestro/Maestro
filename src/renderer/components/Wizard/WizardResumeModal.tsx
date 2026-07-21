@@ -309,7 +309,7 @@ export function WizardResumeModal({
 												style={{ color: theme.colors.warning }}
 											/>
 											<p className="text-xs" style={{ color: theme.colors.warning }}>
-												Agent no longer available — you'll need to select a different agent
+												Agent no longer available - you'll need to select a different agent
 											</p>
 										</div>
 									)}
@@ -348,7 +348,7 @@ export function WizardResumeModal({
 												style={{ color: theme.colors.warning }}
 											/>
 											<p className="text-xs" style={{ color: theme.colors.warning }}>
-												Directory no longer exists — you'll need to select a new location
+												Directory no longer exists - you'll need to select a new location
 											</p>
 										</div>
 									)}

@@ -70,6 +70,9 @@ describe('OmpOutputParser', () => {
 		expect(totalTokens).toBe(14449);
 
 		expect(usage!.costUsd).toBeCloseTo(0.0904, 4);
+
+		// The per-turn model rides along so downstream can resolve its real window.
+		expect(usage!.model).toBe('claude-opus-4-8');
 	});
 
 	it('treats agent_end as the authoritative final result', () => {
@@ -107,6 +110,48 @@ describe('OmpOutputParser', () => {
 		expect(event!.type).toBe('system');
 		expect(parser.isResultMessage(event!)).toBe(false);
 	});
+
+	it('does not emit a result when agent_end final assistant message has empty text', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [
+				{ role: 'user', content: [{ type: 'text', text: 'hi' }] },
+				{ role: 'assistant', content: [{ type: 'text', text: '' }] },
+			],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
+	it('does not emit a result when agent_end final assistant message is whitespace-only', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [{ role: 'assistant', content: [{ type: 'text', text: '   \n\t' }] }],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
+	it('does not emit a result when agent_end final assistant message carries no text block', () => {
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [
+				{
+					role: 'assistant',
+					content: [{ type: 'toolCall', toolName: 'edit', args: {} }],
+				},
+			],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
 	it('does not surface a retrying agent_end as a user-facing error', () => {
 		const retrying = {
 			type: 'agent_end',
@@ -119,5 +164,71 @@ describe('OmpOutputParser', () => {
 		expect(event!.type).toBe('system');
 
 		expect(parser.detectErrorFromParsed(retrying)).toBeNull();
+	});
+
+	it('treats a TTSR rule interrupt on message_end as usage, not an error', () => {
+		const event = parser.parseJsonObject({
+			type: 'message_end',
+			message: {
+				role: 'assistant',
+				errorMessage: 'TTSR matched rule: ts-no-any',
+				usage: { input: 10, output: 5, cost: { total: 0.01 } },
+			},
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('usage');
+		expect(event!.usage).toMatchObject({ inputTokens: 10, outputTokens: 5 });
+	});
+
+	it('does not report a TTSR rule interrupt via detectErrorFromParsed', () => {
+		expect(
+			parser.detectErrorFromParsed({
+				type: 'message_end',
+				message: { role: 'assistant', errorMessage: 'TTSR matched rule: ts-no-return-type' },
+			})
+		).toBeNull();
+	});
+
+	it('does not report a multi-rule TTSR interrupt as an error', () => {
+		expect(
+			parser.detectErrorFromParsed({
+				message: { errorMessage: 'TTSR matched rules: ts-no-any, ts-no-return-type' },
+			})
+		).toBeNull();
+	});
+
+	it('does not emit a TTSR-aborted final message as an agent_end result or error', () => {
+		// The agent re-iterates after a TTSR interrupt, so the aborted turn must not
+		// be marked as the run's result (which would let the stdout handler drop the
+		// self-healed output) nor surface as an error.
+		const event = parser.parseJsonObject({
+			type: 'agent_end',
+			messages: [
+				{ role: 'user', content: [{ type: 'text', text: 'write some ts' }] },
+				{
+					role: 'assistant',
+					content: [{ type: 'text', text: 'partial' }],
+					errorMessage: 'TTSR matched rule: ts-no-any',
+				},
+			],
+		});
+
+		expect(event).not.toBeNull();
+		expect(event!.type).toBe('system');
+		expect(parser.isResultMessage(event!)).toBe(false);
+	});
+
+	it('still surfaces a genuine agent error that is not a TTSR interrupt', () => {
+		const genuine = {
+			type: 'message_end',
+			message: { role: 'assistant', errorMessage: 'invalid api key' },
+		};
+
+		expect(parser.parseJsonObject(genuine)!.type).toBe('error');
+
+		const detected = parser.detectErrorFromParsed(genuine);
+		expect(detected).not.toBeNull();
+		expect(detected!.type).toBe('auth_expired');
 	});
 });

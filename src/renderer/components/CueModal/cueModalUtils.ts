@@ -8,9 +8,9 @@ import type { CuePipeline } from '../../../shared/cue-pipeline-types';
 import { formatDurationHuman } from '../../../shared/formatters';
 
 export function formatRelativeTime(dateStr?: string): string {
-	if (!dateStr) return '—';
+	if (!dateStr) return '-';
 	const parsed = new Date(dateStr).getTime();
-	if (isNaN(parsed)) return '—';
+	if (isNaN(parsed)) return '-';
 	const diff = Date.now() - parsed;
 	if (diff < 0) return 'just now';
 	const seconds = Math.floor(diff / 1000);
@@ -32,7 +32,7 @@ export function formatElapsed(startedAt: string): string {
 }
 
 /**
- * Informational stderr diagnostics that a few agent CLIs emit on every run —
+ * Informational stderr diagnostics that a few agent CLIs emit on every run -
  * they are NOT actual errors and are misleading when painted red under the
  * "Errors" header. Matched as case-insensitive line prefixes after trimming,
  * so minor variants (trailing dots, extra whitespace) are all caught.
@@ -41,7 +41,7 @@ export function formatElapsed(startedAt: string): string {
  * `cue-process-lifecycle.ts` so it also covers (a) pre-fix activity-log
  * entries still in the in-memory ring buffer and (b) any future diagnostic
  * wording we haven't yet added to the backend allowlist. A display-time
- * filter is safe because the patterns are intentionally specific — real
+ * filter is safe because the patterns are intentionally specific - real
  * errors from any supported agent don't start with any of these strings.
  */
 const BENIGN_STDERR_LINE_PREFIXES = ['reading additional input from stdin'];

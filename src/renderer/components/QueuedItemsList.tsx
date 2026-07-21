@@ -167,7 +167,7 @@ export const QueuedItemsList = memo(
 		// Keyboard shortcut bridge: when the user hits the Forced Parallel shortcut
 		// with an empty input, useInputKeyDown dispatches this event. We find the
 		// most recent eligible queued item (matching the same visibility rules as
-		// the per-item Force Send button) and open the confirmation modal — the
+		// the per-item Force Send button) and open the confirmation modal - the
 		// keyboard equivalent of clicking the button.
 		useEventListener('maestro:triggerForceSendQueued', () => {
 			if (

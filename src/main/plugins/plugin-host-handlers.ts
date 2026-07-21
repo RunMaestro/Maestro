@@ -266,7 +266,7 @@ export interface HostHandlerDeps {
 	dispatchUnattendedAllowed?: (pluginId: string, agentId: string) => boolean;
 	/** Optional Phase-4 act verb: run a HOST-BLESSED binary. The handler resolves
 	 * `command` through `resolveSpawnBinary` (the host-owned registry) and hands
-	 * the sink a fully host-owned spec — binary path, env, cwd all come from the
+	 * the sink a fully host-owned spec - binary path, env, cwd all come from the
 	 * registry entry, never from the plugin; only validated argv strings pass
 	 * through. The sink must spawn WITHOUT a shell. */
 	spawn?: (pluginId: string, spec: ResolvedSpawnSpec) => Promise<unknown>;
@@ -576,7 +576,7 @@ function assertLowOrMediumRisk(text: string): void {
  * Enforce a CLOSED param schema for an act verb: every non-undefined key must
  * be in `allowed`. Undefined-valued keys are tolerated (the SDK shim always
  * sends an `opts` slot, and structured clone preserves it as undefined); any
- * key carrying a VALUE outside the schema is rejected loudly — a plugin can
+ * key carrying a VALUE outside the schema is rejected loudly - a plugin can
  * never smuggle skip-permissions/force/concurrency/env/cwd/model flags through.
  */
 function assertClosedSchema(
@@ -938,7 +938,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						? p.projectPath
 						: undefined;
 			if (!projectPath) throw new Error('projectPath is required');
-			// Re-authorize against the session's REAL projectPath — the claimed
+			// Re-authorize against the session's REAL projectPath - the claimed
 			// path above is only the broker's first-pass hint.
 			assertBrokerAllowed(deps, pluginId, 'transcripts.append', { projectPath });
 			if (!deps.appendSessionTranscript) throw new Error('transcripts.append is unavailable');
@@ -1297,7 +1297,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		handlers['agents.dispatch'] = async (pluginId, params) => {
 			const p = asObject(params);
 			// Closed schema: {agentId, prompt} strings only. No model, permission
-			// mode, skip-permissions, cwd, or execution flag can ride along — the
+			// mode, skip-permissions, cwd, or execution flag can ride along - the
 			// target agent's own configuration decides those.
 			assertClosedSchema('agents.dispatch', p, { agentId: true, prompt: true });
 			const agentId = p.agentId;
@@ -1316,7 +1316,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					`agents.dispatch: prompt too long (max ${MAX_DISPATCH_PROMPT_CHARS} chars)`
 				);
 			}
-			// Broker: allowlist scope — the grant must name THIS exact agentId.
+			// Broker: allowlist scope - the grant must name THIS exact agentId.
 			assertBrokerAllowed(deps, pluginId, 'agents.dispatch', p);
 			// Unattended gate: direct plugin dispatch is never user-present, so it
 			// requires the separate unattended consent on top of the allowlist grant.
@@ -1341,7 +1341,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			const p = asObject(params);
 			// Closed schema: `command` is a host-blessed NAME; `opts.args` is the
 			// only other plugin input. env/cwd/shell/detached/force can never be
-			// supplied by the plugin — they are host-owned via the registry.
+			// supplied by the plugin - they are host-owned via the registry.
 			assertClosedSchema('process.spawn', p, { command: true, opts: true });
 			const opts = asObject(p.opts);
 			assertClosedSchema('process.spawn opts', opts, { args: true });
@@ -1349,7 +1349,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (typeof command !== 'string' || command.trim() === '') {
 				throw new Error('command is required');
 			}
-			// Broker: allowlist scope — the grant must name THIS exact binary name.
+			// Broker: allowlist scope - the grant must name THIS exact binary name.
 			assertBrokerAllowed(deps, pluginId, 'process.spawn', p);
 			assertTrustedActVerb(deps, pluginId);
 			const args = validateSpawnArgs(opts.args);

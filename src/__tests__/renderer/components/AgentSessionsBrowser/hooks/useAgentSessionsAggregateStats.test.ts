@@ -69,7 +69,7 @@ describe('useAgentSessionsAggregateStats', () => {
 
 		expect(result.current.aggregateStats.totalSessions).toBe(5);
 
-		// Change project path — should reset
+		// Change project path - should reset
 		act(() => {
 			rerender({ ...defaultArgs, projectPathForSessions: '/other' });
 		});
@@ -166,7 +166,7 @@ describe('useAgentSessionsAggregateStats', () => {
 			})
 		);
 
-		// Update arrives keyed on the REMOTE path — should NOT match
+		// Update arrives keyed on the REMOTE path - should NOT match
 		act(() => {
 			statsCallback?.({
 				projectPath: '/remote/cwd',
@@ -180,7 +180,7 @@ describe('useAgentSessionsAggregateStats', () => {
 			});
 		});
 
-		// Should NOT have updated — wrong key
+		// Should NOT have updated - wrong key
 		expect(result.current.aggregateStats.totalSessions).toBe(0);
 	});
 

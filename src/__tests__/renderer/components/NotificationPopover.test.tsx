@@ -1,5 +1,5 @@
 /**
- * Tests for NotificationPopover — popover for toggling notification types.
+ * Tests for NotificationPopover - popover for toggling notification types.
  *
  * Characterization tests for Tier 2 listener-hygiene refactor: pin down the
  * Escape-key dismissal and listener cleanup before swapping to useEventListener.
@@ -43,7 +43,7 @@ describe('NotificationPopover', () => {
 	beforeEach(() => {
 		onClose = vi.fn();
 		// Provide a non-zero rect so the popover renders (it bails out if rect is null).
-		// Save the original so we can restore it in afterEach — vi.clearAllMocks()
+		// Save the original so we can restore it in afterEach - vi.clearAllMocks()
 		// does NOT undo prototype-method assignments, and leaving the mock in place
 		// pollutes other tests in the same vitest worker.
 		originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
@@ -94,7 +94,7 @@ describe('NotificationPopover', () => {
 			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
 		} finally {
 			// Restore in finally so the document spy is undone even if the
-			// assertion throws — otherwise the prototype patch leaks into the
+			// assertion throws - otherwise the prototype patch leaks into the
 			// next test in this worker.
 			spies.restore();
 		}

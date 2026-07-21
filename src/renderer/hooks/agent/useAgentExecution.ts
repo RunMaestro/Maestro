@@ -50,8 +50,8 @@ const BATCH_WATCHDOG_CHECK_MS = 15 * 1000; // Check every 15 seconds
  * Dependencies for the useAgentExecution hook.
  */
 export interface UseAgentExecutionDeps {
-	/** Current active session (null if none selected) */
-	activeSession: Session | null;
+	/** Active session id (null if none selected). Session fields are read from sessionsRef at call time. */
+	activeSessionId: string | null;
 	/** Ref to sessions for accessing latest state without re-renders */
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Session state setter */
@@ -156,7 +156,7 @@ export interface UseAgentExecutionReturn {
  */
 export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutionReturn {
 	const {
-		activeSession,
+		activeSessionId,
 		sessionsRef,
 		setSessions,
 		processQueuedItemRef,
@@ -235,7 +235,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				// This prevents batch output from appearing in the interactive AI terminal
 				const targetSessionId = `${sessionId}-batch-${Date.now()}`;
 
-				// Batch tasks always spawn fresh sessions — prepare Maestro system prompt
+				// Batch tasks always spawn fresh sessions - prepare Maestro system prompt
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: getActiveTab(session)?.id,
@@ -613,6 +613,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,
 							sessionCustomArgs: session.customArgs,
+							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
 							sessionCustomModel: session.customModel,
 							// Auto Run is session-level (no active tab), so the session's effort
@@ -649,10 +650,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 */
 	const spawnAgentWithPrompt = useCallback(
 		async (prompt: string): Promise<AgentSpawnResult> => {
-			if (!activeSession) return { success: false };
-			return spawnAgentForSession(activeSession.id, prompt, undefined, { isAutoRun: false });
+			if (!activeSessionId) return { success: false };
+			return spawnAgentForSession(activeSessionId, prompt, undefined, { isAutoRun: false });
 		},
-		[activeSession, spawnAgentForSession]
+		[activeSessionId, spawnAgentForSession]
 	);
 
 	/**

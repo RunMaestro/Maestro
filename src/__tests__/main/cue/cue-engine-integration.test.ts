@@ -1,14 +1,14 @@
 /**
- * Phase 15B — Cue engine end-to-end integration tests.
+ * Phase 15B - Cue engine end-to-end integration tests.
  *
  * Drives the real `CueEngine` with its real backing services (session
  * registry, fan-in tracker, run manager, heartbeat, dispatch, completion,
  * cleanup) and the in-memory Cue DB from `cue-integration-test-helpers.ts`.
  * Only the boundary callbacks are mocked:
- *   - `onCueRun`          — the executor is not invoked; we assert the engine
+ *   - `onCueRun`          - the executor is not invoked; we assert the engine
  *                           reached the dispatch point with the right payload
- *   - `loadCueConfig`     — we inject configs directly instead of reading disk
- *   - file watcher, GitHub poller, task scanner — provide a cleanup fn only
+ *   - `loadCueConfig`     - we inject configs directly instead of reading disk
+ *   - file watcher, GitHub poller, task scanner - provide a cleanup fn only
  *
  * This file complements the narrower unit tests in `cue-engine.test.ts` by
  * exercising interleavings that span multiple services: heartbeat →
@@ -61,7 +61,7 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	watchCueYaml: (root: string, onChange: () => void) => mockWatchCueYaml(root, onChange),
 }));
 
-// Trigger sources whose real implementations would need real IO — keep their
+// Trigger sources whose real implementations would need real IO - keep their
 // constructors as cleanup-fn-returning stubs.
 vi.mock('../../../main/cue/cue-file-watcher', () => ({
 	createCueFileWatcher: vi.fn(() => () => {}),
@@ -95,7 +95,7 @@ function resetSharedState() {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe('Phase 15B — CueEngine integration', () => {
+describe('Phase 15B - CueEngine integration', () => {
 	let yamlWatcherCleanup: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
@@ -483,7 +483,7 @@ describe('Phase 15B — CueEngine integration', () => {
 			expect(postRefreshCalls).toContain('replacement');
 			expect(postRefreshCalls).not.toContain('original');
 
-			// Advancing the interval must not re-fire "original" — the watcher
+			// Advancing the interval must not re-fire "original" - the watcher
 			// was torn down on refresh.
 			vi.clearAllMocks();
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
@@ -554,7 +554,7 @@ describe('Phase 15B — CueEngine integration', () => {
 
 			engine1.stop();
 
-			// Fresh engine, same process. DB was not cleared — the event row
+			// Fresh engine, same process. DB was not cleared - the event row
 			// from the first run is still there.
 			const engine2 = new CueEngine(deps);
 			engine2.start();
@@ -661,7 +661,7 @@ describe('Phase 15B — CueEngine integration', () => {
 		});
 	});
 
-	// ─── Phase 13B — Metrics ────────────────────────────────────────────────
+	// ─── Phase 13B - Metrics ────────────────────────────────────────────────
 
 	describe('metrics (Phase 13B)', () => {
 		it('returns a zeroed snapshot before engine start', () => {

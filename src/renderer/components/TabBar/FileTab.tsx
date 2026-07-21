@@ -65,7 +65,7 @@ export interface FileTabProps {
 	colorBlindMode?: boolean;
 	/** Shortcut hint badge number (1-9 for Cmd+1-9, 0 for Cmd+0/last tab) */
 	shortcutHint?: number | null;
-	/** True when the owning agent is running on an SSH remote — hides local-only OS actions */
+	/** True when the owning agent is running on an SSH remote - hides local-only OS actions */
 	sshRemote?: boolean;
 	/**
 	 * Disambiguated label to show instead of the bare filename, e.g. `ioc/service`
@@ -495,7 +495,7 @@ export const FileTab = memo(function FileTab({
 									Open in Default App
 								</button>
 
-								{/* Reveal in Finder / Explorer — local-only, hidden over SSH */}
+								{/* Reveal in Finder / Explorer - local-only, hidden over SSH */}
 								{!sshRemote && (
 									<button
 										onClick={handleRevealInFinder}

@@ -44,7 +44,7 @@ export class ExitHandler {
 	 *
 	 * Async because some agents need post-exit reconciliation against
 	 * on-disk session state before the renderer is told the agent is
-	 * done (currently: Copilot CLI — see `awaitCopilotShutdown`).
+	 * done (currently: Copilot CLI - see `awaitCopilotShutdown`).
 	 * Callers fire-and-forget, so errors are caught internally.
 	 */
 	async handleExit(sessionId: string, code: number): Promise<void> {
@@ -85,7 +85,7 @@ export class ExitHandler {
 		// Copilot CLI: wait for the on-disk shutdown marker before emitting
 		// `exit`. Copilot can keep working in subagent processes after our
 		// parent process closes, and `session.shutdown` is only ever
-		// written to `events.jsonl` — never to stdout in batch mode. If
+		// written to `events.jsonl` - never to stdout in batch mode. If
 		// we emit `exit` immediately, the renderer flips to idle while
 		// Copilot is still doing real work; the user has to manually poke
 		// the tab to discover work is ongoing. When the shutdown marker
@@ -170,7 +170,7 @@ export class ExitHandler {
 			managedProcess.sshRemoteId &&
 			(code !== 0 || managedProcess.stderrBuffer)
 		) {
-			// Only check stderr for SSH errors — NOT stdout.
+			// Only check stderr for SSH errors - NOT stdout.
 			// Stdout contains structured JSONL agent output whose text content (e.g.,
 			// assistant messages quoting shell commands) can false-positive match SSH
 			// error patterns like "command not found". Real SSH transport errors appear
@@ -224,6 +224,50 @@ export class ExitHandler {
 					}
 				);
 			}
+		}
+
+		// omp silent-exit hardening. Oh My Pi can exit cleanly (code 0) right after
+		// startup / TTSR-rule registration having emitted NO `agent_end`, no result,
+		// and no streamed text (observed: the main-turn process went silent while
+		// the paired tab-namer turn completed normally). Every branch above then
+		// no-ops - `detectErrorFromExit` returns null on code 0, and the streamed-
+		// text fallback has nothing to flush - so the tab clears its busy pill to an
+		// empty "done" state with no answer and no error, indistinguishable from
+		// success. That is the reported "started, never went busy, appeared done,
+		// no answer" turn. Surface a recoverable, non-auto-retrying `agent_crashed`
+		// (see NON_RETRYABLE_TYPES) so the turn visibly fails and the user can
+		// resend. Scoped to omp to avoid tripping legitimate empty helper turns of
+		// other agents. User stops are excluded: `kill()` removes the process before
+		// `close` (early return above), and `interrupt()` sets `interrupted`.
+		if (
+			toolType === 'omp' &&
+			isStreamJsonMode &&
+			!managedProcess.resultEmitted &&
+			!managedProcess.errorEmitted &&
+			!managedProcess.interrupted &&
+			!managedProcess.streamedText?.trim() &&
+			!sessionId.endsWith('-terminal') &&
+			!sessionId.includes('-synopsis-') &&
+			!sessionId.startsWith('tab-naming-')
+		) {
+			managedProcess.errorEmitted = true;
+			const agentError: AgentError = {
+				type: 'agent_crashed',
+				message:
+					'Oh My Pi exited without producing a response. The agent process ended early (for example right after startup) before sending any output. Please send your message again.',
+				recoverable: true,
+				agentId: toolType,
+				sessionId,
+				sshRemoteId: managedProcess.sshRemoteId,
+				timestamp: Date.now(),
+				raw: { exitCode: code },
+			};
+			logger.warn(
+				'[ProcessManager] omp exited with no result, error, or output - surfacing recoverable error',
+				'ProcessManager',
+				{ sessionId, exitCode: code }
+			);
+			this.emitter.emit('agent-error', sessionId, agentError);
 		}
 
 		// Clean up temp image files if any
@@ -396,8 +440,17 @@ export class ExitHandler {
 				this.emitter.emit('usage', sessionId, usageStats);
 			}
 		} catch (error) {
-			void captureException(error);
-			logger.error('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
+			// A SyntaxError here just means the agent didn't answer with JSON: in
+			// batch mode some agents fall back to plain prose ("Hello. I'm ...") or
+			// emit a TUI frame with box-drawing characters when they can't honor
+			// the JSON output flag. That's an expected shape we already recover
+			// from by emitting the raw buffer below, so it isn't worth a Sentry
+			// report. Anything else thrown out of the block above (a real fault in
+			// aggregateModelUsage or an emit handler) still gets captured. (MAESTRO-V9)
+			if (!(error instanceof SyntaxError)) {
+				void captureException(error);
+			}
+			logger.warn('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
 				sessionId,
 				error: String(error),
 			});

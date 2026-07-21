@@ -1,4 +1,4 @@
-# Encore Lifts — every Encore feature becomes a managed first-party plugin
+# Encore Lifts - every Encore feature becomes a managed first-party plugin
 
 Status: COMPLETE (wave landed 2026-07-02).
 Directive: ALL Encore features are plugins and are MANAGED as plugins.
@@ -17,13 +17,13 @@ Directive: ALL Encore features are plugins and are MANAGED as plugins.
 
 L6 refinement (recorded): the EncoreTab config sections KEEP their headers and
 `data-setting-id` anchors (searchable-settings parity), but the header toggle
-affordance is gone — state display + jump-to-tile only. Feature CONFIG
+affordance is gone - state display + jump-to-tile only. Feature CONFIG
 (cue settings, DN agent config, symphony registry URLs, wakatime) is untouched
 and renders when the feature is enabled, exactly as before.
 
 ## The lift model (decided)
 
-**First-party plugin-backed** — the pianola pattern, per the roadmap's own P4
+**First-party plugin-backed** - the pianola pattern, per the roadmap's own P4
 note ("each lift keeps a thin host shim; the legacy Encore flag becomes a
 first-party plugin entry in the marketplace"):
 
@@ -31,7 +31,7 @@ first-party plugin entry in the marketplace"):
   category, permission requests (honest disclosure of what it touches),
   background services, settings namespace.
 - The **Extensions marketplace is the management surface**: enable/disable,
-  permission visibility, status, configure — every feature is a tile with
+  permission visibility, status, configure - every feature is a tile with
   details, exactly like a community plugin.
 - Lifecycle routes through a **host-owned bridge** (generalized from
   `pianola-plugin-bridge.ts`): enable = flag flip + first-party grant mint;
@@ -52,14 +52,14 @@ feature until a runtime grant seam is designed. Documented in
 
 ## Workstreams
 
-### L0 — Foundation (blocks all features)
+### L0 - Foundation (blocks all features)
 
 - Generalize `src/shared/pianola/first-party-plugin.ts` into
   `src/shared/plugins/first-party.ts`: a `FirstPartyPluginDefinition`
   interface + a `FIRST_PARTY_PLUGINS` registry keyed by Encore flag
   (id, name, description, category, permissions, backgroundServices,
   settingsNamespace, encoreFlag). Pianola's metadata moves in as the first
-  entry (keep a re-export at the old path until callers migrate — then remove).
+  entry (keep a re-export at the old path until callers migrate - then remove).
 - Generalize `src/main/pianola/pianola-plugin-bridge.ts` into
   `src/main/plugins/first-party-bridge.ts`: one bridge instance per
   definition; enable() mints the declared grants host-side (first-party =
@@ -74,20 +74,20 @@ feature until a runtime grant seam is designed. Documented in
 - _Acceptance:_ unit tests for registry + bridge; extensionModel tests updated;
   every Encore flag flips correctly through the marketplace tile.
 
-### L1..L5 — Per-feature lifts (parallel after L0)
+### L1..L5 - Per-feature lifts (parallel after L0)
 
 | WS  | Feature          | Plugin id                  | Category   | Declared permissions (disclosure)                                                                      | Background services                                        |
 | --- | ---------------- | -------------------------- | ---------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
 | L1  | Pianola          | com.maestro.pianola        | agents     | settings:read, agents:read, transcripts:read, decisions:write, notifications:toast, background:service | pianola.supervisor (exists)                                |
 | L2  | Director's Notes | com.maestro.director-notes | insights   | history:read, transcripts:read, sessions:read, settings:read                                           | director-notes.synopsis (agent-backed synopsis generation) |
 | L3  | Maestro Cue      | com.maestro.cue            | automation | fs:watch, settings:read, notifications:toast, background:service, shell (github polling = net)         | cue.engine (watchers/pollers/heartbeat)                    |
-| L4  | Symphony         | com.maestro.symphony       | agents     | settings:read, net:fetch (registry), sessions:read                                                     | —                                                          |
+| L4  | Symphony         | com.maestro.symphony       | agents     | settings:read, net:fetch (registry), sessions:read                                                     | -                                                          |
 | L5  | Usage Stats      | com.maestro.usage-stats    | insights   | storage:sql, settings:read, history:read                                                               | stats.sampler (usage sampling loop)                        |
 
 Each feature worker:
 
 1. Adds its `FirstPartyPluginDefinition` (exact permission list refined
-   against what the feature ACTUALLY touches — grep its IPC/services; the
+   against what the feature ACTUALLY touches - grep its IPC/services; the
    table above is the starting claim, not the contract).
 2. Wires its lifecycle through the shared bridge (flag ↔ grants ↔ services).
 3. Registers long-running work as supervised background services where the
@@ -97,7 +97,7 @@ Each feature worker:
    feature's existing config surface (EncoreTab section or modal).
 5. Unit tests for definition + lifecycle; extensionModel projection test row.
 
-### L6 — Management-surface completion (after L1..L5)
+### L6 - Management-surface completion (after L1..L5)
 
 - EncoreTab: the per-feature toggle tiles are GONE (management = marketplace);
   remaining EncoreTab sections are config-only, each reachable from its

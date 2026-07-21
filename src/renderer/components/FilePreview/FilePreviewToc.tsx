@@ -41,7 +41,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 	const [activeIndex, setActiveIndex] = useState(0);
 	const prevShowRef = useRef(false);
 
-	// Focus the first heading whenever the overlay opens — supports keyboard-only nav.
+	// Focus the first heading whenever the overlay opens - supports keyboard-only nav.
 	useEffect(() => {
 		if (showTocOverlay && !prevShowRef.current && tocEntries.length > 0) {
 			setActiveIndex(0);
@@ -183,7 +183,7 @@ export const FilePreviewToc = React.memo(function FilePreviewToc({
 									}}
 									onClick={() => {
 										setActiveIndex(index);
-										// Click is deliberate — keep smooth scroll for visual continuity.
+										// Click is deliberate - keep smooth scroll for visual continuity.
 										scrollToHeading(entry, 'smooth');
 										// ToC stays open so user can click multiple items
 										// Dismiss with click outside or Escape key

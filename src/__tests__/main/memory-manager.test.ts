@@ -1,5 +1,5 @@
 /**
- * Tests for memory-manager.ts — project memory CRUD operations.
+ * Tests for memory-manager.ts - project memory CRUD operations.
  *
  * Uses a per-test temporary directory passed explicitly as homeDir so we
  * never touch the user's real ~/.claude/projects/<encoded>/memory/.

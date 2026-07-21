@@ -3,7 +3,7 @@
  *
  * The central control for the `process:spawn` act verb
  * (`Plans/plugin-phase4-high-risk-verbs.md` §2): a plugin NEVER supplies a
- * path, a shell, or an interpreter — it selects a host-blessed entry by NAME,
+ * path, a shell, or an interpreter - it selects a host-blessed entry by NAME,
  * and everything the child actually runs with (absolute binary path, base
  * argv, env, cwd) is owned by this registry, not by the plugin.
  *
@@ -51,7 +51,7 @@ const SECRET_ENV_KEY_PATTERN =
  * Shells, interpreters, and arg-exec tools that must NEVER be blessed, by
  * basename (extension-insensitive, case-insensitive). Executing any of these
  * with plugin-influenced args is arbitrary code execution with extra steps.
- * A denylist has gaps by nature — it is the backstop UNDER the empty-registry
+ * A denylist has gaps by nature - it is the backstop UNDER the empty-registry
  * default and the deliberate `register()` seam, not the boundary itself.
  */
 const FORBIDDEN_BASENAMES: Record<string, true> = {
@@ -142,7 +142,7 @@ export class SpawnBinaryRegistry {
 		}
 		if (FORBIDDEN_BASENAMES[normalizedBasename(entry.binaryPath)]) {
 			throw new Error(
-				`spawn registry: refusing to bless shell/interpreter "${entry.binaryPath}" — spawning one is arbitrary code execution`
+				`spawn registry: refusing to bless shell/interpreter "${entry.binaryPath}" - spawning one is arbitrary code execution`
 			);
 		}
 		if (FORBIDDEN_BASENAMES[normalizedBasename(entry.name)]) {
@@ -154,7 +154,7 @@ export class SpawnBinaryRegistry {
 			}
 			if (SECRET_ENV_KEY_PATTERN.test(key)) {
 				throw new Error(
-					`spawn registry: "${entry.name}" env key "${key}" looks secret-bearing — blessed env must not carry credentials`
+					`spawn registry: "${entry.name}" env key "${key}" looks secret-bearing - blessed env must not carry credentials`
 				);
 			}
 			if (typeof value !== 'string') {

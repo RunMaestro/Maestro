@@ -29,7 +29,7 @@ import {
 
 const AGENT_SESSION_ID = 'cp-test-session';
 
-// Minimal SshRemoteConfig — only the fields readFileRemote touches.
+// Minimal SshRemoteConfig - only the fields readFileRemote touches.
 const SSH_REMOTE = {
 	id: 'r1',
 	name: 'remote',
@@ -120,7 +120,7 @@ describe('CopilotShutdownWaiter', () => {
 		});
 
 		it('returns "missing" when the events file never appears', async () => {
-			// Don't write anything — the events.jsonl never materializes.
+			// Don't write anything - the events.jsonl never materializes.
 			const result = await waitForCopilotShutdown(AGENT_SESSION_ID, {
 				configDir,
 				maxWaitMs: 2000,
@@ -189,7 +189,7 @@ describe('CopilotShutdownWaiter', () => {
 				pollIntervalMs: 25,
 			});
 
-			// Never observed the current turn's shutdown — it goes idle only via the
+			// Never observed the current turn's shutdown - it goes idle only via the
 			// inactivity safety valve, not the stale marker.
 			expect(result).toBe('inactive');
 		});
@@ -378,7 +378,7 @@ describe('CopilotShutdownWaiter', () => {
 
 		it('skips assistant.messages from delegated subagents (parentToolCallId set)', async () => {
 			// Subagent replies are serialized into the parent's events.jsonl with
-			// parentToolCallId set. They must not be returned as the final answer —
+			// parentToolCallId set. They must not be returned as the final answer -
 			// the parent will produce its own conclusion later in the file.
 			await fs.writeFile(
 				eventsPath,
@@ -514,7 +514,7 @@ describe('CopilotShutdownWaiter', () => {
 		});
 
 		it('prefers the LAST session.shutdown event when several appear in the file', async () => {
-			// Copilot writes one shutdown per batch spawn — long sessions
+			// Copilot writes one shutdown per batch spawn - long sessions
 			// accumulate many. The newest one is the snapshot the gauge cares
 			// about.
 			await fs.writeFile(

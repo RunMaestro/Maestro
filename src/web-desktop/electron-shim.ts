@@ -4,11 +4,11 @@
  * Vite aliases `import ... from 'electron'` to this file when building the
  * web-desktop bundle. It re-exports two surfaces the renderer-side code uses:
  *
- *   • ipcRenderer — calls become WS bridge.invoke messages, events become
+ *   • ipcRenderer - calls become WS bridge.invoke messages, events become
  *     bridge.event subscriptions. Uses the same channel naming as Electron so
  *     existing preload factories work unchanged.
  *
- *   • contextBridge — exposeInMainWorld writes directly to globalThis. This
+ *   • contextBridge - exposeInMainWorld writes directly to globalThis. This
  *     lets src/main/preload/index.ts execute in the browser and populate
  *     window.maestro with the same factory output the desktop gets.
  */
@@ -37,7 +37,7 @@ function getWsUrl(): string {
 	if (cfg && typeof cfg.wsUrl === 'string') {
 		const u = cfg.wsUrl;
 		if (u.startsWith('ws://') || u.startsWith('wss://')) return u;
-		// Server hands us "/<token>/ws" — turn it into an absolute URL.
+		// Server hands us "/<token>/ws" - turn it into an absolute URL.
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		return `${proto}//${window.location.host}${u.startsWith('/') ? u : `/${u}`}`;
 	}
@@ -76,7 +76,7 @@ class BridgeClient {
 			// port can throw synchronously. Without scheduling the same retry
 			// the close path uses, this.ready would never resolve and every
 			// subsequent invoke() would hang on `await this.ready`.
-			console.error('[bridge] WebSocket construction failed — retrying in 1s', err);
+			console.error('[bridge] WebSocket construction failed - retrying in 1s', err);
 			setTimeout(() => this.connect(url), 1000);
 			return;
 		}
@@ -141,14 +141,14 @@ class BridgeClient {
 			}
 		});
 		this.ws.addEventListener('close', () => {
-			console.warn('[bridge] WebSocket closed — reconnecting in 1s');
+			console.warn('[bridge] WebSocket closed - reconnecting in 1s');
 			// Reject every in-flight invoke. After reconnect the new server has
 			// no memory of these request IDs, so the promises would otherwise
 			// hang forever and freeze any React component awaiting them.
 			const disconnected = new Error('bridge disconnected');
 			for (const pending of this.pending.values()) pending.reject(disconnected);
 			this.pending.clear();
-			// Queued frames belong to a dead session — drop them so we don't
+			// Queued frames belong to a dead session - drop them so we don't
 			// replay invokes the caller has already given up on.
 			this.queue.length = 0;
 			this.ready = new Promise((r) => (this.resolveReady = r));
@@ -208,7 +208,7 @@ export const ipcRenderer = {
 	send: (channel: string, ...args: unknown[]) => {
 		// ipcRenderer.send is fire-and-forget by contract, but on the WS bridge
 		// we still get a rejection if the channel is unknown or the server-side
-		// handler throws. Log it so the failure is debuggable — don't rethrow,
+		// handler throws. Log it so the failure is debuggable - don't rethrow,
 		// callers don't expect a Promise here.
 		void bridge.invoke(channel, ...args).catch((err) => {
 			console.error(`[bridge] send(${channel}) failed`, err);
@@ -239,7 +239,7 @@ export const ipcRenderer = {
 	// silent null. Real desktop code paths only use invoke/send/on.
 	sendSync: () => {
 		throw new Error(
-			'ipcRenderer.sendSync is not supported in the web-desktop bridge — use invoke() instead'
+			'ipcRenderer.sendSync is not supported in the web-desktop bridge - use invoke() instead'
 		);
 	},
 	// Intentional no-ops: postMessage (MessagePort transfer), sendTo and

@@ -8,10 +8,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import type * as MaestroClientModule from '../../../cli/services/maestro-client';
 
-vi.mock('../../../cli/services/maestro-client', () => ({
-	withMaestroClient: vi.fn(),
-}));
+vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
+	const actual = await importOriginal<typeof MaestroClientModule>();
+	return {
+		...actual,
+		withMaestroClient: vi.fn(),
+	};
+});
 
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
@@ -33,7 +38,7 @@ describe('dispatch command', () => {
 	});
 
 	describe('default (active tab) flow', () => {
-		it('sends send_command with no tabId and surfaces the desktop-supplied tabId', async () => {
+		it('sends send_command in the background by default (no tabId) and surfaces the desktop-supplied tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'command_result',
@@ -53,6 +58,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Hello world',
 					inputMode: 'ai',
+					background: true,
 				},
 				'command_result'
 			);
@@ -87,7 +93,7 @@ describe('dispatch command', () => {
 	});
 
 	describe('--new-tab flow', () => {
-		it('sends new_ai_tab_with_prompt and returns the freshly-created tabId', async () => {
+		it('sends new_ai_tab_with_prompt in the background by default and returns the freshly-created tabId', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'new_ai_tab_with_prompt_result',
@@ -106,6 +112,7 @@ describe('dispatch command', () => {
 					type: 'new_ai_tab_with_prompt',
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
+					background: true,
 				},
 				'new_ai_tab_with_prompt_result'
 			);
@@ -120,7 +127,7 @@ describe('dispatch command', () => {
 			// --new-tab's contract is to surface a fresh tab id for chaining.
 			// If the desktop omits it (older build / race), we must fail loudly
 			// with a dedicated code rather than returning `tabId: null` from a
-			// "successful" response — downstream consumers (Maestro-Discord,
+			// "successful" response - downstream consumers (Maestro-Discord,
 			// Cue) need to distinguish this from a generic command failure.
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -152,6 +159,86 @@ describe('dispatch command', () => {
 		});
 	});
 
+	describe('--focus (foreground opt-in)', () => {
+		it('omits background from send_command when --focus is passed', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-active-99',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			// Commander sets `focus: true` when `--focus` is passed.
+			await dispatch('agent-abc', 'Hello world', { focus: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'send_command',
+					sessionId: 'agent-abc-123',
+					command: 'Hello world',
+					inputMode: 'ai',
+				},
+				'command_result'
+			);
+		});
+
+		it('omits background from new_ai_tab_with_prompt when --focus is combined with --new-tab', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'new_ai_tab_with_prompt_result',
+				success: true,
+				tabId: 'tab-fresh-42',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Open a new conversation', { newTab: true, focus: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'new_ai_tab_with_prompt',
+					sessionId: 'agent-abc-123',
+					prompt: 'Open a new conversation',
+				},
+				'new_ai_tab_with_prompt_result'
+			);
+		});
+
+		it('forwards tabId but omits background when --tab is combined with --focus', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: true,
+				tabId: 'tab-xyz',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			// The options.tab spread runs alongside the background omission; this
+			// covers that distinct payload-building path (tabId present, no background).
+			await dispatch('agent-abc', 'Follow up', { tab: 'tab-xyz', focus: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'send_command',
+					sessionId: 'agent-abc-123',
+					command: 'Follow up',
+					inputMode: 'ai',
+					tabId: 'tab-xyz',
+				},
+				'command_result'
+			);
+		});
+	});
+
 	describe('--tab <tabId> flow', () => {
 		it('forwards the requested tabId in send_command so the desktop targets that tab', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
@@ -174,6 +261,7 @@ describe('dispatch command', () => {
 					command: 'Follow up',
 					inputMode: 'ai',
 					tabId: 'tab-xyz',
+					background: true,
 				},
 				'command_result'
 			);
@@ -238,6 +326,7 @@ describe('dispatch command', () => {
 					command: 'Concurrent message',
 					inputMode: 'ai',
 					force: true,
+					background: true,
 				},
 				'command_result'
 			);
@@ -257,6 +346,133 @@ describe('dispatch command', () => {
 		});
 	});
 
+	describe('--queue flow', () => {
+		it('sends enqueue_command with the target tab and surfaces queue position when busy', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: true,
+				tabId: 'tab-1',
+				queued: true,
+				queuePosition: 2,
+				queueLength: 2,
+				itemId: 'item-9',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Second task', { queue: true, tab: 'tab-1' });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'enqueue_command',
+					sessionId: 'agent-abc-123',
+					command: 'Second task',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+				},
+				'enqueue_command_result'
+			);
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toEqual({
+				success: true,
+				agentId: 'agent-abc-123',
+				sessionId: 'tab-1',
+				tabId: 'tab-1',
+				queued: true,
+				queuePosition: 2,
+				itemId: 'item-9',
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('reports queued=false (no position) when the idle target dispatched immediately', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: true,
+				tabId: 'tab-1',
+				queued: false,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'Run now', { queue: true, tab: 'tab-1' });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(true);
+			expect(output.queued).toBe(false);
+			expect(output.queuePosition).toBeUndefined();
+		});
+
+		it('treats --wait as an alias for --queue', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: true,
+				tabId: 'tab-1',
+				queued: true,
+				queuePosition: 1,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'x', { wait: true, tab: 'tab-1' });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'enqueue_command', tabId: 'tab-1' }),
+				'enqueue_command_result'
+			);
+		});
+
+		it('rejects --queue combined with --new-tab as INVALID_OPTIONS', async () => {
+			await dispatch('agent-abc', 'Hello', { queue: true, newTab: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('INVALID_OPTIONS');
+			expect(output.error).toContain('--queue cannot be combined with --new-tab');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('rejects --queue combined with --force as INVALID_OPTIONS', async () => {
+			await dispatch('agent-abc', 'Hello', { queue: true, force: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('INVALID_OPTIONS');
+			expect(output.error).toContain('--queue cannot be combined with --force');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('maps a renderer tab-not-found reply to TAB_NOT_FOUND', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'enqueue_command_result',
+				success: false,
+				error: 'Tab not found: ghost',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+
+			await dispatch('agent-abc', 'x', { queue: true, tab: 'ghost' });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('TAB_NOT_FOUND');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
 	describe('error mapping', () => {
 		it('maps connection errors to MAESTRO_NOT_RUNNING', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
@@ -271,7 +487,7 @@ describe('dispatch command', () => {
 		});
 
 		// MaestroClient throws three distinct error strings before any WebSocket
-		// activity. They must map to MAESTRO_NOT_RUNNING — not COMMAND_FAILED —
+		// activity. They must map to MAESTRO_NOT_RUNNING - not COMMAND_FAILED -
 		// so downstream consumers (Maestro-Discord, Cue) can distinguish "app
 		// down" from "command rejected" via the error code.
 		it.each([

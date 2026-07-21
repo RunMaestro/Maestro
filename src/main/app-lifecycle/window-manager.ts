@@ -28,6 +28,8 @@ import { attachSpellCheckContextMenu } from './spell-check-menu';
 import { attachWindowCrashHandlers } from './window-crash-handlers';
 import { registerDevAutoUpdaterStubs } from './dev-auto-updater-stubs';
 import { resolveVisibleWindowPosition } from './window-position';
+import { resolveBundledCliPathSync } from '../maestro-cli-manager';
+import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /** Bounds/state used to size and position a window at creation time. */
 interface WindowCreationBounds {
@@ -124,6 +126,10 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		windowRegistry,
 		getIsQuitting,
 	} = deps;
+	const maestroCliPath = resolveBundledCliPathSync();
+	const preloadAdditionalArguments = maestroCliPath
+		? [`${MAESTRO_CLI_PATH_ARG_PREFIX}${maestroCliPath}`]
+		: [];
 
 	/**
 	 * Builds the renderer URL for a window. Secondary windows get a
@@ -171,6 +177,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
 			webPreferences: {
 				preload: preloadPath,
+				additionalArguments: preloadAdditionalArguments,
 				contextIsolation: true,
 				nodeIntegration: false,
 				sandbox: true,
@@ -218,7 +225,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					windowStateStore.set('isMaximized', isMaximized);
 					windowStateStore.set('isFullScreen', isFullScreen);
 				} catch {
-					// Ignore ENFILE/ENOSPC errors during window close — non-critical
+					// Ignore ENFILE/ENOSPC errors during window close - non-critical
 				}
 			};
 

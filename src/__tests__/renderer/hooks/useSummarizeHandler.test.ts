@@ -1,5 +1,5 @@
 /**
- * Tests for useSummarizeAndContinue — handleSummarizeAndContinue (Tier 3E)
+ * Tests for useSummarizeAndContinue - handleSummarizeAndContinue (Tier 3E)
  *
  * Tests the high-level handler that validates, runs summarization,
  * updates session state, and shows toast notifications.
@@ -99,6 +99,20 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 	});
 }
 
+function seedActiveSession(session: Session | null) {
+	if (session) {
+		useSessionStore.setState({
+			sessions: [session],
+			activeSessionId: session.id,
+		} as any);
+	} else {
+		useSessionStore.setState({
+			sessions: [],
+			activeSessionId: null,
+		} as any);
+	}
+}
+
 // ============================================================================
 // Setup / Teardown
 // ============================================================================
@@ -129,7 +143,8 @@ afterEach(() => {
 
 describe('handleSummarizeAndContinue (Tier 3E)', () => {
 	it('returns when no session is provided', async () => {
-		const { result } = renderHook(() => useSummarizeAndContinue(null));
+		seedActiveSession(null);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();
@@ -142,7 +157,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 	it('returns when inputMode is terminal', async () => {
 		const session = createMockSession({ inputMode: 'terminal' });
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();
@@ -157,7 +173,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 
 		const session = createMockSession();
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();
@@ -178,7 +195,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			activeSessionId: session.id,
 		});
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();
@@ -205,7 +223,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			activeSessionId: session.id,
 		});
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();
@@ -233,7 +252,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			activeSessionId: session.id,
 		});
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();
@@ -255,7 +275,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			activeSessionId: session.id,
 		});
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();
@@ -280,7 +301,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			activeSessionId: session.id,
 		});
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue('tab-2');
@@ -312,7 +334,8 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const { result } = renderHook(() => useSummarizeAndContinue(session));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
 
 		await act(async () => {
 			result.current.handleSummarizeAndContinue();

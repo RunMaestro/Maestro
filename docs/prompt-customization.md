@@ -57,6 +57,7 @@ Available in all prompts:
 | `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                          |
 | `{{AGENT_SESSION_ID}}`   | Agent session ID                                         |
 | `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                        |
+| `{{TAB_ID}}`             | This conversation's AI tab ID (for CLI targeting)        |
 | `{{TAB_NAME}}`           | Custom tab name                                          |
 | `{{TOOL_TYPE}}`          | Agent type (claude-code, codex, opencode, factory-droid) |
 | `{{CWD}}`                | Working directory                                        |

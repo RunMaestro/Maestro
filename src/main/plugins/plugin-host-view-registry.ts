@@ -27,6 +27,12 @@ export interface PluginHostViewRegistryDeps {
 	isEnabled: () => boolean;
 	/** Active declarations, normally PluginManager.getContributions().hostViews. */
 	getHostViews: () => readonly HostViewContribution[];
+	/** Whether the plugin's registry record is PRESENT (any loadStatus). Presence -
+	 * including permanent failure states like `invalid`/`incompatible` - means the
+	 * declaration set is authoritative and undeclared runtime views are purged.
+	 * Absence means a transient reload window: retain runtime views until the
+	 * record reappears (plugin code cannot re-send them unprompted). */
+	isPluginRecordPresent: (pluginId: string) => boolean;
 	/** Host-owned bridge to Concerto's existing Movement/Cadenza payload channels. */
 	forward: (mutation: HostViewMutation) => boolean;
 }
@@ -70,9 +76,13 @@ export class PluginHostViewRegistry {
 		const declarations = this.deps.getHostViews();
 		const declaredById = new Map(declarations.map((view) => [view.id, view]));
 		for (const [id, live] of this.live) {
-			if (live.source !== 'static') continue;
 			const declaration = declaredById.get(id);
-			if (!declaration || declaration.blocks === undefined) this.removeLive(id, false);
+			if (
+				(!declaration && this.deps.isPluginRecordPresent(live.view.pluginId)) ||
+				(live.source === 'static' && declaration?.blocks === undefined)
+			) {
+				this.removeLive(id, false);
+			}
 		}
 
 		for (const view of declarations) {

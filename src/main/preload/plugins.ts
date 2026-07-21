@@ -41,7 +41,7 @@ export function createPluginsApi() {
 		 * Enable/disable a first-party Encore feature through its host-owned
 		 * lifecycle bridge (grant mint + supervised-service reconcile/stop), not a
 		 * bare settings write. Returns the settled bridge state. NOT gated on the
-		 * `plugins` subsystem flag — first-party features are independent of it.
+		 * `plugins` subsystem flag - first-party features are independent of it.
 		 */
 		setFirstPartyEnabled: (
 			flag: FirstPartyEncoreFlag,
@@ -88,6 +88,16 @@ export function createPluginsApi() {
 		/** Revoke all of a plugin's grants. */
 		revokeGrants: (id: string): Promise<PluginGrantsSnapshot> =>
 			ipcRenderer.invoke('plugins:revoke-grants', id),
+
+		/**
+		 * Host-managed dispatch allowlist (issue #1250): replace which agents a
+		 * plugin's already-consented agents:dispatch grant may target. The main
+		 * process re-mints the grant SCOPE into the sealed ledger; the plugin is
+		 * never involved. Only the trusted main renderer may call it. Returns the
+		 * refreshed requested/granted snapshot.
+		 */
+		setAgentAllowlist: (id: string, agentIds: string[]): Promise<PluginGrantsSnapshot> =>
+			ipcRenderer.invoke('plugins:set-agent-allowlist', id, agentIds),
 
 		/** Invoke a contributed command (`<pluginId>/<localId>`) in its sandbox. */
 		invokeCommand: (commandId: string, args?: unknown): Promise<{ dispatched: boolean }> =>

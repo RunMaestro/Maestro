@@ -215,7 +215,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 		}
 	}, [plainContent]);
 
-	// Generate synopsis — the handler reads history files directly via file paths,
+	// Generate synopsis - the handler reads history files directly via file paths,
 	// so the renderer only needs to make a single IPC call.
 	const generateSynopsis = useCallback(async () => {
 		setIsGenerating(true);
@@ -362,7 +362,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					/>
 				</div>
 
-				{/* Generated at timestamp — stays visible during regeneration */}
+				{/* Generated at timestamp - stays visible during regeneration */}
 				{generatedAt && (
 					<div className="flex items-center gap-1.5" style={{ color: theme.colors.textDim }}>
 						<Clock className="w-3 h-3" />
@@ -370,7 +370,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					</div>
 				)}
 
-				{/* Rich/Plain mode toggle — segmented control. Rich is the default
+				{/* Rich/Plain mode toggle - segmented control. Rich is the default
 				    widget dashboard; Plain is today's exact markdown view. */}
 				<div
 					className="flex items-center rounded overflow-hidden"
@@ -404,7 +404,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					})}
 				</div>
 
-				{/* Regenerate button — only this disables during generation */}
+				{/* Regenerate button - only this disables during generation */}
 				<button
 					type="button"
 					onClick={generateSynopsis}
@@ -420,7 +420,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					{isGenerating ? 'Regenerating…' : 'Regenerate'}
 				</button>
 
-				{/* Save button — enabled whenever we have content */}
+				{/* Save button - enabled whenever we have content */}
 				<button
 					type="button"
 					onClick={() => setShowSaveModal(true)}
@@ -437,7 +437,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					Save
 				</button>
 
-				{/* Copy to clipboard button — enabled whenever we have content */}
+				{/* Copy to clipboard button - enabled whenever we have content */}
 				<button
 					type="button"
 					onClick={copyToClipboard}
@@ -455,7 +455,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				</button>
 			</div>
 
-			{/* Stats bar — stays visible during regeneration */}
+			{/* Stats bar - stays visible during regeneration */}
 			{stats && synopsis && (
 				<div
 					className="shrink-0 flex items-center gap-6 px-6 py-2.5 border-b"
@@ -492,7 +492,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						</div>
 					)}
 
-					{/* Font-size controls — right-justified, scale only the synopsis text */}
+					{/* Font-size controls - right-justified, scale only the synopsis text */}
 					<div className="ml-auto flex items-center gap-1">
 						<button
 							type="button"
@@ -530,11 +530,11 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				</div>
 			)}
 
-			{/* Content — old notes stay visible and scrollable during regeneration */}
+			{/* Content - old notes stay visible and scrollable during regeneration */}
 			<div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-				{/* Font-scale override — applies to both Plain and Rich narratives. */}
+				{/* Font-scale override - applies to both Plain and Rich narratives. */}
 				<style>{proseScaleRule}</style>
-				{/* Error banner — shown above content so old notes remain readable */}
+				{/* Error banner - shown above content so old notes remain readable */}
 				{error && (
 					<div
 						className={`p-4 rounded border ${synopsis ? 'mb-4' : ''}`}

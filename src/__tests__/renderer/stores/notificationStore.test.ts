@@ -663,7 +663,7 @@ describe('notificationStore', () => {
 			it('notifyToast keeps a single toast (no duplicate) when denied', () => {
 				installNotificationApi('denied');
 				notifyToast({ type: 'success', title: 'Done', message: 'Task complete.' });
-				// Just the one visible toast — the failed web notification must not
+				// Just the one visible toast - the failed web notification must not
 				// spawn a second fallback toast.
 				expect(useNotificationStore.getState().toasts).toHaveLength(1);
 				expect(mockShow).not.toHaveBeenCalled();
@@ -865,7 +865,7 @@ describe('notificationStore', () => {
 	});
 
 	// ==========================================================================
-	// notifyToast — logging disabled reason variants
+	// notifyToast - logging disabled reason variants
 	// ==========================================================================
 
 	describe('notifyToast logging disabled reasons', () => {
@@ -913,7 +913,7 @@ describe('notificationStore', () => {
 	});
 
 	// ==========================================================================
-	// notifyToast — OS notification body construction
+	// notifyToast - OS notification body construction
 	// ==========================================================================
 
 	describe('notifyToast OS notification body variants', () => {
@@ -955,7 +955,7 @@ describe('notificationStore', () => {
 	});
 
 	// ==========================================================================
-	// notifyToast — optional field passthrough
+	// notifyToast - optional field passthrough
 	// ==========================================================================
 
 	describe('notifyToast field passthrough', () => {
@@ -1033,7 +1033,7 @@ describe('notificationStore', () => {
 	});
 
 	// ==========================================================================
-	// notifyToast — concurrent auto-dismiss timers
+	// notifyToast - concurrent auto-dismiss timers
 	// ==========================================================================
 
 	describe('notifyToast concurrent auto-dismiss', () => {
@@ -1065,14 +1065,14 @@ describe('notificationStore', () => {
 			useNotificationStore.getState().removeToast(toastId);
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
 
-			// Timer fires but toast already gone — should not error
+			// Timer fires but toast already gone - should not error
 			vi.advanceTimersByTime(5000);
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
 		});
 	});
 
 	// ==========================================================================
-	// notifyToast — duration edge cases
+	// notifyToast - duration edge cases
 	// ==========================================================================
 
 	describe('notifyToast duration edge cases', () => {

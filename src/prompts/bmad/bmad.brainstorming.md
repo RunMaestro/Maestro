@@ -113,7 +113,7 @@ If existing session files are found:
   **[2]** Start a new session
   **[3]** See all existing sessions"
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 - If user selects **[1]** (continue): Set `{brainstorming_session_output_file}` to that file path and load `./step-01b-continue.md`
 - If user selects **[2]** (new): Generate new filename with current date/time and proceed to step 3
@@ -223,7 +223,7 @@ When user selects approach, append the session overview content directly to `{br
 
 Which approach appeals to you most? (Enter 1-4)"
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ### 4. Handle User Selection and Initial Document Append
 
@@ -351,7 +351,7 @@ Based on session analysis, provide appropriate options:
 [2] Start New Session - Begin brainstorming on a new topic
 [3] Extend Session - Add more techniques or explore new angles"
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 **If Session In Progress:**
 "Let's continue where we left off!
@@ -503,7 +503,7 @@ Show available categories with brief descriptions:
 
 **Which category interests you most? Enter 1-7, or tell me what type of thinking you're drawn to.**"
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ### 3. Handle Category Selection
 
@@ -572,7 +572,7 @@ This combination will take approximately [total_time] and focus on [expected out
 [C] Continue - Begin technique execution
 [Back] - Modify technique selection"
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ### 6. Update Frontmatter and Continue
 
@@ -803,7 +803,7 @@ Provide deeper insight into each recommended technique:
 [Details] - Tell me more about any specific technique
 [Back] - Return to approach selection
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ### 6. Handle User Response
 
@@ -1020,7 +1020,7 @@ You're about to experience brainstorming in a completely new way. These unexpect
 [Details] - Tell me more about any specific technique
 [Back] - Return to approach selection
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ### 5. Handle User Response
 
@@ -1289,7 +1289,7 @@ Show the full progressive flow with timing and transitions:
 [Details] - Tell me more about any specific phase or technique
 [Back] - Return to approach selection
 
-**HALT — wait for user selection before proceeding.**
+**HALT - wait for user selection before proceeding.**
 
 ### 4. Handle Customization Requests
 

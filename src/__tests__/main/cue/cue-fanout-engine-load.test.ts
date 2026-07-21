@@ -1,7 +1,7 @@
 /**
  * Faithful end-to-end test of the engine's actual load path
  * (`loadCueConfigDetailed`) for fan-out pipelines with differing per-agent
- * prompts. The earlier regression test composed the individual pieces —
+ * prompts. The earlier regression test composed the individual pieces -
  * this one exercises the exact function the CueEngine calls on refresh.
  */
 
@@ -35,7 +35,7 @@ function writeFile(relPath: string, content: string) {
 	fs.writeFileSync(abs, content, 'utf-8');
 }
 
-describe('loadCueConfigDetailed — fan-out with per-agent prompt files', () => {
+describe('loadCueConfigDetailed - fan-out with per-agent prompt files', () => {
 	it('loads the fan-out subscription instead of skipping it as invalid', () => {
 		// Exactly the shape the renderer emits post-Commit-7.
 		writeFile(
@@ -71,7 +71,7 @@ describe('loadCueConfigDetailed — fan-out with per-agent prompt files', () => 
 		expect(result.ok).toBe(true);
 		if (!result.ok) return; // type narrowing for TS
 
-		// The sub MUST survive the lenient partition — this is the exact
+		// The sub MUST survive the lenient partition - this is the exact
 		// place that used to silently drop it (validator error) and cause
 		// the pipeline to vanish from the UI after reload.
 		expect(result.config.subscriptions).toHaveLength(1);

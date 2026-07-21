@@ -1,6 +1,6 @@
 /**
  * Lazy syntax highlighting for code pages inside the Fast tier text preview.
- * Thin shell over `shared/lazyShikiObserver` — same factory the markdown
+ * Thin shell over `shared/lazyShikiObserver` - same factory the markdown
  * Fast tier uses, so a bug fix in one place propagates to both.
  */
 
@@ -21,7 +21,7 @@ export interface TextCodeHighlighterOptions {
 
 /**
  * Create a code highlighter for the text Fast tier. Same selector as the
- * markdown tier — both render code in `<pre><code class="language-X">…</code></pre>`
+ * markdown tier - both render code in `<pre><code class="language-X">…</code></pre>`
  * shape, just inside different containers (page wrapper vs block wrapper).
  */
 export function createTextCodeHighlighter(

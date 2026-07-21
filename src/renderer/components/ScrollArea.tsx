@@ -1,5 +1,5 @@
 /**
- * ScrollArea — themed scrollable container.
+ * ScrollArea - themed scrollable container.
  *
  * Thin wrapper around a `<div>` that applies the app's themed scrollbar
  * styling (managed by useThemeStyles + global rules in index.css). Use this
@@ -29,7 +29,7 @@
  *                  conditional scroll containers)
  *
  * Existing components that already use `.scrollbar-thin` directly continue
- * to work — this component is purely additive. Do NOT mass-migrate; reach
+ * to work - this component is purely additive. Do NOT mass-migrate; reach
  * for it when adding new scrollable regions or when refactoring areas
  * touched for other reasons.
  *

@@ -38,6 +38,7 @@ import { app } from 'electron';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { getCommitHash } from '../../utils/build-info';
 import {
 	startProfiling,
 	stopProfiling,
@@ -107,7 +108,7 @@ const VARIANT_TO_COLOR: Record<NotifyCenterFlashVariant, NotifyCenterFlashColor>
 /**
  * Hard upper bound on flash duration for **externally-triggered** flashes
  * (CLI / web). The renderer-side `notifyCenterFlash` itself is uncapped so
- * internal in-app callers can still use longer durations if ever needed —
+ * internal in-app callers can still use longer durations if ever needed -
  * the cap lives at the IPC boundary so external scripts can't stick a
  * permanent overlay on the user.
  */
@@ -116,7 +117,7 @@ const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
 /**
  * Hard upper bound on toast duration (seconds) for externally-triggered
  * toasts. Toasts are corner notifications so the cap is more generous than
- * Center Flash, but `0` (never auto-dismiss) is rejected — external scripts
+ * Center Flash, but `0` (never auto-dismiss) is rejected - external scripts
  * that want a sticky toast must opt in explicitly via `dismissible: true`.
  */
 const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
@@ -137,10 +138,17 @@ import {
 } from '../../../shared/cadenza-types';
 import {
 	MOVEMENT_OPS,
+	MOVEMENT_VIEW_TYPES,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
+	type MovementViewType,
 } from '../../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	MovementDesignerInspection,
+} from '../../../shared/concerto-html';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -160,6 +168,7 @@ export interface WebClientMessage {
 	filePath?: string;
 	focus?: boolean;
 	force?: boolean;
+	background?: boolean;
 	[key: string]: unknown;
 }
 
@@ -206,7 +215,8 @@ export interface MessageHandlerCallbacks {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		force?: boolean,
-		images?: string[]
+		images?: string[],
+		background?: boolean
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
@@ -226,8 +236,34 @@ export interface MessageHandlerCallbacks {
 	) => Promise<boolean>;
 	newAITabWithPrompt: (
 		sessionId: string,
-		prompt: string
+		prompt: string,
+		background?: boolean
 	) => Promise<{ success: boolean; tabId?: string }>;
+	enqueueCommand: (
+		sessionId: string,
+		command: string,
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		images?: string[],
+		background?: boolean
+	) => Promise<{
+		success: boolean;
+		tabId?: string;
+		queued?: boolean;
+		queuePosition?: number;
+		queueLength?: number;
+		itemId?: string;
+		error?: string;
+	}>;
+	listQueue: (sessionId?: string) => Promise<{
+		success: boolean;
+		queues: unknown[];
+		error?: string;
+	}>;
+	removeQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -385,6 +421,11 @@ export interface MessageHandlerCallbacks {
 	cadenzaView: (params: CadenzaPayload) => Promise<boolean>;
 	movementView: (params: MovementPayload) => Promise<boolean>;
 	getMovementState: () => Promise<MovementStateSnapshot | null>;
+	getMovementDesignerInspection: (id: string) => Promise<MovementDesignerInspection | null>;
+	interactMovementDesigner: (
+		id: string,
+		action: ConcertoDesignerAction
+	) => Promise<ConcertoDesignerActionResult>;
 	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
 	getMarketplaceManifest: (options?: {
 		refresh?: boolean;
@@ -444,7 +485,7 @@ export class WebSocketMessageHandler {
 
 	/**
 	 * Report a handler exception to Sentry and send an error response. Use in
-	 * `.catch(...)` blocks where we'd otherwise silently swallow the cause —
+	 * `.catch(...)` blocks where we'd otherwise silently swallow the cause -
 	 * lets us keep the user-facing message tight while preserving production
 	 * diagnostics.
 	 */
@@ -498,6 +539,10 @@ export class WebSocketMessageHandler {
 				this.handleGetSessions(client);
 				break;
 
+			case 'get_app_info':
+				this.handleGetAppInfo(client, message);
+				break;
+
 			case 'select_tab':
 				this.handleSelectTab(client, message);
 				break;
@@ -540,6 +585,18 @@ export class WebSocketMessageHandler {
 
 			case 'new_ai_tab_with_prompt':
 				this.handleNewAITabWithPrompt(client, message);
+				break;
+
+			case 'enqueue_command':
+				this.handleEnqueueCommand(client, message);
+				break;
+
+			case 'list_queue':
+				this.handleListQueue(client, message);
+				break;
+
+			case 'remove_queue_item':
+				this.handleRemoveQueueItem(client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -792,6 +849,12 @@ export class WebSocketMessageHandler {
 			case 'get_movement_state':
 				this.handleGetMovementState(client, message);
 				break;
+			case 'get_movement_designer_inspection':
+				this.handleGetMovementDesignerInspection(client, message);
+				break;
+			case 'interact_movement_designer':
+				this.handleInteractMovementDesigner(client, message);
+				break;
 			case 'cadenza':
 				this.handleCadenza(client, message);
 				break;
@@ -854,7 +917,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Generic IPC bridge — dispatch a bridge.invoke message to the matching
+	 * Generic IPC bridge - dispatch a bridge.invoke message to the matching
 	 * ipcMain handler and return the result/error as a bridge.response. This
 	 * backs the web-desktop bundle, the default browser interface.
 	 */
@@ -904,6 +967,10 @@ export class WebSocketMessageHandler {
 		// dispatch concurrent writes to an already-running agent. Used by
 		// `maestro-cli dispatch --force`.
 		const force = message.force === true;
+		// background=true suppresses the desktop's focus side effect (switching
+		// to the target agent/tab). `maestro-cli dispatch` sets this by default;
+		// passing `--focus` clears it to bring the target to the foreground.
+		const background = message.background === true;
 		// Optional base64 data URLs pasted from the web client. Threaded through
 		// to the renderer so AI tabs can include them in the agent prompt.
 		const images = Array.isArray(message.images)
@@ -969,7 +1036,7 @@ export class WebSocketMessageHandler {
 		// Only echo a tabId in command_result when the caller passed one
 		// explicitly. Returning the server's snapshot of `activeTabId` for the
 		// no-tabId path would lie when the user switches active tabs between
-		// the IPC send and IPC receive — callers chaining `dispatch --session
+		// the IPC send and IPC receive - callers chaining `dispatch --session
 		// <returnedTabId>` would think they are continuing a conversation that
 		// actually went to a different tab. For deterministic addressing,
 		// callers should use `dispatch --new-tab` (returns the new tabId from
@@ -982,7 +1049,15 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, effectiveCommand, clientInputMode, requestedTabId, force, images)
+				.executeCommand(
+					sessionId,
+					effectiveCommand,
+					clientInputMode,
+					requestedTabId,
+					force,
+					images,
+					background
+				)
 				.then((success) => {
 					this.send(client, {
 						type: 'command_result',
@@ -1060,7 +1135,7 @@ export class WebSocketMessageHandler {
 								sessionId,
 							});
 						} else {
-							// PTY failed to spawn — report failure so the client can roll back
+							// PTY failed to spawn - report failure so the client can roll back
 							this.send(client, {
 								type: 'mode_switch_result',
 								success: false,
@@ -1161,6 +1236,21 @@ export class WebSocketMessageHandler {
 	/**
 	 * Handle get_sessions message - request updated sessions list
 	 */
+	/**
+	 * Handle get_app_info message - report the running desktop app's version and the
+	 * git commit hash it was built from (for `maestro-cli version`). commitHash is ''
+	 * when the build couldn't determine it (see utils/build-info.ts).
+	 */
+	private handleGetAppInfo(client: WebClient, message: WebClientMessage): void {
+		this.send(client, {
+			type: 'app_info',
+			requestId: message.requestId,
+			version: app.getVersion(),
+			commitHash: getCommitHash(),
+			platform: process.platform,
+		});
+	}
+
 	private handleGetSessions(client: WebClient): void {
 		if (
 			this.callbacks.getSessions &&
@@ -1605,7 +1695,7 @@ export class WebSocketMessageHandler {
 
 			return result;
 		} catch {
-			// Permission denied or other errors — return empty
+			// Permission denied or other errors - return empty
 			return [];
 		}
 	}
@@ -1710,7 +1800,7 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Validate optional worktree config — desktop app uses this to create a
+		// Validate optional worktree config - desktop app uses this to create a
 		// git worktree, checkout the branch, and optionally open a PR on completion.
 		let worktree:
 			| {
@@ -1885,7 +1975,7 @@ export class WebSocketMessageHandler {
 		}
 		// Relative paths resolve against the agent's working directory; absolute
 		// paths are honored as-is. Opening files outside the worktree is
-		// intentionally allowed — a paired client already has shell-level access
+		// intentionally allowed - a paired client already has shell-level access
 		// (execute_command), so confining preview tabs to the worktree gated
 		// nothing the connection token doesn't already gate.
 		const sessionRoot = path.resolve(session.cwd);
@@ -1918,7 +2008,7 @@ export class WebSocketMessageHandler {
 	private handleOpenBrowserTab(client: WebClient, message: WebClientMessage): void {
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 		const url = typeof message.url === 'string' ? message.url : '';
-		// URLs can embed bearer tokens or session IDs — log length only.
+		// URLs can embed bearer tokens or session IDs - log length only.
 		logger.info(
 			`[Web] Received open_browser_tab message: session=${sessionId}, urlLength=${url.length}`,
 			LOG_CONTEXT
@@ -1999,7 +2089,7 @@ export class WebSocketMessageHandler {
 		const rawCwd = message.cwd;
 		const rawShell = message.shell;
 		const rawName = message.name;
-		// cwd/shell/name can leak local usernames or project names — log
+		// cwd/shell/name can leak local usernames or project names - log
 		// presence flags only.
 		logger.info(
 			`[Web] Received open_terminal_tab message: session=${sessionId}, cwdProvided=${
@@ -2050,7 +2140,7 @@ export class WebSocketMessageHandler {
 		}
 
 		// If a cwd is provided, confine it to the agent working directory
-		// (same rule as open_file_tab — prevents spawning a shell outside scope).
+		// (same rule as open_file_tab - prevents spawning a shell outside scope).
 		// Resolve symlinks via fs.realpath so a `link-to-outside` inside the
 		// session root can't slip past the lexical prefix check.
 		let resolvedCwd: string | undefined;
@@ -2104,7 +2194,10 @@ export class WebSocketMessageHandler {
 	private handleNewAITabWithPrompt(client: WebClient, message: WebClientMessage): void {
 		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
 		const prompt = typeof message.prompt === 'string' ? message.prompt : '';
-		// Prompts can contain user-authored content with secrets or PII —
+		// background=true creates the tab without switching to/focusing it.
+		// `maestro-cli dispatch --new-tab` sets this by default; `--focus` clears it.
+		const background = message.background === true;
+		// Prompts can contain user-authored content with secrets or PII -
 		// log length only rather than a raw preview.
 		logger.info(
 			`[Web] Received new_ai_tab_with_prompt message: session=${sessionId}, promptLength=${prompt.length}`,
@@ -2138,7 +2231,7 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.newAITabWithPrompt(sessionId, prompt)
+			.newAITabWithPrompt(sessionId, prompt, background)
 			.then((result) => {
 				this.send(client, {
 					type: 'new_ai_tab_with_prompt_result',
@@ -2150,6 +2243,173 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				sendErrorResult(`Failed to create AI tab with prompt: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle enqueue_command message - hand a CLI prompt to the renderer's
+	 * authoritative execution queue. When the target session is busy the prompt
+	 * is appended to `session.executionQueue` (FIFO); when idle it is dispatched
+	 * immediately through the same path as a plain send. Used by
+	 * `maestro-cli dispatch --queue`. Unlike `send_command`, this never rejects a
+	 * busy target: waiting in line is the whole point of the mode.
+	 */
+	private handleEnqueueCommand(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const command = typeof message.command === 'string' ? message.command : '';
+		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
+		const requestedTabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+		const background = message.background === true;
+		const images = Array.isArray(message.images)
+			? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
+			: undefined;
+
+		logger.info(
+			`[Web] Received enqueue_command: session=${sessionId}, tab=${requestedTabId ?? 'active'}, commandLen=${command.length}, images=${images?.length ?? 0}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'enqueue_command_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		const hasImages = !!images && images.length > 0;
+		if (!sessionId || (!command && !hasImages)) {
+			sendErrorResult('Missing sessionId or command');
+			return;
+		}
+
+		if (!this.callbacks.getSessionDetail?.(sessionId)) {
+			sendErrorResult('Session not found');
+			return;
+		}
+
+		if (!this.callbacks.enqueueCommand) {
+			sendErrorResult('Enqueue not configured');
+			return;
+		}
+
+		this.callbacks
+			.enqueueCommand(sessionId, command ?? '', clientInputMode, requestedTabId, images, background)
+			.then((result) => {
+				this.send(client, {
+					type: 'enqueue_command_result',
+					success: result.success,
+					sessionId,
+					...(result.tabId ? { tabId: result.tabId } : {}),
+					...(result.queued !== undefined ? { queued: result.queued } : {}),
+					...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
+					...(result.queueLength !== undefined ? { queueLength: result.queueLength } : {}),
+					...(result.itemId ? { itemId: result.itemId } : {}),
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'enqueue_command', sessionId },
+				});
+				sendErrorResult(`Failed to enqueue command: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle list_queue message - return a snapshot of the renderer's execution
+	 * queue(s). Used by `maestro-cli queue list`. When sessionId is omitted, every
+	 * session with queued items is returned.
+	 */
+	private handleListQueue(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+		if (!this.callbacks.listQueue) {
+			this.send(client, {
+				type: 'list_queue_result',
+				success: false,
+				queues: [],
+				error: 'List queue not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		this.callbacks
+			.listQueue(sessionId)
+			.then((result) => {
+				this.send(client, {
+					type: 'list_queue_result',
+					success: result.success,
+					queues: result.queues,
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'list_queue', sessionId },
+				});
+				this.send(client, {
+					type: 'list_queue_result',
+					success: false,
+					queues: [],
+					error: `Failed to list queue: ${error.message}`,
+					requestId: message.requestId,
+				});
+			});
+	}
+
+	/**
+	 * Handle remove_queue_item message - drop a queued item by id from the
+	 * renderer's execution queue. Used by `maestro-cli queue remove`.
+	 */
+	private handleRemoveQueueItem(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+		if (!sessionId || !itemId) {
+			this.send(client, {
+				type: 'remove_queue_item_result',
+				success: false,
+				removed: false,
+				error: 'Missing sessionId or itemId',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		if (!this.callbacks.removeQueueItem) {
+			this.send(client, {
+				type: 'remove_queue_item_result',
+				success: false,
+				removed: false,
+				error: 'Remove queue item not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		this.callbacks
+			.removeQueueItem(sessionId, itemId)
+			.then((result) => {
+				this.send(client, {
+					type: 'remove_queue_item_result',
+					success: result.success,
+					removed: result.removed,
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'remove_queue_item', sessionId, itemId },
+				});
+				this.send(client, {
+					type: 'remove_queue_item_result',
+					success: false,
+					removed: false,
+					error: `Failed to remove queue item: ${error.message}`,
+					requestId: message.requestId,
+				});
 			});
 	}
 
@@ -2364,7 +2624,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle reset_auto_run_doc_tasks message — revert all completed `[x]`
+	 * Handle reset_auto_run_doc_tasks message - revert all completed `[x]`
 	 * checkboxes back to `[ ]` for a single document. Mirrors the desktop's
 	 * "Reset Tasks" action so a playbook can be re-run from scratch.
 	 */
@@ -2424,7 +2684,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle resume_auto_run_error message — clear the error pause and continue.
+	 * Handle resume_auto_run_error message - clear the error pause and continue.
 	 */
 	private handleResumeAutoRunError(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2458,7 +2718,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle skip_auto_run_document message — skip the failing document and
+	 * Handle skip_auto_run_document message - skip the failing document and
 	 * continue with the next one in the queue.
 	 */
 	private handleSkipAutoRunDocument(client: WebClient, message: WebClientMessage): void {
@@ -2493,7 +2753,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle abort_auto_run_error message — fully stop the run after an error.
+	 * Handle abort_auto_run_error message - fully stop the run after an error.
 	 */
 	private handleAbortAutoRunError(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2527,7 +2787,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle list_playbooks message — return the saved playbooks for a session.
+	 * Handle list_playbooks message - return the saved playbooks for a session.
 	 */
 	private handleListPlaybooks(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2561,7 +2821,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle create_playbook message — persist a new playbook with the given config.
+	 * Handle create_playbook message - persist a new playbook with the given config.
 	 */
 	private handleCreatePlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2645,7 +2905,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle update_playbook message — apply partial updates to an existing playbook.
+	 * Handle update_playbook message - apply partial updates to an existing playbook.
 	 */
 	private handleUpdatePlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2747,7 +3007,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle delete_playbook message — remove a playbook.
+	 * Handle delete_playbook message - remove a playbook.
 	 */
 	private handleDeletePlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -2898,7 +3158,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Known agent types for validation — derived from the canonical AGENT_IDS list.
+	 * Known agent types for validation - derived from the canonical AGENT_IDS list.
 	 * Excludes 'terminal' since it's an internal-only agent type.
 	 */
 	private static readonly VALID_AGENT_TYPES: Set<string> = new Set(
@@ -3104,7 +3364,7 @@ export class WebSocketMessageHandler {
 	 * The desktop's `projectRoot` (used for provider session storage) is left
 	 * untouched so historical conversations stay addressable; only the UI-facing
 	 * `cwd`/`fullPath` move. Renderer-side validation rejects updates while an
-	 * agent process is alive — the PTY's cwd is fixed at spawn time.
+	 * agent process is alive - the PTY's cwd is fixed at spawn time.
 	 */
 	private handleUpdateSessionCwd(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
@@ -3459,7 +3719,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle get_git_branches message — list local + remote branches for a session's
+	 * Handle get_git_branches message - list local + remote branches for a session's
 	 * cwd, used by the mobile Run-in-Worktree base-branch picker.
 	 */
 	private handleGetGitBranches(client: WebClient, message: WebClientMessage): void {
@@ -3498,7 +3758,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle list_worktrees message — list existing worktrees for a session's cwd,
+	 * Handle list_worktrees message - list existing worktrees for a session's cwd,
 	 * used by mobile Run-in-Worktree to offer "use existing" alongside "create new".
 	 */
 	private handleListWorktrees(client: WebClient, message: WebClientMessage): void {
@@ -3819,7 +4079,7 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Strict validation — avoid truthy coercion so a string like "false"
+		// Strict validation - avoid truthy coercion so a string like "false"
 		// cannot flip a private gist to public.
 		if (message.description !== undefined && typeof message.description !== 'string') {
 			reply({ success: false, error: 'description must be a string when provided' });
@@ -3987,7 +4247,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_list — return all named pipeline entries from
+	 * Handle cue_pipeline_list - return all named pipeline entries from
 	 * the on-disk cue-pipeline-layout.json. Pipelines are returned as
 	 * opaque JSON objects so the CLI doesn't need to share the editor's
 	 * full type tree to round-trip them.
@@ -4015,7 +4275,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_get — fetch a single pipeline entry by name or
+	 * Handle cue_pipeline_get - fetch a single pipeline entry by name or
 	 * id. Missing entries respond with `pipeline: null` rather than an
 	 * error so scripts can treat "not found" as a normal value.
 	 */
@@ -4048,7 +4308,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_set — add or replace a pipeline entry. The
+	 * Handle cue_pipeline_set - add or replace a pipeline entry. The
 	 * callback returns a structured result so the CLI can map error codes
 	 * (already_exists / not_found / invalid_input / …) to non-zero exit
 	 * codes without parsing free-form messages.
@@ -4092,7 +4352,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle cue_pipeline_remove — delete a pipeline entry by name or id.
+	 * Handle cue_pipeline_remove - delete a pipeline entry by name or id.
 	 */
 	private handleCuePipelineRemove(client: WebClient, message: WebClientMessage): void {
 		const identifier = message.identifier;
@@ -4502,7 +4762,8 @@ export class WebSocketMessageHandler {
 	 */
 	private handleMovement(client: WebClient, message: WebClientMessage): void {
 		const op = typeof message.op === 'string' ? (message.op as MovementOp) : undefined;
-		const id = typeof message.id === 'string' ? message.id : '';
+		const rawId = typeof message.id === 'string' ? message.id : '';
+		const id = rawId.trim();
 
 		const sendResult = (success: boolean, error?: string) => {
 			this.send(client, { type: 'movement_result', success, error, requestId: message.requestId });
@@ -4514,6 +4775,28 @@ export class WebSocketMessageHandler {
 		}
 		if (op !== 'clear' && !id) {
 			sendResult(false, `Missing movement item id for op '${op}'`);
+			return;
+		}
+		if (op !== 'clear' && rawId !== id) {
+			sendResult(false, 'Movement item id must not contain surrounding whitespace');
+			return;
+		}
+
+		let viewType: MovementViewType | undefined;
+		const rawViewType = typeof message.viewType === 'string' ? message.viewType : undefined;
+		if (rawViewType !== undefined) {
+			if (!MOVEMENT_VIEW_TYPES.includes(rawViewType as MovementViewType)) {
+				sendResult(
+					false,
+					`Invalid viewType: ${rawViewType}. Must be one of: ${MOVEMENT_VIEW_TYPES.join(', ')}`
+				);
+				return;
+			}
+			viewType = rawViewType as MovementViewType;
+		}
+		const body = typeof message.body === 'string' ? message.body : undefined;
+		if ((op === 'add' || op === 'update') && viewType === 'html' && body === undefined) {
+			sendResult(false, `Movement ${op} requires HTML content when viewType is 'html'`);
 			return;
 		}
 
@@ -4531,12 +4814,13 @@ export class WebSocketMessageHandler {
 		const payload: MovementPayload = {
 			op,
 			id: id || undefined,
+			viewType,
 			x: num(message.x),
 			y: num(message.y),
 			width: num(message.width),
 			height: num(message.height),
 			title: typeof message.title === 'string' ? message.title : undefined,
-			body: typeof message.body === 'string' ? message.body : undefined,
+			body,
 		};
 
 		if (!this.callbacks.movementView) {
@@ -4578,6 +4862,113 @@ export class WebSocketMessageHandler {
 					: sendResult(null, 'Movement state unavailable (Concerto off or renderer not responding)')
 			)
 			.catch((error) => sendResult(null, `Failed to read movement state: ${error.message}`));
+	}
+
+	/** Capture a live HTML Movement and return its diagnostics to the CLI. */
+	private handleGetMovementDesignerInspection(client: WebClient, message: WebClientMessage): void {
+		const rawId = typeof message.id === 'string' ? message.id : '';
+		const id = rawId.trim();
+		const sendResult = (inspection: MovementDesignerInspection | null, error?: string) => {
+			this.send(client, {
+				type: 'movement_designer_inspection_result',
+				success: !error,
+				inspection,
+				error,
+				requestId: message.requestId,
+			});
+		};
+		if (!id) {
+			sendResult(null, 'Missing movement item id');
+			return;
+		}
+		if (rawId !== id) {
+			sendResult(null, 'Movement item id must not contain surrounding whitespace');
+			return;
+		}
+		if (!this.callbacks.getMovementDesignerInspection) {
+			sendResult(null, 'Movement designer inspection is not configured');
+			return;
+		}
+		this.callbacks
+			.getMovementDesignerInspection(id)
+			.then((inspection) =>
+				inspection
+					? sendResult(inspection)
+					: sendResult(null, `HTML Movement '${id}' is not visible or did not load`)
+			)
+			.catch((error) => sendResult(null, `Failed to inspect Movement: ${error.message}`));
+	}
+
+	/** Perform a click or text entry inside the sandboxed HTML Movement. */
+	private handleInteractMovementDesigner(client: WebClient, message: WebClientMessage): void {
+		const rawId = typeof message.id === 'string' ? message.id : '';
+		const id = rawId.trim();
+		const rawAction = message.action as Record<string, unknown> | undefined;
+		const selector = typeof rawAction?.selector === 'string' ? rawAction.selector.trim() : '';
+		const kind = rawAction?.kind;
+		const sendResult = (result: ConcertoDesignerActionResult) => {
+			this.send(client, {
+				type: 'movement_designer_interaction_result',
+				success: result.ok,
+				result,
+				error: result.ok ? undefined : result.message,
+				requestId: message.requestId,
+			});
+		};
+		if (!id || !selector || (kind !== 'click' && kind !== 'type')) {
+			sendResult({
+				ok: false,
+				action: kind === 'type' ? 'type' : 'click',
+				selector,
+				message: 'Interaction requires an id, a CSS selector, and click or type action',
+			});
+			return;
+		}
+		if (rawId !== id) {
+			sendResult({
+				ok: false,
+				action: kind,
+				selector,
+				message: 'Movement item id must not contain surrounding whitespace',
+			});
+			return;
+		}
+		if (selector.length > 2048) {
+			sendResult({
+				ok: false,
+				action: kind,
+				selector,
+				message: 'CSS selector is too long',
+			});
+			return;
+		}
+		const value = typeof rawAction?.value === 'string' ? rawAction.value : '';
+		if (kind === 'type' && value.length > 100_000) {
+			sendResult({ ok: false, action: kind, selector, message: 'Input value is too long' });
+			return;
+		}
+		const action: ConcertoDesignerAction =
+			kind === 'click' ? { kind, selector } : { kind, selector, value };
+		if (!this.callbacks.interactMovementDesigner) {
+			sendResult({
+				ok: false,
+				action: action.kind,
+				selector,
+				message: 'Movement designer interaction is not configured',
+			});
+			return;
+		}
+		this.callbacks
+			.interactMovementDesigner(id, action)
+			.then(sendResult)
+			.catch((error) =>
+				sendResult({
+					ok: false,
+					action: action.kind,
+					selector,
+					message: `Failed to interact with Movement: ${error.message}`,
+				})
+			);
 	}
 
 	/**
@@ -4716,7 +5107,7 @@ export class WebSocketMessageHandler {
 			color = 'theme';
 		}
 
-		// External flashes must be (0, 5000 ms] — `0` (never auto-dismiss) is rejected so
+		// External flashes must be (0, 5000 ms] - `0` (never auto-dismiss) is rejected so
 		// external scripts can't stick a permanent overlay on the user. In-app callers
 		// using `notifyCenterFlash()` directly are not capped.
 		if (duration !== undefined) {
@@ -4917,7 +5308,7 @@ export class WebSocketMessageHandler {
 		) {
 			return true;
 		}
-		// Reject any backslash anywhere — official/local manifest paths use
+		// Reject any backslash anywhere - official/local manifest paths use
 		// forward slashes, so a backslash is either a Windows-style absolute
 		// fragment or a deliberate normalization-bypass attempt.
 		if (playbookPath.includes('\\')) {
@@ -5148,7 +5539,7 @@ export class WebSocketMessageHandler {
 	 * Handle marketplace_import_playbook - import a playbook into the
 	 * session's Auto Run folder. The server resolves both the folder path
 	 * and SSH config from the session, so the mobile client doesn't need
-	 * to send them — and can't lie about them.
+	 * to send them - and can't lie about them.
 	 */
 	private handleMarketplaceImportPlaybook(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId;
@@ -5245,7 +5636,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle list_desktop_sessions message — enumerate every open AI tab across
+	 * Handle list_desktop_sessions message - enumerate every open AI tab across
 	 * desktop agents. Stateless read backed by the persisted session store; no
 	 * subscription side-effects so external pollers (Maestro-Discord, Cue) can
 	 * call this every few seconds without leaking state into the desktop.
@@ -5261,7 +5652,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle plugins_list_tools — project the registered plugin `tools`
+	 * Handle plugins_list_tools - project the registered plugin `tools`
 	 * contributions into MCP tool defs for the `maestro-cli mcp serve` bridge.
 	 * Returns an MCP-safe `name` (namespaced id, `/`->`__`) plus the real
 	 * `toolId` so the bridge can reverse-map on call. Empty when the plugins flag
@@ -5300,7 +5691,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle plugins_call_tool — risk-gate a model-initiated plugin tool call,
+	 * Handle plugins_call_tool - risk-gate a model-initiated plugin tool call,
 	 * then invoke it via the broker. The toolId MUST be a declared `tools`
 	 * contribution (never an arbitrary command handler), and risk is rated on the
 	 * model's ARGUMENTS via the shared Pianola gate - a HIGH verdict is surfaced
@@ -5356,7 +5747,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle get_session_history message — return the conversation log for a
+	 * Handle get_session_history message - return the conversation log for a
 	 * tab, optionally filtered by `sinceMs` (poll cursor) and/or `tail` (cap).
 	 * Errors are returned in the same response type rather than as a generic
 	 * `error` so the CLI's request/response pairing stays deterministic.

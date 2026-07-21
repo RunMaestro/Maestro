@@ -1,5 +1,5 @@
 /**
- * Phase 15A — fan-in tracker edge cases.
+ * Phase 15A - fan-in tracker edge cases.
  *
  * Complements `cue-fan-in-tracker.test.ts` (which focuses on the inspection
  * API added in Phase 8C) by exercising the lifecycle corners the main runtime
@@ -64,7 +64,7 @@ const OWNER = 'owner-session';
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe('CueFanInTracker — edge cases', () => {
+describe('CueFanInTracker - edge cases', () => {
 	let dispatch: ReturnType<typeof vi.fn>;
 	let onLog: ReturnType<typeof vi.fn>;
 
@@ -125,7 +125,7 @@ describe('CueFanInTracker — edge cases', () => {
 			expect(eventArg.payload.sourceOutput).toContain('A-OUTPUT');
 			expect(sourceNameArg).toBe('Agent A');
 
-			// Tracker state is cleaned up — timeout consumed the entry.
+			// Tracker state is cleaned up - timeout consumed the entry.
 			expect(tracker.getActiveTrackerKeys()).toEqual([]);
 			expect(tracker.getTrackerCreatedAt(`${OWNER}:${sub.name}`)).toBeUndefined();
 		});
@@ -222,7 +222,7 @@ describe('CueFanInTracker — edge cases', () => {
 			// Owner session goes away (user closed the agent); clear its fan-in state.
 			tracker.clearForSession(OWNER);
 
-			// Advance past the timeout — must NOT fire because the timer was cleared.
+			// Advance past the timeout - must NOT fire because the timer was cleared.
 			vi.advanceTimersByTime(5 * 60 * 1000 + 1);
 
 			expect(dispatch).not.toHaveBeenCalled();
@@ -282,7 +282,7 @@ describe('CueFanInTracker — edge cases', () => {
 				'Agent A',
 				makeCompletion({ stdout: 'A-FIRST' })
 			);
-			// Same session completes a second time — must NOT count as a new vote
+			// Same session completes a second time - must NOT count as a new vote
 			// toward the fan-in, otherwise a 2-source fan-in would fire prematurely
 			// after one agent completes twice without the other ever running.
 			tracker.handleCompletion(
@@ -324,7 +324,7 @@ describe('CueFanInTracker — edge cases', () => {
 				'Agent A',
 				makeCompletion()
 			);
-			// Remaining 60s + 1ms must trigger the original timeout — the
+			// Remaining 60s + 1ms must trigger the original timeout - the
 			// duplicate did NOT reset the timer.
 			vi.advanceTimersByTime(60 * 1000 + 1);
 			expect(dispatch).toHaveBeenCalledTimes(1);
@@ -339,7 +339,7 @@ describe('CueFanInTracker — edge cases', () => {
 			// by a timeout, a late completion from the same source for the same
 			// subscription starts a NEW tracker. In-flight coordination logic
 			// upstream is responsible for treating post-timeout events as a new
-			// cycle or dropping them — the tracker itself is stateless across
+			// cycle or dropping them - the tracker itself is stateless across
 			// timeout boundaries.
 			const tracker = makeTracker();
 			const sub = makeSub();
@@ -357,7 +357,7 @@ describe('CueFanInTracker — edge cases', () => {
 			vi.advanceTimersByTime(2 * 60 * 1000 + 1); // timeout fires
 			expect(dispatch).toHaveBeenCalledTimes(1);
 
-			// Late completion arrives from session-b — tracker was cleared, so
+			// Late completion arrives from session-b - tracker was cleared, so
 			// this becomes the first completion of a new cycle.
 			tracker.handleCompletion(
 				OWNER,
@@ -393,7 +393,7 @@ describe('CueFanInTracker — edge cases', () => {
 
 			tracker.expireTracker(`${OWNER}:${sub.name}`);
 
-			// Advance past the original timeout — expireTracker should have
+			// Advance past the original timeout - expireTracker should have
 			// cleared the timer; no dispatch must occur.
 			vi.advanceTimersByTime(5 * 60 * 1000 + 1);
 			expect(dispatch).not.toHaveBeenCalled();

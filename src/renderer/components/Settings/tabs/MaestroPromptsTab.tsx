@@ -75,19 +75,19 @@ const CATEGORY_HELP: Record<string, string> = {
 	wizard:
 		'Prompts used by the Wizard feature for AI-guided conversations, document generation, and continuation flows.',
 	'inline-wizard':
-		'Prompts for the Inline Wizard that operates within the editor — new sessions, iterations, and generation.',
+		'Prompts for the Inline Wizard that operates within the editor - new sessions, iterations, and generation.',
 	autorun:
-		'Prompts controlling Auto Run behavior — the default execution prompt and synopsis generation for Auto Run documents.',
+		'Prompts controlling Auto Run behavior - the default execution prompt and synopsis generation for Auto Run documents.',
 	'group-chat':
-		'Prompts for Group Chat sessions — moderator system/synthesis prompts, participant behavior, and participant request formatting.',
+		'Prompts for Group Chat sessions - moderator system/synthesis prompts, participant behavior, and participant request formatting.',
 	context:
-		'Prompts for context management — grooming (trimming context), transferring context between sessions, and summarization.',
+		'Prompts for context management - grooming (trimming context), transferring context between sessions, and summarization.',
 	commands:
-		'Prompts for built-in commands — image-only message handling and git commit message generation.',
+		'Prompts for built-in commands - image-only message handling and git commit message generation.',
 	includes:
 		'Reusable blocks referenced from other prompts. Two directives consume them: {{INCLUDE:name}} fully inlines the content at assembly time (use for foundational rules every agent must have); {{REF:name}} expands to a one-line pointer that tells the agent to fetch it on demand via `maestro-cli prompts get <name>` (use for heavy reference material only some sessions need). Keeps shared content (history format, Auto Run spec, CLI reference, Cue model, file-access rules) in one place so every agent that needs it gets the same wording.',
 	system:
-		"System-level prompts — the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
+		"System-level prompts - the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
 	[PLUGIN_PROMPT_CATEGORY]:
 		'Read-only prompts contributed by installed plugins. Their content is owned by the plugin and cannot be edited here.',
 };
@@ -139,7 +139,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					code.
 				</p>
 				<p className="prompts-help-text" style={{ color: theme.colors.textDim }}>
-					Changes take effect immediately — no restart required. Use the{' '}
+					Changes take effect immediately - no restart required. Use the{' '}
 					<strong style={{ color: theme.colors.textMain }}>Reset to Default</strong> button to
 					revert any prompt to its bundled original.
 				</p>
@@ -193,7 +193,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					>
 						.md
 					</code>{' '}
-					(native separators for the host OS) — nothing else, no description or formatting. Wrap the
+					(native separators for the host OS) - nothing else, no description or formatting. Wrap the
 					directive with whatever prose, list markers, or context you want; the agent reads the file
 					directly. Use this for heavy reference material only some sessions need. The path resolves
 					to bundled content; to honor your customizations on this tab, agents should fetch via{' '}

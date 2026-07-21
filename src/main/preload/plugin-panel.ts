@@ -11,7 +11,7 @@
  * `ipc-message` event on the <webview> element), where it is namespaced to the
  * owning plugin and forwarded over the broker-gated `plugins:invoke-command`
  * RPC. The panel keeps calling `parent.postMessage(...)` exactly as it did in
- * the srcdoc-iframe era — in a top-level guest `parent === window`, so the
+ * the srcdoc-iframe era - in a top-level guest `parent === window`, so the
  * message dispatches on the guest window and this isolated-world listener
  * receives it. One-way, fire-and-forget: nothing is ever sent back into the
  * page, and no reply channel exists.
@@ -26,7 +26,7 @@
  * Self-contained on purpose (mirrors consent.ts): imports nothing outside
  * `electron`, so its audit surface is this one file. The channel/shape
  * constants are duplicated from `src/shared/plugins/panel-host.ts`
- * (PANEL_BRIDGE_CHANNEL) — keep them in sync.
+ * (PANEL_BRIDGE_CHANNEL) - keep them in sync.
  */
 
 import { ipcRenderer } from 'electron';

@@ -62,7 +62,7 @@ export function revealAiTab(session: Session, tabId: string): Session {
  * Follows unifiedTabOrder, then appends any orphaned tabs as a safety net
  * (e.g., from migration or state corruption).
  *
- * Single source of truth — used by useTabHandlers and tabStore selectors.
+ * Single source of truth - used by useTabHandlers and tabStore selectors.
  */
 export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	if (!session) return [];
@@ -192,17 +192,40 @@ function resolveFocusedAiTabId(group: TabGroup): string | null {
 }
 
 /**
- * Locate the tiled group and leaf-pane id that hold a given AI tab, or null when
- * the tab isn't tiled into any group (i.e. it's a standalone tab). Walks each
- * group's layout locally to avoid a circular import with panelLayout (which
- * imports from this module). Used by setActiveTab so selecting a group-member AI
- * tab (e.g. from the Tab Switcher) activates its group and focuses its pane
- * instead of trying to render it standalone - group members have no standalone
- * chip and are excluded from buildUnifiedTabs, so the standalone path leaves
- * focus stuck on whatever was already showing.
+ * Resolve a group's focused pane to its full tab ref (any kind), or null when the
+ * group has no focused pane or the leaf can't be found. Walks the layout locally to
+ * avoid a circular import with panelLayout (which imports from this module). Used by
+ * the Cmd+W close path so it targets the visible tile, not a stale standalone active
+ * id that may point elsewhere (e.g. a file-focused pane leaves activeTabId untouched).
  */
-function findGroupPaneForAiTab(
+export function resolveFocusedPaneTabRef(group: TabGroup): UnifiedTabRef | null {
+	if (!group.focusedPaneId) return null;
+	let found: UnifiedTabRef | null = null;
+	const walk = (node: PanelLayoutNode): void => {
+		if (found) return;
+		if (node.kind === 'leaf') {
+			if (node.id === group.focusedPaneId) found = node.tab;
+			return;
+		}
+		node.children.forEach(walk);
+	};
+	walk(group.layout);
+	return found;
+}
+
+/**
+ * Locate the tiled group and leaf-pane id that hold a given tab (of any kind),
+ * or null when the tab isn't tiled into any group (i.e. it's a standalone tab).
+ * Walks each group's layout locally to avoid a circular import with panelLayout
+ * (which imports from this module). Used so selecting or opening a group-member
+ * tab activates its group and focuses its pane instead of trying to render it
+ * standalone - group members have no standalone chip and are excluded from
+ * buildUnifiedTabs, so the standalone path leaves focus stuck on whatever was
+ * already showing.
+ */
+export function findGroupPaneForTab(
 	session: Session,
+	type: UnifiedTabRef['type'],
 	tabId: string
 ): { groupId: string; leafId: string } | null {
 	const groups = session.tabGroups;
@@ -212,7 +235,7 @@ function findGroupPaneForAiTab(
 		const walk = (node: PanelLayoutNode): void => {
 			if (leafId) return;
 			if (node.kind === 'leaf') {
-				if (node.tab.type === 'ai' && node.tab.id === tabId) leafId = node.id;
+				if (node.tab.type === type && node.tab.id === tabId) leafId = node.id;
 				return;
 			}
 			node.children.forEach(walk);
@@ -221,6 +244,17 @@ function findGroupPaneForAiTab(
 		if (leafId) return { groupId: group.id, leafId };
 	}
 	return null;
+}
+
+/**
+ * AI-tab shortcut for {@link findGroupPaneForTab}. Kept as a named wrapper so the
+ * AI-specific call sites read clearly.
+ */
+function findGroupPaneForAiTab(
+	session: Session,
+	tabId: string
+): { groupId: string; leafId: string } | null {
+	return findGroupPaneForTab(session, 'ai', tabId);
 }
 
 /**
@@ -264,7 +298,7 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 	const liveGroupIds = new Set((session.tabGroups || []).map((g) => g.id));
 	const groupMemberKeys = collectGroupMemberTabKeys(session);
 
-	// Prune stale entries and duplicates — refs whose tabs no longer exist, and
+	// Prune stale entries and duplicates - refs whose tabs no longer exist, and
 	// later duplicate refs for the same type+id (buildUnifiedTabs also skips both).
 	// Without this, navigation indices diverge from the rendered tab bar.
 	const seen = new Set<string>();
@@ -272,6 +306,13 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 		const key = `${ref.type}:${ref.id}`;
 		if (seen.has(key)) return false;
 		seen.add(key);
+		// A tab tiled into a group is represented by the group ref, never its own
+		// standalone ref. buildUnifiedTabs filters these out at the end, so a lingering
+		// member ref in the order stays invisible in the strip - but navigation would
+		// still walk it, making Cmd+N / next-prev step through group members one by one
+		// instead of treating the group as a single stop. Drop member refs here so the
+		// navigable order matches exactly what the tab bar renders.
+		if (ref.type !== 'group' && groupMemberKeys.has(key)) return false;
 		if (ref.type === 'ai') return liveAiIds.has(ref.id);
 		if (ref.type === 'file') return liveFileIds.has(ref.id);
 		if (ref.type === 'browser') return liveBrowserIds.has(ref.id);
@@ -369,7 +410,7 @@ export function moveActiveUnifiedTabToEdge(session: Session, edge: 'start' | 'en
  * @returns The name to pre-fill in the rename input (empty for auto-generated names)
  */
 /**
- * Get the display name for a tab. Strictly per-tab — the title only reflects
+ * Get the display name for a tab. Strictly per-tab - the title only reflects
  * THIS tab's own state, never another tab's id from the session level.
  *
  * Resolution order:
@@ -517,6 +558,22 @@ export function hasWizardInteraction(tab: AITab): boolean {
 }
 
 /**
+ * Collect the ids of AI tabs that have at least one queued execution item waiting
+ * in the execution queue (a message or command targeting that tab). A tab with
+ * pending queued work needs attention, so it must survive the unread filter and stay
+ * reachable by keyboard navigation. Paused items still count - they remain queued,
+ * awaiting the user. Centralized so every unread-filter surface agrees. Takes the
+ * queue array (not the whole session) so callers can memoize on its stable identity.
+ */
+export function computeQueuedTabIds(queue: QueuedItem[]): Set<string> {
+	const ids = new Set<string>();
+	for (const item of queue ?? []) {
+		ids.add(item.tabId);
+	}
+	return ids;
+}
+
+/**
  * Filter a unified tab order down to the refs that TabBar actually displays when the
  * "unread only" tab filter is active. Matches TabBar.tsx's displayedUnifiedTabs logic so
  * keyboard jump shortcuts (Cmd+1..9, Cmd+0) stay aligned with the rendered tab strip.
@@ -540,12 +597,13 @@ export function filterUnifiedTabOrderForUnread(
 	const inputMode = session.inputMode ?? 'ai';
 	const activeTabId = session.activeTabId ?? null;
 	const activeFileTabId = session.activeFileTabId ?? null;
+	const queuedTabIds = computeQueuedTabIds(session.executionQueue);
 
 	return order.filter((ref) => {
 		if (ref.type === 'ai') {
 			const tab = session.aiTabs.find((t) => t.id === ref.id);
 			if (!tab) return false;
-			return aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred);
+			return aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred, queuedTabIds);
 		}
 		// Active file tab is always visible so the user never loses sight of what
 		// they're looking at, even when the file-preview filter is off.
@@ -564,21 +622,24 @@ export function filterUnifiedTabOrderForUnread(
 /**
  * Shared predicate: does this AI tab pass the "unread" filter? An AI tab is kept
  * when it has unread messages, is busy (thinking), is the active tab in AI mode,
- * holds an unsent draft, or (when the setting is on) is starred. Centralized so the
- * TabBar display filter, navigation filter, and group-unread rollup can never drift.
+ * holds an unsent draft, has pending queued work, or (when the setting is on) is
+ * starred. Centralized so the TabBar display filter, navigation filter, and
+ * group-unread rollup can never drift.
  */
 export function aiTabPassesUnreadFilter(
 	tab: AITab,
 	inputMode: 'ai' | 'terminal' | undefined,
 	activeTabId: string | null,
-	showStarred: boolean
+	showStarred: boolean,
+	queuedTabIds?: Set<string>
 ): boolean {
 	return (
 		tab.hasUnread ||
 		tab.state === 'busy' ||
 		(inputMode === 'ai' && tab.id === activeTabId) ||
 		hasDraft(tab) ||
-		(showStarred && !!tab.starred)
+		(showStarred && !!tab.starred) ||
+		(queuedTabIds?.has(tab.id) ?? false)
 	);
 }
 
@@ -594,10 +655,12 @@ export function groupHasUnreadTabs(session: Session, group: TabGroup): boolean {
 	const showStarred = settings.showStarredInUnreadFilter;
 	const inputMode = session.inputMode ?? 'ai';
 	const activeTabId = session.activeTabId ?? null;
+	const queuedTabIds = computeQueuedTabIds(session.executionQueue);
 	for (const ref of collectGroupLeafRefs(group)) {
 		if (ref.type !== 'ai') continue;
 		const tab = session.aiTabs.find((t) => t.id === ref.id);
-		if (tab && aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred)) return true;
+		if (tab && aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred, queuedTabIds))
+			return true;
 	}
 	return false;
 }
@@ -662,9 +725,14 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
+		const queuedTabIds = computeQueuedTabIds(session.executionQueue);
 		return visible.filter(
 			(tab) =>
-				tab.hasUnread || tab.state === 'busy' || hasDraft(tab) || (showStarred && tab.starred)
+				tab.hasUnread ||
+				tab.state === 'busy' ||
+				hasDraft(tab) ||
+				(showStarred && tab.starred) ||
+				queuedTabIds.has(tab.id)
 		);
 	}
 
@@ -769,6 +837,10 @@ export interface CreateTabOptions {
 	usageStats?: UsageStats; // Token usage stats
 	saveToHistory?: boolean; // Whether to save synopsis to history after completions
 	showThinking?: ThinkingMode; // Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	/** When false, append the tab without making it active (background create).
+	 *  The current active tab/file/browser/terminal/group and inputMode are all
+	 *  preserved so the user's visible view never changes. Default true. */
+	activate?: boolean;
 }
 
 /**
@@ -816,6 +888,7 @@ export function createTab(
 		usageStats,
 		saveToHistory = true,
 		showThinking = 'off',
+		activate = true,
 	} = options;
 
 	// Create the new tab with default values
@@ -834,24 +907,29 @@ export function createTab(
 		showThinking,
 	};
 
-	// Update the session with the new tab added and set as active.
-	// Clear activeFileTabId and activeTerminalTabId so the new AI tab is shown in the
-	// main panel, and set inputMode to 'ai' so callers don't need to patch it manually.
-	// activeGroupId is cleared too: a new tab is a fresh standalone view, so it must
-	// leave any active tiled group - otherwise the group keeps taking over the panel
-	// and the new tab opens in the background (never gets focus). Insert the new tab
-	// into unifiedTabOrder directly to the right of the currently active tab so "new
-	// tab" actions feel positional regardless of which tab type is currently focused.
+	// Update the session with the new tab added. When `activate` is true (the
+	// default), make the new AI tab active: clear activeFileTabId/activeTerminalTabId
+	// so it's shown in the main panel, set inputMode to 'ai', and clear activeGroupId
+	// (a new tab is a fresh standalone view; leaving an active tiled group would keep
+	// the group taking over the panel so the new tab never gets focus). When `activate`
+	// is false (background create, e.g. the default `dispatch --new-tab`), leave every
+	// active-tab id, activeGroupId, and inputMode untouched so the user's visible view
+	// never changes. Either way, insert the new tab into unifiedTabOrder directly to
+	// the right of the currently active tab so "new tab" actions feel positional.
 	const newTabRef = { type: 'ai' as const, id: newTab.id };
 	const updatedSession: Session = {
 		...session,
 		aiTabs: [...(session.aiTabs || []), newTab],
-		activeTabId: newTab.id,
-		activeFileTabId: null,
-		activeBrowserTabId: null,
-		activeTerminalTabId: null,
-		activeGroupId: null,
-		inputMode: 'ai' as const,
+		...(activate
+			? {
+					activeTabId: newTab.id,
+					activeFileTabId: null,
+					activeBrowserTabId: null,
+					activeTerminalTabId: null,
+					activeGroupId: null,
+					inputMode: 'ai' as const,
+				}
+			: {}),
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 	};
 
@@ -932,7 +1010,7 @@ export function closeTab(
 
 	// If we just closed the last tab, create a fresh new tab to replace it
 	let newActiveTabId = session.activeTabId;
-	// Fallback unified tab ref when the closed tab was active — may be terminal or file
+	// Fallback unified tab ref when the closed tab was active - may be terminal or file
 	let fallbackRef: UnifiedTabRef | null = null;
 	if (updatedTabs.length === 0) {
 		const freshTab: AITab = {
@@ -972,7 +1050,7 @@ export function closeTab(
 			}
 		} else {
 			// Normal mode: use repaired unifiedTabOrder to find the correct left neighbor.
-			// This respects the visual tab order which includes terminal and file tabs —
+			// This respects the visual tab order which includes terminal and file tabs -
 			// without this, closing an AI tab that sits to the right of a terminal tab
 			// would fall back to a random AI tab instead of the adjacent terminal tab.
 			// We use getRepairedUnifiedTabOrder to skip stale/duplicate refs (same as rendering).
@@ -987,7 +1065,7 @@ export function closeTab(
 				const fallbackIndex = Math.max(0, closedUnifiedIndex - 1);
 				fallbackRef = remainingUnified[Math.min(fallbackIndex, remainingUnified.length - 1)];
 			} else {
-				// unifiedTabOrder out of sync — fall back to aiTabs position
+				// unifiedTabOrder out of sync - fall back to aiTabs position
 				const newIndex = Math.max(0, tabIndex - 1);
 				newActiveTabId = updatedTabs[newIndex].id;
 			}
@@ -1092,7 +1170,7 @@ export function closeTab(
 		updatedOrphans === session.orphanedThinkingTabs
 			? updatedSession
 			: { ...updatedSession, orphanedThinkingTabs: updatedOrphans };
-	// Only clear session-level busy state when nothing is thinking anywhere —
+	// Only clear session-level busy state when nothing is thinking anywhere -
 	// neither a remaining aiTab nor an orphaned-but-still-running tab.
 	const finalSession =
 		closedTabWasBusy &&
@@ -1129,7 +1207,7 @@ export interface RestoreOrphanedTabResult {
 /**
  * Restore a tab from `orphanedThinkingTabs` back to `aiTabs` and make it active.
  * Used when the user clicks the thinking pill's tab link for a tab they closed
- * while its agent was still running — restoring brings it back into the tab bar
+ * while its agent was still running - restoring brings it back into the tab bar
  * so streaming output resumes routing to the visible tab. The tab keeps its
  * original ID, so the still-running process re-attaches automatically.
  */
@@ -1940,6 +2018,28 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 }
 
 /**
+ * Field patch for flipping a tab's read-only state.
+ *
+ * Keeps the legacy `readOnlyMode` boolean and the 3-way `permissionMode` in
+ * lockstep, so the toolbar pill (resolved via resolveTabPermissionMode) and the
+ * spawn path can never drift: toggling read-only ON means `readonly`, OFF means
+ * full access. This mirrors what the toolbar's permission cycle already writes.
+ * Every read-only toggle entry point (keyboard shortcut, quick action, prompt
+ * composer, tab menu, tab store) spreads this instead of writing `readOnlyMode`
+ * alone - the old inline `readOnlyMode: !tab.readOnlyMode` left `permissionMode`
+ * stale, so a Full Access tab kept its pill after being switched to read-only.
+ * `standard` is reachable only through the toolbar cycle, so toggling read-only
+ * off lands on `full` (the non-readonly default).
+ */
+export function toggleReadOnlyModeFields(tab: Pick<AITab, 'readOnlyMode'>): {
+	readOnlyMode: boolean;
+	permissionMode: 'full' | 'readonly';
+} {
+	const nextReadOnly = !tab.readOnlyMode;
+	return { readOnlyMode: nextReadOnly, permissionMode: nextReadOnly ? 'readonly' : 'full' };
+}
+
+/**
  * Detects the "closed the last tab" transition produced by closeTab(): when the
  * sole remaining AI tab is closed, closeTab() replaces it with a brand-new empty
  * tab, so the session still has exactly one AI tab but its id changed. Callers use
@@ -2043,7 +2143,7 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 	// When selecting an AI tab, deselect any active file/terminal tab and switch to AI mode.
 	// This ensures only one tab type (AI, file, or terminal) is active at a time, and
 	// switching from terminal mode back to AI mode works by clicking any AI tab.
-	// Clearing activeTerminalTabId is critical — getCurrentUnifiedTabIndex checks it first,
+	// Clearing activeTerminalTabId is critical - getCurrentUnifiedTabIndex checks it first,
 	// so a stale value causes next/prev tab navigation to start from the wrong position.
 	return {
 		tab: targetTab,
@@ -2389,7 +2489,7 @@ export function navigateToUnifiedTabByIndex(
 		// If already active, no file/terminal/browser tab selected, and in AI mode, return current state.
 		// The other-ID checks are critical: without them, a stale browser/file/terminal selection
 		// causes the early return to fire and skip the clearing update below, leaving
-		// findActiveUnifiedTabIndex pointing at the wrong tab — the higher-priority ID wins
+		// findActiveUnifiedTabIndex pointing at the wrong tab - the higher-priority ID wins
 		// visually and the user-perceived "current tab" never changes (Cmd+Shift+[ no-ops).
 		if (
 			session.activeTabId === targetTabRef.id &&
@@ -2408,7 +2508,7 @@ export function navigateToUnifiedTabByIndex(
 
 		// Set the AI tab as active, clear terminal/file selection, and ensure inputMode is 'ai'.
 		// inputMode must be explicitly set because navigating from a terminal tab leaves inputMode
-		// as 'terminal' in the spread — without this, MainPanel would continue rendering the
+		// as 'terminal' in the spread - without this, MainPanel would continue rendering the
 		// terminal view even though an AI tab is now active. activeGroupId is cleared so an
 		// active tiled group stops taking over the panel when navigating to a standalone tab.
 		return {
@@ -2534,7 +2634,7 @@ export function navigateToUnifiedTabByIndex(
 			},
 		};
 	} else {
-		// Terminal tab — verify it exists and activate it
+		// Terminal tab - verify it exists and activate it
 		const terminalTab = (session.terminalTabs || []).find((tab) => tab.id === targetTabRef.id);
 		if (!terminalTab) return null;
 
@@ -2651,7 +2751,7 @@ export function navigateToNextUnifiedTab(
 		return null;
 	}
 
-	// When the unread filter is on, walk within the exact list TabBar renders — the shared
+	// When the unread filter is on, walk within the exact list TabBar renders - the shared
 	// filter is the single source of truth so navigation and display can never drift.
 	const effectiveOrder = showUnreadOnly
 		? filterUnifiedTabOrderForUnread(session, repairedOrder)
@@ -2697,7 +2797,7 @@ export function navigateToPrevUnifiedTab(
 		return null;
 	}
 
-	// When the unread filter is on, walk within the exact list TabBar renders — the shared
+	// When the unread filter is on, walk within the exact list TabBar renders - the shared
 	// filter is the single source of truth so navigation and display can never drift.
 	const effectiveOrder = showUnreadOnly
 		? filterUnifiedTabOrderForUnread(session, repairedOrder)
@@ -3002,7 +3102,7 @@ export interface GoToNextUnreadResult {
  * is effectively a draft (it's meant to be completed into an Auto Run doc), so
  * the navigation should stop on it. Pass `isWizardActive` to opt into that.
  *
- * Does NOT mutate state — the caller applies the result via setSessions/setActiveSessionId.
+ * Does NOT mutate state - the caller applies the result via setSessions/setActiveSessionId.
  */
 export function findNextUnreadSession(
 	orderedSessions: Session[],
@@ -3016,7 +3116,7 @@ export function findNextUnreadSession(
 
 	// 1) Tab-level jump within the current session: if there's an unread/draft
 	//    tab here that isn't already active, switch to it without changing
-	//    sessions. The shortcut is called "Next Unread / Draft *Tab*" — staying
+	//    sessions. The shortcut is called "Next Unread / Draft *Tab*" - staying
 	//    in the same session is the closest "next" when one exists.
 	if (currentSession) {
 		const inSessionTarget = currentSession.aiTabs?.find(
@@ -3049,7 +3149,7 @@ export function findNextUnreadSession(
 	}
 
 	// Nothing actionable elsewhere. Don't silently clear the current session's
-	// unread flags — if the user can see an unread badge here, they should be
+	// unread flags - if the user can see an unread badge here, they should be
 	// able to find it (it would have been handled by step 1 above when present).
 	return {
 		jumped: false,

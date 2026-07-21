@@ -106,7 +106,7 @@ export const AutoRunDocumentSelector = forwardRef<
 	);
 
 	// Set of document paths that match the current filter (file paths only).
-	// Null when the filter is empty — the tree renders unchanged in that case.
+	// Null when the filter is empty - the tree renders unchanged in that case.
 	const matchingPaths = useMemo<Set<string> | null>(() => {
 		if (!filterQuery.trim()) return null;
 		const set = new Set<string>();
@@ -156,7 +156,7 @@ export const AutoRunDocumentSelector = forwardRef<
 	}, [matchingPaths, filteredTree, expandedFolders]);
 
 	// Flat, in-order list of file paths currently visible to the user. This is
-	// the keyboard-navigation cursor's domain — ArrowUp/Down cycle through it,
+	// the keyboard-navigation cursor's domain - ArrowUp/Down cycle through it,
 	// Enter opens the highlighted entry.
 	const visibleFiles = useMemo<string[]>(() => {
 		// Flat-list fallback when no tree structure is provided.
@@ -271,7 +271,7 @@ export const AutoRunDocumentSelector = forwardRef<
 		};
 	};
 
-	// Pill badge showing "{pct}% ({total})" — rendered next to file entries in
+	// Pill badge showing "{pct}% ({total})" - rendered next to file entries in
 	// the dropdown list. Green when 100% complete, dim accent otherwise.
 	const renderTaskBadge = (stats: { pct: number; total: number }, extraClass = '') => (
 		<span
@@ -547,7 +547,7 @@ export const AutoRunDocumentSelector = forwardRef<
 									// matches with surviving folders auto-expanded.
 									<div className="py-1">{filteredTree.map((node) => renderTreeNode(node))}</div>
 								) : (
-									// Flat fallback (no documentTree provided) — still keyboard-navigable.
+									// Flat fallback (no documentTree provided) - still keyboard-navigable.
 									visibleFiles.map((doc) => {
 										const taskStats = getTaskStats(doc);
 										const isDocSelected = doc === selectedDocument;

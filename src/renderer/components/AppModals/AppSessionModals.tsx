@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { Theme, Session, ToolType } from '../../types';
+import type { AdditionalDirectory, Theme, Session, ToolType } from '../../types';
 
 // Session Management Modal Components
 import { NewInstanceModal, EditAgentModal } from '../NewInstanceModal';
@@ -48,7 +48,8 @@ export interface AppSessionModalsProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[]
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -67,6 +68,7 @@ export interface AppSessionModalsProps {
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
+		customEffort?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -78,6 +80,7 @@ export interface AppSessionModalsProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
 		boardWorker?: boolean
 	) => void;
 	editAgentSession: Session | null;

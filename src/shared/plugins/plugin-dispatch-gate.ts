@@ -48,7 +48,7 @@ export function evaluatePluginDispatch(payload: string): PluginDispatchVerdict {
  * necessary but NOT sufficient: auto-dispatching a prompt to an agent is
  * high-trust, so it additionally requires a live `agents:dispatch` grant that
  * NAMES the trigger's target agent (the allowlist scope), a trusted (signed)
- * plugin, AND — because a scheduler tick is no-user-present execution — the
+ * plugin, AND - because a scheduler tick is no-user-present execution - the
  * separate, revocable UNATTENDED consent on that grant. A plugin the user lets
  * dispatch interactively must not thereby dispatch on a timer at 3am
  * (plugin-phase4-high-risk-verbs.md §8). Untrusted/unsigned plugins can never
@@ -80,7 +80,7 @@ export function evaluateScheduledDispatch(
 			eligible: false,
 			risk: verdict.risk,
 			reason:
-				'unattended (scheduler-driven) dispatch requires the separate unattended consent — notifying instead',
+				'unattended (scheduler-driven) dispatch requires the separate unattended consent - notifying instead',
 		};
 	}
 	return verdict;

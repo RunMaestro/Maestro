@@ -140,9 +140,9 @@ describe('CueEngine Concurrency Control', () => {
 			// First call dispatched
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// Trigger another interval — should be queued
+			// Trigger another interval - should be queued
 			vi.advanceTimersByTime(1 * 60 * 1000);
-			// Still only 1 call — the second was queued
+			// Still only 1 call - the second was queued
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 			// Verify queue has an entry
@@ -180,7 +180,7 @@ describe('CueEngine Concurrency Control', () => {
 
 			await vi.advanceTimersByTimeAsync(10);
 
-			// Trigger another interval — should be queued
+			// Trigger another interval - should be queued
 			vi.advanceTimersByTime(1 * 60 * 1000);
 
 			expect(deps.onLog).toHaveBeenCalledWith(
@@ -229,12 +229,12 @@ describe('CueEngine Concurrency Control', () => {
 			await vi.advanceTimersByTimeAsync(10);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
-			// Trigger another — should be queued
+			// Trigger another - should be queued
 			vi.advanceTimersByTime(1 * 60 * 1000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 			expect(engine.getQueueStatus().get('session-1')).toBe(1);
 
-			// Complete the first run — should drain the queue
+			// Complete the first run - should drain the queue
 			resolveRun!({
 				runId: 'r1',
 				sessionId: 'session-1',
@@ -295,7 +295,7 @@ describe('CueEngine Concurrency Control', () => {
 
 			expect(engine.getQueueStatus().get('session-1')).toBe(2);
 
-			// Overflow — should drop oldest
+			// Overflow - should drop oldest
 			vi.advanceTimersByTime(1 * 60 * 1000); // queued: still 2, but oldest dropped
 
 			expect(engine.getQueueStatus().get('session-1')).toBe(2);
@@ -351,7 +351,7 @@ describe('CueEngine Concurrency Control', () => {
 			// Wait long enough for the queued event to become stale (> 1 minute)
 			vi.advanceTimersByTime(2 * 60 * 1000);
 
-			// Complete the first run — drain should evict the stale event
+			// Complete the first run - drain should evict the stale event
 			resolveRun!({
 				runId: 'r1',
 				sessionId: 'session-1',
@@ -516,7 +516,7 @@ describe('CueEngine Concurrency Control', () => {
 			vi.advanceTimersByTime(1 * 60 * 1000);
 			expect(engine.getQueueStatus().get('session-1')).toBe(1);
 
-			// Stop the active run — should free the slot and drain the queue
+			// Stop the active run - should free the slot and drain the queue
 			const activeRun = engine.getActiveRuns()[0];
 			engine.stopRun(activeRun.runId);
 
@@ -678,7 +678,7 @@ describe('CueEngine Concurrency Control', () => {
 			const deps = createMockDeps({
 				onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
 			});
-			// Three distinct subscriptions, each firing on start — they are
+			// Three distinct subscriptions, each firing on start - they are
 			// different roots, so the self-overlap guard does not apply and all
 			// three may run in parallel.
 			const config = createMockConfig({
@@ -730,7 +730,7 @@ describe('CueEngine Concurrency Control', () => {
 				onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
 			});
 			// A single subscription at max_concurrent: 3. Even though slots are
-			// free, repeated firings of the SAME root must NOT overlap — the
+			// free, repeated firings of the SAME root must NOT overlap - the
 			// re-trigger is queued and runs only after the in-flight one finishes.
 			// This is the regression guard for the "double-fire" bug.
 			const config = createMockConfig({
@@ -757,7 +757,7 @@ describe('CueEngine Concurrency Control', () => {
 			await vi.advanceTimersByTimeAsync(10);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1); // Initial fire
 
-			// Two more ticks of the SAME subscription — both queue rather than
+			// Two more ticks of the SAME subscription - both queue rather than
 			// dispatching into the 2 free slots.
 			vi.advanceTimersByTime(1 * 60 * 1000);
 			vi.advanceTimersByTime(1 * 60 * 1000);
@@ -959,7 +959,7 @@ describe('CueEngine Concurrency Control', () => {
 			vi.advanceTimersByTime(1 * 60 * 1000);
 			expect(engine.getQueueStatus().get('session-1')).toBe(2);
 
-			// Stop engine mid-drain — should not crash
+			// Stop engine mid-drain - should not crash
 			expect(() => {
 				engine.stop();
 			}).not.toThrow();

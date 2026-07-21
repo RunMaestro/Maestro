@@ -405,10 +405,12 @@ describe('tabStore', () => {
 			useTabStore.getState().toggleReadOnly('tab-1');
 			let session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].readOnlyMode).toBe(true);
+			expect(session.aiTabs[0].permissionMode).toBe('readonly');
 
 			useTabStore.getState().toggleReadOnly('tab-1');
 			session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].readOnlyMode).toBe(false);
+			expect(session.aiTabs[0].permissionMode).toBe('full');
 		});
 
 		it('should toggle save to history', () => {
@@ -538,7 +540,7 @@ describe('tabStore', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			setupSessionWithTabs([tab1]);
 
-			// Out of bounds — should be a no-op
+			// Out of bounds - should be a no-op
 			useTabStore.getState().reorderTabs(0, 5);
 			useTabStore.getState().reorderTabs(-1, 0);
 

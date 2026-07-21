@@ -1,4 +1,6 @@
 import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
+import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
+import type { AdditionalDirectory } from './types';
 
 /**
  * Template Variable System for Auto Run and Custom AI Commands
@@ -15,12 +17,14 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
+ *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
  *
  * Path Variables:
  *   {{CWD}}               - Current working directory
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
+ *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
  *
  * Auto Run Variables:
  *   {{DOCUMENT_NAME}}     - Current Auto Run document name (without .md)
@@ -95,14 +99,14 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *
  *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
- *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
+ *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  *
  *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
  */
 
 /**
  * Detect the current platform in both Node.js (main process / CLI) and
- * renderer (browser) contexts.  The renderer has no `process` global —
+ * renderer (browser) contexts.  The renderer has no `process` global -
  * platform is exposed via the preload bridge at `window.maestro.platform`.
  */
 function getCurrentPlatform(): string {
@@ -172,6 +176,8 @@ export interface TemplateSessionInfo {
 	agentSessionId?: string;
 	isGitRepo?: boolean;
 	contextUsage?: number;
+	/** Extra directories granted beyond the working directory (prompt-level grants). */
+	additionalDirectories?: AdditionalDirectory[];
 }
 
 export interface TemplateContext {
@@ -249,10 +255,10 @@ export interface TemplateContext {
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
 		sourceAgentId?: string;
-		// Unified upstream-agent session ID — `sourceSessionId` for agent.completed,
+		// Unified upstream-agent session ID - `sourceSessionId` for agent.completed,
 		// `sourceAgentId` for cli.trigger. Surfaced as {{CUE_FROM_AGENT}}.
 		fromAgent?: string;
-		// time.once fields — originally-scheduled fire timestamp (ISO-8601 with TZ).
+		// time.once fields - originally-scheduled fire timestamp (ISO-8601 with TZ).
 		fireAt?: string;
 	};
 }
@@ -261,6 +267,10 @@ export interface TemplateContext {
 // Variables marked as autoRunOnly are only shown in Auto Run contexts, not in AI Commands settings
 // Variables marked as cueOnly are only shown in Cue automation contexts
 export const TEMPLATE_VARIABLES = [
+	{
+		variable: '{{ADDITIONAL_DIRECTORIES}}',
+		description: 'Extra granted directories with read/write access (empty when none)',
+	},
 	{ variable: '{{AGENT_DEEP_LINK}}', description: 'Deep link to this agent (maestro://)' },
 	{ variable: '{{AGENT_GROUP}}', description: 'Agent group name' },
 	{ variable: '{{AGENT_ID}}', description: 'Agent UUID (for CLI targeting)' },
@@ -270,6 +280,7 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
 	{ variable: '{{AUTORUN_FOLDER}}', description: 'Auto Run folder path', autoRunOnly: true },
+	{ variable: '{{TAB_ID}}', description: "This conversation's tab ID (for CLI targeting)" },
 	{ variable: '{{TAB_NAME}}', description: 'Custom tab name' },
 	{ variable: '{{CONTEXT_USAGE}}', description: 'Context usage %' },
 	{
@@ -285,7 +296,7 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_FROM_AGENT}}',
 		description:
-			'Upstream agent/session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
+			'Upstream agent/session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
@@ -461,11 +472,17 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,
+		// playbooks, Cue) that have no desktop tab of their own.
+		TAB_ID: activeTabId || '',
 		TAB_NAME: session.name,
 		TOOL_TYPE: session.toolType,
 
 		// Path variables
 		CWD: session.cwd,
+		// Renders the whole "## Additional Directories" section, or '' when the
+		// agent has no grants - an empty heading reads like a failed load.
+		ADDITIONAL_DIRECTORIES: formatAdditionalDirectoriesForPrompt(session.additionalDirectories),
 		AUTORUN_FOLDER:
 			autoRunFolder ||
 			session.autoRunFolderPath ||
@@ -591,9 +608,12 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 	// Perform case-insensitive replacement
 	let result = template;
 	for (const [key, value] of Object.entries(replacements)) {
-		// Match {{KEY}} with case insensitivity
+		// Match {{KEY}} with case insensitivity. The replacement goes through a
+		// function so `$&`/`$1` sequences inside a value (a directory path, a
+		// Cue output blob) are inserted literally instead of being read as
+		// replacement patterns.
 		const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'gi');
-		result = result.replace(regex, value);
+		result = result.replace(regex, () => value);
 	}
 
 	return result;

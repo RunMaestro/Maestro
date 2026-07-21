@@ -1,5 +1,5 @@
 /**
- * PipelineEmptyState — Phase 14B extraction from PipelineCanvas.
+ * PipelineEmptyState - Phase 14B extraction from PipelineCanvas.
  *
  * Shown when there are zero nodes on the canvas. Three shapes:
  *  - `isLoading === true`: centered spinner while pipelines are being fetched

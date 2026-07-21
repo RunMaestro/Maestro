@@ -589,7 +589,7 @@ describe('ActivityGraph', () => {
 	it('falls back to client-side bucketing when precomputedBuckets length does not match', () => {
 		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 30 * 60 * 1000 })];
 
-		// Wrong number of buckets — should be ignored
+		// Wrong number of buckets - should be ignored
 		const wrongBuckets = [{ auto: 99, user: 0, cue: 0 }];
 
 		const { container } = render(

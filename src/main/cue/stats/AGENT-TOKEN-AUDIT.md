@@ -20,7 +20,7 @@ The goal is to determine whether a unified `getSessionTokenSummaries()`
 accessor is feasible without resorting to stdout parsing or per-agent
 forks.
 
-## TL;DR — Verdict
+## TL;DR - Verdict
 
 **Workable.** All 5 agents already aggregate token data into a uniform
 shape (`AgentSessionInfo`) inside their `listSessions()` implementation:
@@ -36,7 +36,7 @@ costUsd?: number; // optional
 (See `src/main/agents/session-storage.ts:45-63`.)
 
 So at the **surface API** the picture is uniform. The catch is that there
-is no per-`sessionId` accessor today — every storage exposes
+is no per-`sessionId` accessor today - every storage exposes
 `listSessions(projectPath)` (project-scoped) and a `getSessionPath`
 helper, but no `getSessionInfo(projectPath, sessionId)`. To go from a raw
 `sessionId` to token totals we need either:
@@ -46,7 +46,7 @@ helper, but no `getSessionInfo(projectPath, sessionId)`. To go from a raw
 3. A focused token-only re-parse of the session file using existing
    per-agent regex/JSON paths.
 
-None of those triggers a STOP+REPORT — all three are mechanical glue, not
+None of those triggers a STOP+REPORT - all three are mechanical glue, not
 "unified accessor would need >300 LOC". The accessor in Phase 02 task #2
 should land cleanly under the size cap.
 
@@ -83,7 +83,7 @@ Proceeding with implementation in the next subtask.
   whole file.
 - **Existing accessor:** No `getSessionInfo(sessionId)`. Use
   `getSessionPath(projectPath, sessionId)` (synchronous, returns a path)
-  - `parseSessionContent` (private helper) — or call `listSessions` and
+  - `parseSessionContent` (private helper) - or call `listSessions` and
     filter.
 - **I/O model:** async file read (`fs.readFile` for local,
   `readFileRemote` for SSH). One file per session, files capped at
@@ -93,7 +93,7 @@ Proceeding with implementation in the next subtask.
 
 - **Storage file:** `src/main/storage/codex-session-storage.ts`
 - **On-disk format:** JSONL file under
-  `~/.codex/sessions/...` (path requires async scan — `getSessionPath`
+  `~/.codex/sessions/...` (path requires async scan - `getSessionPath`
   returns `null`; `findSessionFile()` does a directory walk).
 - **Token field names (raw JSONL):**
   - `turn.completed` events: `usage.input_tokens`,
@@ -101,13 +101,13 @@ Proceeding with implementation in the next subtask.
     output), `usage.cached_input_tokens` → `cacheReadTokens`.
   - `event_msg` events with `payload.type === 'token_count'`: same
     fields under `payload.info.total_token_usage`.
-  - **Cost:** **absent** — Codex doesn't emit cost and the storage
+  - **Cost:** **absent** - Codex doesn't emit cost and the storage
     explicitly omits `costUsd` (`codex-session-storage.ts:440`).
-  - **`cacheCreationTokens`:** **always 0** — Codex doesn't report
+  - **`cacheCreationTokens`:** **always 0** - Codex doesn't report
     cache-creation separately (`codex-session-storage.ts:444`).
 - **Aggregation level:** per-event in JSONL (multiple turn events);
   summed to per-session by `parseSessionContent`. Note `event_msg`
-  carries `total_token_usage` which is **already cumulative** — naive
+  carries `total_token_usage` which is **already cumulative** - naive
   sum of both `turn.completed` and `event_msg` would double-count, but
   the existing parser does the same so we inherit whatever behavior is
   already shipped.
@@ -119,7 +119,7 @@ Proceeding with implementation in the next subtask.
 ### 3. `opencode` (Active)
 
 - **Storage file:** `src/main/storage/opencode-session-storage.ts`
-- **On-disk format:** **Two formats** — modern SQLite database
+- **On-disk format:** **Two formats** - modern SQLite database
   (`OPENCODE_DB_PATH`, table `message`, JSON blob in `data` column) and
   legacy JSON files (`<storage>/messages/<sessionId>/...`). The storage
   detects which to use via `sessionExistsInSqlite(sessionId)`.
@@ -145,19 +145,19 @@ Proceeding with implementation in the next subtask.
 - **Storage file:** `src/main/storage/factory-droid-session-storage.ts`
 - **On-disk format:** Two files per session under
   `~/.factory/sessions/<encoded-project>/`:
-  - `<sessionId>.jsonl` — message history.
-  - `<sessionId>.settings.json` — metadata, **including pre-aggregated
+  - `<sessionId>.jsonl` - message history.
+  - `<sessionId>.settings.json` - metadata, **including pre-aggregated
     `tokenUsage`**.
 - **Token field names (`settings.json` → `tokenUsage`):**
   - `inputTokens`, `outputTokens`, `cacheReadTokens`,
     `cacheCreationTokens`, `thinkingTokens` (ignored; not part of our
     schema).
-  - **Cost:** **absent** —
+  - **Cost:** **absent** -
     `factory-droid-session-storage.ts:465` explicitly notes "Factory
     Droid doesn't provide cost in settings.json". `costUsd` will be
     undefined.
 - **Aggregation level:** **per-session, already cumulative** in
-  `settings.json` — easiest of the five. Single small JSON read gives
+  `settings.json` - easiest of the five. Single small JSON read gives
   totals.
 - **Existing accessor:** No `getSessionInfo`. `getSessionPath` returns a
   deterministic path so a tiny "read settings.json directly" helper is
@@ -181,7 +181,7 @@ Proceeding with implementation in the next subtask.
   - **Cost:** **absent**.
 - **Aggregation level:** per-shutdown-event (effectively per-session).
   **Sessions still in flight have zero tokens until shutdown.** This is
-  a real partial-data case — the `coverage: 'partial'` flag in Phase 02
+  a real partial-data case - the `coverage: 'partial'` flag in Phase 02
   task #2 should be used here when an in-flight session is queried.
 - **Existing accessor:** `getSessionPath` returns the events.jsonl path
   directly (no project required, sessionId-keyed). Cheap to read.
@@ -192,10 +192,10 @@ Proceeding with implementation in the next subtask.
 
 | Agent         | Tokens (in/out/cache)    | Cost (`costUsd`) | Per-session pre-aggregated? | Cheapest single-session read | SSH |
 | ------------- | ------------------------ | ---------------- | --------------------------- | ---------------------------- | --- |
-| claude-code   | yes                      | yes (computed)   | no — full-file regex scan   | known path, full file        | yes |
-| codex         | yes (cache-creation = 0) | no               | no — full-file scan         | requires dir scan to find    | yes |
-| opencode      | yes                      | yes (data)       | no — sum across messages    | one SQL query (modern)       | yes |
-| factory-droid | yes                      | no               | **yes — settings.json**     | tiny settings.json read      | yes |
+| claude-code   | yes                      | yes (computed)   | no - full-file regex scan   | known path, full file        | yes |
+| codex         | yes (cache-creation = 0) | no               | no - full-file scan         | requires dir scan to find    | yes |
+| opencode      | yes                      | yes (data)       | no - sum across messages    | one SQL query (modern)       | yes |
+| factory-droid | yes                      | no               | **yes - settings.json**     | tiny settings.json read      | yes |
 | copilot-cli   | yes (only at shutdown)   | no               | yes (single event)          | known path, full file        | yes |
 
 ## Lookup Chain for `getSessionTokenSummaries(sessionIds)`
@@ -205,11 +205,11 @@ caller will pass us bare `sessionIds`. To resolve `agentType` and
 `projectPath`:
 
 - **Primary lookup:** `session_lifecycle` table
-  (`stats/schema.ts:112-123`) — has `session_id` (UNIQUE),
+  (`stats/schema.ts:112-123`) - has `session_id` (UNIQUE),
   `agent_type`, `project_path`, `is_remote`. One SQL query per batch.
-- **Fallback:** `query_events` table — same fields available, but
+- **Fallback:** `query_events` table - same fields available, but
   `session_id` is non-unique. Use `MAX(start_time)` to dedupe.
-- **OpenCode + Copilot:** `projectPath` is **not strictly required** —
+- **OpenCode + Copilot:** `projectPath` is **not strictly required** -
   OpenCode can route by `sessionExistsInSqlite`, and Copilot's
   `getSessionPath` ignores `projectPath`. So even if the lookup misses,
   these two can degrade gracefully.
@@ -224,8 +224,8 @@ Per Phase 02 task #2:
 - `'full'` → all 4 token fields populated, cost where the agent supports
   it. Applies to: `claude-code`, `opencode`, `factory-droid`.
 - `'partial'` → some fields are structurally absent. Applies to:
-  - `codex` — `cacheCreationTokens` is always 0, no `costUsd`.
-  - `copilot-cli` — tokens only after `session.shutdown`; in-flight
+  - `codex` - `cacheCreationTokens` is always 0, no `costUsd`.
+  - `copilot-cli` - tokens only after `session.shutdown`; in-flight
     sessions report zero tokens.
 - `'unsupported'` → reserved for future agents not in the dispatch
   table. None of the five priority agents currently fall here.
@@ -236,7 +236,7 @@ Per Phase 02 task #2:
   sums both `turn.completed.usage` and
   `event_msg.payload.info.total_token_usage`. If the latter is
   cumulative across the session, this double-counts. We inherit the
-  existing behavior; do **not** "fix" it in Phase 02 — that's a Codex
+  existing behavior; do **not** "fix" it in Phase 02 - that's a Codex
   parser bug separate from the Cue dashboard work.
 - **Copilot in-flight zeroes.** A Cue trigger that fires while a
   Copilot session is still running will see tokens = 0. Mark
@@ -249,7 +249,7 @@ Per Phase 02 task #2:
   must thread `sshConfig` through (resolvable via the
   `session_lifecycle.is_remote` flag plus the remote-resolver chain).
   Failing loudly when `is_remote` is true and the resolver returns
-  nothing — same rule as elsewhere in the codebase.
+  nothing - same rule as elsewhere in the codebase.
 - **Claude `costUsd` is computed locally** from a model-rate table.
   Drift is possible if the rate table goes stale; for the purposes of
   the Cue dashboard this is acceptable (matches what other Maestro
@@ -276,4 +276,4 @@ Recommended approach for `cue-token-accessor.ts`:
 5. Return `Map<sessionId, SessionTokenSummary>`. Missing sessions are
    simply absent from the map (per task #3 test spec).
 
-No STOP+REPORT condition triggered — proceeding to Phase 02 task #2.
+No STOP+REPORT condition triggered - proceeding to Phase 02 task #2.

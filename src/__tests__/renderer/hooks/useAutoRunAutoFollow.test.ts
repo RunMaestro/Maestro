@@ -341,7 +341,7 @@ describe('useAutoRunAutoFollow', () => {
 
 		onAutoRunSelectDocument.mockClear();
 
-		// Start new batch from index 0 — should auto-select again
+		// Start new batch from index 0 - should auto-select again
 		rerender(
 			createDeps({
 				onAutoRunSelectDocument,

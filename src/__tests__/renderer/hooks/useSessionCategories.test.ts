@@ -293,6 +293,35 @@ describe('useSessionCategories', () => {
 			expect(names).toContain('Busy Agent');
 		});
 
+		it('includes agents in an error state even without unread tabs when showUnreadAgentsOnly is true', () => {
+			const s1 = makeSession({
+				name: 'Errored Agent',
+				state: 'error',
+			});
+			const s2 = makeSession({ name: 'Idle No Unread' });
+			resetStore([s1, s2]);
+
+			const { result } = renderHook(() => useSessionCategories('', [s1, s2], true));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(1);
+			expect(result.current.sortedFilteredSessions[0].name).toBe('Errored Agent');
+		});
+
+		it('keeps parent visible when a worktree child is in an error state', () => {
+			const parent = makeSession({ name: 'Parent' });
+			const child = makeSession({
+				name: 'Worktree Child',
+				parentSessionId: parent.id,
+				state: 'error',
+			});
+			resetStore([parent, child]);
+
+			const { result } = renderHook(() => useSessionCategories('', [parent, child], true));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(1);
+			expect(result.current.sortedFilteredSessions[0].name).toBe('Parent');
+		});
+
 		it('includes auto-running agents (AUTO badge) even when idle without unread tabs', () => {
 			const s1 = makeSession({
 				name: 'Has Unread',
@@ -397,7 +426,7 @@ describe('useSessionCategories', () => {
 
 		it('sortedBookmarkedParentSessions excludes worktree children', () => {
 			const parent = makeSession({ name: 'Parent', bookmarked: true });
-			// Worktree child that is also bookmarked — should be excluded from parent list
+			// Worktree child that is also bookmarked - should be excluded from parent list
 			// (In practice children can't be bookmarked, but the filter should still work)
 			resetStore([parent]);
 
@@ -485,7 +514,7 @@ describe('useSessionCategories', () => {
 
 		it('sortedUngroupedParentSessions excludes worktree children', () => {
 			const s1 = makeSession({ name: 'Parent' });
-			// Worktree child without groupId — excluded from parent list by parentSessionId filter
+			// Worktree child without groupId - excluded from parent list by parentSessionId filter
 			resetStore([s1]);
 
 			const { result } = renderHook(() => useSessionCategories('', [s1]));
@@ -749,7 +778,7 @@ describe('useSessionCategories', () => {
 				result.current.worktreeChildrenByParentId.get('pb')
 			);
 			// Unknown parent: caller-side fallback to a fresh [] each call,
-			// so identity does not hold here — content equality is the
+			// so identity does not hold here - content equality is the
 			// right contract.
 			expect(result.current.getWorktreeChildren('nonexistent')).toEqual([]);
 		});

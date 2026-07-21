@@ -11,14 +11,14 @@ import type { AgentId } from './agentIds';
 /**
  * High-level readiness status for an agent in a particular environment.
  *
- * - `ok` — agent binary is present and last interaction succeeded.
- * - `not_installed` — binary not found on PATH and no usable custom path.
- * - `auth_required` — binary present, but the most recent spawn failed with
+ * - `ok` - agent binary is present and last interaction succeeded.
+ * - `not_installed` - binary not found on PATH and no usable custom path.
+ * - `auth_required` - binary present, but the most recent spawn failed with
  *   an auth-related error pattern. Cleared the next time detection succeeds.
- * - `not_configured` — agent definition exists but lacks the configuration
+ * - `not_configured` - agent definition exists but lacks the configuration
  *   required to actually run (reserved for future use).
- * - `probing` — detection is currently in-flight (transient UI state).
- * - `failed` — last detection attempt threw / errored unexpectedly.
+ * - `probing` - detection is currently in-flight (transient UI state).
+ * - `failed` - last detection attempt threw / errored unexpectedly.
  */
 export type AgentStatus =
 	| 'ok'
@@ -35,7 +35,7 @@ export type AgentStatus =
  * renderer can read meaningful state before the next live detection round.
  */
 export interface AgentCapabilitiesSnapshot {
-	/** Readiness classification — drives status pills and pickers. */
+	/** Readiness classification - drives status pills and pickers. */
 	status: AgentStatus;
 	/** Detected binary path (when available). */
 	path?: string;
@@ -46,7 +46,7 @@ export interface AgentCapabilitiesSnapshot {
 	/**
 	 * Discovered context window size in tokens, when probing surfaces it.
 	 * Reserved for the followup PR that migrates `DEFAULT_CONTEXT_WINDOWS`
-	 * callers — populated lazily as detection grows richer.
+	 * callers - populated lazily as detection grows richer.
 	 */
 	contextWindow?: number;
 	/** Last error string (auth message, spawn failure detail, etc.). */

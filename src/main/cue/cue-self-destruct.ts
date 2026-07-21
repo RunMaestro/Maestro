@@ -4,7 +4,7 @@
  * Reads the project's canonical `cue.yaml`, removes the subscription with the
  * given name from the top-level `subscriptions` array, and writes the result
  * atomically. The engine's YAML file watcher picks up the change and reloads
- * the config naturally — callers should NOT trigger a reload themselves.
+ * the config naturally - callers should NOT trigger a reload themselves.
  *
  * Preserves the original file's leading comment block (the `# Pipeline: …`
  * header most cue.yaml files carry) so the rewrite doesn't strip pipeline
@@ -97,7 +97,7 @@ export async function removeSubscriptionFromYaml(
 		try {
 			await fs.promises.unlink(tmpPath);
 		} catch {
-			// ignore — original file is still intact
+			// ignore - original file is still intact
 		}
 		return { removed: false, reason: `write failed: ${message}` };
 	}

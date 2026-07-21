@@ -7,7 +7,7 @@
  *
  * Only called when the per-agent Batch Mode toggle is on. With the toggle
  * gating the entire mechanism, the previous global pin / per-tab manual pin
- * inputs are gone — selection is purely automatic, falling back to API when
+ * inputs are gone - selection is purely automatic, falling back to API when
  * the latest usage snapshot shows either the 5-hour or 7-day window at or
  * above `LIMIT_THRESHOLD_PERCENT`, and sticky-holding the fallback until both
  * windows have rolled over.
@@ -23,7 +23,7 @@ export const LIMIT_THRESHOLD_PERCENT = 99;
  *
  * `authState` distinguishes a real measurement from a "Not logged in" stub.
  * The field is optional purely for back-compat with snapshots persisted
- * before the field existed — readers MUST treat absence as `'authenticated'`
+ * before the field existed - readers MUST treat absence as `'authenticated'`
  * and only suppress the percentages / show a CTA when it's explicitly
  * `'unauthenticated'`.
  */

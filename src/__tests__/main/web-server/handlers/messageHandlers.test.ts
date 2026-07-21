@@ -120,6 +120,19 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		openBrowserTab: vi.fn().mockResolvedValue(true),
 		openTerminalTab: vi.fn().mockResolvedValue(true),
 		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
+		enqueueCommand: vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'tab-mock-123',
+			queued: true,
+			queuePosition: 1,
+			queueLength: 1,
+			itemId: 'item-1',
+		}),
+		listQueue: vi.fn().mockResolvedValue({
+			success: true,
+			queues: [{ sessionId: 'session-1', name: 'Session 1', state: 'busy', items: [] }],
+		}),
+		removeQueueItem: vi.fn().mockResolvedValue({ success: true, removed: true }),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -292,7 +305,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -316,7 +330,8 @@ describe('WebSocketMessageHandler', () => {
 					'terminal',
 					undefined,
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 		});
@@ -381,7 +396,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					'tab-explicit',
 					false,
-					undefined
+					undefined,
+					false
 				);
 			});
 
@@ -393,7 +409,7 @@ describe('WebSocketMessageHandler', () => {
 		it('accepts image-only sends in AI mode (no command, images present)', async () => {
 			// The web composer allows submitting in AI mode when only images
 			// are staged (no typed text). The server must not reject those
-			// requests as "missing command" — instead it forwards an empty
+			// requests as "missing command" - instead it forwards an empty
 			// command alongside the images so the renderer can attach them
 			// to a default image-only prompt.
 			const images = ['data:image/png;base64,abc'];
@@ -411,7 +427,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					images
+					images,
+					false
 				);
 			});
 
@@ -449,7 +466,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					false,
-					images
+					images,
+					false
 				);
 			});
 		});
@@ -472,13 +490,36 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					undefined,
 					true,
-					undefined
+					undefined,
+					false
 				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
+		});
+
+		it('forwards background=true to executeCommand (dispatch backgrounds by default)', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'quietly',
+				inputMode: 'ai',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'quietly',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					true
+				);
+			});
 		});
 
 		it('should reject command when session not found', () => {
@@ -935,7 +976,7 @@ describe('WebSocketMessageHandler', () => {
 		});
 
 		it('should forward paths that resolve outside the worktree', async () => {
-			// Opening files outside the worktree is intentionally allowed — a paired
+			// Opening files outside the worktree is intentionally allowed - a paired
 			// client already has shell-level access (execute_command), so confining
 			// preview tabs to the worktree gated nothing the connection token didn't.
 			handler.handleMessage(client, {
@@ -1269,7 +1310,8 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
-					'Summarize the repo'
+					'Summarize the repo',
+					false
 				);
 			});
 
@@ -1280,6 +1322,23 @@ describe('WebSocketMessageHandler', () => {
 			// PR1: surface the freshly-created tabId so `dispatch --new-tab`
 			// can return an addressable id without owning a persistent channel.
 			expect(response.tabId).toBe('tab-mock-123');
+		});
+
+		it('forwards background=true to newAITabWithPrompt (dispatch --new-tab backgrounds by default)', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Summarize the repo',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Summarize the repo',
+					true
+				);
+			});
 		});
 
 		it('should reject missing sessionId', () => {
@@ -1345,6 +1404,172 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.success).toBe(false);
 				expect(lastResponse.error).toContain('boom');
 			});
+		});
+	});
+
+	describe('Enqueue Command (dispatch --queue)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Do it',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Do it',
+					'ai',
+					'tab-1',
+					undefined,
+					true
+				);
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('enqueue_command_result');
+				expect(response.success).toBe(true);
+				expect(response.queued).toBe(true);
+				expect(response.queuePosition).toBe(1);
+				expect(response.itemId).toBe('item-1');
+				expect(response.tabId).toBe('tab-mock-123');
+			});
+		});
+
+		it('rejects an enqueue with neither command nor images without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				inputMode: 'ai',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('enqueue_command_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or command');
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+		});
+
+		it('rejects when the session does not exist', () => {
+			vi.mocked(callbacks.getSessionDetail).mockReturnValue(null);
+
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'ghost',
+				command: 'hi',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('enqueue_command_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Session not found');
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+		});
+
+		it('replies with an error result when the callback rejects', async () => {
+			vi.mocked(callbacks.enqueueCommand).mockRejectedValue(new Error('boom'));
+
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'hi',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('enqueue_command_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('List Queue (queue list)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards an optional sessionId to the callback and replies with the queues', async () => {
+			handler.handleMessage(client, {
+				type: 'list_queue',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.listQueue).toHaveBeenCalledWith('session-1');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.success).toBe(true);
+				expect(Array.isArray(response.queues)).toBe(true);
+			});
+		});
+
+		it('passes undefined when no sessionId is provided (all agents)', async () => {
+			handler.handleMessage(client, { type: 'list_queue' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.listQueue).toHaveBeenCalledWith(undefined);
+			});
+		});
+
+		it('replies with an error result when the callback rejects', async () => {
+			vi.mocked(callbacks.listQueue).mockRejectedValue(new Error('boom'));
+
+			handler.handleMessage(client, { type: 'list_queue' });
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Remove Queue Item (queue remove)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId + itemId to the callback and replies removed:true', async () => {
+			handler.handleMessage(client, {
+				type: 'remove_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.removeQueueItem).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('remove_queue_item_result');
+				expect(response.success).toBe(true);
+				expect(response.removed).toBe(true);
+			});
+		});
+
+		it('rejects missing sessionId or itemId without calling the callback', () => {
+			handler.handleMessage(client, { type: 'remove_queue_item', sessionId: 'session-1' });
+
+			const response = lastSend();
+			expect(response.type).toBe('remove_queue_item_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or itemId');
+			expect(callbacks.removeQueueItem).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1761,6 +1986,87 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Movement ID validation', () => {
+		it.each(['add', 'update', 'move', 'remove'] as const)(
+			'rejects surrounding whitespace for movement %s',
+			(op) => {
+				callbacks.movementView = vi.fn().mockResolvedValue(true);
+				handler.handleMessage(client, {
+					type: 'movement',
+					op,
+					id: ' item-1 ',
+					body: op === 'add' ? '{}' : undefined,
+					x: op === 'move' ? 10 : undefined,
+					y: op === 'move' ? 20 : undefined,
+				});
+
+				expect(callbacks.movementView).not.toHaveBeenCalled();
+				const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+				expect(response).toMatchObject({
+					type: 'movement_result',
+					success: false,
+					error: 'Movement item id must not contain surrounding whitespace',
+				});
+			}
+		);
+
+		it('rejects surrounding whitespace before designer inspection', () => {
+			callbacks.getMovementDesignerInspection = vi.fn();
+			handler.handleMessage(client, {
+				type: 'get_movement_designer_inspection',
+				id: ' item-1 ',
+			});
+
+			expect(callbacks.getMovementDesignerInspection).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'movement_designer_inspection_result',
+				success: false,
+				error: 'Movement item id must not contain surrounding whitespace',
+			});
+		});
+
+		it('rejects surrounding whitespace before designer interaction', () => {
+			callbacks.interactMovementDesigner = vi.fn();
+			handler.handleMessage(client, {
+				type: 'interact_movement_designer',
+				id: ' item-1 ',
+				action: { kind: 'click', selector: '#save' },
+			});
+
+			expect(callbacks.interactMovementDesigner).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'movement_designer_interaction_result',
+				success: false,
+				error: 'Movement item id must not contain surrounding whitespace',
+			});
+		});
+	});
+
+	describe('Movement HTML validation', () => {
+		it.each(['add', 'update'] as const)(
+			'requires HTML content for a movement %s that explicitly selects html',
+			(op) => {
+				callbacks.movementView = vi.fn().mockResolvedValue(true);
+				handler.handleMessage(client, {
+					type: 'movement',
+					op,
+					id: 'mockup',
+					viewType: 'html',
+				});
+
+				expect(callbacks.movementView).not.toHaveBeenCalled();
+				const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+				expect(response).toMatchObject({
+					type: 'movement_result',
+					success: false,
+					error: `Movement ${op} requires HTML content when viewType is 'html'`,
+				});
+			}
+		);
+	});
+
 	describe('Cue Pipeline Mutations (Web/CLI → Desktop)', () => {
 		it('cue_pipeline_list returns the daemon-supplied list verbatim', async () => {
 			const pipelines = [
@@ -2147,7 +2453,7 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	// ============================================================
-	// Auto Run parity — reset tasks + playbook CRUD validation
+	// Auto Run parity - reset tasks + playbook CRUD validation
 	// These tests pin the path-safety rules called out in the PR
 	// review: neither the web client nor a compromised dev tool may
 	// escape the Auto Run root via absolute / traversal filenames.
@@ -2266,7 +2572,7 @@ describe('WebSocketMessageHandler', () => {
 		});
 
 		it('rejects non-boolean resetOnCompletion rather than coercing it', () => {
-			// Review feedback — a truthy non-boolean value was being silently
+			// Review feedback - a truthy non-boolean value was being silently
 			// flipped to true. The validator now refuses anything that isn't
 			// strictly a boolean.
 			handler.handleMessage(client, {
@@ -2430,7 +2736,7 @@ describe('WebSocketMessageHandler', () => {
 
 		// Coderabbit feedback: defensive validation must reject any traversal
 		// segment / backslash in playbookPath at the entry point, not just
-		// absolute / tilde / Windows-drive prefixes — downstream resolvers
+		// absolute / tilde / Windows-drive prefixes - downstream resolvers
 		// have other guards but shouldn't be relied on in isolation.
 		it.each([
 			['../../etc/passwd', 'parent traversal'],
@@ -2608,7 +2914,7 @@ describe('WebSocketMessageHandler', () => {
 			// Unknown-type echo would confuse the CLI's request/response pairing
 			// (`MaestroClient` matches by responseType). Returning the empty
 			// success shape keeps the wire contract intact even when the desktop
-			// hasn't wired up the callback yet — older builds on a newer CLI.
+			// hasn't wired up the callback yet - older builds on a newer CLI.
 			callbacks.listDesktopSessions = undefined;
 			handler.setCallbacks(callbacks);
 

@@ -1,5 +1,5 @@
 /**
- * useMergeTransferHandlers — extracted from App.tsx (Phase 2.5)
+ * useMergeTransferHandlers - extracted from App.tsx (Phase 2.5)
  *
  * Orchestrates merge-session and send-to-agent workflows:
  *   - useMergeSessionWithSessions (merge context between sessions)
@@ -11,7 +11,7 @@
  * Writes to: modalStore (merge/send-to-agent modal open state)
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type { Session, ToolType, LogEntry, AITab } from '../../types';
 import type { GroomingProgress } from '../../types/contextMerge';
 import type { MergeOptions } from '../../components/MergeSessionModal';
@@ -87,17 +87,18 @@ export function useMergeTransferHandlers(
 ): UseMergeTransferHandlersReturn {
 	const { sessionsRef, activeSessionIdRef, setActiveSessionId } = deps;
 
-	// --- Store subscriptions ---
-	const sessions = useSessionStore((s) => s.sessions);
-	const setSessions = useSessionStore((s) => s.setSessions);
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never subscribe to full sessions / active Session. Streaming rebuilds
+	// would wake App. Merge/send resolve agents via getState(); useMergeSession
+	// only needs the active AI tab id for per-tab progress UI.
+	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
+	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
 
 	// --- Transfer agent tracking state ---
 	const [transferSourceAgent, setTransferSourceAgent] = useState<ToolType | null>(null);
 	const [transferTargetAgent, setTransferTargetAgent] = useState<ToolType | null>(null);
 
 	// ====================================================================
-	// useMergeSessionWithSessions — merge context between sessions
+	// useMergeSessionWithSessions - merge context between sessions
 	// ====================================================================
 
 	const {
@@ -113,10 +114,12 @@ export function useMergeTransferHandlers(
 		clearTabState: clearMergeTabState,
 		reset: resetMerge,
 	} = useMergeSessionWithSessions({
-		sessions,
 		setSessions,
-		activeTabId: activeSession?.activeTabId,
+		activeTabId,
 		onSessionCreated: (info) => {
+			// Pin source tab before navigate so deferred clear does not race focus switch.
+			const sourceTabIdToClear = activeTabId;
+
 			// Navigate to the newly created merged session
 			setActiveSessionId(info.sessionId);
 			getModalActions().setMergeSessionModalOpen(false);
@@ -155,15 +158,15 @@ export function useMergeTransferHandlers(
 			);
 
 			// Clear the merge state for the source tab after a short delay
-			if (activeSession?.activeTabId) {
+			if (sourceTabIdToClear) {
 				setTimeout(() => {
-					clearMergeTabState(activeSession.activeTabId);
+					clearMergeTabState(sourceTabIdToClear);
 				}, 1000);
 			}
 		},
 		onMergeComplete: (sourceTabId, result) => {
 			// For merge into existing tab, navigate to target and show toast
-			if (activeSession && result.success && result.targetSessionId) {
+			if (result.success && result.targetSessionId) {
 				const tokenInfo = result.estimatedTokens
 					? ` (~${result.estimatedTokens.toLocaleString()} tokens)`
 					: '';
@@ -204,7 +207,7 @@ export function useMergeTransferHandlers(
 	});
 
 	// ====================================================================
-	// useSendToAgentWithSessions — transfer context to a different agent
+	// useSendToAgentWithSessions - transfer context to a different agent
 	// ====================================================================
 
 	const {
@@ -215,7 +218,6 @@ export function useMergeTransferHandlers(
 		cancelTransfer,
 		reset: resetTransfer,
 	} = useSendToAgentWithSessions({
-		sessions,
 		setSessions,
 		onSessionCreated: (sessionId, sessionName) => {
 			// Navigate to the newly created transferred session
@@ -264,6 +266,7 @@ export function useMergeTransferHandlers(
 			// Close the modal - merge will show in the input area overlay
 			getModalActions().setMergeSessionModalOpen(false);
 
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) {
 				return { success: false as const, error: 'No active session' };
 			}
@@ -289,7 +292,7 @@ export function useMergeTransferHandlers(
 
 			return result;
 		},
-		[activeSession, executeMerge]
+		[executeMerge]
 	);
 
 	// TransferProgressModal handlers
@@ -308,6 +311,7 @@ export function useMergeTransferHandlers(
 
 	const handleSendToAgent = useCallback(
 		async (targetSessionId: string, options: SendToAgentOptions) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) {
 				getModalActions().setSendToAgentModalOpen(false);
 				useTabStore.getState().setPendingTerminalBufferSend(null);
@@ -315,7 +319,9 @@ export function useMergeTransferHandlers(
 			}
 
 			// Find the target session
-			const targetSession = sessions.find((s) => s.id === targetSessionId);
+			const targetSession = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === targetSessionId);
 			if (!targetSession) {
 				return { success: false, error: 'Target session not found' };
 			}
@@ -521,6 +527,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						// Per-session config overrides (if set)
 						sessionCustomPath: targetSession.customPath,
 						sessionCustomArgs: targetSession.customArgs,
+						sessionAdditionalDirectories: targetSession.additionalDirectories,
 						sessionCustomEnvVars: targetSession.customEnvVars,
 						sessionCustomModel: targetSession.customModel,
 						sessionCustomContextWindow: targetSession.customContextWindow,
@@ -571,10 +578,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			return { success: true, newSessionId: targetSessionId, newTabId };
 		},
-		[activeSession, sessions, setSessions, setActiveSessionId, resetTransfer]
+		[setSessions, setActiveSessionId, resetTransfer]
 	);
 
-	// Tab context menu handlers — switch to tab then open modal
+	// Tab context menu handlers - switch to tab then open modal
 	const handleMergeWith = useCallback(
 		(tabId: string) => {
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);

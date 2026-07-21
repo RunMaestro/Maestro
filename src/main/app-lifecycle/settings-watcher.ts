@@ -117,7 +117,7 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 					}
 				);
 			} else {
-				// Same dir — extend the existing watcher to also look for agent configs
+				// Same dir - extend the existing watcher to also look for agent configs
 				// The first watcher already watches the directory, but we need to
 				// also react to agent config file changes. We'll add a second watcher.
 				watchFile(

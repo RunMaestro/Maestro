@@ -59,7 +59,7 @@ export function createPromptsApi() {
 		reset: (id: string): Promise<{ success: boolean; content?: string; error?: string }> =>
 			ipcRenderer.invoke('prompts:reset', id),
 
-		// Fetch the current bundled (un-customized) content — used to surface the
+		// Fetch the current bundled (un-customized) content - used to surface the
 		// shipped default after drift is detected.
 		getBundledDefault: (
 			id: string

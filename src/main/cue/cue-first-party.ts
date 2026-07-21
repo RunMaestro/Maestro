@@ -1,5 +1,5 @@
 /**
- * Maestro Cue — first-party plugin supervisor hooks (encore-lifts L3).
+ * Maestro Cue - first-party plugin supervisor hooks (encore-lifts L3).
  *
  * The Cue engine IS the feature's one supervised background service
  * (`cue.engine` in MAESTRO_CUE_FIRST_PARTY_PLUGIN): every watcher, GitHub
@@ -7,7 +7,7 @@
  * `CueEngine.start()`/`stop()`. These hooks route the first-party bridge's
  * lifecycle (marketplace tile enable/disable, grant revocation, fail-closed
  * paths) through that SAME start/stop seam the EncoreTab toggle already
- * drives via `cue:enable`/`cue:disable` IPC — so disabling the tile ACTUALLY
+ * drives via `cue:enable`/`cue:disable` IPC - so disabling the tile ACTUALLY
  * halts watchers/pollers instead of merely hiding UI.
  *
  * - `reconcile()` starts the engine when it is not running. It passes
@@ -35,7 +35,7 @@ export interface CueEngineLifecycle {
 
 /**
  * Build the `firstPartySupervisors.maestroCue` hooks over a live engine
- * getter. A null engine (headless boot, teardown) makes both hooks no-ops —
+ * getter. A null engine (headless boot, teardown) makes both hooks no-ops -
  * there is nothing running to reconcile or stop.
  */
 export function createCueSupervisorHooks(

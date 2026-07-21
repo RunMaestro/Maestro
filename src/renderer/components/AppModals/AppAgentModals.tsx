@@ -58,7 +58,7 @@ export interface AppAgentModalsProps {
 
 	// AgentErrorModal (for individual agents)
 	errorSession: Session | null | undefined;
-	/** The effective error to display — live or historical from chat log */
+	/** The effective error to display - live or historical from chat log */
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
 	onDismissAgentError: () => void;

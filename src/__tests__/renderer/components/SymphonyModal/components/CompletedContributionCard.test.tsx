@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/CompletedContributionCard — merged/closed/open
+ * Tests for SymphonyModal/components/CompletedContributionCard - merged/closed/open
  * badge variants, PR link, token formatting.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

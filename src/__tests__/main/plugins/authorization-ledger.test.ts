@@ -1,11 +1,11 @@
 /**
  * @file authorization-ledger.test.ts
- * @description Security tests for the sealed authorization ledger — the plugin
+ * @description Security tests for the sealed authorization ledger - the plugin
  * authorization gate. Proves the contract: nothing on disk authorizes a plugin
  * without a mint, and a file-writer cannot forge, roll back, or revive
  * authorization. Uses fakes for the seal and the credential-store anchor so the
  * anchor persists (like a real keyring) while the ledger file is independently
- * rolled back — the exact rollback attack.
+ * rolled back - the exact rollback attack.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -24,6 +24,7 @@ import {
 } from '../../../main/plugins/authorization-ledger';
 import type { SignatureStatus } from '../../../shared/plugins/signing';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import { isPermitted, parseAllowlistScope } from '../../../shared/plugins/permissions';
 
 let tmpDir: string;
 let ledgerPath: string;
@@ -42,7 +43,7 @@ function fakeSeal(available = true): SealProvider {
 	};
 }
 
-/** In-memory anchor backed by an external holder — simulates the OS credential
+/** In-memory anchor backed by an external holder - simulates the OS credential
  * vault, which is NOT rolled back when the ledger file is restored. */
 function fakeAnchor(holder: { value: Anchor | null }, available = true): AnchorStore {
 	return {
@@ -132,7 +133,7 @@ afterEach(() => {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('AuthorizationStore — mint / revoke', () => {
+describe('AuthorizationStore - mint / revoke', () => {
 	it('mint enables and grants exactly the approved caps; unminted plugins get nothing', () => {
 		const holder = { value: null as Anchor | null };
 		const store = makeStore(fakeSeal(), fakeAnchor(holder));
@@ -161,7 +162,120 @@ describe('AuthorizationStore — mint / revoke', () => {
 	});
 });
 
-describe('AuthorizationStore — persistence', () => {
+describe('AuthorizationStore - setAllowlistScope (host-managed allow list, #1250)', () => {
+	const dispatchGrant = (scope: string, unattended = false): PermissionGrant[] => [
+		{
+			capability: 'agents:dispatch',
+			scope,
+			grantedAt: 1,
+			...(unattended ? { unattended: true } : {}),
+		},
+	];
+
+	it('widens the allow list of an already-consented dispatch grant', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+
+		expect(
+			store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2', 'agent-3'])
+		).toBe(true);
+		const grants = store.readGrants('relay');
+		expect(grants).toHaveLength(1);
+		expect(parseAllowlistScope(grants[0].scope)).toEqual(['agent-1', 'agent-2', 'agent-3']);
+		expect(isPermitted(grants, 'agents:dispatch', 'agent-3')).toBe(true);
+	});
+
+	it('an empty set clears the scope to deny-all (never a wildcard)', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+
+		expect(store.setAllowlistScope('relay', 'agents:dispatch', [])).toBe(true);
+		const grants = store.readGrants('relay');
+		expect(grants[0].scope).toBeUndefined();
+		expect(isPermitted(grants, 'agents:dispatch', 'agent-1')).toBe(false);
+	});
+
+	it('preserves the unattended flag and any other grants', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint(
+			'relay',
+			[
+				{ capability: 'agents:dispatch', scope: 'agent-1', grantedAt: 1, unattended: true },
+				{ capability: 'net:connect', scope: 'gateway.discord.gg', grantedAt: 1 },
+			],
+			ident('hash')
+		);
+
+		store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2']);
+		const grants = store.readGrants('relay');
+		const dispatch = grants.find((g) => g.capability === 'agents:dispatch');
+		const net = grants.find((g) => g.capability === 'net:connect');
+		expect(dispatch?.unattended).toBe(true);
+		expect(parseAllowlistScope(dispatch?.scope)).toEqual(['agent-1', 'agent-2']);
+		expect(net?.scope).toBe('gateway.discord.gg');
+	});
+
+	it('returns false when the plugin holds no grant for the capability', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('data', caps('fs:read', '/data'), ident('hash'));
+		expect(store.setAllowlistScope('data', 'agents:dispatch', ['agent-1'])).toBe(false);
+		expect(store.setAllowlistScope('missing', 'agents:dispatch', ['agent-1'])).toBe(false);
+	});
+
+	it('refuses a non-allowlist capability and leaves its scope untouched', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('data', caps('fs:read', '/data'), ident('hash'));
+		expect(store.setAllowlistScope('data', 'fs:read', ['/other'])).toBe(false);
+		expect(store.readGrants('data')[0].scope).toBe('/data');
+	});
+
+	it('persists the widened scope across restarts (sealed + anchored)', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+		store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2']);
+
+		const reopened = makeStore(fakeSeal(), fakeAnchor(holder));
+		expect(parseAllowlistScope(reopened.readGrants('relay')[0].scope)).toEqual([
+			'agent-1',
+			'agent-2',
+		]);
+		expect(reopened.trustState()).toBe('persistent');
+	});
+
+	it('the widened scope survives verify() with an unchanged identity', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+		store.setAllowlistScope('relay', 'agents:dispatch', ['agent-1', 'agent-2']);
+
+		const result = store.verify('relay', ident('hash'), ['agents:dispatch']);
+		expect(result.authorized).toBe(true);
+		expect(parseAllowlistScope(result.caps[0].scope)).toEqual(['agent-1', 'agent-2']);
+	});
+
+	it('refuses the whole edit if any member is invalid, leaving the scope unchanged', () => {
+		const holder = { value: null as Anchor | null };
+		const store = makeStore(fakeSeal(), fakeAnchor(holder));
+		store.mint('relay', dispatchGrant('agent-1'), ident('hash'));
+
+		// A comma would split the scope into two members; a '*' could smuggle
+		// pattern semantics - both must be refused outright, never silently dropped.
+		expect(
+			store.setAllowlistScope('relay', 'agents:dispatch', ['agent-2', 'agent-1,agent-3'])
+		).toBe(false);
+		expect(store.setAllowlistScope('relay', 'agents:dispatch', ['agent-*'])).toBe(false);
+		// The original scope is untouched.
+		expect(parseAllowlistScope(store.readGrants('relay')[0].scope)).toEqual(['agent-1']);
+	});
+});
+
+describe('AuthorizationStore - persistence', () => {
 	it('persists across instances when sealed + anchored', () => {
 		const holder = { value: null as Anchor | null };
 		makeStore(fakeSeal(), fakeAnchor(holder)).mint('a', caps('storage:write'), ident('hash-a'));
@@ -173,7 +287,7 @@ describe('AuthorizationStore — persistence', () => {
 	});
 });
 
-describe('AuthorizationStore — anti-rollback (the contract)', () => {
+describe('AuthorizationStore - anti-rollback (the contract)', () => {
 	it('rejects a restored OLD sealed ledger (epoch regression) → re-consent, grant NOT honored', () => {
 		const holder = { value: null as Anchor | null };
 		makeStore(fakeSeal(), fakeAnchor(holder)).mint('a', caps('fs:write', '/d'), ident('hash-a'));
@@ -248,7 +362,7 @@ describe('AuthorizationStore — anti-rollback (the contract)', () => {
 	});
 });
 
-describe('AuthorizationStore — session-only fail-safe', () => {
+describe('AuthorizationStore - session-only fail-safe', () => {
 	it('no seal → in-memory grants this session, nothing persisted', () => {
 		const holder = { value: null as Anchor | null };
 		const store = makeStore(fakeSeal(false), fakeAnchor(holder));
@@ -269,7 +383,7 @@ describe('AuthorizationStore — session-only fail-safe', () => {
 	});
 });
 
-describe('AuthorizationStore — persist failure (locked keyring) fails safe', () => {
+describe('AuthorizationStore - persist failure (locked keyring) fails safe', () => {
 	it('an anchor write that throws degrades to session-only, not a crash', () => {
 		const holder = { value: null as Anchor | null };
 		const throwingAnchor: AnchorStore = {
@@ -317,7 +431,7 @@ describe('AuthorizationStore — persist failure (locked keyring) fails safe', (
 	});
 });
 
-describe('AuthorizationStore — verify (refresh-time gate)', () => {
+describe('AuthorizationStore - verify (refresh-time gate)', () => {
 	const newStore = () => makeStore(fakeSeal(), fakeAnchor({ value: null as Anchor | null }));
 
 	it('authorizes when identity matches and caps are still requested', () => {

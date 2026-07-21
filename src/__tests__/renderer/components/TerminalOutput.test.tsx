@@ -857,7 +857,7 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
 			expect(mockRegisterLayer).toHaveBeenCalled();
 
-			// Pull the most recent registerLayer call's onEscape — this is what the
+			// Pull the most recent registerLayer call's onEscape - this is what the
 			// layer stack fires when Escape is pressed on the topmost layer.
 			const layerConfig = mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
 			expect(typeof layerConfig.onEscape).toBe('function');
@@ -898,7 +898,7 @@ describe('TerminalOutput', () => {
 		});
 
 		it('keeps confirmation modal open when clicking the backdrop', async () => {
-			// Confirmation modals intentionally do not close on backdrop click — users
+			// Confirmation modals intentionally do not close on backdrop click - users
 			// must explicitly choose Cancel/Confirm or press Escape. This guards against
 			// accidental dismissal of destructive prompts.
 			const session = createDefaultSession({
@@ -1507,7 +1507,7 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// Toggle is now exposed on user messages too — consistent with
+			// Toggle is now exposed on user messages too - consistent with
 			// assistant messages so the user can flip between formatted and
 			// raw text views of their own input.
 			expect(screen.queryByTitle(/Show plain text/)).toBeInTheDocument();
@@ -2003,7 +2003,7 @@ describe('TerminalOutput', () => {
 
 			// Description shown separately
 			expect(screen.getByText('List comparison samples')).toBeInTheDocument();
-			// Full command shown without truncation — use regex since getByText struggles with newlines
+			// Full command shown without truncation - use regex since getByText struggles with newlines
 			expect(screen.getByText(/All comparison samples/)).toBeInTheDocument();
 			expect(screen.getByText(/compare_\* 2>\/dev\/null/)).toBeInTheDocument();
 			expect(screen.getByText(/Done ===/)).toBeInTheDocument();
@@ -2322,7 +2322,7 @@ describe('TerminalOutput', () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// scrollTo should have been called — user was at bottom, auto-scroll kicks in
+			// scrollTo should have been called - user was at bottom, auto-scroll kicks in
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
 
@@ -2373,7 +2373,7 @@ describe('TerminalOutput', () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// scrollTo should NOT have been called — user scrolled up, auto-scroll paused
+			// scrollTo should NOT have been called - user scrolled up, auto-scroll paused
 			expect(scrollToSpy).not.toHaveBeenCalled();
 		});
 
@@ -2448,6 +2448,147 @@ describe('TerminalOutput', () => {
 
 			// Terminal mode always auto-scrolls
 			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('keeps sticking to the bottom after clicking the pin button while scrolled up', async () => {
+			// Regression (#1140 follow-up): clicking the scroll-to-bottom / pin
+			// button used to scroll once but not re-arm the observer's at-bottom
+			// gate, so streaming thinking output stopped following. web-desktop
+			// surfaced it most visibly, but the bug was shared with desktop.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			// jsdom never actually scrolls. Mirror the requested top into scrollTop
+			// (clamped to the max, like a real browser) AND dispatch the native
+			// `scroll` event that scrollTo fires, so the handleScrollInner guard
+			// path is genuinely exercised rather than bypassed.
+			const scrollToSpy = vi.fn((arg: number | ScrollToOptions) => {
+				const top = typeof arg === 'object' && arg ? (arg.top ?? 0) : (arg ?? 0);
+				const max = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+				Object.defineProperty(scrollContainer, 'scrollTop', {
+					value: Math.min(top, max),
+					configurable: true,
+				});
+				fireEvent.scroll(scrollContainer);
+			});
+			scrollContainer.scrollTo = scrollToSpy as unknown as HTMLElement['scrollTo'];
+
+			// User scrolls up: 1000 tall, viewport 400, parked at the top.
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			// The pin button appears once we're away from the bottom.
+			const pinButton = screen.getByTitle(/pin/i);
+			await act(async () => {
+				fireEvent.click(pinButton);
+				vi.advanceTimersByTime(50);
+			});
+			// The click performs the initial jump to the current bottom.
+			expect(scrollToSpy).toHaveBeenCalled();
+
+			scrollToSpy.mockClear();
+
+			// New streamed content arrives. Because the click re-armed the
+			// at-bottom gate, the observer must follow it (call scrollTo again).
+			const newLogs = [
+				...logs,
+				createLogEntry({ id: 'resp-2', text: 'More streamed text', source: 'stdout' }),
+			];
+			const newSession = {
+				...session,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+			};
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('pauses auto-scroll when the user scrolls up after pinning, within the guard window', async () => {
+			// Greptile P1: after the pin button arms the ~100ms programmatic-scroll
+			// guard, a real user scroll-up that lands inside that window must NOT be
+			// mistaken for our own bottom-jump. The guard is anchored to the
+			// recorded bottom target, so a scroll-up (scrollTop below the target)
+			// still leaves the bottom - proven by onAtBottomChange(false) firing.
+			// A position-blind guard would swallow it and keep auto-scroll pinned.
+			const onAtBottomChange = vi.fn();
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, onAtBottomChange })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 600, configurable: true });
+
+			// scrollTo clamps to the max and dispatches the native scroll event a
+			// real browser fires, so the handleScrollInner guard path runs.
+			const scrollToSpy = vi.fn((arg: number | ScrollToOptions) => {
+				const top = typeof arg === 'object' && arg ? (arg.top ?? 0) : (arg ?? 0);
+				const max = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+				Object.defineProperty(scrollContainer, 'scrollTop', {
+					value: Math.min(top, max),
+					configurable: true,
+				});
+				fireEvent.scroll(scrollContainer);
+			});
+			scrollContainer.scrollTo = scrollToSpy as unknown as HTMLElement['scrollTo'];
+
+			// User scrolls up so the pin button appears.
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+			expect(screen.getByTitle(/pin/i)).toBeInTheDocument();
+
+			// Click the pin: synchronously arms the guard (records bottom target
+			// 600, starts the 100ms timer) and jumps to the bottom.
+			await act(async () => {
+				fireEvent.click(screen.getByTitle(/pin/i));
+				vi.advanceTimersByTime(20); // clear the scroll throttle; guard still armed
+			});
+			onAtBottomChange.mockClear();
+			scrollToSpy.mockClear();
+
+			// User scrolls up again, still well inside the guard window.
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+
+			// Discriminator: the scroll-up registered as leaving the bottom, and
+			// the pin button is shown again (auto-scroll paused).
+			expect(onAtBottomChange).toHaveBeenCalledWith(false);
+			expect(screen.getByTitle(/pin/i)).toBeInTheDocument();
 		});
 	});
 
@@ -2645,7 +2786,7 @@ describe('TerminalOutput', () => {
 			];
 
 			// Forced TUI: enableMaestroP on + maestroPMode 'interactive' is NOT
-			// adaptive — only Dynamic mode auto-switches, so the prefix must drop.
+			// adaptive - only Dynamic mode auto-switches, so the prefix must drop.
 			const session = createDefaultSession({
 				enableMaestroP: true,
 				maestroPMode: 'interactive',

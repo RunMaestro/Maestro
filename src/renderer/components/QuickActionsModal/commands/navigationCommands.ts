@@ -89,8 +89,8 @@ export function buildNavigationCommands({
 			shortcut: shortcuts.nextUnreadTab,
 			action: () => {
 				// Delegate to the shared App.tsx callback so this matches the
-				// Alt+Cmd+Down keyboard shortcut exactly (uses sortedSessions —
-				// the sidebar's visible order — and the same clear semantics).
+				// Alt+Cmd+Down keyboard shortcut exactly (uses sortedSessions -
+				// the sidebar's visible order - and the same clear semantics).
 				onGoToNextUnread?.();
 				setQuickActionOpen(false);
 			},

@@ -19,7 +19,7 @@ function makeSub(overrides: Partial<CueSubscription> = {}): CueSubscription {
 }
 
 describe('isSubscriptionParticipant', () => {
-	it('returns true for unbound (no agent_id) subscriptions — legacy / shared', () => {
+	it('returns true for unbound (no agent_id) subscriptions - legacy / shared', () => {
 		const sub = makeSub({ agent_id: undefined });
 		expect(isSubscriptionParticipant(sub, 'any-session', 'Any Name')).toBe(true);
 	});
@@ -53,7 +53,7 @@ describe('isSubscriptionParticipant', () => {
 });
 
 describe('countActiveSubscriptions with fan-out', () => {
-	it('counts the same fan-out sub for the owner AND every target — bug 2 regression', () => {
+	it('counts the same fan-out sub for the owner AND every target - bug 2 regression', () => {
 		// Pipeline: 1 trigger → 3 agents (fan-out). The YAML generator writes ONE
 		// subscription with agent_id=A and fan_out=[A, B, C]. Before the fix the
 		// dashboard showed only A as active; B and C looked unconfigured even
@@ -225,7 +225,7 @@ describe('computeOwnershipWarning', () => {
 	});
 
 	it('ignores candidates with a different projectRoot when checking explicit owner existence', () => {
-		// An agent named "Opus" exists but lives in a different projectRoot —
+		// An agent named "Opus" exists but lives in a different projectRoot -
 		// owner_agent_id should still resolve as unmatched for this root.
 		const session = makeCandidate({ id: 'session-1', name: 'Sonnet' });
 		const outsider = makeCandidate({
@@ -269,7 +269,7 @@ describe('computeOwnershipWarning', () => {
 	it('config-less candidates are excluded by the caller; the real Cue agent becomes owner', () => {
 		// Simulates the P1 bug: a config-less agent appears earlier in the
 		// session list. The caller is expected to filter it out before calling
-		// this utility — only "configured" is passed in — so the real agent
+		// this utility - only "configured" is passed in - so the real agent
 		// wins the first-in-list race.
 		const configured = makeCandidate({ id: 'session-real', name: 'Obsidian' });
 		const result = computeOwnershipWarning({
@@ -321,7 +321,7 @@ describe('computeOwnershipWarning', () => {
 	it('owner_agent_id is resolved by id even when another session has that string as its display name', () => {
 		// A is the intended owner by id. B happens to have a display name
 		// equal to A's id (a pathological but possible configuration). Only
-		// A should be treated as owner — B must not silently claim it.
+		// A should be treated as owner - B must not silently claim it.
 		const a = makeCandidate({ id: 'uuid-alpha', name: 'Alpha' });
 		const b = makeCandidate({ id: 'session-b', name: 'uuid-alpha' });
 

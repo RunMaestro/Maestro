@@ -5,6 +5,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../../process-manager';
 import { AgentDetector } from '../../../agents';
+import { checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
 	getActivePluginManager,
@@ -41,6 +42,7 @@ import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-sp
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
+import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -79,6 +81,27 @@ export async function handleProcessSpawn(
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
+	let invalidLocalCustomPath = false;
+	if (config.sessionCustomPath && !config.sessionSshRemoteConfig?.enabled) {
+		const requestedCustomPath = config.sessionCustomPath;
+		const detection = await checkCustomPath(requestedCustomPath);
+		if (detection.exists && detection.path) {
+			config = { ...config, sessionCustomPath: detection.path };
+			if (detection.path !== requestedCustomPath) {
+				logger.info(`Resolved updated local custom path for ${config.toolType}`, LOG_CONTEXT, {
+					requestedCustomPath,
+					resolvedCustomPath: detection.path,
+				});
+			}
+		} else {
+			invalidLocalCustomPath = true;
+			config = { ...config, sessionCustomPath: undefined };
+			logger.warn(`Ignoring invalid local custom path for ${config.toolType}`, LOG_CONTEXT, {
+				requestedCustomPath,
+				fallbackPath: agent?.path || config.command,
+			});
+		}
+	}
 	// Use INFO level on Windows for better visibility in logs
 
 	const logFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
@@ -135,6 +158,7 @@ export async function handleProcessSpawn(
 		yoloMode: config.yoloMode,
 		permissionMode: config.permissionMode,
 		agentSessionId: config.agentSessionId,
+		additionalDirectories: config.sessionAdditionalDirectories,
 	});
 
 	// ========================================================================
@@ -353,7 +377,7 @@ export async function handleProcessSpawn(
 	// turn is preserved in the agent's session transcript, so on resume we skip
 	// re-embedding to avoid polluting every subsequent user message with the
 	// full system prompt (which would be redundant context and waste tokens).
-	// Agents with native support re-send per invocation — that flag is metadata,
+	// Agents with native support re-send per invocation - that flag is metadata,
 	// not conversation content, and some agents (e.g. Claude Code) require it
 	// every turn because it isn't persisted into the session transcript.
 	// ========================================================================
@@ -447,7 +471,7 @@ export async function handleProcessSpawn(
 	// each run by calling the `task_complete` tool. The built-in autopilot
 	// system prompt biases the model toward calling that tool *early*,
 	// which manifests in Maestro as "the turn came back to me but the
-	// task wasn't actually done". The remedy isn't a CLI flag — it's a
+	// task wasn't actually done". The remedy isn't a CLI flag - it's a
 	// user-message preamble injected on every batch invocation that
 	// pushes back on premature completion and instructs the model to
 	// put its real conclusion in `task_complete.summary` (which is what
@@ -468,7 +492,7 @@ export async function handleProcessSpawn(
 				});
 			}
 		} catch (err) {
-			// Prompt not loaded yet (initializePrompts not called) — skip silently.
+			// Prompt not loaded yet (initializePrompts not called) - skip silently.
 			// This path is hit by tests that stub the IPC handler without bootstrapping
 			// prompts. Production code always runs initializePrompts() at app start.
 			logger.debug('copilot-preamble unavailable; skipping injection', LOG_CONTEXT, {
@@ -597,7 +621,10 @@ export async function handleProcessSpawn(
 	// so PATH and other environment variables are available. This ensures cross-platform
 	// compatibility and correct agent behavior.
 	// ========================================================================
-	let commandToSpawn = config.sessionCustomPath || config.command;
+	let commandToSpawn =
+		config.sessionCustomPath ||
+		(invalidLocalCustomPath ? agent?.path : undefined) ||
+		config.command;
 	let argsToSpawn = finalArgs;
 	let useShell = false;
 	let sshRemoteUsed: SshRemoteConfig | null = null;
@@ -692,7 +719,7 @@ export async function handleProcessSpawn(
 	// For local (non-SSH) spawns, prepend the parent dir of the binary
 	// we're actually about to spawn to PATH. Covers npm-style script
 	// agents (codex, claude, etc.) installed alongside a non-standard
-	// `node` that's outside our hardcoded version-manager paths —
+	// `node` that's outside our hardcoded version-manager paths -
 	// the script's `#!/usr/bin/env node` shebang needs that node on
 	// PATH. SSH path is built separately on the remote and must not
 	// inherit any local directories.
@@ -708,6 +735,33 @@ export async function handleProcessSpawn(
 		localSpawnBinaryPath && path.isAbsolute(localSpawnBinaryPath)
 			? path.dirname(localSpawnBinaryPath)
 			: undefined;
+
+	// Warm the omp model -> context-window catalog for local runs so the first
+	// turn's usage can resolve the model's real window (e.g. opus 1M) rather than
+	// the static fallback. Keyed to this binary + env overrides so one config's
+	// catalog is never served to another (see computeOmpCatalogKey). SSH remotes
+	// are skipped (their catalog may differ) and fall back to the configured window.
+	let ompModelCatalogKey: string | undefined;
+	if (config.toolType === 'omp' && localAgentBinDir && localSpawnBinaryPath) {
+		// Identity uses the session's stable custom env overrides (not the
+		// platform-expanded `customEnvVarsToPass`, which on Windows is the whole
+		// env) so the same logical config maps to one catalog across platforms and
+		// matches the detector's default-identity warm-up.
+		ompModelCatalogKey = computeOmpCatalogKey(localSpawnBinaryPath, effectiveCustomEnvVars);
+		// Bounded await: block the spawn only briefly so the first turn resolves
+		// correctly on a warm/fast catalog, and proceed (letting the prime finish
+		// in the background for later turns) when it is slow or fails.
+		const OMP_PRIME_SPAWN_CAP_MS = 2000;
+		const prime = primeOmpModelCatalog(
+			localSpawnBinaryPath,
+			{ ...process.env, ...customEnvVarsToPass },
+			ompModelCatalogKey
+		);
+		await Promise.race([
+			prime,
+			new Promise<void>((resolve) => setTimeout(resolve, OMP_PRIME_SPAWN_CAP_MS)),
+		]);
+	}
 
 	const result = processManager.spawn({
 		...config,
@@ -727,6 +781,7 @@ export async function handleProcessSpawn(
 		shellArgs: shellArgsStr, // Shell-specific CLI args (for terminal sessions)
 		shellEnvVars: globalShellEnvVars, // Global shell env vars (for both terminals and agents)
 		contextWindow, // Pass configured context window to process manager
+		ompModelCatalogKey, // Identity for the omp model catalog (local omp only)
 		// When using SSH, env vars are passed in the stdin script, not locally
 		customEnvVars: customEnvVarsToPass,
 		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
@@ -779,7 +834,7 @@ export async function handleProcessSpawn(
 			prompt: replayPrompt,
 			buildApiSpawnConfig: ({ prompt }): ProcessSpawnConfig | null => {
 				// Pull the freshest agentSessionId for this session/tab off the
-				// sessions store — maestro-p's session-id watcher may have stamped
+				// sessions store - maestro-p's session-id watcher may have stamped
 				// one between spawn and exit.
 				let freshAgentSessionId: string | undefined = originalConfig.agentSessionId;
 				try {
@@ -822,6 +877,7 @@ export async function handleProcessSpawn(
 					yoloMode: originalConfig.yoloMode,
 					permissionMode: originalConfig.permissionMode,
 					agentSessionId: freshAgentSessionId,
+					additionalDirectories: originalConfig.sessionAdditionalDirectories,
 				});
 
 				const replayEnv = originalCustomEnvVars ? { ...originalCustomEnvVars } : undefined;

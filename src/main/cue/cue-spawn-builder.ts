@@ -1,5 +1,5 @@
 /**
- * Cue Spawn Builder — constructs a fully resolved spawn specification
+ * Cue Spawn Builder - constructs a fully resolved spawn specification
  * from a CueExecutionConfig.
  *
  * Single responsibility: given session/agent/prompt/SSH config, produce a
@@ -23,7 +23,7 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
-/** Fully resolved spawn specification — everything needed to call spawn(). */
+/** Fully resolved spawn specification - everything needed to call spawn(). */
 export interface SpawnSpec {
 	command: string;
 	args: string[];
@@ -70,6 +70,7 @@ export async function buildSpawnSpec(
 	substitutedPrompt: string
 ): Promise<SpawnBuildResult> {
 	const {
+		session,
 		toolType,
 		projectRoot,
 		sshRemoteConfig,
@@ -100,13 +101,16 @@ export async function buildSpawnSpec(
 		baseArgs: agentDef.args,
 		prompt: substitutedPrompt,
 		cwd: projectRoot,
+		// A Cue-triggered run is the same agent doing the same work unattended, so
+		// it gets the same directory grants an interactive turn would.
+		additionalDirectories: session?.additionalDirectories,
 		yoloMode: true, // Cue runs always use YOLO mode like Auto Run
 		permissionMode: 'full' as const,
 		// Cue spawns with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY, so the
 		// agent must run in batch mode every time. Without this, a prompt that
 		// substituted to `""` (e.g. `{{CUE_SOURCE_OUTPUT}}` when the upstream
 		// agent produced no parseable stdout) would silently drop the batch-mode
-		// args — e.g. Codex loses its `exec` subcommand and launches its TUI,
+		// args - e.g. Codex loses its `exec` subcommand and launches its TUI,
 		// which immediately dies with "Error: stdin is not a terminal".
 		forceBatchMode: true,
 	});

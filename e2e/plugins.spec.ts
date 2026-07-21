@@ -1,16 +1,16 @@
 /**
- * Plugin-system E2E — exercises the ENTIRE plugin interface end-to-end against
+ * Plugin-system E2E - exercises the ENTIRE plugin interface end-to-end against
  * a real isolated Maestro (demo mode) with a seeded full-surface self-test
  * plugin and its real utilityProcess sandbox, under the FC1..FC8 contracts:
  *
  *  - FC1 Option-B trust gate: only a TRUSTED (signed by a trusted key) plugin
  *    ever runs code; a stranger-signed plugin stays declarative-only. Every
- *    enabled code plugin also needs a consented ledger mint — verifyRecord
+ *    enabled code plugin also needs a consented ledger mint - verifyRecord
  *    force-disables any enabled code plugin without one, so every test mints
  *    first (a zero-grant mint is a valid consent gesture).
  *  - FC2 act verbs: agents:dispatch / process:spawn ride a SEPARATE high-risk
  *    consent channel (default unchecked); grants are allowlist-scoped to the
- *    named agent/binary — off-scope targets DENY while the cap is granted.
+ *    named agent/binary - off-scope targets DENY while the cap is granted.
  *  - FC3 scheduler: a cue dispatch trigger without the separate UNATTENDED
  *    consent is surfaced (notify) instead of auto-dispatched.
  *  - FC4 events: metadata-only payloads; capability-gated topics
@@ -30,7 +30,7 @@
  *
  * Run: bunx playwright test e2e/plugins.spec.ts
  *   (build dist first: bun run build:main && bun run build:renderer &&
- *    bun run build:preload — preload carries consent.html + panel preloads)
+ *    bun run build:preload - preload carries consent.html + panel preloads)
  */
 import { test, expect } from '@playwright/test';
 import fs from 'fs';
@@ -68,7 +68,7 @@ const WITHHOLD_SAFE = ['shell:openExternal'] as const;
 const PLAIN_CAPS = REQUESTED_CAPS.filter((c) => !(ACT_CAPS as readonly string[]).includes(c));
 
 /** Occurrences of a literal marker in the captured output. Used across the
- * FC5 assertions to prove "no NEW crash/summary appeared" — call-site count
+ * FC5 assertions to prove "no NEW crash/summary appeared" - call-site count
  * comparisons must share one counting behavior. */
 const countMarker = (output: string, marker: string): number => output.split(marker).length - 1;
 
@@ -117,7 +117,7 @@ test.describe('plugin system e2e', () => {
 		return summary;
 	}
 
-	/** Fire-and-forget a plugin command from the renderer (errors swallowed —
+	/** Fire-and-forget a plugin command from the renderer (errors swallowed -
 	 * assertions are made on captured output, not the RPC ack). */
 	async function invokePluginCommand(launched: LaunchedApp, local: string): Promise<void> {
 		await launched.window.evaluate(
@@ -130,7 +130,7 @@ test.describe('plugin system e2e', () => {
 		// A thrown assertion is not yet in test.info().errors inside `finally`
 		// (and status is unset until the test fn returns), so a conditional
 		// attach can never fire on the very failure it exists for. Write the
-		// captured main-process output to the test's output dir UNCONDITIONALLY —
+		// captured main-process output to the test's output dir UNCONDITIONALLY -
 		// Playwright cleans outputDir per run, and a failure always carries the
 		// sandbox log at e2e-results/<test>/maestro-output.txt.
 		const info = test.info();
@@ -148,7 +148,7 @@ test.describe('plugin system e2e', () => {
 		try {
 			await waitListed(launched);
 
-			// Boot invariant: the seeded enabled:true did NOT survive the refresh —
+			// Boot invariant: the seeded enabled:true did NOT survive the refresh -
 			// verifyRecord force-disables an enabled code plugin without a ledger
 			// mint, however the on-disk enable-state was produced.
 			const before = await launched.window.evaluate(() => window.maestro.plugins.list());
@@ -169,7 +169,7 @@ test.describe('plugin system e2e', () => {
 				})
 				.toBe(true);
 
-			// The trusted sandbox runs — and every brokered probe is DENY.
+			// The trusted sandbox runs - and every brokered probe is DENY.
 			const summary = await selfTestUntil(launched, seeded.runId, (s) =>
 				PROBED_CAPS.every((c) => typeof s[c] === 'string')
 			);
@@ -224,7 +224,7 @@ test.describe('plugin system e2e', () => {
 			];
 			for (const cap of shouldPass) expect(s[cap], `${cap} should PASS once granted`).toBe('PASS');
 
-			// Granted, but the probe invokes an unregistered palette command — the
+			// Granted, but the probe invokes an unregistered palette command - the
 			// broker allows the round-trip and the renderer registry says no.
 			expect(s['ui:command'], 'noop palette command is INERT').toBe('INERT');
 
@@ -246,7 +246,7 @@ test.describe('plugin system e2e', () => {
 			expect(out).toContain(`process.spawn by "${PLUGIN_ID}": e2e-selftest (`);
 
 			// Allowlist scope: with BOTH act verbs granted, an off-scope target is
-			// still DENY — the grant covers only its exact named members (the
+			// still DENY - the grant covers only its exact named members (the
 			// broker's scope check runs BEFORE the act-verb trust gate).
 			expect(out).toContain(`[e2e-selftest:${seeded.runId}] ACT-OFFSCOPE agents:dispatch: DENY`);
 			expect(out).toContain(`[e2e-selftest:${seeded.runId}] ACT-OFFSCOPE process:spawn: DENY`);
@@ -257,7 +257,7 @@ test.describe('plugin system e2e', () => {
 
 	// FC3: the scheduler polls its trigger set every 30s (PluginSchedulerHost's
 	// non-configurable POLL_MS): first eligible tick SEEDS the interval, the
-	// fire happens once everyMinutes elapses — so the observable deny line lands
+	// fire happens once everyMinutes elapses - so the observable deny line lands
 	// ~90-150s after the mint. Deliberately skipped in the default run: the wait
 	// is pure wall-clock (no injectable clock reaches the host from e2e), and a
 	// ~3-minute mostly-idle test makes the suite unbearably slow. Un-skip to
@@ -271,7 +271,7 @@ test.describe('plugin system e2e', () => {
 		try {
 			await waitListed(launched);
 			// Grant agents:dispatch (high-risk channel) but NOT its nested
-			// unattended consent — interactive dispatch works, scheduler must not.
+			// unattended consent - interactive dispatch works, scheduler must not.
 			await approveConsent(launched, {
 				withhold: WITHHOLD_SAFE,
 				highRisk: ['agents:dispatch'],
@@ -289,7 +289,7 @@ test.describe('plugin system e2e', () => {
 							.includes(
 								`[Plugins] cue trigger "${PLUGIN_ID}/e2e-dispatch-trigger" not auto-dispatched ` +
 									'(unattended (scheduler-driven) dispatch requires the separate unattended ' +
-									'consent — notifying instead)'
+									'consent - notifying instead)'
 							),
 					{
 						timeout: 200_000,
@@ -376,7 +376,7 @@ test.describe('plugin system e2e', () => {
 				{ id: entryId2, sessionId: SEEDED_SESSION_ID, scope: seeded.scopeDir }
 			);
 			// Ordering fence: session.updated (needs only events:subscribe) still
-			// delivers — fire one AFTER the add and wait for it, so by the time it
+			// delivers - fire one AFTER the add and wait for it, so by the time it
 			// lands the gated entryAdded delivery would already have happened.
 			await expect
 				.poll(
@@ -442,7 +442,7 @@ test.describe('plugin system e2e', () => {
 			expect(['completed', 'failed']).toContain(payload?.status);
 			expect(typeof payload?.exitCode).toBe('number');
 			expect(payload?.agentId, 'a PTY tab completes as the terminal agent').toBe('terminal');
-			// Metadata ONLY — no output-bearing keys, ever.
+			// Metadata ONLY - no output-bearing keys, ever.
 			for (const k of ['stdout', 'stderr', 'output', 'summary', 'fullResponse', 'response']) {
 				expect(payload, `agent.completed must not carry "${k}"`).not.toHaveProperty(k);
 			}
@@ -454,7 +454,7 @@ test.describe('plugin system e2e', () => {
 	test('untrusted (stranger-signed) plugin never runs code; declarative contributions survive', async () => {
 		const seeded = createSeededEnv();
 		// Signed with a key that is NOT in pluginTrustedKeys: signed-but-untrusted
-		// must behave exactly like unsigned — never runs.
+		// must behave exactly like unsigned - never runs.
 		await seedAll(seeded, { enabled: true, untrusted: true });
 		const launched = await launch(seeded.env);
 		try {
@@ -651,7 +651,7 @@ test.describe('plugin system e2e', () => {
 				.toBe(true);
 
 			// Supervised restart: refresh() re-runs activate(), whose self-test
-			// prints a NEW SUMMARY for this run — restart proof, not a stale line.
+			// prints a NEW SUMMARY for this run - restart proof, not a stale line.
 			await expect
 				.poll(() => countMarker(launched.output(), summaryMarker), {
 					timeout: 60_000,
@@ -695,7 +695,7 @@ test.describe('plugin system e2e', () => {
 				.toBe('healthy');
 
 			// Deliberate disable: onPluginStopped clears supervision BEFORE the
-			// child exits — no crash line, no restart (no new SUMMARY) in a grace
+			// child exits - no crash line, no restart (no new SUMMARY) in a grace
 			// window comfortably past the 1s restart backoff.
 			const crashesBefore = countMarker(launched.output(), crashMarker);
 			const summariesBefore = countMarker(launched.output(), summaryMarker);
@@ -801,7 +801,7 @@ test.describe('plugin system e2e', () => {
 			// denied in the main process and audited. Electron may surface the
 			// guest top-frame attempt as will-navigate OR will-frame-navigate
 			// (observed: will-frame-navigate); the SAME denyNavigation guard
-			// handles both — the contract is "denied + audited", not the event name.
+			// handles both - the contract is "denied + audited", not the event name.
 			await expect
 				.poll(
 					() =>
@@ -1046,7 +1046,7 @@ test.describe('plugin system e2e', () => {
 			).toHaveText('Running (supervised)');
 
 			// Disable stops the supervised work and clears the flag (grants are
-			// kept — disable is not revoke).
+			// kept - disable is not revoke).
 			await fpDetails.locator('[data-testid="extension-enable-toggle"]').click();
 			await expect
 				.poll(async () => (await readCueState()).flag, {

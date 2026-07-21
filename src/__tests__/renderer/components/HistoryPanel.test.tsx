@@ -172,7 +172,7 @@ describe('HistoryPanel', () => {
 		// loading), but tests still drive the entry set through
 		// `mockHistoryGetAll.mockResolvedValue([...])`. We bridge that via an
 		// adapter on `getAllPaginated` that slices the mocked array per the
-		// page request — keeps the existing test surface intact.
+		// page request - keeps the existing test surface intact.
 		const getAllPaginatedAdapter = vi.fn(
 			async (options?: {
 				pagination?: { offset?: number; limit?: number };
@@ -227,7 +227,7 @@ describe('HistoryPanel', () => {
 				delete: mockHistoryDelete,
 				update: mockHistoryUpdate,
 				// Accepts (sessionId, bucketCount, lookbackHours, sharedContext)
-				// — the lookback is keyed into the cache server-side.
+				// - the lookback is keyed into the cache server-side.
 				getGraphData: vi.fn().mockResolvedValue({
 					buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
 					bucketCount: 24,
@@ -502,7 +502,7 @@ describe('HistoryPanel', () => {
 
 			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
 
-			// Error originates inside the shared pagination hook now —
+			// Error originates inside the shared pagination hook now -
 			// `Initial page load failed` is its standard log.
 			await waitFor(() => {
 				expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -1548,7 +1548,7 @@ describe('HistoryPanel', () => {
 				expect(screen.getByText('Entry from session 1')).toBeInTheDocument();
 			});
 
-			// Change session — new loadPage identity triggers a fresh fetch.
+			// Change session - new loadPage identity triggers a fresh fetch.
 			mockHistoryGetAll.mockResolvedValue([createMockEntry({ summary: 'Entry from session 2' })]);
 
 			rerender(<HistoryPanel session={session2} theme={mockTheme} />);
@@ -1642,7 +1642,7 @@ describe('HistoryPanel', () => {
 		});
 
 		it('should render all entries returned by getAll without an in-memory cap', async () => {
-			// The renderer no longer caps entries — the per-session disk file
+			// The renderer no longer caps entries - the per-session disk file
 			// already bounds the dataset (MAX_ENTRIES_PER_SESSION=5000), and
 			// the activity graph data is fetched separately from a cached
 			// server endpoint that covers the full history.

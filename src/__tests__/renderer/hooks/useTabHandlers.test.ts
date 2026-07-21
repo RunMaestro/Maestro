@@ -178,89 +178,17 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// Derived State
+	// Derived state lives in useTabDerivedState / getTabDerivedState (MainPanel)
 	// ========================================================================
 
-	describe('derived state', () => {
-		it('returns undefined activeTab when no session exists', () => {
+	describe('handlers-only return', () => {
+		it('does not expose derived paint fields (moved to MainPanel)', () => {
 			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.activeTab).toBeUndefined();
-		});
-
-		it('returns empty arrays when no session exists', () => {
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.unifiedTabs).toEqual([]);
-			expect(result.current.fileTabBackHistory).toEqual([]);
-			expect(result.current.fileTabForwardHistory).toEqual([]);
-		});
-
-		it('computes activeTab from active session', () => {
-			const tab = createMockAITab({ id: 'tab-1', name: 'Tab 1' });
-			const { result } = renderWithSession([tab]);
-			expect(result.current.activeTab?.id).toBe('tab-1');
-		});
-
-		it('computes unifiedTabs in correct order', () => {
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			const fileTab = createMockFileTab({ id: 'file-1' });
-			setupSessionWithTabs([aiTab], [fileTab]);
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.unifiedTabs).toHaveLength(2);
-			expect(result.current.unifiedTabs[0].type).toBe('ai');
-			expect(result.current.unifiedTabs[0].id).toBe('ai-1');
-			expect(result.current.unifiedTabs[1].type).toBe('file');
-			expect(result.current.unifiedTabs[1].id).toBe('file-1');
-		});
-
-		it('returns activeFileTab when file tab is active', () => {
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			const fileTab = createMockFileTab({ id: 'file-1', name: 'myFile' });
-			setupSessionWithTabs([aiTab], [fileTab], 'ai-1', 'file-1');
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.activeFileTab?.id).toBe('file-1');
-		});
-
-		it('returns null activeFileTab when no file tab is active', () => {
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			setupSessionWithTabs([aiTab]);
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.activeFileTab).toBeNull();
-		});
-
-		it('computes isResumingSession based on agentSessionId', () => {
-			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123' });
-			const { result } = renderWithSession([tab]);
-			expect(result.current.isResumingSession).toBe(true);
-		});
-
-		it('isResumingSession is false when no agentSessionId', () => {
-			const tab = createMockAITab({ id: 'tab-1', agentSessionId: null });
-			const { result } = renderWithSession([tab]);
-			expect(result.current.isResumingSession).toBe(false);
-		});
-
-		it('computes file tab navigation history', () => {
-			const fileTab = createMockFileTab({
-				id: 'file-1',
-				navigationHistory: [
-					{ path: '/a.ts', name: 'a', scrollTop: 0 },
-					{ path: '/b.ts', name: 'b', scrollTop: 0 },
-					{ path: '/c.ts', name: 'c', scrollTop: 0 },
-				],
-				navigationIndex: 1,
-			});
-			const aiTab = createMockAITab({ id: 'ai-1' });
-			setupSessionWithTabs([aiTab], [fileTab], 'ai-1', 'file-1');
-
-			const { result } = renderHook(() => useTabHandlers());
-			expect(result.current.fileTabCanGoBack).toBe(true);
-			expect(result.current.fileTabCanGoForward).toBe(true);
-			expect(result.current.fileTabBackHistory).toHaveLength(1);
-			expect(result.current.fileTabForwardHistory).toHaveLength(1);
-			expect(result.current.activeFileTabNavIndex).toBe(1);
+			expect(result.current).not.toHaveProperty('activeTab');
+			expect(result.current).not.toHaveProperty('unifiedTabs');
+			expect(result.current).not.toHaveProperty('isResumingSession');
+			expect(typeof result.current.handleNewTab).toBe('function');
+			expect(typeof result.current.handleTabSelect).toBe('function');
 		});
 	});
 
@@ -1579,7 +1507,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleSelectFileTab — auto-refresh
+	// handleSelectFileTab - auto-refresh
 	// ========================================================================
 
 	describe('handleSelectFileTab auto-refresh', () => {
@@ -1664,7 +1592,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleTabClose — wizard tab
+	// handleTabClose - wizard tab
 	// ========================================================================
 
 	describe('handleTabClose wizard tab', () => {
@@ -1730,7 +1658,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleTabClose — draft confirmation
+	// handleTabClose - draft confirmation
 	// ========================================================================
 
 	describe('handleTabClose draft confirmation', () => {
@@ -1804,7 +1732,7 @@ describe('useTabHandlers', () => {
 
 		it('uses live draft store when tab.inputValue is stale empty', () => {
 			// Simulates a fresh tab where the user has typed text but not yet
-			// blurred — tab.inputValue is empty but liveDraftStore has the live value.
+			// blurred - tab.inputValue is empty but liveDraftStore has the live value.
 			const tab1 = createMockAITab({ id: 'tab-1', inputValue: '' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
 			setupSessionWithTabs([tab1, tab2], [], 'tab-1');
@@ -1820,7 +1748,7 @@ describe('useTabHandlers', () => {
 		});
 
 		it('skips draft modal when live draft is empty even if tab.inputValue is stale', () => {
-			// Simulates a tab whose user typed and then cleared the textarea —
+			// Simulates a tab whose user typed and then cleared the textarea -
 			// tab.inputValue still has the old text, but liveDraftStore reflects empty.
 			const tab1 = createMockAITab({ id: 'tab-1', inputValue: 'stale persisted text' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
@@ -1857,7 +1785,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseAllTabs — draft confirmation
+	// handleCloseAllTabs - draft confirmation
 	// ========================================================================
 
 	describe('handleCloseAllTabs draft confirmation', () => {
@@ -1894,7 +1822,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseOtherTabs — draft confirmation
+	// handleCloseOtherTabs - draft confirmation
 	// ========================================================================
 
 	describe('handleCloseOtherTabs draft handling', () => {
@@ -1924,7 +1852,7 @@ describe('useTabHandlers', () => {
 				result.current.handleCloseOtherTabs();
 			});
 
-			// Active tab's draft doesn't matter — it's not being closed
+			// Active tab's draft doesn't matter - it's not being closed
 			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
 			const session = getSession();
 			expect(session.aiTabs).toHaveLength(1);
@@ -1933,7 +1861,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseTabsLeft/Right — draft confirmation
+	// handleCloseTabsLeft/Right - draft confirmation
 	// ========================================================================
 
 	describe('handleCloseTabsLeft draft handling', () => {
@@ -1975,7 +1903,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleToggleTabShowThinking — clears logs on off
+	// handleToggleTabShowThinking - clears logs on off
 	// ========================================================================
 
 	describe('handleToggleTabShowThinking log clearing', () => {
@@ -2009,7 +1937,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleDeleteLog — additional coverage
+	// handleDeleteLog - additional coverage
 	// ========================================================================
 
 	describe('handleDeleteLog additional coverage', () => {
@@ -2133,7 +2061,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleAtBottomChange — edge cases
+	// handleAtBottomChange - edge cases
 	// ========================================================================
 
 	describe('handleAtBottomChange edge cases', () => {
@@ -2155,7 +2083,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseOtherTabs — with file tabs
+	// handleCloseOtherTabs - with file tabs
 	// ========================================================================
 
 	describe('handleCloseOtherTabs with file tabs', () => {
@@ -2232,7 +2160,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleCloseTabsLeft/Right — with file tabs
+	// handleCloseTabsLeft/Right - with file tabs
 	// ========================================================================
 
 	describe('handleCloseTabsLeft with file tabs', () => {
@@ -2393,7 +2321,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleOpenFileTab — adjacent insertion
+	// handleOpenFileTab - adjacent insertion
 	// ========================================================================
 
 	describe('handleOpenFileTab adjacent insertion', () => {
@@ -2467,7 +2395,7 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleNewAgentSession — settings defaults
+	// handleNewAgentSession - settings defaults
 	// ========================================================================
 
 	describe('handleNewAgentSession settings', () => {
@@ -2531,7 +2459,7 @@ describe('useTabHandlers', () => {
 				result.current.handleAtBottomChange(true);
 			});
 
-			// No crash — state unchanged
+			// No crash - state unchanged
 			expect(useSessionStore.getState().sessions).toEqual([]);
 		});
 

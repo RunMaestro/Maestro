@@ -101,7 +101,7 @@ import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
 import * as fs from 'fs';
 
 describe('agents IPC handlers', () => {
-	let handlers: Map<string, Function>;
+	let handlers: Map<string, (...args: never[]) => unknown>;
 	let mockAgentDetector: {
 		detectAgents: ReturnType<typeof vi.fn>;
 		getAgent: ReturnType<typeof vi.fn>;
@@ -266,6 +266,88 @@ describe('agents IPC handlers', () => {
 				],
 			});
 		});
+
+		it('excludes sessions whose migrated SSH enabled value explicitly enables SSH', async () => {
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+				},
+				codex: {
+					customEnvVars: { CODEX_HOME: '/Users/me/.codex-agent' },
+				},
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 'true' },
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/remote/.claude-migrated' },
+					},
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 'TRUE' },
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/remote/.claude-uppercase' },
+					},
+					{
+						toolType: 'codex',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 1 },
+						customEnvVars: { CODEX_HOME: '/remote/.codex-migrated' },
+					},
+				]),
+			};
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+			});
+
+			const handler = handlers.get('agents:getKnownAuthDirs');
+			const result = await handler?.({});
+
+			expect(result).toEqual({
+				claudeConfigDirs: [path.resolve('/Users/me/.claude-agent')],
+				codexHomes: [path.resolve('/Users/me/.codex-agent')],
+			});
+		});
+
+		it('includes session auth paths when a migrated SSH enabled value explicitly disables SSH', async () => {
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+				},
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 'false' },
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-migrated' },
+					},
+				]),
+			};
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+			});
+
+			const handler = handlers.get('agents:getKnownAuthDirs');
+			const result = await handler?.({});
+
+			expect(result).toEqual({
+				claudeConfigDirs: [
+					path.resolve('/Users/me/.claude-agent'),
+					path.resolve('/Users/me/.claude-migrated'),
+				],
+				codexHomes: [],
+			});
+		});
 	});
 
 	describe('agents:detect', () => {
@@ -309,6 +391,29 @@ describe('agents IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual([]);
+		});
+
+		it('should strip every arg-builder function so the payload survives IPC', async () => {
+			// A definition carries arg builders (including ones added after this test was
+			// written). Leaving even one behind makes the whole response fail to structured
+			// clone, which strands the agent pickers on "Loading agents..." forever.
+			mockAgentDetector.detectAgents.mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					binaryName: 'claude',
+					available: true,
+					resumeArgs: (id: string) => ['--resume', id],
+					additionalDirArgs: (dirs: unknown[]) => dirs.map(() => '--add-dir'),
+					configOptions: [{ id: 'model', argBuilder: (v: string) => ['--model', v] }],
+				},
+			]);
+
+			const handler = handlers.get('agents:detect');
+			const result = await handler!({} as any);
+
+			expect(() => structuredClone(result)).not.toThrow();
+			expect(result[0].id).toBe('claude-code');
 		});
 
 		it('should include agent id and path for each detected agent', async () => {
@@ -1417,7 +1522,7 @@ describe('agents IPC handlers', () => {
 			});
 
 			// An unexpected failure on the skills dir (e.g. EACCES) should
-			// NOT tear down the slash-command list — enrichment is
+			// NOT tear down the slash-command list - enrichment is
 			// best-effort. The error is still captured by Sentry inside
 			// discoverSlashCommands; the list itself survives.
 			vi.mocked(fs.promises.readdir).mockImplementation(async () => {
@@ -1491,7 +1596,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// No built-in commands — only custom .md commands are discoverable
+			// No built-in commands - only custom .md commands are discoverable
 			expect(result).toEqual([]);
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
@@ -1647,7 +1752,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// Array config ignored, no built-ins — result should be empty
+			// Array config ignored, no built-ins - result should be empty
 			expect(result).toEqual([]);
 		});
 
@@ -1672,7 +1777,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// Malformed JSON skipped gracefully, no built-ins — empty result
+			// Malformed JSON skipped gracefully, no built-ins - empty result
 			expect(result).toEqual([]);
 		});
 
@@ -1875,7 +1980,7 @@ describe('agents IPC handlers', () => {
 			const result = await handler({} as any);
 
 			expect(runSpy).toHaveBeenCalledTimes(1);
-			// Manual refresh must opt into the aggressive sampling path — startup
+			// Manual refresh must opt into the aggressive sampling path - startup
 			// mode would skip when no maestro-p session exists.
 			expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'manual' }));
 			expect(result).toEqual({ refreshed: 2 });

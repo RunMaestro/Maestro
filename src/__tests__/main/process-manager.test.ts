@@ -12,6 +12,16 @@ vi.mock('node-pty', () => ({
 	spawn: vi.fn(),
 }));
 
+const { mockExecFile, mockExecFileSync } = vi.hoisted(() => ({
+	mockExecFile: vi.fn(),
+	mockExecFileSync: vi.fn(),
+}));
+
+vi.mock('child_process', async (importOriginal) => {
+	const actual = await importOriginal();
+	return { ...actual, execFile: mockExecFile, execFileSync: mockExecFileSync };
+});
+
 // Mock logger to avoid any side effects
 vi.mock('../../main/utils/logger', () => ({
 	logger: {
@@ -22,7 +32,7 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock platform detection — delegates to process.platform by default so
+// Mock platform detection - delegates to process.platform by default so
 // pre-existing tests that override process.platform still work. Kill-method
 // tests override via mockReturnValueOnce / mockReturnValue.
 const { mockIsWindows } = vi.hoisted(() => ({
@@ -34,6 +44,7 @@ vi.mock('../../shared/platformDetection', () => ({
 }));
 
 import * as fs from 'fs';
+import { logger } from '../../main/utils/logger';
 
 import {
 	aggregateModelUsage,
@@ -368,6 +379,8 @@ describe('process-manager.ts', () => {
 
 		beforeEach(() => {
 			processManager = new ProcessManager();
+			mockExecFile.mockClear();
+			mockExecFileSync.mockClear();
 		});
 
 		describe('error detection exports', () => {
@@ -557,7 +570,7 @@ describe('process-manager.ts', () => {
 			});
 		});
 
-		describe('kill method — Windows PTY tree kill', () => {
+		describe('kill method - Windows PTY tree kill', () => {
 			let killWindowsTreeSpy: ReturnType<typeof vi.spyOn>;
 
 			beforeEach(() => {
@@ -591,6 +604,33 @@ describe('process-manager.ts', () => {
 
 				expect(killWindowsTreeSpy).toHaveBeenCalledWith(12345, 'pty-session', false);
 				expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+
+				killWindowsTreeSpy.mockRestore();
+				const error = new Error('taskkill failed');
+				mockExecFile.mockImplementationOnce(
+					(_command: string, _arguments: string[], callback: (callbackError: Error) => void) =>
+						callback(error)
+				);
+				// The private helper is the behavior selected by the public Windows kill path.
+				const managerWithPrivateKill = processManager as unknown as {
+					killWindowsProcessTree: (pid: number, sessionId: string, sync?: boolean) => void;
+				};
+				expect(() =>
+					managerWithPrivateKill.killWindowsProcessTree(12345, 'async-session')
+				).not.toThrow();
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'taskkill',
+					['/pid', '12345', '/t', '/f'],
+					expect.any(Function)
+				);
+				expect(logger.debug).toHaveBeenCalledWith(
+					'[ProcessManager] taskkill exited with error (process may already be terminated)',
+					'ProcessManager',
+					{ sessionId: 'async-session', pid: 12345, error: String(error) }
+				);
+				killWindowsTreeSpy = vi
+					.spyOn(ProcessManager.prototype as never, 'killWindowsProcessTree' as never)
+					.mockImplementation(() => {});
 			});
 
 			it('should use SIGTERM for PTY processes on non-Windows', () => {
@@ -697,7 +737,7 @@ describe('process-manager.ts', () => {
 						shell: 'zsh',
 					});
 				} catch {
-					// spawn may fail due to mock — we only care about the kill call
+					// spawn may fail due to mock - we only care about the kill call
 				}
 
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGTERM');
@@ -710,6 +750,7 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should kill all processes even when kill() deletes from the map', () => {
+				mockIsWindows.mockReturnValue(true);
 				const kills: string[] = [];
 				const originalKill = processManager.kill.bind(processManager);
 				processManager.kill = (sessionId: string, opts?: { sync?: boolean }) => {
@@ -741,9 +782,14 @@ describe('process-manager.ts', () => {
 
 				expect(kills).toEqual(expect.arrayContaining(['a', 'b', 'c']));
 				expect(kills).toHaveLength(3);
+				expect(mockExecFileSync).toHaveBeenCalledTimes(3);
+				expect(mockExecFileSync).toHaveBeenCalledWith('taskkill', ['/pid', '1', '/t', '/f'], {
+					timeout: 5000,
+				});
 			});
 
 			it('should pass sync: true to kill() so Windows taskkill blocks until complete', () => {
+				mockIsWindows.mockReturnValue(true);
 				const killSpy = vi.spyOn(processManager, 'kill');
 
 				const processes = (processManager as any).processes as Map<string, any>;
@@ -767,6 +813,9 @@ describe('process-manager.ts', () => {
 				processManager.killAll();
 
 				expect(killSpy).toHaveBeenCalledWith('sync-test', { sync: true, shutdown: false });
+				expect(mockExecFileSync).toHaveBeenCalledWith('taskkill', ['/pid', '1', '/t', '/f'], {
+					timeout: 5000,
+				});
 				killSpy.mockRestore();
 			});
 
@@ -798,10 +847,12 @@ describe('process-manager.ts', () => {
 
 				processManager.killAll({ shutdown: true });
 
-				// SIGKILL only — no SIGTERM, no escalation timer, no onExit listener.
+				// SIGKILL only - no SIGTERM, no escalation timer, no onExit listener.
 				expect(mockPtyKill).toHaveBeenCalledTimes(1);
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGKILL');
 				expect(mockOnExit).not.toHaveBeenCalled();
+				expect(mockExecFile).not.toHaveBeenCalled();
+				expect(mockExecFileSync).not.toHaveBeenCalled();
 			});
 		});
 	});

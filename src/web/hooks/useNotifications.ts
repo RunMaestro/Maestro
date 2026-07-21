@@ -279,7 +279,7 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
 		requestPermission,
 	]);
 
-	// Notification preferences state — persisted to localStorage
+	// Notification preferences state - persisted to localStorage
 	const [preferences, setPreferencesState] = useState<NotificationPreferences>(() => {
 		if (typeof localStorage === 'undefined') return DEFAULT_PREFERENCES;
 		try {

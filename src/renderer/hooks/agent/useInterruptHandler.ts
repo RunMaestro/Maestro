@@ -1,5 +1,5 @@
 /**
- * useInterruptHandler — extracted from App.tsx
+ * useInterruptHandler - extracted from App.tsx
  *
  * Handles interrupting/stopping running AI processes:
  *   - Sends SIGINT to active process (AI or terminal mode)
@@ -8,10 +8,14 @@
  *   - Processes execution queue after interruption
  *   - Falls back to force-kill if graceful interrupt fails
  *
- * Reads from: sessionStore (activeSession, sessions)
+ * PERF: Reads activeSession via getState() at interrupt time so App does not
+ * re-render when the active session / session list changes. Non-store deps are
+ * kept in a ref so handleInterrupt keeps a stable identity.
+ *
+ * Reads from: sessionStore (activeSession, sessions) at event time
  */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
@@ -50,19 +54,18 @@ export interface UseInterruptHandlerReturn {
 // ============================================================================
 
 export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterruptHandlerReturn {
-	const { sessionsRef, cancelPendingSynopsis, processQueuedItem } = deps;
-
-	// --- Reactive subscriptions ---
-	const activeSession = useSessionStore(selectActiveSession);
-
-	// --- Store actions (stable via getState) ---
-	const { setSessions } = useSessionStore.getState();
+	const depsRef = useRef(deps);
+	depsRef.current = deps;
 
 	// ========================================================================
-	// handleInterrupt — interrupt the active process
+	// handleInterrupt - interrupt the active process
 	// ========================================================================
 	const handleInterrupt = useCallback(async () => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
+
+		const { sessionsRef, cancelPendingSynopsis, processQueuedItem } = depsRef.current;
+		const { setSessions } = useSessionStore.getState();
 
 		const currentMode = activeSession.inputMode;
 		const activeTab = getActiveTab(activeSession);
@@ -99,7 +102,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						interruptPromises.push((window as any).maestro.process.interrupt(fp.sessionId));
 					}
 				} catch {
-					// Non-critical — forced parallel lookup failure shouldn't block interrupt
+					// Non-critical - forced parallel lookup failure shouldn't block interrupt
 				}
 			}
 
@@ -499,7 +502,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				}
 			}
 		}
-	}, [activeSession, setSessions, cancelPendingSynopsis, sessionsRef, processQueuedItem]);
+	}, []);
 
 	return { handleInterrupt };
 }

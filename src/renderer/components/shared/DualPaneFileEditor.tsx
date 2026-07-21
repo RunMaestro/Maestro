@@ -1,5 +1,5 @@
 /**
- * DualPaneFileEditor — shared split-pane editor chrome.
+ * DualPaneFileEditor - shared split-pane editor chrome.
  *
  * A file-list on the left and an editor on the right, with:
  *   - Optional category grouping with collapsible headers
@@ -55,7 +55,7 @@ export interface DualPaneFileEditorProps {
 	/** Currently selected item id (or null for none). */
 	selectedId: string | null;
 
-	/** Select handler — consumer should guard unsaved changes before accepting. */
+	/** Select handler - consumer should guard unsaved changes before accepting. */
 	onSelect: (id: string) => void;
 
 	/** Display name lookup by category key. If omitted the list renders flat. */
@@ -82,7 +82,7 @@ export interface DualPaneFileEditorProps {
 	/** Description shown below the title (hidden when editor is expanded). */
 	editorDescription?: string;
 
-	/** Live token count for the edited document — shown next to the editor title. */
+	/** Live token count for the edited document - shown next to the editor title. */
 	editorTokenCount?: number;
 
 	/** Extra buttons in the editor header row (preview, help, expand toggles). */
@@ -104,7 +104,7 @@ export interface DualPaneFileEditorProps {
 	/** Optional secondary action button (e.g., Reset to Default, Delete). */
 	secondaryAction?: DualPaneFileEditorAction;
 
-	/** Optional "Open in Finder" — supplies the absolute path. */
+	/** Optional "Open in Finder" - supplies the absolute path. */
 	openInFinderPath?: string | null;
 
 	/** Success message shown above the editor body. */
@@ -210,7 +210,7 @@ export function DualPaneFileEditor({
 
 	// Scroll the selected item into view on first reveal (initial mount or
 	// when the list re-appears after being hidden by isExpanded/showHelp).
-	// We only auto-scroll once per reveal — user-driven selections already
+	// We only auto-scroll once per reveal - user-driven selections already
 	// scroll via click focus, and we don't want to yank the list on every
 	// render.
 	const listRef = useRef<HTMLDivElement | null>(null);
@@ -493,7 +493,7 @@ export function DualPaneFileEditor({
 							}}
 							title={
 								item.hasDefaultDrifted
-									? 'Customized — bundled default has changed since you saved this'
+									? 'Customized - bundled default has changed since you saved this'
 									: 'Customized'
 							}
 						>

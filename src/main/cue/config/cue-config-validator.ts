@@ -11,7 +11,7 @@ function validateGlobPattern(pattern: string, prefix: string, errors: string[]):
 	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
 	// via chokidar, so any pattern that escapes the project root (via `..`
 	// segments, an absolute POSIX path, or a Windows drive letter) would allow
-	// watching arbitrary files on disk. Reject those shapes up-front — the
+	// watching arbitrary files on disk. Reject those shapes up-front - the
 	// runtime guard in `cue-file-watcher.ts` is the defense-in-depth backstop.
 	const segments = pattern.split(/[\\/]/);
 	if (segments.includes('..')) {
@@ -26,7 +26,7 @@ function validateGlobPattern(pattern: string, prefix: string, errors: string[]):
 		);
 		return;
 	}
-	// Match any leading `X:` drive letter — both drive-absolute (`C:\foo`,
+	// Match any leading `X:` drive letter - both drive-absolute (`C:\foo`,
 	// `C:/foo`) and drive-relative (`C:secret\foo`) forms. Drive-relative
 	// paths resolve against Windows' per-drive current-directory table and
 	// can escape the project root just as effectively as the absolute forms.
@@ -132,7 +132,7 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 
 	if (isCommand) {
 		validateCommandField(subRecord.command, prefix, errors);
-		// Fan-out targets sessions, not subscriptions — combining it with
+		// Fan-out targets sessions, not subscriptions - combining it with
 		// `action: command` would execute the command once per target session,
 		// which is never the user's intent (the pipeline editor already blocks
 		// this; this guard catches hand-edited YAML).
@@ -140,7 +140,7 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 			errors.push(`${prefix}: "fan_out" is not supported when action is "command"`);
 		}
 	} else if (isNotify) {
-		// Notify is a toast surfaced through the owning agent — no prompt, no
+		// Notify is a toast surfaced through the owning agent - no prompt, no
 		// command, no fan-out. The toast body comes from `notify.message`
 		// (with fallback chain handled by the notify executor).
 		if (
@@ -194,11 +194,11 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 		// `fan_out_prompt_files` (file references, preferred) or
 		// `fan_out_prompts` (legacy inline array). Either satisfies the "prompt
 		// required" check even when the shared `prompt` / `prompt_file` fields
-		// are absent — otherwise the loader's lenient partition rejects the
+		// are absent - otherwise the loader's lenient partition rejects the
 		// subscription and the whole pipeline disappears from the UI on save.
 		//
 		// If either field is *present* we validate its elements strictly and
-		// surface an explicit error on malformed entries — rather than silently
+		// surface an explicit error on malformed entries - rather than silently
 		// treating a malformed array as "absent" and letting dispatch fall
 		// through to the shared prompt with no indication anything's wrong.
 		let hasFanOutPromptFiles = false;
@@ -416,7 +416,7 @@ function validateEventSpecificFields(
 			}
 		}
 		// `source_sub` narrows chain matching by the upstream subscription's
-		// `triggeredBy` value. Optional — when absent the chain matches any
+		// `triggeredBy` value. Optional - when absent the chain matches any
 		// run in the source session(s). When present, reject non-string or
 		// empty values so a malformed YAML entry can't silently disable the
 		// self-loop filter and re-introduce the re-trigger class of bugs.
@@ -450,7 +450,7 @@ function validateEventSpecificFields(
 		}
 		// For fan-in chains, source_sub should align positionally with
 		// source_session so each upstream source maps to its exact upstream sub.
-		// Skip when either side is null/undefined — the required-field check
+		// Skip when either side is null/undefined - the required-field check
 		// above already errored on absent source_session, and re-emitting a
 		// misleading "must be a string when source_session is a string" here
 		// just adds noise. `!= null` intentionally treats `null` and `undefined`
@@ -536,7 +536,7 @@ function validateEventSpecificFields(
 	} else if (event === 'app.startup') {
 		// No additional required fields for the startup trigger.
 	} else if (event === 'cli.trigger') {
-		// No additional required fields — triggered manually via maestro-cli.
+		// No additional required fields - triggered manually via maestro-cli.
 	} else if (
 		sub.event &&
 		typeof sub.event === 'string' &&
@@ -558,7 +558,7 @@ function validateSettings(rawSettings: unknown): string[] {
 	const settings = rawSettings as Record<string, unknown>;
 	if (settings.timeout_minutes !== undefined) {
 		// `0`, negative, NaN, or Infinity all reach `cue-run-manager` as a ms
-		// timeout — `0` aborts every run on dispatch, `Infinity` hangs forever.
+		// timeout - `0` aborts every run on dispatch, `Infinity` hangs forever.
 		// 1440 (24 h) is a generous upper bound; anything higher is almost
 		// certainly a typo.
 		if (
@@ -652,7 +652,7 @@ export function validateCueConfigDocument(config: unknown): { valid: boolean; er
  * passed validation along with per-subscription errors for the failures, plus
  * any config-level errors (missing subscriptions array, bad settings).
  *
- * Used to load valid subs while logging warnings for broken ones — one bad
+ * Used to load valid subs while logging warnings for broken ones - one bad
  * subscription must not block an entire project's Cue config (which can be
  * shared across multiple agents in the same project root).
  */
@@ -670,7 +670,7 @@ export function partitionValidSubscriptions(config: unknown): PartitionedValidat
 	};
 
 	if (config === null || config === undefined) {
-		// comments-only or empty file — no config errors, no subscriptions
+		// comments-only or empty file - no config errors, no subscriptions
 		return result;
 	}
 
@@ -700,7 +700,7 @@ export function partitionValidSubscriptions(config: unknown): PartitionedValidat
 				const normalized = name.trim();
 				if (normalized) {
 					if (seenNames.has(normalized)) {
-						dupeError = `${prefix}: duplicate subscription name "${normalized}" — skipped`;
+						dupeError = `${prefix}: duplicate subscription name "${normalized}" - skipped`;
 					} else {
 						seenNames.add(normalized);
 					}

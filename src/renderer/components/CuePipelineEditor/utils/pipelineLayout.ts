@@ -20,7 +20,7 @@ import type {
  * nodes use timestamp-based ids (`trigger-1741234567890`, `agent-s1-1741234567900`)
  * while `yamlToPipeline` regenerates ids from a deterministic scheme on reload
  * (`trigger-0`, `agent-${sessionName}-${size}`). If we looked up positions by
- * node.id alone, first-save positions — keyed by the UI timestamp id —
+ * node.id alone, first-save positions - keyed by the UI timestamp id -
  * would miss every lookup on the next open and every node would snap back to
  * the auto-layout default.
  *
@@ -39,10 +39,10 @@ import type {
  *
  * Legacy fallbacks (kept so old saved layouts without these fields still
  * resolve):
- *   - trigger: `eventType + index_among_all_triggers` — fragile to YAML
+ *   - trigger: `eventType + index_among_all_triggers` - fragile to YAML
  *     reordering (e.g. the topo-sort introduced in #981 swaps trigger
  *     positions), which is why the subscriptionName key above was added.
- *   - agent:   `sessionKey + index_among_same_session_agents` — fragile to
+ *   - agent:   `sessionKey + index_among_same_session_agents` - fragile to
  *     same-session-multiple-instance reordering across reload.
  */
 function semanticNodeKeys(node: PipelineNode, allNodes: PipelineNode[]): string[] {
@@ -108,7 +108,7 @@ function semanticNodeKeys(node: PipelineNode, allNodes: PipelineNode[]): string[
  * the previously selected pipeline.
  *
  * When `savedLayout.selectedPipelineId` is explicitly `null` (meaning
- * "All Pipelines" was selected), that `null` is preserved — it is NOT
+ * "All Pipelines" was selected), that `null` is preserved - it is NOT
  * treated as "missing" and defaulted to the first pipeline.
  *
  * Each live pipeline is matched to a saved pipeline by id first (the normal
@@ -134,11 +134,11 @@ export function mergePipelinesWithSavedLayout(
 
 	const mergedPipelines = livePipelines.map((pipeline) => {
 		// Resolve which saved pipeline corresponds to this live one:
-		//   1. Id match — the normal case once ids have converged across a
+		//   1. Id match - the normal case once ids have converged across a
 		//      save-reload cycle. Required for the unsaved-rename case where
 		//      the saved pipeline's name differs from the live YAML name but
 		//      the id (derived from the original name) still matches.
-		//   2. Name match — catches the first-save case where the saved
+		//   2. Name match - catches the first-save case where the saved
 		//      layout was written under a different id scheme (e.g. legacy
 		//      timestamp ids from before this fix).
 		const savedMatch = savedById.get(pipeline.id) ?? savedByName.get(pipeline.name);
@@ -147,7 +147,7 @@ export function mergePipelinesWithSavedLayout(
 		// Color: YAML is authoritative since `pipeline_color` is persisted there.
 		const mergedName = savedMatch?.name ?? pipeline.name;
 		// YAML is authoritative for color (round-tripped via `pipeline_color`).
-		// Layout-JSON color is only consulted when the live pipeline has none —
+		// Layout-JSON color is only consulted when the live pipeline has none -
 		// which doesn't happen in practice because palette fallback always
 		// yields a value, but the fallback keeps the merge safe against future
 		// refactors that relax `pipeline.color`'s required-ness.
@@ -166,7 +166,7 @@ export function mergePipelinesWithSavedLayout(
 				positionsByNodeId.set(savedNode.id, savedNode.position);
 				const semKeys = semanticNodeKeys(savedNode, savedMatch.nodes);
 				for (const k of semKeys) {
-					// First wins — earlier keys are more stable identifiers,
+					// First wins - earlier keys are more stable identifiers,
 					// so a stable-key save shouldn't be overwritten by a
 					// fallback key produced by another saved node.
 					if (!positionsBySemantic.has(k)) {

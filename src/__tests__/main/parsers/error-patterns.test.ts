@@ -565,7 +565,7 @@ describe('error-patterns', () => {
 			describe('session_not_found patterns', () => {
 				// Real stderr emitted by `codex exec resume <id>` (codex-cli 0.130.0)
 				// when the rollout file backing the thread is missing. Regression
-				// guard for #1042 — must NOT fall through to agent_crashed.
+				// guard for #1042 - must NOT fall through to agent_crashed.
 				it('should match Codex "no rollout found for thread id" resume failure', () => {
 					const stderr =
 						'Error: thread/resume: thread/resume failed: no rollout found for thread id 019e4aa3-5e01-73e1-9f61-d3961386dafd (code -32600)';
@@ -583,6 +583,93 @@ describe('error-patterns', () => {
 				it('should match generic "session not found"', () => {
 					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'session not found');
 					expect(result?.type).toBe('session_not_found');
+				});
+			});
+		});
+
+		describe('Grok-specific patterns', () => {
+			const GROK_ERROR_PATTERNS = getErrorPatterns('grok');
+
+			describe('session_not_found patterns', () => {
+				// Real stderr from `grok -p "hi" --resume <bad-uuid>
+				// --output-format streaming-json` (grok v0.2.93). Stdout carries
+				// no JSON error event for this failure, so the stderr string is
+				// the only signal.
+				it('should match the Grok "Failed to restore session" resume failure', () => {
+					const stderr =
+						'Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found';
+					const result = matchErrorPattern(GROK_ERROR_PATTERNS, stderr);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('session_not_found');
+					expect(result?.recoverable).toBe(true);
+				});
+
+				it('should match the standalone "session get failed" cause', () => {
+					const result = matchErrorPattern(
+						GROK_ERROR_PATTERNS,
+						'session get failed: 404 Not Found'
+					);
+					expect(result?.type).toBe('session_not_found');
+				});
+
+				it('should NOT match the informational "not found locally" restore line', () => {
+					// This line also precedes successful remote restores.
+					const result = matchErrorPattern(
+						GROK_ERROR_PATTERNS,
+						'Session 019f47fb-2316-7f21-98db-55907d4ddb60 not found locally, restoring from remote...'
+					);
+					expect(result).toBeNull();
+				});
+			});
+
+			describe('auth_expired patterns', () => {
+				it('should match multi-token authentication failures', () => {
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'Not authenticated. Please run grok login')?.type
+					).toBe('auth_expired');
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'Authentication failed on remote host')?.type
+					).toBe('auth_expired');
+					expect(
+						matchErrorPattern(GROK_ERROR_PATTERNS, 'HTTP 401 Unauthorized request')?.type
+					).toBe('auth_expired');
+				});
+
+				it('should NOT match bare 401 status alone', () => {
+					// Bare codes misclassify unrelated failures into auth recovery UX.
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Error 401')).toBeNull();
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'status 401')).not.toBeNull();
+				});
+			});
+
+			describe('rate_limited patterns', () => {
+				it('should match multi-token rate limit failures', () => {
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Rate limit exceeded')?.type).toBe(
+						'rate_limited'
+					);
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Too many requests, slow down')?.type).toBe(
+						'rate_limited'
+					);
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'HTTP 429 from API')?.type).toBe(
+						'rate_limited'
+					);
+				});
+
+				it('should NOT match bare 429 status alone', () => {
+					expect(matchErrorPattern(GROK_ERROR_PATTERNS, 'Error 429')).toBeNull();
+				});
+			});
+
+			describe('agent_crashed patterns', () => {
+				// Real message from `grok -p "hi" -m nonexistent-model-xyz`
+				// (grok v0.2.93).
+				it('should match the Grok bad-model failure', () => {
+					const message =
+						"Couldn't set model 'nonexistent-model-xyz': Invalid params: \"unknown model id\". Run 'grok models' to see available models.";
+					const result = matchErrorPattern(GROK_ERROR_PATTERNS, message);
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('agent_crashed');
+					expect(result?.recoverable).toBe(true);
 				});
 			});
 		});
@@ -964,14 +1051,14 @@ describe('error-patterns', () => {
 		});
 
 		it('skips the regex bank for chunks shorter than the threshold', () => {
-			// "abc" is 3 chars — below threshold. Even if the patterns somehow
+			// "abc" is 3 chars - below threshold. Even if the patterns somehow
 			// matched, the length guard short-circuits before any regex runs.
 			const result = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'abc');
 			expect(result).toBeNull();
 		});
 
 		it('honors a caller-supplied minLength override (0 disables the guard)', () => {
-			// "rate limit" — would match rate_limited under the default guard
+			// "rate limit" - would match rate_limited under the default guard
 			// because it's 10 chars. With minLength: 0 the same behavior holds;
 			// just verifying the option is wired.
 			const noGuard = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'rate limit exceeded', {
@@ -982,7 +1069,7 @@ describe('error-patterns', () => {
 		});
 
 		it('honors a caller-supplied minLength that is higher than default', () => {
-			// "rate limit exceeded" is 19 chars — well above default. Pass a
+			// "rate limit exceeded" is 19 chars - well above default. Pass a
 			// minLength of 100 to force the guard to short-circuit.
 			const guarded = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'rate limit exceeded', {
 				minLength: 100,

@@ -35,7 +35,7 @@ export interface OutputSearchSlot {
 }
 
 export interface UIStoreState {
-	// Sidebar — tri-state via two booleans: !hidden && open = full panel,
+	// Sidebar - tri-state via two booleans: !hidden && open = full panel,
 	// !hidden && !open = collapsed status-dot strip, hidden = no panel at all.
 	leftSidebarOpen: boolean;
 	leftSidebarHidden: boolean;
@@ -169,13 +169,13 @@ export interface UIStoreActions {
 	setSidebarExtraSelection: (selection: SidebarExtraSelection | null) => void;
 
 	/**
-	 * Compatibility shim — fires a yellow center flash.
+	 * Compatibility shim - fires a yellow center flash.
 	 * New code should call `notifyCenterFlash({ message, color: 'yellow' })` directly.
 	 * Passing `null` is a no-op (auto-dismiss handles clearing).
 	 */
 	setFlashNotification: (msg: string | null | ((prev: string | null) => string | null)) => void;
 	/**
-	 * Compatibility shim — fires a themed center flash.
+	 * Compatibility shim - fires a themed center flash.
 	 * New code should call `notifyCenterFlash({ message })` directly (defaults to `theme`).
 	 * Passing `null` is a no-op (auto-dismiss handles clearing).
 	 */

@@ -85,7 +85,7 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 	// Map raw-YAML subscription indices (used by the validator) to their
 	// position in document.subscriptions, which is the normalized array.
 	// parseCueConfigDocument silently skips raw entries that aren't objects
-	// (e.g. `- "string-not-an-object"`), so the two arrays' indices drift —
+	// (e.g. `- "string-not-an-object"`), so the two arrays' indices drift -
 	// filtering the normalized array using raw-index errors would drop the
 	// wrong subscriptions. Build a translation table from the raw array.
 	const rawSubs = (parsed as Record<string, unknown>).subscriptions as unknown[];
@@ -122,7 +122,7 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 	const warnings = [...materialized.warnings];
 	for (const entry of partitioned.subscriptionErrors) {
 		const detail = entry.errors.join('; ');
-		warnings.push(`Skipped invalid subscription at index ${entry.index} — ${detail}`);
+		warnings.push(`Skipped invalid subscription at index ${entry.index} - ${detail}`);
 	}
 
 	return { ok: true, config: materialized.config, warnings };

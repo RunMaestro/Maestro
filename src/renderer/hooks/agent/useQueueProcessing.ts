@@ -1,12 +1,18 @@
 /**
- * useQueueProcessing — extracted from App.tsx
+ * useQueueProcessing - extracted from App.tsx
  *
  * Handles execution queue processing:
  *   - Delegates queued item execution to agentStore
  *   - Maintains processQueuedItemRef for batch exit handler
  *   - Recovers stuck queued items from previous app session on startup
  *
- * Reads from: sessionStore (sessionsLoaded, sessions), agentStore, settingsStore
+ * PERF: Does not subscribe to the full `sessions` array. A compact
+ * `idleQueuedSignature` string only changes when an idle session gains or
+ * loses a runnable queue item, so MaestroConsoleInner is not re-rendered on
+ * log/token/busy streaming updates. Session objects are read via getState()
+ * inside effects at event time.
+ *
+ * Reads from: sessionStore (sessionsLoaded, idle-queue signature), agentStore
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -17,6 +23,7 @@ import type {
 	SpecKitCommand,
 	OpenSpecCommand,
 	BmadCommand,
+	Session,
 } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore } from '../../stores/agentStore';
@@ -59,43 +66,52 @@ export interface UseQueueProcessingReturn {
 }
 
 // ============================================================================
+// Selectors
+// ============================================================================
+
+/**
+ * Stable string that changes only when the set of idle sessions with a
+ * runnable queue item changes (session id + next runnable item id).
+ */
+export function selectIdleQueuedSignature(state: { sessions: Session[] }): string {
+	return state.sessions
+		.filter((sess) => sess.state === 'idle' && hasRunnableQueueItem(sess.executionQueue ?? []))
+		.map((sess) => {
+			const item = nextRunnableQueueItem(sess.executionQueue ?? []);
+			return `${sess.id}:${item?.id ?? ''}`;
+		})
+		.join('|');
+}
+
+// ============================================================================
 // Hook implementation
 // ============================================================================
 
 export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProcessingReturn {
-	const {
-		conductorProfile,
-		customAICommandsRef,
-		speckitCommandsRef,
-		openspecCommandsRef,
-		bmadCommandsRef,
-	} = deps;
+	const depsRef = useRef(deps);
+	depsRef.current = deps;
 
-	// --- Reactive subscriptions ---
+	// --- Narrow reactive subscriptions (not the full sessions array) ---
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
-	const sessions = useSessionStore((s) => s.sessions);
-
-	// --- Store actions (stable via getState) ---
-	const { setSessions } = useSessionStore.getState();
+	const idleQueuedSignature = useSessionStore(selectIdleQueuedSignature);
 
 	// --- Refs ---
 	const processQueuedItemRef = useRef<
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
 
-	// Process a queued item - delegates to agentStore action
-	const processQueuedItem = useCallback(
-		async (sessionId: string, item: QueuedItem) => {
-			await useAgentStore.getState().processQueuedItem(sessionId, item, {
-				conductorProfile,
-				customAICommands: customAICommandsRef.current ?? [],
-				speckitCommands: speckitCommandsRef.current ?? [],
-				openspecCommands: openspecCommandsRef.current ?? [],
-				bmadCommands: bmadCommandsRef?.current ?? [],
-			});
-		},
-		[conductorProfile, bmadCommandsRef]
-	);
+	// Process a queued item - delegates to agentStore action.
+	// Stable identity: conductor profile + command refs read from depsRef.
+	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
+		const d = depsRef.current;
+		await useAgentStore.getState().processQueuedItem(sessionId, item, {
+			conductorProfile: d.conductorProfile,
+			customAICommands: d.customAICommandsRef.current ?? [],
+			speckitCommands: d.speckitCommandsRef.current ?? [],
+			openspecCommands: d.openspecCommandsRef.current ?? [],
+			bmadCommands: d.bmadCommandsRef?.current ?? [],
+		});
+	}, []);
 
 	// Update ref for processQueuedItem so batch exit handler can use it
 	processQueuedItemRef.current = processQueuedItem;
@@ -104,6 +120,8 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Shared by startup recovery and runtime queue recovery.
 	const dispatchQueuedItem = useCallback(
 		(session: { id: string; executionQueue: QueuedItem[] }) => {
+			const { setSessions } = useSessionStore.getState();
+
 			// Skip paused items: dispatch the first runnable one. If all items are
 			// held, there's nothing to do.
 			const firstItem = nextRunnableQueueItem(session.executionQueue);
@@ -160,7 +178,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			processQueuedItem(session.id, firstItem).catch((err) => {
 				console.error(`[QueueProcessing] Failed for session ${session.id}:`, err);
 				// Reset session busy state and re-queue the failed item so it isn't lost
-				setSessions((prev) =>
+				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== session.id) return s;
 						return {
@@ -183,7 +201,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 				);
 			});
 		},
-		[processQueuedItem, setSessions]
+		[processQueuedItem]
 	);
 
 	// Process any queued items left over from previous session (after app restart)
@@ -195,18 +213,29 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		if (!sessionsLoaded || startupRecoveryRan.current) return;
 		startupRecoveryRan.current = true;
 
-		const sessionsWithQueuedItems = sessions.filter(
+		const sessions = useSessionStore.getState().sessions;
+		const hasStartupItems = sessions.some(
 			(s) => s.state === 'idle' && hasRunnableQueueItem(s.executionQueue ?? [])
 		);
 
-		if (sessionsWithQueuedItems.length > 0) {
+		if (hasStartupItems) {
 			logger.info(
-				`[QueueProcessing] Found ${sessionsWithQueuedItems.length} session(s) with leftover queued items from previous session`
+				`[QueueProcessing] Found idle session(s) with leftover queued items from previous session`
 			);
 
-			// Delay to ensure all refs and handlers are set up
+			// Delay to ensure all refs and handlers are set up. Re-scan at fire
+			// time (do not close over the mount-time list): a session can become
+			// idle+runnable during the 500ms window, and the runtime-recovery
+			// effect may have already bailed while startupRecoveryComplete was
+			// false with a settled signature, so it would never retry. The old
+			// full-sessions subscription masked that; the narrow signature does not.
 			const startupTimerId = setTimeout(() => {
-				sessionsWithQueuedItems.forEach((session) => {
+				const toRecover = useSessionStore
+					.getState()
+					.sessions.filter(
+						(s) => s.state === 'idle' && hasRunnableQueueItem(s.executionQueue ?? [])
+					);
+				toRecover.forEach((session) => {
 					logger.info(
 						`[QueueProcessing] Startup recovery for session ${session.id.substring(0, 8)}:`,
 						undefined,
@@ -222,10 +251,10 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			}, 500);
 			return () => clearTimeout(startupTimerId);
 		} else {
-			// No startup items to process — runtime recovery can start immediately
+			// No startup items to process - runtime recovery can start immediately
 			startupRecoveryComplete.current = true;
 		}
-	}, [sessionsLoaded, sessions, dispatchQueuedItem]);
+	}, [sessionsLoaded, dispatchQueuedItem]);
 
 	// Runtime queue recovery: process queued items when sessions transition to idle
 	// while items remain in the queue. This handles cases where onExit skipped queue
@@ -240,18 +269,22 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// limit isn't in the queue, so it's captured separately as
 	// `recoveryAction.lastUserPrompt` in useAgentErrorListener for the coordinator
 	// to re-fire.
+	//
+	// Triggered by idleQueuedSignature (not full sessions) so streaming updates
+	// do not re-enter this effect or re-render MaestroConsoleInner.
 	useEffect(() => {
 		if (!sessionsLoaded || !startupRecoveryComplete.current) return;
 
+		const sessions = useSessionStore.getState().sessions;
 		for (const session of sessions) {
 			if (session.state === 'idle' && hasRunnableQueueItem(session.executionQueue ?? [])) {
 				console.log(
-					`[QueueProcessing] Runtime recovery — dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
+					`[QueueProcessing] Runtime recovery - dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
 				);
 				dispatchQueuedItem(session);
 			}
 		}
-	}, [sessionsLoaded, sessions, dispatchQueuedItem]);
+	}, [sessionsLoaded, idleQueuedSignature, dispatchQueuedItem]);
 
 	return {
 		processQueuedItem,

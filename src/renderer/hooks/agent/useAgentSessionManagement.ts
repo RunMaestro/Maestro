@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
-import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
 import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
@@ -69,8 +69,6 @@ export interface HistoryEntryInput {
  * Dependencies for the useAgentSessionManagement hook.
  */
 export interface UseAgentSessionManagementDeps {
-	/** Current active session (null if none selected) */
-	activeSession: Session | null;
 	/** Session state setter */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Agent session ID setter */
@@ -120,9 +118,9 @@ export interface UseAgentSessionManagementReturn {
 export interface ResumeSessionOptions {
 	/**
 	 * Resume into a specific Maestro agent (Session.id) resolved fresh from the
-	 * store, rather than the closure's active session. Required when jumping
-	 * across agents (e.g. the Left Bar "Starred Sessions" list), where the active
-	 * session has just switched and the closure value is stale.
+	 * store, rather than the current active session. Required when jumping
+	 * across agents (e.g. the Left Bar "Starred Sessions" list), where the target
+	 * agent isn't the one currently active.
 	 */
 	targetSessionId?: string;
 	/**
@@ -141,6 +139,10 @@ export interface ResumeSessionOptions {
  * - Jumping to Agent sessions in the browser
  * - Resuming saved Agent sessions as tabs
  *
+ * The active session is not passed in as a dep; each callback resolves it
+ * fresh from the store (`selectActiveSession(useSessionStore.getState())`) at
+ * call time, so callers never risk acting on a stale closure value.
+ *
  * @param deps - Hook dependencies
  * @returns Session management functions and refs
  */
@@ -148,7 +150,6 @@ export function useAgentSessionManagement(
 	deps: UseAgentSessionManagementDeps
 ): UseAgentSessionManagementReturn {
 	const {
-		activeSession,
 		setSessions,
 		setActiveAgentSessionId,
 		setAgentSessionsOpen,
@@ -167,6 +168,8 @@ export function useAgentSessionManagement(
 	 */
 	const addHistoryEntry = useCallback(
 		async (entry: HistoryEntryInput) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+
 			// Use provided values or fall back to activeSession
 			const targetSessionId = entry.sessionId || activeSession?.id;
 			const targetProjectPath = entry.projectPath || activeSession?.cwd;
@@ -247,7 +250,7 @@ export function useAgentSessionManagement(
 			// Refresh history panel to show the new entry
 			rightPanelRef.current?.refreshHistoryPanel();
 		},
-		[activeSession, rightPanelRef]
+		[rightPanelRef]
 	);
 
 	/**
@@ -255,6 +258,8 @@ export function useAgentSessionManagement(
 	 */
 	const handleJumpToAgentSession = useCallback(
 		(agentSessionId: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+
 			// Set the agent session ID and load its messages
 			if (activeSession) {
 				setActiveAgentSessionId(agentSessionId);
@@ -262,7 +267,7 @@ export function useAgentSessionManagement(
 				setAgentSessionsOpen(true);
 			}
 		},
-		[activeSession, setActiveAgentSessionId, setAgentSessionsOpen]
+		[setActiveAgentSessionId, setAgentSessionsOpen]
 	);
 
 	/**
@@ -281,8 +286,9 @@ export function useAgentSessionManagement(
 		): Promise<boolean> => {
 			// Resolve the agent to resume into. When a targetSessionId is provided
 			// (cross-agent jump, e.g. starred sessions), read it fresh from the store
-			// because the active session may have just switched and the `activeSession`
-			// closure is stale. Otherwise operate on the current active session.
+			// by id. Otherwise fall back to the current active session, also resolved
+			// fresh so it can't be a stale closure value.
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			const targetSession = opts?.targetSessionId
 				? (selectSessionById(opts.targetSessionId)(useSessionStore.getState()) ?? null)
 				: activeSession;
@@ -353,7 +359,7 @@ export function useAgentSessionManagement(
 
 					// Convert to log entries, keeping messages with actual text content or
 					// reconstructed images. Tool-use-only messages (empty text, no images)
-					// are skipped — restored tabs start with thinking off so there's nothing
+					// are skipped - restored tabs start with thinking off so there's nothing
 					// useful to render for those entries.
 					messages = withoutSynopsis
 						.filter(
@@ -501,17 +507,7 @@ export function useAgentSessionManagement(
 				return false;
 			}
 		},
-		[
-			activeSession?.projectRoot,
-			activeSession?.id,
-			activeSession?.aiTabs,
-			activeSession?.toolType,
-			setSessions,
-			setActiveAgentSessionId,
-			defaultSaveToHistory,
-			defaultShowThinking,
-			showFlash,
-		]
+		[setSessions, setActiveAgentSessionId, defaultSaveToHistory, defaultShowThinking, showFlash]
 	);
 
 	// Update refs for slash command functions (so other handlers can access latest versions)

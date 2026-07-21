@@ -440,7 +440,7 @@ describe('Toast', () => {
 		});
 
 		it('shows 0s for exactly 0ms edge (not rendered due to guard)', () => {
-			// taskDuration of 0 is guarded — "does not display" already tested
+			// taskDuration of 0 is guarded - "does not display" already tested
 			// But let's verify sub-second with exact 1000ms boundary
 			setStoreToasts([createMockToast({ taskDuration: 1000 })]);
 

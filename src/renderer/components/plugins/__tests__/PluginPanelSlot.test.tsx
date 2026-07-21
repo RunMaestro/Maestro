@@ -75,7 +75,7 @@ describe('PluginPanelSlot', () => {
 		const webview = container.querySelector('webview');
 		expect(webview).not.toBeNull();
 
-		// Isolated surface: per-plugin partition + the panel's own protocol URL —
+		// Isolated surface: per-plugin partition + the panel's own protocol URL -
 		// never inline HTML (srcdoc) and never an arbitrary URL.
 		expect(webview?.getAttribute('partition')).toBe('plugin:acme.tools');
 		expect(webview?.getAttribute('src')).toBe('plugin-panel://panel/acme.tools%2Fboard');

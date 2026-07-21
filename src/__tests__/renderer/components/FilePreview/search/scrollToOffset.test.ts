@@ -47,14 +47,14 @@ describe('buildRangeAtOffset', () => {
 	});
 
 	it('handles offsets that fall on a text node boundary', () => {
-		// "Hello" + " " + "world" across nested spans — text nodes are 5, 1, 5.
+		// "Hello" + " " + "world" across nested spans - text nodes are 5, 1, 5.
 		const el = mkTrackedBlock('<p><span>Hello</span> <span>world</span></p>');
 		const range = buildRangeAtOffset(el, 6, 5); // "world" (after Hello + space)
 		expect(range!.toString()).toBe('world');
 	});
 
 	it('builds a multi-node Range when the match spans an inline element', () => {
-		// Text: "the strong text here" — search "strong text" spans <strong> boundary.
+		// Text: "the strong text here" - search "strong text" spans <strong> boundary.
 		const el = mkTrackedBlock('<p>the <strong>strong</strong> text here</p>');
 		// Block text content: "the strong text here". "strong text" starts at 4, length 11.
 		const range = buildRangeAtOffset(el, 4, 11);
@@ -79,7 +79,7 @@ describe('buildRangeAtOffset', () => {
 
 	it('clamps the end to the last text node when length exceeds remaining content', () => {
 		const el = mkTrackedBlock('<p>ten chars!</p>');
-		// Block text is "ten chars!" — "chars!" begins at index 4. Ask for 999
+		// Block text is "ten chars!" - "chars!" begins at index 4. Ask for 999
 		// chars from there → clamps to the rest of the block ("chars!").
 		const range = buildRangeAtOffset(el, 4, 999);
 		expect(range).not.toBeNull();

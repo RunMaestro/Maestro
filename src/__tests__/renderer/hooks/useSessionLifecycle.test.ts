@@ -172,6 +172,7 @@ describe('useSessionLifecycle', () => {
 					'--arg1',
 					{ MY_VAR: 'value' },
 					'gpt-4',
+					'high',
 					8000,
 					{ enabled: true, remoteId: 'remote-1', workingDirOverride: '/remote' }
 				);
@@ -185,6 +186,7 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customArgs).toBe('--arg1');
 			expect(updated.customEnvVars).toEqual({ MY_VAR: 'value' });
 			expect(updated.customModel).toBe('gpt-4');
+			expect(updated.customEffort).toBe('high');
 			expect(updated.customContextWindow).toBe(8000);
 			expect(updated.sessionSshRemoteConfig).toEqual({
 				enabled: true,
@@ -246,6 +248,7 @@ describe('useSessionLifecycle', () => {
 				customArgs: '--old-args',
 				customEnvVars: { OLD_KEY: 'old' },
 				customModel: 'sonnet',
+				customEffort: 'high',
 				customContextWindow: 200000,
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -274,6 +277,7 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customArgs).toBeUndefined();
 			expect(updated.customEnvVars).toBeUndefined();
 			expect(updated.customModel).toBeUndefined();
+			expect(updated.customEffort).toBeUndefined();
 			expect(updated.customContextWindow).toBeUndefined();
 			// File preview tabs reset
 			expect(updated.filePreviewTabs).toEqual([]);

@@ -23,7 +23,7 @@ import type { QueuedItem } from '../types';
 /** Right panel tab within the group chat view */
 export type GroupChatRightTab = 'participants' | 'history';
 
-/** Group chat error state — tracks which chat has an error and from which participant */
+/** Group chat error state - tracks which chat has an error and from which participant */
 export interface GroupChatErrorState {
 	groupChatId: string;
 	error: AgentError;

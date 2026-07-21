@@ -27,7 +27,7 @@ const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
 // readPromptFile in cue-config-normalizer uses fs.realpathSync.native to harden
 // its containment check. These tests use fake paths (`/projects/test/...`) that
-// don't exist on disk, so we stub realpath as an identity function — the
+// don't exist on disk, so we stub realpath as an identity function - the
 // mocked paths have no symlinks, making this the correct canonical path.
 const mockRealpathSyncNative = vi.fn((p: string) => p);
 vi.mock('fs', () => {
@@ -658,7 +658,7 @@ subscriptions:
 			expect(changeHandler).toBeDefined();
 
 			changeHandler!();
-			expect(onChange).not.toHaveBeenCalled(); // Not yet — debounced
+			expect(onChange).not.toHaveBeenCalled(); // Not yet - debounced
 
 			vi.advanceTimersByTime(1000);
 			expect(onChange).toHaveBeenCalledTimes(1);
@@ -824,7 +824,7 @@ subscriptions:
 		});
 
 		it('rejects source_sub string when source_session is an array', () => {
-			// Symmetric to the previous test — guards the opposite shape-mismatch
+			// Symmetric to the previous test - guards the opposite shape-mismatch
 			// branch (`source_session` is an array but `source_sub` is a plain
 			// string) so the error message stays specific.
 			const result = validateCueConfig({
@@ -937,7 +937,7 @@ subscriptions:
 			// Regression: Commit 7 externalized per-agent fan-out prompts to
 			// individual files. The validator USED to require `prompt` or
 			// `prompt_file`, so these YAMLs were rejected by the lenient
-			// loader partition — which caused the entire pipeline to vanish
+			// loader partition - which caused the entire pipeline to vanish
 			// from the UI when the user saved differing per-agent prompts.
 			const result = validateCueConfig({
 				subscriptions: [
@@ -974,7 +974,7 @@ subscriptions:
 		});
 
 		it('rejects a fan-out subscription with empty fan_out_prompt_files array', () => {
-			// Empty array carries no prompts — don't let it slip past the
+			// Empty array carries no prompts - don't let it slip past the
 			// "at least one prompt source" check.
 			const result = validateCueConfig({
 				subscriptions: [
@@ -1093,7 +1093,7 @@ subscriptions:
 		});
 
 		// `timeout_minutes: 0` reaches `cue-run-manager` as a `0 ms` timeout
-		// and aborts every dispatched run on arrival — pipeline appears to do
+		// and aborts every dispatched run on arrival - pipeline appears to do
 		// nothing with no obvious error. Validate it the same way as the other
 		// settings fields.
 		it('rejects timeout_minutes of 0', () => {
@@ -1139,7 +1139,7 @@ subscriptions:
 			expect(result.valid).toBe(true);
 		});
 
-		// Same failure mode as timeout_minutes but per-subscription —
+		// Same failure mode as timeout_minutes but per-subscription -
 		// `fan_in_timeout_minutes: 0` makes the fan-in tracker expire every
 		// fan-in immediately on the first source's arrival, so the converging
 		// agent never fires.
@@ -1921,7 +1921,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — name validation', () => {
+	describe('validateCueConfig - name validation', () => {
 		it('rejects empty string subscription name', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -1991,7 +1991,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — schedule_times range validation', () => {
+	describe('validateCueConfig - schedule_times range validation', () => {
 		it('rejects schedule_times with hour out of range (25:00)', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -2075,7 +2075,7 @@ subscriptions:
 
 		// The trigger config UI lets users type either `6:30` or `06:30`. Save
 		// emits canonical HH:MM, but legacy YAML and hand-edits may carry the
-		// short form — accept it at validation time and let the normalizer
+		// short form - accept it at validation time and let the normalizer
 		// pad to two digits so the trigger source's includes-check still matches
 		// the wall clock.
 		it('accepts schedule_times with single-digit hour (6:30)', () => {
@@ -2111,7 +2111,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — interval_minutes upper bound', () => {
+	describe('validateCueConfig - interval_minutes upper bound', () => {
 		it('rejects interval_minutes above 10080 (7 days)', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -2252,7 +2252,7 @@ subscriptions:
 		});
 
 		it('picomatch accepts unbalanced bracket pattern without throwing', () => {
-			// picomatch treats [*.ts as a literal — it does NOT throw
+			// picomatch treats [*.ts as a literal - it does NOT throw
 			// so the try/catch validation passes it as valid
 			const result = validateCueConfig({
 				subscriptions: [
@@ -2322,7 +2322,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — app.startup', () => {
+	describe('validateCueConfig - app.startup', () => {
 		it('accepts a minimal app.startup subscription', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -2404,5 +2404,5 @@ subscriptions:
 	// findAncestorCueConfigRoot{,s} were removed when Cue moved to the
 	// per-agent-cwd model. Each session reads only its own cue.yaml; there
 	// is no parent-directory walk anymore. The tests for the removed
-	// functions were deleted with them — see git log for the prior cases.
+	// functions were deleted with them - see git log for the prior cases.
 });

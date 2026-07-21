@@ -77,10 +77,13 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		goalConfig: { goal, exitCriteria, maxIterations },
 	});
 
-	const renderProcessor = (sessions: Session[], groups: Group[]) =>
-		renderHook(() =>
+	const renderProcessor = (sessions: Session[], groups: Group[]) => {
+		useSessionStore.setState({
+			sessions,
+			activeSessionId: sessions[0]?.id ?? '',
+		} as never);
+		return renderHook(() =>
 			useBatchProcessor({
-				sessions,
 				groups,
 				onUpdateSession: mockOnUpdateSession,
 				onSpawnAgent: mockOnSpawnAgent,
@@ -89,10 +92,11 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 				onComplete: mockOnComplete,
 			})
 		);
+	};
 
 	/**
 	 * Find the final-summary history entry. Per-iteration entries now lead with
-	 * "Goal progress: N% — …", so the final summary is the "Goal …" entry that is
+	 * "Goal progress: N% - …", so the final summary is the "Goal …" entry that is
 	 * NOT a per-iteration progress line (its prefix comes from `exitReasonLabel`,
 	 * e.g. "Goal completed", "Goal run stalled").
 	 */
@@ -250,8 +254,8 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		const iterationEntries = mockOnAddHistoryEntry.mock.calls
 			.map((call) => call[0])
 			.filter((entry) => entry?.summary?.startsWith('Goal progress:'));
-		expect(iterationEntries[0].summary).toBe('Goal progress: 30% — scaffolded');
-		expect(iterationEntries[1].summary).toBe('Goal progress: 70% — data layer migrated');
+		expect(iterationEntries[0].summary).toBe('Goal progress: 30% - scaffolded');
+		expect(iterationEntries[1].summary).toBe('Goal progress: 70% - data layer migrated');
 
 		// The internal `<!-- maestro:... -->` control markers are stripped from the
 		// stored body so they can never leak into any history render surface.
@@ -535,7 +539,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			);
 		});
 
-		// Three marker-less iterations trip the stall — it does NOT spin forever.
+		// Three marker-less iterations trip the stall - it does NOT spin forever.
 		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(3);
 		const summary = finalSummaryEntry();
 		expect(summary.summary).toContain('stalled');
@@ -619,7 +623,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			);
 		});
 
-		// Stops at exactly the hard cap — not one iteration more.
+		// Stops at exactly the hard cap - not one iteration more.
 		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(GOAL_RUN_HARD_ITERATION_CAP);
 		const summary = finalSummaryEntry();
 		expect(summary.summary).toContain('iteration limit');
@@ -734,7 +738,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 			expect(finished).toBe(true);
 		});
 
-		// No second spawn — the loop broke at the stop check.
+		// No second spawn - the loop broke at the stop check.
 		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		const summary = finalSummaryEntry();
 		expect(summary.summary).toContain('stopped by user');

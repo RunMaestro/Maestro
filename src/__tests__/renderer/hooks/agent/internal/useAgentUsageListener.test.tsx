@@ -66,8 +66,8 @@ describe('useAgentUsageListener', () => {
 		};
 		// 'sess-1' has no `-ai-` suffix, so parseSessionId returns
 		// { actualSessionId: 'sess-1', tabId: null, baseSessionId: 'sess-1' }.
-		// The hook fires updateUsage twice — once for the tab (here null) and
-		// once for the session (always null) — so each session-id event
+		// The hook fires updateUsage twice - once for the tab (here null) and
+		// once for the session (always null) - so each session-id event
 		// produces two distinct routing calls.
 		handler!('sess-1', usage);
 
@@ -241,6 +241,42 @@ describe('useAgentUsageListener', () => {
 		const last = points[points.length - 1];
 		expect(last.contextWindow).toBe(300000);
 		expect(last.percentage).toBe(10); // round(30000 / 300000 * 100)
+	});
+
+	it('lets a resolved omp model window beat the configured 200k fallback', async () => {
+		// omp reports the model's real window per turn via `contextWindowResolved`,
+		// which must win over the agent-level 200k config default - the reported
+		// bug was opus's 1M window shown as 200k.
+		window.maestro.agents = {
+			// Test seam: only getConfig is exercised by the listener here.
+			getConfig: vi.fn().mockResolvedValue({ contextWindow: 200000 }),
+		} as unknown as typeof window.maestro.agents;
+		const session = createMockSession({ id: 'sess-1', toolType: 'omp' });
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		// Prime the configured-window cache to 200k so the assertion proves the
+		// resolved window beats a real configured value, not merely an empty one.
+		handler!('sess-1', { inputTokens: 10, outputTokens: 1, contextWindow: 200000 });
+		await vi.waitFor(() => expect(getCachedConfiguredContextWindow(session)).toBe(200000));
+
+		handler!('sess-1', {
+			inputTokens: 100000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(1000000);
+		expect(last.percentage).toBe(10); // round(100000 / 1000000 * 100)
 	});
 
 	it('falls back to accumulated growth estimate when contextPercentage is null', () => {

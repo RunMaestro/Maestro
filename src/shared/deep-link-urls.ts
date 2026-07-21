@@ -43,7 +43,7 @@ export function buildFileDeepLink(sessionId: string, filePath: string, line?: nu
 /**
  * Pure parser for `maestro://` URLs. Returns null for malformed or
  * unrecognized inputs. Free of side effects (no logging, no IPC) so it can
- * run in any process — main, renderer, or web/mobile.
+ * run in any process - main, renderer, or web/mobile.
  */
 export function parseMaestroDeepLink(url: string): ParsedDeepLink | null {
 	try {

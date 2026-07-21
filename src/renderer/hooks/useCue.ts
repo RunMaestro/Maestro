@@ -37,7 +37,7 @@ export interface UseCueOptions {
  * Fetches status, active runs, and activity log from the Cue IPC API.
  * Auto-refreshes on mount, listens for activity updates, and polls periodically.
  *
- * Polling is gated on `document.visibilityState === 'visible'` — hidden tabs
+ * Polling is gated on `document.visibilityState === 'visible'` - hidden tabs
  * skip their polls so a minimized app (or a tab behind another window) doesn't
  * burn IPC/DB cycles on state nobody is watching. The activity-update listener
  * stays active regardless, because it only fires when runs actually change.
@@ -58,7 +58,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 			setError(null);
 			// NOTE: these reads bypass the cueService wrapper deliberately.
 			// cueService.* read methods swallow IPC failures and return safe
-			// defaults so the rest of the UI degrades silently — but useCue
+			// defaults so the rest of the UI degrades silently - but useCue
 			// powers the Cue dashboard, where an IPC failure must surface as
 			// a user-visible error banner. Going direct preserves the catch
 			// path below; the wrapper would make `err` unreachable here.
@@ -130,7 +130,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 				notifyToast({
 					type: 'success',
 					title: `"${subscriptionName}" triggered`,
-					message: 'Manual run dispatched — watch the pipeline for activity.',
+					message: 'Manual run dispatched - watch the pipeline for activity.',
 				});
 			}
 			await refresh();
@@ -144,26 +144,26 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 		refresh();
 
 		// Subscribe to real-time activity updates. The payload is a typed
-		// CueLogPayload discriminated union — narrow via `payload.type` to
+		// CueLogPayload discriminated union - narrow via `payload.type` to
 		// surface user-facing events (queueOverflow, …) as toasts.
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
 			if (payload?.type === 'queueOverflow') {
 				// Append the queuedAt timestamp suffix so back-to-back drops
 				// produce distinct toast titles rather than collapsing into
-				// one — the user needs to see every drop.
+				// one - the user needs to see every drop.
 				const queuedDate = new Date(payload.queuedAt);
 				const stamp = `${queuedDate.toLocaleTimeString()}.${queuedDate.getMilliseconds()}ms`;
 				notifyToast({
 					type: 'warning',
 					title: `Cue queue overflow: ${payload.sessionName} (${stamp})`,
-					message: `Oldest queued "${payload.subscriptionName}" event was dropped — raise queue_size or max_concurrent to avoid loss.`,
+					message: `Oldest queued "${payload.subscriptionName}" event was dropped - raise queue_size or max_concurrent to avoid loss.`,
 				});
 			}
 			refresh();
 		});
 
 		// Periodic polling for status updates (timer counts, next trigger estimates).
-		// Skip the tick entirely if the window/tab is hidden — minimized or
+		// Skip the tick entirely if the window/tab is hidden - minimized or
 		// background renderers produce no user-visible benefit from the poll
 		// and running it just generates churn on the main-process IPC handlers.
 		const intervalId = setInterval(() => {

@@ -49,7 +49,7 @@
  *   non-zero exit, empty stdout, malformed JSON, missing wire fields)
  *   resolves to `null` and emits a Sentry breadcrumb with stage + binPath +
  *   configDir + reason. Full env and full stdout are intentionally NOT
- *   included in the Sentry payload — env leaks PATH / shell vars, stdout
+ *   included in the Sentry payload - env leaks PATH / shell vars, stdout
  *   could carry account-level usage data.
  *
  * - execFile choice: node's `execFile` via `util.promisify`, not the
@@ -69,7 +69,7 @@ import { resolveConfigDirKey, type UsageSnapshot } from '../stores/claudeUsageSt
 
 const execFileAsync = promisify(execFile);
 
-/** Default timeout — comfortably wider than maestro-p's internal /usage budget. */
+/** Default timeout - comfortably wider than maestro-p's internal /usage budget. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** maxBuffer cap. The real payload is <1KB; 1MB is paranoia. */
@@ -100,7 +100,7 @@ export interface SampleUsageOptions {
  * the store / selector only ever see the canonical camelCase `UsageSnapshot`.
  *
  * `auth_state` is optional for back-compat with older maestro-p builds that
- * didn't emit the field — readers treat its absence as `'authenticated'`.
+ * didn't emit the field - readers treat its absence as `'authenticated'`.
  */
 interface StatusWireEnvelope {
 	type: 'status';
@@ -113,7 +113,7 @@ interface StatusWireEnvelope {
 
 /**
  * Run `maestro-p --status`, parse the wire envelope, and return a
- * canonicalized `UsageSnapshot`. Resolves to `null` on any failure — see the
+ * canonicalized `UsageSnapshot`. Resolves to `null` on any failure - see the
  * module docblock for the full list of swallowed failure modes.
  */
 export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapshot | null> {
@@ -244,7 +244,7 @@ function extractFirstJsonLine(stdout: string): string | null {
 
 /**
  * Verify the parsed wire object carries every field the camelCase mapping
- * reads. A single missing or wrong-typed field discards the whole sample —
+ * reads. A single missing or wrong-typed field discards the whole sample -
  * a half-populated snapshot would be worse than no snapshot at all.
  */
 function isStatusWireEnvelope(obj: unknown): obj is StatusWireEnvelope {
@@ -254,7 +254,7 @@ function isStatusWireEnvelope(obj: unknown): obj is StatusWireEnvelope {
 	if (typeof e.config_dir !== 'string') return false;
 	// `auth_state` is optional; when present it must be one of two values.
 	// Anything else is malformed and we reject the whole envelope rather
-	// than coercing — a half-typed wire is worse than a missing sample.
+	// than coercing - a half-typed wire is worse than a missing sample.
 	if (
 		e.auth_state !== undefined &&
 		e.auth_state !== 'authenticated' &&
@@ -295,7 +295,7 @@ function classifySpawnError(err: unknown): string {
 }
 
 /**
- * Emit a Sentry warning breadcrumb with the safe subset of context — stage,
+ * Emit a Sentry warning breadcrumb with the safe subset of context - stage,
  * binPath, configDir, reason. Full env / full stdout are deliberately omitted.
  */
 async function reportFailure(

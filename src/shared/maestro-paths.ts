@@ -28,6 +28,13 @@ export const BOARD_CONFIG_PATH = '.maestro/board.yaml';
 /** Default directory for Cue prompt files */
 export const CUE_PROMPTS_DIR = '.maestro/prompts';
 
+/**
+ * Where rendered diagrams (agent-authored inline SVG, Mermaid charts) are saved.
+ * Every "Save Image" surface writes here so diagrams land next to the project
+ * that produced them instead of scattering into ~/Downloads.
+ */
+export const DIAGRAMS_DIR = '.maestro/diagrams';
+
 // ── Legacy paths (backwards compatibility, read-only fallback) ───────────────
 
 /** @deprecated Use PLAYBOOKS_DIR */

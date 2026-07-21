@@ -8,7 +8,7 @@
  * out the layout. All data arrives through props.
  */
 
-import { memo, useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { formatNumber } from '../../../../shared/formatters';
 import type { BarDatum, WidgetProps } from '../types';
 
@@ -45,20 +45,22 @@ export const AgentActivityBars = memo(function AgentActivityBars({
 	}
 
 	return (
-		<div className="flex flex-col gap-2">
+		// Grid so every row shares one label column: it hugs the longest agent
+		// name (names right-justified, sitting right up against the bars) and is
+		// capped at half the widget so a pathological name can't starve the bars.
+		<div
+			className="grid items-center gap-x-3 gap-y-2 text-xs"
+			style={{ gridTemplateColumns: 'fit-content(50%) minmax(0, 1fr) auto' }}
+		>
 			{rows.map((row) => {
 				const widthPct = Math.max(2, (row.value / max) * 100);
 				return (
-					<div key={row.label} className="flex items-center gap-3 text-xs">
-						<span
-							className="w-32 truncate shrink-0"
-							style={{ color: theme.colors.textMain }}
-							title={row.label}
-						>
+					<React.Fragment key={row.label}>
+						<span className="text-right break-words" style={{ color: theme.colors.textMain }}>
 							{row.label}
 						</span>
 						<div
-							className="flex-1 h-2.5 rounded-full overflow-hidden"
+							className="h-2.5 rounded-full overflow-hidden"
 							style={{ backgroundColor: theme.colors.border }}
 						>
 							<div
@@ -66,28 +68,22 @@ export const AgentActivityBars = memo(function AgentActivityBars({
 								style={{ width: `${widthPct}%`, backgroundColor: row.color ?? theme.colors.accent }}
 							/>
 						</div>
-						<span
-							className="w-10 text-right tabular-nums shrink-0"
-							style={{ color: theme.colors.textDim }}
-						>
+						<span className="text-right tabular-nums" style={{ color: theme.colors.textDim }}>
 							{formatNumber(row.value)}
 						</span>
-					</div>
+					</React.Fragment>
 				);
 			})}
 			{overflowCount > 0 && (
-				<div
-					className="flex items-center gap-3 text-xs pt-1"
-					style={{ color: theme.colors.textDim }}
-				>
-					<span className="w-32 truncate shrink-0">
+				<>
+					<span className="text-right pt-1" style={{ color: theme.colors.textDim }}>
 						+{overflowCount} more {overflowCount === 1 ? 'agent' : 'agents'}
 					</span>
-					<div className="flex-1" />
-					<span className="w-10 text-right tabular-nums shrink-0">
+					<div />
+					<span className="text-right tabular-nums pt-1" style={{ color: theme.colors.textDim }}>
 						{formatNumber(overflowValue)}
 					</span>
-				</div>
+				</>
 			)}
 		</div>
 	);

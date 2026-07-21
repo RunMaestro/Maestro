@@ -16,7 +16,7 @@
 export const stripMarkdown = (text: string): string => {
 	return (
 		text
-			// Remove code blocks (```...```) — keep the inner code content
+			// Remove code blocks (```...```) - keep the inner code content
 			.replace(/```[\s\S]*?```/g, (match) => {
 				const lines = match.split('\n');
 				return lines.slice(1, -1).join('\n');
@@ -49,7 +49,7 @@ export const stripMarkdown = (text: string): string => {
 			.replace(/^[ \t]*\|.*\|[ \t]*$/gm, '')
 			.replace(/^[ \t]*(?=.*\|)[ \t:|-]*-{2,}[ \t:|-]*$/gm, '')
 			// Collapse inline pipe-cell runs (3+ pipes) that survive whitespace
-			// flattening — covers already-stored summaries where a table was
+			// flattening - covers already-stored summaries where a table was
 			// joined onto one line, e.g. "Summary: | Step | Result | |---|---| |".
 			// Requires 3+ pipes so prose like "a | b" is left untouched.
 			.replace(/(?:[ \t]*\|[^|\n]*){2,}\|/g, ' ')

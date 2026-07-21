@@ -1,5 +1,5 @@
 /**
- * useBatchHandlers — extracted from App.tsx (Phase 2I)
+ * useBatchHandlers - extracted from App.tsx (Phase 2I)
  *
  * Orchestrates batch/Auto Run processing by:
  *   - Initializing useBatchProcessor with configuration callbacks
@@ -8,6 +8,9 @@
  *   - Computing memoized batch state for the UI
  *   - Owning the quit confirmation effect (prevents quit during active runs)
  *   - Providing handleSyncAutoRunStats for leaderboard server sync
+ *
+ * PERF: Does not subscribe to full sessions / active Session. Streaming session
+ * updates must not re-render App via this hook.
  *
  * Reads from: sessionStore, settingsStore, modalStore
  */
@@ -60,7 +63,7 @@ function resolveGroupName(
 /**
  * Find the session that is actually paused on error.
  * Prefer the active session when it is paused; otherwise pick the first errorPaused session.
- * Returns undefined when nothing is error-paused — callers bail via the existing guard.
+ * Returns undefined when nothing is error-paused - callers bail via the existing guard.
  */
 function resolveBatchSessionIdForPausedError(
 	batchRunStates: Record<string, BatchRunState>,
@@ -162,7 +165,6 @@ export interface UseBatchHandlersReturn {
 // Selectors
 // ============================================================================
 
-const selectSessions = (s: ReturnType<typeof useSessionStore.getState>) => s.sessions;
 const selectGroups = (s: ReturnType<typeof useSessionStore.getState>) => s.groups;
 const selectAudioFeedbackEnabled = (s: ReturnType<typeof useSettingsStore.getState>) =>
 	s.audioFeedbackEnabled;
@@ -183,10 +185,11 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		handleClearAgentError,
 	} = deps;
 
-	// --- Store subscriptions (reactive) ---
-	const sessions = useSessionStore(selectSessions);
+	// PERF: Do not subscribe to full `sessions` / active Session. Streaming would
+	// re-render App. useBatchProcessor reads sessions via getState(); handlers
+	// resolve the active agent with a primitive id selector.
 	const groups = useSessionStore(selectGroups);
-	const activeSession = useSessionStore(selectActiveSession);
+	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const audioFeedbackEnabled = useSettingsStore(selectAudioFeedbackEnabled);
 	const audioFeedbackCommand = useSettingsStore(selectAudioFeedbackCommand);
 	const autoRunStats = useSettingsStore(selectAutoRunStats);
@@ -220,7 +223,6 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		resumeAfterError,
 		abortBatchOnError,
 	} = useBatchProcessor({
-		sessions,
 		groups,
 		onUpdateSession: (sessionId, updates) => {
 			useSessionStore
@@ -476,7 +478,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 										'**Symphony: Pull Request Ready for Review**',
 										'',
 										`- **PR:** ${result.prUrl}`,
-										`- **Issue:** #${session.symphonyMetadata!.issueNumber} — ${session.symphonyMetadata!.issueTitle}`,
+										`- **Issue:** #${session.symphonyMetadata!.issueNumber} - ${session.symphonyMetadata!.issueTitle}`,
 										`- **Tasks Completed:** ${info.completedTasks}`,
 										`- **Documents Processed:** ${info.documentsProcessed}`,
 									].join('\n'),
@@ -489,7 +491,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								// Best-effort history entry
 							}
 						} else {
-							// complete returned but no prUrl — set to completed for manual finalization
+							// complete returned but no prUrl - set to completed for manual finalization
 							await window.maestro.symphony.updateStatus({
 								contributionId,
 								status: 'completed',
@@ -663,8 +665,8 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 	// Batch state for the current session - used for locking the AutoRun editor
 	const currentSessionBatchState = useMemo(() => {
-		return activeSession ? getBatchState(activeSession.id) : null;
-	}, [activeSession, getBatchState]);
+		return activeSessionId ? getBatchState(activeSessionId) : null;
+	}, [activeSessionId, getBatchState]);
 
 	// Display batch state - prioritize session with active batch run,
 	// falling back to active session's state
@@ -672,8 +674,8 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		if (activeBatchSessionIds.length > 0) {
 			return getBatchState(activeBatchSessionIds[0]);
 		}
-		return activeSession ? getBatchState(activeSession.id) : getBatchState('');
-	}, [activeBatchSessionIds, activeSession, getBatchState]);
+		return activeSessionId ? getBatchState(activeSessionId) : getBatchState('');
+	}, [activeBatchSessionIds, activeSessionId, getBatchState]);
 
 	// ====================================================================
 	// Handler callbacks
@@ -681,9 +683,10 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 	const handleStopBatchRun = useCallback(
 		(targetSessionId?: string) => {
+			// Treat empty activeSessionId as unset (same as former activeSession?.id).
 			const sessionId =
 				targetSessionId ??
-				activeSession?.id ??
+				(activeSessionId ? activeSessionId : undefined) ??
 				(activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : undefined);
 			logger.info('[App:handleStopBatchRun] targetSessionId:', undefined, [
 				targetSessionId,
@@ -691,7 +694,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				sessionId,
 			]);
 			if (!sessionId) return;
-			const session = sessions.find((s) => s.id === sessionId);
+			const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			const agentName = session?.name || 'this session';
 			useModalStore.getState().openModal('confirm', {
 				message: `Stop Auto Run for "${agentName}" after the current task completes?`,
@@ -705,7 +708,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				},
 			});
 		},
-		[activeBatchSessionIds, activeSession, sessions, stopBatchRun]
+		[activeBatchSessionIds, activeSessionId, stopBatchRun]
 	);
 
 	const handleKillBatchRun = useCallback(
@@ -720,38 +723,38 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		// Reads batchRunStates imperatively at call time
 		const sessionId = resolveBatchSessionIdForPausedError(
 			useBatchStore.getState().batchRunStates,
-			activeSession?.id
+			activeSessionId
 		);
 		if (!sessionId) return;
 		skipCurrentDocument(sessionId);
 		handleClearAgentError(sessionId);
-	}, [activeSession, skipCurrentDocument, handleClearAgentError]);
+	}, [activeSessionId, skipCurrentDocument, handleClearAgentError]);
 
 	const handleResumeAfterError = useCallback(() => {
 		// Reads batchRunStates imperatively at call time
 		const sessionId = resolveBatchSessionIdForPausedError(
 			useBatchStore.getState().batchRunStates,
-			activeSession?.id
+			activeSessionId
 		);
 		if (!sessionId) return;
 		resumeAfterError(sessionId);
 		handleClearAgentError(sessionId);
-	}, [activeSession, resumeAfterError, handleClearAgentError]);
+	}, [activeSessionId, resumeAfterError, handleClearAgentError]);
 
 	const handleAbortBatchOnError = useCallback(() => {
 		// Reads batchRunStates imperatively at call time
 		const sessionId = resolveBatchSessionIdForPausedError(
 			useBatchStore.getState().batchRunStates,
-			activeSession?.id
+			activeSessionId
 		);
 		if (!sessionId) return;
 		abortBatchOnError(sessionId);
 		handleClearAgentError(sessionId);
-	}, [activeSession, abortBatchOnError, handleClearAgentError]);
+	}, [activeSessionId, abortBatchOnError, handleClearAgentError]);
 
 	// sessionId-targeted variants for use from the web remote layer. These mirror
 	// the handle* helpers above but accept an explicit sessionId instead of
-	// resolving one from the active session — the web client always knows which
+	// resolving one from the active session - the web client always knows which
 	// session the user tapped Resume/Skip/Abort for. Each wrapper also clears
 	// the session's agent error so the renderer UI drops its error banner in
 	// sync with the batch state (otherwise the banner would persist until the
@@ -829,7 +832,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				window.maestro.app.confirmQuit();
 			} else {
 				// Tell main the modal is up so it disarms the dead-renderer safety
-				// timeout — otherwise the app force-quits after a few seconds while
+				// timeout - otherwise the app force-quits after a few seconds while
 				// the user is still deciding.
 				window.maestro.app.quitConfirmationPending?.();
 				getModalActions().setQuitConfirmModalOpen(true, {

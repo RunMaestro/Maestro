@@ -183,7 +183,7 @@ export function createDirectorNotesApi() {
 			ipcRenderer.invoke('director-notes:getUnifiedHistory', options),
 
 		// Cached graph buckets aggregated across every session. The
-		// lookback parameter controls the window — `null` for "all time",
+		// lookback parameter controls the window - `null` for "all time",
 		// or hours back from "now". Each (bucketCount, lookback) pair gets
 		// its own cached aggregate keyed by composite source fingerprint.
 		getGraphData: (bucketCount: number, lookbackHours: number | null): Promise<UnifiedGraphData> =>

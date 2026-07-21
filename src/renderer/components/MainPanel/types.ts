@@ -1,12 +1,10 @@
 import type React from 'react';
 import type {
-	Session,
 	Theme,
 	BatchRunState,
 	UnifiedTab,
 	FilePreviewTab,
 	BrowserTab,
-	ThinkingItem,
 	AgentError,
 	QueuedItem,
 } from '../../types';
@@ -61,10 +59,6 @@ export interface MainPanelProps {
 	agentSessionsOpen: boolean;
 	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
-	activeSession: Session | null;
-	// PERF: Receive pre-filtered thinkingItems instead of full sessions array.
-	// This prevents cascade re-renders when unrelated session updates occur.
-	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	isMobileLandscape?: boolean;
 	stagedImages: string[];
@@ -230,6 +224,8 @@ export interface MainPanelProps {
 	onAtBottomChange?: (isAtBottom: boolean) => void;
 	// Input blur handler for persisting AI input state
 	onInputBlur?: () => void;
+	/** Capture composer owner on focus so blur can pin the write target */
+	onComposerFocus?: () => void;
 	// Prompt composer modal
 	onOpenPromptComposer?: () => void;
 	// Replay a user message (AI mode)

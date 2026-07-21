@@ -9,6 +9,7 @@ import {
 	hasActiveWizard,
 	hasDraft,
 	hasWizardInteraction,
+	resolveFocusedPaneTabRef,
 } from '../../../utils/tabHelpers';
 import { getTerminalSessionId } from '../../../utils/terminalTabHelpers';
 import type { CloseCurrentTabResult, UnifiedTabHandlersReturn } from './types';
@@ -119,7 +120,7 @@ export function useUnifiedTabHandlers({
 		[endInlineWizard]
 	);
 
-	// Bulk close operations never destroy a tab with an unsent draft — such tabs
+	// Bulk close operations never destroy a tab with an unsent draft - such tabs
 	// are filtered out of the close set so they survive. The rest close silently
 	// (no confirmation prompt).
 	const handleCloseOtherTabs = useCallback(
@@ -156,6 +157,51 @@ export function useUnifiedTabHandlers({
 		const { setSessions } = useSessionStore.getState();
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return { type: 'none' };
+
+		// A tiled group takes over the whole panel, so Cmd+W must close ONLY the
+		// focused pane's tab (the visible tile), never whatever standalone active id
+		// happens to linger (a file-focused pane, for instance, leaves activeTabId
+		// pointing at some other AI tab). Resolve the focused leaf's ref and route it
+		// through the matching per-kind close. The normalizeTabGroups self-heal effect
+		// (MainPanelContent) then prunes the now-dangling leaf and collapses/dissolves
+		// the group. No active group => fall through to the standalone logic below.
+		if (session.activeGroupId) {
+			const group = session.tabGroups?.find((g) => g.id === session.activeGroupId);
+			const focusedRef = group ? resolveFocusedPaneTabRef(group) : null;
+			if (focusedRef) {
+				if (focusedRef.type === 'ai') {
+					const tab = session.aiTabs.find((t) => t.id === focusedRef.id);
+					const isWizardTab = tab ? hasActiveWizard(tab) : false;
+					const hasWizardUserInteraction = tab ? hasWizardInteraction(tab) : false;
+					const tabHasDraft = tab ? hasDraft(tab) : false;
+					return {
+						type: 'ai',
+						tabId: focusedRef.id,
+						isWizardTab,
+						hasWizardUserInteraction,
+						hasDraft: tabHasDraft,
+					};
+				}
+				if (focusedRef.type === 'file') {
+					handleCloseFileTab(focusedRef.id);
+					return { type: 'file', tabId: focusedRef.id };
+				}
+				if (focusedRef.type === 'browser') {
+					setSessions((prev: Session[]) =>
+						prev.map((s) => {
+							if (s.id !== session.id) return s;
+							const result = closeBrowserTabHelper(s, focusedRef.id);
+							return result ? result.session : s;
+						})
+					);
+					return { type: 'browser', tabId: focusedRef.id };
+				}
+				// Terminal tile: the keyboard handler completes the close via
+				// handleCloseTerminalTab (killing the PTY). The group always has >=2 panes
+				// here, so the standalone "prevented when it's the last tab" guard never applies.
+				return { type: 'terminal', tabId: focusedRef.id };
+			}
+		}
 
 		if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
 			const tabId = session.activeTerminalTabId;

@@ -228,6 +228,7 @@ const mockMaestro = {
 	},
 	process: {
 		spawn: vi.fn().mockResolvedValue({ pid: 12345 }),
+		releaseConcertoHtmlDocument: vi.fn(),
 		write: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 		resize: vi.fn().mockResolvedValue(undefined),
@@ -289,6 +290,11 @@ const mockMaestro = {
 			save: vi.fn((draft: unknown) => Promise.resolve({ draft })),
 			delete: vi.fn().mockResolvedValue({}),
 		},
+		issues: {
+			list: vi.fn().mockResolvedValue({ issues: [] }),
+			delete: vi.fn().mockResolvedValue({}),
+			refreshStates: vi.fn().mockResolvedValue({ issues: [] }),
+		},
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),
@@ -327,6 +333,7 @@ const mockMaestro = {
 		getPathForFile: vi.fn((file?: { path?: string }) => file?.path ?? ''),
 		writeFile: vi.fn().mockResolvedValue({ success: true }),
 		writeImageFile: vi.fn().mockResolvedValue({ success: true }),
+		mkdir: vi.fn().mockResolvedValue({ success: true }),
 		stat: vi.fn().mockResolvedValue({
 			size: 1024,
 			createdAt: '2024-01-01T00:00:00.000Z',
@@ -495,6 +502,7 @@ const mockMaestro = {
 		getGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
 		requestConsent: vi.fn().mockResolvedValue({ opened: true }),
 		revokeGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
+		setAgentAllowlist: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
 		invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
 		invokeTool: vi.fn().mockResolvedValue({ result: null }),
 		getActivity: vi.fn().mockResolvedValue({}),

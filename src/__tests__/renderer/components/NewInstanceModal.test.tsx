@@ -740,7 +740,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -794,7 +795,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -848,7 +850,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 	});
@@ -903,7 +906,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1331,6 +1335,41 @@ describe('NewInstanceModal', () => {
 	});
 
 	describe('Custom agent paths', () => {
+		it('should prefer the validated local custom path over stale stored config', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'codex',
+					name: 'Codex',
+					binaryName: 'codex',
+					path: '/detected/codex',
+					customPath: '/current/codex',
+				}),
+			]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				customPath: '/stale/codex',
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Codex')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Codex'));
+
+			await waitFor(() => {
+				expect(screen.getByDisplayValue('/current/codex')).toBeInTheDocument();
+			});
+			expect(screen.queryByDisplayValue('/stale/codex')).not.toBeInTheDocument();
+		});
+
 		it('should display path input for Claude Code agent', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
@@ -1421,7 +1460,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -1575,7 +1615,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 	});
@@ -2736,7 +2777,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -2967,7 +3009,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 
@@ -3089,7 +3132,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPPath
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
-				true // retryOnTokenExhaustion
+				true, // retryOnTokenExhaustion
+				undefined // additionalDirectories
 			);
 		});
 

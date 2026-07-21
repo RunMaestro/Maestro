@@ -42,7 +42,7 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 	}
 
 	// A scheme-less input that parses with userinfo (e.g. `foo:bar@baz`) is
-	// almost certainly malformed — reject rather than silently prepending
+	// almost certainly malformed - reject rather than silently prepending
 	// `https://` and producing `https://foo:bar@baz/`.
 	if (!hasExplicitScheme && (parsed.username || parsed.password)) {
 		console.error(`Error: Invalid URL: ${url}`);

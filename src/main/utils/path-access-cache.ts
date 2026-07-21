@@ -14,7 +14,7 @@
  *     path: if a user fixes file permissions or writes a missing key and
  *     immediately retries, they must see a fresh check, not a stale `false`.
  *
- * SRP: the cache class itself does not perform the access — callers pass an
+ * SRP: the cache class itself does not perform the access - callers pass an
  * access function. The default probe is exported alongside (rather than
  * embedded in `check()`) so the cache stays a pure predicate-cache and
  * tests can still inject any boolean function. SOC: production deps in
@@ -39,7 +39,7 @@ export const DEFAULT_PATH_ACCESS_TTL_MS = 30_000;
  * Shared by every SSH `defaultDeps` site so the try/`accessSync`/catch
  * pattern lives in exactly one place. Tests that wire their own
  * `checkFileAccess` / `fileExists` predicate via DI bypass this entirely
- * — the helper is only used by production deps.
+ * - the helper is only used by production deps.
  */
 export function defaultReadableProbe(filePath: string): boolean {
 	try {
@@ -94,7 +94,7 @@ export function getPathAccessCache(): PathAccessCache {
 	return instance;
 }
 
-/** Test seam — replace the singleton with a controllable cache. */
+/** Test seam - replace the singleton with a controllable cache. */
 export function setPathAccessCacheForTest(cache: PathAccessCache | null): void {
 	instance = cache;
 }

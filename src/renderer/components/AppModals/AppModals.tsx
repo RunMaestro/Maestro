@@ -49,7 +49,7 @@ import { getPromptComposerInitialValue } from '../../hooks/modal/usePromptCompos
  * usage in App.tsx.
  */
 export interface AppModalsProps {
-	// Common props (sessions/groups/groupChats/modal booleans self-sourced from stores — Tier 1B)
+	// Common props (sessions/groups/groupChats/modal booleans self-sourced from stores - Tier 1B)
 	theme: Theme;
 	shortcuts: Record<string, Shortcut>;
 	tabShortcuts: Record<string, Shortcut>;
@@ -117,7 +117,6 @@ export interface AppModalsProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic'
 	) => void;
-	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 	onCloseEditAgentModal: () => void;
@@ -131,6 +130,7 @@ export interface AppModalsProps {
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
+		customEffort?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -424,7 +424,7 @@ export interface AppModalsProps {
 		longestRunTimestamp: number;
 	}) => void;
 	errorSession: Session | null | undefined;
-	/** The effective error to display — live or historical from chat log */
+	/** The effective error to display - live or historical from chat log */
 	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
 	onDismissAgentError: () => void;
@@ -639,7 +639,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		// Session modals
 		onCloseNewInstanceModal,
 		onCreateSession,
-		existingSessions,
 		duplicatingSessionId,
 		newInstancePresetGroupId,
 		onCloseEditAgentModal,
@@ -970,7 +969,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				newInstanceModalOpen={newInstanceModalOpen}
 				onCloseNewInstanceModal={onCloseNewInstanceModal}
 				onCreateSession={onCreateSession}
-				existingSessions={existingSessions}
+				existingSessions={sessions}
 				sourceSession={sourceSession}
 				newInstancePresetGroupId={newInstancePresetGroupId}
 				editAgentModalOpen={editAgentModalOpen}

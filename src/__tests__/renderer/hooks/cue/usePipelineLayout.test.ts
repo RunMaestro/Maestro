@@ -117,7 +117,7 @@ describe('usePipelineLayout', () => {
 
 	it('unmount flushes a pending debounced write and clears the timer', () => {
 		// Cancelling the timer outright on unmount used to drop writes that
-		// landed during the modal-close window — most painfully the post-save
+		// landed during the modal-close window - most painfully the post-save
 		// `writtenRoots` update, which left the next mount unable to clear
 		// orphaned cue.yaml files. Unmount now flushes the pending write
 		// synchronously and then clears the timer so it never fires again.
@@ -128,7 +128,7 @@ describe('usePipelineLayout', () => {
 			result.current.persistLayout();
 		});
 
-		// Not yet — still inside the 500ms debounce window.
+		// Not yet - still inside the 500ms debounce window.
 		expect((window as any).maestro.cue.savePipelineLayout).not.toHaveBeenCalled();
 
 		unmount();
@@ -140,7 +140,7 @@ describe('usePipelineLayout', () => {
 			vi.advanceTimersByTime(500);
 		});
 
-		// Timer was cleared — no second call after the debounce window elapses.
+		// Timer was cleared - no second call after the debounce window elapses.
 		expect((window as any).maestro.cue.savePipelineLayout).toHaveBeenCalledTimes(1);
 	});
 
@@ -197,7 +197,7 @@ describe('usePipelineLayout', () => {
 			await vi.advanceTimersByTimeAsync(200);
 		});
 
-		// Hook no longer applies the viewport directly — that's the editor's job,
+		// Hook no longer applies the viewport directly - that's the editor's job,
 		// gated on ReactFlow's useNodesInitialized so nodes have been measured first.
 		expect(setViewport).not.toHaveBeenCalled();
 		expect(result.current.pendingSavedViewportRef.current).toEqual({
@@ -442,7 +442,7 @@ describe('usePipelineLayout', () => {
 			});
 
 			const saveCall = (window as any).maestro.cue.savePipelineLayout.mock.calls[0][0];
-			// Stale selection must NOT reach disk — would set up the next
+			// Stale selection must NOT reach disk - would set up the next
 			// reload to blank the canvas via pickProjectViewState.
 			expect(saveCall.selectedPipelineId).toBeNull();
 			// Every perProject entry written must also have a null or valid
@@ -540,7 +540,7 @@ describe('usePipelineLayout', () => {
 			});
 
 			// setPipelineState was called with merged state. The selection
-			// must NOT be the stale perProject value — it must be either
+			// must NOT be the stale perProject value - it must be either
 			// null or a valid live pipeline id.
 			expect(setPipelineState).toHaveBeenCalledTimes(1);
 			const callArg = setPipelineState.mock.calls[0][0];
@@ -563,7 +563,7 @@ describe('usePipelineLayout', () => {
 				selectedPipelineId: 'pipeline-B',
 				perProject: {
 					'/projects/realroot': {
-						selectedPipelineId: 'pipeline-B', // valid — matches pipeline-B
+						selectedPipelineId: 'pipeline-B', // valid - matches pipeline-B
 						viewport: { x: 0, y: 0, zoom: 1 },
 					},
 				},
@@ -680,7 +680,7 @@ describe('usePipelineLayout', () => {
 	// `latestRestoreIdRef` counter so a stale in-flight load whose await
 	// resolves AFTER a newer load has started cannot apply its result on top
 	// of the newer one. The boolean variant only checked "is one in flight?"
-	// — it could not distinguish "the same load that started" from "a newer
+	// - it could not distinguish "the same load that started" from "a newer
 	// one that fired during my await". When graphSessions changed mid-fetch,
 	// both callbacks would race to setPipelineState with different snapshots.
 	describe('request-id guard (regression: stale in-flight load must not overwrite newer one)', () => {
@@ -701,7 +701,7 @@ describe('usePipelineLayout', () => {
 		//      graphSessions)
 		//   3) the pipeline-restore effect AGAIN (fires on rerender when
 		//      graphSessions changes, before the previous load resolves).
-		// The race the fix guards against is between calls #2 and #3 — call
+		// The race the fix guards against is between calls #2 and #3 - call
 		// #1 is irrelevant. This helper resolves call #1 immediately to null
 		// (writtenRoots ignores null) and gives back deferreds for calls #2/#3.
 		function setupLoadPipelineLayoutQueue() {
@@ -719,7 +719,7 @@ describe('usePipelineLayout', () => {
 		}
 
 		it('drops the stale load when graphSessions change and the first await resolves last', async () => {
-			// Two distinct live-pipeline snapshots — one per "before"/"after"
+			// Two distinct live-pipeline snapshots - one per "before"/"after"
 			// graphSessions. graphSessionsToPipelines is the synchronous
 			// derive-from-graph function called at the top of loadLayout, so
 			// stubbing it to return distinct arrays per call lets us assert
@@ -737,7 +737,7 @@ describe('usePipelineLayout', () => {
 			// Hoist refs that must be stable across renders. createDefaultParams
 			// allocates a fresh `lastWrittenRootsRef`/`savedStateRef` each call,
 			// which would trip the writtenRoots-reseed effect's dep array and
-			// fire an extra loadPipelineLayout on every rerender — defeating
+			// fire an extra loadPipelineLayout on every rerender - defeating
 			// the whole point of the queue.
 			const lastWrittenRootsRef = { current: new Set<string>() };
 			const savedStateRef = { current: '' };
@@ -791,7 +791,7 @@ describe('usePipelineLayout', () => {
 			// Symmetric case: stale load resolves BEFORE the fresh one. Without
 			// the fix, the boolean `restoreInFlightRef` would let the stale
 			// callback set `hasRestoredLayoutRef = true`, and the fresh
-			// callback would then bail via that flag — leaving the user
+			// callback would then bail via that flag - leaving the user
 			// looking at stale data. The reqId guard correctly prefers the
 			// fresh result regardless of resolution order.
 			const stalePipelines = [makePipeline('stale')];
@@ -837,7 +837,7 @@ describe('usePipelineLayout', () => {
 			expect(getCallCount()).toBe(3);
 			expect(setPipelineState).not.toHaveBeenCalled();
 
-			// Stale resolves first — its reqId (1) !== current (2), so it
+			// Stale resolves first - its reqId (1) !== current (2), so it
 			// must bail and leave hasRestoredLayoutRef untouched.
 			await act(async () => {
 				stale.resolve(null);
@@ -845,7 +845,7 @@ describe('usePipelineLayout', () => {
 			});
 			expect(setPipelineState).not.toHaveBeenCalled();
 
-			// Fresh resolves last — its reqId (2) matches and it applies state.
+			// Fresh resolves last - its reqId (2) matches and it applies state.
 			await act(async () => {
 				fresh.resolve(null);
 				await vi.advanceTimersByTimeAsync(0);

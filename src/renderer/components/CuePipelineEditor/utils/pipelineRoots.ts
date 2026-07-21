@@ -28,7 +28,7 @@ type SessionRootInfo = Pick<SessionInfo, 'projectRoot'>;
  * Resolve a single node's project root via its bound session.
  *
  * - Agent nodes bind via `sessionId` / `sessionName`.
- * - Command nodes bind via `owningSessionId` / `owningSessionName` — they
+ * - Command nodes bind via `owningSessionId` / `owningSessionName` - they
  *   inherit cwd + agent_id from their owning session, so they are first-class
  *   project-root contributors and must NOT be ignored when partitioning by
  *   root. Doing so silently dropped command-only pipelines from the save.
@@ -53,7 +53,7 @@ export function resolveNodeWriteRoot(
 	} else if (node.type === 'command') {
 		const data = node.data as CommandNodeData;
 		// Validation requires owningSessionId on save, but stale / in-flight
-		// edits can briefly leave it empty — treat that as "no binding".
+		// edits can briefly leave it empty - treat that as "no binding".
 		if (!data.owningSessionId && !data.owningSessionName) {
 			return { root: null, hasBinding: false };
 		}
@@ -78,12 +78,12 @@ export function resolveNodeWriteRoot(
  * record into each unique cwd's `cue.yaml`.
  *
  * Returns:
- *   - `{ ok: true, cwds }` — every bound node resolved; `cwds` is the set
+ *   - `{ ok: true, cwds }` - every bound node resolved; `cwds` is the set
  *     of distinct project roots the pipeline writes to (one entry for a
  *     single-cwd pipeline, multiple entries for a cross-agent pipeline).
- *   - `{ ok: false, reason: 'no-bindings' }` — pipeline has no agent or
+ *   - `{ ok: false, reason: 'no-bindings' }` - pipeline has no agent or
  *     command nodes (validatePipelines flags this elsewhere).
- *   - `{ ok: false, reason: 'unresolved' }` — at least one bound node has
+ *   - `{ ok: false, reason: 'unresolved' }` - at least one bound node has
  *     a session reference that doesn't resolve to a known projectRoot
  *     (deleted agent, missing cwd). handleSave treats this as a hard
  *     validation error rather than dropping the unresolvable subs silently.
@@ -128,7 +128,7 @@ export function resolvePipelineOwnerCwds(
  * clearing on the next save) and to seed the descendant-refresh sweep.
  *
  * Pipelines that fail to resolve (missing bindings, unresolved sessions)
- * contribute nothing — handleSave surfaces those as validation errors via
+ * contribute nothing - handleSave surfaces those as validation errors via
  * `resolvePipelineOwnerCwds` directly.
  */
 export function resolvePipelinesWriteRoots(

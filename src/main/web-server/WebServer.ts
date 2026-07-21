@@ -71,6 +71,9 @@ import type {
 	OpenBrowserTabCallback,
 	OpenTerminalTabCallback,
 	NewAITabWithPromptCallback,
+	EnqueueCommandCallback,
+	ListQueueCallback,
+	RemoveQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	SetSessionAutoRunFolderCallback,
@@ -134,6 +137,8 @@ import type {
 	CadenzaViewCallback,
 	MovementViewCallback,
 	GetMovementStateCallback,
+	GetMovementDesignerInspectionCallback,
+	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
 	GetMarketplaceManifestCallback,
 	GetMarketplaceDocumentCallback,
@@ -460,6 +465,18 @@ export class WebServer {
 		this.callbackRegistry.setNewAITabWithPromptCallback(callback);
 	}
 
+	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
+		this.callbackRegistry.setEnqueueCommandCallback(callback);
+	}
+
+	setListQueueCallback(callback: ListQueueCallback): void {
+		this.callbackRegistry.setListQueueCallback(callback);
+	}
+
+	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
+		this.callbackRegistry.setRemoveQueueItemCallback(callback);
+	}
+
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbackRegistry.setRefreshAutoRunDocsCallback(callback);
 	}
@@ -676,6 +693,14 @@ export class WebServer {
 		this.callbackRegistry.setGetMovementStateCallback(callback);
 	}
 
+	setGetMovementDesignerInspectionCallback(callback: GetMovementDesignerInspectionCallback): void {
+		this.callbackRegistry.setGetMovementDesignerInspectionCallback(callback);
+	}
+
+	setInteractMovementDesignerCallback(callback: InteractMovementDesignerCallback): void {
+		this.callbackRegistry.setInteractMovementDesignerCallback(callback);
+	}
+
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
@@ -771,7 +796,7 @@ export class WebServer {
 			}
 		}
 
-		// Web-Desktop bundle assets — the default interface. Served at
+		// Web-Desktop bundle assets - the default interface. Served at
 		// /<token>/desktop/assets/ to match the absolute asset references the
 		// desktop index.html is rewritten to use, regardless of the URL the HTML
 		// itself was served from. Mounted whenever the bundle has been built.
@@ -805,7 +830,7 @@ export class WebServer {
 
 	private setupRoutes(): void {
 		// Setup static routes (web-desktop SPA, PWA files, health check). The
-		// desktop bundle is served at the token root and at /<token>/desktop —
+		// desktop bundle is served at the token root and at /<token>/desktop -
 		// see StaticRoutes.registerRoutes.
 		this.staticRoutes.registerRoutes(this.server);
 
@@ -880,9 +905,18 @@ export class WebServer {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean
 			) =>
-				this.callbackRegistry.executeCommand(sessionId, command, inputMode, tabId, force, images),
+				this.callbackRegistry.executeCommand(
+					sessionId,
+					command,
+					inputMode,
+					tabId,
+					force,
+					images,
+					background
+				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
 			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
@@ -909,8 +943,27 @@ export class WebServer {
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null }
 			) => this.callbackRegistry.openTerminalTab(sessionId, config),
-			newAITabWithPrompt: async (sessionId: string, prompt: string) =>
-				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt),
+			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
+				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			enqueueCommand: async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) =>
+				this.callbackRegistry.enqueueCommand(
+					sessionId,
+					command,
+					inputMode,
+					tabId,
+					images,
+					background
+				),
+			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
+			removeQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.removeQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId),
 			configureAutoRun: async (
@@ -1013,7 +1066,7 @@ export class WebServer {
 				sourceAgentId?: string
 			) => this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt, sourceAgentId),
 			// Cue pipeline-layout mutations operate directly on the
-			// main-process layout file via the mutation primitives — no
+			// main-process layout file via the mutation primitives - no
 			// renderer round-trip needed. The Pipeline Editor (when open)
 			// keeps its own in-memory state, so CLI edits made while the
 			// editor is open will be overwritten on the editor's next
@@ -1056,6 +1109,10 @@ export class WebServer {
 			cadenzaView: async (params) => this.callbackRegistry.cadenzaView(params),
 			movementView: async (params) => this.callbackRegistry.movementView(params),
 			getMovementState: async () => this.callbackRegistry.getMovementState(),
+			getMovementDesignerInspection: async (id) =>
+				this.callbackRegistry.getMovementDesignerInspection(id),
+			interactMovementDesigner: async (id, action) =>
+				this.callbackRegistry.interactMovementDesigner(id, action),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
 			getMarketplaceManifest: async (options) =>
 				this.callbackRegistry.getMarketplaceManifest(options),

@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Folder, AlertTriangle } from 'lucide-react';
-import type { AgentConfig, Session, ToolType } from '../../types';
+import type { AdditionalDirectory, AgentConfig, Session, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
+import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { FormInput } from '../ui/FormInput';
+import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
@@ -19,6 +21,7 @@ import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
 import { logger } from '../../utils/logger';
+import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
 
 export function NewInstanceModal({
@@ -34,6 +37,7 @@ export function NewInstanceModal({
 	const [selectedAgent, setSelectedAgent] = useState('');
 	const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 	const [workingDir, setWorkingDir] = useState('');
+	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
 	const [instanceName, setInstanceName] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
@@ -220,8 +224,11 @@ export function NewInstanceModal({
 				configs[agent.id] = config;
 
 				// Extract per-agent settings from the loaded config
-				if (config.customPath) {
-					paths[agent.id] = config.customPath;
+				// Local detection validates and recovers rotating binary paths. SSH paths
+				// belong to the remote host and must not be validated against the local filesystem.
+				const customPath = sshRemoteId ? config.customPath : agent.customPath;
+				if (customPath) {
+					paths[agent.id] = customPath;
 				}
 				if (config.customArgs) {
 					args[agent.id] = config.customArgs;
@@ -248,10 +255,7 @@ export function NewInstanceModal({
 					// Copilot-CLI, Factory Droid). Pick whichever key the source agent
 					// actually defines so the value round-trips through the modal.
 					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === source.toolType);
-					const hasReasoning = sourceAgent?.configOptions?.some(
-						(opt) => opt.key === 'reasoningEffort'
-					);
-					sourceConfig[hasReasoning ? 'reasoningEffort' : 'effort'] = source.customEffort;
+					sourceConfig[getEffortConfigKey(sourceAgent)] = source.customEffort;
 				}
 				configs[source.toolType] = sourceConfig;
 			}
@@ -276,6 +280,9 @@ export function NewInstanceModal({
 			// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
 			if (source) {
 				handleWorkingDirChange(source.cwd);
+				// Clone the grants, don't alias them - the rows are edited in place and
+				// would otherwise mutate the source agent's persisted array.
+				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
 				setInstanceName(`${source.name} (Copy)`);
 				setNudgeMessage(source.nudgeMessage || '');
 				setNewSessionMessage(source.newSessionMessage || '');
@@ -360,12 +367,12 @@ export function NewInstanceModal({
 		return config?.remoteId || undefined;
 	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs]);
 
-	// Debounced git repo detection — checks if the selected working dir is
+	// Debounced git repo detection - checks if the selected working dir is
 	// already a git repo so we can offer to `git init` it if not.
 	useEffect(() => {
 		const trimmed = workingDir.trim();
 		// Reset stale state from a previous directory before the async check
-		// resolves — otherwise the previous "not-repo" panel keeps rendering
+		// resolves - otherwise the previous "not-repo" panel keeps rendering
 		// (with a clickable Init button) against the new, unvalidated path
 		// during the 500ms debounce window.
 		setGitRepoStatus('unknown');
@@ -518,10 +525,7 @@ export function NewInstanceModal({
 		const agentCustomProviderPath = agentConfigs[selectedAgent]?.providerPath?.trim() || undefined;
 		// Effort/reasoningEffort: agents use one or the other key (e.g. Codex stores
 		// it under `reasoningEffort`, Claude Code uses `effort`).
-		const agentCustomEffort =
-			agentConfigs[selectedAgent]?.reasoningEffort?.trim() ||
-			agentConfigs[selectedAgent]?.effort?.trim() ||
-			undefined;
+		const agentCustomEffort = readEffortFromConfig(agentConfigs[selectedAgent]);
 
 		// Get SSH remote configuration for this session (stored per-session, not per-agent)
 		const sshRemoteConfig = agentSshRemoteConfigs[selectedAgent];
@@ -547,7 +551,7 @@ export function NewInstanceModal({
 						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 					};
 
-		// The dropdown's selected value wins — it was seeded from the source
+		// The dropdown's selected value wins - it was seeded from the source
 		// session's group (when duplicating) or the caller's preset (e.g. "New
 		// Agent in Group" from the group context menu), so explicit user
 		// selection naturally overrides those defaults.
@@ -591,13 +595,15 @@ export function NewInstanceModal({
 			agentMaestroPPath,
 			agentMaestroPMode,
 			retryAvailabilityByAgent[selectedAgent] ?? true,
-			retryTokenByAgent[selectedAgent] ?? true
+			retryTokenByAgent[selectedAgent] ?? true,
+			normalizeAdditionalDirectories(additionalDirectories, homeDir)
 		);
 		onClose();
 
 		// Reset
 		setInstanceName('');
 		handleWorkingDirChange('');
+		setAdditionalDirectories([]);
 		setNudgeMessage('');
 		setNewSessionMessage('');
 		// Reset per-agent config for selected agent
@@ -638,6 +644,8 @@ export function NewInstanceModal({
 		instanceName,
 		selectedAgent,
 		workingDir,
+		additionalDirectories,
+		homeDir,
 		nudgeMessage,
 		newSessionMessage,
 		customAgentPaths,
@@ -1056,7 +1064,7 @@ export function NewInstanceModal({
 					/>
 				)}
 
-				{/* Git repo hint — offer to `git init` when the selected dir isn't a repo */}
+				{/* Git repo hint - offer to `git init` when the selected dir isn't a repo */}
 				{workingDir.trim() && gitRepoStatus === 'not-repo' && (
 					<div
 						className="flex items-center gap-3 p-3 rounded border"
@@ -1133,9 +1141,21 @@ export function NewInstanceModal({
 					</div>
 				)}
 
+				{/* Additional Directories: extra read/write grants beyond the working dir */}
+				<AdditionalDirectoriesSection
+					theme={theme}
+					directories={additionalDirectories}
+					onChange={setAdditionalDirectories}
+					disableBrowse={isSshEnabled}
+					nativelyEnforced={
+						!!agents.find((a) => a.id === selectedAgent)?.capabilities
+							?.supportsAdditionalDirectories
+					}
+				/>
+
 				{/* SSH Remote Execution - Top Level.
 				    Always rendered, even when no remotes are configured, so the
-				    "remote-controlled" toggle is reachable — it mirrors history
+				    "remote-controlled" toggle is reachable - it mirrors history
 				    to the local project dir for a Maestro SSH'd into this
 				    machine, independent of local SSH remote setup.
 				    Uses '_pending_' key when no agent selected, transfers to

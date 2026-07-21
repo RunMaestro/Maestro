@@ -41,7 +41,6 @@ export default defineConfig({
 		// one process can segfault the whole run.
 		pool: 'forks',
 		maxWorkers: 4,
-		setupFiles: ['./src/__tests__/setup.ts'],
 		testTimeout: 10000,
 		hookTimeout: 10000,
 		teardownTimeout: 5000,
@@ -54,6 +53,7 @@ export default defineConfig({
 				test: {
 					name: 'jsdom',
 					environment: 'jsdom',
+					setupFiles: ['./src/__tests__/setup.ts'],
 					// NOTE: stays on the forks pool. threads is ~19% faster here but
 					// intermittently SEGFAULTS the run (native addons loaded from
 					// multiple worker threads in one process are not context-aware).

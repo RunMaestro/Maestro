@@ -221,7 +221,7 @@ export function getExtensionColor(
 ): { bg: string; text: string } {
 	const isLightTheme = theme.mode === 'light';
 
-	// Colorblind-safe path — never fall through to non-colorblind-safe colors
+	// Colorblind-safe path - never fall through to non-colorblind-safe colors
 	if (colorBlindMode) {
 		const cbColors = getColorBlindExtensionColor(extension, isLightTheme);
 		if (cbColors) return cbColors;
@@ -266,7 +266,7 @@ export function getExtensionColor(
 				};
 	}
 
-	// Ultimate fallback (non-hex accent like rgb/hsl) — still visible
+	// Ultimate fallback (non-hex accent like rgb/hsl) - still visible
 	return isLightTheme
 		? { bg: 'rgba(107, 114, 128, 0.15)', text: 'rgba(75, 85, 99, 0.9)' }
 		: { bg: 'rgba(156, 163, 175, 0.3)', text: 'rgba(209, 213, 219, 0.9)' };

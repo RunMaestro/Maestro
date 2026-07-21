@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { ToolType, AgentConfig } from '../../../types';
+import type { AdditionalDirectory, ToolType, AgentConfig } from '../../../types';
 
 export type WizardStep =
 	| 'agent-selection'
@@ -49,6 +49,8 @@ export interface WizardState {
 	maestroPPath?: string;
 	sessionSshRemoteConfig?: WizardSessionSshRemoteConfig;
 	directoryPath: string;
+	/** Extra directories granted beyond the working directory (prompt-level grants). */
+	additionalDirectories: AdditionalDirectory[];
 	isGitRepo: boolean;
 	detectedAgentPath: string | null;
 	directoryError: string | null;
@@ -92,6 +94,7 @@ export type WizardAction =
 			config: WizardSessionSshRemoteConfig | undefined;
 	  }
 	| { type: 'SET_DIRECTORY_PATH'; path: string }
+	| { type: 'SET_ADDITIONAL_DIRECTORIES'; directories: AdditionalDirectory[] }
 	| { type: 'SET_IS_GIT_REPO'; isGitRepo: boolean }
 	| { type: 'SET_DETECTED_AGENT_PATH'; path: string | null }
 	| { type: 'SET_DIRECTORY_ERROR'; error: string | null }
@@ -118,6 +121,7 @@ export interface SerializableWizardState {
 	selectedAgent: ToolType | null;
 	agentName: string;
 	directoryPath: string;
+	additionalDirectories?: AdditionalDirectory[];
 	isGitRepo: boolean;
 	conversationHistory: WizardMessage[];
 	confidenceLevel: number;
@@ -150,6 +154,7 @@ export interface WizardContextAPI {
 	setMaestroPPath: (path: string | undefined) => void;
 	setSessionSshRemoteConfig: (config: WizardSessionSshRemoteConfig | undefined) => void;
 	setDirectoryPath: (path: string) => void;
+	setAdditionalDirectories: (directories: AdditionalDirectory[]) => void;
 	setIsGitRepo: (isGitRepo: boolean) => void;
 	setDetectedAgentPath: (path: string | null) => void;
 	setDirectoryError: (error: string | null) => void;

@@ -671,7 +671,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
 			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
@@ -697,7 +697,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
 			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
@@ -722,7 +722,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
 			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
@@ -893,7 +893,7 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(summaryCards).toHaveStyle({ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' });
 			});
 
-			// Switch to agents — its single section is now agent-overview-cards
+			// Switch to agents - its single section is now agent-overview-cards
 			// (the previous agent-comparison chart moved to the new "Agent
 			// Overview" tab). Look up by label, not index, since the order
 			// changed when "Agent Overview" was inserted above "Agents".

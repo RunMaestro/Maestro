@@ -210,7 +210,7 @@ export function useBatchedSessionUpdates(
 						// When the session's resolved Claude mode is interactive, tag
 						// non-stderr entries with renderStyle: 'text-stream' so the
 						// "Captured via interactive TUI" footer pill renders on them.
-						// stderr stays untagged — error frames aren't interactive output.
+						// stderr stays untagged - error frames aren't interactive output.
 						const isInteractive = updatedSession.claudeInteractive?.mode === 'interactive';
 
 						updatedSession = {
@@ -219,7 +219,7 @@ export function useBatchedSessionUpdates(
 								const logData = aiTabLogs.get(tab.id);
 								if (!logData) return tab;
 
-								// ThinkingMode contract — inline clear point.
+								// ThinkingMode contract - inline clear point.
 								// When new assistant text arrives, drop transient thinking/tool entries
 								// from prior reasoning so the final answer replaces them. The matching
 								// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
@@ -283,7 +283,7 @@ export function useBatchedSessionUpdates(
 						};
 					}
 
-					// Apply shell logs (legacy fallback — only when no terminal tabs present)
+					// Apply shell logs (legacy fallback - only when no terminal tabs present)
 					// TODO: Remove shellLogs once terminal tabs migration is complete
 					if ((shellStdout || shellStderr) && !updatedSession.terminalTabs?.length) {
 						const shellLogs = [...updatedSession.shellLogs];
@@ -371,6 +371,7 @@ export function useBatchedSessionUpdates(
 								reasoningTokens:
 									(existing?.reasoningTokens || 0) + (sessionUsageDelta.reasoningTokens || 0),
 								contextWindow: sessionUsageDelta.contextWindow,
+								contextWindowResolved: sessionUsageDelta.contextWindowResolved,
 							},
 						};
 					}
@@ -413,6 +414,9 @@ export function useBatchedSessionUpdates(
 											? (existing?.cacheCreationInputTokens ?? 0)
 											: tabUsageDelta.cacheCreationInputTokens,
 										contextWindow: tabUsageDelta.contextWindow || existing?.contextWindow || 0,
+										contextWindowResolved: tabUsageDelta.contextWindow
+											? tabUsageDelta.contextWindowResolved
+											: existing?.contextWindowResolved,
 										outputTokens: tabUsageDelta.outputTokens, // Current (not accumulated)
 										totalCostUsd: (existing?.totalCostUsd || 0) + tabUsageDelta.totalCostUsd,
 										reasoningTokens: tabUsageDelta.reasoningTokens,
@@ -582,6 +586,7 @@ export function useBatchedSessionUpdates(
 						cacheReadInputTokens: usage.cacheReadInputTokens,
 						cacheCreationInputTokens: usage.cacheCreationInputTokens,
 						contextWindow: usage.contextWindow,
+						contextWindowResolved: usage.contextWindowResolved,
 						outputTokens: usage.outputTokens,
 						totalCostUsd: existing.totalCostUsd + usage.totalCostUsd,
 						reasoningTokens: usage.reasoningTokens,
@@ -597,6 +602,7 @@ export function useBatchedSessionUpdates(
 						totalCostUsd: existing.totalCostUsd + usage.totalCostUsd,
 						reasoningTokens: (existing.reasoningTokens || 0) + (usage.reasoningTokens || 0),
 						contextWindow: usage.contextWindow,
+						contextWindowResolved: usage.contextWindowResolved,
 					});
 				}
 			} else {

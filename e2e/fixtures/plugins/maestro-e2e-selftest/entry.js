@@ -161,7 +161,7 @@ async function runSelfTest(maestro) {
 	});
 
 	// Act-verb allowlist NEGATIVE rows (Phase-4 contract): a valid dispatch/spawn
-	// grant covers ONLY its exact named members — any other target is DENY even
+	// grant covers ONLY its exact named members - any other target is DENY even
 	// while the capability itself is granted. Logged as distinct rows so the
 	// matrix asserts them independently of the main cap rows.
 	async function offscope(name, fn) {

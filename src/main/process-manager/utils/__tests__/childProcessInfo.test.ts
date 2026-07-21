@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { getChildProcesses } from '../childProcessInfo';
 
-// Note: this test mocks execFile (not exec) — the implementation uses execFile
+// Note: this test mocks execFile (not exec) - the implementation uses execFile
 // which is safe from shell injection by design.
 
 // Mock child_process.execFile

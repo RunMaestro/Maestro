@@ -85,7 +85,7 @@ export const PIPELINE_GROUP_PADDING = 28;
  * selected (offsets are only needed for the combined view).
  *
  * Pipelines with a manual `viewOffset` are excluded from the auto-stack
- * chain — they're placed by the user, so they shouldn't push the rest
+ * chain - they're placed by the user, so they shouldn't push the rest
  * of the auto-stacked pipelines around. Their offset comes from
  * `resolvePipelineOffset` instead.
  *
@@ -268,7 +268,7 @@ export function resolveNonOverlappingPipelineOffset(
  * - "All Pipelines" view (selectedPipelineId === null): renders all nodes from
  *   all pipelines, stacked vertically with gap offsets to avoid overlap.
  * - "Selected pipeline" view: renders ONLY nodes belonging to the active
- *   pipeline. Nodes from other pipelines are fully hidden — even if the same
+ *   pipeline. Nodes from other pipelines are fully hidden - even if the same
  *   agent session appears in multiple pipelines. This prevents confusing
  *   "ghost" duplicates when an agent is shared across pipelines.
  *
@@ -282,7 +282,7 @@ export function convertToReactFlowNodes(
 	triggerOptions?: {
 		onTriggerPipeline?: (pipelineName: string) => void;
 		isSaved?: boolean;
-		/** Pipeline-wide running state — kept for components (e.g. the
+		/** Pipeline-wide running state - kept for components (e.g. the
 		 *  NodeConfigPanel on the right rail) that only need a yes/no per
 		 *  pipeline. Trigger-node animation should prefer
 		 *  `runningSubscriptionsByPipeline` for per-sub precision. */
@@ -420,12 +420,12 @@ export function convertToReactFlowNodes(
 
 		// Only render nodes from the active pipeline. In "All Pipelines" view all
 		// pipelines are active, so nothing is skipped. In "selected pipeline" view,
-		// nodes from other pipelines are hidden entirely — this prevents the jarring
+		// nodes from other pipelines are hidden entirely - this prevents the jarring
 		// "ghost duplicate" that appeared when a shared agent was dragged into a new
 		// pipeline, causing the same agent from another pipeline to pop up dimmed.
 		if (!isActive) continue;
 
-		// viewOffset only applies in All Pipelines view — single-pipeline view
+		// viewOffset only applies in All Pipelines view - single-pipeline view
 		// must always show nodes at their canonical positions.
 		const pipelineOffset =
 			selectedPipelineId === null
@@ -434,7 +434,7 @@ export function convertToReactFlowNodes(
 
 		// In All-Pipelines view a pipeline moves as ONE unit by dragging its group
 		// card. Content nodes paint on top of that card, so without this a drag is
-		// only grabbable on the card's empty margins — and dense/small cards (a
+		// only grabbable on the card's empty margins - and dense/small cards (a
 		// two-node pipeline like "BJJ Sensei") have almost none, making them feel
 		// un-draggable. Give content nodes `pointer-events: none` so a drag
 		// anywhere on the pipeline (including over its nodes) falls through to the
@@ -612,19 +612,19 @@ export function convertToReactFlowNodes(
  * Edge animation rule: an edge is flagged `isRunning` iff its TARGET is an
  * agent node whose `sessionName` appears in this pipeline's active-agents
  * set (`runningAgentsByPipeline`). This makes only the edges feeding into
- * the currently-executing agent(s) animate — rather than every edge in a
+ * the currently-executing agent(s) animate - rather than every edge in a
  * pipeline where any run is active. Works identically for linear chains
  * (one target per hop), fan-out (multiple targets concurrently), and
  * fan-in (multiple incoming edges to one running target).
  *
- * Non-agent targets (cli_output, error nodes) never animate — they don't
+ * Non-agent targets (cli_output, error nodes) never animate - they don't
  * correspond to a dispatchable run.
  *
  * Optimistic-trigger override: when a pipeline appears in
  * `optimisticTriggeredPipelineIds`, every edge in that pipeline is flagged
  * `isRunning` for the brief optimistic window after a manual Play click. This
  * gives instant "your click registered" feedback even before any agent has
- * spun up — useful for sub-second shell-only triggers that would otherwise
+ * spun up - useful for sub-second shell-only triggers that would otherwise
  * complete before the per-agent rule could light anything up.
  */
 export function convertToReactFlowEdges(
@@ -640,7 +640,7 @@ export function convertToReactFlowEdges(
 	for (const pipeline of pipelines) {
 		const isActive = selectedPipelineId === null || pipeline.id === selectedPipelineId;
 
-		// Skip non-active pipelines entirely — their nodes are not rendered by
+		// Skip non-active pipelines entirely - their nodes are not rendered by
 		// convertToReactFlowNodes, so edges referencing them would be orphaned.
 		// React Flow may cache the "invalid" state of orphaned edges internally,
 		// causing them to not re-appear when switching back to All Pipelines view.

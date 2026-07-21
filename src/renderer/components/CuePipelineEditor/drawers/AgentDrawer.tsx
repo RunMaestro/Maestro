@@ -186,7 +186,7 @@ export const AgentDrawer = memo(function AgentDrawer({
 
 			{/* Agent list */}
 			<div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 8px' }}>
-				{/* Nodes section — drag the Command pill to add an unbound command
+				{/* Nodes section - drag the Command pill to add an unbound command
 				 *  node (shell or maestro-cli). The owning agent is picked in the
 				 *  node's config panel after drop. Hidden when the user is searching
 				 *  to avoid clutter. */}

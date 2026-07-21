@@ -11,7 +11,7 @@ import MarkdownIt from 'markdown-it';
  *   uses commonmark-compatible breaks).
  * - `typographer: false` keeps output predictable and stable across themes.
  *
- * Creating fresh instances per parse is intentional — markdown-it is cheap to
+ * Creating fresh instances per parse is intentional - markdown-it is cheap to
  * construct (sub-millisecond) and per-instance state would otherwise need to
  * be reset between parses.
  */

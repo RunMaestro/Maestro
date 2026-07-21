@@ -1,6 +1,6 @@
 import type { Shortcut } from '../types';
 
-export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
+export const DEFAULT_SHORTCUTS = {
 	toggleSidebar: {
 		id: 'toggleSidebar',
 		label: 'Toggle Left Panel',
@@ -226,7 +226,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
-};
+} satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)
 export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
@@ -280,7 +280,7 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 };
 
 // Tab navigation shortcuts (AI mode only)
-export const TAB_SHORTCUTS: Record<string, Shortcut> = {
+export const TAB_SHORTCUTS = {
 	tabSwitcher: { id: 'tabSwitcher', label: 'Tab Switcher', keys: ['Alt', 'Meta', 't'] },
 	newTab: { id: 'newTab', label: 'New Tab', keys: ['Meta', 't'] },
 	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser', keys: ['Meta', 'b'] },
@@ -350,4 +350,12 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	goToTab8: { id: 'goToTab8', label: 'Go to Tab 8', keys: ['Meta', '8'] },
 	goToTab9: { id: 'goToTab9', label: 'Go to Tab 9', keys: ['Meta', '9'] },
 	goToLastTab: { id: 'goToLastTab', label: 'Go to Last Tab', keys: ['Meta', '0'] },
-};
+} satisfies Record<string, Shortcut>;
+
+/**
+ * Every valid shortcut id. Lookups keyed by these unions are compile-checked, so a
+ * typo (or a stale name after a rename) surfaces as a type error instead of a
+ * silently-undefined shortcut that renders no key hint in the UI.
+ */
+export type ShortcutId = keyof typeof DEFAULT_SHORTCUTS;
+export type TabShortcutId = keyof typeof TAB_SHORTCUTS;

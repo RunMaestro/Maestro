@@ -246,7 +246,7 @@ describe('cue-github-poller-trigger-source', () => {
 		expect(innerPollNow).toHaveBeenCalledOnce();
 
 		source.stop();
-		// After stop(), pollNow is dropped — calling it does not reach the inner.
+		// After stop(), pollNow is dropped - calling it does not reach the inner.
 		source.pollNow?.();
 		expect(innerPollNow).toHaveBeenCalledOnce();
 	});

@@ -100,7 +100,7 @@ describe('reconcileMissedTimeEvents', () => {
 			sessionName: 'Test Session',
 		});
 
-		// Sleep for 30 minutes — interval is 2 hours, so 0 missed
+		// Sleep for 30 minutes - interval is 2 hours, so 0 missed
 		const config = makeConfig({
 			sleepStartMs: Date.now() - 30 * 60 * 1000,
 			wakeTimeMs: Date.now(),
@@ -273,9 +273,10 @@ describe('reconcileMissedTimeEvents', () => {
 		});
 
 		const sleepDuration = 60 * 60 * 1000; // 1 hour
+		const wakeTimeMs = Date.now();
 		const config = makeConfig({
-			sleepStartMs: Date.now() - sleepDuration,
-			wakeTimeMs: Date.now(),
+			sleepStartMs: wakeTimeMs - sleepDuration,
+			wakeTimeMs,
 			sessions,
 		});
 
@@ -434,7 +435,7 @@ describe('reconcileMissedTimeEvents', () => {
 		});
 
 		it('fires one catch-up for the MOST RECENT slot when multiple are missed', () => {
-			// Sleep across a full week with a daily 09:00 schedule — should fire
+			// Sleep across a full week with a daily 09:00 schedule - should fire
 			// once for the most recent 09:00, not once per day.
 			const wake = new Date();
 			wake.setHours(10, 0, 0, 0);
@@ -511,7 +512,7 @@ describe('reconcileMissedTimeEvents', () => {
 
 		it('does not double-fire when wake lands exactly on a slot boundary', () => {
 			// If wakeTimeMs == slot timestamp, the live trigger source will fire
-			// it on its next 60s tick — the reconciler must not also fire.
+			// it on its next 60s tick - the reconciler must not also fire.
 			const wake = new Date();
 			wake.setHours(9, 0, 0, 0); // wake AT 09:00 exactly
 			const sleepStart = new Date(wake);

@@ -20,7 +20,7 @@ export function settingsGet(key: string, options: SettingsGetOptions): void {
 	try {
 		const value = readSettingValue(key);
 
-		// Resolve metadata — for dot-notation, use the top-level key
+		// Resolve metadata - for dot-notation, use the top-level key
 		const topKey = key.split('.')[0];
 		const meta = SETTINGS_METADATA[topKey];
 		const defaultValue = key.includes('.') ? undefined : getSettingDefault(key);

@@ -226,7 +226,7 @@ UX-DR2: [Actionable UX design requirement with clear implementation scope]
 
 ```
 
-**🚨 CRITICAL**: Do NOT reduce UX requirements to vague summaries. Each UX-DR must be specific enough to generate a story with testable acceptance criteria. If the UX spec identifies 6 reusable components, list all 6 — not "create reusable components."
+**🚨 CRITICAL**: Do NOT reduce UX requirements to vague summaries. Each UX-DR must be specific enough to generate a story with testable acceptance criteria. If the UX spec identifies 6 reusable components, list all 6 - not "create reusable components."
 
 ### 7. Load and Initialize Template
 

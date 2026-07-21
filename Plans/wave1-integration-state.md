@@ -22,7 +22,7 @@
 
 - NEW: Extensions marketplace UI in EncoreTab (ExtensionsView)
 - Added optional manifest field `category` (shared + plugin-sdk mirror)
-- NO App.tsx or index.ts wiring needed — mounts inside EncoreTab.tsx
+- NO App.tsx or index.ts wiring needed - mounts inside EncoreTab.tsx
 - PluginsPanel.tsx now unreferenced; safe to delete PluginsPanel.tsx + PluginsPanel.test.tsx at integration
 
 ## App.tsx Mounts (integrated)
@@ -36,17 +36,17 @@ import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 
 ### Added hook calls
 
-1. `usePluginCommandBridge();` — after the root `__maestroDebug` command helper block.
-2. `usePluginKeybindings();` — immediately after `useMainKeyboardHandler()`.
+1. `usePluginCommandBridge();` - after the root `__maestroDebug` command helper block.
+2. `usePluginKeybindings();` - immediately after `useMainKeyboardHandler()`.
 
 ## Verification run in `.worktrees/autonomous-manager-agent`
 
-1. `bun run build:renderer && bun run build:main` — passed.
-2. `bunx playwright test e2e/plugins.spec.ts` — 8 passed.
-3. `bun run lint && bun tsc -p tsconfig.json --noEmit` — passed.
+1. `bun run build:renderer && bun run build:main` - passed.
+2. `bunx playwright test e2e/plugins.spec.ts` - 8 passed.
+3. `bun run lint && bun tsc -p tsconfig.json --noEmit` - passed.
 
 ## Next
 
 1. Commit + push when approved.
-2. Next: act-verbs (agents:dispatch / process:spawn — security-critical, I own this).
+2. Next: act-verbs (agents:dispatch / process:spawn - security-critical, I own this).
 3. Next wave: P0 contracts + P3 host-API → explicit per-agent git worktrees.

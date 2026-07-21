@@ -1,5 +1,5 @@
 /**
- * E2E signer for the fixture plugin dir — mirrors the production verifier by
+ * E2E signer for the fixture plugin dir - mirrors the production verifier by
  * importing the PURE shared signing module (no Electron deps, safe for the
  * Playwright transpiler): recursive walk, POSIX relative paths, the shared
  * exclusion policy (signature.json + *.pem/*.key + pruned dirs), detached
@@ -7,7 +7,7 @@
  *
  * Keys are createable ONCE and reusable: consent binds the plugin identity to
  * the signer key, so a mid-test fixture edit MUST be re-signed with the SAME
- * key — re-signing with a fresh key is an identity change and force-disables
+ * key - re-signing with a fresh key is an identity change and force-disables
  * the plugin at the next refresh.
  */
 import fs from 'fs';
@@ -21,7 +21,7 @@ import {
 } from '../../src/shared/plugins/signing';
 
 export interface SigningKeys {
-	/** base64 SPKI public key — seed into `pluginTrustedKeys` to trust it. */
+	/** base64 SPKI public key - seed into `pluginTrustedKeys` to trust it. */
 	publicKeyB64: string;
 	privateKey: KeyObject;
 }
@@ -49,7 +49,7 @@ function collectFiles(root: string, dir: string, files: Record<string, string>):
 }
 
 /** (Re-)write `signature.json` over the CURRENT contents of `dir`. Call again
- * after every fixture edit — the exact-file-set check makes stale signatures
+ * after every fixture edit - the exact-file-set check makes stale signatures
  * `invalid`, which the trust gate treats as never-run. */
 export function signPluginDir(dir: string, keys: SigningKeys): void {
 	const files: Record<string, string> = {};

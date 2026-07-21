@@ -26,6 +26,7 @@ import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { capabilitySnapshots } from './capability-snapshot';
+import { setOmpModelCatalog, computeOmpCatalogKey } from './omp-model-catalog';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -42,7 +43,7 @@ function readCopilotConfiguredModel(): string | null {
 			return config.model;
 		}
 	} catch {
-		// Config may not exist or be malformed — fall through to null.
+		// Config may not exist or be malformed - fall through to null.
 	}
 	return null;
 }
@@ -154,11 +155,13 @@ export class AgentDetector {
 		for (const agentDef of AGENT_DEFINITIONS) {
 			const customPath = this.customPaths[agentDef.id];
 			let detection: { exists: boolean; path?: string };
+			let resolvedCustomPath: string | undefined;
 
 			// If user has specified a custom path, check that first
 			if (customPath) {
 				detection = await checkCustomPath(customPath);
 				if (detection.exists) {
+					resolvedCustomPath = detection.path || customPath;
 					logger.info(
 						`Agent "${agentDef.name}" found at custom path: ${detection.path}`,
 						LOG_CONTEXT
@@ -193,13 +196,13 @@ export class AgentDetector {
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
-				customPath: customPath || undefined,
+				customPath: resolvedCustomPath,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
 
 			// Mirror detection into the capability snapshot store so the
 			// renderer has a persisted readiness pill for every agent. Skip
-			// the internal `terminal` agent — it isn't user-facing.
+			// the internal `terminal` agent - it isn't user-facing.
 			//
 			// Each agent is only written when its observed state actually
 			// changed (status differs, or the detected path differs). This
@@ -209,7 +212,7 @@ export class AgentDetector {
 				const existing = capabilitySnapshots.get(agentDef.id);
 				if (detection.exists) {
 					// Preserve any reactive auth_required state set by a recent
-					// spawn failure — detection alone shouldn't clear it. The
+					// spawn failure - detection alone shouldn't clear it. The
 					// next successful spawn (or explicit re-probe) flips it back.
 					if (existing?.status === 'auth_required') {
 						// no-op: leave reactive state intact
@@ -488,11 +491,13 @@ export class AgentDetector {
 						);
 						return [];
 					}
-					let parsed: { models?: Array<{ id?: string; selector?: string }> };
+					let parsed: {
+						models?: Array<{ id?: string; selector?: string; contextWindow?: number }>;
+					};
 					try {
-						parsed = parseJsonWithBom<{ models?: Array<{ id?: string; selector?: string }> }>(
-							result.stdout
-						);
+						parsed = parseJsonWithBom<{
+							models?: Array<{ id?: string; selector?: string; contextWindow?: number }>;
+						}>(result.stdout);
 					} catch (parseError) {
 						captureException(parseError, {
 							operation: 'agent:modelDiscovery',
@@ -503,6 +508,11 @@ export class AgentDetector {
 						});
 						return [];
 					}
+					// Feed the context-window catalog off the same call, so the usage path
+					// can resolve a model's real window without a second fetch. Key it to
+					// the default identity (this binary, no env overrides) so it warms
+					// only same-config sessions; custom-path/env sessions prime their own.
+					setOmpModelCatalog(parsed.models ?? [], computeOmpCatalogKey(command, undefined));
 					const seen = new Set<string>();
 					const models: string[] = [];
 					for (const entry of parsed.models ?? []) {
@@ -514,6 +524,65 @@ export class AgentDetector {
 					}
 					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT);
 					return models;
+				}
+
+				case 'grok': {
+					// Grok: read models_cache.json under GROK_HOME (default ~/.grok).
+					// Unlike Codex's `models` array, Grok's `models` is an object map
+					// keyed by model ID, each entry wrapping an `info` object that
+					// carries a `hidden` flag.
+					try {
+						const grokHome = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
+						const cachePath = path.join(grokHome, 'models_cache.json');
+						const cacheContent = fs.readFileSync(cachePath, 'utf8');
+						const cache = parseJsonWithBom<{
+							models?: Record<string, { info?: { id?: string; hidden?: boolean } }>;
+						}>(cacheContent);
+						if (cache.models && typeof cache.models === 'object') {
+							const models = Object.entries(cache.models)
+								.filter(([, entry]) => entry?.info?.hidden !== true)
+								.map(([id, entry]) => entry?.info?.id || id);
+							if (models.length > 0) {
+								logger.info(
+									`Discovered ${models.length} models for ${agentId} from models_cache.json`,
+									LOG_CONTEXT,
+									{ models }
+								);
+								return models;
+							}
+						}
+					} catch {
+						logger.debug('Could not read Grok models_cache.json for model discovery', LOG_CONTEXT);
+					}
+
+					// Fallback: parse `grok models` output. Model lines are bulleted, e.g.
+					//   * grok-4.5 (default)
+					//   - grok-composer-2.5-fast
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					if (result.exitCode === 0) {
+						const models: string[] = [];
+						for (const line of result.stdout.split('\n')) {
+							const match = line.match(/^\s*[*-]\s+(\S+)/);
+							if (match && !models.includes(match[1])) {
+								models.push(match[1]);
+							}
+						}
+						if (models.length > 0) {
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from \`grok models\``,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					} else {
+						logger.warn(
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+					}
+					return [];
 				}
 
 				default:
@@ -681,6 +750,20 @@ export class AgentDetector {
 								'Could not read Codex models_cache.json for config option discovery',
 								LOG_CONTEXT
 							);
+						}
+					}
+					break;
+				}
+
+				case 'grok': {
+					if (optionKey === 'model') {
+						// Reuse model discovery (~/.grok/models_cache.json with a
+						// `grok models` CLI fallback). Empty string = use grok's default
+						// model. When discovery returns nothing (fresh install, CLI
+						// unavailable), fall through to the static options below.
+						const models = await this.discoverModels(agentId);
+						if (models.length > 0) {
+							return ['', ...models];
 						}
 					}
 					break;

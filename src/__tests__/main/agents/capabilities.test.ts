@@ -292,6 +292,7 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('opencode', 'supportsWizard')).toBe(true);
 			expect(hasCapability('factory-droid', 'supportsWizard')).toBe(true);
 			expect(hasCapability('copilot-cli', 'supportsWizard')).toBe(true);
+			expect(hasCapability('grok', 'supportsWizard')).toBe(true);
 			expect(hasCapability('terminal', 'supportsWizard')).toBe(false);
 
 			// supportsGroupChatModeration
@@ -344,6 +345,7 @@ describe('agent-capabilities', () => {
 				'usesCombinedContextWindow',
 				'supportsAppendSystemPrompt',
 				'supportsProjectMemory',
+				'supportsAdditionalDirectories',
 			];
 
 			const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);

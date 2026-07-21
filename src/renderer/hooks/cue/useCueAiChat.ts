@@ -1,5 +1,5 @@
 /**
- * useCueAiChat — Manages AI assist chat for the Cue YAML editor.
+ * useCueAiChat - Manages AI assist chat for the Cue YAML editor.
  *
  * Handles agent spawning, streaming responses, message state, and cleanup.
  */
@@ -9,7 +9,7 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { buildSpawnConfigForAgent } from '../../utils/sessionHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
-const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only — no markdown, no code fences, no bullet lists, no formatting.
+const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only - no markdown, no code fences, no bullet lists, no formatting.
 
 Event types: app.startup (fires once on application start, no extra fields), time.heartbeat (interval_minutes), time.scheduled (schedule_times array, optional schedule_days), file.changed (watch glob), agent.completed (source_session, optional fan_out), github.pull_request (poll_minutes, optional repo), github.issue (poll_minutes, optional repo), task.pending (watch glob, poll_minutes).
 
@@ -28,7 +28,7 @@ settings:
   timeout_on_fail: break | continue
   max_concurrent: 1
   queue_size: 10
-  owner_agent_id: <agent id or name>  # optional — recommended when >1 agent shares this projectRoot, so unowned subscriptions fire once on a named agent instead of whichever happens to be first in the session list. If unset with >1 agent, the runtime deterministically picks the first-in-list as a fallback. Subs with explicit agent_id keep fanning out regardless.
+  owner_agent_id: <agent id or name>  # optional - recommended when >1 agent shares this projectRoot, so unowned subscriptions fire once on a named agent instead of whichever happens to be first in the session list. If unset with >1 agent, the runtime deterministically picks the first-in-list as a fallback. Subs with explicit agent_id keep fanning out regardless.
 
 Multi-agent patterns: Startup (app.startup), Heartbeat (time.heartbeat), Scheduled (time.scheduled), File Enrichment (file.changed), Research Swarm (fan_out + fan-in), Sequential Chain (agent.completed chain), Debate (fan_out to opposing + fan-in to moderator), PR Review (github.pull_request), Issue Triage (github.issue), Task Queue (task.pending).
 
@@ -63,7 +63,7 @@ export function useCueAiChat({
 
 	const session = useSessionStore(selectSessionById(sessionId));
 
-	// Reset chat state when modal opens — clean up stale listeners first
+	// Reset chat state when modal opens - clean up stale listeners first
 	useEffect(() => {
 		if (isOpen) {
 			aiCleanupRef.current.forEach((fn) => fn());
@@ -120,6 +120,7 @@ export function useCueAiChat({
 				agentSessionId: agentSessionIdRef.current ?? undefined,
 				sessionCustomPath: session.customPath,
 				sessionCustomArgs: session.customArgs,
+				sessionAdditionalDirectories: session.additionalDirectories,
 				sessionCustomEnvVars: session.customEnvVars,
 				sessionCustomModel: session.customModel,
 				sessionCustomContextWindow: session.customContextWindow,

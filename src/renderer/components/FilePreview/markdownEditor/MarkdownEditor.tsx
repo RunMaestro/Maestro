@@ -14,7 +14,7 @@ import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
  * Why CM6 instead of a textarea: CM6 lays out each logical line as its own
  * block element, so the line-number gutter stays aligned with the text
  * regardless of soft-wrap. The previous fixed-row gutter drifted as soon as
- * a line wrapped — which made markdown tables (one row per line, but each
+ * a line wrapped - which made markdown tables (one row per line, but each
  * row is wider than the viewport) look unreadable.
  *
  * Reuses the Giant tier's `themeAdapter` (palette → CM6 theme) and
@@ -69,7 +69,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		}, [onLineNumberContextMenu]);
 
 		// Suppress the next-update onChange when we apply external value changes
-		// via dispatch — otherwise the controlled-input feedback loop would fire
+		// via dispatch - otherwise the controlled-input feedback loop would fire
 		// onChange with the value the parent just gave us, which is harmless but
 		// confusing in devtools.
 		const applyingExternalRef = useRef(false);

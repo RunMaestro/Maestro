@@ -8,6 +8,11 @@ import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type {
+	ConcertoDesignerAction,
+	ConcertoDesignerActionResult,
+	MovementDesignerInspection,
+} from '../../shared/concerto-html';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -287,7 +292,8 @@ export type ExecuteCommandCallback = (
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
 	force?: boolean,
-	images?: string[]
+	images?: string[],
+	background?: boolean
 ) => Promise<boolean>;
 
 /**
@@ -350,8 +356,74 @@ export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 export type NewAITabWithPromptResult = { success: boolean; tabId?: string };
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
-	prompt: string
+	prompt: string,
+	background?: boolean
 ) => Promise<NewAITabWithPromptResult>;
+/**
+ * Result of enqueuing (or immediately dispatching) a CLI prompt into the
+ * renderer's authoritative execution queue. When the target session is busy the
+ * prompt joins `session.executionQueue` (FIFO by timestamp); when idle it is
+ * dispatched immediately through the same path as a plain `dispatch`. Surfaced
+ * so `maestro-cli dispatch --queue` can report the queue position to callers.
+ */
+export type EnqueueCommandResult = {
+	success: boolean;
+	tabId?: string;
+	/** True when the prompt was queued (session busy); false when dispatched now. */
+	queued?: boolean;
+	/** 1-based position in the queue when queued (1 = next to run). */
+	queuePosition?: number;
+	/** Total number of items in the queue after enqueuing. */
+	queueLength?: number;
+	/** Id of the queued item, for later tracking or removal. */
+	itemId?: string;
+	error?: string;
+};
+export type EnqueueCommandCallback = (
+	sessionId: string,
+	command: string,
+	inputMode?: 'ai' | 'terminal',
+	tabId?: string,
+	images?: string[],
+	background?: boolean
+) => Promise<EnqueueCommandResult>;
+/**
+ * A single queued item, mirrored from the renderer's executionQueue for CLI
+ * inspection (`maestro-cli queue list`). Tracks the renderer QueuedItem shape.
+ */
+export interface QueuedItemSnapshot {
+	id: string;
+	timestamp: number;
+	tabId: string;
+	type: 'message' | 'command';
+	text?: string;
+	command?: string;
+	commandArgs?: string;
+	tabName?: string;
+	paused?: boolean;
+}
+/**
+ * Per-session queue snapshot returned by the list_queue round-trip. Carries the
+ * session state alongside the queued items so `maestro-cli queue list` can show
+ * whether the agent is currently busy.
+ */
+export interface QueueSessionSnapshot {
+	sessionId: string;
+	name: string;
+	state: string;
+	items: QueuedItemSnapshot[];
+}
+export type ListQueueResult = {
+	success: boolean;
+	queues: QueueSessionSnapshot[];
+	error?: string;
+};
+export type ListQueueCallback = (sessionId?: string) => Promise<ListQueueResult>;
+export type RemoveQueueItemResult = { success: boolean; removed: boolean; error?: string };
+export type RemoveQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<RemoveQueueItemResult>;
 export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
@@ -366,7 +438,7 @@ export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>
 
 /**
  * Updates the Auto Run folder for an existing session. Mirrors what the desktop
- * app does when the user picks a different folder via `dialog.selectFolder` —
+ * app does when the user picks a different folder via `dialog.selectFolder` -
  * the renderer reloads the document list from the new path and persists the
  * choice to session storage. Used by the web UI's `FolderPickerSheet`.
  */
@@ -408,7 +480,7 @@ export type NotifyCenterFlashVariant = 'success' | 'info' | 'warning' | 'error';
 
 /**
  * Data-driven click intent for an externally-fired toast. Mirrors
- * `ToastClickAction` in `renderer/stores/notificationStore.ts` — the only
+ * `ToastClickAction` in `renderer/stores/notificationStore.ts` - the only
  * subset that survives serialization across the IPC bridge.
  */
 export type NotifyToastClickAction =
@@ -424,21 +496,21 @@ export interface NotifyToastParams {
 	/** Auto-dismiss seconds; ignored when `dismissible: true`. */
 	duration?: number;
 	/**
-	 * Sticky toast — no auto-dismiss, requires the user to click the close
+	 * Sticky toast - no auto-dismiss, requires the user to click the close
 	 * button to dismiss. Use for critical messages the user must acknowledge.
 	 */
 	dismissible?: boolean;
-	/** Optional agent/session ID — clicking the toast jumps to it. */
+	/** Optional agent/session ID - clicking the toast jumps to it. */
 	sessionId?: string;
 	/**
 	 * Optional explicit source-agent label rendered in the toast header strip.
 	 * Unlike the name resolved from `sessionId` (which requires the agent to be
-	 * loaded in the desktop store), this is store-independent — so cron- and
+	 * loaded in the desktop store), this is store-independent - so cron- and
 	 * watchdog-fired toasts always show who produced them. When set, it wins over
 	 * the resolved session name for display; `sessionId` still drives click-jump.
 	 */
 	sourceAgent?: string;
-	/** Optional AI tab ID within the agent — paired with `sessionId` for jump-to-tab. */
+	/** Optional AI tab ID within the agent - paired with `sessionId` for jump-to-tab. */
 	tabId?: string;
 	/** Optional inline action link rendered beneath the message body (opens in browser). */
 	actionUrl?: string;
@@ -469,6 +541,15 @@ export type MovementViewCallback = (params: MovementPayload) => Promise<boolean>
 
 /** Read the current movement snapshot (items + size) for agent awareness. */
 export type GetMovementStateCallback = () => Promise<MovementStateSnapshot | null>;
+/** Capture the live HTML Movement viewport plus its runtime diagnostics. */
+export type GetMovementDesignerInspectionCallback = (
+	id: string
+) => Promise<MovementDesignerInspection | null>;
+/** Perform one selector-scoped action inside a sandboxed HTML Movement. */
+export type InteractMovementDesignerCallback = (
+	id: string,
+	action: ConcertoDesignerAction
+) => Promise<ConcertoDesignerActionResult>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,
@@ -513,7 +594,7 @@ export type GetCustomCommandsCallback = () => CustomAICommand[];
  *
  * `tabId` is the addressable identifier consumers (Maestro-Discord, Cue) pass
  * back to `dispatch --session <id>` and `session show <id>`. `sessionId` is
- * an alias kept for symmetry with `dispatch`'s response shape — the duplicate
+ * an alias kept for symmetry with `dispatch`'s response shape - the duplicate
  * field lets polling consumers use whichever name they prefer.
  */
 export interface DesktopSessionEntry {
@@ -655,7 +736,7 @@ export interface WebPlaybookDocument {
 
 /**
  * Saved Playbook configuration (subset surfaced to web/mobile clients).
- * Worktree settings are intentionally omitted — they're desktop-only.
+ * Worktree settings are intentionally omitted - they're desktop-only.
  */
 export interface WebPlaybook {
 	id: string;
@@ -881,7 +962,7 @@ export type GetGitStatusCallback = (sessionId: string) => Promise<GitStatusResul
 export type GetGitDiffCallback = (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 
 /**
- * Result for the `get_git_branches` WebSocket message — used by mobile Run-in-Worktree
+ * Result for the `get_git_branches` WebSocket message - used by mobile Run-in-Worktree
  * picker to populate the base-branch dropdown.
  */
 export interface GitBranchesResult {

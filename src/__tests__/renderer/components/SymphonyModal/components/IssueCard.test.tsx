@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/IssueCard — selection, blocking labels,
+ * Tests for SymphonyModal/components/IssueCard - selection, blocking labels,
  * claimed-PR link, document count, keyboard activation.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

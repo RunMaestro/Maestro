@@ -1,9 +1,9 @@
 /**
  * ExtensionDetails first-party disclosure surfaces:
  * - Supervised background services (from the shared first-party registry)
- *   with a status line derived from the tile's enabled state — no polling.
+ *   with a status line derived from the tile's enabled state - no polling.
  * - The declared permission list (capability risk + description + reason)
- *   rendered statically as "Granted on enable" — grants are minted host-side
+ *   rendered statically as "Granted on enable" - grants are minted host-side
  *   by the lifecycle bridge, so no getGrants IPC round-trip for builtins.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';

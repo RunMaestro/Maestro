@@ -1,5 +1,5 @@
 /**
- * CueDashboardStats — Top-of-dashboard stat cards: pipelines, total executions
+ * CueDashboardStats - Top-of-dashboard stat cards: pipelines, total executions
  * (lifetime), average runtime over the recent activity log, agents in pipelines.
  */
 
@@ -77,7 +77,7 @@ export function CueDashboardStats({
 			<StatCard
 				theme={theme}
 				label="Average Runtime"
-				value={averageRuntimeMs === null ? '—' : formatElapsedTime(averageRuntimeMs)}
+				value={averageRuntimeMs === null ? '-' : formatElapsedTime(averageRuntimeMs)}
 				icon={<Clock className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 			/>
 			<StatCard

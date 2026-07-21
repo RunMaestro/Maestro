@@ -192,7 +192,7 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			return typeof p.agentId === 'string' ? p.agentId : undefined;
 		case 'process.spawn':
 			// Allowlist scope target: the host-blessed binary NAME the plugin
-			// selects (never a path or shell text — the handler's closed schema
+			// selects (never a path or shell text - the handler's closed schema
 			// and the host-owned registry enforce that).
 			return typeof p.command === 'string' ? p.command : undefined;
 		default:

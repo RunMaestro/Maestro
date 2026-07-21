@@ -1,8 +1,8 @@
 /**
  * Common interface for every Cue trigger source.
  *
- * A trigger source owns the *external* mechanism for one subscription —
- * a setInterval timer, a chokidar watcher, a GitHub poller, etc. — and emits
+ * A trigger source owns the *external* mechanism for one subscription -
+ * a setInterval timer, a chokidar watcher, a GitHub poller, etc. - and emits
  * `CueEvent`s through the context-supplied `emit` callback whenever the trigger
  * fires. Each source is responsible for its own start/stop lifecycle so the
  * runtime never has to know whether it owns timers, watchers, or pollers.
@@ -19,13 +19,13 @@ import type { CueSessionRegistry } from '../cue-session-registry';
 
 /**
  * The minimum surface a trigger source must expose. The runtime never calls
- * anything else on a source — keeping the interface tight ensures that adding
+ * anything else on a source - keeping the interface tight ensures that adding
  * a new source type is mechanical (define start/stop/nextTriggerAt + register
  * with the factory).
  */
 export interface CueTriggerSource {
 	/**
-	 * Start the source. Must be idempotent — the runtime currently calls
+	 * Start the source. Must be idempotent - the runtime currently calls
 	 * start() exactly once per source instance, but defensive idempotency keeps
 	 * the contract simple if that ever changes.
 	 */
@@ -52,7 +52,7 @@ export interface CueTriggerSource {
 	 * for the next scheduled poll (which may be up to `poll_minutes` away).
 	 *
 	 * Sources that don't have a meaningful "poll now" semantics (heartbeat,
-	 * scheduled, file watchers, task scanners — these either tick on tight
+	 * scheduled, file watchers, task scanners - these either tick on tight
 	 * intervals or are reconciled separately) omit this method.
 	 */
 	pollNow?(): void;
@@ -83,7 +83,7 @@ export interface CueTriggerSourceContext {
 	 * Optional: request that the subscription self-destruct from cue.yaml.
 	 * Used by `time.once` to consume one-shot tasks after they fire (or after
 	 * they miss their grace window). The runtime is responsible for the actual
-	 * YAML rewrite — sources never touch the file directly. Reasons:
+	 * YAML rewrite - sources never touch the file directly. Reasons:
 	 *  - `missed-grace`: `fire_at` was already past the grace window on first
 	 *    poll, so the sub self-destructs without firing.
 	 *  - `filtered`: the fire time arrived but the sub's `filter` rejected the

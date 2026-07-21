@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
-import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { countMarkdownTasks } from './batchUtils';
@@ -86,14 +86,15 @@ function getSshRemoteId(session: Session | null): string | undefined {
  * Hook that provides handlers for Auto Run operations.
  * Extracted from App.tsx to reduce file size and improve maintainability.
  *
- * @param activeSession - The currently active session (can be null)
+ * Each handler resolves the active session fresh from the store at call time
+ * (via `selectActiveSession(useSessionStore.getState())`) instead of closing
+ * over a prop, so handlers always see the latest session even if they were
+ * memoized before the active session changed.
+ *
  * @param deps - Dependencies including state setters and values
  * @returns Object containing all Auto Run handler functions
  */
-export function useAutoRunHandlers(
-	activeSession: Session | null,
-	deps: UseAutoRunHandlersDeps
-): UseAutoRunHandlersReturn {
+export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHandlersReturn {
 	const {
 		setSessions,
 		setAutoRunDocumentList,
@@ -112,6 +113,7 @@ export function useAutoRunHandlers(
 	// Handler for auto run folder selection from setup modal
 	const handleAutoRunFolderSelected = useCallback(
 		async (folderPath: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 
 			const sshRemoteId = getSshRemoteId(activeSession);
@@ -179,7 +181,6 @@ export function useAutoRunHandlers(
 			setActiveFocus('right');
 		},
 		[
-			activeSession,
 			setSessions,
 			setAutoRunDocumentList,
 			setAutoRunDocumentTree,
@@ -193,6 +194,7 @@ export function useAutoRunHandlers(
 	// Handler to start batch run from modal with multi-document support
 	const handleStartBatchRun = useCallback(
 		async (config: BatchRunConfig) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			window.maestro.logger.log('info', 'handleStartBatchRun called', 'AutoRunHandlers', {
 				hasActiveSession: !!activeSession,
 				sessionId: activeSession?.id,
@@ -211,7 +213,7 @@ export function useAutoRunHandlers(
 				return;
 			}
 
-			// Determine target session ID — may differ from activeSession when running in a worktree
+			// Determine target session ID - may differ from activeSession when running in a worktree
 			let targetSessionId = activeSession.id;
 			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
 				// Verify the target session still exists (could have been removed while modal was open)
@@ -304,51 +306,46 @@ export function useAutoRunHandlers(
 			// Documents stay with the parent session's autoRunFolderPath; execution targets the worktree agent
 			startBatchRun(targetSessionId, config, activeSession.autoRunFolderPath);
 		},
-		[activeSession, startBatchRun, setBatchRunnerModalOpen]
+		[startBatchRun, setBatchRunnerModalOpen]
 	);
 
 	// Memoized function to get task count for a document (used by BatchRunnerModal)
-	const getDocumentTaskCount = useCallback(
-		async (filename: string) => {
-			if (!activeSession?.autoRunFolderPath) return 0;
-			const sshRemoteId = getSshRemoteId(activeSession);
-			const result = await window.maestro.autorun.readDoc(
-				activeSession.autoRunFolderPath,
-				filename + '.md',
-				sshRemoteId
-			);
-			if (!result.success || !result.content) return 0;
-			return countMarkdownTasks(result.content).unchecked;
-			// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
-		},
-		[
-			activeSession?.autoRunFolderPath,
-			activeSession?.sshRemoteId,
-			activeSession?.sessionSshRemoteConfig?.remoteId,
-		]
-	);
+	const getDocumentTaskCount = useCallback(async (filename: string) => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (!activeSession?.autoRunFolderPath) return 0;
+		const sshRemoteId = getSshRemoteId(activeSession);
+		const result = await window.maestro.autorun.readDoc(
+			activeSession.autoRunFolderPath,
+			filename + '.md',
+			sshRemoteId
+		);
+		if (!result.success || !result.content) return 0;
+		return countMarkdownTasks(result.content).unchecked;
+	}, []);
 
 	// Auto Run document content change handler
 	// Updates content in the session state (per-session, not global)
 	const handleAutoRunContentChange = useCallback(
 		async (content: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			setSessions((prev) =>
 				prev.map((s) => (s.id === activeSession.id ? { ...s, autoRunContent: content } : s))
 			);
 		},
-		[activeSession, setSessions]
+		[setSessions]
 	);
 
 	// Auto Run mode change handler
 	const handleAutoRunModeChange = useCallback(
 		(mode: 'edit' | 'preview') => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			setSessions((prev) =>
 				prev.map((s) => (s.id === activeSession.id ? { ...s, autoRunMode: mode } : s))
 			);
 		},
-		[activeSession, setSessions]
+		[setSessions]
 	);
 
 	// Auto Run state change handler (scroll/cursor positions)
@@ -359,6 +356,7 @@ export function useAutoRunHandlers(
 			editScrollPos: number;
 			previewScrollPos: number;
 		}) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
 			setSessions((prev) =>
 				prev.map((s) =>
@@ -374,13 +372,14 @@ export function useAutoRunHandlers(
 				)
 			);
 		},
-		[activeSession, setSessions]
+		[setSessions]
 	);
 
 	// Auto Run document selection handler
 	// Updates both selectedFile AND content atomically in session state
 	const handleAutoRunSelectDocument = useCallback(
 		async (filename: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession?.autoRunFolderPath) return;
 
 			const sshRemoteId = getSshRemoteId(activeSession);
@@ -407,11 +406,12 @@ export function useAutoRunHandlers(
 				)
 			);
 		},
-		[activeSession, setSessions]
+		[setSessions]
 	);
 
 	// Auto Run refresh handler - reload document list and show flash notification
 	const handleAutoRunRefresh = useCallback(async () => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession?.autoRunFolderPath) return;
 		const sshRemoteId = getSshRemoteId(activeSession);
 		const previousCount = autoRunDocumentList.length;
@@ -443,11 +443,7 @@ export function useAutoRunHandlers(
 		} finally {
 			setAutoRunIsLoadingDocuments(false);
 		}
-		// Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
 	}, [
-		activeSession?.autoRunFolderPath,
-		activeSession?.sshRemoteId,
-		activeSession?.sessionSshRemoteConfig?.remoteId,
 		autoRunDocumentList.length,
 		setAutoRunDocumentList,
 		setAutoRunDocumentTree,
@@ -459,6 +455,7 @@ export function useAutoRunHandlers(
 	// If no folder is configured, directly open folder picker
 	// If folder exists, open modal to allow changing it
 	const handleAutoRunOpenSetup = useCallback(async () => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.autoRunFolderPath) {
 			// Folder exists - open modal to change it
 			setAutoRunSetupModalOpen(true);
@@ -476,16 +473,12 @@ export function useAutoRunHandlers(
 				}
 			}
 		}
-	}, [
-		activeSession?.autoRunFolderPath,
-		activeSession,
-		setAutoRunSetupModalOpen,
-		handleAutoRunFolderSelected,
-	]);
+	}, [setAutoRunSetupModalOpen, handleAutoRunFolderSelected]);
 
 	// Auto Run create new document handler
 	const handleAutoRunCreateDocument = useCallback(
 		async (filename: string): Promise<boolean> => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession?.autoRunFolderPath) return false;
 
 			const sshRemoteId = getSshRemoteId(activeSession);
@@ -532,7 +525,7 @@ export function useAutoRunHandlers(
 				return false;
 			}
 		},
-		[activeSession, setSessions, setAutoRunDocumentList, setAutoRunDocumentTree]
+		[setSessions, setAutoRunDocumentList, setAutoRunDocumentTree]
 	);
 
 	return {

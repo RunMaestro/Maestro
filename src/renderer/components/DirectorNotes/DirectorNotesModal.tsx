@@ -25,7 +25,7 @@ const AIOverviewTab = lazy(() =>
 interface DirectorNotesModalProps {
 	theme: Theme;
 	onClose: () => void;
-	// Session navigation — jumps to an agent's session tab (closes modal first)
+	// Session navigation - jumps to an agent's session tab (closes modal first)
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
@@ -57,7 +57,7 @@ export function DirectorNotesModal({
 		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
 	);
 
-	// "Director's Notes Since Friday May 8th" — updates live when the
+	// "Director's Notes Since Friday May 8th" - updates live when the
 	// user changes the lookback period in the activity graph. "All time"
 	// suppresses the suffix.
 	const titleText = useMemo(() => {
@@ -176,11 +176,8 @@ export function DirectorNotesModal({
 	}, [navigateTab]);
 	const resizableModal = useResizableModal({
 		resizeKey: 'director-notes',
-		defaultSize: { width: 1050, height: 760 },
+		defaultSize: { width: 1200, height: 820 },
 		minSize: { width: 720, height: 480 },
-		// Preserves the previous fixed 60vw/1050px readability-width cap for this
-		// notes/markdown-reading surface.
-		maxSize: { width: 1050 },
 		externalRef: modalRef,
 	});
 
@@ -199,7 +196,7 @@ export function DirectorNotesModal({
 				aria-modal="true"
 				aria-labelledby="director-notes-title"
 				tabIndex={-1}
-				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,

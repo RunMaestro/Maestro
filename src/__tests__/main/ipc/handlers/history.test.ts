@@ -698,7 +698,7 @@ describe('history IPC handlers', () => {
 				return { emitPluginEvent, addHandler };
 			}
 
-			it('emits ids/classification only at the ingestion point — never summary/fullResponse', async () => {
+			it('emits ids/classification only at the ingestion point - never summary/fullResponse', async () => {
 				const { emitPluginEvent, addHandler } = registerWithPluginEmit();
 				const entry = createMockEntry({
 					id: 'entry-42',

@@ -1,5 +1,5 @@
 /**
- * Tests for fileExplorerStore — File explorer UI state management
+ * Tests for fileExplorerStore - File explorer UI state management
  *
  * Tests file tree UI state, flat file list, and document graph view state.
  * Covers functional updaters, atomic graph actions, and non-React access

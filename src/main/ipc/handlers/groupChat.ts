@@ -80,6 +80,15 @@ import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[GroupChat]';
 
+const areGroupChatProviderProcessesDisabled = (): boolean =>
+	process.env.MAESTRO_DISABLE_GROUP_CHAT_PROVIDERS === '1';
+
+const assertGroupChatProviderProcessesEnabled = (): void => {
+	if (areGroupChatProviderProcessesDisabled()) {
+		throw new Error('Group Chat provider processes are disabled for this load demo');
+	}
+};
+
 /**
  * Moderator usage stats for display in the moderator card.
  */
@@ -209,7 +218,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				// Initialize the moderator immediately so it's "hot and ready"
 				// This spawns the session ID prefix so the UI doesn't show "pending"
 				const processManager = getProcessManager();
-				if (processManager) {
+				if (processManager && !areGroupChatProviderProcessesDisabled()) {
 					logger.info(`Initializing moderator for group chat: ${chat.id}`, LOG_CONTEXT);
 					await spawnModerator(chat, processManager);
 					// Reload the chat to get the updated moderatorSessionId
@@ -331,7 +340,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					updates.moderatorAgentId && updates.moderatorAgentId !== chat.moderatorAgentId;
 
 				// Kill existing moderator if agent is changing
-				if (moderatorChanged) {
+				if (moderatorChanged && !areGroupChatProviderProcessesDisabled()) {
 					const processManager = getProcessManager();
 					await killModerator(id, processManager ?? undefined);
 				}
@@ -344,7 +353,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				});
 
 				// Restart moderator if agent changed
-				if (moderatorChanged) {
+				if (moderatorChanged && !areGroupChatProviderProcessesDisabled()) {
 					const processManager = getProcessManager();
 					if (processManager) {
 						logger.info(
@@ -449,6 +458,10 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			if (!chat) {
 				throw new Error(`Group chat not found: ${id}`);
 			}
+			if (areGroupChatProviderProcessesDisabled()) {
+				logger.info(`Moderator process disabled for group chat load demo: ${id}`, LOG_CONTEXT);
+				return chat.moderatorSessionId || `group-chat-${id}-moderator-disabled`;
+			}
 
 			const processManager = getProcessManager();
 			if (!processManager) {
@@ -468,6 +481,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('sendToModerator'),
 			async (id: string, message: string, images?: string[], readOnly?: boolean): Promise<void> => {
+				assertGroupChatProviderProcessesEnabled();
 				logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
 				logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
 				logger.info(
@@ -564,6 +578,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('reportAutoRunComplete'),
 			async (groupChatId: string, participantName: string, summary: string): Promise<void> => {
+				assertGroupChatProviderProcessesEnabled();
 				logger.info(
 					`Auto Run complete for participant ${participantName} in ${groupChatId}`,
 					LOG_CONTEXT
@@ -591,8 +606,8 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 
 				// Mark participant as done and trigger synthesis if all participants have responded.
 				// Unlike regular participants (whose process exit triggers this via exit-listener),
-				// autorun participants never exit a group-chat process — the batch runs as a separate
-				// Maestro session — so we must call markParticipantResponded here.
+				// autorun participants never exit a group-chat process - the batch runs as a separate
+				// Maestro session - so we must call markParticipantResponded here.
 				const agentDetector = getAgentDetector();
 				const isLast = markParticipantResponded(groupChatId, participantName);
 				if (isLast && processManager && agentDetector) {
@@ -630,6 +645,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				agentId: string,
 				cwd?: string
 			): Promise<GroupChatParticipant> => {
+				assertGroupChatProviderProcessesEnabled();
 				const processManager = getProcessManager();
 				if (!processManager) {
 					throw new Error('Process manager not initialized');
@@ -662,6 +678,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('sendToParticipant'),
 			async (id: string, name: string, message: string, images?: string[]): Promise<void> => {
+				assertGroupChatProviderProcessesEnabled();
 				const processManager = getProcessManager();
 				await sendToParticipant(id, name, message, processManager ?? undefined);
 
@@ -714,6 +731,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				participantName: string,
 				cwd?: string
 			): Promise<{ newAgentSessionId: string }> => {
+				assertGroupChatProviderProcessesEnabled();
 				logger.info(
 					`Resetting context for participant ${participantName} in ${groupChatId}`,
 					LOG_CONTEXT

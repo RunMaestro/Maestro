@@ -1,6 +1,6 @@
 import type { TextPage } from './types';
 
-/** Default lines per page. 80 is a sweet spot — small enough that mounting
+/** Default lines per page. 80 is a sweet spot - small enough that mounting
  * one page is cheap, large enough that a 1M-line file fits in ~12,500 pages
  * (TanStack Virtual handles that count trivially). */
 export const DEFAULT_LINES_PER_PAGE = 80;
@@ -8,7 +8,7 @@ export const DEFAULT_LINES_PER_PAGE = 80;
 /**
  * Split a source string into fixed-size pages for virtualization.
  *
- * Pure, no DOM, no React — fully unit-testable. The function does a single
+ * Pure, no DOM, no React - fully unit-testable. The function does a single
  * O(n) scan over `content` to locate newlines, then chops the resulting line
  * array into pages of `linesPerPage`. Each page carries its source offset
  * range so Cmd+F search can map a match offset back to a page index.

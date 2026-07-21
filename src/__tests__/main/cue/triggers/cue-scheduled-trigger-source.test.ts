@@ -54,7 +54,7 @@ describe('cue-scheduled-trigger-source', () => {
 	});
 
 	it('fires when the polling tick lands on a scheduled minute', () => {
-		// Local Monday 08:59 — 1 minute before the scheduled 09:00.
+		// Local Monday 08:59 - 1 minute before the scheduled 09:00.
 		vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 		const emit = vi.fn();
 		const source = createCueScheduledTriggerSource({
@@ -112,7 +112,7 @@ describe('cue-scheduled-trigger-source', () => {
 	});
 
 	it('skips the fire when the day-of-week filter does not match', () => {
-		// Monday — only Wed allowed.
+		// Monday - only Wed allowed.
 		vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 		const emit = vi.fn();
 		const source = createCueScheduledTriggerSource({
@@ -178,7 +178,7 @@ describe('cue-scheduled-trigger-source', () => {
 	});
 
 	it('nextTriggerAt() reports the next scheduled time after start', () => {
-		// Local Monday 08:00 — next 09:00 is 1 hour ahead, same local day.
+		// Local Monday 08:00 - next 09:00 is 1 hour ahead, same local day.
 		vi.setSystemTime(new Date('2026-03-09T08:00:00'));
 		const source = createCueScheduledTriggerSource({
 			session: makeSession(),

@@ -3,7 +3,7 @@ import { defaultUrlTransform } from 'react-markdown';
 /**
  * react-markdown's default urlTransform strips href schemes outside of
  * https/http/ircs/mailto/xmpp. Allow our internal protocols through so the
- * click handler receives them — without this, `maestro://`, `maestro-file://`,
+ * click handler receives them - without this, `maestro://`, `maestro-file://`,
  * `tel:`, and `file:` hrefs would arrive as empty strings.
  */
 export function urlTransformAllowingMaestro(value: string): string {

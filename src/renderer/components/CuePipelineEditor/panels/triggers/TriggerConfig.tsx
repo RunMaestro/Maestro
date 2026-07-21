@@ -1,5 +1,5 @@
 /**
- * TriggerConfig — Event-type-specific configuration fields for trigger nodes.
+ * TriggerConfig - Event-type-specific configuration fields for trigger nodes.
  *
  * Renders form fields based on the trigger's event type (heartbeat, scheduled,
  * file change, agent completed, GitHub PR/issue, task pending).
@@ -18,7 +18,7 @@ import { CueSelect } from '../CueSelect';
 const UNLIMITED_NOTIFICATIONS = 0;
 const DEFAULT_MAX_NOTIFICATIONS = 10;
 /** Inclusive bounds for the per-item cap slider. Values outside this range
- *  remain valid in YAML — the slider just clamps for visual display. */
+ *  remain valid in YAML - the slider just clamps for visual display. */
 const MAX_NOTIFICATIONS_SLIDER_MIN = 1;
 const MAX_NOTIFICATIONS_SLIDER_MAX = 25;
 
@@ -64,7 +64,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 	// pending-edits registry so `handleSave` can flush before reading
 	// pipelineState. Without this, toggling a checkbox (or editing the
 	// custom label) and immediately closing the panel or saving inside
-	// the 300ms window silently drops the edit — the user-visible
+	// the 300ms window silently drops the edit - the user-visible
 	// "re-trigger toggle won't stick across restarts" symptom.
 	useEffect(() => {
 		const unregister = registerPendingEdit(() => {
@@ -310,7 +310,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 									retrigger_on_comments: e.target.checked,
 								};
 								// Drop max_notifications when the toggle goes off so the
-								// YAML stays clean — the cap is meaningless without it.
+								// YAML stays clean - the cap is meaningless without it.
 								if (!e.target.checked) delete next.max_notifications;
 								setLocalConfig(next);
 								debouncedUpdate(next);
@@ -394,7 +394,7 @@ interface MaxNotificationsControlProps {
  *
  * Values from YAML that fall outside [1, 25] (e.g. hand-edited `100`) display
  * clamped on the slider track but are preserved in the count label until the
- * user drags — at which point the slider value wins.
+ * user drags - at which point the slider value wins.
  */
 function MaxNotificationsControl({
 	entityLabel,

@@ -1,5 +1,5 @@
 /**
- * useFileExplorerEffects — extracted from App.tsx (Phase 2.6)
+ * useFileExplorerEffects - extracted from App.tsx (Phase 2.6)
  *
  * Owns all file-explorer side effects and keyboard navigation:
  *   - Scroll position restore on session switch
@@ -120,8 +120,15 @@ export function useFileExplorerEffects(
 	} = deps;
 
 	// --- Store subscriptions ---
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Subscribe only to file-explorer fields needed for
+	// tree flatten / jump / keyboard expand state. Use the resolved agent id
+	// (same fallback as selectActiveSession) so jump clear / toggleFolder match
+	// the session those fields came from.
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
+	const fileTree = useSessionStore((s) => selectActiveSession(s)?.fileTree);
+	const fileExplorerExpanded = useSessionStore((s) => selectActiveSession(s)?.fileExplorerExpanded);
+	const pendingJumpPath = useSessionStore((s) => selectActiveSession(s)?.pendingJumpPath);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
 
 	const activeFocus = useUIStore((s) => s.activeFocus);
@@ -149,13 +156,13 @@ export function useFileExplorerEffects(
 	const { hasOpenModal } = useLayerStack();
 
 	// ====================================================================
-	// stableFileTree — prevents FilePreview re-renders during agent activity
+	// stableFileTree - prevents FilePreview re-renders during agent activity
 	// ====================================================================
 
-	const stableFileTree = useMemo(() => activeSession?.fileTree || [], [activeSession?.fileTree]);
+	const stableFileTree = useMemo(() => fileTree || [], [fileTree]);
 
 	// ====================================================================
-	// handleMainPanelFileClick — open [[wiki]] and path links in markdown
+	// handleMainPanelFileClick - open [[wiki]] and path links in markdown
 	// ====================================================================
 
 	const handleMainPanelFileClick = useCallback(
@@ -220,6 +227,7 @@ export function useFileExplorerEffects(
 	// ====================================================================
 
 	useEffect(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (
 			activeSession &&
 			fileTreeContainerRef.current &&
@@ -234,12 +242,12 @@ export function useFileExplorerEffects(
 	// ====================================================================
 
 	useEffect(() => {
-		if (!activeSession || !activeSession.fileExplorerExpanded) {
+		if (!fileExplorerExpanded) {
 			setFilteredFileTree([]);
 			setFlatFileList([]);
 			return;
 		}
-		const expandedSet = new Set(activeSession.fileExplorerExpanded);
+		const expandedSet = new Set(fileExplorerExpanded);
 
 		// Apply hidden files filter to match FileExplorerPanel's display
 		const filterHiddenFiles = (nodes: FileNode[]): FileNode[] => {
@@ -269,17 +277,16 @@ export function useFileExplorerEffects(
 
 		setFilteredFileTree(filteredFileTree);
 		setFlatFileList(newFlatList);
-	}, [activeSession?.fileExplorerExpanded, filteredFileTree, showHiddenFiles]);
+	}, [fileExplorerExpanded, filteredFileTree, showHiddenFiles]);
 
 	// ====================================================================
 	// Effect: Handle pending jump path from /jump command
 	// ====================================================================
 
 	useEffect(() => {
-		if (!activeSession || activeSession.pendingJumpPath === undefined || flatFileList.length === 0)
-			return;
+		if (pendingJumpPath === undefined || flatFileList.length === 0 || !activeSessionId) return;
 
-		const jumpPath = activeSession.pendingJumpPath;
+		const jumpPath = pendingJumpPath;
 		let targetIndex = 0;
 
 		if (jumpPath === '') {
@@ -298,9 +305,9 @@ export function useFileExplorerEffects(
 
 		// Clear the pending jump path
 		setSessions((prev) =>
-			prev.map((s) => (s.id === activeSession.id ? { ...s, pendingJumpPath: undefined } : s))
+			prev.map((s) => (s.id === activeSessionId ? { ...s, pendingJumpPath: undefined } : s))
 		);
-	}, [activeSession?.pendingJumpPath, flatFileList, activeSession?.id]);
+	}, [pendingJumpPath, flatFileList, activeSessionId]);
 
 	// ====================================================================
 	// Effect: Scroll to selected file on keyboard navigation
@@ -343,8 +350,9 @@ export function useFileExplorerEffects(
 
 			if (activeFocus !== 'right' || activeRightTab !== 'files' || flatFileList.length === 0)
 				return;
+			if (!activeSessionId) return;
 
-			const expandedFolders = new Set(activeSession?.fileExplorerExpanded || []);
+			const expandedFolders = new Set(fileExplorerExpanded || []);
 
 			// Collapse the multi-selection and re-anchor at `index`. Called by every
 			// non-extending move (plain/Cmd/Option arrows, ArrowLeft-to-parent) so the
@@ -468,8 +476,8 @@ export function useFileExplorerEffects(
 		activeRightTab,
 		flatFileList,
 		selectedFileIndex,
-		activeSession?.fileExplorerExpanded,
 		activeSessionId,
+		fileExplorerExpanded,
 		setSessions,
 		toggleFolder,
 		handleFileClick,

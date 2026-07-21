@@ -1,5 +1,5 @@
 /**
- * Cue backup manager — owns creation, listing, inspection, and restore of
+ * Cue backup manager - owns creation, listing, inspection, and restore of
  * Cue config snapshots. A snapshot bundles every distinct workspace's
  * `.maestro/cue.yaml` plus its `.maestro/prompts/*.md` into a single zip
  * under `userData/cue-backups/`. A `manifest.json` at the zip root records
@@ -55,7 +55,7 @@ function timestampForFilename(date = new Date()): string {
 
 /**
  * Group sessions by their workspace cwd. A single workspace may be shared by
- * multiple agents — the backup deduplicates so each cwd is captured once.
+ * multiple agents - the backup deduplicates so each cwd is captured once.
  */
 function groupSessionsByWorkspace(
 	sessions: ReadonlyArray<StoredSession>
@@ -96,7 +96,7 @@ function collectWorkspaceFiles(
 			out.push({
 				absolutePath: cuePath,
 				// Always normalize to canonical name inside the zip even if the
-				// live file is the legacy `maestro-cue.yaml` — restore will use
+				// live file is the legacy `maestro-cue.yaml` - restore will use
 				// the canonical path.
 				relativePath: 'cue.yaml',
 				size: stat.size,
@@ -133,7 +133,7 @@ function collectWorkspaceFiles(
  * Create a new backup containing every workspace's Cue config and prompts.
  * Workspaces with no Cue files at all are omitted from the zip. If no
  * workspace has any Cue files, the backup is still created but its manifest
- * will list zero workspaces — the UI surfaces this so the user knows.
+ * will list zero workspaces - the UI surfaces this so the user knows.
  */
 export async function createCueBackup(
 	sessions: ReadonlyArray<StoredSession>
@@ -352,7 +352,7 @@ export function restoreCueBackupFile(
  * Restore every file in a backup to its original workspace path. Files in
  * a workspace whose cwd no longer exists on disk are skipped; the result
  * lists each skip with a reason so the UI can surface them. This is
- * additive — it does NOT delete files that exist live but were not in the
+ * additive - it does NOT delete files that exist live but were not in the
  * backup, since destructive deletion is much harder to recover from than
  * an extra orphaned prompt.
  */
@@ -432,7 +432,7 @@ export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap
 			try {
 				const entry = zip.getEntry(`workspaces/${ws.id}/${f.relativePath}`);
 				if (!entry) {
-					// No content in zip — treat as missing so the user can still
+					// No content in zip - treat as missing so the user can still
 					// notice; Diff/Restore will both fail loudly with a clear error.
 					result[key] = 'missing-live';
 					continue;
@@ -447,7 +447,7 @@ export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap
 					result[key] = 'changed';
 					continue;
 				}
-				// Sizes match — compare content. For Cue files this is KB-scale
+				// Sizes match - compare content. For Cue files this is KB-scale
 				// so a direct equality check is cheap and avoids hash overhead.
 				const backupContent = entry.getData().toString('utf-8');
 				const liveContent = fs.readFileSync(liveAbs, 'utf-8');

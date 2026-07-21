@@ -1,5 +1,5 @@
 /**
- * Phase 15A — race-condition regression tests for the Cue run manager.
+ * Phase 15A - race-condition regression tests for the Cue run manager.
  *
  * The run manager is the main source of concurrency coordination in the Cue
  * backend: it tracks active runs, queues events at the concurrency limit,
@@ -115,7 +115,7 @@ function createDeps(overrides: Partial<CueRunManagerDeps> = {}): CueRunManagerDe
 
 /**
  * Helper to construct an `onCueRun` that blocks until the returned `resolve`
- * is called — lets tests interleave state changes with an in-flight run.
+ * is called - lets tests interleave state changes with an in-flight run.
  */
 function deferredOnCueRun() {
 	let resolve!: (value: CueRunResult) => void;
@@ -128,7 +128,7 @@ function deferredOnCueRun() {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe('CueRunManager — race conditions', () => {
+describe('CueRunManager - race conditions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
@@ -148,16 +148,16 @@ describe('CueRunManager — race conditions', () => {
 			const manager = createCueRunManager(deps);
 
 			manager.execute('session-1', 'prompt', createEvent(), 'race-sub');
-			// Run is active — reset() clears it out as if the engine is shutting down.
+			// Run is active - reset() clears it out as if the engine is shutting down.
 			expect(manager.getActiveRunMap().size).toBe(1);
 
 			manager.reset();
 			expect(manager.getActiveRunMap().size).toBe(0);
 
-			// onCueRun finally resolves — the finally block must detect that the
+			// onCueRun finally resolves - the finally block must detect that the
 			// run was removed from activeRuns and skip the onRunCompleted call
 			// (which would otherwise fire a chain propagation after engine
-			// shutdown — the regression Phase 7 was designed to prevent).
+			// shutdown - the regression Phase 7 was designed to prevent).
 			deferred.resolve(makeResult({ runId: 'r1' }));
 			await vi.advanceTimersByTimeAsync(0);
 
@@ -205,7 +205,7 @@ describe('CueRunManager — race conditions', () => {
 			expect(manager.stopRun(runId)).toBe(true);
 			expect(deps.onRunStopped).toHaveBeenCalledTimes(1);
 
-			// The in-flight run resolves after the fact — the finally block
+			// The in-flight run resolves after the fact - the finally block
 			// must skip onRunCompleted because stopRun already removed the run.
 			deferred.resolve(makeResult({ runId }));
 			await vi.advanceTimersByTimeAsync(0);
@@ -216,7 +216,7 @@ describe('CueRunManager — race conditions', () => {
 		});
 
 		it('frees the concurrency slot so a queued event drains immediately', async () => {
-			// Two in-flight runs — stop the first, the queued second must start.
+			// Two in-flight runs - stop the first, the queued second must start.
 			let resolveCount = 0;
 			const pending: Array<(result: CueRunResult) => void> = [];
 			const deps = createDeps({
@@ -301,7 +301,7 @@ describe('CueRunManager — race conditions', () => {
 			expect(onCueRun).toHaveBeenCalledTimes(1);
 			expect(onCueRun.mock.calls[0][0].subscriptionName).toBe('sub-1');
 
-			// Resolve the first run — sub-2 must start before sub-3 (FIFO).
+			// Resolve the first run - sub-2 must start before sub-3 (FIFO).
 			resolvers.shift()!(makeResult({ status: 'completed' }));
 			await vi.advanceTimersByTimeAsync(0);
 
@@ -370,7 +370,7 @@ describe('CueRunManager — race conditions', () => {
 		it('stopAll clears both the queue and every active run (no drained run escapes)', () => {
 			// stopAll's contract: after this function returns, zero active runs
 			// and zero queued events. It achieves this by clearing the queue
-			// FIRST — otherwise stopRun's slot-release would drain a queued
+			// FIRST - otherwise stopRun's slot-release would drain a queued
 			// event into a fresh active run that escaped the snapshot.
 			//
 			// This test pins the invariant so a future refactor that reorders
@@ -399,7 +399,7 @@ describe('CueRunManager — race conditions', () => {
 			expect(manager.getQueueStatus().size).toBe(0);
 			expect(deps.onRunStopped).toHaveBeenCalledTimes(1); // one active run stopped
 			// onCueRun was called once (for sub-1's initial dispatch) and must
-			// NOT have been called a second time for sub-2 — the queue-clear
+			// NOT have been called a second time for sub-2 - the queue-clear
 			// prevents the drain during stopRun from re-dispatching.
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 		});

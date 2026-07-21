@@ -32,7 +32,7 @@ function padScheduleTime(time: string): string {
 }
 
 /**
- * Returns the chain identity for a node — the value downstream subscriptions
+ * Returns the chain identity for a node - the value downstream subscriptions
  * will use as `source_session`. For agents that's the agent's session name; for
  * command nodes we use the owning session's name (the engine emits
  * agent.completed against the session that ran the work).
@@ -43,7 +43,7 @@ function getChainSessionName(node: PipelineNode): string {
 }
 
 /**
- * Returns the owning session ID for a node — used as the `agent_id` field on
+ * Returns the owning session ID for a node - used as the `agent_id` field on
  * the YAML subscription, binding it to the session whose project root and
  * cue.yaml own the work.
  */
@@ -180,7 +180,7 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 				sub.retrigger_on_comments = true;
 				// Only emit the cap when it differs from the default (10) so YAML
 				// stays minimal. `0` (unlimited) is a valid explicit value and
-				// must round-trip — the !== 10 check covers both cases.
+				// must round-trip - the !== 10 check covers both cases.
 				if (
 					triggerData.config.max_notifications !== undefined &&
 					triggerData.config.max_notifications !== 10
@@ -232,9 +232,9 @@ function populateTargetWork(
 
 /**
  * Owning agent for an emitted subscription, captured at emission time keyed by
- * the subscription's object identity (NOT its name). Sub names are not unique —
+ * the subscription's object identity (NOT its name). Sub names are not unique -
  * a command node can be named exactly like the `<pipeline>-chain-N` auto-naming
- * scheme — so re-deriving the owner via a second name-keyed traversal silently
+ * scheme - so re-deriving the owner via a second name-keyed traversal silently
  * dropped `agent_id` on a later sub once a collision shifted the chain counter.
  * Stamping the owner here makes that impossible. See {@link pipelineToYamlSubscriptions}.
  */
@@ -250,7 +250,7 @@ export interface SubscriptionOwner {
  *
  * When `ownerOut` is supplied, each emitted subscription is recorded against
  * its owning agent (by object identity) so callers don't have to re-walk the
- * graph to recover `agent_id` — a re-walk that drifted out of sync whenever a
+ * graph to recover `agent_id` - a re-walk that drifted out of sync whenever a
  * command node's name collided with the `-chain-N` auto-naming sequence.
  */
 export function pipelineToYamlSubscriptions(
@@ -325,14 +325,14 @@ export function pipelineToYamlSubscriptions(
 		if (triggerOutgoing.length === 0) continue;
 
 		// Build the first subscription from trigger. A "work target" is anything
-		// that performs work — agent nodes (run a prompt) or command nodes (run
+		// that performs work - agent nodes (run a prompt) or command nodes (run
 		// shell/cli). cli_output nodes from rc are now folded into command nodes;
 		// they no longer exist as a node type.
 		const directTargets = triggerOutgoing
 			.map((e) => nodeMap.get(e.target))
 			.filter(Boolean) as PipelineNode[];
 		// Filter out unbound commands (no owning session). They can't be serialized
-		// — `agent_id` on the subscription would be empty and the engine rejects
+		// - `agent_id` on the subscription would be empty and the engine rejects
 		// the config. Validation catches this at save time; this is defense-in-depth.
 		const workTargets = directTargets.filter(
 			(n) =>
@@ -377,7 +377,7 @@ export function pipelineToYamlSubscriptions(
 				ownerOut
 			);
 		} else if (allAgents) {
-			// === Fan-out to agents only — canonical `fan_out` shape ===
+			// === Fan-out to agents only - canonical `fan_out` shape ===
 			// The engine's fan_out array addresses sessions by name, which
 			// only makes sense for agent targets (commands have no session
 			// identity of their own). One sub handles N agents at runtime.
@@ -404,7 +404,7 @@ export function pipelineToYamlSubscriptions(
 			// distinguish "two distinct visual nodes happen to point at the
 			// same agent_id" (different keys → separate nodes) from "explicit
 			// fan-in onto one shared node" (same key → merged node). Emit only
-			// when every position carries a key — partial population is
+			// when every position carries a key - partial population is
 			// ambiguous and we'd rather fall back to the legacy
 			// dedup-by-sessionName behavior than guess.
 			const fanOutKeys = fanOutAgents.map((a) => getNodeKey(a));
@@ -418,7 +418,7 @@ export function pipelineToYamlSubscriptions(
 			});
 			const allSame = perAgentPrompts.every((p) => p === perAgentPrompts[0]);
 			if (allSame) {
-				// All fan-out targets share the same prompt — keep the single
+				// All fan-out targets share the same prompt - keep the single
 				// `prompt` path so we externalize it to one file in the record
 				// assembly step below.
 				sub.prompt = perAgentPrompts[0];
@@ -426,13 +426,13 @@ export function pipelineToYamlSubscriptions(
 				// Per-agent prompts differ. Externalize each to its own `.md`
 				// file (written in the record assembly step) and emit
 				// `fan_out_prompt_files` pointing at them. This keeps the UI↔YAML
-				// mapping symmetric — one file per agent, mirroring what the
-				// editor shows — instead of the old inline `fan_out_prompts`
+				// mapping symmetric - one file per agent, mirroring what the
+				// editor shows - instead of the old inline `fan_out_prompts`
 				// array which bloated the YAML and read asymmetrically.
 				sub.prompt = perAgentPrompts[0]; // engine fallback if files go missing
 				sub.fan_out_prompts = perAgentPrompts; // carries content to assembly
-				// Path is keyed by (agentName, subName). `subName` — not
-				// `pipeline.name` — is what disambiguates prompt files
+				// Path is keyed by (agentName, subName). `subName` - not
+				// `pipeline.name` - is what disambiguates prompt files
 				// across subscriptions within the same pipeline. A pipeline
 				// may have multiple triggers that each fan-out to the same
 				// agents (e.g. a GitHub-PR trigger and a heartbeat trigger
@@ -444,7 +444,7 @@ export function pipelineToYamlSubscriptions(
 				// keyed (see `promptSuffix = sub.name` below).
 				//
 				// Additional disambiguator: when two fan-out targets within
-				// the SAME sub share a sessionName (pathological — user
+				// the SAME sub share a sessionName (pathological - user
 				// dragged the same agent in twice), append the positional
 				// index so each agent still gets its own file.
 				const baseNameCounts = new Map<string, number>();
@@ -487,7 +487,7 @@ export function pipelineToYamlSubscriptions(
 			}
 		} else {
 			// === Per-branch fan-out: any target is a command ===
-			// `fan_out` can't carry command targets — the engine addresses
+			// `fan_out` can't carry command targets - the engine addresses
 			// fan_out by session name and commands have no session of their
 			// own. Instead we emit one fully-independent subscription per
 			// direct target, each re-carrying the trigger's event config so
@@ -533,7 +533,7 @@ export function pipelineToYamlSubscriptions(
 
 	// Post-pass: populate `source_sub` on every chain subscription now that
 	// `subNamesForNode` holds entries for every work node in the pipeline.
-	// Doing this inline during buildChain's recursion is unsafe — a fan-in
+	// Doing this inline during buildChain's recursion is unsafe - a fan-in
 	// target reached through the first branch has upstream work nodes from
 	// OTHER branches whose subs haven't been emitted yet. Deferring the
 	// lookup guarantees every upstream sub name is known.
@@ -541,7 +541,7 @@ export function pipelineToYamlSubscriptions(
 	// `source_sub` narrows completion matching: a chain sub fires only on
 	// completions produced by the listed upstream subs, not on any run in
 	// the source session (which was the pre-existing self-loop / cross-fire
-	// failure mode — see `CueSubscription.source_sub` docs for the full
+	// failure mode - see `CueSubscription.source_sub` docs for the full
 	// rationale).
 	const targetNodeBySubName = new Map<string, string>();
 	for (const [nodeId, names] of subNamesForNode) {
@@ -549,11 +549,11 @@ export function pipelineToYamlSubscriptions(
 			// A second node owning the same sub name silently overwrites the
 			// first entry here, which would drop the first sub's `source_sub`
 			// population. Sub names are expected to be unique within a pipeline,
-			// but pathological YAML or a future refactor could break that — log
+			// but pathological YAML or a future refactor could break that - log
 			// loudly so the failure mode is visible instead of silent.
 			if (targetNodeBySubName.has(name)) {
 				console.warn(
-					`[CUE] Duplicate sub name "${name}" while building source_sub map — earlier owner may not get its source_sub populated`
+					`[CUE] Duplicate sub name "${name}" while building source_sub map - earlier owner may not get its source_sub populated`
 				);
 			}
 			targetNodeBySubName.set(name, nodeId);
@@ -682,7 +682,7 @@ function buildChain(
 
 			if (incomingWorkEdges.length > 1) {
 				// Fan-in include_output_from / forward_output_from only emit for agent
-				// targets — command nodes don't aggregate per-source outputs.
+				// targets - command nodes don't aggregate per-source outputs.
 				if (includedEdges.length < incomingWorkEdges.length && includedEdges.length > 0) {
 					sub.include_output_from = includedEdges
 						.map((e) => {
@@ -741,7 +741,7 @@ function buildChain(
 		// `source_sub` is intentionally NOT set here. It's populated in a
 		// post-pass at the end of `pipelineToYamlSubscriptions` because a
 		// fan-in chain sub reached through the first branch can't see the
-		// second branch's upstream sub names yet — those subs haven't been
+		// second branch's upstream sub names yet - those subs haven't been
 		// pushed when `buildChain` recurses into the fan-in target from
 		// branch 1. Deferring the lookup until every sub has been emitted
 		// guarantees all upstream names are known before we resolve
@@ -753,7 +753,7 @@ function buildChain(
 		subscriptions.push(sub);
 		if (ownerOut)
 			ownerOut.set(sub, { id: getOwningSessionId(target), name: getChainSessionName(target) });
-		// Merge instead of overwrite — a chain agent can be reached from
+		// Merge instead of overwrite - a chain agent can be reached from
 		// multiple upstream paths (e.g. TriggerA → Agent1 and TriggerB →
 		// Agent1 → Agent2). If we replace the set, the post-pass that fills
 		// `source_sub` for downstream chain subs loses the earlier-recorded
@@ -787,7 +787,7 @@ function buildChain(
  * records (pre-yaml.dump) plus the prompt files they reference and any
  * edge-mode comments. Used as the join point for both whole-yaml emit and
  * per-owner-cwd emit (see {@link pipelinesToYamlByOwnerCwd}). Each record
- * carries an `agent_id` field that uniquely identifies the owning agent —
+ * carries an `agent_id` field that uniquely identifies the owning agent -
  * grouping by `agent_id`'s cwd is what enables per-agent-yaml splitting.
  */
 export interface PipelineSubscriptionRecords {
@@ -803,8 +803,8 @@ export interface PipelineSubscriptionRecords {
  *
  * The default behavior (no resolver) emits the raw `sessionId`. handleSave
  * passes a resolver backed by the live session maps so that a node bound by
- * NAME only — empty/stale `sessionId` but a `sessionName` that still matches a
- * live agent — emits the live agent's id instead of an empty `agent_id`. That
+ * NAME only - empty/stale `sessionId` but a `sessionName` that still matches a
+ * live agent - emits the live agent's id instead of an empty `agent_id`. That
  * asymmetry (validation resolves by name, emission did not) was the
  * "Unresolvable agent_id ... (agent_id=<missing>)" save failure on legacy
  * pipelines whose nodes predate stable session ids.
@@ -832,7 +832,7 @@ export function pipelinesToSubscriptionRecords(
 		// emission, keyed by object identity. This replaces the previous pair of
 		// name-keyed re-traversals (`buildSubAgentMap` / `buildSubAgentIdMap`),
 		// which drifted out of sync with the emitter whenever a command node's
-		// name collided with the `-chain-N` auto-naming scheme — dropping
+		// name collided with the `-chain-N` auto-naming scheme - dropping
 		// `agent_id` on a later sub and failing the save with
 		// "Unresolvable agent_id ... (agent_id=<missing>)".
 		const owners = new Map<CueSubscription, SubscriptionOwner>();
@@ -854,7 +854,7 @@ export function pipelinesToSubscriptionRecords(
 			if (agentId) record.agent_id = agentId;
 
 			// Persist the owning pipeline's name and color so they round-trip
-			// through YAML. `pipeline_name` is authoritative for grouping —
+			// through YAML. `pipeline_name` is authoritative for grouping -
 			// editing a subscription's `name` no longer breaks pipeline
 			// membership. `pipeline_color` keeps colors stable across reloads.
 			if (pipeline.name) record.pipeline_name = pipeline.name;
@@ -875,7 +875,7 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.fan_out != null) record.fan_out = sub.fan_out;
 			if (sub.fan_out_ids != null) record.fan_out_ids = sub.fan_out_ids;
 			// Per-agent fan-out prompts: prefer externalized files over the
-			// legacy inline array. Emitting both would be redundant — the
+			// legacy inline array. Emitting both would be redundant - the
 			// normalizer resolves files into the same runtime slots as
 			// inline prompts, so only one needs to reach the YAML.
 			if (sub.fan_out_prompt_files != null) {
@@ -894,7 +894,7 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.fan_out_node_keys != null) record.fan_out_node_keys = sub.fan_out_node_keys;
 
 			// Command action: emit `action: command` + the structured `command`
-			// object inline. Skip prompt_file emission — the dispatcher uses
+			// object inline. Skip prompt_file emission - the dispatcher uses
 			// `prompt` only as a sentinel that the normalizer back-fills from
 			// the command spec on load.
 			if (sub.action === 'command') {
@@ -912,7 +912,7 @@ export function pipelinesToSubscriptionRecords(
 
 			// When fan-out targets carry different prompts, each agent's prompt
 			// lives in its own file (`fan_out_prompt_files`). In that case we
-			// skip the single `prompt_file` emission entirely — `sub.prompt` is
+			// skip the single `prompt_file` emission entirely - `sub.prompt` is
 			// kept only as an engine fallback, not as a canonical source of
 			// truth on disk.
 			if (sub.prompt && !sub.fan_out_prompt_files) {
@@ -924,7 +924,7 @@ export function pipelinesToSubscriptionRecords(
 				// neither `prompt` nor `prompt_file`. A pipeline whose prompts
 				// haven't been filled in yet (or where a debounce race wiped the
 				// value before save) would otherwise yield YAML that loads
-				// cleanly on the editor but is rejected on the engine side —
+				// cleanly on the editor but is rejected on the engine side -
 				// producing the "pipeline vanished after save" symptom. Emit an
 				// empty inline prompt so the subscription round-trips and the
 				// editor can still surface a "missing prompt" validation error
@@ -978,7 +978,7 @@ export function pipelinesToSubscriptionRecords(
 
 /**
  * Serialize a subscription record list (with optional settings + comments) to
- * a YAML string. Pure formatting — no graph traversal — so callers that have
+ * a YAML string. Pure formatting - no graph traversal - so callers that have
  * already split records (e.g. {@link pipelinesToYamlByOwnerCwd}) can re-emit
  * per-cwd YAMLs without re-running the pipeline-to-records conversion.
  */
@@ -1039,7 +1039,7 @@ interface SessionRootRef {
 export interface CwdYamlEntry extends PipelineYamlResult {
 	/**
 	 * Subscriptions whose `agent_id` did not resolve to a known session.
-	 * Caller (handleSave) should treat these as validation errors —
+	 * Caller (handleSave) should treat these as validation errors -
 	 * unresolvable refs cannot be safely written anywhere.
 	 */
 }
@@ -1067,7 +1067,7 @@ export function pipelinesToYamlByOwnerCwd(
 	/**
 	 * Per-cwd `owner_agent_id` to preserve. The editor does NOT manage
 	 * ownership (it's a per-root field, set via Edit YAML for shared roots), but
-	 * the save fully overwrites each cue.yaml — so the existing owner must be
+	 * the save fully overwrites each cue.yaml - so the existing owner must be
 	 * re-injected into that root's settings here, or it would be silently
 	 * dropped, reverting a shared root to fragile "first agent wins" ownership.
 	 */
@@ -1083,7 +1083,7 @@ export function pipelinesToYamlByOwnerCwd(
 		if (!agentId) {
 			// Unowned subs (no agent_id) cannot be placed under a per-agent
 			// cwd. The current emitter always sets agent_id, so reaching this
-			// branch means a hand-edited yaml or a future bug — surface it as
+			// branch means a hand-edited yaml or a future bug - surface it as
 			// unresolved so the save fails loudly rather than dropping the sub.
 			unresolved.push({ subName: String(record.name ?? '<unnamed>'), agentId: '' });
 			continue;

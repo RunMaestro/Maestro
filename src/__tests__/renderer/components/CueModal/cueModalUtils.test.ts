@@ -38,7 +38,7 @@ describe('cleanStderrForDisplay', () => {
 	});
 
 	it('does not match lines that merely contain the phrase later on', () => {
-		// Only line-prefix matches are stripped — a legitimate error that happens
+		// Only line-prefix matches are stripped - a legitimate error that happens
 		// to mention stdin somewhere inside the line must survive.
 		const input = 'Error while reading additional input from stdin\n';
 		expect(cleanStderrForDisplay(input)).toBe(input);

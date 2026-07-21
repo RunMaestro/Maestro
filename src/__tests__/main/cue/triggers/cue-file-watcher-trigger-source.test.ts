@@ -112,7 +112,7 @@ describe('cue-file-watcher-trigger-source', () => {
 		source.start();
 
 		// Pull the onEvent callback that the wrapper passed to the provider and
-		// invoke it directly — simulates a file change.
+		// invoke it directly - simulates a file change.
 		const config = mockCreateCueFileWatcher.mock.calls[0][0] as {
 			onEvent: (event: CueEvent) => void;
 		};

@@ -1,6 +1,6 @@
 /**
  * @file usage-parser.test.ts
- * @description Tests for src/maestro-p/usage-parser.ts — parses Claude's
+ * @description Tests for src/maestro-p/usage-parser.ts - parses Claude's
  * `/usage` panel (the screen-scrape source for --status mode) into the
  * StatusSnapshot wire envelope.
  *
@@ -28,7 +28,9 @@ interface FixtureExpected {
 }
 
 function loadFixture(name: string): { raw: string; expected: FixtureExpected } {
-	const raw = fs.readFileSync(path.join(FIXTURES_DIR, `${name}.txt`), 'utf-8');
+	const raw = fs
+		.readFileSync(path.join(FIXTURES_DIR, `${name}.txt`), 'utf-8')
+		.replaceAll('\\u2014', '\u2014');
 	const expected = JSON.parse(
 		fs.readFileSync(path.join(FIXTURES_DIR, `${name}.expected.json`), 'utf-8')
 	) as FixtureExpected;
@@ -87,7 +89,7 @@ describe('parseUsage / fixtures', () => {
 	// "what's contributing" breakdown) paint entirely via cursor-addressing
 	// with no line feeds, so the ANSI-stripped capture collapses into one glued
 	// blob carrying multiple repaints. The parser must re-segment the sections
-	// AND parse only the final (settled) paint — here the provisional first
+	// AND parse only the final (settled) paint - here the provisional first
 	// paint shows session 99% and a week(all) row with no Resets line yet, while
 	// the settled paint shows 100% / 44% / 23% with full reset timestamps.
 	it('parses a cursor-addressed glued panel with no newlines, isolating the final repaint', () => {
@@ -215,7 +217,7 @@ describe('parseUsage / behavioral guards', () => {
 
 	it('does NOT inline-scan Sonnet for a polluted bare reset spec (would lock onto prior section)', () => {
 		// Sonnet's first line carries a bleed-over of the all_models trailing reset
-		// (in a slightly different month) — we should NOT pick that up; instead the
+		// (in a slightly different month) - we should NOT pick that up; instead the
 		// borrow path returns all_models.resets_at.
 		const raw = [
 			'Current session',
@@ -282,7 +284,7 @@ describe('RESET_SPEC_BODY', () => {
 
 	it('matches a bare-m spec (claude dropped the p in pm) and resolves to PM', () => {
 		// Real gmail-account compound session row renders "Resets 6pm" as
-		// "Reses 6m" — both 't' and 'p' clobbered. The regex must still
+		// "Reses 6m" - both 't' and 'p' clobbered. The regex must still
 		// match so the inline-scan reset extraction can recover; to24Hour
 		// then resolves the lone 'm' as PM. See RESET_SPEC_BODY comment.
 		const m = '6m (America/Chicago)'.match(re);
@@ -345,7 +347,7 @@ describe('parseUsage / not-logged-in detection', () => {
 	it('prefers the unauthenticated short-circuit over attempting to parse sections', () => {
 		// Even if the raw output happens to contain Max-plan-shaped section
 		// headers (e.g. from a previous /usage invocation scrolled above the
-		// "Not logged in" status bar), the bar wins — sections from before
+		// "Not logged in" status bar), the bar wins - sections from before
 		// a logout no longer represent live state.
 		const raw = [
 			'Current session',

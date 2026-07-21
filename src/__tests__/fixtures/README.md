@@ -7,7 +7,7 @@ Small, committed assets used by automated tests live alongside this file
 
 The 26 synthetic files used to manually verify the tiered FilePreview
 pipeline (Rich / Fast / Giant) are too big to commit. Place (or generate)
-them outside the repo at a location convenient for you — the suggested
+them outside the repo at a location convenient for you - the suggested
 sibling layout is:
 
 ```
@@ -39,7 +39,7 @@ inputs:
   `edge-one-huge-line.txt` (single 488 KB line that escalates to Giant via
   the long-line threshold).
 
-Use these for manual perf sweeps in `npm run dev` — open each in FilePreview
+Use these for manual perf sweeps in `npm run dev` - open each in FilePreview
 and watch for: first-paint time, scroll FPS, search count stability,
 prev/next precision (lands on the matched word, not just the block), tier
 chip override persistence across tab switch.

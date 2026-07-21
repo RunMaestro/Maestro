@@ -18,6 +18,7 @@ import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+import { extractGrokTextFromJsonl, getGrokTextDelta } from '../utils/grokWizard';
 
 let cachedWizardDocumentGenerationPrompt: string | null = null;
 let cachedWizardInlineIterateGenerationPrompt: string | null = null;
@@ -117,6 +118,12 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 				if (msg.type === 'message' && msg.text) {
 					textParts.push(msg.text);
 				}
+			}
+
+			// Grok streaming-json: text deltas only (skip thought/reasoning)
+			else if (agentType === 'grok') {
+				const data = getGrokTextDelta(msg);
+				if (data) textParts.push(data);
 			}
 		} catch {
 			// Ignore non-JSON lines or parse errors
@@ -360,7 +367,7 @@ export interface PlaybookDocumentEmitterOptions {
  * Coordinates reading newly-detected playbook docs off disk and notifying the
  * wizard UI exactly once per file. Owns the dedup set so the chokidar
  * watcher AND a periodic disk poll can both feed it without producing
- * duplicates — the watcher catches changes fast when fsevents cooperates,
+ * duplicates - the watcher catches changes fast when fsevents cooperates,
  * the poll backstops the cold-start window where add events go missing.
  */
 export interface PlaybookDocumentEmitter {
@@ -445,7 +452,7 @@ export function createPlaybookDocumentEmitter(
 			for (const baseName of listResult.files) {
 				const filename = baseName.endsWith('.md') ? baseName : `${baseName}.md`;
 				if (emitted.has(filename)) continue;
-				// Short retry budget during polling — if the file isn't readable
+				// Short retry budget during polling - if the file isn't readable
 				// within ~300ms we'll just catch it on the next poll tick.
 				if (await tryEmitFile(filename, { maxAttempts: 2, delayMs: 150 })) {
 					newCount++;
@@ -744,6 +751,12 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 		}
 
+		// For Grok: join text deltas (end event has no body)
+		if (agentType === 'grok') {
+			const grokText = extractGrokTextFromJsonl(lines);
+			if (grokText) return grokText;
+		}
+
 		// For Claude Code: look for result message
 		for (const line of lines) {
 			if (!line.trim()) continue;
@@ -786,7 +799,7 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 		}
 
 		case 'codex': {
-			// Return only base args — the IPC handler's buildAgentArgs() adds
+			// Return only base args - the IPC handler's buildAgentArgs() adds
 			// batchModePrefix, batchModeArgs, jsonOutputArgs, and workingDirArgs
 			// automatically when a prompt is present. Adding them here would
 			// duplicate flags and cause "unexpected argument" exit code 2.
@@ -794,7 +807,7 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 		}
 
 		case 'opencode': {
-			// Return only base args — the IPC handler's buildAgentArgs() adds
+			// Return only base args - the IPC handler's buildAgentArgs() adds
 			// batchModePrefix, jsonOutputArgs, and workingDirArgs automatically
 			// when a prompt is present.
 			return [...(agent.args || [])];

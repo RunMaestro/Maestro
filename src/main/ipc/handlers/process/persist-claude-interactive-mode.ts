@@ -36,7 +36,7 @@ export function persistClaudeInteractiveMode(
 	//   - We need to clear stale `mode === 'interactive'` from a prior
 	//     turn (both `resolvedConfigDirKey` above branches resolve it,
 	//     gate on `!== undefined`).
-	// When none of those apply we leave `claudeInteractive` alone — the
+	// When none of those apply we leave `claudeInteractive` alone - the
 	// popover hides itself anyway when `enableMaestroP` is false.
 	if (!isClaudeCode || !resolvedConfigDirKey) return;
 

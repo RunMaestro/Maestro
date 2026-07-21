@@ -5,7 +5,7 @@
  * URLs (`plugin-panel://panel/<encoded id>`, exactly one path segment, fail
  * closed on anything malformed), the attachment gate (partition and document
  * MUST name the same plugin), and the CSP injection (header content and meta
- * placement — connect-src 'none' is the load-bearing egress directive).
+ * placement - connect-src 'none' is the load-bearing egress directive).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -45,7 +45,7 @@ describe('panel partition naming', () => {
 describe('panel document URLs', () => {
 	it('round-trips a namespaced panel id through the URL', () => {
 		const url = pluginPanelUrl('acme.tools/board');
-		// The `/` in the id is encoded — a single opaque path segment.
+		// The `/` in the id is encoded - a single opaque path segment.
 		expect(url).toBe('plugin-panel://panel/acme.tools%2Fboard');
 		expect(panelIdFromPluginPanelUrl(url)).toBe('acme.tools/board');
 	});

@@ -7,6 +7,8 @@ import {
 	capabilityRisk,
 	describeCapability,
 	isPluginCapability,
+	isAllowlistScoped,
+	isValidAllowlistMember,
 	PLUGIN_CAPABILITIES,
 	type PermissionGrant,
 } from '../../../shared/plugins/permissions';
@@ -126,7 +128,7 @@ describe('isPermitted (default deny + scope matching)', () => {
 	});
 });
 
-describe('allowlist scope matching (Phase-4 act verbs — exhaustive set membership)', () => {
+describe('allowlist scope matching (Phase-4 act verbs - exhaustive set membership)', () => {
 	const at = 1;
 	const grant = (capability: string, scope?: string, unattended?: boolean): PermissionGrant =>
 		({
@@ -175,7 +177,7 @@ describe('allowlist scope matching (Phase-4 act verbs — exhaustive set members
 
 	it('never treats a wildcard-looking member as a pattern', () => {
 		// Even if a '*' member were somehow minted, it matches ONLY the literal
-		// string '*' — never "anything".
+		// string '*' - never "anything".
 		const g = [grant('process:spawn', '*')];
 		expect(isPermitted(g, 'process:spawn', 'tool')).toBe(false);
 	});
@@ -204,6 +206,39 @@ describe('allowlist scope matching (Phase-4 act verbs — exhaustive set members
 		expect(isPermittedUnattended(withUnattended, 'agents:dispatch', 'agent-b')).toBe(false);
 		// And the interactive predicate still passes for the same grant.
 		expect(isPermitted(withUnattended, 'agents:dispatch', 'agent-a')).toBe(true);
+	});
+});
+
+describe('isAllowlistScoped', () => {
+	it('is true only for the allowlist-scoped act verbs', () => {
+		expect(isAllowlistScoped('agents:dispatch')).toBe(true);
+		expect(isAllowlistScoped('process:spawn')).toBe(true);
+	});
+
+	it('is false for path / host / none scoped capabilities', () => {
+		expect(isAllowlistScoped('fs:read')).toBe(false);
+		expect(isAllowlistScoped('net:fetch')).toBe(false);
+		expect(isAllowlistScoped('agents:read')).toBe(false);
+		expect(isAllowlistScoped('transcripts:read')).toBe(false);
+	});
+});
+
+describe('isValidAllowlistMember', () => {
+	it('accepts a plain exact token (an agent id / binary name)', () => {
+		expect(isValidAllowlistMember('018f-abc-123')).toBe(true);
+		expect(isValidAllowlistMember('my-agent')).toBe(true);
+	});
+
+	it('rejects empty, non-string, and any pattern/shell/whitespace/comma char', () => {
+		expect(isValidAllowlistMember('')).toBe(false);
+		expect(isValidAllowlistMember(undefined)).toBe(false);
+		expect(isValidAllowlistMember(42)).toBe(false);
+		expect(isValidAllowlistMember('a b')).toBe(false);
+		// A comma would split the comma-joined scope string into two members.
+		expect(isValidAllowlistMember('a,b')).toBe(false);
+		expect(isValidAllowlistMember('a*')).toBe(false);
+		expect(isValidAllowlistMember('../x')).toBe(false);
+		expect(isValidAllowlistMember('$(x)')).toBe(false);
 	});
 });
 

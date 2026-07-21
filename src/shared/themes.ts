@@ -290,7 +290,7 @@ const ayuLightAnsi: AnsiPalette = {
 	selection: 'rgba(85, 180, 212, 0.2)',
 };
 
-/** Pedurple (vibe) — purple-themed ANSI palette */
+/** Pedurple (vibe) - purple-themed ANSI palette */
 const pedurpleAnsi: AnsiPalette = {
 	ansiBlack: '#1a0f24',
 	ansiRed: '#da70d6',
@@ -311,7 +311,7 @@ const pedurpleAnsi: AnsiPalette = {
 	selection: 'rgba(255, 105, 180, 0.3)',
 };
 
-/** Maestro's Choice (vibe) — gold/dark ANSI palette */
+/** Maestro's Choice (vibe) - gold/dark ANSI palette */
 const maestrosChoiceAnsi: AnsiPalette = {
 	ansiBlack: '#1a1a24',
 	ansiRed: '#e05070',
@@ -332,7 +332,7 @@ const maestrosChoiceAnsi: AnsiPalette = {
 	selection: 'rgba(244, 196, 48, 0.3)',
 };
 
-/** Dre Synth (vibe) — cyberpunk/neon ANSI palette */
+/** Dre Synth (vibe) - cyberpunk/neon ANSI palette */
 const dreSynthAnsi: AnsiPalette = {
 	ansiBlack: '#0d0221',
 	ansiRed: '#ff2a6d',
@@ -353,7 +353,7 @@ const dreSynthAnsi: AnsiPalette = {
 	selection: 'rgba(0, 255, 204, 0.3)',
 };
 
-/** Winamp (vibe) — retro media player ANSI palette */
+/** Winamp (vibe) - retro media player ANSI palette */
 const winampAnsi: AnsiPalette = {
 	ansiBlack: '#1a1a1a',
 	ansiRed: '#ff5555',
@@ -374,7 +374,7 @@ const winampAnsi: AnsiPalette = {
 	selection: 'rgba(255, 137, 36, 0.3)',
 };
 
-/** InQuest (vibe) — high-contrast red/black ANSI palette */
+/** InQuest (vibe) - high-contrast red/black ANSI palette */
 const inquestAnsi: AnsiPalette = {
 	ansiBlack: '#0a0a0a',
 	ansiRed: '#cc0033',

@@ -399,7 +399,7 @@ describe('pipelineValidation', () => {
 
 			it('accepts pipeline with only command (no agents)', () => {
 				// A trigger -> command pipeline is valid; the old "needs at least one agent"
-				// rule was too strict — command-only pipelines ship work too.
+				// rule was too strict - command-only pipelines ship work too.
 				const t = triggerNode('t1', 'app.startup');
 				const c = commandNode('c1', {
 					name: 'lint',

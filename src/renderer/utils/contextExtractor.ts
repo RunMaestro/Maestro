@@ -651,7 +651,7 @@ export function calculateTotalTokens(contexts: ContextSource[]): number {
 export interface FormatLogsOptions {
 	/**
 	 * Include `source: 'thinking'` entries in the output, labeled as `THINKING:`.
-	 * Defaults to false — thinking blocks can be verbose and most exports want
+	 * Defaults to false - thinking blocks can be verbose and most exports want
 	 * just the user/assistant dialogue.
 	 */
 	includeThinking?: boolean;
@@ -661,7 +661,7 @@ export interface FormatLogsOptions {
  * Convert log entries to a simple text format for clipboard copying.
  *
  * By default only user messages and AI responses are included. Pass
- * `{ includeThinking: true }` to also include reasoning blocks — the HTML
+ * `{ includeThinking: true }` to also include reasoning blocks - the HTML
  * export already includes them, so this option lets clipboard/gist match.
  *
  * @param logs - Array of log entries to convert

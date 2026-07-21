@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/RepositoryDetailView — issue partitioning,
+ * Tests for SymphonyModal/components/RepositoryDetailView - issue partitioning,
  * document dropdown + click-outside, document selection, start-button gating,
  * loading states.
  */

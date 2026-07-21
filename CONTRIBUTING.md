@@ -119,7 +119,7 @@ npm run package:linux  # Package for Linux
 
 ### Development Data Directories
 
-By default, `npm run dev` uses an isolated data directory (`~/Library/Application Support/maestro-dev/`) separate from production. This allows you to run both dev and production instances simultaneously—useful when using the production Maestro to work on the dev instance.
+By default, `npm run dev` uses an isolated data directory (`~/Library/Application Support/maestro-dev/`) separate from production. This allows you to run both dev and production instances simultaneously - useful when using the production Maestro to work on the dev instance.
 
 | Command                 | Data Directory          | Can Run Alongside Production?  |
 | ----------------------- | ----------------------- | ------------------------------ |
@@ -129,9 +129,9 @@ By default, `npm run dev` uses an isolated data directory (`~/Library/Applicatio
 
 **When to use each:**
 
-- **`npm run dev`** — Default for most development. Start fresh or use dev-specific test data.
-- **`npm run dev:prod-data`** — Test with your real sessions and settings. Must close production app first to avoid database lock conflicts.
-- **`npm run dev:demo`** — Screenshots, demos, or testing with completely fresh state.
+- **`npm run dev`** - Default for most development. Start fresh or use dev-specific test data.
+- **`npm run dev:prod-data`** - Test with your real sessions and settings. Must close production app first to avoid database lock conflicts.
+- **`npm run dev:demo`** - Screenshots, demos, or testing with completely fresh state.
 
 ### Demo Mode
 
@@ -225,7 +225,7 @@ This project uses [Husky](https://typicode.github.io/husky/) and [lint-staged](h
 3. If there are unfixable errors, the commit is blocked
 4. Fixed files are automatically re-staged
 
-**Setup is automatic** — hooks are installed when you run `npm install` (via the `prepare` script).
+**Setup is automatic** - hooks are installed when you run `npm install` (via the `prepare` script).
 
 **Bypassing hooks (emergency only):**
 
@@ -241,9 +241,9 @@ npx lint-staged
 
 **Troubleshooting:**
 
-- **Hooks not running** — Check if `.husky/pre-commit` has executable permissions: `chmod +x .husky/pre-commit`
-- **Wrong tool version** — Ensure `npx` is using local `node_modules`: delete `node_modules` and run `npm install`
-- **Hook fails in CI/Docker** — The `prepare` script uses `husky || true` to gracefully skip in environments without `.git`
+- **Hooks not running** - Check if `.husky/pre-commit` has executable permissions: `chmod +x .husky/pre-commit`
+- **Wrong tool version** - Ensure `npx` is using local `node_modules`: delete `node_modules` and run `npm install`
+- **Hook fails in CI/Docker** - The `prepare` script uses `husky || true` to gracefully skip in environments without `.git`
 
 ### Manual Linting
 
@@ -442,7 +442,7 @@ Then add the ID to `ThemeId` type in `src/shared/theme-types.ts` and to the `isV
 
 ## Encore Features (Feature Gating)
 
-Encore Features is Maestro's system for optional, user-toggled features. It serves as a precursor to a full plugin marketplace — features that are powerful but not essential for every user can be shipped as Encore Features, disabled by default.
+Encore Features is Maestro's system for optional, user-toggled features. It serves as a precursor to a full plugin marketplace - features that are powerful but not essential for every user can be shipped as Encore Features, disabled by default.
 
 ### When to Use Encore Features
 
@@ -453,7 +453,7 @@ Consider making your feature an Encore Feature when:
 - It's experimental or targeting a niche workflow
 - It would clutter the interface for users who don't want it
 
-**When disabled, an Encore Feature must be completely invisible** — no keyboard shortcuts, no menu items, no command palette entries.
+**When disabled, an Encore Feature must be completely invisible** - no keyboard shortcuts, no menu items, no command palette entries.
 
 ### Architecture
 
@@ -480,7 +480,7 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    }
    ```
 
-2. **Set the default** in `useSettings.ts` — always default to `false`:
+2. **Set the default** in `useSettings.ts` - always default to `false`:
 
    ```typescript
    const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
@@ -489,15 +489,15 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    };
    ```
 
-3. **Add toggle UI** in `SettingsModal.tsx` under the Encore Features tab. Follow the existing Director's Notes pattern — a clickable section with a toggle switch and feature-specific settings that only render when enabled.
+3. **Add toggle UI** in `SettingsModal.tsx` under the Encore Features tab. Follow the existing Director's Notes pattern - a clickable section with a toggle switch and feature-specific settings that only render when enabled.
 
-4. **Gate all access points** — the feature must be invisible when disabled:
+4. **Gate all access points** - the feature must be invisible when disabled:
    - **Keyboard shortcuts** (`useMainKeyboardHandler.ts`): Guard with `ctx.encoreFeatures?.myFeature`
    - **App.tsx**: Conditionally pass callbacks and render modals based on `encoreFeatures.myFeature`
    - **SessionList hamburger menu**: Make the setter optional and conditionally render the menu item
    - **Quick Actions** (`QuickActionsModal.tsx`): Pass `undefined` for the handler when disabled
 
-5. **Update tests** in `SettingsModal.test.tsx` — add toggle and settings tests within the Encore Features describe block.
+5. **Update tests** in `SettingsModal.test.tsx` - add toggle and settings tests within the Encore Features describe block.
 
 ### Existing Encore Features
 
@@ -743,12 +743,12 @@ npm install -g react-devtools
 npx react-devtools
 ```
 
-Then run `npm run dev` — the app auto-connects (connection script in `src/renderer/index.html`).
+Then run `npm run dev` - the app auto-connects (connection script in `src/renderer/index.html`).
 
 **Tabs:**
 
-- **Components** — Inspect React component tree, props, state, hooks
-- **Profiler** — Record and analyze render performance, identify unnecessary re-renders
+- **Components** - Inspect React component tree, props, state, hooks
+- **Profiler** - Record and analyze render performance, identify unnecessary re-renders
 
 **Profiler workflow:**
 
@@ -829,7 +829,7 @@ Example: `feat: add context usage visualization`
 
 PRs are automatically reviewed by two AI-powered tools:
 
-**[CodeRabbit](https://coderabbit.ai)** — Line-level code review. When you open or update a PR, CodeRabbit will:
+**[CodeRabbit](https://coderabbit.ai)** - Line-level code review. When you open or update a PR, CodeRabbit will:
 
 - Post a **PR summary** with a walkthrough of changes
 - Leave **inline review comments** on potential issues
@@ -842,9 +842,9 @@ PRs are automatically reviewed by two AI-powered tools:
 | `@coderabbitai resolve`       | Resolve all CodeRabbit review comments          |
 | `@coderabbitai configuration` | Show current repo settings                      |
 
-You can reply to any CodeRabbit comment to ask follow-up questions — it responds conversationally.
+You can reply to any CodeRabbit comment to ask follow-up questions - it responds conversationally.
 
-**[Greptile](https://greptile.com)** — Codebase-aware review with deeper architectural context. Greptile indexes the full repo and reviews PRs with understanding of how changes relate to the broader codebase.
+**[Greptile](https://greptile.com)** - Codebase-aware review with deeper architectural context. Greptile indexes the full repo and reviews PRs with understanding of how changes relate to the broader codebase.
 
 | Command     | Effect                                                        |
 | ----------- | ------------------------------------------------------------- |
@@ -856,20 +856,20 @@ Reply to Greptile comments the same way you would CodeRabbit.
 
 All PRs must pass these checks before review:
 
-1. **Linting passes** — Run both TypeScript and ESLint checks:
+1. **Linting passes** - Run both TypeScript and ESLint checks:
 
    ```bash
    npm run lint           # TypeScript type checking
    npm run lint:eslint    # ESLint code quality
    ```
 
-2. **Tests pass** — Run the full test suite:
+2. **Tests pass** - Run the full test suite:
 
    ```bash
    npm test
    ```
 
-3. **Manual testing** — Test affected features in the running app:
+3. **Manual testing** - Test affected features in the running app:
 
    ```bash
    npm run dev
@@ -937,7 +937,7 @@ Example timeline:
 
 - **Bug fixes and small improvements**: Target `main` (cherry-pick to `rc` if relevant).
 - **New features and larger changes**: Target `rc`.
-- If unsure, target `rc` — it's easier to cherry-pick a stable change to `main` than to untangle a premature merge.
+- If unsure, target `rc` - it's easier to cherry-pick a stable change to `main` than to untangle a premature merge.
 
 ### Release Tags
 
@@ -1102,7 +1102,7 @@ All screenshots are stored in `docs/screenshots/` and referenced with relative p
 - Use **PNG format** for UI screenshots (better quality for text)
 - Capture at **standard resolution** (avoid Retina 2x for smaller file sizes, or use 2x for crisp details)
 - Use a **consistent theme** (Pedurple is used in most existing screenshots)
-- **Crop to relevant area** — don't include unnecessary whitespace or system UI
+- **Crop to relevant area** - don't include unnecessary whitespace or system UI
 - Keep file sizes reasonable (compress if over 1MB)
 
 ### Assets

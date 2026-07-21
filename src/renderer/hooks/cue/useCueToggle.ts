@@ -1,7 +1,7 @@
 /**
- * useCueToggle — master enable/disable toggle for Cue engine.
+ * useCueToggle - master enable/disable toggle for Cue engine.
  *
- * Wraps useCue's `enable` / `disable` with a `toggling` boolean (NOT a ref —
+ * Wraps useCue's `enable` / `disable` with a `toggling` boolean (NOT a ref -
  * the state flip is what disables the UI button so double-clicks are blocked).
  * Error handling: surfaces failures as toasts; `toggling` is always restored
  * to false in the finally branch.

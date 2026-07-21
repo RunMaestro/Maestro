@@ -11,7 +11,7 @@ import type { AgentCapabilitiesSnapshot } from './agentCapabilities';
 /**
  * Default context window sizes for different agents.
  * Used as fallback when the agent doesn't report its context window size.
- * Not all agents have a known default — agents without an entry here
+ * Not all agents have a known default - agents without an entry here
  * should configure contextWindow via their configOptions in definitions.ts.
  */
 export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
@@ -24,6 +24,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	'copilot-cli': 200000, // Copilot-CLI (varies by model, defaults to Claude Sonnet)
 	'qwen3-coder': 262144, // Qwen3-Coder native 256K context window
 	omp: 200000, // Oh My Pi (fallback until runtime-specific reporting lands)
+	grok: 500000, // Grok CLI (grok-4.5 default, per ~/.grok/models_cache.json)
 	terminal: 0, // Terminal has no context window
 };
 
@@ -79,8 +80,8 @@ export function isAdaptiveModeDefaultOn(_agentId: string): boolean {
 /**
  * Agent Resilience (auto-retry on availability / token-exhaustion errors) is ON
  * by default for every agent. The persisted flags (`retryOnAvailabilityErrors`,
- * `retryOnTokenExhaustion`) are optional, so `undefined` — the state for every
- * pre-existing agent and any newly created one that didn't touch the toggle —
+ * `retryOnTokenExhaustion`) are optional, so `undefined` - the state for every
+ * pre-existing agent and any newly created one that didn't touch the toggle -
  * reads as enabled. Only an explicit `false` opts out. This read-time default
  * means no storage migration is needed.
  */
@@ -119,7 +120,7 @@ export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
  * pattern appears so context-window changes shipped by an agent vendor flow
  * into Maestro automatically once a snapshot has captured them.
  *
- * Caller migration of existing readers is deferred to a follow-up PR — this
+ * Caller migration of existing readers is deferred to a follow-up PR - this
  * helper coexists with the old constant readers and is safe to land first.
  */
 export function getContextWindowForAgent(

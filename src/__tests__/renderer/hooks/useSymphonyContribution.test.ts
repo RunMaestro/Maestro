@@ -3,10 +3,10 @@
  *
  * Tests:
  *   - Creates session with correct Symphony metadata
- *   - Validates session uniqueness — shows error toast on failure
- *   - Agent not found — shows error toast
- *   - Git repo detection — fetches branches and tags when isRepo is true
- *   - Non-git repo — skips branch/tag fetching
+ *   - Validates session uniqueness - shows error toast on failure
+ *   - Agent not found - shows error toast
+ *   - Git repo detection - fetches branches and tags when isRepo is true
+ *   - Non-git repo - skips branch/tag fetching
  *   - Registers active contribution via IPC
  *   - Tracks stats via IPC
  *   - Closes Symphony modal after session creation
@@ -25,7 +25,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
-// Mocks — must come before imports
+// Mocks - must come before imports
 // ============================================================================
 
 vi.mock('../../../renderer/services/git', () => ({
@@ -514,7 +514,7 @@ describe('useSymphonyContribution', () => {
 			});
 
 			const session = useSessionStore.getState().sessions[0];
-			// New sessions start with only an AI tab — terminal tabs are created on demand
+			// New sessions start with only an AI tab - terminal tabs are created on demand
 			expect(session.unifiedTabOrder).toHaveLength(1);
 			const aiRef = session.unifiedTabOrder.find((r) => r.type === 'ai');
 			const termRef = session.unifiedTabOrder.find((r) => r.type === 'terminal');

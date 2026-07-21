@@ -350,7 +350,7 @@ export function parseWorktreePathForBranch(stdout: string, branchName: string): 
  * be entered left-to-right without cursor backtracking.
  *
  * Used by both the WorktreeRunSection (Auto Run "Create New Worktree") and the
- * CreateWorktreeModal so the same input — e.g. "Cue Dashboard" — produces the
+ * CreateWorktreeModal so the same input - e.g. "Cue Dashboard" - produces the
  * same sanitized branch ("Cue-Dashboard") regardless of entry point.
  */
 // Built from string form so the source file doesn't carry raw control bytes.
@@ -377,7 +377,7 @@ export function sanitizeGitBranchName(
 	s = s.replace(/\s+/g, '-');
 	// Replace characters git forbids in ref names
 	s = s.replace(/[~^:?*[\\]/g, '-');
-	// `..` and `@{` are illegal sequences — flatten them
+	// `..` and `@{` are illegal sequences - flatten them
 	s = s.replace(/\.\.+/g, '.');
 	s = s.replace(/@\{/g, '-');
 	// No consecutive slashes
