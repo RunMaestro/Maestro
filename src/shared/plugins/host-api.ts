@@ -21,9 +21,12 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.13.0 for the
- * additive host-mediated `PluginUiSurface` registry and trusted-chrome guard.
- * 1.12.0 added `net:connect` plus `net.connect` / `net.send` / `net.close`;
+ * The host API version this Maestro build implements. Bumped to 1.15.0 for the
+ * additive Board event topics `board.cardStatusChanged` / `board.cardCompleted`
+ * / `board.cardBlocked` / `board.decomposed`. (1.14.0 is taken by an upstream
+ * change on rc; this branch skips it rather than colliding.)
+ * 1.13.0 added the host-mediated `PluginUiSurface` registry and trusted-chrome
+ * guard; 1.12.0 added `net:connect` plus `net.connect` / `net.send` / `net.close`;
  * 1.11.0 added virtual `groupings` and `ui:grouping`; 1.10.0 added data-only
  * `iconPacks`; 1.9.0 added host-rendered `hostViews`, `ui:hostView`, and
  * `ui.hostViewUpdate` / `ui.hostViewRemove`; 1.8.0 added `background.list`;
@@ -36,7 +39,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.13.0';
+export const HOST_API_VERSION = '1.15.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

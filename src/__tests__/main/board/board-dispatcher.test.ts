@@ -20,10 +20,13 @@ import {
 	countRunning,
 	reclaimStaleRunning,
 	applyCardResult,
+	snapshotCardStatuses,
+	diffCardStatuses,
 	type BoardDispatcherDeps,
 	type CardAssignment,
 	type CardNotification,
 	type CardSpawnResult,
+	type CardStatusChange,
 } from '../../../main/board/board-dispatcher';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
 
@@ -389,7 +392,15 @@ describe('BoardDispatcher notifications', () => {
 		h.dispatcher.tick();
 		await flush();
 		expect(h.events).toEqual([
-			{ kind: 'done', cardId: 'a', cardTitle: 'Card a', detail: 'shipped the thing' },
+			{
+				kind: 'done',
+				boardId: 'b1',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				detail: 'shipped the thing',
+				attempt: 1,
+				outcome: 'done',
+			},
 		]);
 	});
 
@@ -399,7 +410,15 @@ describe('BoardDispatcher notifications', () => {
 		h.dispatcher.tick();
 		await flush();
 		expect(h.events).toEqual([
-			{ kind: 'blocked', cardId: 'a', cardTitle: 'Card a', detail: 'needs a schema' },
+			{
+				kind: 'blocked',
+				boardId: 'b1',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				detail: 'needs a schema',
+				attempt: 1,
+				outcome: 'blocked',
+			},
 		]);
 	});
 
@@ -426,9 +445,12 @@ describe('BoardDispatcher notifications', () => {
 		expect(h.events).toEqual([
 			{
 				kind: 'blocked',
+				boardId: 'b1',
 				cardId: 'a',
 				cardTitle: 'Card a',
 				detail: 'Assignee profile "p1" could not be resolved.',
+				attempt: 1,
+				outcome: 'error',
 			},
 		]);
 	});
@@ -441,7 +463,13 @@ describe('BoardDispatcher notifications', () => {
 		h.dispatcher.tick();
 		await flush();
 		expect(h.events).toEqual([
-			{ kind: 'blocked', cardId: 'a', cardTitle: 'Card a', detail: 'Profile "p1" not found.' },
+			{
+				kind: 'blocked',
+				boardId: 'b1',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				detail: 'Profile "p1" not found.',
+			},
 		]);
 		expect(h.status('a')).toBe('blocked');
 	});
@@ -456,6 +484,135 @@ describe('BoardDispatcher notifications', () => {
 		h.dispatcher.tick();
 		await flush();
 		expect(h.status('a')).toBe('done');
+	});
+});
+
+describe('BoardDispatcher status-change stream (Phase 5)', () => {
+	/** Harness that records every status transition the dispatcher announces. */
+	function statusHarness(
+		initial: Board,
+		spawnScript: (cardId: string) => CardSpawnResult,
+		extra?: Partial<BoardDispatcherDeps>
+	) {
+		const changes: CardStatusChange[] = [];
+		const h = harness(initial, spawnScript, { onStatusChanged: (e) => changes.push(e), ...extra });
+		return { ...h, changes };
+	}
+
+	it('announces claim and terminal transitions with board metadata', async () => {
+		const h = statusHarness(board([card({ id: 'a' })], 1), () => completeMarker('shipped'));
+
+		h.dispatcher.tick();
+		await flush();
+
+		// Promote and claim share one save, so the intermediate `ready` never hits
+		// disk and is not announced: the stream reports PERSISTED transitions.
+		expect(h.changes).toEqual([
+			{
+				boardId: 'b1',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				fromStatus: 'todo',
+				toStatus: 'running',
+				attempt: 1,
+			},
+			{
+				boardId: 'b1',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				fromStatus: 'running',
+				toStatus: 'done',
+				attempt: 1,
+			},
+		]);
+	});
+
+	it('carries no prompt body, run output, or summary', async () => {
+		const h = statusHarness(board([card({ id: 'a' })], 1), () =>
+			completeMarker('secret from the run output')
+		);
+
+		h.dispatcher.tick();
+		await flush();
+
+		const serialized = JSON.stringify(h.changes);
+		expect(serialized).not.toContain('secret from the run output');
+		expect(serialized).not.toContain('do the thing'); // the card body
+	});
+
+	it('stamps the pool worker on a pooled claim', async () => {
+		const h = statusHarness(board([card({ id: 'a' })], 1), () => completeMarker(), {
+			assign: () => ({ kind: 'assigned', agentId: 'worker-7', overrides: {} }) as CardAssignment,
+		});
+
+		h.dispatcher.tick();
+		await flush();
+
+		const claim = h.changes.find((c) => c.toStatus === 'running');
+		expect(claim?.workerAgentId).toBe('worker-7');
+	});
+
+	it('announces a retry back to ready and the breaker trip separately', async () => {
+		const h = statusHarness(board([card({ id: 'a' })], 1), () => failure());
+
+		h.dispatcher.tick(); // attempt 1 -> retried
+		await flush();
+		h.dispatcher.tick(); // attempt 2 -> breaker trips
+		await flush();
+
+		expect(h.changes.map((c) => `${c.fromStatus}->${c.toStatus}`)).toEqual([
+			'todo->running',
+			'running->ready',
+			'ready->running',
+			'running->blocked',
+		]);
+	});
+
+	it('announces a cancel back to todo', async () => {
+		let settle: ((result: CardSpawnResult) => void) | null = null;
+		const changes: CardStatusChange[] = [];
+		const h = harness(board([card({ id: 'a' })], 1), () => failure(), {
+			spawn: () => new Promise<CardSpawnResult>((resolve) => (settle = resolve)),
+			onStatusChanged: (e) => changes.push(e),
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.dispatcher.cancelCard('a')).toBe(true);
+		settle?.({ output: '', exitCode: null });
+		await flush();
+
+		expect(changes.at(-1)).toMatchObject({ fromStatus: 'running', toStatus: 'todo' });
+	});
+
+	it('survives a status listener that throws', async () => {
+		const h = harness(board([card({ id: 'a' })], 1), () => completeMarker(), {
+			onStatusChanged: () => {
+				throw new Error('bus exploded');
+			},
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+	});
+});
+
+describe('diffCardStatuses', () => {
+	it('reports only cards whose status actually moved', () => {
+		const b = board([card({ id: 'a', status: 'ready' }), card({ id: 'b', status: 'todo' })]);
+		const before = snapshotCardStatuses(b);
+		b.cards[0].status = 'running';
+
+		expect(diffCardStatuses(b, before).map((c) => c.cardId)).toEqual(['a']);
+	});
+
+	it('skips cards that appeared after the snapshot (decompose children)', () => {
+		const b = board([card({ id: 'a', status: 'ready' })]);
+		const before = snapshotCardStatuses(b);
+		b.cards.push(card({ id: 'child', status: 'todo' }));
+
+		expect(diffCardStatuses(b, before)).toEqual([]);
 	});
 });
 
@@ -769,9 +926,12 @@ describe('worktree metadata (Phase 4)', () => {
 		expect(events).toEqual([
 			{
 				kind: 'done',
+				boardId: 'b1',
 				cardId: 'a',
 				cardTitle: 'Card a',
 				detail: 'isolated work',
+				attempt: 1,
+				outcome: 'done',
 				worktreeBranch: 'board/b1/a',
 			},
 		]);

@@ -6,7 +6,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getEligibleCards, getBlockers, hasCycle } from '../../../shared/board/graph';
+import {
+	getEligibleCards,
+	getBlockers,
+	hasCycle,
+	countActiveCards,
+} from '../../../shared/board/graph';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
 
 function card(overrides: Partial<BoardCard> & { id: string }): BoardCard {
@@ -193,5 +198,35 @@ describe('eligibility after a parent is deleted', () => {
 		]);
 		expect(getBlockers(b.cards[1], b)).toEqual([]);
 		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['c']);
+	});
+});
+
+describe('countActiveCards', () => {
+	it('counts running and ready cards across every board', () => {
+		const counts = countActiveCards([
+			board([
+				card({ id: 'a', status: 'running' }),
+				card({ id: 'b', status: 'ready' }),
+				card({ id: 'c', status: 'done' }),
+			]),
+			{ id: 'b2', name: 'Second', cards: [card({ id: 'd', status: 'running' })] },
+		]);
+		expect(counts).toEqual({ running: 2, ready: 1 });
+	});
+
+	it('ignores todo, done, blocked, and canceled cards', () => {
+		const counts = countActiveCards([
+			board([
+				card({ id: 'a', status: 'todo' }),
+				card({ id: 'b', status: 'done' }),
+				card({ id: 'c', status: 'blocked' }),
+				card({ id: 'd', status: 'triage' }),
+			]),
+		]);
+		expect(counts).toEqual({ running: 0, ready: 0 });
+	});
+
+	it('is zero for no boards (the indicator hides on a zero total)', () => {
+		expect(countActiveCards([])).toEqual({ running: 0, ready: 0 });
 	});
 });

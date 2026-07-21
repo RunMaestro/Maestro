@@ -102,9 +102,17 @@ export type CardAssignment =
 export interface CardNotification {
 	/** `done` = the card completed; `blocked` = it needs a human. */
 	kind: 'done' | 'blocked';
+	/** Board the card belongs to (hosts route plugin events by board). */
+	boardId: string;
 	cardId: string;
 	/** Card title, for the notification heading. */
 	cardTitle: string;
+	/** 1-based attempt number of the run that just ended, when there was one. */
+	attempt?: number;
+	/** Pool worker that ran the attempt (worker pool), when pooled. */
+	workerAgentId?: string;
+	/** Outcome enum recorded on the ended run (`done` / `blocked` / `error`). */
+	outcome?: CardRunOutcome;
 	/** Run summary (`done`) or block reason (`blocked`), when there is one. */
 	detail?: string;
 	/**
@@ -113,6 +121,24 @@ export interface CardNotification {
 	 * nothing merges or removes the branch automatically.
 	 */
 	worktreeBranch?: string;
+}
+
+/**
+ * One card status transition the dispatcher performed (Phase 5). Emitted for
+ * EVERY transition - promote, claim, retry, reclaim, cancel, terminal - after
+ * the mutated board is on disk, so a consumer acting on it never sees a board
+ * that disagrees. Metadata only: no prompt text, run output, or summaries.
+ */
+export interface CardStatusChange {
+	boardId: string;
+	cardId: string;
+	cardTitle: string;
+	fromStatus: BoardCard['status'];
+	toStatus: BoardCard['status'];
+	/** 1-based attempt number of the card's latest run, when it has one. */
+	attempt?: number;
+	/** Pool worker bound to the latest run (worker pool), when pooled. */
+	workerAgentId?: string;
 }
 
 /** Injected side effects. Fakes for these are all a test needs. */
@@ -152,6 +178,12 @@ export interface BoardDispatcherDeps {
 	 * headless tick wires nothing, the desktop host turns it into a toast.
 	 */
 	notify?: (event: CardNotification) => void;
+	/**
+	 * Announce every card status transition (Phase 5), after the board is saved.
+	 * Optional: the desktop host forwards these to the plugin event bus, the CLI
+	 * wires nothing. Advisory - a listener that throws never breaks a pass.
+	 */
+	onStatusChanged?: (event: CardStatusChange) => void;
 	/** ISO clock, injectable so tests get stable timestamps. */
 	now?: () => string;
 	/** Epoch-ms clock for stale detection, injectable for tests. */
@@ -451,6 +483,43 @@ export function applyCardResult(
 	return status;
 }
 
+/** Snapshot every card's status, so a mutated board can be diffed afterwards. */
+export function snapshotCardStatuses(board: Board): Map<string, BoardCard['status']> {
+	return new Map(board.cards.map((card) => [card.id, card.status]));
+}
+
+/**
+ * Diff a mutated board against a {@link snapshotCardStatuses} snapshot into the
+ * transitions that happened. Cards absent from the snapshot (created in between,
+ * e.g. by an auto-decompose pass) are skipped: they never transitioned, they
+ * appeared.
+ *
+ * The diff reports PERSISTED transitions, so a promote and a claim landing in
+ * the same save collapse into one `todo -> running` change rather than two. That
+ * matches what an observer reading `board.yaml` would see, which is the point.
+ */
+export function diffCardStatuses(
+	board: Board,
+	before: ReadonlyMap<string, BoardCard['status']>
+): CardStatusChange[] {
+	const changes: CardStatusChange[] = [];
+	for (const card of board.cards) {
+		const from = before.get(card.id);
+		if (from === undefined || from === card.status) continue;
+		const run = card.runs?.[card.runs.length - 1];
+		changes.push({
+			boardId: board.id,
+			cardId: card.id,
+			cardTitle: card.title,
+			fromStatus: from,
+			toStatus: card.status,
+			...(run ? { attempt: run.attempt } : {}),
+			...(run?.workerAgentId ? { workerAgentId: run.workerAgentId } : {}),
+		});
+	}
+	return changes;
+}
+
 // ─── Orchestrator ────────────────────────────────────────────────────────────
 
 export class BoardDispatcher {
@@ -487,6 +556,7 @@ export class BoardDispatcher {
 
 		let dirty = false;
 		const nowIso = this.now();
+		const before = snapshotCardStatuses(board);
 
 		const reclaimed = reclaimStaleRunning(
 			board,
@@ -508,20 +578,26 @@ export class BoardDispatcher {
 		// ready card to a free worker; otherwise fall back to the legacy
 		// single-agent claim + resolveOverrides path.
 		if (this.deps.assign) {
-			this.tickPooled(board, cap, nowIso, dirty);
+			this.tickPooled(board, cap, nowIso, dirty, before);
 		} else {
-			this.tickLegacy(board, cap, nowIso, dirty);
+			this.tickLegacy(board, cap, nowIso, dirty, before);
 		}
 	}
 
 	/** Legacy single-agent dispatch (pre-Phase-6). One pinned agent per card. */
-	private tickLegacy(board: Board, cap: number, nowIso: string, dirtyIn: boolean): void {
+	private tickLegacy(
+		board: Board,
+		cap: number,
+		nowIso: string,
+		dirtyIn: boolean,
+		before: ReadonlyMap<string, BoardCard['status']>
+	): void {
 		let dirty = dirtyIn;
 		const claims = claimReadyCards(board, cap, nowIso);
 		if (claims.length > 0) dirty = true;
 
 		// Persist BEFORE spawning so a crash / next tick sees `running`.
-		if (dirty) this.deps.saveBoard(board);
+		if (dirty) this.saveAndAnnounce(board, before);
 
 		for (const card of claims) {
 			const overrides = this.deps.resolveOverrides(card);
@@ -550,7 +626,13 @@ export class BoardDispatcher {
 	}
 
 	/** Worker-pool dispatch (Board Phase 6). Each card runs on a free pool worker. */
-	private tickPooled(board: Board, cap: number, nowIso: string, dirtyIn: boolean): void {
+	private tickPooled(
+		board: Board,
+		cap: number,
+		nowIso: string,
+		dirtyIn: boolean,
+		before: ReadonlyMap<string, BoardCard['status']>
+	): void {
 		let dirty = dirtyIn;
 		const { claimed, unresolvable } = claimReadyCardsPooled(board, cap, nowIso, this.deps.assign!);
 		if (claimed.length > 0) dirty = true;
@@ -569,16 +651,20 @@ export class BoardDispatcher {
 		}
 
 		// Persist BEFORE spawning so a crash / next tick sees `running`.
-		if (dirty) this.deps.saveBoard(board);
+		if (dirty) this.saveAndAnnounce(board, before);
 
 		// Announce the force-blocks only once they are on disk, so a user acting on
 		// the toast never sees a board that disagrees with it.
 		for (const { card, reason } of unresolvable) {
+			const run = card.runs?.[card.runs.length - 1];
 			this.emitNotification({
 				kind: 'blocked',
+				boardId: board.id,
 				cardId: card.id,
 				cardTitle: card.title,
 				detail: reason ?? `Assignee for card "${card.id}" could not be resolved.`,
+				...(run ? { attempt: run.attempt, outcome: run.outcome } : {}),
+				...(run?.workerAgentId ? { workerAgentId: run.workerAgentId } : {}),
 			});
 		}
 
@@ -637,6 +723,7 @@ export class BoardDispatcher {
 		const board = this.loadBoardOrSkip('cancelCard');
 		if (!board) return false;
 		const nowIso = this.now();
+		const before = snapshotCardStatuses(board);
 		if (!applyCardCancel(board, cardId, nowIso)) return false;
 
 		this.canceled.add(cardId);
@@ -648,7 +735,7 @@ export class BoardDispatcher {
 			// mutation below still lands and the stale-reclaim pass is the backstop.
 			this.log('warn', `card "${cardId}" cancel: kill failed - ${(err as Error).message}`);
 		}
-		this.deps.saveBoard(board);
+		this.saveAndAnnounce(board, before);
 		this.log('info', `card "${cardId}" -> canceled`);
 		return true;
 	}
@@ -668,9 +755,10 @@ export class BoardDispatcher {
 		}
 		const board = this.loadBoardOrSkip('finalize');
 		if (!board) return;
+		const before = snapshotCardStatuses(board);
 		const status = applyCardResult(board, cardId, result, this.now(), this.maxFailures);
 		if (status === null) return;
-		this.deps.saveBoard(board);
+		this.saveAndAnnounce(board, before);
 		this.log('info', `card "${cardId}" -> ${status}`);
 		if (status === 'done' || status === 'blocked') {
 			// The run summary the marker/exit path just recorded is the useful half of
@@ -679,9 +767,12 @@ export class BoardDispatcher {
 			const lastRun = card?.runs?.[card.runs.length - 1];
 			this.emitNotification({
 				kind: status,
+				boardId: board.id,
 				cardId,
 				cardTitle: card?.title ?? cardId,
 				detail: lastRun?.summary,
+				...(lastRun ? { attempt: lastRun.attempt, outcome: lastRun.outcome } : {}),
+				...(lastRun?.workerAgentId ? { workerAgentId: lastRun.workerAgentId } : {}),
 				...(lastRun?.worktreeBranch ? { worktreeBranch: lastRun.worktreeBranch } : {}),
 			});
 		}
@@ -698,6 +789,7 @@ export class BoardDispatcher {
 		if (!board) return;
 		const card = board.cards.find((c) => c.id === cardId);
 		if (!card) return;
+		const before = snapshotCardStatuses(board);
 		const run = card.runs?.[card.runs.length - 1];
 		if (run && !run.endedAt) {
 			run.endedAt = this.now();
@@ -706,9 +798,39 @@ export class BoardDispatcher {
 		}
 		card.status = 'blocked';
 		card.updatedAt = this.now();
-		this.deps.saveBoard(board);
+		this.saveAndAnnounce(board, before);
 		this.log('info', `card "${cardId}" -> blocked (${reason})`);
-		this.emitNotification({ kind: 'blocked', cardId, cardTitle: card.title, detail: reason });
+		this.emitNotification({
+			kind: 'blocked',
+			boardId: board.id,
+			cardId,
+			cardTitle: card.title,
+			detail: reason,
+			...(run ? { attempt: run.attempt, outcome: run.outcome } : {}),
+			...(run?.workerAgentId ? { workerAgentId: run.workerAgentId } : {}),
+		});
+	}
+
+	/**
+	 * Persist a mutated board and announce the transitions it contains, diffed
+	 * against a pre-mutation snapshot. Saving first is the invariant every emit
+	 * site here shares: a listener must never observe a transition the board on
+	 * disk does not yet agree with.
+	 */
+	private saveAndAnnounce(board: Board, before: ReadonlyMap<string, BoardCard['status']>): void {
+		this.deps.saveBoard(board);
+		const listener = this.deps.onStatusChanged;
+		if (!listener) return;
+		for (const change of diffCardStatuses(board, before)) {
+			try {
+				listener(change);
+			} catch (err) {
+				this.log(
+					'warn',
+					`status listener failed for card "${change.cardId}": ${(err as Error).message}`
+				);
+			}
+		}
 	}
 
 	/**

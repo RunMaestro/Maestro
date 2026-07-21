@@ -103,3 +103,29 @@ export function hasCycle(board: Board): boolean {
 
 	return false;
 }
+
+/** In-flight card counts across every board in a project. */
+export interface ActiveCardCounts {
+	/** Cards a dispatcher is running right now. */
+	running: number;
+	/** Cards whose parents are all done, waiting for a free slot or worker. */
+	ready: number;
+}
+
+/**
+ * Count the `running` and `ready` cards across a project's boards. Pure, so the
+ * status-bar indicator that displays it is a render of data rather than a
+ * second source of truth. `total` is what the caller checks to decide whether
+ * to show anything at all.
+ */
+export function countActiveCards(boards: readonly Board[]): ActiveCardCounts {
+	let running = 0;
+	let ready = 0;
+	for (const board of boards) {
+		for (const card of board.cards) {
+			if (card.status === 'running') running += 1;
+			else if (card.status === 'ready') ready += 1;
+		}
+	}
+	return { running, ready };
+}

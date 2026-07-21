@@ -563,8 +563,10 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
  * card's assignee profile against its base agent, and spawns that assignee. The
  * Board is the closest analogue to Cue, so this mirrors the Cue def (a
  * dispatcher with a host-owned spawn path). Grepped from `src/main/board/*`
- * (board-storage, board-dispatcher) and `src/main/profiles/profile-storage.ts`
- * (assignee resolution). */
+ * (board-storage, board-dispatcher, board-spawn, board-worktree) and
+ * `src/main/profiles/profile-storage.ts` (assignee resolution). Kept true
+ * through Phase 5: toasts (Phase 2), serialized atomic writes (Phase 1), and
+ * per-card git worktrees (Phase 4) are all accounted for below. */
 export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	id: 'com.maestro.board',
 	name: 'Board',
@@ -584,6 +586,11 @@ export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				"Resolve a card's assignee profile to its base Left Bar agent (identity, tool type, SSH/custom config) so the run spawns as the right agent.",
 		},
 		{
+			capability: 'notifications:toast',
+			reason:
+				'Announce terminal card transitions: a sticky toast when a card blocks and needs a human, an auto-dismissing one when a card completes (naming its worktree branch when the run was isolated).',
+		},
+		{
 			capability: 'fs:read',
 			scope: '.maestro/board.yaml',
 			reason: 'Load the task DAG (cards, statuses, dependencies) each tick.',
@@ -594,10 +601,13 @@ export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 			reason: "Read the agent profiles a card's assignee references (Phase 1 storage).",
 		},
 		{
+			// Scoped to the directory, not the single file: every board write is
+			// atomic (write `board.yaml.tmp`, rename over `board.yaml`) and creates
+			// `.maestro/` when absent, so a file-exact scope would not cover it.
 			capability: 'fs:write',
-			scope: '.maestro/board.yaml',
+			scope: '.maestro/',
 			reason:
-				'Persist card status transitions (promote/claim/done/blocked) and per-attempt run history.',
+				'Persist card status transitions (promote/claim/done/blocked/canceled) and per-attempt run history through a serialized, atomic temp-file-plus-rename write of board.yaml.',
 		},
 		// NOTE: `agents:dispatch` and `process:spawn` are deliberately ABSENT,
 		// mirroring Cue (see MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS) and
@@ -605,7 +615,17 @@ export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		// Board dispatches each card to a dynamically-resolved profile/base-agent
 		// target that a static manifest scope cannot name. That authority stays
 		// HOST-OWNED (the supervised engine tick, gated by the Encore flag) until a
-		// runtime grant seam is designed.
+		// runtime grant seam is designed - see `Plans/rfc-runtime-dispatch-grants.md`,
+		// which specifies that seam and the tier-2 Board plugin it would unblock.
+		//
+		// The same rationale covers Phase 4's per-card worktree isolation, which is
+		// why no `fs:write` scope names it: provisioning a card's checkout runs
+		// `git worktree add` into a `worktrees/` directory BESIDE the project root
+		// and then spawns the agent with that cwd. Both halves are host-owned spawn
+		// machinery (`src/main/board/board-worktree.ts`, driven from `board-spawn.ts`),
+		// not something a sandboxed plugin performs through the broker - a plugin
+		// able to write arbitrary sibling directories and run git is `process:spawn`
+		// by another name.
 	],
 	settingsNamespace: 'board',
 	encoreFlag: 'board',

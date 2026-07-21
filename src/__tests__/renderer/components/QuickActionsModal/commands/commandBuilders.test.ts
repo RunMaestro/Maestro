@@ -631,3 +631,50 @@ describe('agent-switch window scoping', () => {
 		expect(revealJumpTarget).not.toHaveBeenCalled();
 	});
 });
+
+describe('Board + Agent Profiles palette entries', () => {
+	/** Minimal args: the Encore gate lives at the call site, which either passes
+	 * an open handler or leaves it undefined. */
+	const baseArgs = {
+		activeSession: createMockSession({ id: 's1', name: 'Atlas' }),
+		setQuickActionOpen: close,
+		setSuccessFlashNotification: vi.fn(),
+		setAgentSessionsOpen: vi.fn(),
+		setActiveAgentSessionId: vi.fn(),
+		bionifyReadingMode: false,
+		setBionifyReadingMode: vi.fn(),
+		audioFeedbackEnabled: false,
+		setAudioFeedbackEnabled: vi.fn(),
+		idleNotificationEnabled: false,
+		setIdleNotificationEnabled: vi.fn(),
+		showStarredSessionsSection: true,
+		setShowStarredSessionsSection: vi.fn(),
+		shortcuts: {},
+	};
+
+	it('hides both commands when the feature is off (no handlers passed)', () => {
+		const ids = buildFeatureCommands(baseArgs).map((a) => a.id);
+		expect(ids).not.toContain('board');
+		expect(ids).not.toContain('agent-profiles');
+	});
+
+	it('opens the Board and closes the palette', () => {
+		const onOpenBoard = vi.fn();
+		const board = buildFeatureCommands({ ...baseArgs, onOpenBoard }).find((a) => a.id === 'board');
+		expect(board).toBeDefined();
+		board!.action();
+		expect(onOpenBoard).toHaveBeenCalled();
+		expect(close).toHaveBeenCalledWith(false);
+	});
+
+	it('opens Agent Profiles and closes the palette', () => {
+		const onOpenProfiles = vi.fn();
+		const profiles = buildFeatureCommands({ ...baseArgs, onOpenProfiles }).find(
+			(a) => a.id === 'agent-profiles'
+		);
+		expect(profiles).toBeDefined();
+		profiles!.action();
+		expect(onOpenProfiles).toHaveBeenCalled();
+		expect(close).toHaveBeenCalledWith(false);
+	});
+});

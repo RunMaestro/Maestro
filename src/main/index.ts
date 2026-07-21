@@ -1572,8 +1572,37 @@ app
 				// Terminal card transitions surface as toasts through the SAME
 				// `remote:notifyToast` relay Cue's notify action uses. A blocked card
 				// needs a human, so its toast is sticky; a done card auto-dismisses.
-				notifyCard: (_projectRoot, event) => {
+				notifyCard: (projectRoot, event) => {
 					const blocked = event.kind === 'blocked';
+					// Board Phase 5: the same terminal transition is republished on the
+					// plugin event bus so OTHER plugins can build on the Board. Metadata
+					// only - the toast below carries the run summary, the event never
+					// does (summaries can quote agent output).
+					const common = {
+						boardId: event.boardId,
+						cardId: event.cardId,
+						cardTitle: event.cardTitle,
+						projectPath: projectRoot,
+						...(event.attempt !== undefined ? { attempt: event.attempt } : {}),
+						...(event.workerAgentId ? { workerAgentId: event.workerAgentId } : {}),
+					};
+					const at = new Date().toISOString();
+					if (blocked) {
+						pluginEventBus?.emit({
+							topic: 'board.cardBlocked',
+							at,
+							payload: { ...common, ...(event.outcome ? { outcome: event.outcome } : {}) },
+						});
+					} else {
+						pluginEventBus?.emit({
+							topic: 'board.cardCompleted',
+							at,
+							payload: {
+								...common,
+								...(event.worktreeBranch ? { worktreeBranch: event.worktreeBranch } : {}),
+							},
+						});
+					}
 					// Phase 4: an isolated card's output lives on its own branch, which
 					// nothing merges automatically - name it so the user can find it.
 					const branchNote = event.worktreeBranch ? ` (branch ${event.worktreeBranch})` : '';
@@ -1586,6 +1615,31 @@ app
 						sourceAgent: 'Board',
 					});
 				},
+				// Board Phase 5: every card status transition goes out on the plugin
+				// event bus (metadata only - ids, statuses, attempt, worker). Null-safe;
+				// no-op when plugins are disabled.
+				onCardStatusChanged: (projectRoot, event) =>
+					pluginEventBus?.emit({
+						topic: 'board.cardStatusChanged',
+						at: new Date().toISOString(),
+						payload: {
+							boardId: event.boardId,
+							cardId: event.cardId,
+							cardTitle: event.cardTitle,
+							fromStatus: event.fromStatus,
+							toStatus: event.toStatus,
+							projectPath: projectRoot,
+							...(event.attempt !== undefined ? { attempt: event.attempt } : {}),
+							...(event.workerAgentId ? { workerAgentId: event.workerAgentId } : {}),
+						},
+					}),
+				// Board Phase 5: a finished auto-decompose pass, counts only.
+				onBoardDecomposed: (projectRoot, boardId, triageCardCount) =>
+					pluginEventBus?.emit({
+						topic: 'board.decomposed',
+						at: new Date().toISOString(),
+						payload: { boardId, triageCardCount, projectPath: projectRoot },
+					}),
 				// OPTIONAL auto-decompose (Board Phase 5), off by default. Only runs when
 				// a board sets `autoDecompose: true`; loads the editable prompt template
 				// and fans triage cards into child cards via the same spawn plumbing.

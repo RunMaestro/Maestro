@@ -81,6 +81,7 @@ import {
 	BoardDispatcher,
 	type CardAssignment,
 	type CardNotification,
+	type CardStatusChange,
 	type CardSpawnRequest,
 	type CardSpawnResult,
 } from '../board/board-dispatcher';
@@ -219,6 +220,17 @@ export interface CueEngineBoardDeps {
 	 * host turns it into a toast; absent => silent (the CLI's headless path).
 	 */
 	notifyCard?: (projectRoot: string, event: CardNotification) => void;
+	/**
+	 * Announce EVERY card status transition (Board Phase 5). The host republishes
+	 * these on the plugin event bus as `board.cardStatusChanged`; absent => no
+	 * one is listening (the CLI's headless path).
+	 */
+	onCardStatusChanged?: (projectRoot: string, event: CardStatusChange) => void;
+	/**
+	 * Announce a completed auto-decompose pass (Board Phase 5) with the number of
+	 * triage cards it expanded. The host republishes it as `board.decomposed`.
+	 */
+	onBoardDecomposed?: (projectRoot: string, boardId: string, triageCardCount: number) => void;
 	/**
 	 * OPTIONAL auto-decompose (Board Phase 5), OFF by default. When wired AND the
 	 * board's own `autoDecompose` flag is `true`, run one decomposition pass for a
@@ -1599,6 +1611,7 @@ export class CueEngine {
 			.then((count) => {
 				if (count > 0) {
 					this.meteredOnLog('info', `[BOARD] auto-decomposed ${count} triage card(s)`);
+					this.deps.board?.onBoardDecomposed?.(projectRoot, board.id, count);
 				}
 			})
 			.catch((err) => {
@@ -1638,6 +1651,9 @@ export class CueEngine {
 				: undefined,
 			notify: boardDeps.notifyCard
 				? (event: CardNotification): void => boardDeps.notifyCard!(projectRoot, event)
+				: undefined,
+			onStatusChanged: boardDeps.onCardStatusChanged
+				? (event: CardStatusChange): void => boardDeps.onCardStatusChanged!(projectRoot, event)
 				: undefined,
 			onLog: (level, message) => this.meteredOnLog(level, `[BOARD] ${message}`),
 		});
