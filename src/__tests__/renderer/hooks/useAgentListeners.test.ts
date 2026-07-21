@@ -1418,7 +1418,7 @@ describe('useAgentListeners', () => {
 	// ========================================================================
 
 	describe('onToolExecution', () => {
-		it('does not emit tool logs when thinking is hidden', () => {
+		it('records tool logs regardless of thinking visibility (hidden at render, not here)', () => {
 			const deps = createMockDeps();
 			const session = createMockSession({
 				id: 'sess-1',
@@ -1439,7 +1439,11 @@ describe('useAgentListeners', () => {
 			});
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+			// Tool events are always recorded now; visibility is a render concern
+			// (TerminalOutput hides source:'tool' when tools are off), so the log is
+			// present here even with thinking off.
+			expect(updated?.aiTabs[0]?.logs).toHaveLength(1);
+			expect(updated?.aiTabs[0]?.logs[0]?.source).toBe('tool');
 		});
 
 		// Copilot-CLI emits paired `tool.execution_start` and `tool.execution_complete`
