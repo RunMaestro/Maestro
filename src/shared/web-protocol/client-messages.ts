@@ -81,6 +81,8 @@ export const WEB_CLIENT_MESSAGE_TYPES = [
 	'notify_toast',
 	'movement',
 	'get_movement_state',
+	'get_movement_designer_inspection',
+	'interact_movement_designer',
 	'cadenza',
 	'notify_center_flash',
 	'profiling_start',

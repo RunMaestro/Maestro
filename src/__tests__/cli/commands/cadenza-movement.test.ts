@@ -76,6 +76,7 @@ describe('Cadenza and Movement CLI transport', () => {
 				type: 'movement',
 				op: 'add',
 				id: 'block-1',
+				viewType: 'view',
 				x: 10,
 				y: 20,
 				width: 300,

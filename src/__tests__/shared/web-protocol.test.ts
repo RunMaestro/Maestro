@@ -54,6 +54,11 @@ describe('web server protocol contracts', () => {
 				})
 			).toBe(true);
 		});
+
+		it('accepts movement designer request discriminants', () => {
+			expect(isWebClientMessage({ type: 'get_movement_designer_inspection' })).toBe(true);
+			expect(isWebClientMessage({ type: 'interact_movement_designer' })).toBe(true);
+		});
 	});
 
 	it('accepts every server discriminant with a contract fixture', () => {

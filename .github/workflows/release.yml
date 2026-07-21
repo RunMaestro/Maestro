@@ -44,32 +44,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      # CRITICAL: Do NOT use setup-node's built-in npm cache for Linux builds.
-      # The cache key doesn't include architecture, so x64 and arm64 share the same cache.
-      # This causes ARM64 prebuilds to contaminate x64 builds (GitHub issue #116).
-      - name: Setup Node.js (Linux - no cache)
-        if: matrix.platform == 'linux' || matrix.platform == 'linux-arm64'
+      # Keep the package cache architecture-specific so native prebuilds from
+      # Linux x64 and arm64 release runners cannot contaminate each other.
+      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          # Explicitly no cache to prevent cross-architecture contamination
 
-      - name: Setup Node.js (non-Linux - with cache)
-        if: matrix.platform != 'linux' && matrix.platform != 'linux-arm64'
-        uses: actions/setup-node@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
-          cache: 'npm'
+          bun-version: '1.3.9'
 
-      # Use architecture-specific cache for Linux builds
-      - name: Cache npm dependencies (Linux)
-        if: matrix.platform == 'linux' || matrix.platform == 'linux-arm64'
+      - name: Cache Bun packages
         uses: actions/cache@v5
         with:
-          path: ~/.npm
-          key: npm-linux-${{ matrix.arch }}-${{ hashFiles('**/package-lock.json') }}
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            npm-linux-${{ matrix.arch }}-
+            bun-${{ runner.os }}-${{ matrix.arch }}-
 
       # Extra safety: Clear any prebuild cache that might have wrong-arch binaries
       - name: Clear prebuild cache (Linux)
@@ -154,7 +147,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          node -e "
+          bun -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             pkg.version = process.env.VERSION;
@@ -163,10 +156,10 @@ jobs:
           echo "Updated package.json to version $VERSION"
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
-      # Clean any prebuilt binaries that may have been downloaded for wrong architecture
-      # This is critical: prebuild-install downloads binaries during npm ci, which may be wrong
+      # Clean any prebuilt binaries that may have been downloaded for the wrong architecture.
+      # This is critical because install-time prebuild resolution may select host binaries.
       - name: Clean prebuilt binaries (Linux x64)
         if: matrix.platform == 'linux'
         run: |
@@ -191,7 +184,7 @@ jobs:
       # Rebuild native modules for the target platform
       - name: Rebuild native modules (Linux x64)
         if: matrix.platform == 'linux'
-        run: npm run postinstall
+        run: bun run postinstall
         env:
           npm_config_build_from_source: true
           npm_config_arch: x64
@@ -199,7 +192,7 @@ jobs:
 
       - name: Rebuild native modules (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
-        run: npm run postinstall
+        run: bun run postinstall
         env:
           npm_config_build_from_source: true
           npm_config_arch: arm64
@@ -207,7 +200,7 @@ jobs:
 
       - name: Rebuild native modules (Windows)
         if: matrix.platform == 'win'
-        run: npm run postinstall
+        run: bun run postinstall
         env:
           npm_config_build_from_source: true
 
@@ -224,7 +217,7 @@ jobs:
         run: .github/scripts/verify-native-arch.sh --arch arm64 --platform linux
 
       - name: Build application
-        run: npm run build
+        run: bun run build
         env:
           VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
 
@@ -273,7 +266,7 @@ jobs:
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           .github/scripts/verify-native-arch.sh --rebuild --arch x64 --platform mac
-          npx electron-builder --mac --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          bunx electron-builder --mac --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       - name: Package for macOS arm64
         if: matrix.platform == 'mac'
@@ -288,12 +281,12 @@ jobs:
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           .github/scripts/verify-native-arch.sh --rebuild --arch arm64 --platform mac
-          npx electron-builder --mac --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          bunx electron-builder --mac --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       - name: Package for Windows
         if: matrix.platform == 'win'
         shell: bash
-        run: npx electron-builder --win --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
+        run: bunx electron-builder --win --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           DEBUG: electron-builder
 
@@ -316,7 +309,7 @@ jobs:
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           .github/scripts/verify-native-arch.sh --rebuild --arch x64 --platform linux
-          npx electron-builder --linux --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          bunx electron-builder --linux --x64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       - name: Package for Linux ARM64
         if: matrix.platform == 'linux-arm64'
@@ -329,7 +322,7 @@ jobs:
           BUILD_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           .github/scripts/verify-native-arch.sh --rebuild --arch arm64 --platform linux
-          npx electron-builder --linux --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
+          bunx electron-builder --linux --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
       # Verify native modules are correctly included in unpacked resources (Linux x64)
       - name: Verify native modules in package (Linux x64)

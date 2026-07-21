@@ -806,8 +806,11 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			);
 			const workflowContent = fs.readFileSync(workflowPath, 'utf8');
 
-			// Workflow should run postinstall which triggers electron-rebuild
-			expect(workflowContent).toContain('npm run postinstall');
+			// Release builds use the repository's canonical Bun lockfile and rebuild script.
+			expect(workflowContent).toContain('oven-sh/setup-bun@v2');
+			expect(workflowContent).toContain('bun install --frozen-lockfile');
+			expect(workflowContent).toContain('bun run postinstall');
+			expect(workflowContent).not.toContain('npm ci');
 			expect(workflowContent).toContain('npm_config_build_from_source');
 		});
 

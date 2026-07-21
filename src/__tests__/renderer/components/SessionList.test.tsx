@@ -108,10 +108,6 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
-vi.mock('../../../renderer/components/plugins/PluginUiItemsSlot', () => ({
-	PluginUiItemsSlot: () => null,
-}));
-
 // Mock InlineWizardContext to avoid Provider requirement
 vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
 	useInlineWizardContext: () => ({

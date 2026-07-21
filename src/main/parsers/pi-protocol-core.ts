@@ -20,6 +20,7 @@ export interface PiProtocolMessage {
 	role?: string;
 	content?: string | PiProtocolContentBlock[];
 	usage?: PiProtocolUsage;
+	model?: string;
 	errorMessage?: string;
 }
 
@@ -108,6 +109,7 @@ function extractUsageFromMessage(message: PiProtocolMessage): ParsedEvent['usage
 		cacheReadTokens: usage.cacheRead || 0,
 		cacheCreationTokens: usage.cacheWrite || 0,
 		costUsd: typeof usage.cost === 'number' ? usage.cost : usage.cost?.total || 0,
+		...(message.model ? { model: message.model } : {}),
 	};
 }
 
@@ -200,12 +202,13 @@ export function createPiProtocolCore(adapter: PiProtocolAdapter): PiProtocolCore
 					}
 					return { type: 'error', text: finalMessage.errorMessage, sessionId, raw: event };
 				}
-				if (!finalMessage && !adapter.emitEmptyAgentEndResult) {
+				const resultText = finalMessage ? extractMessageText(finalMessage) : '';
+				if (!adapter.emitEmptyAgentEndResult && !resultText.trim()) {
 					return { type: 'system', sessionId, raw: event };
 				}
 				return {
 					type: 'result',
-					text: finalMessage ? extractMessageText(finalMessage) : '',
+					text: resultText,
 					sessionId,
 					raw: event,
 				};
