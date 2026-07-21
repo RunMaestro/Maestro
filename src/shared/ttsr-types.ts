@@ -46,6 +46,11 @@ export type TtsrRepeatMode = (typeof TTSR_REPEAT_MODES)[number];
 export const TTSR_CONTEXT_MODES = ['keep', 'discard'] as const;
 export type TtsrContextMode = (typeof TTSR_CONTEXT_MODES)[number];
 
+/** Narrow an unknown (persisted setting, IPC payload) to a {@link TtsrContextMode}. */
+export function isTtsrContextMode(value: unknown): value is TtsrContextMode {
+	return TTSR_CONTEXT_MODES.includes(value as TtsrContextMode);
+}
+
 /** Default scopes when a rule does not declare any. */
 export const DEFAULT_TTSR_SCOPES: TtsrScope[] = ['text', 'thinking'];
 

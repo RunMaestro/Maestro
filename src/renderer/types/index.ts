@@ -1258,6 +1258,11 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// TTSR (Time-Traveling Stream Rules) - watch agent output streams and
+	// interrupt a turn that violates a project rule. Off by default. Optional so
+	// existing literals (older test fixtures, persisted settings without the
+	// key) continue to type-check.
+	ttsr?: boolean;
 }
 
 // Director's Notes settings for synopsis generation
