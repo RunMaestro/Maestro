@@ -38,6 +38,12 @@ export interface TabBarProps {
 	/** Whether GitHub CLI is available for gist publishing */
 	ghCliAvailable?: boolean;
 	showUnreadOnly?: boolean;
+	/**
+	 * Ids of AI tabs that have queued execution items. Under the unread filter these
+	 * tabs stay visible (pending queued work needs attention). Undefined outside the
+	 * filter (all tabs shown).
+	 */
+	queuedTabIds?: Set<string>;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
 	/** Handler to open message search (Cmd+F) */

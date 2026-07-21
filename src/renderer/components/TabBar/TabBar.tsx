@@ -87,6 +87,7 @@ function TabBarInner({
 	onSendBrowserContentToAgent,
 	activeGroupId,
 	unreadGroupIds,
+	queuedTabIds,
 	onGroupSelect,
 	onGroupRename,
 	onGroupBreakApart,
@@ -203,7 +204,8 @@ function TabBarInner({
 						stuckTabIds.has(t.id) ||
 						(inputMode === 'ai' && t.id === activeTabId) ||
 						hasDraft(t) ||
-						(showStarredInUnreadFilter && t.starred)
+						(showStarredInUnreadFilter && t.starred) ||
+						(queuedTabIds?.has(t.id) ?? false)
 				)
 			: tabs;
 	}, [
@@ -214,6 +216,7 @@ function TabBarInner({
 		showStarredInUnreadFilter,
 		stuckTabIds,
 		ownsActiveAgent,
+		queuedTabIds,
 	]);
 
 	const displayedUnifiedTabs = useMemo(() => {
@@ -232,7 +235,8 @@ function TabBarInner({
 					stuckTabIds.has(ut.id) ||
 					(inputMode === 'ai' && ut.id === activeTabId) ||
 					hasDraft(ut.data) ||
-					(showStarredInUnreadFilter && ut.data.starred)
+					(showStarredInUnreadFilter && ut.data.starred) ||
+					(queuedTabIds?.has(ut.id) ?? false)
 				);
 			}
 			// File preview tabs: hidden by default in unread filter, shown if setting
@@ -262,6 +266,7 @@ function TabBarInner({
 		ownsActiveAgent,
 		unreadGroupIds,
 		stuckTabIds,
+		queuedTabIds,
 	]);
 
 	// Drag handlers
