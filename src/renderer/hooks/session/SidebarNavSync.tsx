@@ -16,6 +16,9 @@ import { computeSortedSessions } from './computeSortedSessions';
 import { useStarredItems } from './useStarredItems';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { scopeSessionsToOwningWindow } from '../../utils/windowTargets';
+import { useShallow } from 'zustand/react/shallow';
+import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { useActiveOutageSessionSignature } from '../../stores/retryStore';
 
 function SidebarNavSyncInner() {
 	const windowCtx = useWindowContextOptional();
@@ -30,6 +33,11 @@ function SidebarNavSyncInner() {
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
+	// Batch (AUTO badge) and stuck-outage ids feed the shared "needs attention"
+	// predicate so auto-running / stuck agents survive the unread filter in the
+	// jump-badge / nav projection, matching the rendered list.
+	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const stuckOutageSignature = useActiveOutageSessionSignature();
 
 	const setSortedProjection = useSidebarNavStore((s) => s.setSortedProjection);
 	const setStarredItems = useSidebarNavStore((s) => s.setStarredItems);
@@ -52,6 +60,8 @@ function SidebarNavSyncInner() {
 				bookmarksCollapsed,
 				showUnreadAgentsOnly,
 				activeSessionId,
+				activeBatchSessionIds,
+				stuckOutageSessionIds: stuckOutageSignature ? stuckOutageSignature.split(',') : [],
 			})
 		);
 	}, [
@@ -60,6 +70,8 @@ function SidebarNavSyncInner() {
 		bookmarksCollapsed,
 		showUnreadAgentsOnly,
 		activeSessionId,
+		activeBatchSessionIds,
+		stuckOutageSignature,
 		setSortedProjection,
 	]);
 

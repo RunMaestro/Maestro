@@ -1,5 +1,9 @@
 import type { Session, Group } from '../../types';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import {
+	sessionOrChildrenNeedAttention,
+	type AttentionContext,
+} from '../../utils/sessionAttention';
 
 /**
  * Inputs for {@link computeSortedSessions}. Pure - safe to call from a Zustand
@@ -11,6 +15,10 @@ export interface ComputeSortedSessionsInput {
 	bookmarksCollapsed: boolean;
 	showUnreadAgentsOnly?: boolean;
 	activeSessionId?: string | null;
+	/** Session ids auto-running an Auto Run batch (the AUTO badge). */
+	activeBatchSessionIds?: string[];
+	/** Session ids stuck auto-retrying an Agent Resilience outage. */
+	stuckOutageSessionIds?: string[];
 }
 
 /**
@@ -33,7 +41,19 @@ export interface SortedSessionsProjection {
  * 3. navSessions / navIndexMap - arrow-key visual order (bookmarks + group + ungrouped)
  */
 export function computeSortedSessions(input: ComputeSortedSessionsInput): SortedSessionsProjection {
-	const { sessions, groups, bookmarksCollapsed, showUnreadAgentsOnly, activeSessionId } = input;
+	const {
+		sessions,
+		groups,
+		bookmarksCollapsed,
+		showUnreadAgentsOnly,
+		activeSessionId,
+		activeBatchSessionIds,
+		stuckOutageSessionIds,
+	} = input;
+	const attentionCtx: AttentionContext = {
+		batchSessionIds: new Set(activeBatchSessionIds),
+		stuckOutageIds: new Set(stuckOutageSessionIds),
+	};
 
 	const worktreeChildrenByParent = new Map<string, Session[]>();
 	for (const s of sessions) {
@@ -130,17 +150,11 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 			worktreeChildrenByParent.get(session.id)?.some((child) => child.id === activeSessionId) ||
 			false;
 		if (isActiveOrParentOfActive) return true;
-		const hasUnread = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
-		const isBusyOrError = session.state === 'busy' || session.state === 'error';
-		const children = worktreeChildrenByParent.get(session.id);
-		const hasUnreadChildren =
-			children?.some(
-				(child) =>
-					child.aiTabs?.some((tab) => tab.hasUnread) ||
-					child.state === 'busy' ||
-					child.state === 'error'
-			) ?? false;
-		return hasUnread || isBusyOrError || hasUnreadChildren;
+		return sessionOrChildrenNeedAttention(
+			session,
+			worktreeChildrenByParent.get(session.id),
+			attentionCtx
+		);
 	};
 
 	const visibleSessions: Session[] = [];

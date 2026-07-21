@@ -4,6 +4,7 @@ import { SkinnySidebar } from '../../../../renderer/components/SessionList/Skinn
 import type { Session, Group, Theme } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { createMockSession } from '../../../helpers';
 
 let idCounter = 0;
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -47,6 +48,8 @@ function createProps(overrides: Partial<Parameters<typeof SkinnySidebar>[0]> = {
 		getFileCount: vi.fn(() => 0),
 		setActiveSessionId: vi.fn(),
 		handleContextMenu: vi.fn(),
+		showUnreadAgentsOnly: false,
+		stuckOutageSignature: '',
 		...overrides,
 	};
 }
@@ -174,5 +177,54 @@ describe('SkinnySidebar', () => {
 		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
 		expect(dot.style.backgroundColor).toBe('transparent');
 		expect(dot.style.border).toContain('1.5px solid');
+	});
+	it('keeps an auto-running (batch) agent visible under the unread filter', () => {
+		const batch = createMockSession({ id: 'batch-s' });
+		const idle = createMockSession({ id: 'idle-s' });
+		const { container } = render(
+			<SkinnySidebar
+				{...createProps({
+					sortedSessions: [batch, idle],
+					activeSessionId: 'other',
+					activeBatchSessionIds: ['batch-s'],
+					showUnreadAgentsOnly: true,
+				})}
+			/>
+		);
+
+		expect(container.querySelectorAll('[aria-label^="Switch to "]').length).toBe(1);
+	});
+
+	it('keeps a stuck (outage) agent visible under the unread filter', () => {
+		const stuck = createMockSession({ id: 'stuck-s' });
+		const idle = createMockSession({ id: 'idle-s' });
+		const { container } = render(
+			<SkinnySidebar
+				{...createProps({
+					sortedSessions: [stuck, idle],
+					activeSessionId: 'other',
+					stuckOutageSignature: 'stuck-s',
+					showUnreadAgentsOnly: true,
+				})}
+			/>
+		);
+
+		expect(container.querySelectorAll('[aria-label^="Switch to "]').length).toBe(1);
+	});
+
+	it('hides idle agents under the unread filter', () => {
+		const idle1 = createMockSession({ id: 'idle-1' });
+		const idle2 = createMockSession({ id: 'idle-2' });
+		const { container } = render(
+			<SkinnySidebar
+				{...createProps({
+					sortedSessions: [idle1, idle2],
+					activeSessionId: 'other',
+					showUnreadAgentsOnly: true,
+				})}
+			/>
+		);
+
+		expect(container.querySelectorAll('[aria-label^="Switch to "]').length).toBe(0);
 	});
 });

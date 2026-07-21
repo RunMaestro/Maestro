@@ -23,6 +23,12 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { compareNamesIgnoringEmojis } from './useSortedSessions';
 import type { StarredItem } from './useStarredItems';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
+import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { getActiveOutageSessionIds } from '../../stores/retryStore';
+import {
+	sessionOrChildrenNeedAttention,
+	type AttentionContext,
+} from '../../utils/sessionAttention';
 
 // ============================================================================
 // Dependencies
@@ -48,6 +54,16 @@ export interface CycleSessionDeps {
 	 * for production (sidebarNavStore).
 	 */
 	navIndexMap?: Map<string, number>;
+	/**
+	 * Session ids auto-running an Auto Run batch (the AUTO badge). Prefer omitting
+	 * for production (read from batchStore at event time); tests may pass a fixture.
+	 */
+	batchSessionIds?: ReadonlySet<string>;
+	/**
+	 * Session ids stuck auto-retrying an outage. Prefer omitting for production
+	 * (read from retryStore at event time); tests may pass a fixture.
+	 */
+	stuckOutageIds?: ReadonlySet<string>;
 	/**
 	 * Multi-window: optional window-ownership predicate. When provided, cycling
 	 * includes only agent rows THIS window owns, so `Cmd+[` / `Cmd+]` never jumps
@@ -237,32 +253,27 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		);
 	}
 
-	// When unread filter is active, restrict cycling to unread/busy agents only
-	// (plus the currently active agent so you don't get lost)
+	// When the unread filter is active, restrict cycling to agents that need
+	// attention (unread / busy / error / auto-running / stuck), plus the currently
+	// active agent so you don't get lost.
 	if (showUnreadAgentsOnly) {
+		const attentionCtx: AttentionContext = {
+			batchSessionIds:
+				deps.batchSessionIds ?? new Set(selectActiveBatchSessionIds(useBatchStore.getState())),
+			stuckOutageIds: deps.stuckOutageIds ?? getActiveOutageSessionIds(),
+		};
 		const currentActiveId = activeGroupChatId || activeSessionId;
 		const filteredOrder = visualOrder.filter((item) => {
 			// Always keep the currently active item
 			if (item.id === currentActiveId) return true;
 			// Group chats pass through (they have their own unread badges)
 			if (item.type === 'groupChat') return true;
-			// Check if session is unread, busy, or in an error state (all "needs attention")
+			// Defer to the shared predicate (unread / busy / error / auto-running /
+			// stuck), including worktree children, so cycling matches the rendered list.
 			const session = sessions.find((s) => s.id === item.id);
 			if (!session) return false;
-			if (session.aiTabs?.some((tab) => tab.hasUnread)) return true;
-			if (session.state === 'busy' || session.state === 'error') return true;
-			// Check worktree children for unread/busy/error
 			const children = sessions.filter((s) => s.parentSessionId === session.id);
-			if (
-				children.some(
-					(child) =>
-						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy' ||
-						child.state === 'error'
-				)
-			)
-				return true;
-			return false;
+			return sessionOrChildrenNeedAttention(session, children, attentionCtx);
 		});
 		visualOrder.length = 0;
 		visualOrder.push(...filteredOrder);
