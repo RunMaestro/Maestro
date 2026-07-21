@@ -9,17 +9,21 @@
  *   TTSR abort, not a failure.
  * - `ttsr:triggered` - the aborted turn has exited; here is the corrective
  *   prompt to respawn it with.
+ * - `ttsr:abortCleared` - the announced abort is off; no corrective turn is
+ *   coming, so resume normal exit handling.
  * - `ttsr:matched` - observability only (a rule matched, interrupting or not).
  */
 
 import { ipcRenderer } from 'electron';
 import type {
+	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
 	TtsrMatchedPayload,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 
 export type {
+	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
 	TtsrMatchedPayload,
 	TtsrRuleRef,
@@ -48,6 +52,16 @@ export function createTtsrApi() {
 			ipcRenderer.on('ttsr:triggered', handler);
 			return () => {
 				ipcRenderer.removeListener('ttsr:triggered', handler);
+			};
+		},
+
+		// The announced abort was withdrawn (the process could not be signalled),
+		// so no corrective turn is coming and exit handling must resume.
+		onAbortCleared: (callback: (payload: TtsrAbortClearedPayload) => void): (() => void) => {
+			const handler = (_e: unknown, payload: TtsrAbortClearedPayload) => callback(payload);
+			ipcRenderer.on('ttsr:abortCleared', handler);
+			return () => {
+				ipcRenderer.removeListener('ttsr:abortCleared', handler);
 			};
 		},
 

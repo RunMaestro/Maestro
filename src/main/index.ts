@@ -34,6 +34,7 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { installTtsrRuntime, type TtsrRuntime } from './ttsr';
+import { DEFAULT_TTSR_CONTEXT_MODE, isTtsrContextMode } from '../shared/ttsr-types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -1024,6 +1025,12 @@ app
 				store.get('ttsrEnabled', false) === true &&
 				(store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true,
 			getDisabledRules: () => store.get('ttsrDisabledRules', []) as string[],
+			// Fallback teardown mode for projects whose `.maestro/ttsr.yaml` does
+			// not name one; a project that does still wins.
+			getContextMode: () => {
+				const stored = store.get('ttsrContextMode', DEFAULT_TTSR_CONTEXT_MODE);
+				return isTtsrContextMode(stored) ? stored : DEFAULT_TTSR_CONTEXT_MODE;
+			},
 			safeSend,
 		});
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)

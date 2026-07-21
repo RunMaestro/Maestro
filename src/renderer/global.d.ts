@@ -3862,6 +3862,9 @@ interface MaestroAPI {
 		onTriggered: (
 			callback: (payload: import('../shared/ttsr-types').TtsrTriggeredPayload) => void
 		) => () => void;
+		onAbortCleared: (
+			callback: (payload: import('../shared/ttsr-types').TtsrAbortClearedPayload) => void
+		) => () => void;
 		onMatched: (
 			callback: (payload: import('../shared/ttsr-types').TtsrMatchedPayload) => void
 		) => () => void;

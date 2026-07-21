@@ -8,10 +8,13 @@
 
 import type { ParsedEventObserver } from '../process-manager/types';
 import type {
+	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
+	TtsrContextMode,
 	TtsrMatchedPayload,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
+import { watchTtsrConfig } from './config/ttsr-config-loader';
 import type { TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { emitTtsrTriggeredToast } from './ttsr-notify';
 import { TtsrRuntime } from './ttsr-runtime';
@@ -45,6 +48,11 @@ export interface InstallTtsrOptions {
 	isGloballyEnabled(): boolean;
 	/** Live read of the `ttsrDisabledRules` setting. */
 	getDisabledRules?(): string[];
+	/**
+	 * Live read of the `ttsrContextMode` setting. Applies to any project whose
+	 * `.maestro/ttsr.yaml` does not name a teardown mode of its own.
+	 */
+	getContextMode?(): TtsrContextMode;
 	/** Renderer push channel, used for the `ttsr:matched` observability event. */
 	safeSend?: (channel: string, ...args: unknown[]) => void;
 	/**
@@ -72,6 +80,10 @@ export function installTtsrRuntime(
 	const runtime = new TtsrRuntime({
 		isGloballyEnabled: options.isGloballyEnabled,
 		getDisabledRules: options.getDisabledRules,
+		getContextMode: options.getContextMode,
+		// Rules are cached for the life of the runtime, so the watcher - not a
+		// timer - is what makes an edited rule file take effect.
+		watchConfig: watchTtsrConfig,
 		persistence:
 			options.persistence === null
 				? undefined
@@ -92,6 +104,9 @@ export function installTtsrRuntime(
 			: undefined,
 		onAbortPending: safeSend
 			? (payload: TtsrAbortPendingPayload) => safeSend('ttsr:abortPending', payload)
+			: undefined,
+		onAbortCleared: safeSend
+			? (payload: TtsrAbortClearedPayload) => safeSend('ttsr:abortCleared', payload)
 			: undefined,
 	});
 

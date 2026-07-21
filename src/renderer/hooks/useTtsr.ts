@@ -11,6 +11,8 @@
  * - `ttsr:triggered` respawns the turn with the `<system-interrupt>` prompt,
  *   resuming the provider session when Gate A says the agent can (or starting a
  *   fresh, goal-restating turn when it cannot).
+ * - `ttsr:abortCleared` releases that mark when main withdraws an abort, so a
+ *   turn that was never actually stopped is not left suppressed forever.
  *
  * Mount once, gated on the `ttsr` Encore feature.
  */
@@ -22,6 +24,7 @@ import { generateId } from '../utils/ids';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { buildTtsrRespawnConfig, resolveTtsrTarget } from '../utils/ttsrRespawn';
 import { processService } from '../services/process';
+import { getBatchState, selectAutoRunForcesReadOnly } from '../stores/batchStore';
 import { useSessionStore, updateAiTab } from '../stores/sessionStore';
 import { useTtsrStore } from '../stores/ttsrStore';
 import type { LogEntry } from '../types';
@@ -72,6 +75,7 @@ export async function runTtsrCorrectiveTurn(payload: TtsrTriggeredPayload): Prom
 			tab,
 			agent,
 			appendSystemPrompt,
+			autoRunForcesReadOnly: selectAutoRunForcesReadOnly(getBatchState(), session.id),
 		});
 
 		// Back to busy before the spawn: the aborted turn's exit already flipped
@@ -122,9 +126,20 @@ export function useTtsr(enabled: boolean): void {
 			void runTtsrCorrectiveTurn(payload);
 		});
 
+		// Main withdrew the abort: the turn was never stopped, so exit handling has
+		// to be released or the tab stays busy for good.
+		const offAbortCleared = bridge.onAbortCleared((payload) => {
+			logger.warn('[TTSR] Abort withdrawn, no corrective turn', undefined, {
+				sessionId: payload.sessionId,
+				reason: payload.reason,
+			});
+			useTtsrStore.getState().clearAbortPending(payload.sessionId);
+		});
+
 		return () => {
 			offAbortPending();
 			offTriggered();
+			offAbortCleared();
 		};
 	}, [enabled]);
 }

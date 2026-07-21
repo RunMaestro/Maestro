@@ -723,6 +723,7 @@ const mockMaestro = {
 	ttsr: {
 		onAbortPending: vi.fn().mockReturnValue(() => {}),
 		onTriggered: vi.fn().mockReturnValue(() => {}),
+		onAbortCleared: vi.fn().mockReturnValue(() => {}),
 		onMatched: vi.fn().mockReturnValue(() => {}),
 	},
 	// Pianola API (autonomous manager: rules + decision log)

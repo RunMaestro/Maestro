@@ -68,6 +68,12 @@ export function buildTtsrRespawnConfig(input: {
 	tab: AITab;
 	agent: TtsrRespawnAgent;
 	appendSystemPrompt?: string;
+	/**
+	 * Whether a non-worktree Auto Run is in flight for this agent, which forces
+	 * concurrent manual turns read-only. Passed in rather than read here so this
+	 * stays a pure function.
+	 */
+	autoRunForcesReadOnly?: boolean;
 }): ProcessConfig {
 	const { payload, session, tab, agent } = input;
 
@@ -75,8 +81,15 @@ export function buildTtsrRespawnConfig(input: {
 	if (!command) throw new Error(`${payload.agentId} agent has no command configured`);
 
 	// The corrective turn inherits the aborted turn's permissions: a read-only
-	// tab must not gain write access just because a rule fired.
-	const isReadOnly = tab.readOnlyMode === true || tab.permissionMode === 'readonly';
+	// tab must not gain write access just because a rule fired. That includes the
+	// Auto Run gate - mirrors the interactive spawn path in `useInputProcessing`,
+	// where the same three inputs decide read-only. A forced-parallel turn runs
+	// in its own worktree and is exempt, exactly as it is there.
+	const isForcedParallel = /-fp-\d+$/.test(payload.sessionId);
+	const isReadOnly =
+		(input.autoRunForcesReadOnly === true && !isForcedParallel) ||
+		tab.readOnlyMode === true ||
+		tab.permissionMode === 'readonly';
 	const baseArgs = agent.args ?? [];
 
 	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({

@@ -426,7 +426,6 @@ export interface SettingsStoreState {
 	ttsrEnabled: boolean;
 	ttsrDisabledRules: string[];
 	ttsrContextMode: TtsrContextMode;
-	ttsrBuiltinRules: Record<string, boolean>;
 	coworkingBrowserInteraction: string[];
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
 	coworkingBackgroundBrowsers: boolean;
@@ -582,7 +581,6 @@ export interface SettingsStoreActions {
 	setTtsrEnabled: (value: boolean) => void;
 	setTtsrDisabledRules: (value: string[]) => void;
 	setTtsrContextMode: (value: TtsrContextMode) => void;
-	setTtsrBuiltinRules: (value: Record<string, boolean>) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
@@ -850,7 +848,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		ttsrEnabled: false,
 		ttsrDisabledRules: [],
 		ttsrContextMode: 'keep',
-		ttsrBuiltinRules: {},
 		coworkingBrowserInteraction: [],
 		coworkingBrowserInteractionConfirm: {},
 		coworkingBackgroundBrowsers: false,
@@ -1521,11 +1518,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setTtsrContextMode: (value) => {
 			set({ ttsrContextMode: value });
 			window.maestro.settings.set('ttsrContextMode', value);
-		},
-
-		setTtsrBuiltinRules: (value) => {
-			set({ ttsrBuiltinRules: value });
-			window.maestro.settings.set('ttsrBuiltinRules', value);
 		},
 
 		setCoworkingBrowserInteraction: (value) => {
@@ -2924,14 +2916,6 @@ export async function loadAllSettings(): Promise<void> {
 		}
 		if (isTtsrContextMode(allSettings['ttsrContextMode'])) {
 			patch.ttsrContextMode = allSettings['ttsrContextMode'];
-		}
-		const rawBuiltinRules = allSettings['ttsrBuiltinRules'];
-		if (rawBuiltinRules && typeof rawBuiltinRules === 'object' && !Array.isArray(rawBuiltinRules)) {
-			const builtins: Record<string, boolean> = {};
-			for (const [ruleName, enabled] of Object.entries(rawBuiltinRules)) {
-				if (typeof enabled === 'boolean') builtins[ruleName] = enabled;
-			}
-			patch.ttsrBuiltinRules = builtins;
 		}
 
 		// Coworking browser interaction (agent ids allowed to use browser tools)

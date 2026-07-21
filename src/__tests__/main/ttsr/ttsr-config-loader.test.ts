@@ -243,7 +243,7 @@ describe('loadTtsrConfigDetailed', () => {
 		expect(result.ok).toBe(false);
 		expect(result.reason).toBe('missing');
 		expect(result.rules).toEqual([]);
-		expect(result.settings).toEqual({ enabled: true, disabledRules: [], contextMode: 'keep' });
+		expect(result.settings).toEqual({ enabled: true, disabledRules: [] });
 	});
 
 	it('loads rules when ttsr.yaml is absent', () => {
@@ -256,7 +256,24 @@ describe('loadTtsrConfigDetailed', () => {
 
 		expect(result.ok).toBe(true);
 		expect(result.rules).toHaveLength(1);
+		// Left unset so the global `ttsrContextMode` setting decides; defaulting it
+		// here would make every project silently override the user's choice.
+		expect(result.settings.contextMode).toBeUndefined();
+	});
+
+	it('reports the contextMode a project does declare', () => {
+		writeConfig('contextMode: discard\n');
+
+		expect(loadTtsrConfigDetailed(projectRoot).settings.contextMode).toBe('discard');
+	});
+
+	it('falls back to keep for an invalid contextMode rather than deferring globally', () => {
+		writeConfig('contextMode: nonsense\n');
+
+		const result = loadTtsrConfigDetailed(projectRoot);
+
 		expect(result.settings.contextMode).toBe('keep');
+		expect(result.warnings.join('\n')).toContain('contextMode');
 	});
 
 	it('reports unparseable on malformed YAML', () => {

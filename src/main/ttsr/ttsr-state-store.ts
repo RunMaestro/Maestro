@@ -35,9 +35,23 @@ export interface TtsrConversationState {
 	/** Completed turns in this conversation. Drives `after-gap` eligibility. */
 	messageCount: number;
 	rules: Record<string, TtsrRuleState>;
+	/** Turns TTSR has aborted here. Bounded by {@link MAX_TTSR_INTERRUPTS}. */
+	interruptCount: number;
 	/** Epoch ms of the last mutation. Drives the persistence layer's TTL prune. */
 	updatedAt: number;
 }
+
+/**
+ * Hard ceiling on how many turns TTSR may abort in one conversation.
+ *
+ * Every abort costs a full turn's tokens and the agent is not obliged to comply,
+ * so a rule the agent keeps tripping would otherwise interrupt forever (the
+ * default `after-gap` policy re-arms every few turns, and each aborted turn
+ * advances that counter itself). Past the budget, matches still fire - they just
+ * degrade to deferred `<system-reminder>`s that ride the next prompt instead of
+ * killing the process.
+ */
+export const MAX_TTSR_INTERRUPTS = 5;
 
 /** Serializable snapshot, handed to the main-side persistence layer. */
 export type TtsrStateSnapshot = Record<string, TtsrConversationState>;
@@ -52,7 +66,7 @@ export interface TtsrStateStoreOptions {
 }
 
 function emptyConversation(): TtsrConversationState {
-	return { messageCount: 0, rules: {}, updatedAt: Date.now() };
+	return { messageCount: 0, rules: {}, interruptCount: 0, updatedAt: Date.now() };
 }
 
 export class TtsrStateStore {
@@ -92,6 +106,23 @@ export class TtsrStateStore {
 	noteTurnEnd(key: string): void {
 		const state = this.ensure(key);
 		state.messageCount += 1;
+		this.touch(state);
+	}
+
+	/** Turns TTSR has already aborted in this conversation. */
+	getInterruptCount(key: string): number {
+		return this.conversations.get(key)?.interruptCount ?? 0;
+	}
+
+	/** Whether this conversation may still be interrupted (budget not spent). */
+	canInterrupt(key: string): boolean {
+		return this.getInterruptCount(key) < MAX_TTSR_INTERRUPTS;
+	}
+
+	/** Charge one abort against the conversation's interrupt budget. */
+	noteInterrupt(key: string): void {
+		const state = this.ensure(key);
+		state.interruptCount += 1;
 		this.touch(state);
 	}
 
@@ -145,6 +176,9 @@ export class TtsrStateStore {
 		}
 
 		target.messageCount = Math.max(target.messageCount, pending.messageCount);
+		// Summed, not maxed: aborts recorded before the provider id landed were
+		// really spent, and the budget must not be refunded by the adoption.
+		target.interruptCount += pending.interruptCount;
 		for (const [ruleName, pendingRule] of Object.entries(pending.rules)) {
 			const existing = target.rules[ruleName];
 			target.rules[ruleName] = existing
@@ -169,6 +203,7 @@ export class TtsrStateStore {
 			out[key] = {
 				messageCount: state.messageCount,
 				rules: { ...state.rules },
+				interruptCount: state.interruptCount,
 				updatedAt: state.updatedAt,
 			};
 		}
@@ -202,7 +237,10 @@ export class TtsrStateStore {
 			// A record written before `updatedAt` existed reads as touched now, so a
 			// schema upgrade never silently expires a live conversation's history.
 			const updatedAt = Number.isFinite(state.updatedAt) ? state.updatedAt : now;
-			this.conversations.set(key, { messageCount, rules, updatedAt });
+			// Likewise for `interruptCount`: a pre-budget record starts with a full
+			// budget rather than an unusable NaN.
+			const interruptCount = Number.isFinite(state.interruptCount) ? state.interruptCount : 0;
+			this.conversations.set(key, { messageCount, rules, interruptCount, updatedAt });
 		}
 	}
 }

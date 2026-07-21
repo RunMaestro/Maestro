@@ -170,8 +170,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setTtsrDisabledRules: vi.fn(),
 		ttsrContextMode: 'keep',
 		setTtsrContextMode: vi.fn(),
-		ttsrBuiltinRules: {},
-		setTtsrBuiltinRules: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));

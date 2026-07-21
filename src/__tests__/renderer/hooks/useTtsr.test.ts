@@ -4,12 +4,18 @@
  * corrective respawn that continues the aborted conversation.
  */
 
+import { renderHook } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockAITab, createMockSession } from '../../helpers';
-import { runTtsrCorrectiveTurn } from '../../../renderer/hooks/useTtsr';
+import { runTtsrCorrectiveTurn, useTtsr } from '../../../renderer/hooks/useTtsr';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { isTtsrAbortPending, useTtsrStore } from '../../../renderer/stores/ttsrStore';
-import type { TtsrAbortPendingPayload, TtsrTriggeredPayload } from '../../../shared/ttsr-types';
+import type {
+	TtsrAbortClearedPayload,
+	TtsrAbortPendingPayload,
+	TtsrTriggeredPayload,
+} from '../../../shared/ttsr-types';
 
 function makePayload(overrides: Partial<TtsrTriggeredPayload> = {}): TtsrTriggeredPayload {
 	return {
@@ -69,6 +75,34 @@ describe('ttsrStore abort-pending flag', () => {
 		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
 		expect(useTtsrStore.getState().lastTriggered['session-1-ai-tab-1']?.mode).toBe('resume');
 	});
+
+	it('releases the flag when main withdraws the abort', () => {
+		const cleared: TtsrAbortClearedPayload = {
+			sessionId: 'session-1-ai-tab-1',
+			tabId: 'tab-1',
+			agentId: 'claude-code',
+			reason: 'the process could not be signalled',
+		};
+		const listeners: Record<string, (payload: never) => void> = {};
+		window.maestro.ttsr.onAbortPending = vi.fn((cb) => {
+			listeners.abortPending = cb as never;
+			return () => {};
+		});
+		window.maestro.ttsr.onTriggered = vi.fn(() => () => {});
+		window.maestro.ttsr.onAbortCleared = vi.fn((cb) => {
+			listeners.abortCleared = cb as never;
+			return () => {};
+		});
+
+		renderHook(() => useTtsr(true));
+		listeners.abortPending?.(makeAbortPending() as never);
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(true);
+
+		// No corrective turn is coming, so exit handling has to resume - otherwise
+		// the tab stays suppressed and busy for good.
+		listeners.abortCleared?.(cleared as never);
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+	});
 });
 
 describe('runTtsrCorrectiveTurn', () => {
@@ -123,6 +157,22 @@ describe('runTtsrCorrectiveTurn', () => {
 			expect.objectContaining({ agentSessionId: undefined })
 		);
 		expect(currentTab().logs[0].text).toContain('cannot resume mid-turn');
+	});
+
+	it('keeps the corrective turn read-only under a non-worktree Auto Run', async () => {
+		const session = seedSession();
+		useBatchStore.setState({
+			batchRunStates: {
+				[session.id]: { isRunning: true, worktreeActive: false } as never,
+			},
+		});
+
+		await runTtsrCorrectiveTurn(makePayload());
+
+		expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+			expect.objectContaining({ readOnlyMode: true, permissionMode: 'readonly' })
+		);
+		useBatchStore.setState({ batchRunStates: {} });
 	});
 
 	it('drops the corrective turn when the tab is gone', async () => {

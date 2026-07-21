@@ -110,10 +110,18 @@ describe('TtsrManager prose matching', () => {
 		const store = new TtsrStateStore();
 		const { manager } = setup([makeRule()], { store });
 
-		const matches = manager.endTurn('s1', ctx('opencode'), 'done, left console.log(x) in place');
+		// Tier B: opencode has no live prose stream, so its whole answer arrives as
+		// one final `result` event - the ordinary observe path, not a special case.
+		const matches = manager.observe(
+			's1',
+			{ type: 'result', text: 'done, left console.log(x) in place' },
+			ctx('opencode')
+		);
 
 		expect(matches).toHaveLength(1);
 		expect(matches[0].source).toBe('text');
+
+		manager.endTurn('s1');
 		expect(store.getMessageCount('s1|-')).toBe(1);
 	});
 
@@ -130,9 +138,9 @@ describe('TtsrManager prose matching', () => {
 		const agent = ctx('claude-code');
 
 		expect(manager.observe('s1', { type: 'text', text: 'console.log(a)' }, agent)).toHaveLength(1);
-		manager.endTurn('s1', agent);
+		manager.endTurn('s1');
 		expect(manager.observe('s1', { type: 'text', text: 'console.log(b)' }, agent)).toEqual([]);
-		manager.endTurn('s1', agent);
+		manager.endTurn('s1');
 		expect(manager.observe('s1', { type: 'text', text: 'console.log(c)' }, agent)).toHaveLength(1);
 	});
 });

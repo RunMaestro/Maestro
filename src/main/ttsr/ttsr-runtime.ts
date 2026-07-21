@@ -16,12 +16,14 @@
 import { logger } from '../utils/logger';
 import type {
 	LoadedTtsrRule,
+	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
+	TtsrContextMode,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
-import { DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
+import { DEFAULT_TTSR_CONTEXT_MODE, DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr-config-loader';
 import { renderTtsrReminder } from './ttsr-injection';
@@ -38,13 +40,6 @@ import {
 
 const LOG_CONTEXT = 'TTSR';
 
-/**
- * How long a project's rule set is reused before it is re-read from disk. Long
- * enough that a chatty turn never re-reads, short enough that editing a rule
- * takes effect within a turn or two without a config watcher per project.
- */
-const RULE_CACHE_TTL_MS = 5_000;
-
 export interface TtsrRuntimeDeps {
 	/**
 	 * The global gate: `settings.ttsrEnabled && encoreFeatures.ttsr`. Read live
@@ -54,6 +49,12 @@ export interface TtsrRuntimeDeps {
 	isGloballyEnabled(): boolean;
 	/** Rule names the user disabled globally (`ttsrDisabledRules` setting). */
 	getDisabledRules?(): string[];
+	/**
+	 * The global `ttsrContextMode` setting, used as the teardown mode for any
+	 * project whose `.maestro/ttsr.yaml` does not name one of its own. A project
+	 * that does name one still wins - it is the more specific statement.
+	 */
+	getContextMode?(): TtsrContextMode;
 	/** Observability sink for `ttsr:matched`. Wired to `safeSend` in Phase 4. */
 	onMatched?(payload: TtsrMatchedPayload): void;
 	/**
@@ -72,10 +73,24 @@ export interface TtsrRuntimeDeps {
 	 * renderer stops treating the imminent exit as a failed turn.
 	 */
 	onAbortPending?(payload: TtsrAbortPendingPayload): void;
+	/**
+	 * Sink for `ttsr:abortCleared`, fired when an announced abort will not
+	 * produce a corrective turn after all, so the renderer stops suppressing
+	 * that turn's exit handling.
+	 */
+	onAbortCleared?(payload: TtsrAbortClearedPayload): void;
 	/** Test override for how long an abort waits on the turn's `exit`. */
 	exitTimeoutMs?: number;
 	/** Swappable for tests; defaults to the real disk loader. */
 	loadConfig?(projectRoot: string): LoadTtsrConfigResult;
+	/**
+	 * Watch a project's rule files, invalidating its cache entry on change.
+	 * Injected rather than defaulted: the cache is otherwise held for the life of
+	 * the runtime, so production MUST pass `watchTtsrConfig` (installTtsrRuntime
+	 * does), while tests with a synthetic loader want no filesystem watcher at
+	 * all.
+	 */
+	watchConfig?(projectRoot: string, onChange: () => void): () => void;
 	/**
 	 * Disk persistence for repeat/injection bookkeeping. Omit it and the runtime
 	 * keeps that state in memory only, so `once` and `after-gap` reset with the
@@ -87,7 +102,12 @@ export interface TtsrRuntimeDeps {
 interface RuleCacheEntry {
 	rules: LoadedTtsrRule[];
 	settings: TtsrProjectSettings;
-	loadedAt: number;
+	/**
+	 * The `ttsrDisabledRules` setting this entry was filtered with. Disk changes
+	 * are picked up by the watcher, but a settings change has no file event, so
+	 * the entry is rebuilt when this no longer matches.
+	 */
+	disabledKey: string;
 }
 
 export class TtsrRuntime {
@@ -99,6 +119,8 @@ export class TtsrRuntime {
 	readonly driver: TtsrInterruptDriver | null;
 
 	private readonly cache = new Map<string, RuleCacheEntry>();
+	/** One rule-file watcher per project root, closed on {@link dispose}. */
+	private readonly watchers = new Map<string, () => void>();
 	private readonly loadConfig: (projectRoot: string) => LoadTtsrConfigResult;
 	private detach: (() => void) | null = null;
 	/** In-flight `astCondition` passes, awaited by {@link flushAst}. */
@@ -116,6 +138,9 @@ export class TtsrRuntime {
 						onTriggered: (payload) => onTriggered(payload),
 						onAbortPending: deps.onAbortPending
 							? (payload) => deps.onAbortPending?.(payload)
+							: undefined,
+						onAbortCleared: deps.onAbortCleared
+							? (payload) => deps.onAbortCleared?.(payload)
 							: undefined,
 						exitTimeoutMs: deps.exitTimeoutMs,
 					})
@@ -195,7 +220,13 @@ export class TtsrRuntime {
 
 		const onSpawn = (config: TtsrSpawnConfigLike) => {
 			const meta = this.registry.noteSpawn(config);
-			if (meta) this.manager.beginTurn(meta.sessionId, meta.providerSessionId);
+			if (!meta) return;
+			this.manager.beginTurn(meta.sessionId, meta.providerSessionId);
+			// Warm the rule cache here, off the stdout hot path: loading is
+			// synchronous disk I/O (readdir + read + YAML parse + regex compile per
+			// rule file), and doing it lazily would put that first read inside
+			// `StdoutHandler.handleParsedEvent`.
+			if (this.deps.isGloballyEnabled()) this.entry(meta.projectRoot);
 		};
 		const onSessionId = (sessionId: string, providerSessionId: string) => {
 			if (!this.registry.get(sessionId)) return;
@@ -211,7 +242,7 @@ export class TtsrRuntime {
 			// Advances the turn counter `after-gap` eligibility is measured in and
 			// drops this turn's buffers. Deferred reminders deliberately survive:
 			// they are consumed by the next prompt, not by the turn that queued them.
-			this.manager.endTurn(sessionId, { agentId: meta.agentId, cwd: meta.projectRoot });
+			this.manager.endTurn(sessionId);
 			// Nothing left to say to this conversation: drop its state rather than
 			// retain an entry per turn (Auto Run mints a fresh session id per task).
 			if (!this.manager.hasDeferred(sessionId)) this.manager.dispose(sessionId);
@@ -293,6 +324,9 @@ export class TtsrRuntime {
 	/** Detach from the process manager and persist whatever is still pending. */
 	dispose(): void {
 		this.detach?.();
+		for (const close of this.watchers.values()) close();
+		this.watchers.clear();
+		this.cache.clear();
 		this.deps.persistence?.flush();
 		this.deps.persistence?.dispose();
 	}
@@ -315,12 +349,36 @@ export class TtsrRuntime {
 		const matches = this.manager.takeInterrupts(sessionId);
 		if (matches.length === 0) return;
 
+		// Every abort costs a whole turn, and the agent may simply keep tripping
+		// the rule. Past the budget the guidance still lands - as a reminder on the
+		// next prompt - but the conversation is left to run to completion.
+		if (!this.manager.canInterrupt(sessionId)) {
+			logger.warn('TTSR interrupt budget spent, deferring instead', LOG_CONTEXT, {
+				sessionId,
+				rules: matches.map((match) => match.rule.name),
+			});
+			this.manager.deferMatches(sessionId, matches);
+			return;
+		}
+		this.manager.noteInterrupt(sessionId);
+
 		const pending = this.driver
 			.trigger({
 				sessionId,
 				meta,
 				matches,
-				contextMode: this.entry(meta.projectRoot).settings.contextMode,
+				contextMode: this.contextModeFor(meta.projectRoot),
+			})
+			.then((payload) => {
+				// The corrective turn respawns through the normal spawn path, so tell
+				// the registry which prompt to expect and what goal it really serves.
+				if (payload) {
+					this.registry.noteCorrectiveTurn(sessionId, {
+						originalPrompt: payload.originalGoal,
+						injectionPrompt: payload.injectionPrompt,
+					});
+				}
+				return payload;
 			})
 			.catch((err: unknown) => {
 				logger.error('TTSR interrupt failed', LOG_CONTEXT, {
@@ -333,19 +391,42 @@ export class TtsrRuntime {
 		this.pendingInterrupts.add(pending);
 	}
 
-	/** Cached rules + settings for a project root, reloaded past the TTL. */
+	/**
+	 * Teardown mode for a project: its own `.maestro/ttsr.yaml` first, then the
+	 * global `ttsrContextMode` setting, then the conservative default.
+	 */
+	private contextModeFor(projectRoot: string): TtsrContextMode {
+		return (
+			this.entry(projectRoot).settings.contextMode ??
+			this.deps.getContextMode?.() ??
+			DEFAULT_TTSR_CONTEXT_MODE
+		);
+	}
+
+	/**
+	 * Cached rules + settings for a project root.
+	 *
+	 * Held until something says otherwise, because this is reached from the
+	 * stdout hot path and loading means synchronous disk I/O. Invalidation is
+	 * event-driven instead of timed: the rule-file watcher covers disk edits, and
+	 * `disabledKey` covers the one input with no file event behind it.
+	 */
 	private entry(projectRoot: string): RuleCacheEntry {
+		const disabled = this.deps.getDisabledRules?.() ?? [];
+		const disabledKey = disabled.join('\n');
 		const cached = this.cache.get(projectRoot);
-		if (cached && Date.now() - cached.loadedAt < RULE_CACHE_TTL_MS) return cached;
+		if (cached && cached.disabledKey === disabledKey) return cached;
+
+		this.watch(projectRoot);
 
 		let entry: RuleCacheEntry;
 		try {
 			const result = this.loadConfig(projectRoot);
-			const globallyDisabled = new Set(this.deps.getDisabledRules?.() ?? []);
+			const globallyDisabled = new Set(disabled);
 			entry = {
 				rules: result.rules.filter((rule) => !globallyDisabled.has(rule.name)),
 				settings: result.settings,
-				loadedAt: Date.now(),
+				disabledKey,
 			};
 			// `missing` is the overwhelmingly common case (no rules in the project);
 			// only a real config problem is worth a log line.
@@ -367,11 +448,29 @@ export class TtsrRuntime {
 			entry = {
 				rules: [],
 				settings: { ...DEFAULT_TTSR_PROJECT_SETTINGS },
-				loadedAt: Date.now(),
+				disabledKey,
 			};
 		}
 
 		this.cache.set(projectRoot, entry);
 		return entry;
+	}
+
+	/** Install this project's rule-file watcher once, if one was injected. */
+	private watch(projectRoot: string): void {
+		if (!this.deps.watchConfig || this.watchers.has(projectRoot)) return;
+		try {
+			this.watchers.set(
+				projectRoot,
+				this.deps.watchConfig(projectRoot, () => this.invalidateRules(projectRoot))
+			);
+		} catch (err) {
+			// An unwatchable project (permissions, network path) still gets its
+			// rules - they just stop reloading until the app restarts.
+			logger.warn('TTSR rule watcher failed to start', LOG_CONTEXT, {
+				projectRoot,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
 	}
 }

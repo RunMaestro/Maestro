@@ -286,28 +286,40 @@ export class TtsrManager {
 	}
 
 	/**
-	 * Tier B fallback: match the accumulated final text at turn end for agents
-	 * with no live prose stream (opencode), then advance the turn counter that
-	 * `after-gap` eligibility is measured in.
+	 * Close a turn: advance the counter `after-gap` eligibility is measured in
+	 * and drop the turn's buffers.
+	 *
+	 * There is no separate end-of-turn matching pass. Tier B agents (opencode)
+	 * deliver their whole answer as a final `result` event, which reaches
+	 * {@link TtsrManager.observe} like any other - so the Tier B fallback is the
+	 * ordinary path, not a special case here.
 	 */
-	endTurn(sessionId: string, ctx: TtsrObserveContext, finalText?: string): TtsrMatch[] {
-		let matches: TtsrMatch[] = [];
-		if (finalText && this.deps.isEnabled(ctx.cwd)) {
-			const rules = this.deps.getRules(ctx.cwd);
-			if (rules.length > 0) {
-				const scanText = this.appendToBuffer(sessionId, 'text', finalText);
-				matches = this.evaluate(sessionId, rules, scanText, {
-					agentId: ctx.agentId,
-					source: 'text',
-				});
-				if (matches.length > 0) this.record(sessionId, ctx, matches);
-			}
-		}
+	endTurn(sessionId: string): void {
 		this.store.noteTurnEnd(this.keyFor(sessionId));
 		const state = this.session(sessionId);
 		state.buffers.clear();
 		state.astSeen.clear();
-		return matches;
+	}
+
+	/** Whether this conversation may still abort a turn (interrupt budget). */
+	canInterrupt(sessionId: string): boolean {
+		return this.store.canInterrupt(this.keyFor(sessionId));
+	}
+
+	/** Charge one abort against this conversation's interrupt budget. */
+	noteInterrupt(sessionId: string): void {
+		this.store.noteInterrupt(this.keyFor(sessionId));
+	}
+
+	/**
+	 * Re-file matches that would have interrupted as deferred reminders, used
+	 * when the conversation's interrupt budget is spent. The guidance still
+	 * reaches the agent, on its next prompt instead of by force.
+	 */
+	deferMatches(sessionId: string, matches: TtsrMatch[]): void {
+		const state = this.session(sessionId);
+		state.deferred.push(...matches);
+		this.trimDeferred(state);
 	}
 
 	/** Interrupting matches captured this turn, cleared by the read (Phase 3). */
@@ -400,6 +412,17 @@ export class TtsrManager {
 		return matches;
 	}
 
+	/**
+	 * Bound the deferred queue. Oldest guidance loses: the newest violation is
+	 * the one the agent just committed, and the block is prepended to a real user
+	 * prompt, so an unbounded queue would cost more context than it is worth.
+	 */
+	private trimDeferred(state: SessionState): void {
+		if (state.deferred.length > MAX_DEFERRED_PER_SESSION) {
+			state.deferred = state.deferred.slice(-MAX_DEFERRED_PER_SESSION);
+		}
+	}
+
 	/** Queue matches into their Phase 3 buckets and report them. */
 	private record(sessionId: string, ctx: TtsrObserveContext, matches: TtsrMatch[]): void {
 		const state = this.session(sessionId);
@@ -407,11 +430,7 @@ export class TtsrManager {
 			if (match.disposition === 'interrupt') state.interrupts.push(match);
 			else state.deferred.push(match);
 		}
-		// Oldest guidance loses: the newest violation is the one the agent just
-		// committed, and the block is prepended to a real user prompt.
-		if (state.deferred.length > MAX_DEFERRED_PER_SESSION) {
-			state.deferred = state.deferred.slice(-MAX_DEFERRED_PER_SESSION);
-		}
+		this.trimDeferred(state);
 
 		if (!this.deps.onMatched) return;
 		// One payload per source so the renderer can label the stream that fired.

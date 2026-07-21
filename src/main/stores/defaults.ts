@@ -94,7 +94,6 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	ttsrEnabled: false,
 	ttsrDisabledRules: [],
 	ttsrContextMode: 'keep',
-	ttsrBuiltinRules: {},
 	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
 	coworkingBrowserInteraction: [],
 	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)

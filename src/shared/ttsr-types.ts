@@ -46,6 +46,13 @@ export type TtsrRepeatMode = (typeof TTSR_REPEAT_MODES)[number];
 export const TTSR_CONTEXT_MODES = ['keep', 'discard'] as const;
 export type TtsrContextMode = (typeof TTSR_CONTEXT_MODES)[number];
 
+/**
+ * Teardown used when neither the project's `.maestro/ttsr.yaml` nor the global
+ * `ttsrContextMode` setting names one. `keep` is the faithful mode; `discard`
+ * can only ever be best-effort against an external provider's transcript.
+ */
+export const DEFAULT_TTSR_CONTEXT_MODE: TtsrContextMode = 'keep';
+
 /** Narrow an unknown (persisted setting, IPC payload) to a {@link TtsrContextMode}. */
 export function isTtsrContextMode(value: unknown): value is TtsrContextMode {
 	return TTSR_CONTEXT_MODES.includes(value as TtsrContextMode);
@@ -99,15 +106,20 @@ export interface TtsrProjectSettings {
 	enabled: boolean;
 	/** Rule names disabled for this project. */
 	disabledRules: string[];
-	/** Teardown mode used when a rule interrupts a turn. */
-	contextMode: TtsrContextMode;
+	/**
+	 * Teardown mode used when a rule interrupts a turn.
+	 *
+	 * Undefined when the project does not state one, which is what lets the
+	 * global `ttsrContextMode` setting apply: defaulting it here would make every
+	 * project silently override the user's choice with `keep`.
+	 */
+	contextMode?: TtsrContextMode;
 }
 
 /** Settings applied when `.maestro/ttsr.yaml` is absent or omits a field. */
 export const DEFAULT_TTSR_PROJECT_SETTINGS: TtsrProjectSettings = {
 	enabled: true,
 	disabledRules: [],
-	contextMode: 'keep',
 };
 
 // ── Match reporting (IPC-safe) ───────────────────────────────────────────────
@@ -155,6 +167,23 @@ export interface TtsrAbortPendingPayload {
 	rules: TtsrRuleRef[];
 	/** `keep` interrupted (SIGINT); `discard` hard-killed. */
 	contextMode: TtsrContextMode;
+}
+
+/**
+ * Payload of the `ttsr:abortCleared` push event: an announced abort will not
+ * produce a corrective turn after all.
+ *
+ * Every `ttsr:abortPending` must be answered by exactly one of `ttsr:triggered`
+ * or this event. Without it, a failed signal would leave the renderer
+ * suppressing that turn's exit forever, wedging the tab as permanently busy.
+ */
+export interface TtsrAbortClearedPayload {
+	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
+	sessionId: string;
+	tabId?: string;
+	agentId: AgentId;
+	/** Why no corrective turn is coming, for the log and the transcript notice. */
+	reason: string;
 }
 
 /**

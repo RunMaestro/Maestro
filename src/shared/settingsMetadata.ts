@@ -1069,16 +1069,9 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	ttsrContextMode: {
 		description:
-			"How an interrupted turn is torn down: 'keep' (SIGINT, let the provider commit the partial turn) or 'discard' (hard kill, best-effort pre-commit). Validated in the TTSR normalizer.",
+			"How an interrupted turn is torn down: 'keep' (SIGINT, let the provider commit the partial turn) or 'discard' (hard kill, best-effort pre-commit). Applies to projects whose .maestro/ttsr.yaml does not set its own contextMode. Validated in the TTSR normalizer.",
 		type: 'string',
 		default: 'keep',
-		category: 'advanced',
-	},
-	ttsrBuiltinRules: {
-		description:
-			'Per-rule enable map for TTSR built-in starter rules, keyed by rule name. Missing rules default to disabled.',
-		type: 'object',
-		default: {},
 		category: 'advanced',
 	},
 	coworkingBrowserInteraction: {

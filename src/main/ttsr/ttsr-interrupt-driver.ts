@@ -15,6 +15,7 @@
 import { logger } from '../utils/logger';
 import {
 	TTSR_AGENT_CAPABILITIES,
+	type TtsrAbortClearedPayload,
 	type TtsrAbortPendingPayload,
 	type TtsrContextMode,
 	type TtsrRuleRef,
@@ -51,6 +52,12 @@ export interface TtsrInterruptDriverDeps {
 	 * renderer can suppress its normal exit handling for the abort that follows.
 	 */
 	onAbortPending?(payload: TtsrAbortPendingPayload): void;
+	/**
+	 * Sink for `ttsr:abortCleared`. Fired instead of `onTriggered` when the
+	 * process could not be signalled, so the renderer resumes its normal exit
+	 * handling for a turn that is still running rather than staying wedged.
+	 */
+	onAbortCleared?(payload: TtsrAbortClearedPayload): void;
 	/** Override for tests. */
 	exitTimeoutMs?: number;
 }
@@ -137,10 +144,23 @@ export class TtsrInterruptDriver {
 		// `discard` hard-kills so the provider gets no chance to commit the partial
 		// turn; `keep` interrupts and lets it flush. Both are best-effort - Maestro
 		// cannot rewrite an external provider's transcript (plan fidelity gap 2).
-		const signalled =
-			input.contextMode === 'discard'
-				? this.deps.target.kill(input.sessionId)
-				: this.deps.target.interrupt(input.sessionId);
+		let signalled: boolean;
+		try {
+			signalled =
+				input.contextMode === 'discard'
+					? this.deps.target.kill(input.sessionId)
+					: this.deps.target.interrupt(input.sessionId);
+		} catch (err) {
+			// The turn is most likely still running, so a corrective respawn would
+			// collide with it. Withdraw the abort instead and let the turn finish;
+			// the matched rules stay eligible for the next one.
+			logger.error('TTSR abort signal failed', LOG_CONTEXT, {
+				sessionId: input.sessionId,
+				error: err instanceof Error ? err.message : String(err),
+			});
+			this.withdraw(input.sessionId, input.meta, 'the process could not be signalled');
+			return null;
+		}
 
 		logger.info('TTSR interrupting turn', LOG_CONTEXT, {
 			sessionId: input.sessionId,
@@ -193,6 +213,24 @@ export class TtsrInterruptDriver {
 	}
 
 	// ── internals ──
+
+	/**
+	 * Take back an announced abort: drop the pending record and tell the renderer
+	 * to stop suppressing this turn's exit. Every `onAbortPending` is answered by
+	 * either this or `onTriggered`, or the tab stays busy forever.
+	 */
+	private withdraw(sessionId: string, meta: TtsrSpawnMeta, reason: string): void {
+		const pending = this.pending.get(sessionId);
+		if (pending?.timer) clearTimeout(pending.timer);
+		pending?.resolveExit();
+		this.pending.delete(sessionId);
+		this.deps.onAbortCleared?.({
+			sessionId: meta.sessionId,
+			tabId: meta.tabId,
+			agentId: meta.agentId,
+			reason,
+		});
+	}
 
 	private buildPayload(meta: TtsrSpawnMeta, pending: PendingAbort): TtsrTriggeredPayload {
 		// Gate A: only agents that emit their provider session id early enough can

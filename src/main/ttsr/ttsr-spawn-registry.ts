@@ -14,6 +14,7 @@
  */
 
 import { isValidAgentId, type AgentId } from '../../shared/agentIds';
+import { parseAiTabSpawnId } from '../coworking/coworking-session-id';
 
 /** Everything TTSR knows about one in-flight turn. */
 export interface TtsrSpawnMeta {
@@ -27,10 +28,27 @@ export interface TtsrSpawnMeta {
 	 * with no mid-turn provider id, the corrective turn restates it.
 	 */
 	originalPrompt: string;
-	tabId?: string;
+	/** AI tab that owns the turn, parsed from the spawn id. */
+	tabId: string;
 	/** Known from spawn time on a resume, otherwise once `session-id` fires. */
 	providerSessionId?: string;
 	startedAt: number;
+}
+
+/**
+ * A corrective turn TTSR is about to ask the renderer to spawn.
+ *
+ * The respawn goes back through `ProcessManager.spawn`, so it re-enters
+ * {@link TtsrSpawnRegistry.noteSpawn} with the `<system-interrupt>` block as its
+ * prompt. Without this hand-off the registry would record that block as the
+ * turn's `originalPrompt`, and a second interrupt on a degraded (`fresh`) agent
+ * would restate the previous injection instead of the user's actual goal.
+ */
+interface PendingCorrectiveTurn {
+	/** Goal to keep attributing the corrective turn to. */
+	originalPrompt: string;
+	/** Exact prompt handed to the renderer, used to recognise the respawn. */
+	injectionPrompt: string;
 }
 
 /** The subset of a spawn config the registry reads. */
@@ -39,7 +57,6 @@ export interface TtsrSpawnConfigLike {
 	toolType: string;
 	cwd: string;
 	prompt?: string;
-	tabId?: string;
 	projectPath?: string;
 	agentSessionId?: string;
 }
@@ -54,14 +71,32 @@ export interface TtsrProcessEventSource {
 
 export class TtsrSpawnRegistry {
 	private readonly entries = new Map<string, TtsrSpawnMeta>();
+	private readonly pendingCorrective = new Map<string, PendingCorrectiveTurn>();
 
 	/**
-	 * Record a turn. Terminal spawns and any agent id TTSR does not know are
-	 * ignored outright - terminal is out of scope for v1 (Gate A tier C) and an
-	 * unknown id has no capability row to reason about.
+	 * Record a turn, or return `null` for one TTSR must not touch.
+	 *
+	 * Two gates, both load-bearing:
+	 *
+	 * - **Agent:** terminal is out of scope for v1 (Gate A tier C) and an unknown
+	 *   agent id has no capability row to reason about.
+	 * - **Spawn flavor:** only AI-tab spawns (`{sessionId}-ai-{tabId}`) are
+	 *   registered. Interrupting is worthless without a matching respawn, and the
+	 *   corrective respawn can only target an AI tab - the renderer has no tab to
+	 *   put a corrective turn in for an Auto Run task, a background synopsis, a
+	 *   tab-naming run or a group-chat participant. Registering those would let
+	 *   TTSR kill an unattended turn it can never restart, silently truncating it.
 	 */
 	noteSpawn(config: TtsrSpawnConfigLike): TtsrSpawnMeta | null {
 		if (!isValidAgentId(config.toolType) || config.toolType === 'terminal') return null;
+
+		const parsedId = parseAiTabSpawnId(config.sessionId);
+		if (!parsedId) {
+			// A corrective turn is never coming for this spawn, so its carry-over
+			// (if any) is stale bookkeeping.
+			this.pendingCorrective.delete(config.sessionId);
+			return null;
+		}
 
 		const meta: TtsrSpawnMeta = {
 			sessionId: config.sessionId,
@@ -70,8 +105,10 @@ export class TtsrSpawnRegistry {
 			// is not the project. `projectPath` carries the real workspace root and
 			// is what `.maestro/rules` must be resolved against.
 			projectRoot: config.projectPath || config.cwd,
-			originalPrompt: config.prompt ?? '',
-			tabId: config.tabId,
+			originalPrompt: this.resolveOriginalPrompt(config),
+			// Parsed from the spawn id rather than read from `config.tabId`, which
+			// no spawn caller currently sets.
+			tabId: parsedId.tabId,
 			// A resume spawn already knows the conversation it re-attaches to, so
 			// repeat state is keyed correctly from the very first delta rather than
 			// spending the turn in the pending bucket.
@@ -80,6 +117,32 @@ export class TtsrSpawnRegistry {
 		};
 		this.entries.set(meta.sessionId, meta);
 		return meta;
+	}
+
+	/**
+	 * Note that a corrective turn was handed to the renderer, so the respawn it
+	 * performs is attributed to the goal the aborted turn was pursuing rather
+	 * than to the injected `<system-interrupt>` block.
+	 */
+	noteCorrectiveTurn(sessionId: string, pending: PendingCorrectiveTurn): void {
+		this.pendingCorrective.set(sessionId, pending);
+	}
+
+	/**
+	 * The goal to record for a spawn: the carried-over one when this really is
+	 * the corrective respawn we asked for, otherwise the spawn's own prompt.
+	 *
+	 * The match is `endsWith` rather than equality because the spawn path may
+	 * prepend deferred `<system-reminder>` blocks to the prompt on its way out.
+	 */
+	private resolveOriginalPrompt(config: TtsrSpawnConfigLike): string {
+		const prompt = config.prompt ?? '';
+		const pending = this.pendingCorrective.get(config.sessionId);
+		// Consumed either way: a spawn that is not the corrective turn means it
+		// never arrived, and a later unrelated turn must not inherit the goal.
+		this.pendingCorrective.delete(config.sessionId);
+		if (pending && prompt.endsWith(pending.injectionPrompt)) return pending.originalPrompt;
+		return prompt;
 	}
 
 	/** Record the provider conversation id once the agent announces it. */

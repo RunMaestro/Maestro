@@ -12,6 +12,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { isValidAgentId, type AgentId } from '../../../shared/agentIds';
 import {
+	DEFAULT_TTSR_CONTEXT_MODE,
 	DEFAULT_TTSR_PROJECT_SETTINGS,
 	DEFAULT_TTSR_REPEAT_GAP,
 	DEFAULT_TTSR_SCOPES,
@@ -315,13 +316,20 @@ export function normalizeTtsrSettings(raw: unknown): {
 		}
 	}
 
-	const contextMode = toEnum<TtsrContextMode>(
-		map.contextMode,
-		TTSR_CONTEXT_MODES,
-		DEFAULT_TTSR_PROJECT_SETTINGS.contextMode,
-		'ttsr.yaml: contextMode',
-		warnings
-	);
+	// Left undefined when the project says nothing, so the global
+	// `ttsrContextMode` setting is what applies. An invalid value is a statement
+	// (a wrong one), so it falls back to the built-in default with a warning
+	// rather than silently handing control back to the global setting.
+	const contextMode =
+		map.contextMode === undefined || map.contextMode === null
+			? undefined
+			: toEnum<TtsrContextMode>(
+					map.contextMode,
+					TTSR_CONTEXT_MODES,
+					DEFAULT_TTSR_CONTEXT_MODE,
+					'ttsr.yaml: contextMode',
+					warnings
+				);
 
 	return {
 		settings: {

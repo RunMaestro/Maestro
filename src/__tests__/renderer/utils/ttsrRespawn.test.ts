@@ -113,6 +113,43 @@ describe('buildTtsrRespawnConfig', () => {
 		expect(config.args).toEqual(['--print']);
 	});
 
+	it('stays read-only while a non-worktree Auto Run holds the tree', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'session-1', aiTabs: [tab] });
+
+		const config = buildTtsrRespawnConfig({
+			payload: makePayload(),
+			session,
+			tab,
+			agent: AGENT,
+			autoRunForcesReadOnly: true,
+		});
+
+		// The aborted turn was read-only for this reason too; a rule firing must not
+		// hand the corrective turn write access to a tree Auto Run is working in.
+		expect(config.readOnlyMode).toBe(true);
+		expect(config.permissionMode).toBe('readonly');
+		expect(config.args).toEqual(['--print']);
+	});
+
+	it('exempts a forced-parallel turn from the Auto Run gate', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'session-1', aiTabs: [tab] });
+		const payload = makePayload({ sessionId: 'session-1-ai-tab-1-fp-1717171717' });
+
+		const config = buildTtsrRespawnConfig({
+			payload,
+			session,
+			tab,
+			agent: AGENT,
+			autoRunForcesReadOnly: true,
+		});
+
+		// Forced-parallel runs in its own worktree, so it keeps write access -
+		// same exemption the interactive spawn path makes.
+		expect(config.readOnlyMode).toBe(false);
+	});
+
 	it('carries per-session and per-tab overrides through to the corrective turn', () => {
 		const tab = createMockAITab({ id: 'tab-1', customModel: 'tab-model' });
 		const session = createMockSession({

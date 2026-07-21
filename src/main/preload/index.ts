@@ -601,6 +601,7 @@ export type {
 export type {
 	// From ttsr
 	TtsrApi,
+	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
 	TtsrMatchedPayload,
 	TtsrTriggeredPayload,

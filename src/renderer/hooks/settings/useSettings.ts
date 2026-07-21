@@ -387,8 +387,6 @@ export interface UseSettingsReturn {
 	setTtsrDisabledRules: (value: string[]) => void;
 	ttsrContextMode: TtsrContextMode;
 	setTtsrContextMode: (value: TtsrContextMode) => void;
-	ttsrBuiltinRules: Record<string, boolean>;
-	setTtsrBuiltinRules: (value: Record<string, boolean>) => void;
 
 	// Coworking browser interaction (agent ids allowed to use browser tools)
 	coworkingBrowserInteraction: string[];
