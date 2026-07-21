@@ -365,6 +365,7 @@ describe('process IPC handlers', () => {
 	describe('registration', () => {
 		it('should register all process handlers', () => {
 			const expectedChannels = [
+				'concerto-html:restore',
 				'process:spawn',
 				'process:write',
 				'process:broadcast-user-input',
@@ -383,6 +384,24 @@ describe('process IPC handlers', () => {
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
 			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('Concerto HTML restore', () => {
+		it('restores a validated recently closed document', async () => {
+			const handler = handlers.get('concerto-html:restore');
+
+			const revision = await handler!({}, 'movement', 'mockup', '<button>Fresh</button>');
+
+			expect(revision).toBeTypeOf('number');
+		});
+
+		it('rejects an invalid restore request', async () => {
+			const handler = handlers.get('concerto-html:restore');
+
+			await expect(handler!({}, 'bogus', '', null)).rejects.toThrow(
+				'Invalid Concerto HTML restore request'
+			);
 		});
 	});
 

@@ -11,6 +11,7 @@ import {
 	MAX_CONCERTO_HTML_BYTES,
 	MAX_CONCERTO_HTML_DOCUMENTS,
 	releaseConcertoHtmlDocument,
+	restoreConcertoHtmlDocument,
 } from '../../main/concerto-html';
 import { buildConcertoHtmlUrl, CONCERTO_DESIGNER_CHANNEL } from '../../shared/concerto-html';
 
@@ -102,6 +103,25 @@ describe('Concerto HTML document protocol', () => {
 		expect(first.revision).toBe(1);
 		expect(second.revision).toBe(2);
 		expect(getConcertoHtmlDocumentRevision('movement', 'mockup')).toBe(2);
+	});
+
+	it('restores a released document with a fresh revision', async () => {
+		applyMovementHtmlPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<p>original</p>',
+		});
+		releaseConcertoHtmlDocument('movement', 'mockup');
+
+		const revision = restoreConcertoHtmlDocument('movement', 'mockup', '<p>fresh</p>');
+
+		expect(revision).toBe(2);
+		const response = createConcertoHtmlResponse(
+			buildConcertoHtmlUrl('movement', 'mockup', revision)
+		);
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('<p>fresh</p>');
 	});
 
 	it('rejects capacity instead of evicting a live document and accepts explicit release', () => {

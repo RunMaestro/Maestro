@@ -39,7 +39,7 @@ const MovementPanel = memo(function MovementPanel({
 }) {
 	const moveItem = useMovementStore((s) => s.moveItem);
 	const resizeItem = useMovementStore((s) => s.resizeItem);
-	const removeItem = useMovementStore((s) => s.removeItem);
+	const dismissItem = useMovementStore((s) => s.dismissItem);
 	const setItemMinimized = useMovementStore((s) => s.setItemMinimized);
 	const setMeasuredHeight = useMovementStore((s) => s.setMeasuredHeight);
 	const surfaceItem = useMovementStore((s) => s.surfaceItem);
@@ -66,7 +66,7 @@ const MovementPanel = memo(function MovementPanel({
 	const isHtml = item.viewType === 'html';
 	const onClose = () => {
 		window.maestro.process.releaseConcertoHtmlDocument?.('movement', item.id);
-		removeItem(item.id);
+		dismissItem(item.id);
 	};
 
 	// Report the panel's real rendered height to the store so `movement state`

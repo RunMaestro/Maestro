@@ -668,6 +668,13 @@ export function createProcessApi() {
 			ipcRenderer.send('concerto-html:release', surface, id);
 		},
 
+		/** Restore a recently closed isolated document before recreating its view. */
+		restoreConcertoHtmlDocument: (
+			surface: ConcertoHtmlSurface,
+			id: string,
+			html: string
+		): Promise<number> => ipcRenderer.invoke('concerto-html:restore', surface, id, html),
+
 		/**
 		 * Subscribe to `movement state` reads: the main process sends a request with a
 		 * response channel; the renderer replies via sendMovementStateResponse with the

@@ -223,6 +223,15 @@ export function releaseConcertoHtmlDocument(surface: ConcertoHtmlSurface, id: st
 	deleteDocument(surface, id);
 }
 
+/** Re-register a recently closed document before its renderer view is recreated. */
+export function restoreConcertoHtmlDocument(
+	surface: ConcertoHtmlSurface,
+	id: string,
+	html: string
+): number {
+	return setDocument(surface, id, html);
+}
+
 export function applyMovementHtmlPayload(payload: MovementPayload): MovementPayload {
 	if (payload.op === 'clear') {
 		clearSurface('movement');

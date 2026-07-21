@@ -58,6 +58,8 @@ function parseSpec(body: string | undefined): BlockSpec {
 
 export interface MovementStoreState {
 	items: MovementItem[];
+	/** Recently user-closed items that a chat chip can reopen as a fresh view. */
+	dismissedItems: MovementItem[];
 	/** Movement viewport size (px), reported by the overlay for agent awareness. */
 	viewportWidth: number;
 	viewportHeight: number;
@@ -73,15 +75,18 @@ export interface MovementStoreActions {
 	moveItem: (id: string, x: number, y: number) => void;
 	resizeItem: (id: string, width: number, height: number) => void;
 	setMeasuredHeight: (id: string, height: number) => void;
+	dismissItem: (id: string) => void;
 	removeItem: (id: string) => void;
 	clearItems: () => void;
 	setViewport: (width: number, height: number) => void;
 	setHidden: (hidden: boolean) => void;
 	setItemMinimized: (id: string, minimized: boolean) => void;
+	/** Move a recently dismissed item back into the live overlay. */
+	restoreDismissedItem: (id: string, timestamp?: number) => boolean;
 	/** Restore, un-stash, and move a panel above its peers without remounting it. */
 	surfaceItem: (id: string) => void;
 	/** Un-stash the overlay and pulse the panel with this id (chat-chip "point"). */
-	flashItem: (id: string) => void;
+	flashItem: (id: string) => boolean;
 }
 
 export type MovementStore = MovementStoreState & MovementStoreActions;
@@ -94,6 +99,8 @@ const MIN_ITEM_HEIGHT = 120;
  *  drag handle + close button) remains reachable (px). */
 const VISIBLE_MARGIN_X = 120;
 const VISIBLE_MARGIN_Y = 40;
+/** Bound retained source documents while still allowing recent chat chips to reopen them. */
+const MAX_DISMISSED_MOVEMENT_ITEMS = 12;
 
 /** Clamp a panel position on both ends: never negative, and when the viewport
  *  size is known (non-zero), never so far right/down that the header is
@@ -112,15 +119,23 @@ function clampPosition(
 
 export const useMovementStore = create<MovementStore>()((set, get) => ({
 	items: [],
+	dismissedItems: [],
 	viewportWidth: 0,
 	viewportHeight: 0,
 	hidden: false,
 	flashedId: null,
 
-	upsertItem: (item) => set((s) => ({ items: upsertById(s.items, item) })),
+	upsertItem: (item) =>
+		set((s) => ({
+			items: upsertById(s.items, item),
+			dismissedItems: s.dismissedItems.filter((dismissed) => dismissed.id !== item.id),
+		})),
 
 	patchItem: (id, patch) =>
-		set((s) => ({ items: s.items.map((v) => (v.id === id ? { ...v, ...patch } : v)) })),
+		set((s) => ({
+			items: s.items.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+			dismissedItems: s.dismissedItems.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+		})),
 
 	moveItem: (id, x, y) =>
 		set((s) => ({
@@ -156,9 +171,24 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 			return changed ? { items } : s;
 		}),
 
-	removeItem: (id) => set((s) => ({ items: s.items.filter((v) => v.id !== id) })),
+	dismissItem: (id) =>
+		set((s) => {
+			const item = s.items.find((candidate) => candidate.id === id);
+			if (!item) return s;
+			const dismissedItems = [
+				...s.dismissedItems.filter((dismissed) => dismissed.id !== id),
+				item,
+			].slice(-MAX_DISMISSED_MOVEMENT_ITEMS);
+			return { items: s.items.filter((candidate) => candidate.id !== id), dismissedItems };
+		}),
 
-	clearItems: () => set({ items: [] }),
+	removeItem: (id) =>
+		set((s) => ({
+			items: s.items.filter((v) => v.id !== id),
+			dismissedItems: s.dismissedItems.filter((v) => v.id !== id),
+		})),
+
+	clearItems: () => set({ items: [], dismissedItems: [] }),
 
 	setViewport: (width, height) => set({ viewportWidth: width, viewportHeight: height }),
 
@@ -174,6 +204,24 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 			});
 			return changed ? { items } : s;
 		}),
+
+	restoreDismissedItem: (id, timestamp) => {
+		let restored = false;
+		set((s) => {
+			const item = s.dismissedItems.find((candidate) => candidate.id === id);
+			if (!item) return s;
+			restored = true;
+			return {
+				hidden: false,
+				items: [
+					...s.items.filter((candidate) => candidate.id !== id),
+					{ ...item, minimized: false, timestamp: timestamp ?? item.timestamp },
+				],
+				dismissedItems: s.dismissedItems.filter((candidate) => candidate.id !== id),
+			};
+		});
+		return restored;
+	},
 
 	surfaceItem: (id) =>
 		set((s) => {
@@ -193,6 +241,7 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 
 	// Chat-chip "point": surface the overlay and pulse the target panel for a moment.
 	flashItem: (id) => {
+		if (!get().items.some((item) => item.id === id)) return false;
 		get().surfaceItem(id);
 		set({ flashedId: id });
 		scheduleFlashClear(
@@ -200,6 +249,7 @@ export const useMovementStore = create<MovementStore>()((set, get) => ({
 			() => set({ flashedId: null }),
 			id
 		);
+		return true;
 	},
 }));
 
@@ -230,7 +280,8 @@ export function applyMovementPayload(p: MovementPayload): void {
 		const patch: Partial<Omit<MovementItem, 'id'>> = {};
 		// Clamp on both ends like moveItem does, so an agent can't strand a panel
 		// (and its only drag handle + close button) off ANY edge of the viewport.
-		const target = store.items.find((v) => v.id === p.id);
+		const target =
+			store.items.find((v) => v.id === p.id) ?? store.dismissedItems.find((v) => v.id === p.id);
 		if (typeof p.x === 'number' || typeof p.y === 'number') {
 			const clamped = clampPosition(
 				typeof p.x === 'number' ? p.x : (target?.x ?? 0),
@@ -263,7 +314,8 @@ export function applyMovementPayload(p: MovementPayload): void {
 	}
 
 	// op === 'add'. Preserve position if the id already exists; else cascade.
-	const existing = store.items.find((v) => v.id === p.id);
+	const existing =
+		store.items.find((v) => v.id === p.id) ?? store.dismissedItems.find((v) => v.id === p.id);
 	const viewType = p.viewType ?? existing?.viewType ?? 'view';
 	const step = (cascadeIndex++ % 6) * 32;
 	// A newly-added panel should surface immediately. Updates intentionally do

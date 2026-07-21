@@ -18,6 +18,7 @@ import {
 function reset() {
 	useMovementStore.setState({
 		items: [],
+		dismissedItems: [],
 		viewportWidth: 0,
 		viewportHeight: 0,
 		hidden: false,
@@ -241,6 +242,43 @@ describe('movementStore actions', () => {
 		expect(useMovementStore.getState().items).toMatchObject([
 			{ id: 'a', minimized: true, title: 'Updated' },
 			{ id: 'b', minimized: false },
+		]);
+	});
+
+	it('dismisses a panel for chat-chip restoration and removes it permanently on remote remove', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<button>Open</button>',
+			revision: 4,
+		});
+
+		useMovementStore.getState().dismissItem('mockup');
+		expect(useMovementStore.getState().items).toEqual([]);
+		expect(useMovementStore.getState().dismissedItems).toMatchObject([
+			{ id: 'mockup', html: '<button>Open</button>' },
+		]);
+
+		expect(useMovementStore.getState().restoreDismissedItem('mockup', 9)).toBe(true);
+		expect(useMovementStore.getState().items).toMatchObject([
+			{ id: 'mockup', minimized: false, timestamp: 9 },
+		]);
+
+		useMovementStore.getState().dismissItem('mockup');
+		applyMovementPayload({ op: 'remove', id: 'mockup' });
+		expect(useMovementStore.getState().dismissedItems).toEqual([]);
+		expect(useMovementStore.getState().restoreDismissedItem('mockup')).toBe(false);
+	});
+
+	it('updates retained source while a user-dismissed panel is closed', () => {
+		applyMovementPayload({ op: 'add', id: 'report', title: 'Initial' });
+		useMovementStore.getState().dismissItem('report');
+
+		applyMovementPayload({ op: 'update', id: 'report', title: 'Updated' });
+
+		expect(useMovementStore.getState().dismissedItems).toMatchObject([
+			{ id: 'report', title: 'Updated' },
 		]);
 	});
 });

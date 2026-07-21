@@ -2,18 +2,51 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MovementOverlay } from '../../../../renderer/components/Movement/MovementOverlay';
 import { applyMovementPayload, useMovementStore } from '../../../../renderer/stores/movementStore';
+import { flashConcertoTarget } from '../../../../renderer/utils/concertoLinks';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 describe('MovementOverlay', () => {
 	beforeEach(() => {
 		useMovementStore.setState({
 			items: [],
+			dismissedItems: [],
 			viewportWidth: 0,
 			viewportHeight: 0,
 			hidden: false,
 			flashedId: null,
 		});
 		vi.mocked(window.maestro.process.releaseConcertoHtmlDocument).mockClear();
+		vi.mocked(window.maestro.process.restoreConcertoHtmlDocument).mockReset();
+		vi.mocked(window.maestro.process.restoreConcertoHtmlDocument).mockResolvedValue(44);
+	});
+
+	it('reopens a user-closed HTML movement from its chat chip as a fresh frame', async () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			title: 'Checkout mockup',
+			body: '<button>Buy</button>',
+			revision: 8,
+		});
+		render(<MovementOverlay theme={mockTheme} />);
+		const originalFrame = screen.getByTestId('concerto-html-iframe');
+
+		fireEvent.click(screen.getByRole('button', { name: 'Close movement panel' }));
+		expect(screen.queryByTestId('concerto-html-iframe')).not.toBeInTheDocument();
+
+		await act(async () => {
+			await expect(flashConcertoTarget('maestro://concerto/movement/mockup')).resolves.toBe(true);
+		});
+
+		const restoredFrame = screen.getByTestId('concerto-html-iframe');
+		expect(restoredFrame).not.toBe(originalFrame);
+		expect(restoredFrame.getAttribute('src')).toContain('revision=44');
+		expect(window.maestro.process.restoreConcertoHtmlDocument).toHaveBeenCalledWith(
+			'movement',
+			'mockup',
+			'<button>Buy</button>'
+		);
 	});
 
 	it('labels plugin-namespaced host views with their provenance', () => {
@@ -53,6 +86,7 @@ describe('MovementOverlay', () => {
 			'mockup'
 		);
 		expect(useMovementStore.getState().items).toEqual([]);
+		expect(useMovementStore.getState().dismissedItems).toMatchObject([{ id: 'mockup' }]);
 	});
 
 	it('keeps HTML frames mounted while the overlay is stashed', () => {

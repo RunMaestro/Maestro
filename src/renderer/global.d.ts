@@ -470,6 +470,11 @@ interface MaestroAPI {
 		) => () => void;
 		sendMovementAppliedResponse: (responseChannel: string, applied: boolean) => void;
 		releaseConcertoHtmlDocument: (surface: 'movement' | 'cadenza', id: string) => void;
+		restoreConcertoHtmlDocument: (
+			surface: 'movement' | 'cadenza',
+			id: string,
+			html: string
+		) => Promise<number>;
 		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
 		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
 		onRequestMovementDesignerInspection: (
