@@ -486,8 +486,9 @@ export class StdoutHandler {
 
 		if (!event) return;
 
-		// Stream observation seam (Time-Traveling Stream Rules). No observer is
-		// installed unless the feature is on, so this is a null check when off.
+		// Stream observation seam (Time-Traveling Stream Rules). The observer reads
+		// the feature gate live and returns before doing any work while TTSR is
+		// off, so this stays a null check plus one no-op call.
 		// A throwing observer must never take the agent's output stream down with
 		// it, so it is contained here and reported rather than propagated.
 		if (this.parsedEventObserver) {
