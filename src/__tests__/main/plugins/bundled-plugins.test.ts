@@ -21,6 +21,13 @@ vi.mock('../../../main/plugins/plugin-store-main', () => ({
 	isSafePluginFolderName: (name: string) => /^[a-z][a-z0-9._-]*$/i.test(name),
 }));
 
+// Real fs everywhere, but a controllable cpSync so a copy failure can be forced
+// to exercise the atomic-replace rollback.
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof fs>();
+	return { ...actual, cpSync: vi.fn(actual.cpSync) };
+});
+
 import { seedBundledPlugins } from '../../../main/plugins/bundled-plugins';
 
 let tmp = '';
@@ -109,5 +116,32 @@ describe('seedBundledPlugins', () => {
 		h.sigStatus[dest] = 'trusted';
 		seedBundledPlugins({ trustedKeys });
 		expect(fs.existsSync(path.join(dest, 'stale.txt'))).toBe(false);
+	});
+
+	it('skips a bundle whose directory name does not match its declared id', () => {
+		const src = path.join(bundledRoot, 'plugins', 'innocent-name');
+		writePlugin(src, 'evil-plugin', '0.1.0');
+		h.sigStatus[src] = 'trusted';
+		seedBundledPlugins({ trustedKeys });
+		expect(fs.existsSync(path.join(h.target.dir, 'evil-plugin'))).toBe(false);
+		expect(fs.existsSync(path.join(h.target.dir, 'innocent-name'))).toBe(false);
+	});
+
+	it('preserves the existing install when the copy fails (atomic replace)', () => {
+		bundle('agent-flow', '0.2.0', 'trusted'); // newer -> a replace is attempted
+		const dest = path.join(h.target.dir, 'agent-flow');
+		writePlugin(dest, 'agent-flow', '0.1.0');
+		fs.writeFileSync(path.join(dest, 'live.txt'), 'in use');
+		h.sigStatus[dest] = 'trusted';
+		const errors: unknown[] = [];
+		const cpSync = vi.mocked(fs.cpSync);
+		cpSync.mockImplementationOnce(() => {
+			throw new Error('disk full');
+		});
+		seedBundledPlugins({ trustedKeys, onError: (e) => errors.push(e) });
+		// The failed copy staged into a temp sibling first, so the live install
+		// and its file are untouched, and the error surfaced.
+		expect(fs.existsSync(path.join(dest, 'live.txt'))).toBe(true);
+		expect(errors.length).toBeGreaterThan(0);
 	});
 });

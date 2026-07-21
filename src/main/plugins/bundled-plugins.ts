@@ -86,6 +86,13 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 		const bundled = readManifest(src);
 		const id = bundled?.id;
 		if (!id || !isSafePluginFolderName(id)) continue;
+		// Identity guard: the bundled folder name must equal the declared id, so a
+		// signed bundle can never target a DIFFERENT plugin's directory in the
+		// writable plugins tree.
+		if (entry.name !== id) {
+			deps.onLog?.(`bundled plugin dir "${entry.name}" declares id "${id}"; skipped`);
+			continue;
+		}
 		try {
 			// Trust gate: only seed a bundled plugin that verifies `trusted`.
 			const sig = verifyPluginSignature(src, trusted);
@@ -109,14 +116,30 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 					!!semver.valid(installed.version) &&
 					semver.gt(bundled.version, installed.version));
 			if (!shouldSeed) continue;
-			// Never copy a symlink: a link in the bundled tree must not become a
-			// live link inside the writable plugins dir (mirrors install()'s guard).
+			// Stage a full copy into a temp sibling, then atomically swap it in with a
+			// backup + rollback, so a failed copy (disk full, permissions) never
+			// leaves the install destroyed. Temp names start with '.' so discovery
+			// (isSafePluginFolderName) never picks them up. Never copy a symlink: a
+			// link in the bundled tree must not become a live link in the writable
+			// plugins dir (mirrors install()'s guard).
 			fs.mkdirSync(targetRoot, { recursive: true });
-			fs.rmSync(dest, { recursive: true, force: true });
-			fs.cpSync(src, dest, {
+			const staging = path.join(targetRoot, `.${id}.seed-tmp`);
+			const backup = path.join(targetRoot, `.${id}.seed-bak`);
+			fs.rmSync(staging, { recursive: true, force: true });
+			fs.rmSync(backup, { recursive: true, force: true });
+			fs.cpSync(src, staging, {
 				recursive: true,
 				filter: (from) => !fs.lstatSync(from).isSymbolicLink(),
 			});
+			const hadDest = fs.existsSync(dest);
+			if (hadDest) fs.renameSync(dest, backup);
+			try {
+				fs.renameSync(staging, dest);
+			} catch (swapError) {
+				if (hadDest) fs.renameSync(backup, dest);
+				throw swapError;
+			}
+			fs.rmSync(backup, { recursive: true, force: true });
 			deps.onLog?.(`seeded bundled plugin "${id}" (${bundled.version ?? 'unknown'})`);
 		} catch (error) {
 			deps.onError?.(error);
