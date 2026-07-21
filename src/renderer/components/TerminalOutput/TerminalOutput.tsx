@@ -126,18 +126,20 @@ export const TerminalOutput = memo(
 
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
-		// Tool visibility is a pure render concern: tool events are always recorded
-		// (useAgentToolExecutionListener), so hide them here when the tab's effective
-		// tools setting is off. Keeps toggling from mutating log storage (the flicker
-		// bug) and preserves running->completed correlation.
+		// Collapse FIRST so tool logs still act as response boundaries
+		// (collapseAiResponseLogs treats source:'tool' as a boundary between
+		// assistant segments); only THEN hide them. Tool visibility is a pure render
+		// concern: tool events are always recorded (useAgentToolExecutionListener),
+		// so hiding here keeps toggling from mutating log storage (the flicker bug)
+		// and preserves running->completed correlation.
+		const collapsedAll = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
 		const toolsVisible = activeTab
 			? toolLogsRecorded(activeTab.showTools, activeTab.showThinking)
 			: true;
-		const visibleLogs = useMemo(
-			() => (toolsVisible ? activeLogs : activeLogs.filter((l) => l.source !== 'tool')),
-			[activeLogs, toolsVisible]
+		const collapsedLogs = useMemo(
+			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
+			[collapsedAll, toolsVisible]
 		);
-		const collapsedLogs = useMemo(() => collapseAiResponseLogs(visibleLogs), [visibleLogs]);
 		// Nest subagent tool badges (claude-code Task) under the tool entry that
 		// spawned them; orphans and non-claude agents pass through untouched.
 		const { logs: filteredLogs, childrenByParentId } = useMemo(

@@ -2098,6 +2098,35 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('npm run test')).not.toBeInTheDocument();
 		});
 
+		it('keeps response segments separate when a hidden tool call sat between them', () => {
+			// collapseAiResponseLogs treats a tool entry as a boundary. If tools were
+			// filtered BEFORE collapse, the two replies would merge into one bubble
+			// ("First replySecond reply"). Collapsing first preserves the boundary.
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'First reply', source: 'stdout' }),
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'completed' } },
+				}),
+				createLogEntry({ text: 'Second reply', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: false },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// The tool badge is hidden, but the two replies stay separate.
+			expect(screen.getByText('First reply')).toBeInTheDocument();
+			expect(screen.getByText('Second reply')).toBeInTheDocument();
+			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
+		});
+
 		it('collapses subagent tool calls behind a count under the Task badge', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
