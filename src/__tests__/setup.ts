@@ -725,6 +725,19 @@ const mockMaestro = {
 		onTriggered: vi.fn().mockReturnValue(() => {}),
 		onAbortCleared: vi.fn().mockReturnValue(() => {}),
 		onMatched: vi.fn().mockReturnValue(() => {}),
+		listRules: vi.fn().mockResolvedValue({
+			rules: [],
+			settings: { enabled: true, disabledRules: [] },
+			warnings: [],
+			errors: [],
+			configExists: false,
+		}),
+		readRule: vi.fn().mockResolvedValue(null),
+		writeRule: vi.fn().mockResolvedValue({ path: '.maestro/rules/x.md' }),
+		deleteRule: vi.fn().mockResolvedValue({ deleted: true }),
+		validateRule: vi.fn().mockResolvedValue({ valid: true, rule: null, warnings: [] }),
+		readProjectSettings: vi.fn().mockResolvedValue({ enabled: true, disabledRules: [] }),
+		writeProjectSettings: vi.fn().mockResolvedValue({ path: '.maestro/ttsr.yaml' }),
 	},
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: {

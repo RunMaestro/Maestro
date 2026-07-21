@@ -19,6 +19,9 @@ import type {
 	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
 	TtsrMatchedPayload,
+	TtsrProjectSettings,
+	TtsrRuleListResult,
+	TtsrRuleValidation,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 
@@ -26,7 +29,11 @@ export type {
 	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
 	TtsrMatchedPayload,
+	TtsrProjectSettings,
+	TtsrRule,
+	TtsrRuleListResult,
 	TtsrRuleRef,
+	TtsrRuleValidation,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 
@@ -74,6 +81,32 @@ export function createTtsrApi() {
 				ipcRenderer.removeListener('ttsr:matched', handler);
 			};
 		},
+
+		// ── Rule management (project-scoped; every call names its project) ──
+
+		listRules: (projectRoot: string): Promise<TtsrRuleListResult> =>
+			ipcRenderer.invoke('ttsr:listRules', { projectRoot }),
+
+		readRule: (projectRoot: string, path: string): Promise<string | null> =>
+			ipcRenderer.invoke('ttsr:readRule', { projectRoot, path }),
+
+		writeRule: (projectRoot: string, path: string, content: string): Promise<{ path: string }> =>
+			ipcRenderer.invoke('ttsr:writeRule', { projectRoot, path, content }),
+
+		deleteRule: (projectRoot: string, path: string): Promise<{ deleted: boolean }> =>
+			ipcRenderer.invoke('ttsr:deleteRule', { projectRoot, path }),
+
+		validateRule: (content: string, path?: string): Promise<TtsrRuleValidation> =>
+			ipcRenderer.invoke('ttsr:validateRule', { content, path }),
+
+		readProjectSettings: (projectRoot: string): Promise<TtsrProjectSettings> =>
+			ipcRenderer.invoke('ttsr:readProjectSettings', { projectRoot }),
+
+		writeProjectSettings: (
+			projectRoot: string,
+			settings: Partial<TtsrProjectSettings>
+		): Promise<{ path: string }> =>
+			ipcRenderer.invoke('ttsr:writeProjectSettings', { projectRoot, settings }),
 	};
 }
 

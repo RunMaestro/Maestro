@@ -32,6 +32,14 @@ export type {
 
 // Re-export Symphony types for session metadata
 export type { SymphonySessionMetadata } from '../../shared/symphony-types';
+export type {
+	TtsrContextMode,
+	TtsrProjectSettings,
+	TtsrRule,
+	TtsrRuleListResult,
+	TtsrRuleValidation,
+	TtsrScope,
+} from '../../shared/ttsr-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 
@@ -62,7 +70,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'autorun';
+export type RightPanelTab = 'files' | 'history' | 'autorun' | 'rules';
 /**
  * Tabs in the Usage Dashboard modal. Shared so the in-memory uiStore can
  * remember the last-selected tab across dashboard opens (resets on restart).

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
+import { TtsrRulesPanel } from './TtsrRulesPanel';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
@@ -119,6 +120,8 @@ interface RightPanelProps {
 	// Modal handlers
 	onOpenAboutModal?: () => void;
 	onFileClick?: (path: string) => void;
+	/** Send a composed prompt to the active agent (TTSR rule authoring hand-off). */
+	onSendPromptToAgent?: (prompt: string) => void;
 	onOpenMarketplace?: () => void;
 	onLaunchWizard?: () => void;
 
@@ -154,6 +157,10 @@ export const RightPanel = memo(
 		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
 		const autoRunDisabled = useSettingsStore((s) => s.autoRunDisabled);
+		// TTSR rules are an Encore Feature: no flag, no tab. Also gated on the
+		// runtime switch, so a user who turned matching off does not keep a tab
+		// for rules that cannot fire.
+		const ttsrEnabled = useSettingsStore((s) => s.encoreFeatures.ttsr && s.ttsrEnabled);
 
 		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
@@ -223,6 +230,7 @@ export const RightPanel = memo(
 			onOpenSessionAsTab,
 			onOpenAboutModal,
 			onFileClick,
+			onSendPromptToAgent,
 			onOpenMarketplace,
 			onLaunchWizard,
 			onFocusFileInGraph,
@@ -475,7 +483,14 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
+					{(
+						[
+							'files',
+							'history',
+							...(autoRunDisabled ? [] : ['autorun']),
+							...(ttsrEnabled ? ['rules'] : []),
+						] as const
+					).map((tab) => (
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
@@ -588,6 +603,17 @@ export const RightPanel = memo(
 					{activeRightTab === 'autorun' && !autoRunDisabled && (
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
+						</div>
+					)}
+
+					{activeRightTab === 'rules' && ttsrEnabled && (
+						<div data-tour="rules-panel" className="h-full">
+							<TtsrRulesPanel
+								theme={theme}
+								projectRoot={session?.cwd ?? null}
+								onSendToAgent={onSendPromptToAgent}
+								onOpenFile={onFileClick}
+							/>
 						</div>
 					)}
 				</div>

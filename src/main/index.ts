@@ -164,6 +164,7 @@ import {
 	registerCrossAgentHandlers,
 	registerCueHandlers,
 	registerCueBackupHandlers,
+	registerTtsrHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
 	registerMaestroCliHandlers,
@@ -3123,6 +3124,13 @@ function setupIpcHandlers() {
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore,
+	});
+
+	// TTSR rule + per-project settings CRUD (Right Bar Rules tab). A write from
+	// the UI drops the runtime's cached rules straight away; the file watcher
+	// would also catch it, a debounce later.
+	registerTtsrHandlers({
+		onRulesChanged: (projectRoot: string) => ttsrRuntime?.invalidateRules(projectRoot),
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts

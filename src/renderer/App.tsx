@@ -2924,6 +2924,15 @@ function MaestroConsoleInner() {
 		handleDeleteAllArchivedGroupChats,
 	});
 
+	// TTSR rule authoring is delegated to the agent: the Rules tab composes a
+	// brief and this puts it in front of the active agent as a normal turn.
+	const handleSendPromptToAgent = useCallback(
+		(prompt: string) => {
+			void processInputRef.current?.(prompt);
+		},
+		[processInputRef]
+	);
+
 	const rightPanelProps = useRightPanelProps({
 		// Theme (computed externally from settingsStore + themeId)
 		theme,
@@ -2974,6 +2983,7 @@ function MaestroConsoleInner() {
 
 		// File linking
 		handleMainPanelFileClick,
+		handleSendPromptToAgent,
 
 		// Document Graph handlers
 		handleFocusFileInGraph,

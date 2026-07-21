@@ -132,6 +132,34 @@ export const DEFAULT_TTSR_PROJECT_SETTINGS: TtsrProjectSettings = {
 	disabledRules: [],
 };
 
+// ── Rule management (IPC-safe) ───────────────────────────────────────────────
+
+/** Everything the rules panel needs for one project, from a single call. */
+export interface TtsrRuleListResult {
+	/** Rules the project would actually run, disabled ones already excluded. */
+	rules: TtsrRule[];
+	settings: TtsrProjectSettings;
+	/**
+	 * Non-fatal load problems: dropped regexes, agents that cannot evaluate a
+	 * rule, shadowed names. Surfaced in the UI because they are the only signal
+	 * a user gets that a rule they wrote will never fire.
+	 */
+	warnings: string[];
+	/** Fatal problems (unparseable or non-mapping `.maestro/ttsr.yaml`). */
+	errors: string[];
+	/** False when the project has neither rules nor a config file yet. */
+	configExists: boolean;
+}
+
+/** Result of dry-running a rule's markdown through the normalizer. */
+export interface TtsrRuleValidation {
+	/** False when the loader would drop this rule entirely. */
+	valid: boolean;
+	/** The normalized rule, so the editor can show the defaults that were filled in. */
+	rule: TtsrRule | null;
+	warnings: string[];
+}
+
 // ── Match reporting (IPC-safe) ───────────────────────────────────────────────
 
 /** Minimal rule identity carried in IPC payloads and the activity log. */

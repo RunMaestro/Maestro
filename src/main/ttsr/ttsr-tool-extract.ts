@@ -16,7 +16,26 @@
  * `shell` (codex), or `bash` (opencode) with the command in the tool input.
  */
 
+import { TTSR_CONFIG_PATH, TTSR_RULES_DIR } from '../../shared/maestro-paths';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
+
+/**
+ * Whether a path is TTSR's own configuration, which is never matched against.
+ *
+ * A rule file necessarily contains the very text its rule looks for: writing
+ * `.maestro/rules/no-console-log.md` means writing "console.log" into a file,
+ * which a `tool:write` rule with no `globs` would happily fire on. TTSR would
+ * then interrupt the agent for authoring the rule that told it not to do the
+ * thing - and since editing rules is exactly how a user asks an agent to set
+ * TTSR up, that is not a corner case but the main authoring path.
+ *
+ * Accepts absolute or project-relative paths, either separator.
+ */
+export function isTtsrConfigPath(filePath: string | undefined): boolean {
+	if (!filePath) return false;
+	const normalized = filePath.replace(/\\/g, '/');
+	return normalized.includes(`${TTSR_RULES_DIR}/`) || normalized.endsWith(TTSR_CONFIG_PATH);
+}
 
 /** One in-flight tool action observed on the stream. */
 export interface TtsrToolSnapshot {
@@ -207,22 +226,27 @@ function snapshotFromInput(toolName: string, rawInput: unknown): TtsrToolSnapsho
 }
 
 /**
- * Every edit/write snapshot carried by a parsed event. Covers both event
- * shapes the parsers produce: `toolUseBlocks` (claude-code, copilot-cli) and
- * `toolName` + `toolState.input` (opencode, codex).
+ * Every tool snapshot carried by a parsed event. Covers both event shapes the
+ * parsers produce: `toolUseBlocks` (claude-code, copilot-cli) and `toolName` +
+ * `toolState.input` (opencode, codex).
+ *
+ * Writes to TTSR's own config are dropped here, at the single choke point, so
+ * neither regex nor ast-grep ever sees a rule file (see {@link isTtsrConfigPath}).
  */
 export function extractToolSnapshots(event: ParsedEvent): TtsrToolSnapshot[] {
 	const snapshots: TtsrToolSnapshot[] = [];
 
+	const add = (snapshot: TtsrToolSnapshot | null): void => {
+		if (snapshot && !isTtsrConfigPath(snapshot.filePath)) snapshots.push(snapshot);
+	};
+
 	for (const block of event.toolUseBlocks ?? []) {
-		const snapshot = snapshotFromInput(block.name, block.input);
-		if (snapshot) snapshots.push(snapshot);
+		add(snapshotFromInput(block.name, block.input));
 	}
 
 	if (event.toolName) {
 		const state = asRecord(event.toolState);
-		const snapshot = snapshotFromInput(event.toolName, state ? state.input : undefined);
-		if (snapshot) snapshots.push(snapshot);
+		add(snapshotFromInput(event.toolName, state ? state.input : undefined));
 	}
 
 	return snapshots;

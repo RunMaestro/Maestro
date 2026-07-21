@@ -111,6 +111,45 @@ describe('extractToolSnapshots', () => {
 	});
 });
 
+describe('TTSR config files are never matched', () => {
+	// A rule file necessarily contains the text its own rule looks for, and
+	// editing rules is how a user asks an agent to set TTSR up - so without this
+	// carve-out the authoring path trips the rules it is authoring.
+	it.each([
+		['project-relative', '.maestro/rules/no-console-log.md'],
+		['absolute', '/repo/.maestro/rules/no-console-log.md'],
+		['windows separators', 'C:\\repo\\.maestro\\rules\\no-console-log.md'],
+		['the settings file', '/repo/.maestro/ttsr.yaml'],
+	])('drops a write to %s', (_label, filePath) => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{
+					name: 'Write',
+					input: { file_path: filePath, content: 'Do not use console.log( in shipped source.' },
+				},
+			],
+		};
+
+		expect(extractToolSnapshots(event)).toEqual([]);
+	});
+
+	it('still matches an ordinary file inside .maestro', () => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{
+					name: 'Write',
+					input: { file_path: '.maestro/playbooks/x.md', content: 'console.log(1)' },
+				},
+			],
+		};
+
+		// Only TTSR's own config is exempt, not the whole .maestro directory.
+		expect(extractToolSnapshots(event)).toHaveLength(1);
+	});
+});
+
 describe('shell command extraction', () => {
 	it('extracts a claude-code Bash command', () => {
 		const event: ParsedEvent = {
