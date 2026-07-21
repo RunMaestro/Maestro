@@ -236,8 +236,12 @@ export function createProcessApi() {
 		/**
 		 * Get all active processes from ProcessManager
 		 */
-		getActiveProcesses: (): Promise<ActiveProcess[]> =>
-			ipcRenderer.invoke('process:getActiveProcesses'),
+		getActiveProcesses: (options?: {
+			includeChildProcesses?: boolean;
+		}): Promise<ActiveProcess[]> =>
+			options === undefined
+				? ipcRenderer.invoke('process:getActiveProcesses')
+				: ipcRenderer.invoke('process:getActiveProcesses', options),
 
 		/**
 		 * Check whether a terminal tab's PTY has a non-shell foreground process
