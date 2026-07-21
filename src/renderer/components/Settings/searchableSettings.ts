@@ -788,7 +788,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'Tab Options',
 		description:
-			'Show starred and file preview tabs when filtering by unread; Command+0 vs Command+9 last-tab shortcut; browser tab domain pill',
+			'Show starred and file preview tabs when filtering by unread; Command+0 vs Command+9 last-tab shortcut; browser tab domain pill; scroll tabs with the mouse wheel',
 		keywords: [
 			'tab',
 			'filter',
@@ -811,6 +811,13 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'hostname',
 			'url',
 			'pill',
+			'wheel',
+			'mouse wheel',
+			'scroll',
+			'scroll tabs',
+			'pan',
+			'tab bar',
+			'tab strip',
 		],
 	},
 	{
