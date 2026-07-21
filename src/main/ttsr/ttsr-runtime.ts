@@ -18,15 +18,18 @@ import type {
 	LoadedTtsrRule,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
+	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 import { DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr-config-loader';
+import { TtsrInterruptDriver, type TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { TtsrManager, type TtsrMatch } from './ttsr-manager';
 import {
 	TtsrSpawnRegistry,
 	type TtsrProcessEventSource,
 	type TtsrSpawnConfigLike,
+	type TtsrSpawnMeta,
 } from './ttsr-spawn-registry';
 
 const LOG_CONTEXT = 'TTSR';
@@ -49,6 +52,19 @@ export interface TtsrRuntimeDeps {
 	getDisabledRules?(): string[];
 	/** Observability sink for `ttsr:matched`. Wired to `safeSend` in Phase 4. */
 	onMatched?(payload: TtsrMatchedPayload): void;
+	/**
+	 * The process manager's abort surface. Omit it and the runtime stays
+	 * detection-only (Phase 2 behaviour) - matches are reported but no turn is
+	 * ever interrupted.
+	 */
+	interruptTarget?: TtsrInterruptTarget;
+	/**
+	 * Sink for `ttsr:triggered`. Required alongside `interruptTarget`: aborting a
+	 * turn without telling the renderer to respawn it would strand the agent.
+	 */
+	onTriggered?(payload: TtsrTriggeredPayload): void;
+	/** Test override for how long an abort waits on the turn's `exit`. */
+	exitTimeoutMs?: number;
 	/** Swappable for tests; defaults to the real disk loader. */
 	loadConfig?(projectRoot: string): LoadTtsrConfigResult;
 }
@@ -62,15 +78,28 @@ interface RuleCacheEntry {
 export class TtsrRuntime {
 	readonly registry = new TtsrSpawnRegistry();
 	readonly manager: TtsrManager;
+	/** Null while no abort surface was injected (detection-only runtime). */
+	readonly driver: TtsrInterruptDriver | null;
 
 	private readonly cache = new Map<string, RuleCacheEntry>();
 	private readonly loadConfig: (projectRoot: string) => LoadTtsrConfigResult;
 	private detach: (() => void) | null = null;
 	/** In-flight `astCondition` passes, awaited by {@link flushAst}. */
 	private readonly pendingAst = new Set<Promise<TtsrMatch[]>>();
+	/** In-flight aborts, awaited by {@link flushInterrupts}. */
+	private readonly pendingInterrupts = new Set<Promise<unknown>>();
 
 	constructor(private readonly deps: TtsrRuntimeDeps) {
 		this.loadConfig = deps.loadConfig ?? loadTtsrConfigDetailed;
+		const onTriggered = deps.onTriggered;
+		this.driver =
+			deps.interruptTarget && onTriggered
+				? new TtsrInterruptDriver({
+						target: deps.interruptTarget,
+						onTriggered: (payload) => onTriggered(payload),
+						exitTimeoutMs: deps.exitTimeoutMs,
+					})
+				: null;
 		this.manager = new TtsrManager({
 			getRules: (projectRoot) => this.entry(projectRoot).rules,
 			isEnabled: (projectRoot) =>
@@ -100,7 +129,7 @@ export class TtsrRuntime {
 		const matches = this.manager.observe(sessionId, event, observeCtx);
 
 		// Structural matching is parsed off the stream's synchronous path; hits
-		// land in the manager's buckets, which Phase 3 drains.
+		// land in the manager's buckets, drained by `drive` once they settle.
 		if (this.manager.needsAstCheck(event, observeCtx)) {
 			const pending = this.manager
 				.observeAst(sessionId, event, observeCtx)
@@ -111,15 +140,20 @@ export class TtsrRuntime {
 					});
 					return [] as TtsrMatch[];
 				})
-				.finally(() => this.pendingAst.delete(pending));
+				.finally(() => {
+					this.pendingAst.delete(pending);
+					this.drive(sessionId, meta);
+				});
 			this.pendingAst.add(pending);
 		}
 
 		// The manager learns the provider id from the stream's `init` event; mirror
-		// it onto the registry so Phase 3's reinject payload can read one source.
+		// it onto the registry so the reinject payload reads one source.
 		if (event.type === 'init' && event.sessionId) {
 			this.registry.noteProviderSessionId(sessionId, event.sessionId);
 		}
+
+		this.drive(sessionId, meta);
 		return matches;
 	}
 
@@ -142,6 +176,9 @@ export class TtsrRuntime {
 		const onExit = (sessionId: string) => {
 			const meta = this.registry.get(sessionId);
 			if (!meta) return;
+			// Unblocks a driver waiting on this abort. Must run before the registry
+			// entry is dropped so the corrective payload still has its spawn meta.
+			this.driver?.noteExit(sessionId);
 			// Advances the turn counter `after-gap` eligibility is measured in and
 			// drops this turn's buffers. Deferred reminders deliberately survive:
 			// they are consumed by the next prompt, not by the turn that queued them.
@@ -173,6 +210,21 @@ export class TtsrRuntime {
 		}
 	}
 
+	/**
+	 * Settle every in-flight abort. Tests await it to observe the corrective
+	 * payload; production never needs it (the driver resolves on `exit`).
+	 */
+	async flushInterrupts(): Promise<void> {
+		while (this.pendingInterrupts.size > 0) {
+			await Promise.all([...this.pendingInterrupts]);
+		}
+	}
+
+	/** True while a TTSR abort is in flight for this turn (`ttsrAbortPending`). */
+	isAbortPending(sessionId: string): boolean {
+		return this.driver?.isAbortPending(sessionId) ?? false;
+	}
+
 	/** Drop cached rules so the next event re-reads them (rule file edited). */
 	invalidateRules(projectRoot?: string): void {
 		if (projectRoot) this.cache.delete(projectRoot);
@@ -180,6 +232,34 @@ export class TtsrRuntime {
 	}
 
 	// ── internals ──
+
+	/**
+	 * Drain the manager's interrupt bucket into the driver. Called after every
+	 * synchronous observation and after each structural pass settles, so a rule
+	 * that fires mid-stream aborts the turn without waiting for it to end.
+	 */
+	private drive(sessionId: string, meta: TtsrSpawnMeta): void {
+		if (!this.driver) return;
+		const matches = this.manager.takeInterrupts(sessionId);
+		if (matches.length === 0) return;
+
+		const pending = this.driver
+			.trigger({
+				sessionId,
+				meta,
+				matches,
+				contextMode: this.entry(meta.projectRoot).settings.contextMode,
+			})
+			.catch((err: unknown) => {
+				logger.error('TTSR interrupt failed', LOG_CONTEXT, {
+					sessionId,
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return null;
+			})
+			.finally(() => this.pendingInterrupts.delete(pending));
+		this.pendingInterrupts.add(pending);
+	}
 
 	/** Cached rules + settings for a project root, reloaded past the TTL. */
 	private entry(projectRoot: string): RuleCacheEntry {

@@ -136,6 +136,38 @@ export interface TtsrMatchedPayload {
 	filePath?: string;
 }
 
+/**
+ * Payload of the `ttsr:triggered` push event: everything the renderer needs to
+ * spawn the corrective turn without re-deriving main-process state (Gate B).
+ *
+ * The main engine owns `providerSessionId` (captured from the agent's
+ * `session-id` event) and `originalGoal` (the prompt recorded by the TTSR spawn
+ * registry - `ManagedProcess` keeps none), so both travel in the payload.
+ */
+export interface TtsrTriggeredPayload {
+	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
+	sessionId: string;
+	/** AI tab the aborted turn belonged to, when the spawn carried one. */
+	tabId?: string;
+	/** Drives `resumeArgs` shape and the tier/degradation choice. */
+	agentId: AgentId;
+	/** Rules that fired, for the injection template and the activity log. */
+	rules: TtsrRuleRef[];
+	/** Rendered `<system-interrupt>` block(s) - the corrective turn's prompt. */
+	injectionPrompt: string;
+	/**
+	 * `resume` re-attaches to the aborted conversation; `fresh` is the degraded
+	 * path for agents that only emit their session id on the final event.
+	 */
+	mode: 'resume' | 'fresh';
+	/** Required when `mode === 'resume'`; passed as `agentSessionId` on respawn. */
+	providerSessionId?: string;
+	/** Prompt that started the aborted turn. Restated verbatim on `fresh`. */
+	originalGoal: string;
+	/** Teardown that was used: `keep` interrupted, `discard` hard-killed. */
+	contextMode: TtsrContextMode;
+}
+
 // ── Gate A: per-agent capability matrix ──────────────────────────────────────
 
 /**

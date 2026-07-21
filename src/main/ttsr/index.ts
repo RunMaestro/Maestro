@@ -7,18 +7,20 @@
  */
 
 import type { ParsedEventObserver } from '../process-manager/types';
-import type { TtsrMatchedPayload } from '../../shared/ttsr-types';
+import type { TtsrMatchedPayload, TtsrTriggeredPayload } from '../../shared/ttsr-types';
+import type { TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { TtsrRuntime } from './ttsr-runtime';
 import type { TtsrProcessEventSource } from './ttsr-spawn-registry';
 
 export { TtsrRuntime } from './ttsr-runtime';
 export { TtsrManager } from './ttsr-manager';
+export { TtsrInterruptDriver } from './ttsr-interrupt-driver';
 export { TtsrSpawnRegistry } from './ttsr-spawn-registry';
 export { TtsrStateStore } from './ttsr-state-store';
 export * from './config/ttsr-config-loader';
 
 /** The process-manager surface TTSR needs. */
-export interface TtsrProcessManagerLike extends TtsrProcessEventSource {
+export interface TtsrProcessManagerLike extends TtsrProcessEventSource, TtsrInterruptTarget {
 	setParsedEventObserver(observer: ParsedEventObserver | null): void;
 }
 
@@ -43,11 +45,18 @@ export function installTtsrRuntime(
 	processManager: TtsrProcessManagerLike,
 	options: InstallTtsrOptions
 ): TtsrRuntime {
+	const safeSend = options.safeSend;
 	const runtime = new TtsrRuntime({
 		isGloballyEnabled: options.isGloballyEnabled,
 		getDisabledRules: options.getDisabledRules,
-		onMatched: options.safeSend
-			? (payload: TtsrMatchedPayload) => options.safeSend?.('ttsr:matched', payload)
+		onMatched: safeSend
+			? (payload: TtsrMatchedPayload) => safeSend('ttsr:matched', payload)
+			: undefined,
+		// Aborting without a way to tell the renderer to respawn would strand the
+		// turn, so the interrupt surface is wired only when a push channel exists.
+		interruptTarget: safeSend ? processManager : undefined,
+		onTriggered: safeSend
+			? (payload: TtsrTriggeredPayload) => safeSend('ttsr:triggered', payload)
 			: undefined,
 	});
 
