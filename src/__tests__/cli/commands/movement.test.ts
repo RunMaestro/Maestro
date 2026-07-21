@@ -209,6 +209,17 @@ describe('movement begin command', () => {
 		);
 		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
+
+	it('prints a JSON error for a non-numeric position', async () => {
+		await expect(
+			movementBegin('startup', { title: 'Loopline startup', x: 'left', json: true })
+		).rejects.toThrow('__exit__');
+
+		expect(console.log).toHaveBeenCalledWith(
+			JSON.stringify({ success: false, error: '--x must be a number' })
+		);
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
 });
 
 describe('movement progress command', () => {
@@ -331,6 +342,7 @@ describe('movement progress command', () => {
 		{ step: '5', steps: '4', error: '--step must be an integer from 1 through --steps (4)' },
 		{ step: '1', steps: '9', error: '--steps must be an integer from 1 through 8' },
 		{ step: '1.5', steps: '4', error: '--step must be an integer from 1 through --steps (4)' },
+		{ step: '1', steps: 'many', error: '--steps must be a number' },
 	])('rejects invalid phase subdivision: $step of $steps', async ({ step, steps, error }) => {
 		await expect(
 			movementProgress('startup', {
