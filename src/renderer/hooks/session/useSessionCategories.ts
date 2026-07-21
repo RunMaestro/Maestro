@@ -4,6 +4,10 @@ import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { compareNamesIgnoringEmojis as compareSessionNames } from '../../../shared/emojiUtils';
+import {
+	sessionOrChildrenNeedAttention,
+	type AttentionContext,
+} from '../../utils/sessionAttention';
 
 export interface SessionCategories {
 	worktreeChildrenByParentId: Map<string, Session[]>;
@@ -130,6 +134,10 @@ export function useSessionCategories(
 		// the busy/unread checks below would drop them. Keep them visible in the
 		// unread filter using the same set that drives the badge.
 		const batchSessionIds = new Set(activeBatchSessionIds);
+		const attentionCtx: AttentionContext = {
+			batchSessionIds,
+			stuckOutageIds: stuckOutageSessionIds,
+		};
 
 		for (const s of sessions) {
 			// Exclude worktree children from main list (they appear under parent)
@@ -139,33 +147,19 @@ export function useSessionCategories(
 			// section, never in Bookmarks/Groups/Ungrouped, so exclude it here.
 			if (s.isPianola) continue;
 
-			// Apply unread agents filter (also keep busy/working agents visible)
-			// Always keep the active session (or its parent) visible so user doesn't lose their place
+			// Apply the unread-agents filter. Always keep the active session (or its
+			// parent) visible so the user doesn't lose their place; otherwise defer to
+			// the shared "needs attention" predicate (unread / busy / error /
+			// auto-running / stuck), including worktree children.
 			const isActiveOrParentOfActive =
 				s.id === activeSessionId ||
 				worktreeChildrenByParentId.get(s.id)?.some((child) => child.id === activeSessionId);
-			if (showUnreadAgentsOnly && !isActiveOrParentOfActive) {
-				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
-				const isBusy = s.state === 'busy';
-				// An agent in an error state needs attention, so keep it visible.
-				const isError = s.state === 'error';
-				const isAutoRunning = batchSessionIds.has(s.id);
-				// A stuck (auto-retrying) agent needs attention just like an unread
-				// one, so keep it visible under the unread filter.
-				const isStuck = stuckOutageSessionIds.has(s.id);
-				// Also check if any worktree children have unread, are busy, are
-				// auto-running, are stuck in an outage, or are in an error state.
-				const children = worktreeChildrenByParentId.get(s.id);
-				const hasActiveChildren = children?.some(
-					(child) =>
-						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy' ||
-						child.state === 'error' ||
-						batchSessionIds.has(child.id) ||
-						stuckOutageSessionIds.has(child.id)
-				);
-				if (!hasUnread && !isBusy && !isError && !isAutoRunning && !isStuck && !hasActiveChildren)
-					continue;
+			if (
+				showUnreadAgentsOnly &&
+				!isActiveOrParentOfActive &&
+				!sessionOrChildrenNeedAttention(s, worktreeChildrenByParentId.get(s.id), attentionCtx)
+			) {
+				continue;
 			}
 
 			if (!query) {

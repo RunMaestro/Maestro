@@ -32,6 +32,8 @@ export interface SeedSidebarNavFromSessions {
 	activeSessionId?: string | null;
 	bookmarksCollapsed?: boolean;
 	showUnreadAgentsOnly?: boolean;
+	activeBatchSessionIds?: string[];
+	stuckOutageSessionIds?: string[];
 	starredItems?: StarredItem[];
 	activateStarredItem?: ActivateStarred;
 }
@@ -54,6 +56,8 @@ export function seedSidebarNav(input: SeedSidebarNavInput): void {
 			bookmarksCollapsed: input.bookmarksCollapsed ?? ui.bookmarksCollapsed,
 			showUnreadAgentsOnly: input.showUnreadAgentsOnly ?? ui.showUnreadAgentsOnly,
 			activeSessionId: input.activeSessionId,
+			activeBatchSessionIds: input.activeBatchSessionIds,
+			stuckOutageSessionIds: input.stuckOutageSessionIds,
 		});
 		useSidebarNavStore.setState({
 			...projection,

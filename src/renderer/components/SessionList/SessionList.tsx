@@ -60,6 +60,11 @@ import { SkinnySidebar } from './SkinnySidebar';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
 import { useSessionCategories } from '../../hooks/session/useSessionCategories';
 import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
+import {
+	sessionNeedsAttention,
+	outageIdsFromSignature,
+	type AttentionContext,
+} from '../../utils/sessionAttention';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
@@ -485,12 +490,17 @@ function SessionListInner(props: SessionListProps) {
 	// Agent Resilience: agents stuck auto-retrying an outage count as "needs
 	// attention" and surface in the unread filter (see useSessionCategories).
 	const stuckOutageSignature = useActiveOutageSessionSignature();
+	// Shared "needs attention" context (batch + stuck ids) for the unread filter.
+	const attentionCtx = useMemo<AttentionContext>(
+		() => ({
+			batchSessionIds: new Set(activeBatchSessionIds),
+			stuckOutageIds: outageIdsFromSignature(stuckOutageSignature),
+		}),
+		[activeBatchSessionIds, stuckOutageSignature]
+	);
 	const hasUnreadAgents = useMemo(
-		() =>
-			sessions.some(
-				(s) => s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy' || s.state === 'error'
-			) || stuckOutageSignature !== '',
-		[sessions, stuckOutageSignature]
+		() => sessions.some((s) => sessionNeedsAttention(s, attentionCtx)),
+		[sessions, attentionCtx]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -959,16 +969,12 @@ function SessionListInner(props: SessionListProps) {
 		}
 	) => {
 		const allWorktreeChildren = getWorktreeChildren(session.id);
-		// When filtering unread, only show worktree children that are unread, busy,
-		// in an error state, or stuck auto-retrying an outage (all "needs attention").
+		// When filtering unread, only show worktree children that need attention:
+		// unread, busy, in an error state, auto-running an Auto Run batch, or stuck
+		// auto-retrying an outage (the shared predicate, plus the active child).
 		const worktreeChildren = showUnreadAgentsOnly
 			? allWorktreeChildren.filter(
-					(child) =>
-						child.id === activeSessionId ||
-						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy' ||
-						child.state === 'error' ||
-						stuckOutageSignature.split(',').includes(child.id)
+					(child) => child.id === activeSessionId || sessionNeedsAttention(child, attentionCtx)
 				)
 			: allWorktreeChildren;
 		const hasWorktrees = worktreeChildren.length > 0;
@@ -2109,6 +2115,7 @@ function SessionListInner(props: SessionListProps) {
 					setActiveSessionId={setActiveSessionId}
 					handleContextMenu={handleContextMenu}
 					showUnreadAgentsOnly={showUnreadAgentsOnly}
+					stuckOutageSignature={stuckOutageSignature}
 				/>
 			)}
 
