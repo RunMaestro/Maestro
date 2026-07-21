@@ -1501,12 +1501,12 @@ describe('tabHelpers', () => {
 				],
 			});
 
-			expect(computeQueuedTabIds(session)).toEqual(new Set(['tab-2', 'tab-5']));
+			expect(computeQueuedTabIds(session.executionQueue)).toEqual(new Set(['tab-2', 'tab-5']));
 		});
 
 		it('returns an empty set when the execution queue is empty', () => {
 			const session = createMockSession({ executionQueue: [] });
-			expect(computeQueuedTabIds(session).size).toBe(0);
+			expect(computeQueuedTabIds(session.executionQueue).size).toBe(0);
 		});
 
 		it('counts paused queued items as pending work', () => {
@@ -1516,7 +1516,7 @@ describe('tabHelpers', () => {
 				],
 			});
 
-			expect(computeQueuedTabIds(session).has('tab-3')).toBe(true);
+			expect(computeQueuedTabIds(session.executionQueue).has('tab-3')).toBe(true);
 		});
 	});
 

@@ -559,14 +559,15 @@ export function hasWizardInteraction(tab: AITab): boolean {
 
 /**
  * Collect the ids of AI tabs that have at least one queued execution item waiting
- * in `session.executionQueue` (a message or command targeting that tab). A tab with
+ * in the execution queue (a message or command targeting that tab). A tab with
  * pending queued work needs attention, so it must survive the unread filter and stay
  * reachable by keyboard navigation. Paused items still count - they remain queued,
- * awaiting the user. Centralized so every unread-filter surface agrees.
+ * awaiting the user. Centralized so every unread-filter surface agrees. Takes the
+ * queue array (not the whole session) so callers can memoize on its stable identity.
  */
-export function computeQueuedTabIds(session: Session): Set<string> {
+export function computeQueuedTabIds(queue: QueuedItem[]): Set<string> {
 	const ids = new Set<string>();
-	for (const item of session.executionQueue ?? []) {
+	for (const item of queue ?? []) {
 		ids.add(item.tabId);
 	}
 	return ids;
@@ -596,7 +597,7 @@ export function filterUnifiedTabOrderForUnread(
 	const inputMode = session.inputMode ?? 'ai';
 	const activeTabId = session.activeTabId ?? null;
 	const activeFileTabId = session.activeFileTabId ?? null;
-	const queuedTabIds = computeQueuedTabIds(session);
+	const queuedTabIds = computeQueuedTabIds(session.executionQueue);
 
 	return order.filter((ref) => {
 		if (ref.type === 'ai') {
@@ -654,7 +655,7 @@ export function groupHasUnreadTabs(session: Session, group: TabGroup): boolean {
 	const showStarred = settings.showStarredInUnreadFilter;
 	const inputMode = session.inputMode ?? 'ai';
 	const activeTabId = session.activeTabId ?? null;
-	const queuedTabIds = computeQueuedTabIds(session);
+	const queuedTabIds = computeQueuedTabIds(session.executionQueue);
 	for (const ref of collectGroupLeafRefs(group)) {
 		if (ref.type !== 'ai') continue;
 		const tab = session.aiTabs.find((t) => t.id === ref.id);
@@ -724,7 +725,7 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
-		const queuedTabIds = computeQueuedTabIds(session);
+		const queuedTabIds = computeQueuedTabIds(session.executionQueue);
 		return visible.filter(
 			(tab) =>
 				tab.hasUnread ||

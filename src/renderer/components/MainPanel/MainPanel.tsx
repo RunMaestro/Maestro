@@ -865,9 +865,12 @@ export const MainPanel = React.memo(
 
 		// Ids of AI tabs with queued execution items, so the TabBar keeps them visible under
 		// the unread filter (pending queued work needs attention). Undefined outside the filter.
+		// Depend on the executionQueue array (not the full session) so streaming/token updates
+		// that leave the queue untouched preserve the Set identity and TabBar's memoization.
+		const executionQueue = activeSession?.executionQueue;
 		const queuedTabIds = useMemo(
-			() => (showUnreadOnly && activeSession ? computeQueuedTabIds(activeSession) : undefined),
-			[showUnreadOnly, activeSession]
+			() => (showUnreadOnly && executionQueue ? computeQueuedTabIds(executionQueue) : undefined),
+			[showUnreadOnly, executionQueue]
 		);
 
 		// Handler for input focus - select session in sidebar
