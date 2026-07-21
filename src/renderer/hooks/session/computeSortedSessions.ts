@@ -131,13 +131,16 @@ export function computeSortedSessions(input: ComputeSortedSessionsInput): Sorted
 			false;
 		if (isActiveOrParentOfActive) return true;
 		const hasUnread = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
-		const isBusy = session.state === 'busy';
+		const isBusyOrError = session.state === 'busy' || session.state === 'error';
 		const children = worktreeChildrenByParent.get(session.id);
 		const hasUnreadChildren =
 			children?.some(
-				(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+				(child) =>
+					child.aiTabs?.some((tab) => tab.hasUnread) ||
+					child.state === 'busy' ||
+					child.state === 'error'
 			) ?? false;
-		return hasUnread || isBusy || hasUnreadChildren;
+		return hasUnread || isBusyOrError || hasUnreadChildren;
 	};
 
 	const visibleSessions: Session[] = [];

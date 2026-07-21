@@ -246,16 +246,19 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 			if (item.id === currentActiveId) return true;
 			// Group chats pass through (they have their own unread badges)
 			if (item.type === 'groupChat') return true;
-			// Check if session is unread or busy
+			// Check if session is unread, busy, or in an error state (all "needs attention")
 			const session = sessions.find((s) => s.id === item.id);
 			if (!session) return false;
 			if (session.aiTabs?.some((tab) => tab.hasUnread)) return true;
-			if (session.state === 'busy') return true;
-			// Check worktree children for unread/busy
+			if (session.state === 'busy' || session.state === 'error') return true;
+			// Check worktree children for unread/busy/error
 			const children = sessions.filter((s) => s.parentSessionId === session.id);
 			if (
 				children.some(
-					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+					(child) =>
+						child.aiTabs?.some((tab) => tab.hasUnread) ||
+						child.state === 'busy' ||
+						child.state === 'error'
 				)
 			)
 				return true;
