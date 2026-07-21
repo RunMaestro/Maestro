@@ -3977,6 +3977,9 @@ interface MaestroAPI {
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
 		onChanged: (callback: () => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
+		onPanelData: (
+			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
+		) => () => void;
 		onRunUiCommand: (
 			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
 		) => () => void;

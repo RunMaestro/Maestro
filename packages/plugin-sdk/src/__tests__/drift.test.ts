@@ -15,6 +15,7 @@ import {
 	UI_SURFACES,
 	HOST_VIEW_SURFACES,
 	MAX_HOST_VIEW_BLOCKS_BYTES,
+	MAX_PANEL_POST_BYTES,
 	serializedJsonByteLength,
 	isPluginUiSurface,
 	isProtectedUiSurface,
@@ -50,6 +51,7 @@ import { HOST_API_VERSION as SRC_HOST_API_VERSION } from '../../../../src/shared
 import {
 	HOST_VIEW_SURFACES as SRC_HOST_VIEW_SURFACES,
 	MAX_HOST_VIEW_BLOCKS_BYTES as SRC_MAX_HOST_VIEW_BLOCKS_BYTES,
+	MAX_PANEL_POST_BYTES as SRC_MAX_PANEL_POST_BYTES,
 	PROTECTED_UI_SURFACES as SRC_PROTECTED_UI_SURFACES,
 	UI_SURFACES as SRC_UI_SURFACES,
 	isHostViewBlocks as srcIsHostViewBlocks,
@@ -94,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.13.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.14.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.13.0');
+		expect(HOST_API_VERSION).toBe('1.14.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -113,6 +115,10 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 	it('host view surfaces and serialized-block cap match the source', () => {
 		expect(HOST_VIEW_SURFACES).toEqual(SRC_HOST_VIEW_SURFACES);
 		expect(MAX_HOST_VIEW_BLOCKS_BYTES).toBe(SRC_MAX_HOST_VIEW_BLOCKS_BYTES);
+	});
+
+	it('panel-post byte cap matches the source', () => {
+		expect(MAX_PANEL_POST_BYTES).toBe(SRC_MAX_PANEL_POST_BYTES);
 	});
 
 	it('serialized JSON byte measurement matches the source contract', () => {

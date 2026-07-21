@@ -12,15 +12,31 @@ const THINKING_CHUNK_FLUSH_INTERVAL_MS = 50;
 const THINKING_CHUNK_FLUSH_SIZE = 8 * 1024;
 
 /**
+ * Best-effort lifecycle string for a tool execution (running / completed /
+ * failed / ...), lifted defensively out of the provider-specific `state` blob.
+ * Returns undefined unless `state` is a plain object carrying a string status,
+ * so nothing content-bearing can ever reach the plugin event payload.
+ */
+function extractToolPhase(state: unknown): string | undefined {
+	if (!state || typeof state !== 'object' || Array.isArray(state)) return undefined;
+	const record = state as Record<string, unknown>;
+	const candidate = record.status ?? record.phase;
+	return typeof candidate === 'string' && candidate ? candidate : undefined;
+}
+
+/**
  * Sets up simple forwarding listeners that pass events directly to renderer.
  * These are lightweight handlers that don't require any processing logic.
  * Also broadcasts tool-execution events to web clients for UX parity.
  */
 export function setupForwardingListeners(
 	processManager: ProcessManager,
-	deps: Pick<ProcessListenerDependencies, 'safeSend' | 'getWebServer' | 'patterns'>
+	deps: Pick<
+		ProcessListenerDependencies,
+		'safeSend' | 'getWebServer' | 'patterns' | 'emitPluginEvent'
+	>
 ): void {
-	const { safeSend, getWebServer, patterns } = deps;
+	const { safeSend, getWebServer, patterns, emitPluginEvent } = deps;
 	const { REGEX_AI_SUFFIX, REGEX_AI_TAB_ID } = patterns;
 
 	// Handle slash commands from Claude Code init message
@@ -85,6 +101,24 @@ export function setupForwardingListeners(
 	// Handle tool execution events (OpenCode, Codex)
 	processManager.on('tool-execution', (sessionId: string, toolEvent: ToolExecution) => {
 		safeSend('process:tool-execution', sessionId, toolEvent);
+
+		// Metadata-only mirror for subscribed plugins: tool NAME and timing only.
+		// `toolEvent.state` carries arguments/results and must never be forwarded;
+		// only a best-effort lifecycle string is lifted out of it.
+		if (emitPluginEvent) {
+			const phase = extractToolPhase(toolEvent.state);
+			emitPluginEvent({
+				topic: 'tool.executed',
+				at: new Date().toISOString(),
+				payload: {
+					sessionId,
+					toolName: toolEvent.toolName,
+					timestamp: toolEvent.timestamp,
+					...(toolEvent.toolCallId ? { toolCallId: toolEvent.toolCallId } : {}),
+					...(phase ? { phase } : {}),
+				},
+			});
+		}
 
 		// Broadcast to web clients for UX parity with desktop thinking stream
 		const webServer = getWebServer();
