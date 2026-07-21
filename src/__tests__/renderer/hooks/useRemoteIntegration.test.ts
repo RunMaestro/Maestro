@@ -56,18 +56,14 @@ describe('useRemoteIntegration', () => {
 	let onRemoteNewTabHandler: ((sessionId: string, responseChannel: string) => void) | undefined;
 	let onRemoteCloseTabHandler: ((sessionId: string, tabId: string) => void) | undefined;
 	let onRemoteRenameTabHandler:
-		| ((sessionId: string, tabId: string, newName: string) => void)
-		| undefined;
+		((sessionId: string, tabId: string, newName: string) => void) | undefined;
 	let onRemoteStarTabHandler:
-		| ((sessionId: string, tabId: string, starred: boolean) => void)
-		| undefined;
+		((sessionId: string, tabId: string, starred: boolean) => void) | undefined;
 	let onRemoteReorderTabHandler:
-		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
-		| undefined;
+		((sessionId: string, fromIndex: number, toIndex: number) => void) | undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
-		| ((id: string, expectedRevision: number, responseChannel: string) => void)
-		| undefined;
+		((id: string, expectedRevision: number, responseChannel: string) => void) | undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
 		| undefined;
@@ -89,8 +85,7 @@ describe('useRemoteIntegration', () => {
 		  }) => void)
 		| undefined;
 	let onRemoteMovementHandler:
-		| ((params: MovementPayload, responseChannel?: string) => void)
-		| undefined;
+		((params: MovementPayload, responseChannel?: string) => void) | undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
