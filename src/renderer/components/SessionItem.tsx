@@ -17,6 +17,7 @@ import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
+import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
@@ -428,6 +429,8 @@ export const SessionItem = memo(function SessionItem({
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 					</div>
 				)}
+				{/* Host-owned secondary actions stay outside session identity and SSH/status indicators. */}
+				{variant !== 'worktree' && <PluginUiItemsSlot surface="sessionRowBadge" className="mt-1" />}
 			</div>
 
 			{/* Right side: Indicators and actions */}

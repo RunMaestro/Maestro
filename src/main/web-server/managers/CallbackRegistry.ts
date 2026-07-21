@@ -27,6 +27,12 @@ import type {
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	NewAITabWithPromptCallback,
+	EnqueueCommandCallback,
+	EnqueueCommandResult,
+	ListQueueCallback,
+	ListQueueResult,
+	RemoveQueueItemCallback,
+	RemoveQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	SetSessionAutoRunFolderCallback,
@@ -148,6 +154,9 @@ export interface WebServerCallbacks {
 	openBrowserTab: OpenBrowserTabCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
+	enqueueCommand: EnqueueCommandCallback | null;
+	listQueue: ListQueueCallback | null;
+	removeQueueItem: RemoveQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
@@ -237,6 +246,9 @@ export class CallbackRegistry {
 		openBrowserTab: null,
 		openTerminalTab: null,
 		newAITabWithPrompt: null,
+		enqueueCommand: null,
+		listQueue: null,
+		removeQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		setSessionAutoRunFolder: null,
@@ -425,6 +437,29 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
+	}
+
+	async enqueueCommand(
+		sessionId: string,
+		command: string,
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		images?: string[],
+		background?: boolean
+	): Promise<EnqueueCommandResult> {
+		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
+		return this.callbacks.enqueueCommand(sessionId, command, inputMode, tabId, images, background);
+	}
+
+	async listQueue(sessionId?: string): Promise<ListQueueResult> {
+		if (!this.callbacks.listQueue) return { success: false, queues: [], error: 'not configured' };
+		return this.callbacks.listQueue(sessionId);
+	}
+
+	async removeQueueItem(sessionId: string, itemId: string): Promise<RemoveQueueItemResult> {
+		if (!this.callbacks.removeQueueItem)
+			return { success: false, removed: false, error: 'not configured' };
+		return this.callbacks.removeQueueItem(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
@@ -969,6 +1004,18 @@ export class CallbackRegistry {
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbacks.newAITabWithPrompt = callback;
+	}
+
+	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
+		this.callbacks.enqueueCommand = callback;
+	}
+
+	setListQueueCallback(callback: ListQueueCallback): void {
+		this.callbacks.listQueue = callback;
+	}
+
+	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
+		this.callbacks.removeQueueItem = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {

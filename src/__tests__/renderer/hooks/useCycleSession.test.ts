@@ -44,7 +44,10 @@ import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session } from '../../../renderer/types';
-import { resetStores } from '../../helpers';
+import { resetStores, createMockSession, createMockAITab } from '../../helpers';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useRetryStore } from '../../../renderer/stores/retryStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
 
 // ============================================================================
 // Helpers
@@ -138,7 +141,14 @@ function makeOpenStarred(parentSessionId: string, tabId: string, displayName: st
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	resetStores(useSessionStore, useGroupChatStore, useUIStore, useSettingsStore);
+	resetStores(
+		useSessionStore,
+		useGroupChatStore,
+		useUIStore,
+		useSettingsStore,
+		useBatchStore,
+		useRetryStore
+	);
 });
 
 // ============================================================================
@@ -1793,6 +1803,159 @@ describe('cycleSession', () => {
 			cycleSession('next', deps);
 
 			// All sessions visible - Alpha → Beta
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+		it('includes auto-running (batch) sessions even if not unread', () => {
+			const sessA = createMockSession({
+				id: 'a',
+				name: 'Alpha',
+				aiTabs: [createMockAITab({ hasUnread: true })],
+			});
+			const sessB = createMockSession({ id: 'b', name: 'Beta' }); // idle, but auto-running
+			const sessC = createMockSession({ id: 'c', name: 'Gamma' }); // neither
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			});
+			useSettingsStore.setState({ groupChatsExpanded: false });
+
+			const deps = makeDeps({ batchSessionIds: new Set(['b']) });
+
+			cycleSession('next', deps);
+
+			// Alpha -> Beta (auto-running counts as visible); Gamma skipped.
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('includes stuck (outage) sessions even if not unread', () => {
+			const sessA = createMockSession({
+				id: 'a',
+				name: 'Alpha',
+				aiTabs: [createMockAITab({ hasUnread: true })],
+			});
+			const sessB = createMockSession({ id: 'b', name: 'Beta' }); // idle, but stuck
+			const sessC = createMockSession({ id: 'c', name: 'Gamma' }); // neither
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			});
+			useSettingsStore.setState({ groupChatsExpanded: false });
+
+			const deps = makeDeps({ stuckOutageIds: new Set(['b']) });
+
+			cycleSession('next', deps);
+
+			// Alpha -> Beta (stuck counts as visible); Gamma skipped.
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('includes parent when a worktree child is auto-running a batch', () => {
+			const parent = createMockSession({ id: 'p', name: 'Parent' }); // idle itself
+			const child = createMockSession({
+				id: 'child1',
+				name: 'Child',
+				parentSessionId: 'p',
+				worktreeBranch: 'feat',
+			});
+			const other = createMockSession({
+				id: 'o',
+				name: 'Other',
+				aiTabs: [createMockAITab({ hasUnread: true })],
+			});
+
+			useSessionStore.setState({
+				sessions: [parent, child, other],
+				activeSessionId: 'o',
+				cyclePosition: -1,
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			});
+			useSettingsStore.setState({ groupChatsExpanded: false });
+
+			const deps = makeDeps({ batchSessionIds: new Set(['child1']) });
+
+			cycleSession('next', deps);
+
+			// Other -> Parent (parent kept because its worktree child is auto-running).
+			expect(useSessionStore.getState().activeSessionId).toBe('p');
+		});
+
+		it('reads auto-running sessions from batchStore when no deps override is given', () => {
+			const sessA = createMockSession({
+				id: 'a',
+				name: 'Alpha',
+				aiTabs: [createMockAITab({ hasUnread: true })],
+			});
+			const sessB = createMockSession({ id: 'b', name: 'Beta' });
+			const sessC = createMockSession({ id: 'c', name: 'Gamma' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			});
+			useSettingsStore.setState({ groupChatsExpanded: false });
+			useBatchStore.setState({
+				batchRunStates: { b: { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+
+			const deps = makeDeps(); // no override -> event-time batchStore read
+
+			cycleSession('next', deps);
+
+			// Alpha -> Beta (batchStore marks 'b' auto-running); Gamma skipped.
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('reads stuck sessions from retryStore when no deps override is given', () => {
+			const sessA = createMockSession({
+				id: 'a',
+				name: 'Alpha',
+				aiTabs: [createMockAITab({ hasUnread: true })],
+			});
+			const sessB = createMockSession({ id: 'b', name: 'Beta' });
+			const sessC = createMockSession({ id: 'c', name: 'Gamma' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			});
+			useSettingsStore.setState({ groupChatsExpanded: false });
+			useRetryStore.getState().patchOutage('outage-b', { sessionId: 'b', status: 'active' });
+
+			const deps = makeDeps(); // no override -> event-time retryStore read
+
+			cycleSession('next', deps);
+
+			// Alpha -> Beta (retryStore marks 'b' stuck); Gamma skipped.
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 	});

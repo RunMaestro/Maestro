@@ -7,4 +7,11 @@ export {
 	PERMISSION_REQUEST_CHANNEL,
 } from './integration';
 export { permissionRelayServer } from './PermissionRelayServer';
-export type { PermissionDecision, PermissionRequest } from './types';
+export { parseQuestionRequest } from './question-request';
+export type {
+	PermissionDecision,
+	PermissionRequest,
+	ParsedQuestion,
+	QuestionOption,
+} from './types';
+export { ASK_USER_QUESTION_TOOL } from './types';

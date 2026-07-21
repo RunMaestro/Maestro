@@ -23,6 +23,34 @@ export type PermissionDecision =
 	| { behavior: 'deny'; message: string };
 
 /**
+ * The claude-code tool that presents multiple-choice questions. Routed through
+ * the relay like any other non-allowed tool, but rendered as a question picker
+ * instead of an allow/deny prompt. Answers are delivered back as a
+ * `{ behavior: 'deny', message }` decision (empirically the only reply shape
+ * claude-code reads as the user's answer on the headless path - see the
+ * Findings in the Tool Display Phase 3 playbook doc).
+ */
+export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion';
+
+/** One selectable option within an AskUserQuestion question. */
+export interface QuestionOption {
+	label: string;
+	description?: string;
+}
+
+/** A single parsed question from an AskUserQuestion tool call. */
+export interface ParsedQuestion {
+	/** The question text shown to the user. */
+	question: string;
+	/** Short header/category label claude attaches to the question. */
+	header?: string;
+	/** The offered choices. */
+	options: QuestionOption[];
+	/** Whether more than one option may be selected. */
+	multiSelect: boolean;
+}
+
+/**
  * A pending permission request, surfaced to the renderer for a user decision.
  * `requestId` is unique per request; `token` identifies the spawn (and thus
  * the session/tab) that produced it.
@@ -37,6 +65,14 @@ export interface PermissionRequest {
 	/** The tool input Claude proposed (command, file path + contents, etc.). */
 	input: Record<string, unknown>;
 	createdAt: number;
+	/**
+	 * Set to 'question' only for AskUserQuestion requests. The renderer renders
+	 * the question picker instead of the allow/deny prompt. Absent for ordinary
+	 * permission requests, which stay byte-for-byte unchanged over the wire.
+	 */
+	kind?: 'question';
+	/** Parsed AskUserQuestion questions; present only when `kind === 'question'`. */
+	questions?: ParsedQuestion[];
 }
 
 /** Identifies which session/tab a spawn's relay token belongs to. */

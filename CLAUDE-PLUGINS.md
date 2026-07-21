@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.12.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.14.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -104,9 +104,10 @@ HostResponse { id, ok, result?, error? } <---postMessage---
   - `sessions.list` / `sessions.get`: projected through `toSessionMetadata` - metadata only, never transcript/prompt text.
   - `transcripts.read`: PROJECTED session content - the caller declares which fields it needs and only allowlisted fields are returned (projection, not redaction). Resolves the session's REAL `projectPath` and RE-authorizes against it (the caller-claimed path is only a broker hint), refuses an untrusted plugin that also holds `net:fetch`/`net:connect`/`process:spawn` (the exfiltration combination), runs under the `ActionGuard` (high-risk rate/concurrency cap), and writes a per-read audit line. The metadata-only event bus is untouched.
   - `storage.*`: per-plugin KV via `kvStore` (values are strings).
-  - `events.subscribe` / `unsubscribe`: filtered to the fixed `PLUGIN_EVENT_TOPICS` catalog.
+  - `events.subscribe` / `unsubscribe`: filtered to the fixed `PLUGIN_EVENT_TOPICS` catalog. Includes `tool.executed`, a metadata-only tool-lifecycle event (tool name + timing, never arguments or results).
   - `agents.dispatch` and `process.spawn`: LIVE but fully gated. Each registers only when `deps.dispatch` / `deps.spawn` are injected (both are wired in `index.ts`). Every call runs the gate stack: allowlist-scope grant (`assertBrokerAllowed`), trusted signature (`assertTrustedActVerb`), Pianola risk ceiling (`assertLowOrMediumRisk`), a closed input schema, and the `ActionGuard` rate/concurrency cap. `agents.dispatch` ADDITIONALLY requires the separate unattended consent (see below) because plugin-initiated dispatch is never user-present.
   - `net.connect` / `net.send` / `net.close`: LIVE, trusted-only persistent outbound WebSocket. Registers only when `deps.netConnect` is injected. `wss:` only; the connect is pinned through the same `EgressGuard` lookup as `net.fetch` (loopback / RFC1918 / link-local / metadata blocked); caps at `MAX_SOCKETS_PER_PLUGIN = 4` per plugin and `MAX_FRAME_BYTES = 64 KB` per frame in both directions; `send`/`close` re-authorize the still-held host grant on every call so a mid-stream revoke denies the next call. The host owns the real socket; the plugin gets a `socketId` handle and receives frames as `net.connect:<socketId>` topic events (via `pushEvent`, not the `PLUGIN_EVENT_TOPICS` catalog). Sockets are force-closed on disable / crash / uninstall.
+  - `ui.panelPost`: requires `ui:panel` and targets ONLY one of the plugin's own declared panels (own-panels-only); JSON-only payload capped at `MAX_PANEL_POST_BYTES = 64 KB`; delivered to the panel page as a `maestro:panelData` window message. One-way push - there is no reply channel back to the sandbox.
 
   **Direct dispatch requires unattended consent.** The `agents.dispatch` handler additionally calls the injected `dispatchUnattendedAllowed(pluginId, agentId)` predicate (wired in `index.ts` to `isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId)`) and denies the call unless the plugin holds the separate, revocable UNATTENDED grant on top of the interactive `agents:dispatch` allowlist grant. The time-based scheduler (`PluginSchedulerHost`) enforces the same unattended check independently and calls the dispatch SINK directly, so it is unaffected by this handler.
 
@@ -132,10 +133,10 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 | `ui:command`          | low    | none  | invoke a registered palette command                                                                                                                                                                                                    |
 | `events:subscribe`    | medium | none  | metadata-only topics                                                                                                                                                                                                                   |
 | `process:spawn`       | high   | none  | LIVE, fully gated: allowlist grant + trusted signature + Pianola risk + ActionGuard + closed schema                                                                                                                                    |
-| `ui:contribute`       | medium | none  | gates accepting declarative `uiItems` into host surfaces (menus, sidebar, status bar)                                                                                                                                                  |
-| `ui:panel`            | medium | none  | gates accepting the plugin's sandboxed `panels`                                                                                                                                                                                        |
+| `ui:contribute`       | medium | none  | gates declarative `uiItems` in approved host-owned surfaces; every surface uses this same capability                                                                                                                                   |
+| `ui:panel`            | medium | none  | gates sandboxed `panels` in approved Maestro regions                                                                                                                                                                                   |
 | `ui:hostView`         | medium | none  | drives brokered updates/removals of the plugin's declared native BlockView data; no plugin renderer runs                                                                                                                               |
-| `ui:render-unsafe`    | high   | none  | escape hatch: full custom UI with interface access (high-trust)                                                                                                                                                                        |
+| `ui:render-unsafe`    | high   | none  | high-trust custom UI only in host-approved, non-protected regions; never a trusted-chrome bypass                                                                                                                                       |
 
 `PermissionRequest = { capability, scope?, reason? }`. Scopes narrow `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); an absent scope means the broad form (the consent UI must present it as such). The user grants a subset at the consent dialog (`plugins:set-grants`).
 
@@ -151,6 +152,12 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 
 - `hostViews` are data-only contributions available to tier-0 and tier-1 plugins: `{ id, surface: 'movement' | 'cadenza', title, description?, blocks? }`. `blocks` is an optional BlockView block array, serialized UTF-8 is capped at 1,000,000 bytes, and the host renderer - not plugin code - draws it. Tier-1 runtime update/remove RPCs require `ui:hostView`, resolve only an already-declared local id, retain its title/surface, and reject cadenza decision/options or agent-routing payloads.
 
+- `uiItems` (tier 1) are declarative host-rendered controls gated by `ui:contribute`: `status-bar`, `menu`, `sidebar`, `activity-bar`, `toolbar`, `tabBar`, `sessionRowBadge`, `groupHeaderBadge`, `settingsSection`, `rightPanelTab`, `contextMenuItem`, and `emptyState`. Their `command` is plugin-local; content is only label/icon/tooltip data, never raw markup.
+
+### Trusted chrome (never plugin-accessible)
+
+`PROTECTED_UI_SURFACES` is an explicit denylist enforced while contributions are collected and again during aggregation; every `PluginUiItemsSlot` repeats the positive-allowlist check at the render boundary. Plugins must never target, nest into, replace, or visually occlude: (1) plugin management and enable/disable controls, (2) permission or consent dialogs, (3) uninstall or grant/revoke flows, or (4) security indicators, including SSH status, permission mode, and agent identity. Those semantic zones are deliberately absent from `PluginUiSurface`. `ui:render-unsafe` is subject to the same guard and does not unlock `ui:contribute` or `ui:panel`.
+
 ## IPC surface (`src/main/ipc/handlers/plugins.ts`)
 
 Channels (all gated on `encoreFeatures.plugins`):
@@ -159,6 +166,7 @@ Channels (all gated on `encoreFeatures.plugins`):
 
 - **Pure-reads invariant.** `plugins:list` and `plugins:contributions` MUST NOT call `refresh()`. `refresh()` reconciles sandboxes and fires `onChange` -> `plugins:changed` -> renderer re-fetch -> read again, an infinite IPC loop that freezes the app. Discovery happens at startup and on mutations only.
 - **Consent (`plugins:set-grants`).** The user approves a SUBSET of the plugin's REQUESTED permissions. The handler intersects approved capabilities with the manifest's requests, so an over-broad grant can never be smuggled in via the renderer, and only known capabilities survive. `plugins:revoke-grants` calls `forgetGrants`.
+- **Host-managed dispatch allow list (`plugins:set-agent-allowlist`, issue #1250).** `agents:dispatch` uses an allowlist scope naming the exact agent ids a plugin may target. The manifest declares the CAPABILITY; the USER owns the SCOPE. This channel is registered in `index.ts` (gated on the trusted main renderer + Encore flag, NOT this module, like `plugins:request-consent`) and re-mints the grant's scope through `AuthorizationStore.setAllowlistScope` - the same sealed-ledger path as consent/revoke, so the epoch bump, anti-rollback, tombstones, and session-only fallback are all preserved. It edits ONLY the scope of an ALREADY-CONSENTED capability: it never adds a capability, never touches the `unattended` flag, and never changes identity (the plugin's files are unchanged, so `verify()` still matches), so adding an agent needs no plugin re-pack/re-sign. The plugin can never reach it (a different principal), and submitted ids are intersected with live sessions and filtered through `isValidAllowlistMember`. Edited from Settings -> Plugins (the `AgentDispatchAllowlist` editor in a plugin's Permissions tab). A denied `agents.dispatch` (an out-of-date allow list) also raises a throttled operator toast, so it no longer fails invisibly.
 
 ## Renderer panel render host + consent
 
@@ -183,12 +191,14 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.12.0`; it added the `net:connect` capability and the
-`net.connect` / `net.send` / `net.close` methods. Earlier: `1.11.0` added
-`groupings` + `ui:grouping`; `1.10.0` added `iconPacks`; `1.9.0` added
-`hostViews`, `ui:hostView`, and the `ui.hostViewUpdate` / `ui.hostViewRemove`
-methods. Plugins declare the `maestro.minHostApi` matching the lowest version
-whose surface they use.
+The current host is `1.14.0`; it added the `tool.executed` event topic and the
+`ui.panelPost` host-to-panel push method. Earlier: `1.13.0` added the
+host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
+added the `net:connect` capability and the `net.connect` / `net.send` /
+`net.close` methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added
+`iconPacks`; `1.9.0` added `hostViews`, `ui:hostView`, and the
+`ui.hostViewUpdate` / `ui.hostViewRemove` methods. Plugins declare the
+`maestro.minHostApi` matching the lowest version whose surface they use.
 
 ## Key invariants and gotchas (read before editing)
 
@@ -201,7 +211,8 @@ whose surface they use.
 7. **Built-in wins.** Plugin agents/contributions can never shadow first-party ids.
 8. **Host views remain data-only.** A plugin may contribute or update only BlockView data for its own declared host view; it cannot supply HTML, renderer code, cadenza decision actions, or agent-routing data. Enforce `MAX_HOST_VIEW_BLOCKS_BYTES` in both declaration parsing and runtime updates.
 9. **Uninstall purges everything** (dir, toggle, grants, KV, `plugins.<id>.*` settings, event subs). Add any new per-plugin state to `purgePluginData`.
-10. **Live but fully gated.** `agents:dispatch`, `process:spawn`, and `net:connect` are wired and reachable, each behind the full gate stack (allowlist/host-scope grant + trusted signature + Pianola risk ceiling + ActionGuard + closed schema; `net:connect` adds wss-only + egress-pinning + socket/frame caps). The direct `agents.dispatch` handler ADDITIONALLY requires the separate unattended consent. These conditions are pinned by the AST wiring guard (`plugin-host-deps-wiring.test.ts`): removing a gate, wiring a partial `net.connect` surface, or dropping `dispatchUnattendedAllowed` fails the build and forces a security review. Do not loosen any of them in isolation.
+10. **Live but fully gated.** `agents:dispatch`, `process:spawn`, and `net:connect` are wired and reachable, each behind the full gate stack (allowlist/host-scope grant + trusted signature + Pianola risk ceiling + ActionGuard + closed schema; `net:connect` adds wss-only + egress-pinning + socket/frame caps). The direct `agents.dispatch` handler additionally requires separate unattended consent. These conditions are pinned by the AST wiring guard (`plugin-host-deps-wiring.test.ts`): removing a gate, wiring a partial `net.connect` surface, or dropping `dispatchUnattendedAllowed` fails the build and forces a security review. Do not loosen any of them in isolation.
+11. **Trusted chrome is permanent.** `PROTECTED_UI_SURFACES` applies to declarative items and every high-trust render tier in collection, aggregation, and at the render boundary. Never create a mount in plugin management/enable-disable, consent, uninstall/grant-revoke, or SSH/permission-mode/agent-identity chrome.
 
 ## Honest tier-1 trust model
 

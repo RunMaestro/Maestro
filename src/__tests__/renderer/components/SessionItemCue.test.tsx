@@ -13,7 +13,8 @@ import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	Activity: () => <span data-testid="icon-activity" />,
 	GitBranch: () => <span data-testid="icon-git-branch" />,
 	Bot: () => <span data-testid="icon-bot" />,

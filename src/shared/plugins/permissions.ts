@@ -59,7 +59,7 @@ export type PluginCapability =
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:hostView' // contribute and update host-rendered BlockView data
 	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
-	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
+	| 'ui:render-unsafe'; // high-trust custom UI in host-approved, non-protected regions
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
@@ -189,6 +189,18 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 
 export function capabilityRisk(capability: PluginCapability): CapabilityRisk {
 	return CAPABILITY_RISK[capability];
+}
+
+/**
+ * Does this capability take an allowlist scope (the Phase-4 act verbs, whose
+ * grant names EXACTLY which agent ids / host-blessed binary names are permitted)?
+ * True for `agents:dispatch` and `process:spawn`. The host uses this to gate the
+ * user-managed allowlist editor: only allowlist-scoped grants have an editable
+ * member set, and an unscoped/empty one denies (never wildcard). Exposes the
+ * module-private scope-kind map to the main-process ledger, which cannot inline it.
+ */
+export function isAllowlistScoped(capability: PluginCapability): boolean {
+	return CAPABILITY_SCOPE_KIND[capability] === 'allowlist';
 }
 
 export function isPluginCapability(value: unknown): value is PluginCapability {
@@ -364,11 +376,27 @@ function hostScopeCovers(scope: string, target: string): boolean {
 }
 
 /**
- * Characters that could smuggle pattern semantics or confuse audit logs out of
- * an allowlist member name. Allowlist members are opaque EXACT tokens (agent
- * ids, host-blessed binary names) - never patterns, paths, or shell text.
+ * Characters that could smuggle pattern semantics, confuse audit logs, or split
+ * the comma-joined scope string out of an allowlist member name. Allowlist
+ * members are opaque EXACT tokens (agent ids, host-blessed binary names) - never
+ * patterns, paths, shell text, or the comma delimiter itself. (Manifest members
+ * are comma-split before this check, so forbidding comma here only guards the
+ * host's per-id validation of user-submitted allow-list edits.)
  */
-const ALLOWLIST_MEMBER_FORBIDDEN = /[*?[\]{}()|<>$`"'\\\/\s\0]/;
+const ALLOWLIST_MEMBER_FORBIDDEN = /[*?[\]{}()|<>$`"'\\\/\s\0,]/;
+
+/**
+ * Is `member` a valid allowlist member: a non-empty EXACT token free of the
+ * pattern/shell/whitespace characters that could smuggle semantics or split the
+ * comma-joined scope string? The host filters user-submitted allowlist ids
+ * (Settings-managed dispatch targets) through this before minting, so a stray
+ * token can never corrupt the scope. Single source of truth for member validity.
+ */
+export function isValidAllowlistMember(member: unknown): member is string {
+	return (
+		typeof member === 'string' && member.length > 0 && !ALLOWLIST_MEMBER_FORBIDDEN.test(member)
+	);
+}
 
 /**
  * Parse an allowlist scope string into its member set: comma-separated EXACT
@@ -397,7 +425,7 @@ function validateAllowlistScope(capability: PluginCapability, scope: unknown): s
 		return `capability "${capability}" allowlist scope has no valid members`;
 	}
 	for (const member of members) {
-		if (ALLOWLIST_MEMBER_FORBIDDEN.test(member)) {
+		if (!isValidAllowlistMember(member)) {
 			return `capability "${capability}" allowlist member "${member}" contains forbidden characters (exact names only)`;
 		}
 	}
@@ -529,15 +557,15 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'transcripts:write':
 			return 'Write brokered entries into session transcripts';
 		case 'ui:contribute':
-			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
+			return "Add declarative items to Maestro's approved host surfaces";
 		case 'ui:panel':
-			return 'Show its own panels inside Maestro';
+			return 'Show its own panels inside approved Maestro regions';
 		case 'ui:hostView':
 			return 'Show and update host-rendered BlockView data in Maestro';
 		case 'ui:grouping':
 			return 'Organize session metadata into virtual sidebar groups';
 		case 'ui:render-unsafe':
-			return "Render its own custom UI with full access to Maestro's interface (advanced - only enable for authors you fully trust)";
+			return 'Render high-trust custom UI only in host-approved, non-protected regions (advanced - only enable authors you fully trust)';
 	}
 }
 

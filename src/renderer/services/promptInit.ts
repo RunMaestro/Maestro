@@ -50,6 +50,36 @@ async function loadAll(force = false): Promise<void> {
 }
 
 /**
+ * Milliseconds to wait for the preload bridge (`window.maestro`) before giving
+ * up. The bridge is typed as always present, but a renderer can run before it
+ * is injected; a short poll closes that race without stalling the gated app
+ * render when the bridge is genuinely absent (e.g. a window with no preload).
+ * Normal startups find the bridge on the first check and never wait.
+ */
+const PROMPT_BRIDGE_WAIT_MS = 1000;
+const PROMPT_BRIDGE_POLL_MS = 50;
+
+/**
+ * Resolve once the prompts bridge is available, or after PROMPT_BRIDGE_WAIT_MS.
+ * Returns whether the bridge became ready.
+ */
+function waitForPromptBridge(): Promise<boolean> {
+	if (window.maestro?.prompts !== undefined) return Promise.resolve(true);
+	return new Promise<boolean>((resolve) => {
+		const deadline = Date.now() + PROMPT_BRIDGE_WAIT_MS;
+		const timer = setInterval(() => {
+			if (window.maestro?.prompts !== undefined) {
+				clearInterval(timer);
+				resolve(true);
+			} else if (Date.now() >= deadline) {
+				clearInterval(timer);
+				resolve(false);
+			}
+		}, PROMPT_BRIDGE_POLL_MS);
+	});
+}
+
+/**
  * Initialize all renderer prompts. Safe to call multiple times (idempotent).
  * Must complete before the app renders components that use prompts.
  */
@@ -63,6 +93,18 @@ export async function initializeRendererPrompts(): Promise<void> {
 	// Start initialization
 	initPromise = (async () => {
 		try {
+			// The preload bridge (`window.maestro`) is typed as always present,
+			// but the renderer can run before it is injected, or in a window
+			// without a preload. Treat that as expected and recoverable: skip
+			// prompt loading so the app still renders (features degrade) and
+			// leave `initialized` false so a later call retries once the bridge
+			// exists. Previously this surfaced as an opaque "reading 'prompts'"
+			// TypeError reported to Sentry on every bridge-less startup
+			// (MAESTRO-W6).
+			if (!(await waitForPromptBridge())) {
+				initPromise = null;
+				return;
+			}
 			await loadAll();
 			initialized = true;
 		} catch (error) {

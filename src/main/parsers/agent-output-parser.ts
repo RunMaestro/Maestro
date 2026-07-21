@@ -86,6 +86,15 @@ export interface ParsedEvent {
 	toolState?: unknown;
 
 	/**
+	 * Id of the parent tool call that spawned the subagent producing this event.
+	 * Set on every event a subagent emits (tool_use, text, thinking), and
+	 * references the spawning tool_use id (claude-code's Task tool). Absent for
+	 * main-transcript events. Only claude-code populates this today; other
+	 * parsers leave it undefined.
+	 */
+	parentToolUseId?: string;
+
+	/**
 	 * Token usage statistics (for 'usage' type)
 	 */
 	usage?: {
@@ -139,6 +148,21 @@ export interface ParsedEvent {
 		name: string;
 		id?: string;
 		input?: unknown;
+	}>;
+
+	/**
+	 * Additional terminal-state tool results carried alongside a primary
+	 * 'tool_use' event when one message bundles several parallel tool_result
+	 * blocks (Claude Code returns parallel tool calls this way). The primary
+	 * result stays in the top-level toolName/toolCallId/toolState fields; the
+	 * remaining results live here so no parallel call is left stuck 'running'.
+	 * Process-manager emits a tool-execution for each.
+	 */
+	toolResultBlocks?: Array<{
+		toolName: string;
+		toolCallId: string;
+		toolState: unknown;
+		parentToolUseId?: string;
 	}>;
 
 	/**

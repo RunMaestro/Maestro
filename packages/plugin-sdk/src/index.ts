@@ -27,6 +27,14 @@ function isNonEmptyString(value: unknown): value is string {
  */
 export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
 
+/**
+ * Maximum UTF-8 size of ONE host-to-panel push (`ui.panelPost`). Panel data is
+ * a live update stream, not a bulk transfer, so the per-message cap is small
+ * and deliberate: it bounds what a plugin can force through the sandbox RPC,
+ * the main-to-renderer IPC, and the webview bridge in a single call.
+ */
+export const MAX_PANEL_POST_BYTES = 64 * 1024;
+
 /** Size of JSON data as it crosses a UTF-8 message boundary. */
 export function serializedJsonByteLength(value: unknown): number | null {
 	let serialized: string | undefined;
@@ -91,7 +99,7 @@ export type PluginCapability =
 	| 'ui:panel' // show its own sandboxed interactive panels
 	| 'ui:hostView' // contribute and update host-rendered BlockView data
 	| 'ui:grouping' // publish virtual session grouping snapshots (presentation only)
-	| 'ui:render-unsafe'; // render arbitrary UI with full interface access (escape hatch)
+	| 'ui:render-unsafe'; // high-trust custom UI in host-approved, non-protected regions
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
@@ -387,40 +395,44 @@ export function describeCapability(capability: PluginCapability): string {
 		case 'transcripts:write':
 			return 'Write brokered entries into session transcripts';
 		case 'ui:contribute':
-			return "Add items to Maestro's interface (menus, sidebar, status bar, settings, themes)";
+			return "Add declarative items to Maestro's approved host surfaces";
 		case 'ui:panel':
-			return 'Show its own panels inside Maestro';
+			return 'Show its own panels inside approved Maestro regions';
 		case 'ui:hostView':
 			return 'Show and update host-rendered BlockView data in Maestro';
 		case 'ui:grouping':
 			return 'Organize session metadata into virtual sidebar groups';
 		case 'ui:render-unsafe':
-			return "Render its own custom UI with full access to Maestro's interface (advanced - only enable for authors you fully trust)";
+			return 'Render high-trust custom UI only in host-approved, non-protected regions (advanced - only enable authors you fully trust)';
 	}
 }
 
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.12.0 for the
- * backward-compatible additive `net:connect` capability plus its `net.connect`
- * / `net.send` / `net.close` host methods (hold an outbound persistent
- * websocket to a host scope, e.g. a Discord/Slack gateway; egress-classified).
- * 1.11.0 added virtual `groupings` contributions and the presentation-only
- * `ui:grouping` publish/clear methods; 1.10.0 added the backward-compatible,
- * data-only `iconPacks` contribution; 1.9.0 added host-rendered `hostViews`,
- * their `ui:hostView` capability, and the `ui.hostViewUpdate` /
- * `ui.hostViewRemove` RPC methods; 1.8.0 added `background.list`; 1.7.0 added
- * history/session/tab/transcript
+ * The host API version this Maestro build implements. Bumped to 1.14.0 for the
+ * backward-compatible additive `tool.executed` event topic (metadata-only tool
+ * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
+ * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES
+ * cap). 1.13.0 added the additive host-mediated `PluginUiSurface` registry and
+ * trusted-chrome guard. 1.12.0 added the backward-compatible additive
+ * `net:connect` capability plus its `net.connect` / `net.send` / `net.close`
+ * host methods (hold an outbound persistent websocket to a host scope, e.g. a
+ * Discord/Slack gateway; egress-classified). 1.11.0 added virtual `groupings`
+ * contributions and the presentation-only `ui:grouping` publish/clear methods;
+ * 1.10.0 added the backward-compatible, data-only `iconPacks` contribution;
+ * 1.9.0 added host-rendered `hostViews`, their `ui:hostView` capability, and the
+ * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods; 1.8.0 added
+ * `background.list`; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
- * `agent.error` / `usage.updated` / `run.completed` + functional
- * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added the
- * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
- * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
+ * `agent.error` / `usage.updated` / `run.completed` plus functional
+ * `sidebar`/`activity-bar`/`toolbar` uiItem surfaces; 1.4.0 added
+ * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
+ * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.12.0';
+export const HOST_API_VERSION = '1.14.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -906,27 +918,109 @@ export interface KeybindingContribution {
 	description?: string;
 }
 
-/** Where a `ui:contribute` item renders. The renderer maps each surface to a
- * concrete region (status bar, menus, sidebar/activity bar, toolbar). */
-export type UiSurface = 'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar';
-
-export const UI_SURFACES: readonly UiSurface[] = [
+/**
+ * Host-mediated regions a plugin may target with a declarative `uiItem`.
+ * Add a future surface by appending one literal here; the union and all
+ * allowlist checks derive from this registry.
+ */
+export const UI_SURFACES = [
 	'status-bar',
 	'menu',
 	'sidebar',
 	'activity-bar',
 	'toolbar',
-];
+	'tabBar',
+	'sessionRowBadge',
+	'groupHeaderBadge',
+	'settingsSection',
+	'rightPanelTab',
+	'contextMenuItem',
+	'emptyState',
+] as const;
 
-/** Type guard: is `value` one of the known UI surfaces? */
-export function isUiSurface(value: unknown): value is UiSurface {
+/** Public union of the host-owned slots available to `ui:contribute`. */
+export type PluginUiSurface = (typeof UI_SURFACES)[number];
+
+/** Compatibility name retained for existing plugin authors. */
+export type UiSurface = PluginUiSurface;
+
+/**
+ * Host-owned chrome that is permanently unavailable to every plugin render
+ * tier. Keep these semantic targets separate from contribution ids: ids are
+ * only provenance/uniqueness, never an authority to mount into a region.
+ */
+export const PROTECTED_UI_SURFACES = [
+	'plugin-management',
+	'permission-consent',
+	'uninstall-grant-revoke',
+	'security-indicators',
+] as const;
+
+export type ProtectedUiSurface = (typeof PROTECTED_UI_SURFACES)[number];
+export type HostUiSurface = PluginUiSurface | ProtectedUiSurface;
+export type PluginUiMountTier = 'ui:contribute' | 'ui:render-unsafe';
+
+export interface PluginUiMountAttempt {
+	pluginId: string;
+	tier: PluginUiMountTier;
+	target: unknown;
+}
+
+export type PluginUiMountValidation =
+	| { allowed: true }
+	| {
+			allowed: false;
+			error: string;
+	  };
+
+/** Is `value` a host zone that plugins may never target or nest beneath? */
+export function isProtectedUiSurface(value: unknown): value is ProtectedUiSurface {
+	return typeof value === 'string' && (PROTECTED_UI_SURFACES as readonly string[]).includes(value);
+}
+
+/** Type guard for the positive allowlist of plugin-contributable host slots. */
+export function isPluginUiSurface(value: unknown): value is PluginUiSurface {
 	return typeof value === 'string' && (UI_SURFACES as readonly string[]).includes(value);
+}
+
+/** Host-internal target guard; unknown strings fail closed. */
+export function isHostUiSurface(value: unknown): value is HostUiSurface {
+	return isPluginUiSurface(value) || isProtectedUiSurface(value);
+}
+
+/** Backward-compatible name for the original public surface guard. */
+export const isUiSurface = isPluginUiSurface;
+
+/**
+ * Shared trusted-chrome admission policy for declarative items and the
+ * high-trust `ui:render-unsafe` tier. The latter has no current mount API, but
+ * any future unsafe renderer must use this exact registry-level check before it
+ * selects a host slot.
+ */
+export function validatePluginUiMount({
+	pluginId,
+	tier,
+	target,
+}: PluginUiMountAttempt): PluginUiMountValidation {
+	if (isProtectedUiSurface(target)) {
+		return {
+			allowed: false,
+			error: `[${pluginId}] ${tier} surface "${target}" is protected chrome and was dropped`,
+		};
+	}
+	if (!isPluginUiSurface(target)) {
+		return {
+			allowed: false,
+			error: `[${pluginId}] ${tier} surface "${String(target)}" is invalid or unavailable`,
+		};
+	}
+	return { allowed: true };
 }
 
 /**
  * A declarative UI item a (tier-1) plugin renders into a host surface. The item
- * is pure data (label / icon / placement) the host renders; activating it invokes
- * one of the plugin's OWN commands through the broker. Gated by the
+ * is pure data (label / icon / tooltip / placement) the host renders; activating
+ * it invokes one of the plugin's OWN commands through the broker. Gated by the
  * `ui:contribute` capability, so an enabled plugin WITHOUT that grant
  * contributes none.
  */
@@ -934,12 +1028,14 @@ export interface UiItemContribution {
 	id: string;
 	localId: string;
 	pluginId: string;
-	surface: UiSurface;
+	surface: PluginUiSurface;
 	label: string;
 	/** Plugin-local command id invoked on activation. */
 	command: string;
 	/** Optional icon keyword the renderer maps to its icon set. */
 	icon?: string;
+	/** Optional host-rendered tooltip; provenance is always appended by the host. */
+	tooltip?: string;
 	/** Optional grouping / ordering hints within the surface. */
 	group?: string;
 	priority?: number;
@@ -1052,6 +1148,7 @@ export const PLUGIN_EVENT_TOPICS = [
 	'cue.runFinished', // a Cue automation run reached a terminal state (status only)
 	'history.entryAdded', // a history entry was added (ids/classification only)
 	'agent.completed', // an agent reached a terminal state (metadata only, no output)
+	'tool.executed', // a tool call started or finished (name + timing only, no arguments or results)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -1136,6 +1233,19 @@ export interface PluginEventPayloads {
 		pipelineName?: string;
 		lineageDepth?: number;
 	};
+	/** A tool call transitioned. Name + timing ONLY: the tool's `state` object,
+	 * arguments and results are content-bearing and must never appear here. */
+	'tool.executed': {
+		sessionId: string;
+		tabId?: string;
+		toolName: string;
+		toolCallId?: string;
+		/** Best-effort lifecycle string (e.g. running / completed / failed) when
+		 * the provider reports one; omitted otherwise. */
+		phase?: string;
+		timestamp: number;
+		durationMs?: number;
+	};
 }
 
 /** A typed host event. */
@@ -1182,6 +1292,7 @@ export const HOST_API = {
 	'ui.runCommand': { capability: 'ui:command' },
 	'ui.hostViewUpdate': { capability: 'ui:hostView' },
 	'ui.hostViewRemove': { capability: 'ui:hostView' },
+	'ui.panelPost': { capability: 'ui:panel' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -1414,6 +1525,10 @@ export interface MaestroUiApi {
 	runCommand(commandId: string, args?: unknown): Promise<unknown>;
 	readonly hostView: MaestroHostViewApi;
 	readonly grouping: MaestroGroupingApi;
+	/** Push a live JSON snapshot to one of this plugin's own declared panels
+	 * (`ui:panel`). Delivered to the panel page as a `maestro:panelData` window
+	 * message; JSON-only, capped at MAX_PANEL_POST_BYTES, no reply channel. */
+	panelPost(panelId: string, data: unknown): Promise<void>;
 }
 
 /** Manage Maestro tabs (`tabs:manage`). */

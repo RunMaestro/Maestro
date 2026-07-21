@@ -23,6 +23,12 @@ export interface LogItemProps {
 	// Expansion state
 	isExpanded: boolean;
 	onToggleExpanded: (logId: string) => void;
+	/**
+	 * Tool entries produced by a subagent this tool call spawned (claude-code's
+	 * Task tool). Rendered indented under this entry's badge, collapsed behind a
+	 * count until `isExpanded`. Undefined for every entry with no subagent.
+	 */
+	subagentLogs?: LogEntry[];
 	// Local filter state
 	localFilterQuery: string;
 	filterMode: { mode: 'include' | 'exclude'; regex: boolean };

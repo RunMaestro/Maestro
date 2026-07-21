@@ -11,10 +11,15 @@ import {
 	HOST_METHOD_CAPABILITY,
 	HOST_API_VERSION,
 	PLUGIN_ID_PATTERN,
+	PROTECTED_UI_SURFACES,
 	UI_SURFACES,
 	HOST_VIEW_SURFACES,
 	MAX_HOST_VIEW_BLOCKS_BYTES,
+	MAX_PANEL_POST_BYTES,
 	serializedJsonByteLength,
+	isPluginUiSurface,
+	isProtectedUiSurface,
+	validatePluginUiMount,
 	capabilityRisk,
 	isHostViewBlocks,
 	describeCapability,
@@ -46,9 +51,14 @@ import { HOST_API_VERSION as SRC_HOST_API_VERSION } from '../../../../src/shared
 import {
 	HOST_VIEW_SURFACES as SRC_HOST_VIEW_SURFACES,
 	MAX_HOST_VIEW_BLOCKS_BYTES as SRC_MAX_HOST_VIEW_BLOCKS_BYTES,
-	serializedJsonByteLength as srcSerializedJsonByteLength,
+	MAX_PANEL_POST_BYTES as SRC_MAX_PANEL_POST_BYTES,
+	PROTECTED_UI_SURFACES as SRC_PROTECTED_UI_SURFACES,
 	UI_SURFACES as SRC_UI_SURFACES,
 	isHostViewBlocks as srcIsHostViewBlocks,
+	isPluginUiSurface as srcIsPluginUiSurface,
+	isProtectedUiSurface as srcIsProtectedUiSurface,
+	serializedJsonByteLength as srcSerializedJsonByteLength,
+	validatePluginUiMount as srcValidatePluginUiMount,
 } from '../../../../src/shared/plugins/contributions';
 
 // This package VENDORS the frozen plugin contracts so it can publish standalone
@@ -86,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.12.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.14.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.12.0');
+		expect(HOST_API_VERSION).toBe('1.14.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -107,6 +117,10 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(MAX_HOST_VIEW_BLOCKS_BYTES).toBe(SRC_MAX_HOST_VIEW_BLOCKS_BYTES);
 	});
 
+	it('panel-post byte cap matches the source', () => {
+		expect(MAX_PANEL_POST_BYTES).toBe(SRC_MAX_PANEL_POST_BYTES);
+	});
+
 	it('serialized JSON byte measurement matches the source contract', () => {
 		for (const value of [[], { blocks: [{ kind: 'text', content: '🪄' }] }]) {
 			expect(serializedJsonByteLength(value)).toBe(srcSerializedJsonByteLength(value));
@@ -121,6 +135,29 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 			{ viewType: 'decision', blocks: [] },
 		]) {
 			expect(isHostViewBlocks(value)).toBe(srcIsHostViewBlocks(value));
+		}
+	});
+
+	it('trusted-chrome catalog and mount policy match the source', () => {
+		expect(PROTECTED_UI_SURFACES).toEqual(SRC_PROTECTED_UI_SURFACES);
+		for (const protectedSurface of PROTECTED_UI_SURFACES) {
+			expect(isProtectedUiSurface(protectedSurface)).toBe(
+				srcIsProtectedUiSurface(protectedSurface)
+			);
+			expect(isPluginUiSurface(protectedSurface)).toBe(srcIsPluginUiSurface(protectedSurface));
+			expect(
+				validatePluginUiMount({
+					pluginId: 'com.acme',
+					tier: 'ui:render-unsafe',
+					target: protectedSurface,
+				})
+			).toEqual(
+				srcValidatePluginUiMount({
+					pluginId: 'com.acme',
+					tier: 'ui:render-unsafe',
+					target: protectedSurface,
+				})
+			);
 		}
 	});
 

@@ -294,7 +294,7 @@ interface MaestroAPI {
 				syncHistory?: boolean;
 			};
 		}) => Promise<{ exitCode: number }>;
-		getActiveProcesses: () => Promise<
+		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;
 				toolType: string;
@@ -342,6 +342,13 @@ interface MaestroAPI {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				kind?: 'question';
+				questions?: Array<{
+					question: string;
+					header?: string;
+					options: Array<{ label: string; description?: string }>;
+					multiSelect: boolean;
+				}>;
 			}) => void
 		) => () => void;
 		respondPermission: (
@@ -531,6 +538,43 @@ interface MaestroAPI {
 			responseChannel: string,
 			success: boolean,
 			tabId?: string
+		) => void;
+		onRemoteEnqueueCommand: (
+			callback: (
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => void
+		) => () => void;
+		sendRemoteEnqueueCommandResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				tabId?: string;
+				queued?: boolean;
+				queuePosition?: number;
+				queueLength?: number;
+				itemId?: string;
+				error?: string;
+			}
+		) => void;
+		onRemoteListQueue: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		) => () => void;
+		sendRemoteListQueueResponse: (
+			responseChannel: string,
+			result: { success: boolean; queues: unknown[]; error?: string }
+		) => void;
+		onRemoteRemoveQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteRemoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; removed: boolean; error?: string }
 		) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
@@ -3918,12 +3962,16 @@ interface MaestroAPI {
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		requestConsent: (id: string) => Promise<{ opened: boolean }>;
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		setAgentAllowlist: (id: string, agentIds: string[]) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
 		onChanged: (callback: () => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
+		onPanelData: (
+			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
+		) => () => void;
 		onRunUiCommand: (
 			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
 		) => () => void;

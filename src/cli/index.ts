@@ -11,6 +11,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -356,7 +357,34 @@ program
 		'--focus',
 		'Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)'
 	)
+	.option(
+		'--queue',
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab or --force. Returns the queue position.'
+	)
+	.option('--wait', 'Alias for --queue')
 	.action(dispatch);
+
+// Queue commands - inspect and manage the desktop execution queue populated by
+// `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
+// cleanup/debugging. The queue lives authoritatively in the desktop renderer.
+const queue = program
+	.command('queue')
+	.description('Inspect and manage the desktop execution queue (from dispatch --queue)');
+
+queue
+	.command('list')
+	.description('List queued execution items as JSON (all agents, or one with --agent)')
+	.option(
+		'-a, --agent <id>',
+		'Only list items for this agent (default: every agent with queued items)'
+	)
+	.action(queueList);
+
+queue
+	.command('remove <item-id>')
+	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueRemove);
 
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro

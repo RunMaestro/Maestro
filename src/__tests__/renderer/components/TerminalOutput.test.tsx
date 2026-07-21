@@ -1975,6 +1975,103 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('npm run test')).toBeInTheDocument();
 		});
 
+		it('collapses subagent tool calls behind a count under the Task badge', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-task_1',
+					text: 'Task',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { description: 'explore parsers' } } },
+				}),
+				createLogEntry({
+					id: 'tool-child_a',
+					text: 'Grep',
+					source: 'tool',
+					metadata: {
+						toolState: { status: 'completed', input: { pattern: 'parseJsonLine' } },
+						parentToolUseId: 'task_1',
+					},
+				}),
+				createLogEntry({
+					id: 'tool-child_b',
+					text: 'Read',
+					source: 'tool',
+					metadata: {
+						toolState: { status: 'completed', input: { file_path: '/tmp/a.ts' } },
+						parentToolUseId: 'task_1',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// Parent renders; children are hidden behind the count until expanded.
+			expect(screen.getByText('Task')).toBeInTheDocument();
+			expect(screen.getByText('2 tool calls')).toBeInTheDocument();
+			expect(screen.queryByText('Grep')).not.toBeInTheDocument();
+			expect(screen.queryByText('Read')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('2 tool calls'));
+
+			expect(screen.getByText('Grep')).toBeInTheDocument();
+			expect(screen.getByText('Read')).toBeInTheDocument();
+		});
+
+		it('singularizes the subagent tool call count', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-task_1',
+					text: 'Task',
+					source: 'tool',
+					metadata: { toolState: { status: 'running' } },
+				}),
+				createLogEntry({
+					id: 'tool-child_a',
+					text: 'Grep',
+					source: 'tool',
+					metadata: { toolState: { status: 'running' }, parentToolUseId: 'task_1' },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getByText('1 tool call')).toBeInTheDocument();
+		});
+
+		it('renders an orphaned subagent tool entry flat', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-child_a',
+					text: 'Grep',
+					source: 'tool',
+					metadata: {
+						toolState: { status: 'completed', input: { pattern: 'orphan' } },
+						parentToolUseId: 'trimmed_away',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Grep')).toBeInTheDocument();
+			expect(screen.getByText('orphan')).toBeInTheDocument();
+			expect(screen.queryByText(/tool calls?$/)).not.toBeInTheDocument();
+		});
+
 		it('renders Bash tool with description and full multi-line command', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({

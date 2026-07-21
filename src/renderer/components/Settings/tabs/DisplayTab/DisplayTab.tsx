@@ -22,6 +22,8 @@ import {
 } from './components';
 import { useBionifyAlgorithmState, useFontConfigurationState } from './hooks';
 import type { DisplayTabProps } from './types';
+import { PluginPanelSlot } from '../../../plugins/PluginPanelSlot';
+import { PluginUiItemsSlot } from '../../../plugins/PluginUiItemsSlot';
 
 export type { DisplayTabProps } from './types';
 
@@ -134,6 +136,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setUseCmd0AsLastTab={settings.setUseCmd0AsLastTab}
 				showBrowserTabDomain={settings.showBrowserTabDomain}
 				setShowBrowserTabDomain={settings.setShowBrowserTabDomain}
+				tabBarWheelScroll={settings.tabBarWheelScroll}
+				setTabBarWheelScroll={settings.setTabBarWheelScroll}
 			/>
 			<DocumentGraphSection
 				theme={theme}
@@ -171,6 +175,15 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setSshReduceEntryCapEnabled={settings.setSshReduceEntryCapEnabled}
 				sshReduceEntryCapFraction={settings.sshReduceEntryCapFraction}
 				setSshReduceEntryCapFraction={settings.setSshReduceEntryCapFraction}
+			/>
+
+			{/* This neutral display-settings slot is deliberately outside plugin
+			    management, consent, uninstall, and grant/revoke flows. */}
+			<PluginUiItemsSlot surface="settingsSection" className="rounded-lg border p-3" />
+			<PluginPanelSlot
+				theme={theme}
+				placement="settings"
+				className="flex flex-col overflow-hidden rounded-lg border h-[440px]"
 			/>
 
 			{bionifyAlgorithmState.showInfoModal && (

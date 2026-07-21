@@ -37,9 +37,11 @@ import { evaluatePluginDispatch } from '../../shared/plugins/plugin-dispatch-gat
 import {
 	isHostViewBlocks,
 	MAX_HOST_VIEW_BLOCKS_BYTES,
+	MAX_PANEL_POST_BYTES,
 	serializedJsonByteLength,
 	type HostViewBlocks,
 	type HostViewContribution,
+	type PanelContribution,
 } from '../../shared/plugins/contributions';
 import type { HistoryEntry } from '../../shared/types';
 
@@ -218,6 +220,15 @@ export interface HostHandlerDeps {
 		localId: string,
 		blocks?: HostViewBlocks
 	) => boolean;
+
+	/** Resolve a caller-owned local panel id against active panel declarations.
+	 * A plugin may only push data into panels IT declared. */
+	getPanel?: (pluginId: string, localId: string) => PanelContribution | null;
+	/** Host-to-panel push sink. Receives the already-namespaced panel id and
+	 * validated, size-capped JSON data; broadcasts it to the renderer(s) so the
+	 * owning panel webview can receive it. Absent means the method is not
+	 * registered at all (fail closed). */
+	panelPost?: (pluginId: string, namespacedPanelId: string, data: unknown) => void;
 
 	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
 	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
@@ -1292,6 +1303,37 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// directly, bypassing this handler). We deliberately do NOT try to infer
 	// "user-initiated" presence here: it is racy and Relay needs the unattended
 	// grant regardless.
+	// ui.panelPost: the ONLY host-to-panel push channel. It is data-in, never
+	// code: the payload is JSON-validated and size-capped here, structured-cloned
+	// across every hop, and the renderer/guest never evaluate it. A plugin can
+	// target only panels IT declared, so the channel creates no cross-plugin
+	// reach and no new egress. Registered only when the sink is wired (fail
+	// closed, mirroring agents.dispatch).
+	if (deps.panelPost) {
+		const panelPost = deps.panelPost;
+		handlers['ui.panelPost'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('ui.panelPost', p, { panelId: true, data: true });
+			const panelId = p.panelId;
+			if (typeof panelId !== 'string' || panelId.trim() === '' || panelId !== panelId.trim()) {
+				throw new Error('panelId is required');
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.panelPost', p);
+			// Own-panels-only: `panelId` is the caller's LOCAL id, resolved against
+			// this plugin's declarations. A namespaced or foreign id never resolves.
+			if (!deps.getPanel?.(pluginId, panelId)) {
+				throw new Error(`panel "${panelId}" is not declared by this plugin`);
+			}
+			const byteLength = serializedJsonByteLength(p.data);
+			if (byteLength === null) throw new Error('panel data must be JSON-serializable');
+			if (byteLength > MAX_PANEL_POST_BYTES) {
+				throw new Error(`panel data exceeds the ${MAX_PANEL_POST_BYTES}-byte size limit`);
+			}
+			panelPost(pluginId, `${pluginId}/${panelId}`, p.data);
+			return { ok: true };
+		};
+	}
+
 	if (deps.dispatch) {
 		const dispatch = deps.dispatch;
 		handlers['agents.dispatch'] = async (pluginId, params) => {

@@ -226,12 +226,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							? sessionsRef.current.find((s) => s.id === resolvedSessionId)
 							: undefined) ?? selectActiveSession(useSessionStore.getState()));
 
-			const resolveTargetTab = (session: Session) => {
-				if (options?.tabId) {
-					return session.aiTabs.find((t) => t.id === options.tabId) ?? getActiveTab(session);
-				}
-				return getActiveTab(session);
-			};
+			// Pin the target tab before any async work. The user can switch tabs while
+			// process reconciliation or agent configuration is in flight, but this send
+			// must keep using the tab that owned the submitted input.
+			const targetTabId = activeSession
+				? options?.tabId && activeSession.aiTabs.some((tab) => tab.id === options.tabId)
+					? options.tabId
+					: getActiveTab(activeSession)?.id
+				: undefined;
+			const resolveTargetTab = (session: Session) =>
+				targetTabId ? session.aiTabs.find((tab) => tab.id === targetTabId) : getActiveTab(session);
 
 			const syncTarget = activeSession
 				? {
@@ -586,6 +590,52 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (currentMode === 'ai') {
 				const activeTab = resolveTargetTab(activeSession);
 				const isReadOnlyMode = activeTab?.readOnlyMode === true;
+				const targetProcessSessionId = `${activeSession.id}-ai-${activeTab?.id || 'default'}`;
+				const sessionProcessPrefix = `${activeSession.id}-ai-`;
+				let sameTabProcessActive = false;
+				let anySessionAiProcessActive = false;
+				let activeProcessStartTime: number | undefined;
+
+				// The renderer can briefly say "idle" before the process exit event has
+				// reconciled into session state. Main-process ownership is authoritative:
+				// spawning another turn with the same id would otherwise replace the live
+				// process and discard its eventual response.
+				try {
+					const activeProcesses = await window.maestro.process.getActiveProcesses({
+						includeChildProcesses: false,
+					});
+					const sessionAiProcesses = activeProcesses.filter(
+						(process) =>
+							!process.isTerminal &&
+							!process.isCueRun &&
+							process.sessionId.startsWith(sessionProcessPrefix)
+					);
+					anySessionAiProcessActive = sessionAiProcesses.length > 0;
+					sameTabProcessActive = sessionAiProcesses.some(
+						(process) =>
+							process.sessionId === targetProcessSessionId ||
+							process.sessionId.startsWith(`${targetProcessSessionId}-fp-`)
+					);
+					activeProcessStartTime = sessionAiProcesses.reduce<number | undefined>(
+						(earliest, process) => {
+							if (process.startTime === undefined) return earliest;
+							return earliest === undefined
+								? process.startTime
+								: Math.min(earliest, process.startTime);
+						},
+						undefined
+					);
+				} catch (error) {
+					logger.warn(
+						'[processInput] Failed to reconcile active processes before queue decision:',
+						undefined,
+						error
+					);
+					// Preserve the input when process ownership is unknown. Treating an IPC
+					// failure as idle can retry the same process id and lose the live response.
+					sameTabProcessActive = true;
+					anySessionAiProcessActive = true;
+				}
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
@@ -626,11 +676,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// ALSO: Always queue write commands when AutoRun is active (to prevent file conflicts)
 				// FORCE PARALLEL: queues only when THIS tab is busy (skips cross-tab and AutoRun wait).
 				// When the tab finishes, the queued item dispatches immediately without waiting for other tabs.
-				const shouldQueue = forceParallel
-					? activeTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
-					: isReadOnlyMode
-						? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
-						: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive; // Write mode: queue if busy OR AutoRun active
+				const processStateRequiresQueue =
+					sameTabProcessActive ||
+					(!forceParallel &&
+						!isReadOnlyMode &&
+						activeSession.state !== 'busy' &&
+						anySessionAiProcessActive);
+				const shouldQueue =
+					processStateRequiresQueue ||
+					(forceParallel
+						? activeTab?.state === 'busy' // Force parallel: only queue if THIS tab is busy
+						: isReadOnlyMode
+							? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
+							: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive); // Write mode: queue if busy OR AutoRun active
 
 				// Debug logging to diagnose queue issues
 				logger.info('[processInput] Queue decision:', undefined, {
@@ -640,6 +698,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					isReadOnlyMode,
 					isAutoRunActive,
 					forceParallel,
+					sameTabProcessActive,
+					anySessionAiProcessActive,
+					processStateRequiresQueue,
 					shouldQueue,
 					queueLength: activeSession.executionQueue.length,
 				});
@@ -670,8 +731,26 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== resolvedSessionId) return s;
+							const reconciledAiTabs = sameTabProcessActive
+								? s.aiTabs.map((tab) =>
+										tab.id === queuedItem.tabId
+											? {
+													...tab,
+													state: 'busy' as const,
+													thinkingStartTime:
+														tab.thinkingStartTime || activeProcessStartTime || Date.now(),
+												}
+											: tab
+									)
+								: s.aiTabs;
 							return {
 								...s,
+								...(processStateRequiresQueue && {
+									state: 'busy' as SessionState,
+									busySource: 'ai' as const,
+									thinkingStartTime: s.thinkingStartTime || activeProcessStartTime || Date.now(),
+									aiTabs: reconciledAiTabs,
+								}),
 								executionQueue: [...s.executionQueue, queuedItem],
 							};
 						})
@@ -1135,12 +1214,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const targetPid = currentMode === 'ai' ? activeSession.aiPid : activeSession.terminalPid;
 			// For batch mode (Claude), include tab ID in session ID to prevent process collision
 			// This ensures each tab's process has a unique identifier
-			const activeTabForSpawn = resolveTargetTab(activeSession);
 			const isForceParallel =
 				options?.forceParallel === true && useSettingsStore.getState().forcedParallelExecution;
 			const targetSessionId =
 				currentMode === 'ai'
-					? `${activeSession.id}-ai-${activeTabForSpawn?.id || 'default'}`
+					? `${activeSession.id}-ai-${targetTabId || 'default'}`
 					: `${activeSession.id}-terminal`;
 
 			// Check if this is an AI agent in batch mode
@@ -1164,13 +1242,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						const agent = await window.maestro.agents.get(activeSession.toolType);
 						if (!agent) throw new Error(`${activeSession.toolType} agent not found`);
 
-						// IMPORTANT: Get fresh session state from ref to avoid stale closure bug
-						// If user switches tabs quickly, activeSession from closure may have wrong activeTabId
+						// Read mutable session fields from the ref, but keep the submitted tab pinned.
 						const freshSession = sessionsRef.current.find((s) => s.id === resolvedSessionId);
 						if (!freshSession) throw new Error('Session not found');
 
-						// Use the ACTIVE TAB's agentSessionId (not the deprecated session-level one)
 						const freshActiveTab = resolveTargetTab(freshSession);
+						if (!freshActiveTab) throw new Error('Target tab not found');
+
+						// Use the target tab's agentSessionId (not the deprecated session-level one)
 						const tabAgentSessionId = freshActiveTab?.agentSessionId;
 
 						if (!tabAgentSessionId && freshActiveTab?.logs && freshActiveTab.logs.length > 0) {
@@ -1268,7 +1347,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						//    turn; on resume the prompt is already in the transcript.
 						const appendSystemPrompt = await prepareMaestroSystemPrompt({
 							session: freshSession,
-							activeTabId: freshSession.activeTabId,
+							activeTabId: targetTabId,
 						});
 
 						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
@@ -1320,7 +1399,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						setSessions((prev) =>
 							prev.map((s) => {
 								if (s.id !== resolvedSessionId) return s;
-								const errorTabId = options?.tabId ?? s.activeTabId;
+								const errorTabId = targetTabId ?? s.activeTabId;
 								// Reset target tab's state to 'idle' and add error log
 								const updatedAiTabs =
 									s.aiTabs?.length > 0

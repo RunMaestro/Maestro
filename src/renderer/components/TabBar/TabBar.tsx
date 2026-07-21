@@ -21,8 +21,10 @@ import { NewTabPopover } from './NewTabPopover';
 import { SearchPopover } from './SearchPopover';
 import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import { buildFileTabDisplayNames } from '../../hooks/tabs/internal/filePreviewTabHelpers';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { TabBarProps } from './types';
+import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { logger } from '../../utils/logger';
 
 /** Approximate width of the sticky right "+" button area (px) */
@@ -86,6 +88,7 @@ function TabBarInner({
 	onSendBrowserContentToAgent,
 	activeGroupId,
 	unreadGroupIds,
+	queuedTabIds,
 	onGroupSelect,
 	onGroupRename,
 	onGroupBreakApart,
@@ -124,6 +127,7 @@ function TabBarInner({
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
 	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
+	const tabBarWheelScroll = useSettingsStore((s) => s.tabBarWheelScroll);
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
@@ -188,6 +192,34 @@ function TabBarInner({
 		showUnreadOnly,
 	]);
 
+	// Pan the horizontally-overflowing tab strip with the mouse wheel. A plain
+	// vertical wheel (deltaY) is translated into horizontal scroll, matching the
+	// VS Code convention; trackpads and Shift+wheel emit deltaX, so we follow
+	// whichever axis the device reports. Bound with passive: false because the
+	// handler calls preventDefault(), which passive wheel listeners (the browser
+	// default, and React's synthetic onWheel) are not allowed to do.
+	useEventListener(
+		'wheel',
+		(event) => {
+			const el = tabBarRef.current;
+			if (!el) return;
+			const e = event as WheelEvent;
+			const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+			if (delta === 0) return;
+			// Only claim the event when the strip can actually move in the delta's
+			// direction. At a clamped edge (or with no overflow at all) the wheel
+			// falls through to the surrounding content instead of being swallowed.
+			// The 1px slack absorbs fractional scrollLeft values.
+			const maxScrollLeft = el.scrollWidth - el.clientWidth;
+			const canPan =
+				maxScrollLeft > 0 && (delta > 0 ? el.scrollLeft < maxScrollLeft - 1 : el.scrollLeft > 1);
+			if (!canPan) return;
+			el.scrollLeft += delta;
+			e.preventDefault();
+		},
+		{ target: tabBarRef.current, enabled: tabBarWheelScroll, passive: false }
+	);
+
 	// Filter tabs for display. Memoized so the filter only re-runs when the
 	// inputs actually change - without this, every TabBar render (e.g. on input
 	// keystrokes or unrelated session updates) re-walks the tabs array.
@@ -202,7 +234,8 @@ function TabBarInner({
 						stuckTabIds.has(t.id) ||
 						(inputMode === 'ai' && t.id === activeTabId) ||
 						hasDraft(t) ||
-						(showStarredInUnreadFilter && t.starred)
+						(showStarredInUnreadFilter && t.starred) ||
+						(queuedTabIds?.has(t.id) ?? false)
 				)
 			: tabs;
 	}, [
@@ -213,6 +246,7 @@ function TabBarInner({
 		showStarredInUnreadFilter,
 		stuckTabIds,
 		ownsActiveAgent,
+		queuedTabIds,
 	]);
 
 	const displayedUnifiedTabs = useMemo(() => {
@@ -231,7 +265,8 @@ function TabBarInner({
 					stuckTabIds.has(ut.id) ||
 					(inputMode === 'ai' && ut.id === activeTabId) ||
 					hasDraft(ut.data) ||
-					(showStarredInUnreadFilter && ut.data.starred)
+					(showStarredInUnreadFilter && ut.data.starred) ||
+					(queuedTabIds?.has(ut.id) ?? false)
 				);
 			}
 			// File preview tabs: hidden by default in unread filter, shown if setting
@@ -261,6 +296,7 @@ function TabBarInner({
 		ownsActiveAgent,
 		unreadGroupIds,
 		stuckTabIds,
+		queuedTabIds,
 	]);
 
 	// Drag handlers
@@ -856,6 +892,9 @@ function TabBarInner({
 			{/* Tab group chips render inline within the unified tab loop above (each
 			    tiled group is a first-class `group` unified tab, ordered by its ref in
 			    unifiedTabOrder), so no separate append here. */}
+
+			{/* Trailing plugin actions are host-rendered controls, never tab chips. */}
+			<PluginUiItemsSlot surface="tabBar" className="shrink-0 self-center mb-1" />
 
 			{/* New tab button + popover */}
 			<NewTabPopover
