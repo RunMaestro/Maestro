@@ -51,6 +51,7 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
@@ -572,6 +573,113 @@ describe('StdoutHandler', () => {
 					},
 				})
 			);
+		});
+
+		it('should forward parentToolUseId on claude subagent tool events', () => {
+			const parser = new ClaudeOutputParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser,
+			});
+			const toolSpy = vi.fn();
+			emitter.on('tool-execution', toolSpy);
+
+			// Subagent tool_use start
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				parent_tool_use_id: 'toolu_task_1',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: { pattern: 'x' } }],
+				},
+			});
+
+			// Subagent tool_result
+			sendJsonLine(handler, sessionId, {
+				type: 'user',
+				parent_tool_use_id: 'toolu_task_1',
+				message: {
+					role: 'user',
+					content: [{ type: 'tool_result', tool_use_id: 'toolu_child', content: 'no matches' }],
+				},
+			});
+
+			expect(toolSpy).toHaveBeenCalledTimes(2);
+			expect(toolSpy.mock.calls[0][1]).toMatchObject({
+				toolName: 'Grep',
+				toolCallId: 'toolu_child',
+				parentToolUseId: 'toolu_task_1',
+			});
+			expect(toolSpy.mock.calls[1][1]).toMatchObject({
+				toolCallId: 'toolu_child',
+				parentToolUseId: 'toolu_task_1',
+			});
+		});
+
+		it('should emit a terminal event for every parallel tool_result in one message', () => {
+			const parser = new ClaudeOutputParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser,
+			});
+			const toolSpy = vi.fn();
+			emitter.on('tool-execution', toolSpy);
+
+			// Two parallel tool_use starts.
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [
+						{ type: 'tool_use', id: 'toolu_a', name: 'Read', input: {} },
+						{ type: 'tool_use', id: 'toolu_b', name: 'Grep', input: { pattern: 'x' } },
+					],
+				},
+			});
+
+			// Both results bundled into a single user message.
+			sendJsonLine(handler, sessionId, {
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [
+						{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'a-out' },
+						{ type: 'tool_result', tool_use_id: 'toolu_b', content: 'b-out' },
+					],
+				},
+			});
+
+			// 2 running + 2 completed = 4 emissions; neither parallel call is left running.
+			const completed = toolSpy.mock.calls
+				.map((c) => c[1])
+				.filter((e) => e.state?.status === 'completed')
+				.map((e) => e.toolCallId)
+				.sort();
+			expect(completed).toEqual(['toolu_a', 'toolu_b']);
+		});
+
+		it('should omit parentToolUseId for main-transcript claude tool events', () => {
+			const parser = new ClaudeOutputParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser,
+			});
+			const toolSpy = vi.fn();
+			emitter.on('tool-execution', toolSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: 'toolu_main', name: 'Read', input: {} }],
+				},
+			});
+
+			expect(toolSpy).toHaveBeenCalledTimes(1);
+			expect(toolSpy.mock.calls[0][1].parentToolUseId).toBeUndefined();
 		});
 
 		it('should not emit Copilot reasoning summaries as thinking chunks or final text', () => {

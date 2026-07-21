@@ -23,6 +23,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
 import { createPending, lookupBinding } from './registry';
+import { parseQuestionRequest } from './question-request';
 import type { BridgeToServerMessage, PermissionRequest, ServerToBridgeMessage } from './types';
 
 const LOG_CONTEXT = '[PermissionRelay]';
@@ -210,14 +211,19 @@ export class PermissionRelayServer {
 
 		// Server-side globally-unique id used as the pending key + renderer id.
 		const requestId = randomUUID();
+		const input = msg.input ?? {};
+		// AskUserQuestion is surfaced as a question picker, not an allow/deny
+		// prompt. Ordinary tools return null here and stay byte-for-byte unchanged.
+		const questionFields = parseQuestionRequest(msg.toolName, input);
 		const request: PermissionRequest = {
 			requestId,
 			token: msg.token,
 			sessionId: binding.sessionId,
 			tabId: binding.tabId,
 			toolName: msg.toolName,
-			input: msg.input ?? {},
+			input,
 			createdAt: Date.now(),
+			...(questionFields ?? {}),
 		};
 
 		const decisionPromise = createPending(requestId, msg.token);

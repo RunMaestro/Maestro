@@ -233,6 +233,13 @@ export interface LogEntry {
 			input?: unknown;
 			output?: unknown;
 		};
+		/**
+		 * For tool entries produced inside a subagent: the `toolCallId` of the
+		 * parent tool call that spawned it (claude-code's Task tool). The
+		 * transcript nests these badges under the matching parent entry; entries
+		 * whose parent is not in the log render flat. Only claude-code sets it.
+		 */
+		parentToolUseId?: string;
 		hiddenProgress?: {
 			kind: 'thinking' | 'tool';
 			toolName?: string;
@@ -526,6 +533,7 @@ export interface AITab {
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	showTools?: boolean; // Controls tool-badge display, independent of showThinking. Absent falls back to showThinking's on/off state (see toolLogsRecorded); new tabs default to true.
 	enterToSend?: boolean; // Per-tab send-key override; undefined inherits `enterToSendAI` setting. Toggling the chip or palette action stores an override here so new tabs continue using the global default.
 	customModel?: string; // Per-tab model override; falls back to session.customModel, then agent default
 	customEffort?: string; // Per-tab effort/reasoning override; falls back to session.customEffort, then agent default

@@ -13,6 +13,7 @@ import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type { ParsedQuestion } from '../permission-relay/types';
 import type {
 	ConcertoDesignerAction,
 	ConcertoDesignerActionResult,
@@ -292,6 +293,10 @@ export function createProcessApi() {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				// AskUserQuestion requests carry a parsed question payload; ordinary
+				// permission requests omit both fields (unchanged shape).
+				kind?: 'question';
+				questions?: ParsedQuestion[];
 			}) => void
 		): (() => void) => {
 			const handler = (_: unknown, request: Parameters<typeof callback>[0]) => callback(request);

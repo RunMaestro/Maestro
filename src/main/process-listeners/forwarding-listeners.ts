@@ -105,6 +105,7 @@ export function setupForwardingListeners(
 						status: (toolState?.status as 'running' | 'completed' | 'error') ?? 'running',
 						input: toolState?.input as Record<string, unknown> | undefined,
 					},
+					parentToolUseId: toolEvent.parentToolUseId,
 				},
 			});
 		}
