@@ -457,19 +457,27 @@ export function useTabHasActiveOutage(sessionId: string, tabId: string): boolean
 }
 
 /**
+ * Set of agent ids that currently have an active outage. Event-time selector for
+ * non-reactive callers (e.g. `cycleSession`'s getState() path); the reactive
+ * `useActiveOutageSessionSignature` below derives its signature from this so the
+ * two never diverge.
+ */
+export function selectActiveOutageSessionIds(s: Pick<RetryStore, 'outages'>): Set<string> {
+	const ids = new Set<string>();
+	for (const id in s.outages) {
+		const o = s.outages[id];
+		if (o.status === 'active') ids.add(o.sessionId);
+	}
+	return ids;
+}
+
+/**
  * Reactive: a stable, comma-joined signature of all agent ids that currently
  * have an active outage. Primitive return → referential stability, so the Left
  * Bar filter memo only recomputes when the set of stuck agents actually changes.
  */
 export function useActiveOutageSessionSignature(): string {
-	return useRetryStore((s) => {
-		const ids = new Set<string>();
-		for (const id in s.outages) {
-			const o = s.outages[id];
-			if (o.status === 'active') ids.add(o.sessionId);
-		}
-		return Array.from(ids).sort().join(',');
-	});
+	return useRetryStore((s) => Array.from(selectActiveOutageSessionIds(s)).sort().join(','));
 }
 
 /**

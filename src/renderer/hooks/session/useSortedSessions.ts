@@ -1,6 +1,10 @@
 import { useCallback, useMemo } from 'react';
 import type { Session, Group } from '../../types';
 import { stripLeadingEmojis, compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import {
+	sessionOrChildrenNeedAttention,
+	outageIdsFromSignature,
+} from '../../utils/sessionAttention';
 
 // Re-export for backwards compatibility with existing imports
 export { stripLeadingEmojis, compareNamesIgnoringEmojis };
@@ -24,6 +28,10 @@ export interface UseSortedSessionsDeps {
 	showUnreadAgentsOnly?: boolean;
 	/** Active session id - kept visible even when the unread filter would exclude it */
 	activeSessionId?: string | null;
+	/** Session ids with an active Auto Run batch - kept visible under the unread filter. */
+	activeBatchSessionIds?: string[];
+	/** Comma-joined signature of agent ids stuck auto-retrying an outage. */
+	stuckOutageSignature?: string;
 }
 
 /**
@@ -68,7 +76,15 @@ export interface UseSortedSessionsReturn {
  * @returns Sorted and visible session arrays
  */
 export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSessionsReturn {
-	const { sessions, groups, bookmarksCollapsed, showUnreadAgentsOnly, activeSessionId } = deps;
+	const {
+		sessions,
+		groups,
+		bookmarksCollapsed,
+		showUnreadAgentsOnly,
+		activeSessionId,
+		activeBatchSessionIds,
+		stuckOutageSignature,
+	} = deps;
 
 	// Memoize worktree children lookup for O(1) access instead of O(n) per parent
 	// This reduces complexity from O(n²) to O(n) when building sorted sessions
@@ -200,24 +216,29 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 
 	// Matches the unread-filter logic in useSessionCategories so visibleSessions (used for
 	// jump badges + Alt+Cmd+N shortcuts) stays in sync with the Left Bar's rendered list.
+	const attentionCtx = useMemo(
+		() => ({
+			batchSessionIds: new Set(activeBatchSessionIds ?? []),
+			stuckOutageIds: outageIdsFromSignature(stuckOutageSignature ?? ''),
+		}),
+		[activeBatchSessionIds, stuckOutageSignature]
+	);
+
 	const passesUnreadFilter = useCallback(
 		(session: Session): boolean => {
 			if (!showUnreadAgentsOnly) return true;
 			const isActiveOrParentOfActive =
 				session.id === activeSessionId ||
-				childrenByParentId.get(session.id)?.some((child) => child.id === activeSessionId) ||
-				false;
+				(childrenByParentId.get(session.id)?.some((child) => child.id === activeSessionId) ??
+					false);
 			if (isActiveOrParentOfActive) return true;
-			const hasUnread = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
-			const isBusy = session.state === 'busy';
-			const children = childrenByParentId.get(session.id);
-			const hasUnreadChildren =
-				children?.some(
-					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
-				) ?? false;
-			return hasUnread || isBusy || hasUnreadChildren;
+			return sessionOrChildrenNeedAttention(
+				session,
+				childrenByParentId.get(session.id),
+				attentionCtx
+			);
 		},
-		[showUnreadAgentsOnly, activeSessionId, childrenByParentId]
+		[showUnreadAgentsOnly, activeSessionId, childrenByParentId, attentionCtx]
 	);
 
 	// Create visible sessions array for session jump shortcuts (Opt+Cmd+NUMBER)

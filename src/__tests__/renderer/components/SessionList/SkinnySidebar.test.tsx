@@ -42,6 +42,8 @@ function createProps(overrides: Partial<Parameters<typeof SkinnySidebar>[0]> = {
 		activeSessionId: '',
 		groups: [] as Group[],
 		activeBatchSessionIds: [] as string[],
+		showUnreadAgentsOnly: false,
+		stuckOutageSignature: '',
 		contextWarningYellowThreshold: 70,
 		contextWarningRedThreshold: 90,
 		getFileCount: vi.fn(() => 0),

@@ -4,6 +4,7 @@ import { getStatusColor } from '../../utils/theme';
 import { hasNoClaudeProviderSession } from '../SessionItem';
 import { SessionTooltipContent } from './SessionTooltipContent';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { sessionNeedsAttention, outageIdsFromSignature } from '../../utils/sessionAttention';
 
 interface SkinnySidebarProps {
 	theme: Theme;
@@ -17,6 +18,7 @@ interface SkinnySidebarProps {
 	setActiveSessionId: (id: string) => void;
 	handleContextMenu: (e: React.MouseEvent, sessionId: string) => void;
 	showUnreadAgentsOnly: boolean;
+	stuckOutageSignature: string;
 }
 
 export const SkinnySidebar = memo(function SkinnySidebar({
@@ -31,11 +33,15 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	setActiveSessionId,
 	handleContextMenu,
 	showUnreadAgentsOnly,
+	stuckOutageSignature,
 }: SkinnySidebarProps) {
+	const attentionCtx = {
+		batchSessionIds: new Set(activeBatchSessionIds),
+		stuckOutageIds: outageIdsFromSignature(stuckOutageSignature),
+	};
 	const visibleSessions = showUnreadAgentsOnly
 		? sortedSessions.filter(
-				(s) =>
-					s.id === activeSessionId || s.state === 'busy' || s.aiTabs?.some((tab) => tab.hasUnread)
+				(s) => s.id === activeSessionId || sessionNeedsAttention(s, attentionCtx)
 			)
 		: sortedSessions;
 

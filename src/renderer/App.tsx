@@ -153,7 +153,7 @@ import { WindowProvider, useWindowContextOptional } from './contexts/WindowConte
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore, isGroupChatVisibleInWindow } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
-import { registerBatchResumer } from './stores/retryStore';
+import { registerBatchResumer, useActiveOutageSessionSignature } from './stores/retryStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import {
 	useSessionStore,
@@ -2010,6 +2010,10 @@ function MaestroConsoleInner() {
 
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
+	// Stuck (auto-retry outage) agents count as "needs attention" too - thread the
+	// signature into the sorted-session filter so their parents keep jump badges
+	// and stay cyclable, matching the rendered Left Bar.
+	const stuckOutageSignature = useActiveOutageSessionSignature();
 	const { sortedSessions, visibleSessions, navSessions, bookmarkNavSize, navIndexMap } =
 		useSortedSessions({
 			// Use the sidebar-stable projection so log streaming doesn't recompute
@@ -2019,6 +2023,8 @@ function MaestroConsoleInner() {
 			bookmarksCollapsed,
 			showUnreadAgentsOnly,
 			activeSessionId,
+			activeBatchSessionIds,
+			stuckOutageSignature,
 		});
 
 	// --- KEYBOARD NAVIGATION ---

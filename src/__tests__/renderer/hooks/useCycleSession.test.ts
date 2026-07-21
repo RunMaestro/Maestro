@@ -43,6 +43,9 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useRetryStore } from '../../../renderer/stores/retryStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
 import type { Session } from '../../../renderer/types';
 import { resetStores } from '../../helpers';
 
@@ -138,7 +141,14 @@ function makeOpenStarred(parentSessionId: string, tabId: string, displayName: st
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	resetStores(useSessionStore, useGroupChatStore, useUIStore, useSettingsStore);
+	resetStores(
+		useSessionStore,
+		useGroupChatStore,
+		useUIStore,
+		useSettingsStore,
+		useBatchStore,
+		useRetryStore
+	);
 });
 
 // ============================================================================
@@ -1769,6 +1779,40 @@ describe('cycleSession', () => {
 			cycleSession('next', deps);
 
 			// Other → Parent (parent included because child has unread)
+			expect(useSessionStore.getState().activeSessionId).toBe('p');
+		});
+
+		it('includes parent when worktree child is auto-running (AUTO badge)', () => {
+			const parent = makeSession({ id: 'p', name: 'Parent' }); // idle, no unread
+			const child = makeSession({
+				id: 'child1',
+				name: 'Child',
+				parentSessionId: 'p',
+				worktreeBranch: 'feat',
+			}); // idle + read, but auto-running via the batch store below
+			const other = makeSession({ id: 'o', name: 'Other', state: 'busy' });
+
+			useSessionStore.setState({
+				sessions: [parent, child, other],
+				activeSessionId: 'o',
+				cyclePosition: -1,
+			});
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				showUnreadAgentsOnly: true,
+			});
+			useSettingsStore.setState({ groupChatsExpanded: false });
+			useBatchStore.setState({
+				batchRunStates: { child1: { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+
+			const deps = makeDeps();
+
+			cycleSession('next', deps);
+
+			// Other → Parent (parent kept in the cycle because its worktree child
+			// is auto-running, even though the parent itself is idle and read).
 			expect(useSessionStore.getState().activeSessionId).toBe('p');
 		});
 

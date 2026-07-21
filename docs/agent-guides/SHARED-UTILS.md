@@ -439,6 +439,17 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | `getSessionSshRemoteId(session)`          | `(SessionSshInfo?) => string \| undefined`                                       | Get effective SSH remote ID. Handles the sshRemoteId vs sessionSshRemoteConfig pitfall. |
 | `isSessionRemote(session)`                | `(SessionSshInfo?) => boolean`                                                   | Check if session is SSH remote. Works for both AI and terminal-only sessions.           |
 
+### Session Attention Filter (`src/renderer/utils/sessionAttention.ts`)
+
+Single source of truth for the Left Bar "unread agents only" (a.k.a. "needs attention") filter. Every surface that filters by unread MUST route through these so they never diverge: categorization (`useSessionCategories`), rendered worktree children (`SessionList`), the skinny sidebar (`SkinnySidebar`), jump badges + `Alt+Cmd+N` (`useSortedSessions`), the bell badge (`hasUnreadAgents`), and keyboard cycling (`useCycleSession`). Do NOT re-inline the checks - a partial copy is how an auto-running worktree child ends up hidden while its parent stays visible.
+
+| Function / Type                                          | Signature                                                                       | Purpose                                                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `AttentionContext`                                       | `{ batchSessionIds: ReadonlySet<string>; stuckOutageIds: ReadonlySet<string> }` | Store-derived inputs the predicate can't read off the Session: Auto Run batch ids (batchStore) + stuck outage ids (retryStore). |
+| `sessionNeedsAttention(session, ctx)`                    | `(Session, AttentionContext) => boolean`                                        | True when an agent has an unread AI tab, is busy, is auto-running an Auto Run batch, or is stuck retrying an outage.            |
+| `sessionOrChildrenNeedAttention(session, children, ctx)` | `(Session, readonly Session[] \| undefined, AttentionContext) => boolean`       | Keep a parent visible when it or any worktree child needs attention.                                                            |
+| `outageIdsFromSignature(signature)`                      | `(string) => Set<string>`                                                       | Parse the comma-joined outage signature (`useActiveOutageSessionSignature`) into a lookup set; guards the empty-string case.    |
+
 ### Sentry (`src/renderer/utils/sentry.ts`)
 
 | Function                                   | Signature                                 | Purpose                                 |

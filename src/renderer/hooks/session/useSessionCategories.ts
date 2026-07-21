@@ -4,6 +4,10 @@ import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { compareNamesIgnoringEmojis as compareSessionNames } from '../../../shared/emojiUtils';
+import {
+	sessionOrChildrenNeedAttention,
+	outageIdsFromSignature,
+} from '../../utils/sessionAttention';
 
 export interface SessionCategories {
 	worktreeChildrenByParentId: Map<string, Session[]>;
@@ -117,7 +121,7 @@ export function useSessionCategories(
 	// Stable Set of stuck (outage) agent ids, recomputed only when the signature
 	// changes so the categorization memo isn't invalidated on unrelated renders.
 	const stuckOutageSessionIds = useMemo(
-		() => new Set(stuckOutageSignature ? stuckOutageSignature.split(',') : []),
+		() => outageIdsFromSignature(stuckOutageSignature),
 		[stuckOutageSignature]
 	);
 
@@ -130,6 +134,7 @@ export function useSessionCategories(
 		// the busy/unread checks below would drop them. Keep them visible in the
 		// unread filter using the same set that drives the badge.
 		const batchSessionIds = new Set(activeBatchSessionIds);
+		const attentionCtx = { batchSessionIds, stuckOutageIds: stuckOutageSessionIds };
 
 		for (const s of sessions) {
 			// Exclude worktree children from main list (they appear under parent)
@@ -145,23 +150,8 @@ export function useSessionCategories(
 				s.id === activeSessionId ||
 				worktreeChildrenByParentId.get(s.id)?.some((child) => child.id === activeSessionId);
 			if (showUnreadAgentsOnly && !isActiveOrParentOfActive) {
-				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
-				const isBusy = s.state === 'busy';
-				const isAutoRunning = batchSessionIds.has(s.id);
-				// A stuck (auto-retrying) agent needs attention just like an unread
-				// one, so keep it visible under the unread filter.
-				const isStuck = stuckOutageSessionIds.has(s.id);
-				// Also check if any worktree children have unread, are busy, are
-				// auto-running, or are stuck in an outage.
 				const children = worktreeChildrenByParentId.get(s.id);
-				const hasActiveChildren = children?.some(
-					(child) =>
-						child.aiTabs?.some((tab) => tab.hasUnread) ||
-						child.state === 'busy' ||
-						batchSessionIds.has(child.id) ||
-						stuckOutageSessionIds.has(child.id)
-				);
-				if (!hasUnread && !isBusy && !isAutoRunning && !isStuck && !hasActiveChildren) continue;
+				if (!sessionOrChildrenNeedAttention(s, children, attentionCtx)) continue;
 			}
 
 			if (!query) {

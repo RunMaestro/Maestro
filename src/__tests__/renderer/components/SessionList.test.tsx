@@ -32,6 +32,7 @@ const enableGroupsPlus = () =>
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { BatchRunState } from '../../../renderer/types';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
 
 const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
 
@@ -3928,6 +3929,45 @@ describe('SessionList', () => {
 			});
 
 			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Worktree children under unread filter', () => {
+		it('renders an auto-running worktree child (and its parent) even when both are idle and read', () => {
+			const parent = createMockSession({ id: 'p1', name: 'Parent Agent' });
+			const child = createMockSession({
+				id: 'child-1',
+				name: 'Worktree Child',
+				parentSessionId: 'p1',
+			});
+			useSessionStore.setState({ sessions: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+			// child-1 is auto-running an Auto Run batch (idle between prompts, no unread).
+			useBatchStore.setState({
+				batchRunStates: { 'child-1': { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [parent, child] })} />);
+
+			expect(screen.getByText('Parent Agent')).toBeInTheDocument();
+			expect(screen.getByText('Worktree Child')).toBeInTheDocument();
+		});
+
+		it('hides an idle, read worktree child (and its parent) when nothing needs attention', () => {
+			const parent = createMockSession({ id: 'p1', name: 'Parent Agent' });
+			const child = createMockSession({
+				id: 'child-1',
+				name: 'Worktree Child',
+				parentSessionId: 'p1',
+			});
+			useSessionStore.setState({ sessions: [parent, child] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+			useBatchStore.setState({ batchRunStates: {} });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [parent, child] })} />);
+
+			expect(screen.queryByText('Parent Agent')).toBeNull();
+			expect(screen.queryByText('Worktree Child')).toBeNull();
 		});
 	});
 });

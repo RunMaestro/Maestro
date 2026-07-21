@@ -20,6 +20,9 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { useRetryStore, selectActiveOutageSessionIds } from '../../stores/retryStore';
+import { sessionOrChildrenNeedAttention } from '../../utils/sessionAttention';
 import { compareNamesIgnoringEmojis } from './useSortedSessions';
 import type { StarredItem } from './useStarredItems';
 
@@ -242,25 +245,22 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 	// (plus the currently active agent so you don't get lost)
 	if (showUnreadAgentsOnly) {
 		const currentActiveId = activeGroupChatId || activeSessionId;
+		// Auto-running (Auto Run batch) and stuck (outage) agents are "needs
+		// attention" too. Read them at event time - no React subscription here.
+		const attentionCtx = {
+			batchSessionIds: new Set(selectActiveBatchSessionIds(useBatchStore.getState())),
+			stuckOutageIds: selectActiveOutageSessionIds(useRetryStore.getState()),
+		};
 		const filteredOrder = visualOrder.filter((item) => {
 			// Always keep the currently active item
 			if (item.id === currentActiveId) return true;
 			// Group chats pass through (they have their own unread badges)
 			if (item.type === 'groupChat') return true;
-			// Check if session is unread or busy
 			const session = sessions.find((s) => s.id === item.id);
 			if (!session) return false;
-			if (session.aiTabs?.some((tab) => tab.hasUnread)) return true;
-			if (session.state === 'busy') return true;
-			// Check worktree children for unread/busy
+			// Unread / busy / error / auto-running / stuck - self or any worktree child.
 			const children = sessions.filter((s) => s.parentSessionId === session.id);
-			if (
-				children.some(
-					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
-				)
-			)
-				return true;
-			return false;
+			return sessionOrChildrenNeedAttention(session, children, attentionCtx);
 		});
 		visualOrder.length = 0;
 		visualOrder.push(...filteredOrder);
