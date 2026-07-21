@@ -36,8 +36,26 @@ import {
 	cuePipelineRemove,
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
-import { boardList, boardShow, boardAddCard, boardSetStatus, boardTick } from './commands/board';
-import { profileList, profileCreate, profileDelete } from './commands/profile';
+import {
+	boardList,
+	boardCreate,
+	boardRename,
+	boardDelete,
+	boardShow,
+	boardAddCard,
+	boardUpdateCard,
+	boardRemoveCard,
+	boardSetStatus,
+	boardTick,
+	boardWatch,
+} from './commands/board';
+import {
+	profileList,
+	profileCreate,
+	profileShow,
+	profileUpdate,
+	profileDelete,
+} from './commands/profile';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -622,7 +640,7 @@ cuePipeline
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
 
-// Board commands — drive the persistent task DAG (.maestro/board.yaml) headlessly.
+// Board commands - drive the persistent task DAG (.maestro/board.yaml) headlessly.
 // Mirrors the board:* IPC surface via the same Electron-free storage module the
 // desktop uses. `board tick` runs one dispatcher pass (promote / claim / spawn /
 // apply) reusing the Phase 3 pure helpers + the existing CLI spawn path.
@@ -634,6 +652,30 @@ board
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardList);
+
+board
+	.command('create <name>')
+	.description("Create a new, empty board in an agent's project")
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project will own the board')
+	.option('--max-in-progress <n>', 'Cap how many cards may run at once')
+	.option('--auto-decompose', 'Let the dispatcher fan triage cards out with one LLM pass')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardCreate);
+
+board
+	.command('rename <boardId> <newName>')
+	.description('Rename a board (cards and their ids are untouched)')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardRename);
+
+board
+	.command('delete <boardId>')
+	.description('Delete a board and every card on it')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board')
+	.option('--force', 'Delete even when the board still has cards that are not done')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardDelete);
 
 board
 	.command('show <boardId>')
@@ -663,6 +705,31 @@ board
 	.action(boardAddCard);
 
 board
+	.command('update-card <cardId>')
+	.description('Edit a card in place (only the flags you pass are changed)')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('--board <boardId>', 'Scope the card lookup to a specific board')
+	.option('-t, --title <title>', 'New card title')
+	.option('-b, --body <body>', 'New card body / instructions')
+	.option('--assignee <profileId>', 'New Agent Profile (role) id; pass "" to clear')
+	.option('--assignee-agent <agentId>', 'Pin the card to a specific agent; pass "" to clear')
+	.option('--parents <ids>', 'Comma-separated parent card ids; pass "" to clear')
+	.option('--priority <level>', 'Dispatch priority: high|normal|low ("normal" clears it)')
+	.option('--worktree', 'Record an isolated-worktree intent for this card')
+	.option('--no-worktree', "Clear the card's worktree intent")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardUpdateCard);
+
+board
+	.command('remove-card <cardId>')
+	.description("Delete a card (its children inherit the card's parents)")
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
+	.option('--board <boardId>', 'Scope the card lookup to a specific board')
+	.option('--force', 'Remove even a running card (the in-flight run is NOT canceled)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(boardRemoveCard);
+
+board
 	.command('set-status <cardId> <status>')
 	.description("Set a card's status (triage|todo|ready|running|blocked|done)")
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
@@ -678,7 +745,20 @@ board
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardTick);
 
-// Profile commands — manage Agent Profiles (.maestro/profiles.yaml), mirroring
+board
+	.command('watch')
+	.description(
+		'Run `board tick` on a loop until Ctrl-C. The desktop Cue engine ticks the same ' +
+			'boards; overlapping is safe (board.yaml writes are atomic and serialized) but ' +
+			'still discouraged. No daemonization, no lock files.'
+	)
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
+	.option('--board <boardId>', 'Watch only a specific board')
+	.option('--interval <seconds>', 'Seconds between ticks (default 30, minimum 5)')
+	.option('--json', 'Output one JSON object per tick (for scripting)')
+	.action(boardWatch);
+
+// Profile commands - manage Agent Profiles (.maestro/profiles.yaml), mirroring
 // the profiles:* IPC surface via the same Electron-free storage module.
 const profile = program.command('profile').description('Manage Agent Profiles');
 
@@ -700,6 +780,28 @@ profile
 	.option('--role <text>', 'Role system-prompt appended for this profile')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(profileCreate);
+
+profile
+	.command('show <profileId>')
+	.description('Show a profile and the spawn overrides it resolves to')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profile')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profileShow);
+
+profile
+	.command('update <profileId>')
+	.description('Edit a profile in place, keeping its id (and every card that references it)')
+	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the profile')
+	.option('-n, --name <name>', 'New profile name')
+	.option('--model <model>', 'Model override; pass "" to fall back to the running agent')
+	.option('--effort <level>', 'Reasoning effort override; pass "" to clear')
+	.option('--role-prompt <text>', 'Role system-prompt appended for this profile; pass "" to clear')
+	.option('--role <text>', 'Alias for --role-prompt (matches `profile create`)')
+	.option('--args <args>', 'Extra CLI args for spawns wearing this role; pass "" to clear')
+	.option('--base <agentId>', 'Pin the role to a different base agent')
+	.option('--pool', 'Drop the base agent so the role floats to the free worker pool')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(profileUpdate);
 
 profile
 	.command('delete <profileId>')

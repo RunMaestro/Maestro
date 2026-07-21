@@ -28,6 +28,15 @@ export function createBoardApi() {
 		create: (projectRoot: string, name: string): Promise<Board> =>
 			ipcRenderer.invoke('board:create', { projectRoot, name }),
 
+		// Rename a board in place. Returns the renamed board.
+		rename: (projectRoot: string, boardId: string, name: string): Promise<Board> =>
+			ipcRenderer.invoke('board:rename', { projectRoot, boardId, name }),
+
+		// Delete an entire board. Refuses without `force` when any card is not
+		// `done`. Returns the remaining boards.
+		delete: (projectRoot: string, boardId: string, force?: boolean): Promise<Board[]> =>
+			ipcRenderer.invoke('board:delete', { projectRoot, boardId, force }),
+
 		// Create a card on a board. Returns the updated board.
 		addCard: (projectRoot: string, boardId: string, card: BoardCard): Promise<Board> =>
 			ipcRenderer.invoke('board:addCard', { projectRoot, boardId, card }),

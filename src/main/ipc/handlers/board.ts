@@ -16,6 +16,8 @@ import {
 	listBoards,
 	getBoard,
 	createBoard,
+	renameBoard,
+	deleteBoard,
 	addCard,
 	updateCard,
 	updateCardStatus,
@@ -77,6 +79,37 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			async (options: { projectRoot: string; name: string }): Promise<Board> => {
 				return enqueueBoardWrite(options.projectRoot, () =>
 					createBoard(options.projectRoot, options.name)
+				);
+			}
+		)
+	);
+
+	// Rename a board in place. Returns the renamed board.
+	ipcMain.handle(
+		'board:rename',
+		withIpcErrorLogging(
+			handlerOpts('rename'),
+			async (options: { projectRoot: string; boardId: string; name: string }): Promise<Board> => {
+				return enqueueBoardWrite(options.projectRoot, () =>
+					renameBoard(options.projectRoot, options.boardId, options.name)
+				);
+			}
+		)
+	);
+
+	// Delete an entire board. Refuses without `force` when any card is not `done`.
+	// Returns the remaining boards.
+	ipcMain.handle(
+		'board:delete',
+		withIpcErrorLogging(
+			handlerOpts('delete'),
+			async (options: {
+				projectRoot: string;
+				boardId: string;
+				force?: boolean;
+			}): Promise<Board[]> => {
+				return enqueueBoardWrite(options.projectRoot, () =>
+					deleteBoard(options.projectRoot, options.boardId, { force: options.force })
 				);
 			}
 		)

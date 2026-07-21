@@ -18,8 +18,13 @@ import { generateUUID } from '../../shared/uuid';
 import {
 	listBoards,
 	getBoard,
+	createBoard,
+	renameBoard,
+	deleteBoard,
 	addCard,
+	updateCard,
 	updateCardStatus,
+	deleteCard,
 	saveBoard,
 } from '../../main/board/board-storage';
 import type { Board, BoardCard, CardStatus } from '../../shared/board/types';
@@ -49,7 +54,7 @@ import { readSessions, getSessionById, resolveAgentId } from '../services/storag
 import { spawnAgent } from '../services/agent-spawner';
 import { getCliPrompt } from '../services/prompt-loader';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
-import { formatError, formatSuccess } from '../output/formatter';
+import { formatError, formatSuccess, formatWarning } from '../output/formatter';
 import type { SessionInfo, ToolType } from '../../shared/types';
 
 interface BoardCommonOptions {
@@ -58,6 +63,18 @@ interface BoardCommonOptions {
 }
 
 interface BoardShowOptions extends BoardCommonOptions {}
+
+interface BoardCreateOptions extends BoardCommonOptions {
+	/** `--max-in-progress <n>`: WIP cap for the dispatcher. Commander hands strings. */
+	maxInProgress?: string;
+	/** `--auto-decompose`: opt the board into the LLM triage fan-out pass. */
+	autoDecompose?: boolean;
+}
+
+interface BoardDeleteOptions extends BoardCommonOptions {
+	/** `--force`: delete even when the board still has cards that are not done. */
+	force?: boolean;
+}
 
 interface BoardAddCardOptions extends BoardCommonOptions {
 	title: string;
@@ -72,6 +89,27 @@ interface BoardAddCardOptions extends BoardCommonOptions {
 	worktree?: boolean;
 }
 
+interface BoardUpdateCardOptions extends BoardCommonOptions {
+	board?: string;
+	title?: string;
+	body?: string;
+	/** Role profile id. An explicit empty string clears it. */
+	assignee?: string;
+	/** Pinned agent id. An explicit empty string clears it. */
+	assigneeAgent?: string;
+	/** Comma-separated parent ids. An explicit empty string clears them all. */
+	parents?: string;
+	priority?: string;
+	/** `--worktree` records the advisory ref, `--no-worktree` clears it. */
+	worktree?: boolean;
+}
+
+interface BoardRemoveCardOptions extends BoardCommonOptions {
+	board?: string;
+	/** `--force`: allow removing a card that is currently `running`. */
+	force?: boolean;
+}
+
 interface BoardSetStatusOptions extends BoardCommonOptions {
 	board?: string;
 }
@@ -79,6 +117,16 @@ interface BoardSetStatusOptions extends BoardCommonOptions {
 interface BoardTickOptions extends BoardCommonOptions {
 	board?: string;
 }
+
+interface BoardWatchOptions extends BoardTickOptions {
+	/** Seconds between ticks (`--interval`). Commander hands strings. */
+	interval?: string;
+}
+
+/** Default seconds between `board watch` ticks. */
+export const DEFAULT_WATCH_INTERVAL_SECONDS = 30;
+/** Floor for `--interval`: below this the loop spends its life re-reading YAML. */
+export const MIN_WATCH_INTERVAL_SECONDS = 5;
 
 /** Print an error (JSON or human-readable) and exit non-zero. Called once, at
  * each command's boundary, so a mocked `process.exit` in tests never continues
@@ -127,6 +175,107 @@ export async function boardList(options: BoardCommonOptions): Promise<void> {
 			lines.push('');
 		}
 		console.log(lines.join('\n'));
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/**
+ * `board create <name> --agent <id>` - stand up a new, empty board.
+ *
+ * The bootstrap command for a pure CLI/CI workflow: without it a headless user
+ * had to open the desktop app once to get a board id to add cards to. Goes
+ * through the same `createBoard` storage function the `board:create` IPC handler
+ * uses, so the two can never drift.
+ */
+export async function boardCreate(name: string, options: BoardCreateOptions): Promise<void> {
+	try {
+		const session = resolveAgentSession(options.agent);
+		const trimmed = (name ?? '').trim();
+		if (!trimmed) throw new Error('A board name is required (board create <name>).');
+
+		// Validate the cap here rather than letting a typo silently become "no cap":
+		// a board the user believes is capped at 3 running everything at once is the
+		// kind of surprise that costs real tokens.
+		let maxInProgress: number | undefined;
+		const rawCap = (options.maxInProgress ?? '').toString().trim();
+		if (rawCap) {
+			const parsed = Number(rawCap);
+			if (!Number.isInteger(parsed) || parsed < 1) {
+				throw new Error(`Invalid --max-in-progress "${rawCap}". Use a positive integer.`);
+			}
+			maxInProgress = parsed;
+		}
+
+		const board = createBoard(session.projectRoot, trimmed, {
+			maxInProgress,
+			autoDecompose: options.autoDecompose === true,
+		});
+
+		if (options.json) {
+			console.log(JSON.stringify(board, null, 2));
+			return;
+		}
+		console.log(formatSuccess(`Created board "${board.name}".`));
+		console.log(board.id);
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/** `board rename <boardId> <newName> --agent <id>` - rename a board in place. */
+export async function boardRename(
+	boardId: string,
+	newName: string,
+	options: BoardCommonOptions
+): Promise<void> {
+	try {
+		const session = resolveAgentSession(options.agent);
+		const board = resolveBoard(session.projectRoot, boardId);
+		const trimmed = (newName ?? '').trim();
+		if (!trimmed) throw new Error('A new board name is required (board rename <boardId> <name>).');
+
+		const previous = board.name;
+		const renamed = renameBoard(session.projectRoot, board.id, trimmed);
+
+		if (options.json) {
+			console.log(JSON.stringify(renamed, null, 2));
+			return;
+		}
+		console.log(formatSuccess(`Renamed board "${previous}" to "${renamed.name}".`));
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/**
+ * `board delete <boardId> --agent <id> [--force]` - delete a board and its cards.
+ *
+ * The guard rail (refuse when any card is not `done`) lives in the storage layer
+ * so the desktop path gets it too; this command just surfaces it and forwards
+ * `--force`.
+ */
+export async function boardDelete(boardId: string, options: BoardDeleteOptions): Promise<void> {
+	try {
+		const session = resolveAgentSession(options.agent);
+		const board = resolveBoard(session.projectRoot, boardId);
+		const remaining = deleteBoard(session.projectRoot, board.id, { force: options.force === true });
+
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					{ deleted: board.id, cards: board.cards.length, remaining: remaining.length },
+					null,
+					2
+				)
+			);
+			return;
+		}
+		console.log(
+			formatSuccess(
+				`Deleted board "${board.name}" (${board.id.slice(0, 8)}) and its ${board.cards.length} card(s).`
+			)
+		);
 	} catch (error) {
 		reportError(error, options.json);
 	}
@@ -188,17 +337,11 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 			);
 		}
 
-		const parents = (options.parents ?? '')
-			.split(',')
-			.map((p) => p.trim())
-			.filter((p) => p.length > 0);
+		const parents = parseParents(options.parents);
 
 		// Priority is optional and validated up front: a typo must not silently
 		// become a normal-priority card the user thinks is high.
-		const priority = (options.priority ?? '').trim().toLowerCase();
-		if (priority && !(CARD_PRIORITIES as readonly string[]).includes(priority)) {
-			throw new Error(`Invalid --priority "${options.priority}". Use one of: high, normal, low.`);
-		}
+		const priority = parsePriority(options.priority);
 
 		const now = new Date().toISOString();
 		const cardId = generateUUID();
@@ -215,15 +358,7 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 		if (assigneeAgent) card.assigneeAgentId = assigneeAgent;
 		// `normal` is the default and is never serialized.
 		if (priority === 'high' || priority === 'low') card.priority = priority;
-		if (options.worktree) {
-			// Advisory worktree intent: a conventional isolated checkout path for this
-			// card. The dispatcher currently runs cards in the project root; this ref
-			// is metadata the desktop worktree-aware path can honor later.
-			card.worktree = {
-				path: path.join(session.projectRoot, '.maestro', 'worktrees', cardId),
-				branch: `board/${cardId.slice(0, 8)}`,
-			};
-		}
+		if (options.worktree) card.worktree = buildWorktreeRef(session.projectRoot, cardId);
 
 		addCard(session.projectRoot, board.id, card);
 
@@ -233,6 +368,162 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 		}
 		console.log(
 			formatSuccess(`Added card "${title}" (${cardId.slice(0, 8)}) to board "${board.name}".`)
+		);
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/**
+ * `board update-card <cardId> [--title ...] [--body ...] ...` - edit a card.
+ *
+ * Goes through the same `updateCard` storage path as the desktop editor, so
+ * validation and cycle rejection come for free (a `--parents` edit that would
+ * close a loop is refused by `saveBoards`). Only the flags actually passed are
+ * touched; an explicitly empty `--assignee ''` / `--parents ''` clears that
+ * field. Editing a `running` card is refused: the dispatcher is mid-flight with
+ * the old title/body, and the finished run would be applied to a card the author
+ * has since redefined.
+ */
+export async function boardUpdateCard(
+	cardId: string,
+	options: BoardUpdateCardOptions
+): Promise<void> {
+	try {
+		const session = resolveAgentSession(options.agent);
+		const located = locateCard(session.projectRoot, cardId, options.board);
+		const { board, card } = located;
+		if (card.status === 'running') {
+			throw new Error(
+				`Card "${card.title}" (${card.id.slice(0, 8)}) is running and cannot be edited. ` +
+					`Stop it first (desktop stop button), or wait for the run to finish.`
+			);
+		}
+
+		const next: BoardCard = { ...card, parents: [...card.parents] };
+		let changed = false;
+
+		if (options.title !== undefined) {
+			const title = options.title.trim();
+			if (!title) throw new Error('--title cannot be empty.');
+			next.title = title;
+			changed = true;
+		}
+		if (options.body !== undefined) {
+			next.body = options.body;
+			changed = true;
+		}
+		if (options.assignee !== undefined) {
+			const value = options.assignee.trim();
+			if (value) next.assigneeProfileId = value;
+			else delete next.assigneeProfileId;
+			changed = true;
+		}
+		if (options.assigneeAgent !== undefined) {
+			const value = options.assigneeAgent.trim();
+			if (value) next.assigneeAgentId = value;
+			else delete next.assigneeAgentId;
+			changed = true;
+		}
+		// A card with no assignee at all fails validation deep inside storage with
+		// "invalid card shape"; say what actually went wrong instead.
+		if (!next.assigneeProfileId && !next.assigneeAgentId) {
+			throw new Error(
+				'A card must keep an assignee: --assignee <profileId> and/or --assignee-agent <agentId>.'
+			);
+		}
+		if (options.parents !== undefined) {
+			next.parents = parseParents(options.parents);
+			changed = true;
+		}
+		if (options.priority !== undefined) {
+			const priority = parsePriority(options.priority);
+			// `normal` is the default and is never serialized, so it clears the field.
+			if (priority === 'high' || priority === 'low') next.priority = priority;
+			else delete next.priority;
+			changed = true;
+		}
+		if (options.worktree === true) {
+			next.worktree = buildWorktreeRef(session.projectRoot, card.id);
+			changed = true;
+		} else if (options.worktree === false) {
+			delete next.worktree;
+			changed = true;
+		}
+
+		if (!changed) {
+			throw new Error(
+				'Nothing to update. Pass at least one of --title, --body, --assignee, ' +
+					'--assignee-agent, --parents, --priority, --worktree/--no-worktree.'
+			);
+		}
+
+		updateCard(session.projectRoot, board.id, next);
+
+		if (options.json) {
+			const fresh = getBoard(session.projectRoot, board.id);
+			console.log(JSON.stringify(fresh?.cards.find((c) => c.id === next.id) ?? next, null, 2));
+			return;
+		}
+		console.log(formatSuccess(`Updated card "${next.title}" (${next.id.slice(0, 8)}).`));
+	} catch (error) {
+		reportError(error, options.json);
+	}
+}
+
+/**
+ * `board remove-card <cardId> [--force]` - delete a card.
+ *
+ * Reuses the storage `deleteCard`, which keeps the DAG intact (children of the
+ * removed card inherit its parents). A `running` card needs `--force`: the CLI
+ * has no handle on the in-flight process (it belongs to whatever dispatcher
+ * claimed the card, in another process entirely), so it cannot cancel it first
+ * and says so rather than pretending the agent was stopped.
+ */
+export async function boardRemoveCard(
+	cardId: string,
+	options: BoardRemoveCardOptions
+): Promise<void> {
+	try {
+		const session = resolveAgentSession(options.agent);
+		const { board, card } = locateCard(session.projectRoot, cardId, options.board);
+
+		if (card.status === 'running' && !options.force) {
+			throw new Error(
+				`Card "${card.title}" (${card.id.slice(0, 8)}) is running. Stop it from the desktop ` +
+					`Board first, or re-run with --force (the CLI cannot cancel the in-flight run).`
+			);
+		}
+
+		const dependents = board.cards.filter((c) => c.parents.includes(card.id));
+		deleteCard(session.projectRoot, board.id, card.id);
+
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					{
+						removed: card.id,
+						board: board.id,
+						wasRunning: card.status === 'running',
+						reparented: dependents.map((c) => c.id),
+					},
+					null,
+					2
+				)
+			);
+			return;
+		}
+		if (card.status === 'running') {
+			console.log(
+				formatWarning(
+					'The card was running. Its agent process is owned by another process and keeps going; stop it there if it is still live.'
+				)
+			);
+		}
+		const inherited =
+			dependents.length > 0 ? ` ${dependents.length} dependent card(s) inherited its parents.` : '';
+		console.log(
+			formatSuccess(`Removed card "${card.title}" (${card.id.slice(0, 8)}).${inherited}`)
 		);
 	} catch (error) {
 		reportError(error, options.json);
@@ -272,28 +563,11 @@ export async function boardSetStatus(
 export async function boardTick(options: BoardTickOptions): Promise<void> {
 	try {
 		const session = resolveAgentSession(options.agent);
-		const projectRoot = session.projectRoot;
-
-		let boards = listBoards(projectRoot);
-		if (options.board) {
-			boards = [resolveBoard(projectRoot, options.board)];
-		}
-		if (boards.length === 0) {
+		const summaries = await tickBoardsOnce(session.projectRoot, options.board, options.json);
+		if (summaries.length === 0) {
 			if (options.json) console.log(JSON.stringify({ type: 'tick', boards: [] }));
 			else console.log('No boards to tick.');
 			return;
-		}
-
-		const sessions = readSessions();
-		// Load the editable decompose template once; only used when a board opts in.
-		const decomposeTemplate = boards.some((b) => b.autoDecompose)
-			? await getCliPrompt(PROMPT_IDS.BOARD_DECOMPOSE).catch(() => undefined)
-			: undefined;
-		const summaries: TickSummary[] = [];
-		for (const board of boards) {
-			summaries.push(
-				await tickBoard(projectRoot, board.id, sessions, decomposeTemplate, options.json)
-			);
 		}
 
 		if (options.json) {
@@ -312,7 +586,137 @@ export async function boardTick(options: BoardTickOptions): Promise<void> {
 	}
 }
 
+/**
+ * `board watch --agent <id> [--interval <seconds>] [--board <id>]`
+ *
+ * A deliberately dumb loop over the same single-tick pass `board tick` runs: no
+ * daemonization, no lock file, no PID file. It exists so a CI box or a headless
+ * host can keep a board moving without the desktop app open. Stops on SIGINT.
+ *
+ * A storage failure is fatal by design: after Phase 1, `loadBoards` throws
+ * rather than silently returning `[]` for a damaged board.yaml, and a watcher
+ * that shrugged that off would spin forever on a file no human is looking at.
+ * It exits non-zero so a supervisor notices.
+ */
+export async function boardWatch(options: BoardWatchOptions): Promise<void> {
+	let projectRoot: string;
+	let intervalMs: number;
+	try {
+		projectRoot = resolveAgentSession(options.agent).projectRoot;
+		intervalMs = parseWatchInterval(options.interval) * 1000;
+	} catch (error) {
+		return reportError(error, options.json);
+	}
+
+	// SIGINT sets the flag AND wakes an in-progress sleep, so Ctrl-C is felt
+	// immediately instead of after the rest of the interval.
+	let stopped = false;
+	let wake: (() => void) | null = null;
+	const onSigint = () => {
+		stopped = true;
+		wake?.();
+	};
+	process.on('SIGINT', onSigint);
+
+	if (!options.json) {
+		console.log(
+			`Watching board(s) every ${intervalMs / 1000}s. Press Ctrl-C to stop.\n` +
+				'Note: the desktop Cue engine ticks the same boards. Overlapping runs are safe ' +
+				'(board.yaml writes are atomic and serialized), but running both is still discouraged.'
+		);
+	}
+
+	try {
+		while (!stopped) {
+			try {
+				const summaries = await tickBoardsOnce(projectRoot, options.board, options.json);
+				printWatchTick(summaries, options.json);
+			} catch (error) {
+				return reportError(error, options.json);
+			}
+			if (stopped) break;
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(() => {
+					wake = null;
+					resolve();
+				}, intervalMs);
+				wake = () => {
+					clearTimeout(timer);
+					wake = null;
+					resolve();
+				};
+			});
+		}
+	} finally {
+		process.off('SIGINT', onSigint);
+	}
+
+	if (!options.json) console.log('Board watch stopped.');
+}
+
+/** Validate `--interval`, defaulting and enforcing the floor. Returns seconds. */
+function parseWatchInterval(raw: string | undefined): number {
+	const value = (raw ?? '').toString().trim();
+	if (!value) return DEFAULT_WATCH_INTERVAL_SECONDS;
+	const seconds = Number(value);
+	if (!Number.isFinite(seconds) || !Number.isInteger(seconds)) {
+		throw new Error(`Invalid --interval "${raw}". Use a whole number of seconds.`);
+	}
+	if (seconds < MIN_WATCH_INTERVAL_SECONDS) {
+		throw new Error(`--interval must be at least ${MIN_WATCH_INTERVAL_SECONDS} seconds.`);
+	}
+	return seconds;
+}
+
+/** One line per board per tick (or one JSON object per tick when `--json`). */
+function printWatchTick(summaries: TickSummary[], json: boolean | undefined): void {
+	const at = new Date().toISOString();
+	if (json) {
+		console.log(JSON.stringify({ type: 'watch-tick', at, boards: summaries }));
+		return;
+	}
+	if (summaries.length === 0) {
+		console.log(`[${at}] no boards`);
+		return;
+	}
+	for (const s of summaries) {
+		console.log(
+			`[${at}] ${s.name}: promoted ${s.promoted}  |  claimed ${s.ran}  |  done ${s.done}  |  blocked ${s.blocked}`
+		);
+	}
+}
+
 // ─── Headless dispatch (reuses the Phase 3 pure helpers) ─────────────────────
+
+/**
+ * Run one dispatch pass across every board in the project (or just `boardHint`).
+ * Shared by `board tick` (one pass, then exit) and `board watch` (the same pass
+ * on a timer) so the two can never drift. Returns an empty array when the
+ * project has no boards. Storage failures propagate (fail-closed, Phase 1).
+ */
+async function tickBoardsOnce(
+	projectRoot: string,
+	boardHint: string | undefined,
+	json: boolean | undefined
+): Promise<TickSummary[]> {
+	let boards = listBoards(projectRoot);
+	if (boardHint) {
+		boards = [resolveBoard(projectRoot, boardHint)];
+	}
+	if (boards.length === 0) return [];
+
+	const sessions = readSessions();
+	// Load the editable decompose template once; only used when a board opts in.
+	const decomposeTemplate = boards.some((b) => b.autoDecompose)
+		? await getCliPrompt(PROMPT_IDS.BOARD_DECOMPOSE).catch(() => undefined)
+		: undefined;
+
+	const summaries: TickSummary[] = [];
+	for (const board of boards) {
+		summaries.push(await tickBoard(projectRoot, board.id, sessions, decomposeTemplate, json));
+	}
+	return summaries;
+}
 
 interface TickSummary {
 	boardId: string;
@@ -572,6 +976,39 @@ function makeDecomposeSpawn(projectRoot: string, sessions: SessionInfo[]): Decom
 }
 
 // ─── Small helpers ───────────────────────────────────────────────────────────
+
+/** Split a `--parents a,b,c` value into trimmed, non-empty ids. */
+function parseParents(raw: string | undefined): string[] {
+	return (raw ?? '')
+		.split(',')
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0);
+}
+
+/**
+ * Normalize a `--priority` value, throwing on a typo. Returns `''` when the flag
+ * was not passed; callers treat `normal` as "clear the field" since the default
+ * is never serialized.
+ */
+function parsePriority(raw: string | undefined): string {
+	const priority = (raw ?? '').trim().toLowerCase();
+	if (priority && !(CARD_PRIORITIES as readonly string[]).includes(priority)) {
+		throw new Error(`Invalid --priority "${raw}". Use one of: high, normal, low.`);
+	}
+	return priority;
+}
+
+/**
+ * Advisory worktree intent: a conventional isolated checkout path for a card.
+ * The dispatcher currently runs cards in the project root; this ref is metadata
+ * the desktop worktree-aware path can honor later.
+ */
+function buildWorktreeRef(projectRoot: string, cardId: string): { path: string; branch: string } {
+	return {
+		path: path.join(projectRoot, '.maestro', 'worktrees', cardId),
+		branch: `board/${cardId.slice(0, 8)}`,
+	};
+}
 
 /** Short human-facing assignee label: role profile and/or pinned agent. */
 function assigneeLabel(card: BoardCard): string {

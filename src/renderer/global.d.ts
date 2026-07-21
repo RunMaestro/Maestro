@@ -3912,6 +3912,18 @@ interface MaestroAPI {
 			boardId: string
 		) => Promise<import('../shared/board/types').Board | null>;
 		create: (projectRoot: string, name: string) => Promise<import('../shared/board/types').Board>;
+		rename: (
+			projectRoot: string,
+			boardId: string,
+			name: string
+		) => Promise<import('../shared/board/types').Board>;
+		// Delete an entire board. Refuses without `force` when any card is not
+		// `done`. Resolves to the remaining boards.
+		delete: (
+			projectRoot: string,
+			boardId: string,
+			force?: boolean
+		) => Promise<import('../shared/board/types').Board[]>;
 		addCard: (
 			projectRoot: string,
 			boardId: string,

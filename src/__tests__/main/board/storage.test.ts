@@ -16,6 +16,8 @@ import {
 	listBoards,
 	getBoard,
 	createBoard,
+	renameBoard,
+	deleteBoard,
 	addCard,
 	updateCard,
 	updateCardStatus,
@@ -106,6 +108,86 @@ describe('createBoard', () => {
 		const created = createBoard(projectRoot, 'Second');
 		const all = listBoards(projectRoot);
 		expect(all.map((b) => b.id).sort()).toEqual(['existing', created.id].sort());
+	});
+});
+
+describe('createBoard options', () => {
+	it('persists maxInProgress and autoDecompose when provided', () => {
+		const created = createBoard(projectRoot, 'Capped', { maxInProgress: 3, autoDecompose: true });
+		const reloaded = getBoard(projectRoot, created.id);
+		expect(reloaded?.maxInProgress).toBe(3);
+		expect(reloaded?.autoDecompose).toBe(true);
+	});
+
+	it('omits both fields when not provided', () => {
+		const created = createBoard(projectRoot, 'Plain');
+		expect(created.maxInProgress).toBeUndefined();
+		expect(created.autoDecompose).toBeUndefined();
+	});
+
+	it('rejects a non-positive maxInProgress', () => {
+		expect(() => createBoard(projectRoot, 'Bad', { maxInProgress: 0 })).toThrow(/positive integer/);
+		expect(listBoards(projectRoot)).toHaveLength(0);
+	});
+});
+
+describe('renameBoard', () => {
+	it('renames in place and leaves the cards untouched', () => {
+		saveBoards(projectRoot, [board([card({ id: 'a' })])]);
+		const renamed = renameBoard(projectRoot, 'b1', '  New name  ');
+		expect(renamed.name).toBe('New name');
+		const reloaded = getBoard(projectRoot, 'b1');
+		expect(reloaded?.name).toBe('New name');
+		expect(reloaded?.cards.map((c) => c.id)).toEqual(['a']);
+	});
+
+	it('rejects a blank name and an unknown board', () => {
+		saveBoards(projectRoot, [board([])]);
+		expect(() => renameBoard(projectRoot, 'b1', '   ')).toThrow(/name is required/);
+		expect(() => renameBoard(projectRoot, 'nope', 'X')).toThrow(/not found/);
+		expect(getBoard(projectRoot, 'b1')?.name).toBe('Test board');
+	});
+
+	it('does not disturb sibling boards', () => {
+		saveBoards(projectRoot, [
+			board([], { id: 'b1', name: 'One' }),
+			board([], { id: 'b2', name: 'Two' }),
+		]);
+		renameBoard(projectRoot, 'b1', 'Renamed');
+		expect(listBoards(projectRoot).map((b) => b.name)).toEqual(['Renamed', 'Two']);
+	});
+});
+
+describe('deleteBoard', () => {
+	it('deletes a board whose cards are all done and returns the remainder', () => {
+		saveBoards(projectRoot, [
+			board([card({ id: 'a', status: 'done' })], { id: 'b1', name: 'Finished' }),
+			board([], { id: 'b2', name: 'Keep' }),
+		]);
+		const remaining = deleteBoard(projectRoot, 'b1');
+		expect(remaining.map((b) => b.id)).toEqual(['b2']);
+		expect(getBoard(projectRoot, 'b1')).toBeNull();
+	});
+
+	it('deletes an empty board without --force', () => {
+		saveBoards(projectRoot, [board([])]);
+		expect(deleteBoard(projectRoot, 'b1')).toEqual([]);
+	});
+
+	it('refuses without force when any card is not done, leaving the file intact', () => {
+		saveBoards(projectRoot, [board([card({ id: 'a', status: 'done' }), card({ id: 'b' })])]);
+		expect(() => deleteBoard(projectRoot, 'b1')).toThrow(/not done/);
+		expect(getBoard(projectRoot, 'b1')?.cards).toHaveLength(2);
+	});
+
+	it('deletes unfinished cards with force', () => {
+		saveBoards(projectRoot, [board([card({ id: 'a', status: 'running' })])]);
+		expect(deleteBoard(projectRoot, 'b1', { force: true })).toEqual([]);
+		expect(listBoards(projectRoot)).toEqual([]);
+	});
+
+	it('throws for an unknown board', () => {
+		expect(() => deleteBoard(projectRoot, 'ghost')).toThrow(/not found/);
 	});
 });
 

@@ -278,19 +278,89 @@ export function saveBoard(projectRoot: string, board: Board): string {
 	return saveBoards(projectRoot, boards);
 }
 
+/** Optional board settings accepted at creation time. */
+export interface CreateBoardOptions {
+	/** Cap on how many cards may be `running` at once. Must be a positive integer. */
+	maxInProgress?: number;
+	/** Opt this board into the LLM auto-decompose pass for `triage` cards. */
+	autoDecompose?: boolean;
+}
+
 /**
  * Create a new, empty board and persist it. Mints a UUID id, trims the name
  * (required), and upserts it alongside any existing boards. Returns the created
- * board. Used by the Board UI (Phase 4) to stand up the first board on demand.
+ * board. Used by the Board UI (Phase 4) to stand up the first board on demand,
+ * and by `maestro-cli board create` to bootstrap a board headlessly.
  */
-export function createBoard(projectRoot: string, name: string): Board {
+export function createBoard(
+	projectRoot: string,
+	name: string,
+	options: CreateBoardOptions = {}
+): Board {
 	const trimmed = (name ?? '').trim();
 	if (!trimmed) {
 		throw new Error('createBoard: name is required');
 	}
 	const board: Board = { id: generateUUID(), name: trimmed, cards: [] };
+	if (options.maxInProgress !== undefined) {
+		if (!Number.isFinite(options.maxInProgress) || options.maxInProgress < 1) {
+			throw new Error('createBoard: maxInProgress must be a positive integer');
+		}
+		board.maxInProgress = Math.floor(options.maxInProgress);
+	}
+	if (options.autoDecompose) board.autoDecompose = true;
 	saveBoard(projectRoot, board);
 	return board;
+}
+
+/**
+ * Rename a board in place. Trims the new name (required) and leaves every card
+ * untouched, so card ids referenced by the CLI, Cue pipelines, or open UI keep
+ * resolving. Throws if the board is missing or the name is blank. Returns the
+ * renamed board.
+ */
+export function renameBoard(projectRoot: string, boardId: string, name: string): Board {
+	const trimmed = (name ?? '').trim();
+	if (!trimmed) {
+		throw new Error('renameBoard: name is required');
+	}
+	const boards = loadBoards(projectRoot);
+	const board = requireBoard(boards, boardId);
+	board.name = trimmed;
+	saveBoards(projectRoot, boards);
+	return board;
+}
+
+/**
+ * Delete an entire board and every card on it. Returns the remaining boards
+ * (mirroring `deleteProfile`). Throws if the board is missing.
+ *
+ * Guard rail: a board with any card that is not `done` refuses to delete unless
+ * `force` is set. Unlike a single card, this is unrecoverable and takes the run
+ * history of everything on the board with it - and a `running` card would be
+ * orphaned mid-flight, its process still burning tokens with nothing left on
+ * disk to record the outcome. The caller (CLI `--force`, a UI confirm) has to
+ * say so explicitly.
+ */
+export function deleteBoard(
+	projectRoot: string,
+	boardId: string,
+	options: { force?: boolean } = {}
+): Board[] {
+	const boards = loadBoards(projectRoot);
+	const board = requireBoard(boards, boardId);
+	if (!options.force) {
+		const unfinished = board.cards.filter((c) => c.status !== 'done');
+		if (unfinished.length > 0) {
+			throw new Error(
+				`Board "${board.name}" still has ${unfinished.length} card(s) that are not done. ` +
+					`Pass --force to delete it and everything on it anyway.`
+			);
+		}
+	}
+	const remaining = boards.filter((b) => b.id !== boardId);
+	saveBoards(projectRoot, remaining);
+	return remaining;
 }
 
 /** Load a board by id or throw a caller-surfaceable error when it is missing. */

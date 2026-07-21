@@ -116,6 +116,22 @@ The prompt is registered in `src/shared/promptDefinitions.ts` (`PROMPT_IDS.BOARD
 
 `src/cli/commands/board.ts` and `profile.ts` mirror the IPC surface via the same storage modules. Every command resolves the project root from `--agent` (id or name). `board tick` reuses the pure dispatcher helpers (`promoteEligibleCards` / `claimReadyCards` / `applyCardResult` / `reclaimStaleRunning`) and the existing CLI `spawnAgent` path - it does **not** fork a second spawn implementation. Commands follow the repo's try/catch-at-boundary convention (throw internally, print + `process.exit(1)` once in the catch). See [cli-reference](../cli-reference.md) for the flag matrix; user-facing overview in [board.md](../board.md).
 
+Full lifecycle parity (Phase 3 of the 10x pass), so a CI box never needs the desktop app:
+
+| Board                                                     | Profile                                          |
+| --------------------------------------------------------- | ------------------------------------------------ |
+| `create` / `rename` / `delete` / `list` / `show`          | `create` / `update` / `show` / `list` / `delete` |
+| `add-card` / `update-card` / `remove-card` / `set-status` |                                                  |
+| `tick` (one pass) / `watch` (loop)                        |                                                  |
+
+Rules worth knowing before you extend this surface:
+
+- **Storage owns the guard rails, not the CLI.** `deleteBoard` refuses a board with any non-`done` card unless `{ force: true }`, so the desktop path inherits the same rule (`board:delete` IPC forwards the flag). Do not re-implement a check like this in a command.
+- **Editing is id-preserving.** `profile update` upserts with the EXISTING id. `profile create` mints a new UUID, which orphans every card whose `assigneeProfileId` points at the old one - that was the entire bug this command fixes.
+- **Only the flags you pass are touched.** `board update-card` and `profile update` diff against the stored record; an explicit empty string (`--assignee ''`, `--model ''`) is the clear operation, and a call with no flags is refused rather than silently rewriting the file.
+- **The CLI cannot cancel a run.** A `running` card's process belongs to whichever dispatcher claimed it, in another process. `board update-card` refuses a `running` card outright; `board remove-card --force` deletes it but says plainly that the run was not canceled. Do not add a command that claims to stop an agent it has no handle on.
+- **`board watch` is deliberately dumb.** One shared `tickBoardsOnce` pass on a timer (`--interval`, default 30s, floor 5s), stopped by SIGINT, which also wakes the sleep so Ctrl-C is instant. No daemon, no lock file, no PID file. Overlapping it with the desktop Cue engine tick is _safe_ (board.yaml writes are atomic and serialized per file) but still discouraged. A storage failure exits non-zero instead of spinning on a damaged file.
+
 ---
 
 ## Gotchas

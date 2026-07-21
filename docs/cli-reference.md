@@ -218,11 +218,34 @@ Send a message to an agent and get a JSON response
 
 Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID
 
-| Option           | Description                                                                                                                                          | Default |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--new-tab`      | Create a fresh AI tab and dispatch the prompt into it                                                                                                | -       |
-| `-t, --tab <id>` | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                             | -       |
-| `-f, --force`    | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy) | -       |
+| Option           | Description                                                                                                                                                                                                           | Default |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--new-tab`      | Create a fresh AI tab and dispatch the prompt into it                                                                                                                                                                 | -       |
+| `-t, --tab <id>` | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                              | -       |
+| `-f, --force`    | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)                                                                  | -       |
+| `--focus`        | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                         | -       |
+| `--queue`        | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab or --force. Returns the queue position. | -       |
+| `--wait`         | Alias for --queue                                                                                                                                                                                                     | -       |
+
+## `maestro-cli queue`
+
+Inspect and manage the desktop execution queue (from dispatch --queue)
+
+## `maestro-cli queue list`
+
+List queued execution items as JSON (all agents, or one with --agent)
+
+| Option             | Description                                                             | Default |
+| ------------------ | ----------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Only list items for this agent (default: every agent with queued items) | -       |
+
+## `maestro-cli queue remove <item-id>`
+
+Remove a queued item by its id (from dispatch --queue output or queue list)
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
 ## `maestro-cli session`
 
@@ -467,6 +490,196 @@ Remove a pipeline entry by name or id
 | --------- | ------------------------------------------------------------ | ------- |
 | `--force` | Suppress the no-op error when the pipeline is already absent | -       |
 | `--json`  | Output as JSON (for scripting)                               | -       |
+
+## `maestro-cli board`
+
+Manage and dispatch the Maestro Board
+
+## `maestro-cli board list`
+
+List all boards in an agent's project
+
+| Option                     | Description                           | Default |
+| -------------------------- | ------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board(s) | -       |
+| `--json`                   | Output as JSON (for scripting)        | -       |
+
+## `maestro-cli board create <name>`
+
+Create a new, empty board in an agent's project
+
+| Option                     | Description                                               | Default |
+| -------------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project will own the board                    | -       |
+| `--max-in-progress <n>`    | Cap how many cards may run at once                        | -       |
+| `--auto-decompose`         | Let the dispatcher fan triage cards out with one LLM pass | -       |
+| `--json`                   | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli board rename <boardId> <newName>`
+
+Rename a board (cards and their ids are untouched)
+
+| Option                     | Description                        | Default |
+| -------------------------- | ---------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board | -       |
+| `--json`                   | Output as JSON (for scripting)     | -       |
+
+## `maestro-cli board delete <boardId>`
+
+Delete a board and every card on it
+
+| Option                     | Description                                                  | Default |
+| -------------------------- | ------------------------------------------------------------ | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board                           | -       |
+| `--force`                  | Delete even when the board still has cards that are not done | -       |
+| `--json`                   | Output as JSON (for scripting)                               | -       |
+
+## `maestro-cli board show <boardId>`
+
+Show a board and its cards
+
+| Option                     | Description                        | Default |
+| -------------------------- | ---------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board | -       |
+| `--json`                   | Output as JSON (for scripting)     | -       |
+
+## `maestro-cli board add-card <boardId>`
+
+Add a card to a board
+
+| Option                       | Description                                                                 | Default |
+| ---------------------------- | --------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>`   | Agent whose project owns the board                                          | -       |
+| `-t, --title <title>`        | Card title                                                                  | -       |
+| `--assignee <profileId>`     | Agent Profile (role) id that runs this card; floats to the free worker pool | -       |
+| `--assignee-agent <agentId>` | Pin the card to a specific agent (runs with its own settings)               | -       |
+| `-b, --body <body>`          | Card body / instructions for the assignee                                   | -       |
+| `--parents <ids>`            | Comma-separated parent card ids this card depends on                        | -       |
+| `--priority <level>`         | Dispatch priority: high\|normal\|low (default normal)                       | -       |
+| `--worktree`                 | Record an isolated-worktree intent for this card                            | -       |
+| `--json`                     | Output as JSON (for scripting)                                              | -       |
+
+## `maestro-cli board update-card <cardId>`
+
+Edit a card in place (only the flags you pass are changed)
+
+| Option                       | Description                                               | Default |
+| ---------------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>`   | Agent whose project owns the card                         | -       |
+| `--board <boardId>`          | Scope the card lookup to a specific board                 | -       |
+| `-t, --title <title>`        | New card title                                            | -       |
+| `-b, --body <body>`          | New card body / instructions                              | -       |
+| `--assignee <profileId>`     | New Agent Profile (role) id; pass "" to clear             | -       |
+| `--assignee-agent <agentId>` | Pin the card to a specific agent; pass "" to clear        | -       |
+| `--parents <ids>`            | Comma-separated parent card ids; pass "" to clear         | -       |
+| `--priority <level>`         | Dispatch priority: high\|normal\|low ("normal" clears it) | -       |
+| `--worktree`                 | Record an isolated-worktree intent for this card          | -       |
+| `--no-worktree`              | Clear the card's worktree intent                          | -       |
+| `--json`                     | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli board remove-card <cardId>`
+
+Delete a card (its children inherit the card's parents)
+
+| Option                     | Description                                                    | Default |
+| -------------------------- | -------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the card                              | -       |
+| `--board <boardId>`        | Scope the card lookup to a specific board                      | -       |
+| `--force`                  | Remove even a running card (the in-flight run is NOT canceled) | -       |
+| `--json`                   | Output as JSON (for scripting)                                 | -       |
+
+## `maestro-cli board set-status <cardId> <status>`
+
+Set a card's status (triage|todo|ready|running|blocked|done)
+
+| Option                     | Description                               | Default |
+| -------------------------- | ----------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the card         | -       |
+| `--board <boardId>`        | Scope the card lookup to a specific board | -       |
+| `--json`                   | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli board tick`
+
+Run one dispatcher pass headlessly (promote, claim, spawn, apply)
+
+| Option                     | Description                           | Default |
+| -------------------------- | ------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board(s) | -       |
+| `--board <boardId>`        | Tick only a specific board            | -       |
+| `--json`                   | Output as JSON (for scripting)        | -       |
+
+## `maestro-cli board watch`
+
+Run `board tick` on a loop until Ctrl-C. The desktop Cue engine ticks the same boards; overlapping is safe (board.yaml writes are atomic and serialized) but still discouraged. No daemonization, no lock files.
+
+| Option                     | Description                                     | Default |
+| -------------------------- | ----------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board(s)           | -       |
+| `--board <boardId>`        | Watch only a specific board                     | -       |
+| `--interval <seconds>`     | Seconds between ticks (default 30, minimum 5)   | -       |
+| `--json`                   | Output one JSON object per tick (for scripting) | -       |
+
+## `maestro-cli profile`
+
+Manage Agent Profiles
+
+## `maestro-cli profile list`
+
+List all profiles in an agent's project
+
+| Option                     | Description                           | Default |
+| -------------------------- | ------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the profiles | -       |
+| `--json`                   | Output as JSON (for scripting)        | -       |
+
+## `maestro-cli profile create`
+
+Create a profile layered on a base agent
+
+| Option              | Description                                                       | Default |
+| ------------------- | ----------------------------------------------------------------- | ------- |
+| `--base <agentId>`  | Base Left Bar agent (also locates the project)                    | -       |
+| `-n, --name <name>` | Profile name                                                      | -       |
+| `--pool`            | Create a base-agent-less role that floats to the free worker pool | -       |
+| `--model <model>`   | Model override (falls back to the running agent)                  | -       |
+| `--effort <level>`  | Reasoning effort override                                         | -       |
+| `--role <text>`     | Role system-prompt appended for this profile                      | -       |
+| `--json`            | Output as JSON (for scripting)                                    | -       |
+
+## `maestro-cli profile show <profileId>`
+
+Show a profile and the spawn overrides it resolves to
+
+| Option                     | Description                          | Default |
+| -------------------------- | ------------------------------------ | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the profile | -       |
+| `--json`                   | Output as JSON (for scripting)       | -       |
+
+## `maestro-cli profile update <profileId>`
+
+Edit a profile in place, keeping its id (and every card that references it)
+
+| Option                     | Description                                                    | Default |
+| -------------------------- | -------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the profile                           | -       |
+| `-n, --name <name>`        | New profile name                                               | -       |
+| `--model <model>`          | Model override; pass "" to fall back to the running agent      | -       |
+| `--effort <level>`         | Reasoning effort override; pass "" to clear                    | -       |
+| `--role-prompt <text>`     | Role system-prompt appended for this profile; pass "" to clear | -       |
+| `--role <text>`            | Alias for --role-prompt (matches `profile create`)             | -       |
+| `--args <args>`            | Extra CLI args for spawns wearing this role; pass "" to clear  | -       |
+| `--base <agentId>`         | Pin the role to a different base agent                         | -       |
+| `--pool`                   | Drop the base agent so the role floats to the free worker pool | -       |
+| `--json`                   | Output as JSON (for scripting)                                 | -       |
+
+## `maestro-cli profile delete <profileId>`
+
+Delete a profile by id
+
+| Option                     | Description                          | Default |
+| -------------------------- | ------------------------------------ | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the profile | -       |
+| `--json`                   | Output as JSON (for scripting)       | -       |
 
 ## `maestro-cli director-notes`
 
