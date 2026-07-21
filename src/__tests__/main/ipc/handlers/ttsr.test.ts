@@ -82,6 +82,7 @@ describe('ttsr:listRules', () => {
 
 		expect(result.rules).toHaveLength(1);
 		expect(result.rules[0]).toMatchObject({
+			disabled: false,
 			name: 'no-force-push',
 			description: 'Stop force-pushes',
 			scope: ['tool:bash'],
@@ -98,6 +99,28 @@ describe('ttsr:listRules', () => {
 		expect(result.rules).toEqual([]);
 		expect(result.configExists).toBe(false);
 		expect(result.errors).toEqual([]);
+	});
+
+	// Disabled rules used to be filtered out of the list entirely, which meant the
+	// only way to re-enable one was hand-editing `.maestro/ttsr.yaml`.
+	it('lists disabled rules flagged rather than dropping them', async () => {
+		writeRuleFile('no-force-push.md', RULE);
+		writeRuleFile(
+			'quiet.md',
+			['---', 'description: Off for now', "condition: 'x'", '---', 'Body.'].join('\n')
+		);
+		await call('ttsr:writeProjectSettings', {
+			projectRoot,
+			settings: { disabledRules: ['quiet'] },
+		});
+
+		const result = await call<TtsrRuleListResult>('ttsr:listRules', { projectRoot });
+
+		expect(result.rules.map((rule) => [rule.name, rule.disabled])).toEqual([
+			['no-force-push', false],
+			['quiet', true],
+		]);
+		expect(result.settings.disabledRules).toEqual(['quiet']);
 	});
 
 	it('surfaces load warnings so a rule that can never fire is visible', async () => {

@@ -36,7 +36,9 @@ export type {
 	TtsrContextMode,
 	TtsrProjectSettings,
 	TtsrRule,
+	TtsrRuleListEntry,
 	TtsrRuleListResult,
+	TtsrRulesChangedPayload,
 	TtsrRuleValidation,
 	TtsrScope,
 } from '../../shared/ttsr-types';

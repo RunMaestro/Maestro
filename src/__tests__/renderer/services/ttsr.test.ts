@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { buildRuleAuthoringPrompt, isTtsrRuleApiAvailable } from '../../../renderer/services/ttsr';
+import {
+	buildRuleAuthoringPrompt,
+	isTtsrRuleApiAvailable,
+	ttsrService,
+} from '../../../renderer/services/ttsr';
 import { TTSR_RULES_DIR } from '../../../shared/maestro-paths';
 
 const TEMPLATE = [
@@ -70,6 +74,37 @@ describe('buildRuleAuthoringPrompt', () => {
 		window.maestro.prompts.get = vi.fn().mockRejectedValue(new Error('bridge gone'));
 
 		await expect(buildRuleAuthoringPrompt('x')).resolves.toContain(TTSR_RULES_DIR);
+	});
+});
+
+describe('ttsrService.onRulesChanged', () => {
+	it('forwards the payload and hands back the unsubscribe', () => {
+		const off = vi.fn();
+		let pushed: ((payload: { projectRoot?: string }) => void) | undefined;
+		window.maestro.ttsr.onRulesChanged = vi.fn((cb) => {
+			pushed = cb;
+			return off;
+		});
+		const seen = vi.fn();
+
+		const unsubscribe = ttsrService.onRulesChanged(seen);
+		pushed?.({ projectRoot: '/repo' });
+
+		expect(seen).toHaveBeenCalledWith({ projectRoot: '/repo' });
+		unsubscribe();
+		expect(off).toHaveBeenCalledTimes(1);
+	});
+
+	it('degrades to a no-op on a preload without the channel', () => {
+		const original = window.maestro.ttsr;
+		// @ts-expect-error - deliberately simulating an older preload
+		window.maestro.ttsr = { listRules: vi.fn() };
+
+		const unsubscribe = ttsrService.onRulesChanged(vi.fn());
+
+		// Callers must be able to unsubscribe unconditionally.
+		expect(() => unsubscribe()).not.toThrow();
+		window.maestro.ttsr = original;
 	});
 });
 

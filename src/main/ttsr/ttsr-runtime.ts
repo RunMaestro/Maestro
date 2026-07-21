@@ -21,6 +21,7 @@ import type {
 	TtsrContextMode,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
+	TtsrRulesChangedPayload,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 import { DEFAULT_TTSR_CONTEXT_MODE, DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
@@ -79,6 +80,13 @@ export interface TtsrRuntimeDeps {
 	 * that turn's exit handling.
 	 */
 	onAbortCleared?(payload: TtsrAbortClearedPayload): void;
+	/**
+	 * Sink for `ttsr:rulesChanged`, fired whenever a project's cached rules are
+	 * dropped (watcher event or a write through the IPC handlers). The Rules panel
+	 * lists on mount only, so without this it shows a stale list right after the
+	 * agent finishes authoring a rule - the one moment the user is watching it.
+	 */
+	onRulesChanged?(payload: TtsrRulesChangedPayload): void;
 	/** Test override for how long an abort waits on the turn's `exit`. */
 	exitTimeoutMs?: number;
 	/** Swappable for tests; defaults to the real disk loader. */
@@ -431,10 +439,17 @@ export class TtsrRuntime {
 		this.deps.persistence?.dispose();
 	}
 
-	/** Drop cached rules so the next event re-reads them (rule file edited). */
+	/**
+	 * Drop cached rules so the next event re-reads them (rule file edited).
+	 *
+	 * Also the single place `ttsr:rulesChanged` is announced from: every path that
+	 * changes a project's rules - the file watcher, a panel write, the agent
+	 * writing a rule file itself - already funnels through here.
+	 */
 	invalidateRules(projectRoot?: string): void {
 		if (projectRoot) this.cache.delete(projectRoot);
 		else this.cache.clear();
+		this.deps.onRulesChanged?.({ projectRoot });
 	}
 
 	// ── internals ──

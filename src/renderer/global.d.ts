@@ -3868,6 +3868,9 @@ interface MaestroAPI {
 		onMatched: (
 			callback: (payload: import('../shared/ttsr-types').TtsrMatchedPayload) => void
 		) => () => void;
+		onRulesChanged: (
+			callback: (payload: import('../shared/ttsr-types').TtsrRulesChangedPayload) => void
+		) => () => void;
 		// Rule management. Project-scoped: rules live in each project's
 		// .maestro/rules/, so every call names the project it acts on.
 		listRules: (projectRoot: string) => Promise<import('../shared/ttsr-types').TtsrRuleListResult>;

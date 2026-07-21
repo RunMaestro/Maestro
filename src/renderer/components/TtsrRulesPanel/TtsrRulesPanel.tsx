@@ -13,13 +13,21 @@
  * follow up conversationally ("narrower", "it fires too often").
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, FileText, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, FileText, Plus, Power, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { TTSR_RULES_DIR } from '../../../shared/maestro-paths';
 import { buildRuleAuthoringPrompt, isTtsrRuleApiAvailable, ttsrService } from '../../services/ttsr';
 import { notifyToast } from '../../stores/notificationStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
-import type { Theme, TtsrContextMode, TtsrRule, TtsrRuleListResult } from '../../types';
+import type {
+	Theme,
+	TtsrContextMode,
+	TtsrProjectSettings,
+	TtsrRule,
+	TtsrRuleListEntry,
+	TtsrRuleListResult,
+} from '../../types';
 
 interface TtsrRulesPanelProps {
 	theme: Theme;
@@ -39,6 +47,12 @@ const EMPTY: TtsrRuleListResult = {
 	configExists: false,
 };
 
+/** Coalescing window for `ttsr:rulesChanged`; one save can fire several events. */
+const RULES_CHANGED_DEBOUNCE_MS = 300;
+
+/** How long a delete stays armed before it disarms itself again. */
+const DELETE_ARMED_MS = 4000;
+
 /** Short, readable summary of what a rule watches. */
 function scopeLabel(rule: TtsrRule): string {
 	return rule.scope.join(', ');
@@ -53,6 +67,21 @@ export function TtsrRulesPanel({
 	const [data, setData] = useState<TtsrRuleListResult>(EMPTY);
 	const [loading, setLoading] = useState(false);
 	const [request, setRequest] = useState('');
+	// Two-step confirm for delete: the trash icon sits in a hover cluster next to
+	// Edit, so a single click is far too easy to fire by accident. Holds the path
+	// of the rule currently armed.
+	const [armedDelete, setArmedDelete] = useState<string | null>(null);
+	const disarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// The global (all-projects) disable list. A rule named here cannot fire even
+	// though this project says nothing about it, so the panel has to show that.
+	const globalDisabled = useSettingsStore((state) => state.ttsrDisabledRules);
+	const setGlobalDisabled = useSettingsStore((state) => state.setTtsrDisabledRules);
+
+	useEffect(() => {
+		return () => {
+			if (disarmTimerRef.current) clearTimeout(disarmTimerRef.current);
+		};
+	}, []);
 
 	const refresh = useCallback(async () => {
 		if (!projectRoot || !isTtsrRuleApiAvailable()) return;
@@ -71,8 +100,30 @@ export function TtsrRulesPanel({
 		void refresh();
 	}, [refresh]);
 
+	// Live re-list. Authoring is delegated to the agent, so the moment a rule
+	// exists is the moment the agent writes the file - not a click in here. Main
+	// pushes `ttsr:rulesChanged` when it drops the project's rule cache; without
+	// this subscription the authoring loop ends on a stale list.
+	useEffect(() => {
+		if (!projectRoot || !isTtsrRuleApiAvailable()) return;
+		// The watcher can fire several times for one save (frontmatter, body,
+		// editor temp files), so coalesce rather than re-reading the directory
+		// once per event.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const off = ttsrService.onRulesChanged((payload) => {
+			// No projectRoot means every project was invalidated.
+			if (payload.projectRoot && payload.projectRoot !== projectRoot) return;
+			if (timer) clearTimeout(timer);
+			timer = setTimeout(() => void refresh(), RULES_CHANGED_DEBOUNCE_MS);
+		});
+		return () => {
+			if (timer) clearTimeout(timer);
+			off();
+		};
+	}, [projectRoot, refresh]);
+
 	const patchSettings = useCallback(
-		async (patch: { enabled?: boolean; contextMode?: TtsrContextMode | undefined }) => {
+		async (patch: Partial<TtsrProjectSettings>) => {
 			if (!projectRoot) return;
 			try {
 				await ttsrService.writeProjectSettings(projectRoot, patch);
@@ -85,6 +136,31 @@ export function TtsrRulesPanel({
 		[projectRoot, refresh]
 	);
 
+	/**
+	 * Flip one rule on or off.
+	 *
+	 * Disabling is a statement about this repo, so it goes in the committed
+	 * `.maestro/ttsr.yaml`. Enabling has to undo whichever list is holding the
+	 * rule down: the project file, the machine-wide `ttsrDisabledRules` setting,
+	 * or both. Missing the second one would leave the toggle looking stuck.
+	 */
+	const toggleRule = useCallback(
+		async (rule: TtsrRuleListEntry, projectDisabled: string[]) => {
+			const globallyOff = globalDisabled.includes(rule.name);
+			if (!rule.disabled && !globallyOff) {
+				await patchSettings({ disabledRules: [...projectDisabled, rule.name] });
+				return;
+			}
+			if (globallyOff) {
+				setGlobalDisabled(globalDisabled.filter((name) => name !== rule.name));
+			}
+			if (rule.disabled) {
+				await patchSettings({ disabledRules: projectDisabled.filter((n) => n !== rule.name) });
+			}
+		},
+		[globalDisabled, patchSettings, setGlobalDisabled]
+	);
+
 	const authorRule = useCallback(
 		async (instruction: string) => {
 			if (!onSendToAgent) return;
@@ -95,9 +171,17 @@ export function TtsrRulesPanel({
 		[onSendToAgent]
 	);
 
+	/** First click arms, second deletes. Deleting a rule file is not undoable. */
 	const removeRule = useCallback(
 		async (rule: TtsrRule) => {
 			if (!projectRoot) return;
+			if (disarmTimerRef.current) clearTimeout(disarmTimerRef.current);
+			if (armedDelete !== rule.path) {
+				setArmedDelete(rule.path);
+				disarmTimerRef.current = setTimeout(() => setArmedDelete(null), DELETE_ARMED_MS);
+				return;
+			}
+			setArmedDelete(null);
 			try {
 				await ttsrService.deleteRule(projectRoot, rule.path);
 				await refresh();
@@ -106,7 +190,7 @@ export function TtsrRulesPanel({
 				notifyToast({ color: 'red', title: 'TTSR', message: `Could not delete ${rule.name}.` });
 			}
 		},
-		[projectRoot, refresh]
+		[armedDelete, projectRoot, refresh]
 	);
 
 	if (!projectRoot) {
@@ -262,73 +346,101 @@ export function TtsrRulesPanel({
 						committed with the repo, so they apply to everyone working in it.
 					</div>
 				) : (
-					rules.map((rule) => (
-						<div
-							key={rule.path}
-							className="px-3 py-2 border-b group"
-							style={{ borderColor: theme.colors.border }}
-						>
-							<div className="flex items-start justify-between gap-2">
-								<div className="min-w-0 flex-1">
-									<div
-										className="text-xs font-medium truncate select-text"
-										style={{ color: theme.colors.textMain }}
-									>
-										{rule.name}
-									</div>
-									<div
-										className="text-[10px] leading-snug mt-0.5 select-text"
-										style={{ color: theme.colors.textDim }}
-									>
-										{rule.description}
-									</div>
-									<div
-										className="text-[10px] mt-1 font-mono"
-										style={{ color: theme.colors.textDim }}
-									>
-										{scopeLabel(rule)} · {rule.interruptMode}
-									</div>
-								</div>
-								<div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-									{onOpenFile && (
-										<button
-											type="button"
-											onClick={() => onOpenFile(rule.path)}
-											className="p-1 rounded hover:bg-white/10"
-											title="Open rule file"
+					rules.map((rule) => {
+						// Either list can hold a rule down, and both read as "off" here.
+						const off = rule.disabled || globalDisabled.includes(rule.name);
+						const armed = armedDelete === rule.path;
+						return (
+							<div
+								key={rule.path}
+								className="px-3 py-2 border-b group"
+								style={{ borderColor: theme.colors.border, opacity: off ? 0.5 : 1 }}
+							>
+								<div className="flex items-start justify-between gap-2">
+									<div className="min-w-0 flex-1">
+										<div
+											className="text-xs font-medium truncate select-text"
+											style={{ color: theme.colors.textMain }}
+										>
+											{rule.name}
+										</div>
+										<div
+											className="text-[10px] leading-snug mt-0.5 select-text"
 											style={{ color: theme.colors.textDim }}
 										>
-											<FileText className="w-3 h-3" />
-										</button>
-									)}
-									{onSendToAgent && (
+											{rule.description}
+										</div>
+										<div
+											className="text-[10px] mt-1 font-mono"
+											style={{ color: theme.colors.textDim }}
+										>
+											{scopeLabel(rule)} · {rule.interruptMode}
+											{off ? ' · disabled' : ''}
+										</div>
+									</div>
+									<div className="flex items-center gap-0.5">
+										<div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+											{onOpenFile && (
+												<button
+													type="button"
+													onClick={() => onOpenFile(rule.path)}
+													className="p-1 rounded hover:bg-white/10"
+													title="Open rule file"
+													style={{ color: theme.colors.textDim }}
+												>
+													<FileText className="w-3 h-3" />
+												</button>
+											)}
+											{onSendToAgent && (
+												<button
+													type="button"
+													onClick={() =>
+														void authorRule(
+															`Edit the existing rule at \`${rule.path}\`. Read it first, then change it as follows: `
+														)
+													}
+													className="p-1 rounded hover:bg-white/10"
+													title="Ask the agent to edit this rule"
+													style={{ color: theme.colors.textDim }}
+												>
+													<Sparkles className="w-3 h-3" />
+												</button>
+											)}
+											<button
+												type="button"
+												onClick={() => void removeRule(rule)}
+												className="p-1 rounded hover:bg-white/10"
+												title={
+													armed
+														? `Click again to delete ${rule.name} - this removes the file`
+														: 'Delete rule'
+												}
+												aria-label={armed ? `Confirm delete ${rule.name}` : `Delete ${rule.name}`}
+												style={{ color: armed ? theme.colors.warning : theme.colors.error }}
+											>
+												<Trash2 className="w-3 h-3" />
+											</button>
+										</div>
+										{/* Always visible, unlike the cluster above: a rule whose switch
+										    only appears on hover is one a user cannot find. */}
 										<button
 											type="button"
-											onClick={() =>
-												void authorRule(
-													`Edit the existing rule at \`${rule.path}\`. Read it first, then change it as follows: `
-												)
+											onClick={() => void toggleRule(rule, settings.disabledRules)}
+											className="p-1 rounded hover:bg-white/10"
+											title={
+												off ? 'Rule is off - click to enable' : 'Rule is on - click to disable'
 											}
-											className="p-1 rounded hover:bg-white/10"
-											title="Ask the agent to edit this rule"
-											style={{ color: theme.colors.textDim }}
+											aria-label={`${off ? 'Enable' : 'Disable'} ${rule.name}`}
+											aria-pressed={!off}
+											style={{ color: off ? theme.colors.textDim : theme.colors.success }}
 										>
-											<Sparkles className="w-3 h-3" />
+											<Power className="w-3 h-3" />
 										</button>
-									)}
-									<button
-										type="button"
-										onClick={() => void removeRule(rule)}
-										className="p-1 rounded hover:bg-white/10"
-										title="Delete rule"
-										style={{ color: theme.colors.error }}
-									>
-										<Trash2 className="w-3 h-3" />
-									</button>
+									</div>
 								</div>
 							</div>
-						</div>
-					))
+						);
+					})
 				)}
 			</div>
 		</div>

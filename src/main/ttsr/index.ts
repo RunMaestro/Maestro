@@ -12,6 +12,7 @@ import type {
 	TtsrAbortPendingPayload,
 	TtsrContextMode,
 	TtsrMatchedPayload,
+	TtsrRulesChangedPayload,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 import { watchTtsrConfig } from './config/ttsr-config-loader';
@@ -90,6 +91,12 @@ export function installTtsrRuntime(
 				: (options.persistence ?? createTtsrStatePersistence()),
 		onMatched: safeSend
 			? (payload: TtsrMatchedPayload) => safeSend('ttsr:matched', payload)
+			: undefined,
+		// The Rules panel lists on mount only, so this is what closes the authoring
+		// loop: the agent writes a rule file, the watcher invalidates, the panel
+		// re-lists without the user having to hit refresh.
+		onRulesChanged: safeSend
+			? (payload: TtsrRulesChangedPayload) => safeSend('ttsr:rulesChanged', payload)
 			: undefined,
 		// Aborting without a way to tell the renderer to respawn would strand the
 		// turn, so the interrupt surface is wired only when a push channel exists.

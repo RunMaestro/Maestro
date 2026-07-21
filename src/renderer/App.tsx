@@ -2928,7 +2928,18 @@ function MaestroConsoleInner() {
 	// brief and this puts it in front of the active agent as a normal turn.
 	const handleSendPromptToAgent = useCallback(
 		(prompt: string) => {
-			void processInputRef.current?.(prompt);
+			// No input handler means no agent tab is mounted to receive the turn.
+			// Silently dropping the click would leave the user waiting for a rule
+			// nothing is writing.
+			if (!processInputRef.current) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Maestro',
+					message: 'No active agent input to send this to. Open an agent tab and try again.',
+				});
+				return;
+			}
+			void processInputRef.current(prompt);
 		},
 		[processInputRef]
 	);

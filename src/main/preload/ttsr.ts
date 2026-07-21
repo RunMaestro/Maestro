@@ -12,6 +12,8 @@
  * - `ttsr:abortCleared` - the announced abort is off; no corrective turn is
  *   coming, so resume normal exit handling.
  * - `ttsr:matched` - observability only (a rule matched, interrupting or not).
+ * - `ttsr:rulesChanged` - a project's rules were edited on disk or through the
+ *   handlers below, so any list of them is now stale.
  */
 
 import { ipcRenderer } from 'electron';
@@ -21,6 +23,7 @@ import type {
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrRuleListResult,
+	TtsrRulesChangedPayload,
 	TtsrRuleValidation,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
@@ -33,6 +36,7 @@ export type {
 	TtsrRule,
 	TtsrRuleListResult,
 	TtsrRuleRef,
+	TtsrRulesChangedPayload,
 	TtsrRuleValidation,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
@@ -79,6 +83,16 @@ export function createTtsrApi() {
 			ipcRenderer.on('ttsr:matched', handler);
 			return () => {
 				ipcRenderer.removeListener('ttsr:matched', handler);
+			};
+		},
+
+		// A project's rules changed on disk (or through the handlers below), so
+		// anything showing them has to re-list.
+		onRulesChanged: (callback: (payload: TtsrRulesChangedPayload) => void): (() => void) => {
+			const handler = (_e: unknown, payload: TtsrRulesChangedPayload) => callback(payload);
+			ipcRenderer.on('ttsr:rulesChanged', handler);
+			return () => {
+				ipcRenderer.removeListener('ttsr:rulesChanged', handler);
 			};
 		},
 

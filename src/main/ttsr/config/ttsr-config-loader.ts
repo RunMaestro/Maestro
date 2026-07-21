@@ -49,6 +49,13 @@ export interface LoadTtsrConfigResult {
 	/** Non-fatal problems: dropped rules, bad regexes, shadowed names. */
 	warnings: string[];
 	rules: LoadedTtsrRule[];
+	/**
+	 * Rules that parsed fine but are named in `settings.disabledRules`, so they
+	 * are absent from {@link LoadTtsrConfigResult.rules}. Kept so the management
+	 * surface can show a disabled rule (and let the user re-enable it) without
+	 * ever handing it to the matcher.
+	 */
+	disabledRules: LoadedTtsrRule[];
 	settings: TtsrProjectSettings;
 }
 
@@ -63,6 +70,7 @@ function emptyResult(
 		errors,
 		warnings,
 		rules: [],
+		disabledRules: [],
 		settings: { ...DEFAULT_TTSR_PROJECT_SETTINGS },
 	};
 }
@@ -74,9 +82,10 @@ function emptyResult(
  * Precedence is name-based first-wins: a later file whose rule name collides
  * with an earlier one is shadowed with a warning (mirroring OMP).
  *
- * Rules named in `settings.disabledRules` are loaded but excluded from the
- * returned set, so a disabled rule cannot fire without also disappearing from
- * the collision bookkeeping.
+ * Rules named in `settings.disabledRules` are loaded but excluded from `rules`,
+ * so a disabled rule cannot fire without also disappearing from the collision
+ * bookkeeping. They are still returned under `disabledRules` for the management
+ * surface, which has to show what it can turn back on.
  */
 export function loadTtsrConfigDetailed(projectRoot: string): LoadTtsrConfigResult {
 	const warnings: string[] = [];
@@ -130,9 +139,11 @@ export function loadTtsrConfigDetailed(projectRoot: string): LoadTtsrConfigResul
 		byName.set(rule.name, rule);
 	}
 
-	const rules = [...byName.values()].filter((rule) => !disabled.has(rule.name));
+	const loaded = [...byName.values()];
+	const rules = loaded.filter((rule) => !disabled.has(rule.name));
+	const disabledRules = loaded.filter((rule) => disabled.has(rule.name));
 
-	return { ok: true, errors: [], warnings, rules, settings };
+	return { ok: true, errors: [], warnings, rules, disabledRules, settings };
 }
 
 /**

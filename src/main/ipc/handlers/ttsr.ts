@@ -31,6 +31,7 @@ import { ttsrRuleFilePath } from '../../../shared/maestro-paths';
 import type {
 	TtsrProjectSettings,
 	TtsrRule,
+	TtsrRuleListEntry,
 	TtsrRuleListResult,
 	TtsrRuleValidation,
 } from '../../../shared/ttsr-types';
@@ -67,8 +68,15 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 			handlerOpts('listRules'),
 			async (args: { projectRoot: string }): Promise<TtsrRuleListResult> => {
 				const result = loadTtsrConfigDetailed(args.projectRoot);
+				// Disabled rules are listed, not filtered: one the panel cannot show is
+				// one the user cannot turn back on. Only the runtime's rule cache
+				// filters, so the matcher is unaffected by this.
+				const listed: TtsrRuleListEntry[] = [
+					...result.rules.map((rule) => ({ ...toSerializable(rule), disabled: false })),
+					...result.disabledRules.map((rule) => ({ ...toSerializable(rule), disabled: true })),
+				];
 				return {
-					rules: result.rules.map(toSerializable),
+					rules: listed.sort((a, b) => a.path.localeCompare(b.path)),
 					settings: result.settings,
 					warnings: result.warnings,
 					errors: result.errors,

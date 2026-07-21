@@ -11,7 +11,12 @@
  */
 
 import { TTSR_RULES_DIR } from '../../shared/maestro-paths';
-import type { TtsrProjectSettings, TtsrRuleListResult, TtsrRuleValidation } from '../types';
+import type {
+	TtsrProjectSettings,
+	TtsrRuleListResult,
+	TtsrRulesChangedPayload,
+	TtsrRuleValidation,
+} from '../types';
 import { logger } from '../utils/logger';
 
 /** True when the preload exposes rule management (older preloads, some web builds). */
@@ -42,6 +47,17 @@ export const ttsrService = {
 		projectRoot: string,
 		settings: Partial<TtsrProjectSettings>
 	): Promise<{ path: string }> => window.maestro.ttsr.writeProjectSettings(projectRoot, settings),
+
+	/**
+	 * Subscribe to `ttsr:rulesChanged` - main's "this project's rules are now
+	 * stale" push, fired by the rule-file watcher and by every write handler.
+	 * Returns the unsubscribe. A no-op unsubscribe on preloads without it, so the
+	 * panel degrades to its manual refresh rather than crashing.
+	 */
+	onRulesChanged: (callback: (payload: TtsrRulesChangedPayload) => void): (() => void) => {
+		if (typeof window.maestro?.ttsr?.onRulesChanged !== 'function') return () => {};
+		return window.maestro.ttsr.onRulesChanged(callback);
+	},
 };
 
 /**

@@ -4,13 +4,33 @@
  * corrective respawn that continues the aborted conversation.
  */
 
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Controlled WindowContext: `undefined` => no window scoping (permit all); a
+// predicate => this window owns only what the predicate accepts. TTSR pushes are
+// broadcast to every window, so ownership is what stops two renderers from both
+// respawning the corrective turn.
+let mockOwnsSession: ((id: string) => boolean) | undefined;
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindowContextOptional: () => (mockOwnsSession ? { ownsSession: mockOwnsSession } : null),
+}));
+
+const mockNotifyToast = vi.fn();
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
+	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
+}));
+
 import { createMockAITab, createMockSession } from '../../helpers';
 import { runTtsrCorrectiveTurn, useTtsr } from '../../../renderer/hooks/useTtsr';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { isTtsrAbortPending, useTtsrStore } from '../../../renderer/stores/ttsrStore';
+import {
+	isTtsrAbortPending,
+	TTSR_ABORT_PENDING_TTL_MS,
+	useTtsrStore,
+} from '../../../renderer/stores/ttsrStore';
 import type {
 	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
@@ -54,6 +74,37 @@ function seedSession() {
 
 function currentTab() {
 	return useSessionStore.getState().sessions[0].aiTabs[0];
+}
+
+/**
+ * Mock the three TTSR push channels and hand back the callbacks the hook
+ * registered, so a test can fire a real `ttsr:triggered` instead of calling the
+ * respawn directly.
+ */
+function wireBridge() {
+	const listeners: {
+		abortPending?: (payload: TtsrAbortPendingPayload) => void;
+		triggered?: (payload: TtsrTriggeredPayload) => void;
+		abortCleared?: (payload: TtsrAbortClearedPayload) => void;
+	} = {};
+	const off = {
+		abortPending: vi.fn(),
+		triggered: vi.fn(),
+		abortCleared: vi.fn(),
+	};
+	window.maestro.ttsr.onAbortPending = vi.fn((cb) => {
+		listeners.abortPending = cb;
+		return off.abortPending;
+	});
+	window.maestro.ttsr.onTriggered = vi.fn((cb) => {
+		listeners.triggered = cb;
+		return off.triggered;
+	});
+	window.maestro.ttsr.onAbortCleared = vi.fn((cb) => {
+		listeners.abortCleared = cb;
+		return off.abortCleared;
+	});
+	return { listeners, off };
 }
 
 describe('ttsrStore abort-pending flag', () => {
@@ -102,6 +153,28 @@ describe('ttsrStore abort-pending flag', () => {
 		// the tab stays suppressed and busy for good.
 		listeners.abortCleared?.(cleared as never);
 		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+	});
+
+	// Main dying mid-abort, or the renderer unsubscribing between the two events,
+	// leaves a mark nobody will ever clear. Without the TTL that mark suppresses
+	// EVERY later exit for the session, so the agent can never go idle again.
+	it('stops suppressing once the mark is older than the TTL', () => {
+		useTtsrStore.getState().noteAbortPending(makeAbortPending());
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(true);
+
+		vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTSR_ABORT_PENDING_TTL_MS + 1);
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+		// The stale entry is dropped, not just ignored.
+		expect(useTtsrStore.getState().abortPending['session-1-ai-tab-1']).toBeUndefined();
+		vi.restoreAllMocks();
+	});
+
+	it('keeps suppressing an abort that is merely slow', () => {
+		useTtsrStore.getState().noteAbortPending(makeAbortPending());
+
+		vi.spyOn(Date, 'now').mockReturnValue(Date.now() + TTSR_ABORT_PENDING_TTL_MS - 1000);
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(true);
+		vi.restoreAllMocks();
 	});
 });
 
@@ -192,5 +265,181 @@ describe('runTtsrCorrectiveTurn', () => {
 		expect(tab.state).toBe('idle');
 		expect(tab.thinkingStartTime).toBeUndefined();
 		expect(tab.logs.at(-1)?.text).toContain('spawn failed');
+	});
+
+	// The aborted turn's exit is suppressed by the abort-pending flag, so a failed
+	// respawn is the ONLY thing left that can release the session. Miss it and the
+	// agent spins forever with queue dispatch blocked until the app reloads.
+	it('releases the session, not just the tab, when the respawn cannot spawn', async () => {
+		seedSession();
+		useSessionStore.getState().setSessions([
+			{
+				...useSessionStore.getState().sessions[0],
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: Date.now(),
+			},
+		]);
+		useTtsrStore.getState().noteAbortPending(makeAbortPending());
+		window.maestro.process.spawn = vi.fn().mockRejectedValue(new Error('ssh remote unresolvable'));
+
+		await expect(runTtsrCorrectiveTurn(makePayload())).resolves.toBe(false);
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.state).toBe('idle');
+		expect(session.busySource).toBeUndefined();
+		expect(session.thinkingStartTime).toBeUndefined();
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+		expect(mockNotifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				color: 'red',
+				message: expect.stringContaining('ssh remote unresolvable'),
+			})
+		);
+		// The rule that fired is named, so the user knows what guidance was lost.
+		expect(mockNotifyToast.mock.calls[0][0].message).toContain('no-console-log');
+	});
+
+	it('releases the session when the agent is not installed', async () => {
+		seedSession();
+		useSessionStore
+			.getState()
+			.setSessions([
+				{ ...useSessionStore.getState().sessions[0], state: 'busy', busySource: 'ai' },
+			]);
+		useTtsrStore.getState().noteAbortPending(makeAbortPending());
+		window.maestro.agents.get = vi.fn().mockResolvedValue(null);
+
+		await expect(runTtsrCorrectiveTurn(makePayload())).resolves.toBe(false);
+
+		expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.state).toBe('idle');
+		expect(session.busySource).toBeUndefined();
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+		expect(mockNotifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', message: expect.stringContaining('not found') })
+		);
+	});
+
+	it('clears the abort mark when the tab is gone, so future exits are not suppressed', async () => {
+		useSessionStore.getState().setSessions([]);
+		useTtsrStore.getState().noteAbortPending(makeAbortPending());
+
+		await expect(runTtsrCorrectiveTurn(makePayload())).resolves.toBe(false);
+
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+	});
+});
+
+describe('useTtsr subscription wiring', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockOwnsSession = undefined;
+		useTtsrStore.setState({ abortPending: {}, lastTriggered: {} });
+		window.maestro.agents.get = vi.fn().mockResolvedValue({
+			command: 'claude',
+			path: '/usr/local/bin/claude',
+			args: ['--print'],
+			capabilities: { supportsStreamJsonInput: true },
+		});
+		window.maestro.process.spawn = vi.fn().mockResolvedValue({ pid: 1, success: true });
+	});
+
+	it('respawns the corrective turn when `ttsr:triggered` arrives', async () => {
+		seedSession();
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		listeners.triggered?.(makePayload());
+
+		await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+		expect(useTtsrStore.getState().lastTriggered['session-1-ai-tab-1']).toBeDefined();
+	});
+
+	it('does NOT respawn in a window that does not own the agent', async () => {
+		seedSession();
+		mockOwnsSession = (id: string) => id === 'some-other-agent';
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		listeners.triggered?.(makePayload());
+		await Promise.resolve();
+
+		// The push reaches every window, but only the owner may spawn - a second
+		// spawn would kill the first mid-flight and double the interrupt.
+		expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		// Display state is per-renderer, so it is still recorded here.
+		expect(useTtsrStore.getState().lastTriggered['session-1-ai-tab-1']).toBeDefined();
+	});
+
+	it('respawns in the window that DOES own the agent', async () => {
+		seedSession();
+		mockOwnsSession = (id: string) => id === 'session-1';
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		listeners.triggered?.(makePayload());
+
+		await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+	});
+
+	it('subscribes to nothing while the Encore flag is off', () => {
+		wireBridge();
+
+		renderHook(() => useTtsr(false));
+
+		expect(window.maestro.ttsr.onTriggered).not.toHaveBeenCalled();
+		expect(window.maestro.ttsr.onAbortPending).not.toHaveBeenCalled();
+		expect(window.maestro.ttsr.onAbortCleared).not.toHaveBeenCalled();
+	});
+
+	it('removes every listener on unmount', () => {
+		const { off } = wireBridge();
+
+		const { unmount } = renderHook(() => useTtsr(true));
+		unmount();
+
+		expect(off.abortPending).toHaveBeenCalledTimes(1);
+		expect(off.triggered).toHaveBeenCalledTimes(1);
+		expect(off.abortCleared).toHaveBeenCalledTimes(1);
+	});
+
+	// An abort in flight when the hook goes away can never be cleared by the
+	// normal path, and a standing mark suppresses that session's exits forever.
+	it('drops standing abort marks on unmount', () => {
+		const { listeners } = wireBridge();
+
+		const { unmount } = renderHook(() => useTtsr(true));
+		listeners.abortPending?.(makeAbortPending());
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(true);
+
+		unmount();
+
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+	});
+
+	it('drops standing abort marks when the Encore flag flips off', () => {
+		const { listeners } = wireBridge();
+
+		const { rerender } = renderHook(({ on }: { on: boolean }) => useTtsr(on), {
+			initialProps: { on: true },
+		});
+		listeners.abortPending?.(makeAbortPending());
+
+		rerender({ on: false });
+
+		expect(isTtsrAbortPending('session-1-ai-tab-1')).toBe(false);
+	});
+
+	it('removes every listener when the Encore flag flips off', () => {
+		const { off } = wireBridge();
+
+		const { rerender } = renderHook(({ on }: { on: boolean }) => useTtsr(on), {
+			initialProps: { on: true },
+		});
+		rerender({ on: false });
+
+		expect(off.triggered).toHaveBeenCalledTimes(1);
 	});
 });

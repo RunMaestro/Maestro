@@ -134,10 +134,24 @@ export const DEFAULT_TTSR_PROJECT_SETTINGS: TtsrProjectSettings = {
 
 // ── Rule management (IPC-safe) ───────────────────────────────────────────────
 
+/**
+ * A rule as the management surface sees it: the rule plus whether it is
+ * switched off.
+ *
+ * Disabled rules are listed rather than filtered out, because a rule the user
+ * cannot see is a rule they cannot turn back on - re-enabling used to mean
+ * hand-editing `.maestro/ttsr.yaml`. The matcher still never sees these: the
+ * filtering lives in the runtime's rule cache, not in this list.
+ */
+export interface TtsrRuleListEntry extends TtsrRule {
+	/** True when `.maestro/ttsr.yaml` names this rule in `disabledRules`. */
+	disabled: boolean;
+}
+
 /** Everything the rules panel needs for one project, from a single call. */
 export interface TtsrRuleListResult {
-	/** Rules the project would actually run, disabled ones already excluded. */
-	rules: TtsrRule[];
+	/** Every rule in the project, disabled ones included and flagged. */
+	rules: TtsrRuleListEntry[];
 	settings: TtsrProjectSettings;
 	/**
 	 * Non-fatal load problems: dropped regexes, agents that cannot evaluate a
@@ -149,6 +163,18 @@ export interface TtsrRuleListResult {
 	errors: string[];
 	/** False when the project has neither rules nor a config file yet. */
 	configExists: boolean;
+}
+
+/**
+ * Payload of the `ttsr:rulesChanged` push event.
+ *
+ * Fired when a project's rule cache is invalidated - by the rule-file watcher or
+ * by a write through the IPC handlers - so the Rules panel can re-list instead
+ * of showing what the project looked like when the tab was opened.
+ */
+export interface TtsrRulesChangedPayload {
+	/** The project whose rules changed. Absent when every project was invalidated. */
+	projectRoot?: string;
 }
 
 /** Result of dry-running a rule's markdown through the normalizer. */
