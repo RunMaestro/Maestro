@@ -248,6 +248,7 @@ describe('WsRoute', () => {
 			const connectedMsg = sentMessages.find((m: any) => m.type === 'connected');
 			expect(connectedMsg).toBeDefined();
 			expect(connectedMsg.clientId).toMatch(/^web-client-/);
+			expect(connectedMsg.authenticated).toBe(true);
 			expect(connectedMsg.subscribedSessionId).toBe('session-123');
 			expect(connectedMsg.timestamp).toBeDefined();
 		});

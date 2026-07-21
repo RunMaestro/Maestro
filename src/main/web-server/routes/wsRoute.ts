@@ -112,6 +112,7 @@ export class WsRoute {
 					type: 'connected',
 					clientId,
 					message: 'Connected to Maestro Web Interface',
+					authenticated: true,
 					subscribedSessionId: sessionId,
 					timestamp: Date.now(),
 				})
