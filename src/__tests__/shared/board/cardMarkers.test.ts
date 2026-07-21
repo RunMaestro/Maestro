@@ -34,9 +34,7 @@ describe('parseCardMarkers', () => {
 	});
 
 	it('detects a block marker with a reason', () => {
-		const markers = parseCardMarkers(
-			'stuck\n<!-- maestro:card-block: missing API credentials -->'
-		);
+		const markers = parseCardMarkers('stuck\n<!-- maestro:card-block: missing API credentials -->');
 		expect(markers.blocked).toBe(true);
 		expect(markers.blockReason).toBe('missing API credentials');
 		expect(markers.complete).toBe(false);

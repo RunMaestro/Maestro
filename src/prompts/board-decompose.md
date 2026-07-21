@@ -23,16 +23,16 @@ Respond with ONLY a fenced code block tagged `json` containing an array of child
 
 ```json
 [
-  {
-    "title": "Short imperative title",
-    "body": "One or two sentences of concrete instructions for the agent that runs this card.",
-    "dependsOn": []
-  },
-  {
-    "title": "Second task that needs the first",
-    "body": "Instructions.",
-    "dependsOn": [0]
-  }
+	{
+		"title": "Short imperative title",
+		"body": "One or two sentences of concrete instructions for the agent that runs this card.",
+		"dependsOn": []
+	},
+	{
+		"title": "Second task that needs the first",
+		"body": "Instructions.",
+		"dependsOn": [0]
+	}
 ]
 ```
 

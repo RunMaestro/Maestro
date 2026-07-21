@@ -600,6 +600,17 @@ A plugin with `events:subscribe` receives a FIXED catalog of host topics (`src/s
 | `agent.statusChanged` | `{ agentId, tabId?, status }`                   |
 | `cue.fired`           | `{ cueType, projectPath? }`                     |
 
+Board topics (host-API 1.15.0) let a plugin follow a task DAG without reading `board.yaml`:
+
+| Topic                     | Payload                                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `board.cardStatusChanged` | `{ boardId, cardId, cardTitle, fromStatus, toStatus, attempt?, workerAgentId?, projectPath? }` |
+| `board.cardCompleted`     | `{ boardId, cardId, cardTitle, attempt?, workerAgentId?, worktreeBranch?, projectPath? }`      |
+| `board.cardBlocked`       | `{ boardId, cardId, cardTitle, attempt?, workerAgentId?, outcome?, projectPath? }`             |
+| `board.decomposed`        | `{ boardId, triageCardCount, projectPath? }`                                                   |
+
+`cardTitle` is the only human-authored string on these topics. Run summaries, prompt bodies, and block reasons never ship: `board.cardBlocked` carries the run `outcome` classification (`error` / `blocked` / ...) instead of the reason text.
+
 Register handlers with `maestro.events.on(topic, fn)` first, then start delivery with `maestro.events.subscribe([...])`. Stop with `maestro.events.unsubscribe([...])` (or no argument for all). The handler receives `(payload, meta)` where `meta` is `{ topic, at }`. Unknown topics are ignored.
 
 ---

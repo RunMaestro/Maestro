@@ -25,15 +25,42 @@ boards:
         assigneeProfileId: architect
         parents: []
         status: todo
+        priority: high # optional: high | normal | low (normal is the default and is not written)
         createdAt: 2026-07-10T00:00:00.000Z
         updatedAt: 2026-07-10T00:00:00.000Z
       - id: b
         title: Add the migration
         body: Implement the migration from the design.
         assigneeProfileId: builder
+        assigneeAgentId: agent-2 # optional: pin this card to one agent
         parents: [a] # waits until card "a" is done
-        status: todo
+        status: done
+        worktree: # optional: run this card in its own checkout
+          branch: board/8f3c1d2e/b1c2d3e4
+          path: /home/you/worktrees/board/8f3c1d2e/b1c2d3e4
+        runs: # one entry per dispatch attempt, appended by the dispatcher
+          - attempt: 1
+            startedAt: 2026-07-10T00:05:00.000Z
+            endedAt: 2026-07-10T00:19:00.000Z
+            outcome: done
+            summary: Added the migration and a round-trip test.
+            workerAgentId: agent-2
+            worktreeBranch: board/8f3c1d2e/b1c2d3e4
 ```
+
+Cards are written by hand or by the app; the `runs` list, the derived statuses, and the timestamps are the dispatcher's bookkeeping. Each run records one attempt and never disappears, so a card that took three tries keeps all three.
+
+### Run outcomes
+
+| Outcome     | Meaning                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| `done`      | The run completed (complete marker, or a clean exit with no marker).                          |
+| `blocked`   | The run asked for a human (block marker) or exited non-zero with no completion signal.        |
+| `error`     | The run could not be carried out (spawn failure, killed process).                             |
+| `reclaimed` | The app was restarted mid-run, so the attempt was abandoned and the card returned to `ready`. |
+| `canceled`  | You pressed stop on the card.                                                                 |
+
+`reclaimed` and `canceled` runs do not count toward the circuit breaker: neither one says anything about whether the work is doable.
 
 ### Card status
 
@@ -66,13 +93,40 @@ At spawn time each field resolves as **profile value, then base agent value, the
 
 On each Maestro Cue engine tick, the Board dispatcher runs one pass per board (gated on both the Cue and Board Encore flags, read fresh each tick):
 
-1. **Reclaim** stale `running` cards. A card left `running` with no live process (for example after the app restarted mid-run) is returned to `ready` and its open run is closed as an error.
+1. **Reclaim** stale `running` cards. A card left `running` with no live process (for example after the app restarted mid-run) is returned to `ready` and its open run is closed as `reclaimed`.
 2. **Auto-decompose** (optional, see below).
 3. **Promote** every `todo` card whose parents are all `done` to `ready`.
-4. **Claim** the oldest `ready` cards up to the work-in-progress cap, mark each `running`, open a run record, and spawn its assignee. The board is persisted _before_ any spawn resolves, so a crash or the next tick sees the cards as `running` and never double-dispatches them.
+4. **Claim** `ready` cards up to the work-in-progress cap, mark each `running`, open a run record, and spawn its assignee. The board is persisted _before_ any spawn resolves, so a crash or the next tick sees the cards as `running` and never double-dispatches them.
 5. **Apply** each finished run's outcome (see completion markers).
 
 A card that fails repeatedly is force-blocked by a circuit breaker (two consecutive non-completing runs by default), so a broken card cannot spin forever.
+
+### Dispatch order and priority
+
+When more cards are `ready` than the WIP cap allows, they are claimed by **priority descending** (`high`, then `normal`, then `low`), then **oldest first** within a priority, then board order. A card with no `priority` counts as `normal`, so raising one card to `high` is enough to jump the queue without re-prioritizing everything else. Set it in the card editor or with `--priority high` on `board add-card` / `board update-card`.
+
+## Stopping a running card
+
+Press **Stop** on a `running` card to kill its agent process. The card goes back to `todo` (from where it is promoted again once you are ready) and the attempt is recorded as a `canceled` run, which does not count against the circuit breaker. A cancel is safe to press even if the run happens to finish at the same moment: the late result is discarded rather than overwriting the cancellation.
+
+Cancellation is a desktop-app action. `maestro-cli` cannot stop a run, because the agent process belongs to whichever dispatcher started it, in another process.
+
+## Notifications
+
+Terminal card transitions raise a toast:
+
+- **Card done** - green, auto-dismissing. Names the worktree branch when the run was isolated.
+- **Card blocked** - red and sticky, because it is waiting on you. Click to dismiss.
+
+Both are stamped as coming from **Board**. When a card is in flight, the Main Window header also shows a small Board pill with the number of `running` and `ready` cards across the project; click it to open the Board. The pill hides itself when nothing is happening.
+
+## Multiple boards
+
+A project can hold as many boards as you like in the same `.maestro/board.yaml`. Use the board picker in the Board window header to switch, rename, or delete the current board, and **New board** to create one. Maestro remembers the last board you had open per project.
+
+Every board is dispatched independently, each with its own `maxInProgress` cap and its own view of which workers are busy, so splitting work across boards raises total concurrency. Keep that in mind if you rely on the pool's one-card-per-worker rule: it holds within a board, and two boards in the same project can hand the same agent a card at the same time. Pin cards to different agents, or keep parallel work on one board, if that matters to you.
+
+Deleting a board takes its cards and their run history with it, so a board with anything that is not `done` asks for confirmation first (`--force` from the CLI).
 
 ## Completion markers
 
