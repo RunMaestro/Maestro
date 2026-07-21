@@ -178,7 +178,7 @@ describe('TtsrInterruptDriver', () => {
 		await Promise.resolve();
 		expect(triggered).toEqual([]);
 
-		expect(driver.noteExit('sess-ai-tab-1')).toBe(true);
+		driver.noteExit('sess-ai-tab-1');
 		await done;
 
 		expect(driver.isAbortPending('sess-ai-tab-1')).toBe(false);
@@ -307,9 +307,12 @@ describe('TtsrInterruptDriver', () => {
 		expect(triggered[0].mode).toBe('fresh');
 	});
 
-	it('reports an unrelated exit as not a TTSR abort', () => {
-		const { driver } = makeDriver();
-		expect(driver.noteExit('sess-ai-tab-1')).toBe(false);
+	// Every turn's exit is reported, whether or not TTSR aborted it.
+	it('ignores an exit for a session with no abort in flight', () => {
+		const { driver, triggered, abortCleared } = makeDriver();
+		expect(() => driver.noteExit('sess-ai-tab-1')).not.toThrow();
+		expect(triggered).toEqual([]);
+		expect(abortCleared).toEqual([]);
 	});
 
 	it('withdraws the abort when the process cannot be signalled', async () => {
@@ -421,6 +424,137 @@ describe('TtsrInterruptDriver', () => {
 		expect(triggered).toHaveLength(1);
 	});
 
+	// Two turns are in flight at once whenever the user has two AI tabs working,
+	// and both aborts share one `pending` map keyed by session id. A leak between
+	// them would reinject one tab's guidance into the other tab's conversation.
+	it('keeps two concurrent aborts apart, payload for payload', async () => {
+		const { driver, triggered } = makeDriver();
+		const ruleA = makeRule({ name: 'rule-a', content: 'Guidance A.', path: '.maestro/rules/a.md' });
+		const ruleB = makeRule({ name: 'rule-b', content: 'Guidance B.', path: '.maestro/rules/b.md' });
+		const metaB = makeMeta({
+			sessionId: 'sess-ai-tab-2',
+			tabId: 'tab-2',
+			providerSessionId: 'prov-2',
+			originalPrompt: 'Write the tests',
+		});
+
+		const doneA = driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch(ruleA)],
+			contextMode: 'keep',
+		});
+		const doneB = driver.trigger({
+			sessionId: 'sess-ai-tab-2',
+			meta: metaB,
+			matches: [makeMatch(ruleB)],
+			contextMode: 'keep',
+		});
+
+		expect(driver.isAbortPending('sess-ai-tab-1')).toBe(true);
+		expect(driver.isAbortPending('sess-ai-tab-2')).toBe(true);
+
+		// B exits first: the two turns have no reason to end in the order they
+		// started, and B's resolution must not release A's wait.
+		driver.noteExit('sess-ai-tab-2');
+		const payloadB = await doneB;
+		expect(driver.isAbortPending('sess-ai-tab-2')).toBe(false);
+		expect(driver.isAbortPending('sess-ai-tab-1')).toBe(true);
+		expect(triggered).toHaveLength(1);
+
+		driver.noteExit('sess-ai-tab-1');
+		const payloadA = await doneA;
+
+		expect(payloadA).toMatchObject({
+			sessionId: 'sess-ai-tab-1',
+			tabId: 'tab-1',
+			providerSessionId: 'prov-1',
+			originalGoal: 'Refactor the auth module',
+			rules: [{ name: 'rule-a', path: '.maestro/rules/a.md' }],
+		});
+		expect(payloadB).toMatchObject({
+			sessionId: 'sess-ai-tab-2',
+			tabId: 'tab-2',
+			providerSessionId: 'prov-2',
+			originalGoal: 'Write the tests',
+			rules: [{ name: 'rule-b', path: '.maestro/rules/b.md' }],
+		});
+		expect(payloadA?.injectionPrompt).not.toContain('Guidance B.');
+		expect(payloadB?.injectionPrompt).not.toContain('Guidance A.');
+		expect(triggered.map((payload) => payload.sessionId)).toEqual([
+			'sess-ai-tab-2',
+			'sess-ai-tab-1',
+		]);
+	});
+
+	// A late match folds into the abort for ITS session only. Folding across the
+	// map would put the other tab's rule into this tab's corrective turn.
+	it('folds a late match into its own session, not the other one in flight', async () => {
+		const { driver, target, triggered } = makeDriver();
+		const metaB = makeMeta({ sessionId: 'sess-ai-tab-2', tabId: 'tab-2' });
+
+		const doneA = driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch()],
+			contextMode: 'keep',
+		});
+		const doneB = driver.trigger({
+			sessionId: 'sess-ai-tab-2',
+			meta: metaB,
+			matches: [makeMatch()],
+			contextMode: 'keep',
+		});
+
+		const folded = await driver.trigger({
+			sessionId: 'sess-ai-tab-2',
+			meta: metaB,
+			matches: [makeMatch(makeRule({ name: 'late-rule', content: 'Late guidance.' }))],
+			contextMode: 'keep',
+		});
+		expect(folded).toBeNull();
+		// One signal per session, not three.
+		expect(target.interrupt).toHaveBeenCalledTimes(2);
+
+		driver.noteExit('sess-ai-tab-1');
+		driver.noteExit('sess-ai-tab-2');
+		await Promise.all([doneA, doneB]);
+
+		const byId = new Map(triggered.map((payload) => [payload.sessionId, payload]));
+		expect(byId.get('sess-ai-tab-1')?.rules.map((rule) => rule.name)).toEqual(['no-console-log']);
+		expect(byId.get('sess-ai-tab-2')?.rules.map((rule) => rule.name)).toEqual([
+			'no-console-log',
+			'late-rule',
+		]);
+	});
+
+	// The common shape: one tab misbehaves, the other is mid-turn and fine.
+	it('leaves a session that is merely streaming untouched by another abort', async () => {
+		const { driver, triggered, abortPending, abortCleared } = makeDriver();
+
+		const done = driver.trigger({
+			sessionId: 'sess-ai-tab-1',
+			meta: makeMeta(),
+			matches: [makeMatch()],
+			contextMode: 'keep',
+		});
+
+		// The streaming session has no pending record, so its own exit passes
+		// through and disposing it cannot disturb the abort in flight.
+		expect(driver.isAbortPending('sess-ai-tab-2')).toBe(false);
+		driver.noteExit('sess-ai-tab-2');
+		driver.dispose('sess-ai-tab-2');
+		expect(driver.isAbortPending('sess-ai-tab-1')).toBe(true);
+		expect(triggered).toEqual([]);
+
+		driver.noteExit('sess-ai-tab-1');
+		await done;
+
+		expect(triggered.map((payload) => payload.sessionId)).toEqual(['sess-ai-tab-1']);
+		expect(abortPending.map((payload) => payload.sessionId)).toEqual(['sess-ai-tab-1']);
+		expect(abortCleared).toEqual([]);
+	});
+
 	it('reports no withdrawal for an abort that succeeds', async () => {
 		const { driver, withdrawn } = makeDriver();
 		const done = driver.trigger({
@@ -495,7 +629,7 @@ describe('TtsrRuntime interrupt loop', () => {
 
 		// The signal goes out synchronously with the match - no renderer round-trip.
 		expect(target.interrupt).toHaveBeenCalledWith('sess-ai-tab-1');
-		expect(runtime.isAbortPending('sess-ai-tab-1')).toBe(true);
+		expect(runtime.driver?.isAbortPending('sess-ai-tab-1')).toBe(true);
 		expect(triggered).toEqual([]);
 
 		source.emit('exit', 'sess-ai-tab-1', 0);
@@ -510,7 +644,7 @@ describe('TtsrRuntime interrupt loop', () => {
 			contextMode: 'keep',
 		});
 		expect(triggered[0].injectionPrompt).toContain('Use the project logger.');
-		expect(runtime.isAbortPending('sess-ai-tab-1')).toBe(false);
+		expect(runtime.driver?.isAbortPending('sess-ai-tab-1')).toBe(false);
 	});
 
 	it('hard-kills when the project sets contextMode discard', async () => {
@@ -577,6 +711,51 @@ describe('TtsrRuntime interrupt loop', () => {
 		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toContain('<system-reminder');
 	});
 
+	// The third leg of the resume race: the id lands neither before the abort
+	// (clean resume) nor never (degraded fresh), but inside the wait-for-exit
+	// window. The payload is built after that wait, so the abort upgrades itself.
+	it('upgrades the pending abort to resume when the provider id lands mid-abort', async () => {
+		const { runtime, source, triggered } = setup();
+		source.emit('spawn', spawnConfig);
+
+		// No `session-id` yet: this is the abort of a turn whose provider id is
+		// still unknown, which on its own would degrade to a restated fresh turn.
+		runtime.observe('sess-ai-tab-1', { type: 'text', text: 'console.log(x)' });
+		expect(runtime.driver?.isAbortPending('sess-ai-tab-1')).toBe(true);
+		expect(runtime.registry.get('sess-ai-tab-1')?.providerSessionId).toBeUndefined();
+
+		// The SIGINT'd process keeps streaming for up to 2s, so the id can still
+		// arrive before the exit that releases the corrective payload.
+		source.emit('session-id', 'sess-ai-tab-1', 'prov-late');
+		source.emit('exit', 'sess-ai-tab-1', 0);
+		await runtime.flushInterrupts();
+
+		expect(triggered).toHaveLength(1);
+		expect(triggered[0]).toMatchObject({ mode: 'resume', providerSessionId: 'prov-late' });
+		// Resuming means the goal is already in the transcript, so the restatement
+		// that a fresh turn needs must not be there.
+		expect(triggered[0].injectionPrompt).not.toContain('Continuing this request:');
+	});
+
+	it('ignores a provider id that arrives after the corrective payload was built', async () => {
+		const { runtime, source, triggered } = setup();
+		source.emit('spawn', spawnConfig);
+		runtime.observe('sess-ai-tab-1', { type: 'text', text: 'console.log(x)' });
+		source.emit('exit', 'sess-ai-tab-1', 0);
+		await runtime.flushInterrupts();
+
+		expect(triggered[0]).toMatchObject({ mode: 'fresh', providerSessionId: undefined });
+
+		// A straggling `session-id` for the dead turn (or the corrective turn's own
+		// id arriving on the same process id) must not rewrite a payload the
+		// renderer already acted on.
+		source.emit('session-id', 'sess-ai-tab-1', 'prov-too-late');
+
+		expect(triggered).toHaveLength(1);
+		expect(triggered[0]).toMatchObject({ mode: 'fresh', providerSessionId: undefined });
+		expect(triggered[0].injectionPrompt).toContain('Continuing this request:');
+	});
+
 	it('hands the aborted turn goal to the corrective respawn', async () => {
 		const { runtime, source, triggered } = setup();
 		source.emit('spawn', spawnConfig);
@@ -585,10 +764,19 @@ describe('TtsrRuntime interrupt loop', () => {
 		source.emit('exit', 'sess-ai-tab-1', 0);
 		await runtime.flushInterrupts();
 
-		// The renderer respawns with the injection as the prompt; the registry must
-		// keep attributing that turn to the user's original request.
-		source.emit('spawn', { ...spawnConfig, prompt: triggered[0].injectionPrompt });
+		// The renderer respawns with the injection as the prompt and hands the
+		// payload's correlation id straight back; the registry must keep
+		// attributing that turn to the user's original request.
+		expect(triggered[0].ttsrCorrelationId).toBeTruthy();
+		source.emit('spawn', {
+			...spawnConfig,
+			// Decorated after the injection block, which is exactly what the old
+			// `endsWith` recognition could not survive.
+			prompt: `${triggered[0].injectionPrompt}\n\nRespond in English.`,
+			ttsrCorrelationId: triggered[0].ttsrCorrelationId,
+		});
 		expect(runtime.registry.get('sess-ai-tab-1')?.originalPrompt).toBe('Refactor the auth module');
+		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toBe('');
 	});
 
 	it('does not abort on a non-interrupting match', async () => {

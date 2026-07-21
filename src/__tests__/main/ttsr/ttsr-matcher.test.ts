@@ -15,6 +15,7 @@ import {
 	isProseSource,
 	matchesGlobs,
 	ruleAppliesToContext,
+	TTSR_MAX_SCAN_CHARS,
 } from '../../../main/ttsr/ttsr-matcher';
 import type { LoadedTtsrRule } from '../../../shared/ttsr-types';
 
@@ -98,6 +99,22 @@ describe('matchesGlobs', () => {
 		expect(matchesGlobs(['src/**/*.ts'], 'src\\main\\thing.ts')).toBe(true);
 	});
 
+	// The matcher cache is keyed by the whole glob list, so editing a rule's
+	// `globs` (or working across many projects) mints a new entry every time. It
+	// is bounded by oldest-first eviction, which must stay invisible to callers:
+	// an evicted matcher is simply recompiled on its next use.
+	it('still matches correctly after the matcher cache has evicted entries', () => {
+		expect(matchesGlobs(['src/first/**/*.ts'], 'src/first/a.ts')).toBe(true);
+
+		// Well past the cap, so the first entry is long gone.
+		for (let i = 0; i < 400; i += 1) {
+			expect(matchesGlobs([`src/gen-${i}/**/*.ts`], `src/gen-${i}/a.ts`)).toBe(true);
+		}
+
+		expect(matchesGlobs(['src/first/**/*.ts'], 'src/first/a.ts')).toBe(true);
+		expect(matchesGlobs(['src/first/**/*.ts'], 'docs/a.md')).toBe(false);
+	});
+
 	it('keeps the original path when the file lives outside the project root', () => {
 		const cwd = process.platform === 'win32' ? 'C:\\repo' : '/repo';
 		const file = process.platform === 'win32' ? 'C:\\other\\a.ts' : '/other/a.ts';
@@ -159,5 +176,19 @@ describe('findRegexMatch', () => {
 		rule.compiledCondition = [/console\.log\(/g];
 		expect(findRegexMatch(rule, 'console.log(a)')).toBe('console.log(');
 		expect(findRegexMatch(rule, 'console.log(b)')).toBe('console.log(');
+	});
+
+	// The scan-length ceiling is a security invariant: repo-supplied patterns run
+	// on the main process's stdout hot path, and backtracking cost grows with the
+	// input. Prose arrives pre-bounded by the manager's 32KB buffer, but a tool
+	// payload (one `Write` of a huge file) reaches the matcher whole.
+	it('scans at most TTSR_MAX_SCAN_CHARS of an oversized payload', () => {
+		const rule = makeRule({ condition: ['NEEDLE'] });
+		const filler = 'x'.repeat(TTSR_MAX_SCAN_CHARS);
+
+		expect(findRegexMatch(rule, `${filler.slice(0, 100)}NEEDLE`)).toBe('NEEDLE');
+		// Past the ceiling the payload is simply not scanned, rather than handing
+		// an unbounded input to a pattern the project controls.
+		expect(findRegexMatch(rule, `${filler}NEEDLE`)).toBeNull();
 	});
 });

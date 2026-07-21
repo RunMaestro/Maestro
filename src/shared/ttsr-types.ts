@@ -280,6 +280,16 @@ export interface TtsrTriggeredPayload {
 	originalGoal: string;
 	/** Teardown that was used: `keep` interrupted, `discard` hard-killed. */
 	contextMode: TtsrContextMode;
+	/**
+	 * Opaque id the respawn passes straight back on its spawn config, so main
+	 * recognises its own corrective turn by correlation rather than by inspecting
+	 * the prompt.
+	 *
+	 * Optional because every unrelated spawn path leaves it unset; the registry
+	 * still falls back to matching the injection block when it is missing (an
+	 * older renderer, or a respawn that rebuilt the config from scratch).
+	 */
+	ttsrCorrelationId?: string;
 }
 
 // ── Gate A: per-agent capability matrix ──────────────────────────────────────

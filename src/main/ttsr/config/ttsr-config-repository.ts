@@ -157,6 +157,18 @@ export function deleteTtsrRuleFile(projectRoot: string, relativePath: string): b
  * Watch `.maestro/ttsr.yaml` plus every `.md` file directly under
  * `.maestro/rules/`, debouncing `onChange` by 1 second.
  *
+ * The watch is anchored on the `.maestro` directory rather than on those two
+ * targets directly, because chokidar 3 silently watches NOTHING when it is
+ * handed a path that does not exist yet inside a dot-directory - and one such
+ * path poisons every sibling passed in the same call. `.maestro/ttsr.yaml` is
+ * optional (rules alone are a valid setup), so listing it meant the common
+ * project got no rule-file events at all and edits never reloaded. The
+ * `ignored` predicate keeps the watch as narrow as the old path list: the rest
+ * of `.maestro` (Working docs, cue.yaml, diagrams) is never traversed.
+ *
+ * A project with no `.maestro` directory at all has nothing to watch; its first
+ * rule arrives through the IPC write path, which invalidates the cache itself.
+ *
  * Uses the same `torn` guard as the Cue watcher so an event that slips past
  * `close()` cannot trigger a refresh on a torn-down session.
  *
@@ -168,14 +180,23 @@ export function watchTtsrConfigFiles(
 	onChange: () => void,
 	opts?: { onReady?: () => void }
 ): () => void {
+	const maestroDir = path.join(projectRoot, MAESTRO_DIR);
 	const configPath = path.join(projectRoot, TTSR_CONFIG_PATH);
-	const rulesGlob = path.join(projectRoot, TTSR_RULES_DIR, '*.md');
+	const rulesDir = path.join(projectRoot, TTSR_RULES_DIR);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
 
-	const watcher = chokidar.watch([configPath, rulesGlob], {
+	const isWatched = (filePath: string): boolean => {
+		if (filePath === maestroDir || filePath === rulesDir || filePath === configPath) return true;
+		return path.dirname(filePath) === rulesDir && path.extname(filePath).toLowerCase() === '.md';
+	};
+
+	const watcher = chokidar.watch(maestroDir, {
 		persistent: true,
 		ignoreInitial: true,
+		// `.maestro/rules/*.md` is one level below the anchor.
+		depth: 1,
+		ignored: (filePath: string) => !isWatched(filePath),
 	});
 
 	// Without an error listener, chokidar failures (EISDIR on WSL network

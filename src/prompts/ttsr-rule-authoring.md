@@ -86,6 +86,17 @@ on `tool:write`/`tool:edit`, optionally narrowed with `globs`.
 - **TTSR never matches its own config**, so rule files themselves are exempt.
 - Regexes are matched against a rolling buffer. Anchors like `^`/`$` rarely do
   what you want; prefer a distinctive substring.
+- **Patterns are case-sensitive and take no flags.** There is no surface for
+  `i`, `m`, or `s`. Spell out the alternatives you care about (`(TODO|todo)`) or
+  use a character class.
+- **No nested quantifiers.** A quantified group whose body is itself unbounded
+  (`(a+)+`, `(x*)+`, `(\d+){2,}`) is refused at load time with a warning: those
+  patterns can backtrack catastrophically, and rule regexes run inside Maestro's
+  main process on the agent's live output. Rewrite without the inner quantifier.
+- **Rules are repo-controlled input.** A rule body is injected verbatim into the
+  agent's prompt, so anyone who can commit to `.maestro/rules/` can put text in
+  front of the agent. That is the same trust class as `.maestro/cue.yaml`: only
+  add rules you would accept from the repository's authors.
 
 ## Quality bar
 

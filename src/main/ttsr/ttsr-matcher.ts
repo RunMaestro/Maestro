@@ -71,11 +71,26 @@ export function classifyMatch(
 
 const globMatcherCache = new Map<string, (input: string) => boolean>();
 
+/**
+ * Compiled glob matchers held before the oldest is evicted.
+ *
+ * The cache key is a rule's whole glob list, so it grows with every distinct
+ * list ever seen: editing a rule's `globs`, or working across many projects in
+ * one long session, would otherwise keep every past version alive for the life
+ * of the process. Insertion-order eviction is enough here - the working set is
+ * one entry per rule in the open projects, and a re-compile is cheap.
+ */
+const MAX_GLOB_MATCHERS = 100;
+
 function getGlobMatcher(globs: string[]): (input: string) => boolean {
 	const key = globs.join('\n');
 	let matcher = globMatcherCache.get(key);
 	if (!matcher) {
 		matcher = picomatch(globs, { dot: true });
+		if (globMatcherCache.size >= MAX_GLOB_MATCHERS) {
+			const oldest = globMatcherCache.keys().next().value;
+			if (oldest !== undefined) globMatcherCache.delete(oldest);
+		}
 		globMatcherCache.set(key, matcher);
 	}
 	return matcher;
@@ -125,6 +140,23 @@ export function ruleAppliesToContext(
 }
 
 /**
+ * Hard ceiling on how much text a single regex evaluation may scan.
+ *
+ * This is a security invariant, not a tuning knob. Rule patterns come from the
+ * opened project's `.maestro/rules/*.md`, so a hostile repo controls regexes
+ * that run on the main process's stdout hot path, and backtracking cost grows
+ * with input length. Bounding the input is one half of keeping a bad pattern
+ * from wedging Electron's main process; the normalizer's nested-quantifier gate
+ * is the other half. Raising or removing this reopens that hole.
+ *
+ * Prose already arrives bounded (one delta plus a 1KB overlap, off a 32KB
+ * per-stream buffer in `TtsrManager`). Tool payloads do not - a single `Write`
+ * can carry megabytes - so the ceiling is enforced here, at the one place every
+ * rule regex actually runs.
+ */
+export const TTSR_MAX_SCAN_CHARS = 32_768;
+
+/**
  * First regex hit for this rule, or `null`. Returns the matched substring so
  * the activity log can show what tripped the rule.
  */
@@ -133,10 +165,12 @@ export function findRegexMatch(
 	text: string
 ): string | null {
 	if (!text) return null;
+	// Only allocates in the rare oversized case; see TTSR_MAX_SCAN_CHARS.
+	const scanned = text.length > TTSR_MAX_SCAN_CHARS ? text.slice(0, TTSR_MAX_SCAN_CHARS) : text;
 	for (const regex of rule.compiledCondition) {
 		// Guard against sticky/global patterns carrying `lastIndex` between calls.
 		if (regex.global || regex.sticky) regex.lastIndex = 0;
-		const match = regex.exec(text);
+		const match = regex.exec(scanned);
 		if (match) return match[0];
 	}
 	return null;

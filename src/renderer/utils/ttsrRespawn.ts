@@ -107,6 +107,9 @@ export function buildTtsrRespawnConfig(input: {
 		prompt: payload.injectionPrompt,
 		appendSystemPrompt: input.appendSystemPrompt,
 		agentSessionId: payload.mode === 'resume' ? payload.providerSessionId : undefined,
+		// Handed straight back so main recognises its own corrective turn without
+		// inspecting the prompt, which anything downstream may still decorate.
+		ttsrCorrelationId: payload.ttsrCorrelationId,
 		readOnlyMode: isReadOnly,
 		permissionMode: isReadOnly ? 'readonly' : resolveTabPermissionMode(tab),
 		sessionCustomPath: session.customPath,

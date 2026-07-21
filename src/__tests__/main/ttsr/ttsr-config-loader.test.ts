@@ -13,11 +13,14 @@
  * directory listing + read ordering, which a mock would have to re-implement.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { loadTtsrConfigDetailed } from '../../../main/ttsr/config/ttsr-config-loader';
+import {
+	loadTtsrConfigDetailed,
+	watchTtsrConfig,
+} from '../../../main/ttsr/config/ttsr-config-loader';
 import { TTSR_CONFIG_PATH, TTSR_RULES_DIR } from '../../../shared/maestro-paths';
 
 let projectRoot: string;
@@ -148,6 +151,70 @@ describe('loadTtsrConfigDetailed', () => {
 
 		expect(result.rules).toHaveLength(0);
 		expect(result.warnings.some((w) => w.includes('no usable condition'))).toBe(true);
+	});
+
+	// Rule regexes come from the opened repo and run on the main process's stdout
+	// hot path, so a quantified group with an unbounded body - the classic
+	// `(a+)+$` bomb - is refused at load time, exactly like an uncompilable one.
+	it.each([
+		['(a+)+$', 'quantified group over an unbounded body'],
+		['(x*)+y', 'star inside a plus-quantified group'],
+		['(\\d+){2,}', 'counted repetition of an unbounded group'],
+		['((a+)b)*', 'nested one level deeper'],
+		['(?:a+)*', 'non-capturing group is no safer'],
+	])('drops the backtracking-prone pattern %s (%s)', (pattern) => {
+		writeRule(
+			'bomb.md',
+			['---', 'description: Hostile pattern', `condition: '${pattern}'`, '---', 'Body.'].join('\n')
+		);
+
+		const result = loadTtsrConfigDetailed(projectRoot);
+
+		expect(result.rules).toHaveLength(0);
+		expect(result.warnings.join('\n')).toContain('nested quantifier');
+	});
+
+	it.each([
+		'console\\.log\\(',
+		'(TODO|FIXME):',
+		'\\s+$',
+		'(foo)?bar',
+		'a{2,4}',
+		'(x+)?',
+		'[a+*]+',
+		'\\(a+\\)+',
+	])('accepts the ordinary pattern %s', (pattern) => {
+		writeRule(
+			'ok.md',
+			['---', 'description: Ordinary pattern', `condition: '${pattern}'`, '---', 'Body.'].join('\n')
+		);
+
+		const result = loadTtsrConfigDetailed(projectRoot);
+
+		expect(result.rules).toHaveLength(1);
+		expect(result.rules[0].condition).toEqual([pattern]);
+		expect(result.warnings).toEqual([]);
+	});
+
+	it('drops only the unsafe pattern and keeps its siblings', () => {
+		writeRule(
+			'mixed-safety.md',
+			[
+				'---',
+				'description: One safe pattern, one bomb',
+				'condition:',
+				"  - 'console\\.log\\('",
+				"  - '(a+)+$'",
+				'---',
+				'Fix it.',
+			].join('\n')
+		);
+
+		const result = loadTtsrConfigDetailed(projectRoot);
+
+		expect(result.rules).toHaveLength(1);
+		expect(result.rules[0].condition).toEqual(['console\\.log\\(']);
+		expect(result.warnings.join('\n')).toContain('nested quantifier');
 	});
 
 	it('shadows a name collision, first file wins', () => {
@@ -358,6 +425,85 @@ describe('loadTtsrConfigDetailed', () => {
 		expect(result.reason).toBe('invalid');
 		expect(result.errors[0]).toContain('must be a YAML mapping');
 	});
+
+	// Regression: the watcher used to be handed `.maestro/ttsr.yaml` as a watch
+	// target directly, and chokidar 3 watches nothing at all when a listed path
+	// inside a dot-directory does not exist yet - one missing path poisons its
+	// siblings. A project with rules but no ttsr.yaml (a valid setup, and the
+	// common one) therefore never saw a single rule edit.
+	it('fires for a rule edit in a project that has no ttsr.yaml', async () => {
+		writeRule(
+			'watched.md',
+			['---', 'description: Watched', 'condition: "x"', '---', 'Body.'].join('\n')
+		);
+
+		const onChange = vi.fn();
+		let cleanup!: () => void;
+		await new Promise<void>((resolve) => {
+			cleanup = watchTtsrConfig(projectRoot, onChange, { onReady: resolve });
+		});
+
+		try {
+			writeRule(
+				'watched.md',
+				['---', 'description: Watched', 'condition: "x"', '---', 'Edited body.'].join('\n')
+			);
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+
+			expect(onChange).toHaveBeenCalledTimes(1);
+		} finally {
+			cleanup();
+		}
+	}, 15_000);
+
+	// An agent authoring a rule writes the file several times in a second (draft,
+	// fix the regex, fix the body), and each write is its own chokidar event.
+	// The debounce is what keeps a half-written intermediate state from becoming
+	// the live rule set: the reload reads the directory once, after the burst.
+	it('coalesces a burst of rule-file writes into one reload of the final rule set', async () => {
+		// The rule directory exists before the watcher starts, which is the shape
+		// production always has: the watcher is installed when a project's rules
+		// are first loaded.
+		writeRule(
+			'churn.md',
+			['---', 'description: draft', 'condition: "x"', '---', 'Body draft.'].join('\n')
+		);
+
+		const onChange = vi.fn();
+		let cleanup!: () => void;
+		await new Promise<void>((resolve) => {
+			cleanup = watchTtsrConfig(projectRoot, onChange, { onReady: resolve });
+		});
+
+		try {
+			for (const marker of ['first', 'second', 'third']) {
+				writeRule(
+					'churn.md',
+					['---', `description: ${marker}`, 'condition: "x"', '---', `Body ${marker}.`].join('\n')
+				);
+			}
+			// A second file lands mid-burst, and the config file changes too.
+			writeRule(
+				'extra.md',
+				['---', 'description: Extra', 'condition: "y"', '---', 'Extra body.'].join('\n')
+			);
+			writeConfig('enabled: true\n');
+
+			// Past the 1s debounce window.
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+
+			expect(onChange).toHaveBeenCalledTimes(1);
+
+			const result = loadTtsrConfigDetailed(projectRoot);
+			expect(result.rules.map((rule) => rule.name).sort()).toEqual(['churn', 'extra']);
+			// The final write wins, and no intermediate version survives as a
+			// duplicate: rules are keyed by name, read fresh from disk.
+			expect(result.rules.find((rule) => rule.name === 'churn')?.content).toBe('Body third.');
+			expect(result.warnings).toEqual([]);
+		} finally {
+			cleanup();
+		}
+	}, 15_000);
 
 	it('skips a rule with no frontmatter and one with an empty body', () => {
 		writeRule('no-frontmatter.md', 'Just a markdown file, no rule here.');

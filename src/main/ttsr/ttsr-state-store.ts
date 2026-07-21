@@ -60,6 +60,18 @@ export interface TtsrConversationState {
  */
 export const MAX_TTSR_INTERRUPTS = 5;
 
+/**
+ * How long a conversation's bookkeeping outlives its last mutation.
+ *
+ * Long enough that resuming a month-old conversation still remembers what
+ * already fired; short enough that the file (and this map) does not accumulate
+ * every conversation the user has ever had.
+ */
+export const TTSR_STATE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Newest conversations retained once the TTL prune is not enough on its own. */
+export const MAX_PERSISTED_CONVERSATIONS = 500;
+
 /** Serializable snapshot, handed to the main-side persistence layer. */
 export type TtsrStateSnapshot = Record<string, TtsrConversationState>;
 
@@ -89,8 +101,34 @@ export class TtsrStateStore {
 		if (!state) {
 			state = emptyConversation();
 			this.conversations.set(key, state);
+			this.prune();
 		}
 		return state;
+	}
+
+	/**
+	 * Bound the in-memory map with the same TTL + cap policy the persisted
+	 * snapshot applies, so memory never holds what disk has already dropped.
+	 *
+	 * Auto Run mints a fresh Maestro session id per task, so a long-running
+	 * automation would otherwise leave one live record per task behind for the
+	 * life of the process. Only ever runs on the turn that creates a new
+	 * conversation, past the cap - never on the stdout hot path.
+	 */
+	private prune(): void {
+		if (this.conversations.size <= MAX_PERSISTED_CONVERSATIONS) return;
+
+		const now = Date.now();
+		for (const [key, state] of this.conversations) {
+			if (now - state.updatedAt > TTSR_STATE_TTL_MS) this.conversations.delete(key);
+		}
+		if (this.conversations.size <= MAX_PERSISTED_CONVERSATIONS) return;
+
+		// Oldest-touched first; the conversation that just triggered this is the
+		// newest, so it can never evict itself.
+		const byAge = [...this.conversations.entries()].sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+		const excess = this.conversations.size - MAX_PERSISTED_CONVERSATIONS;
+		for (let i = 0; i < excess; i += 1) this.conversations.delete(byAge[i][0]);
 	}
 
 	/** Stamp the conversation as freshly touched and notify the persistence layer. */
@@ -276,5 +314,8 @@ export class TtsrStateStore {
 			const interruptCount = Number.isFinite(state.interruptCount) ? state.interruptCount : 0;
 			this.conversations.set(key, { messageCount, rules, interruptCount, updatedAt });
 		}
+		// The persistence layer prunes on read too; this keeps a snapshot handed in
+		// from anywhere else (a test, a future importer) under the same bound.
+		this.prune();
 	}
 }

@@ -175,6 +175,7 @@ export class TtsrRuntime {
 							// so a spawn that is NOT it can hand the guidance back.
 							this.registry.noteCorrectiveTurn(payload.sessionId, {
 								originalPrompt: payload.originalGoal,
+								correlationId: payload.ttsrCorrelationId,
 								injectionPrompt: payload.injectionPrompt,
 								matches,
 							});
@@ -340,9 +341,12 @@ export class TtsrRuntime {
 	}
 
 	/**
-	 * Settle every in-flight structural match. Phase 3 awaits this before acting
-	 * on a turn's interrupts so an AST hit is not missed by a race with `exit`;
-	 * tests use it to make the async pass deterministic.
+	 * Settle every in-flight structural match.
+	 *
+	 * Test-support surface, deliberately kept: the AST pass and the abort it can
+	 * trigger are the only asynchronous things the runtime does, and there is no
+	 * other signal a test can await for them. Production never calls either
+	 * flush - the driver resolves on `exit`.
 	 */
 	async flushAst(): Promise<void> {
 		while (this.pendingAst.size > 0) {
@@ -350,19 +354,11 @@ export class TtsrRuntime {
 		}
 	}
 
-	/**
-	 * Settle every in-flight abort. Tests await it to observe the corrective
-	 * payload; production never needs it (the driver resolves on `exit`).
-	 */
+	/** Settle every in-flight abort. Test-support, like {@link flushAst}. */
 	async flushInterrupts(): Promise<void> {
 		while (this.pendingInterrupts.size > 0) {
 			await Promise.all([...this.pendingInterrupts]);
 		}
-	}
-
-	/** True while a TTSR abort is in flight for this turn (`ttsrAbortPending`). */
-	isAbortPending(sessionId: string): boolean {
-		return this.driver?.isAbortPending(sessionId) ?? false;
 	}
 
 	/**

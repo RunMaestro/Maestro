@@ -73,6 +73,26 @@ corrective respawn needs an AI tab to live in - so registering those would let
 TTSR kill an unattended turn it could never restart. Covered in
 `ttsr-runtime.test.ts` ("ignores a %s spawn").
 
+## Post-review hardening (Phases H1-H4)
+
+Four hardening passes landed after the matrix was first recorded. None of them
+changed a row above; they closed correctness and cost gaps around it.
+
+| Pass | What changed                                                                                                                                                                                                                                              |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1   | Airtight gating: the spawn/exit lifecycle now consults the gate too, so a turn spawned while TTSR is off creates no conversation state and schedules no write. The disabled path costs exactly one boolean check per event, asserted by test.             |
+| H2   | Budget accounting (an abort that folds a later match is charged once, and a withdrawn abort is refunded), forced-parallel `-fp-` spawn ids normalized to the stable conversation key, transactional reminder draining, and a `tool:bash` self-trip gate.  |
+| H3   | Ownership-gated corrective respawn (one renderer, not every window), full state release when a respawn fails so the tab cannot wedge busy, a TTL on orphaned abort-pending entries, and the live Rules panel.                                             |
+| H4   | Concurrency and mid-abort-race coverage, the regex backtracking guard and scan ceiling below, cache caps (`globMatcherCache` at 100, in-memory conversations on the same 30-day/500 policy as disk), and correlation-id matching for the corrective turn. |
+
+One fix in H4 came from a defect the new tests surfaced rather than from the
+review: the rule-file watcher was handed `.maestro/ttsr.yaml` as a chokidar watch
+target, and chokidar 3 watches nothing at all when a listed path inside a
+dot-directory does not exist yet - one missing path poisons its siblings. Every
+project with rules but no `ttsr.yaml` (a valid, and the common, setup) therefore
+never reloaded a rule edit. The watch is now anchored on the `.maestro` directory
+with an `ignored` predicate that keeps the scope identical.
+
 ## Interrupt budget
 
 A conversation may be aborted at most `MAX_TTSR_INTERRUPTS` (5) times, counted
@@ -82,7 +102,10 @@ the next prompt. Without this an agent that keeps tripping a rule would be
 killed and respawned indefinitely, since the default `after-gap` policy re-arms
 every few turns and each aborted turn advances that counter itself.
 
-## Documented fidelity gaps (unchanged from the plan)
+## Documented fidelity gaps
+
+Gaps 1-5 are unchanged from the plan; gap 6 is the trust model, written down
+during the Phase 4 hardening pass.
 
 1. **AST is post-write, not preventive.** Maestro observes an external CLI's
    tool call after it has usually already applied the edit, so a structural
@@ -103,6 +126,17 @@ every few turns and each aborted turn advances that counter itself.
    cannot block a command the way a permission prompt can - it interrupts the
    turn and makes the agent answer for it. factory-droid and grok report no tool
    calls at all, so "never run X" is not expressible for them.
+6. **Rules are repo-controlled input, in the same trust class as
+   `.maestro/cue.yaml`.** Rule bodies are injected verbatim into the agent's
+   prompt, so whoever can commit to `.maestro/rules/` can put text in front of
+   the agent (repo-controlled prompt injection), and rule regexes execute in the
+   Electron main process against live agent output. Two bounds keep the regex
+   half from being a denial of service: the normalizer refuses patterns with a
+   quantified group over an unbounded body (`(a+)+`, `(x*)+`, `(\d+){2,}`) with
+   a load warning, exactly like an uncompilable pattern, and `findRegexMatch`
+   scans at most `TTSR_MAX_SCAN_CHARS` (32KB) per evaluation. Both are security
+   invariants rather than tuning knobs. Regexes are case-sensitive with no flags
+   surface: there is no way for a rule to request `i`, `m`, or `s`.
 
 ## Feature-off safety
 
@@ -121,6 +155,23 @@ call.
 | No renderer-owned repeat state                       | clean (no `repeatMode` / injected-rule bookkeeping under `src/renderer/`)          |
 | No direct TTSR import into `process-manager`         | clean (the observer is injected via `setParsedEventObserver`)                      |
 
+## Merge-time notes
+
+- **Host API version: nothing to re-bump.** This branch does not touch
+  `src/shared/plugins/host-api.ts` or the SDK at all. Its base already read
+  `HOST_API_VERSION = '1.13.0'`, and `upstream/rc` has since moved to `1.14.0`
+  (Agent Flow's `tool.executed` + `ui.panelPost`). Checked on 2026-07-22 with
+  `git show upstream/rc:src/shared/plugins/host-api.ts`. The branch's only
+  plugin-surface change is `src/shared/plugins/first-party.ts`, which adds the
+  `ttsr` first-party id and its permission set - additive and version-neutral,
+  so a merge takes upstream's version untouched. Bumping to a free minor here
+  would claim host capability this branch does not add.
+- **`PluginPanelSlot placement="settings"` is not this branch's change.**
+  Settings-placed plugin panels do render from `DisplayTab` rather than from the
+  Plugins panel, but that is already true at the merge base (`fbc664ff4`): the
+  branch touches neither file. Recorded here because the hardening review
+  flagged it as a possible user-visible change of this branch, and it is not.
+
 ## Gates run
 
 - `tsc -p tsconfig.lint.json`, `tsconfig.main.json`, `tsconfig.cli.json`: clean.
@@ -130,6 +181,9 @@ call.
 - Suites: `src/__tests__/main/ttsr`, `src/__tests__/main/ipc/handlers/process`,
   `src/__tests__/renderer/utils/ttsrRespawn.test.ts`,
   `src/__tests__/renderer/hooks/useTtsr.test.ts`,
-  `src/__tests__/renderer/components/Settings`. All green.
+  `src/__tests__/renderer/components/Settings`. All green, re-run after each
+  hardening pass.
 - Windows leg: not runnable locally. CI must be green on both
   `test (ubuntu-latest)` and `test (windows-latest)` before merge.
+- A live end-to-end run against real agent binaries is still unperformed, and
+  cannot be automated from the test suite. It stays the one open acceptance item.

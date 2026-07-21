@@ -69,6 +69,90 @@ function toEnum<T extends string>(
 	return fallback;
 }
 
+// ── Regex safety gate ────────────────────────────────────────────────────────
+
+/**
+ * The quantifier starting at `index`, if any, and whether it can repeat the
+ * preceding term more than once (`?` and `{0,1}` cannot).
+ */
+function readQuantifier(source: string, index: number): { end: number; repeats: boolean } | null {
+	const ch = source[index];
+	if (ch === '*' || ch === '+') return { end: index + 1, repeats: true };
+	if (ch === '?') return { end: index + 1, repeats: false };
+	if (ch !== '{') return null;
+	const close = source.indexOf('}', index);
+	if (close === -1) return null;
+	const body = source.slice(index + 1, close);
+	if (!/^\d*(,\d*)?$/.test(body) || body.length === 0) return null;
+	const [minRaw, maxRaw] = body.split(',');
+	const min = Number(minRaw || '0');
+	// `{n,}` is unbounded; `{n,m}` repeats when it can run more than once.
+	const max = body.includes(',') ? (maxRaw === '' ? Infinity : Number(maxRaw)) : min;
+	return { end: close + 1, repeats: max > 1 };
+}
+
+/**
+ * Heuristic catastrophic-backtracking gate for repo-supplied patterns.
+ *
+ * Rules load from the opened project's `.maestro/rules/*.md`, so a hostile (or
+ * simply careless) repo picks the regexes that run on the main process's stdout
+ * hot path. The classic wedge is a quantified group whose body is itself
+ * unbounded - `(a+)+$`, `(x*)+`, `(\s+)  {2,}` - which makes the engine explore
+ * exponentially many splits of the same input before failing.
+ *
+ * Deliberately a heuristic, not an analyzer: it rejects the nested-quantifier
+ * shape and nothing else, which costs a handful of legitimate-but-rewritable
+ * patterns and buys the guarantee that the obvious attack is not expressible.
+ * The scan-length ceiling in `ttsr-matcher.ts` is the other half of the defense.
+ */
+function hasNestedQuantifier(source: string): boolean {
+	/** One open group; `unbounded` once its body can repeat without a bound. */
+	const groups: Array<{ unbounded: boolean }> = [];
+	let inClass = false;
+
+	for (let i = 0; i < source.length; i += 1) {
+		const ch = source[i];
+		if (ch === '\\') {
+			i += 1;
+			continue;
+		}
+		if (inClass) {
+			if (ch === ']') inClass = false;
+			continue;
+		}
+		if (ch === '[') {
+			inClass = true;
+			continue;
+		}
+		if (ch === '(') {
+			groups.push({ unbounded: false });
+			continue;
+		}
+		if (ch === ')') {
+			const group = groups.pop();
+			const quantifier = readQuantifier(source, i + 1);
+			if (!quantifier) continue;
+			i = quantifier.end - 1;
+			if (quantifier.repeats && group?.unbounded) return true;
+			// A repeating group is itself an unbounded term for its parent.
+			if (quantifier.repeats && groups.length > 0) {
+				groups[groups.length - 1].unbounded = true;
+			}
+			continue;
+		}
+		const quantifier = readQuantifier(source, i);
+		if (!quantifier) continue;
+		i = quantifier.end - 1;
+		// `a+` inside `(...)` makes every enclosing group unbounded, so
+		// `((a+)b)*` is caught as well as `(a+)*`.
+		if (quantifier.repeats) {
+			for (const group of groups) group.unbounded = true;
+		}
+	}
+
+	return false;
+}
+
 /**
  * Split a frontmatter-markdown document into its YAML block and body.
  * Returns `null` when the document has no leading `---` fence.
@@ -136,11 +220,19 @@ export function parseTtsrRule(raw: string, relativePath: string): ParsedTtsrRule
 			? fm.description.trim()
 			: name;
 
-	// Compile every regex up front. A bad pattern is dropped with a warning so
-	// the rest of the rule still works, matching OMP's behavior.
+	// Compile every regex up front. A bad pattern - unparseable, or shaped like a
+	// backtracking bomb - is dropped with a warning so the rest of the rule still
+	// works, matching OMP's behavior for invalid patterns.
 	const compiledCondition: RegExp[] = [];
 	const condition: string[] = [];
 	for (const source of toStringArray(fm.condition)) {
+		if (hasNestedQuantifier(source)) {
+			warnings.push(
+				`${label}: regex "${source}" dropped (nested quantifier can backtrack catastrophically; ` +
+					'rewrite it without a quantified group whose body is itself unbounded)'
+			);
+			continue;
+		}
 		try {
 			compiledCondition.push(new RegExp(source));
 			condition.push(source);

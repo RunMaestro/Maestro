@@ -90,6 +90,11 @@ export interface ProcessConfig {
 	 *  script's `#!/usr/bin/env node` shebang. Local spawn only - SSH builds
 	 *  its remote PATH separately. */
 	extraPathDirs?: string[];
+	/** Set only on a TTSR corrective respawn: the id from `ttsr:triggered`,
+	 *  echoed back by the renderer. Carried on the `spawn` event so the TTSR
+	 *  spawn registry recognises its own corrective turn by correlation rather
+	 *  than by inspecting the prompt. Nothing in the spawner reads it. */
+	ttsrCorrelationId?: string;
 	/** Agent-reported session id when this spawn is resuming a prior session
 	 *  (e.g. Copilot's `--resume=<id>`, Claude's `--resume <id>`). The spawner
 	 *  uses it to seed `ManagedProcess.agentSessionId` so post-exit work that

@@ -1121,6 +1121,10 @@ export interface ProcessConfig {
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// Set only on a TTSR corrective respawn: the id from `ttsr:triggered`, echoed
+	// back so main recognises its own corrective turn by correlation rather than
+	// by inspecting the prompt.
+	ttsrCorrelationId?: string;
 }
 
 // DirectoryEntry and ShellInfo re-exported from shared/types above

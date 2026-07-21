@@ -56,7 +56,12 @@ export interface TtsrSpawnMeta {
 interface PendingCorrectiveTurn {
 	/** Goal to keep attributing the corrective turn to. */
 	originalPrompt: string;
-	/** Exact prompt handed to the renderer, used to recognise the respawn. */
+	/**
+	 * The payload's `ttsrCorrelationId`. The respawn hands it straight back on
+	 * its spawn config, which is how this turn is recognised.
+	 */
+	correlationId?: string;
+	/** Exact prompt handed to the renderer. Fallback when no id comes back. */
 	injectionPrompt: string;
 	/**
 	 * The matches whose guidance rides that injection. Handed back on the spawn
@@ -73,6 +78,8 @@ export interface TtsrSpawnConfigLike {
 	prompt?: string;
 	projectPath?: string;
 	agentSessionId?: string;
+	/** Echoed back from `ttsr:triggered` when this spawn IS the corrective turn. */
+	ttsrCorrelationId?: string;
 }
 
 /** Minimal event surface the registry attaches to (ProcessManager in prod). */
@@ -148,8 +155,15 @@ export class TtsrSpawnRegistry {
 	 * The goal to record for a spawn: the carried-over one when this really is
 	 * the corrective respawn we asked for, otherwise the spawn's own prompt.
 	 *
-	 * The match is `endsWith` rather than equality because the spawn path may
-	 * prepend deferred `<system-reminder>` blocks to the prompt on its way out.
+	 * Recognition is by correlation id. Main both builds the payload and observes
+	 * the spawn, so the renderer only has to hand the id back on its spawn config;
+	 * inspecting the prompt instead made goal carry-over depend on nothing ever
+	 * decorating the prompt after the injection block.
+	 *
+	 * The `endsWith` check stays as a fallback for a spawn that carries no id (an
+	 * older renderer, or a caller that rebuilt the config). It is `endsWith`
+	 * rather than equality because the spawn path may prepend deferred
+	 * `<system-reminder>` blocks on the way out.
 	 *
 	 * The next spawn of a session is also the deadline for the corrective turn:
 	 * once a different turn starts, the injection will never be delivered, so its
@@ -165,7 +179,12 @@ export class TtsrSpawnRegistry {
 		// never arrived, and a later unrelated turn must not inherit the goal.
 		this.pendingCorrective.delete(config.sessionId);
 		if (!pending) return { originalPrompt: prompt };
-		if (prompt.endsWith(pending.injectionPrompt)) return { originalPrompt: pending.originalPrompt };
+
+		const isCorrective =
+			pending.correlationId && config.ttsrCorrelationId
+				? config.ttsrCorrelationId === pending.correlationId
+				: prompt.endsWith(pending.injectionPrompt);
+		if (isCorrective) return { originalPrompt: pending.originalPrompt };
 		return {
 			originalPrompt: prompt,
 			lostCorrective: pending.matches.length > 0 ? pending.matches : undefined,

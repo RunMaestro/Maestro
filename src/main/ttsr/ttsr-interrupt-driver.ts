@@ -13,6 +13,7 @@
  */
 
 import { logger } from '../utils/logger';
+import { generateUUID } from '../../shared/uuid';
 import {
 	TTSR_AGENT_CAPABILITIES,
 	type TtsrAbortClearedPayload,
@@ -205,14 +206,12 @@ export class TtsrInterruptDriver {
 	}
 
 	/**
-	 * Report a turn's exit. Returns true when it belonged to a TTSR abort, so
-	 * the caller can suppress the normal "turn failed" handling.
+	 * Report a turn's exit, releasing an abort that is waiting on it. An exit for
+	 * a session with no pending abort is simply ignored, so callers can report
+	 * every exit without checking first.
 	 */
-	noteExit(sessionId: string): boolean {
-		const pending = this.pending.get(sessionId);
-		if (!pending) return false;
-		pending.resolveExit();
-		return true;
+	noteExit(sessionId: string): void {
+		this.pending.get(sessionId)?.resolveExit();
 	}
 
 	/** Abandon a pending abort (session closed mid-flight). */
@@ -269,6 +268,9 @@ export class TtsrInterruptDriver {
 			providerSessionId: canResume ? meta.providerSessionId : undefined,
 			originalGoal: meta.originalPrompt,
 			contextMode: pending.contextMode,
+			// Handed back verbatim on the respawn's spawn config, so the registry
+			// recognises this exact corrective turn without reading its prompt.
+			ttsrCorrelationId: generateUUID(),
 		};
 	}
 }

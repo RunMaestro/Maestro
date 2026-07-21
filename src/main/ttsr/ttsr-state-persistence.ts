@@ -20,18 +20,21 @@
 import Store from 'electron-store';
 
 import { logger } from '../utils/logger';
-import type { TtsrStateSnapshot, TtsrStateStore } from './ttsr-state-store';
+import {
+	MAX_PERSISTED_CONVERSATIONS,
+	TTSR_STATE_TTL_MS,
+	type TtsrStateSnapshot,
+	type TtsrStateStore,
+} from './ttsr-state-store';
 
 const LOG_CONTEXT = 'TTSR';
 
 /** electron-store namespace, i.e. `userData/ttsr-state.json`. */
 export const TTSR_STATE_STORE_NAME = 'ttsr-state';
 
-/** A conversation quiet for this long is forgotten on the next read or write. */
-export const TTSR_STATE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-/** Hard cap on retained conversations, newest first. */
-export const MAX_PERSISTED_CONVERSATIONS = 500;
+// The retention policy lives with the store, which applies the same bounds to
+// its in-memory map so memory never holds what disk has already dropped.
+export { MAX_PERSISTED_CONVERSATIONS, TTSR_STATE_TTL_MS };
 
 /** Default debounce between a mutation and the disk write it triggers. */
 export const TTSR_STATE_SAVE_DEBOUNCE_MS = 1_000;

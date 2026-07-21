@@ -10,7 +10,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	TtsrStateStore,
 	ttsrConversationKey,
+	MAX_PERSISTED_CONVERSATIONS,
 	TTSR_PENDING_PROVIDER_ID,
+	TTSR_STATE_TTL_MS,
+	type TtsrConversationState,
 } from '../../../main/ttsr/ttsr-state-store';
 
 const ONCE = { name: 'once-rule', repeatMode: 'once' as const, repeatGap: 3 };
@@ -123,6 +126,46 @@ describe('TtsrStateStore persistence', () => {
 
 		expect(restored.getMessageCount(key)).toBe(1);
 		expect(restored.isEligible(ONCE, key)).toBe(false);
+	});
+
+	// Auto Run mints a fresh Maestro session id per task, so an all-day
+	// automation would otherwise leave one live record per task in memory for
+	// the life of the process - even though the persisted file already drops
+	// them. Memory has to match disk.
+	it('caps the in-memory map at the persisted-conversation limit, oldest first', () => {
+		const store = new TtsrStateStore();
+
+		for (let i = 0; i < MAX_PERSISTED_CONVERSATIONS + 25; i += 1) {
+			store.noteTurnEnd(`sess-${i}|prov-${i}`);
+		}
+
+		const snapshot = store.snapshot();
+		expect(Object.keys(snapshot)).toHaveLength(MAX_PERSISTED_CONVERSATIONS);
+		// The oldest are gone and the newest survive.
+		expect(snapshot['sess-0|prov-0']).toBeUndefined();
+		expect(snapshot[`sess-${MAX_PERSISTED_CONVERSATIONS + 24}|prov-x`]).toBeUndefined();
+		expect(
+			store.getMessageCount(
+				`sess-${MAX_PERSISTED_CONVERSATIONS + 24}|prov-${MAX_PERSISTED_CONVERSATIONS + 24}`
+			)
+		).toBe(1);
+	});
+
+	it('drops conversations past the TTL before falling back to the cap', () => {
+		const store = new TtsrStateStore();
+		const stale: Record<string, TtsrConversationState> = {};
+		const staleAt = Date.now() - TTSR_STATE_TTL_MS - 1;
+		for (let i = 0; i < MAX_PERSISTED_CONVERSATIONS; i += 1) {
+			stale[`old-${i}`] = { messageCount: 1, rules: {}, interruptCount: 0, updatedAt: staleAt };
+		}
+		store.hydrate(stale);
+
+		// Nothing was over the cap yet, so hydration keeps the stale records; the
+		// first new conversation past the cap is what triggers the prune.
+		store.noteTurnEnd('fresh|prov-1');
+
+		expect(store.getMessageCount('old-0')).toBe(0);
+		expect(store.getMessageCount('fresh|prov-1')).toBe(1);
 	});
 
 	it('ignores malformed persisted entries rather than throwing', () => {

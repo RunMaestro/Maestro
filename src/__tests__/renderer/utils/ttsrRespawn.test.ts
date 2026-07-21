@@ -86,6 +86,28 @@ describe('buildTtsrRespawnConfig', () => {
 		expect(config.prompt).toContain('<system-interrupt');
 	});
 
+	// Main recognises its own corrective turn by this id rather than by reading
+	// the prompt back, so anything that decorates the prompt downstream cannot
+	// silently break the aborted turn's goal carry-over.
+	it('echoes the payload correlation id back on the spawn config', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'session-1', aiTabs: [tab] });
+		const payload = makePayload({ ttsrCorrelationId: 'corr-42' });
+
+		const config = buildTtsrRespawnConfig({ payload, session, tab, agent: AGENT });
+
+		expect(config.ttsrCorrelationId).toBe('corr-42');
+	});
+
+	it('leaves the correlation id unset when the payload carries none', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'session-1', aiTabs: [tab] });
+
+		const config = buildTtsrRespawnConfig({ payload: makePayload(), session, tab, agent: AGENT });
+
+		expect(config.ttsrCorrelationId).toBeUndefined();
+	});
+
 	it('sends no session id on the degraded fresh path so no resumeArgs are built', () => {
 		const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'stale-id' });
 		const session = createMockSession({ id: 'session-1', toolType: 'grok', aiTabs: [tab] });
