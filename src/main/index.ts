@@ -33,6 +33,7 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { installTtsrRuntime } from './ttsr';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -1013,6 +1014,16 @@ app
 		processManager = new ProcessManager(
 			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true
 		);
+		// Time-Traveling Stream Rules: watch every agent's normalized output
+		// stream and match `.maestro/rules/*.md`. Gated live on the `ttsr` Encore
+		// flag AND the `ttsrEnabled` setting, so it is a no-op while off.
+		installTtsrRuntime(processManager, {
+			isGloballyEnabled: () =>
+				store.get('ttsrEnabled', false) === true &&
+				(store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true,
+			getDisabledRules: () => store.get('ttsrDisabledRules', []) as string[],
+			safeSend,
+		});
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
 
