@@ -578,7 +578,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
 
 				try {
-					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 					if (!session) {
 						reply({ success: false, error: 'Session not found' });
 						return;
@@ -635,14 +635,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						readOnlyMode: isReadOnly,
 					};
 
-					let queueLength = 0;
+					// Position is deterministic from the snapshot we already read: the item
+					// is appended to the tail, so it lands at length+1 (1-based). Computing
+					// it here (not inside the state updater) keeps the returned position
+					// independent of when the store applies the update.
+					const queueLength = (session.executionQueue?.length ?? 0) + 1;
 					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const nextQueue = [...s.executionQueue, queuedItem];
-							queueLength = nextQueue.length;
-							return { ...s, executionQueue: nextQueue };
-						})
+						prev.map((s) =>
+							s.id === sessionId ? { ...s, executionQueue: [...s.executionQueue, queuedItem] } : s
+						)
 					);
 
 					reply({
@@ -666,12 +667,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote "list queue" from the CLI (`queue list`). Read-only snapshot
 		// of the authoritative executionQueue(s) so scripts can inspect what is
-		// pending. Reads sessionsRef (the live mirror) for parity with the other
-		// handlers in this effect.
+		// pending. Reads the store directly (useSessionStore.getState) so the snapshot
+		// is always current, per the store's outside-React contract.
 		const unsubscribeListQueue = window.maestro.process.onRemoteListQueue(
 			(sessionId: string | undefined, responseChannel: string) => {
 				try {
-					const sessions = sessionsRef.current;
+					const sessions = useSessionStore.getState().sessions;
 					const relevant = sessionId
 						? sessions.filter((s) => s.id === sessionId)
 						: sessions.filter((s) => (s.executionQueue?.length ?? 0) > 0);
@@ -711,15 +712,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribeRemoveQueueItem = window.maestro.process.onRemoteRemoveQueueItem(
 			(sessionId: string, itemId: string, responseChannel: string) => {
 				try {
-					let removed = false;
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							if (!s.executionQueue?.some((i) => i.id === itemId)) return s;
-							removed = true;
-							return { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) };
-						})
-					);
+					// Determine the outcome from the current store snapshot, then mutate.
+					// Keeps the returned `removed` independent of update timing.
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					const removed = !!session?.executionQueue?.some((i) => i.id === itemId);
+					if (removed) {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) }
+									: s
+							)
+						);
+					}
 					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
 						success: true,
 						removed,

@@ -2312,6 +2312,9 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'enqueue_command', sessionId },
+				});
 				sendErrorResult(`Failed to enqueue command: ${error.message}`);
 			});
 	}
@@ -2345,6 +2348,9 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'list_queue', sessionId },
+				});
 				this.send(client, {
 					type: 'list_queue_result',
 					success: false,
@@ -2394,6 +2400,9 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'remove_queue_item', sessionId, itemId },
+				});
 				this.send(client, {
 					type: 'remove_queue_item_result',
 					success: false,

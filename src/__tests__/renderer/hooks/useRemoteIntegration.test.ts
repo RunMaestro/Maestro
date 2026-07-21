@@ -937,6 +937,7 @@ describe('useRemoteIntegration', () => {
 				activeTabId: 'tab-1',
 				executionQueue: [],
 			});
+			useSessionStore.setState({ sessions: [session] });
 			const deps = createDeps({ sessions: [session] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
@@ -990,6 +991,7 @@ describe('useRemoteIntegration', () => {
 				activeTabId: 'tab-1',
 				executionQueue: [existing],
 			});
+			useSessionStore.setState({ sessions: [session] });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
@@ -1018,6 +1020,7 @@ describe('useRemoteIntegration', () => {
 				aiTabs: [tab],
 				activeTabId: 'tab-1',
 			});
+			useSessionStore.setState({ sessions: [session] });
 			const deps = createDeps({ sessions: [session] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
@@ -1055,6 +1058,7 @@ describe('useRemoteIntegration', () => {
 				aiTabs: [tab],
 				activeTabId: 'tab-1',
 			});
+			useSessionStore.setState({ sessions: [session] });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
@@ -1108,6 +1112,7 @@ describe('useRemoteIntegration', () => {
 				activeTabId: 'tab-1',
 				executionQueue: [item],
 			});
+			useSessionStore.setState({ sessions: [session] });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
@@ -1140,6 +1145,7 @@ describe('useRemoteIntegration', () => {
 				activeTabId: 'tab-1',
 				executionQueue: [item],
 			});
+			useSessionStore.setState({ sessions: [session] });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
@@ -1166,6 +1172,7 @@ describe('useRemoteIntegration', () => {
 				activeTabId: 'tab-1',
 				executionQueue: [],
 			});
+			useSessionStore.setState({ sessions: [session] });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
