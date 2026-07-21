@@ -16,14 +16,14 @@ import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import { InlineWizardProvider } from '../../renderer/contexts/InlineWizardContext';
 import { createMockTheme } from '../helpers/mockTheme';
-import type { Session, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
+import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
 import { useSessionStore } from '../../renderer/stores/sessionStore';
 import { createMockGroup } from '../helpers/mockGroup';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import { seedSidebarNav, resetSidebarNavStore } from '../helpers/seedSidebarNav';
-import { useSessionStore } from '../../renderer/stores/sessionStore';
 import { useUIStore } from '../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../renderer/stores/settingsStore';
+
 // Helper to wrap component in LayerStackProvider with custom rerender
 const renderWithProviders = (ui: React.ReactElement) => {
 	const result = render(<LayerStackProvider>{ui}</LayerStackProvider>);
@@ -339,21 +339,6 @@ const IntegrationTestWrapper = ({
 		message: string;
 		onConfirm: () => void;
 	} | null>(null);
-	useEffect(() => {
-		useSessionStore.setState({ sessions, groups, activeSessionId });
-	}, [activeSessionId, groups, sessions]);
-	useEffect(
-		() =>
-			useSessionStore.subscribe((state) => {
-				if (state.sessions !== sessions) setSessions(state.sessions);
-				if (state.groups !== groups) setGroups(state.groups);
-				if (state.activeSessionId !== activeSessionId) {
-					setActiveSessionId(state.activeSessionId);
-					onSessionChange?.(state.activeSessionId);
-				}
-			}),
-		[activeSessionId, groups, onSessionChange, sessions]
-	);
 
 	const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
 
@@ -365,21 +350,23 @@ const IntegrationTestWrapper = ({
 		[onSessionChange]
 	);
 
-	const handleDeleteSession = useCallback(
-		(sessionId: string) => {
-			const newSessions = sessions.filter((s) => s.id !== sessionId);
-			setSessions(newSessions);
-			onSessionDelete?.(sessionId);
-			if (activeSessionId === sessionId && newSessions.length > 0) {
-				setActiveSessionId(newSessions[0].id);
-			}
-		},
-		[sessions, activeSessionId, onSessionDelete]
-	);
-
 	const handleConfirmation = useCallback((message: string, onConfirm: () => void) => {
 		setShowConfirmDialog({ message, onConfirm });
 	}, []);
+
+	const handleDeleteSession = useCallback(
+		(sessionId: string) => {
+			handleConfirmation('Are you sure you want to remove this agent?', () => {
+				const newSessions = sessions.filter((s) => s.id !== sessionId);
+				setSessions(newSessions);
+				onSessionDelete?.(sessionId);
+				if (activeSessionId === sessionId && newSessions.length > 0) {
+					setActiveSessionId(newSessions[0].id);
+				}
+			});
+		},
+		[sessions, activeSessionId, onSessionDelete, handleConfirmation]
+	);
 
 	// SessionList reads Zustand; keep local harness state mirrored into stores.
 	useEffect(() => {
@@ -437,24 +424,16 @@ const IntegrationTestWrapper = ({
 		<InlineWizardProvider>
 			<LayerStackProvider>
 				<div style={{ display: 'flex', height: '100vh' }}>
-				{/* Session List */}
-				<SessionList
-					theme={theme}
-					isLiveMode={false}
-					webInterfaceUrl={null}
-					toggleGlobalLive={() => {}}
-					restartWebServer={async () => null}
-					toggleGroup={(groupId) => {
-						setGroups((prev) =>
-							prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
-						);
-					}}
-					handleDragStart={(sessionId) => setDraggingSessionId(sessionId)}
-					handleDragOver={(e) => e.preventDefault()}
-					handleDropOnGroup={(groupId) => {
-						if (draggingSessionId) {
-							setSessions((prev) =>
-								prev.map((s) => (s.id === draggingSessionId ? { ...s, groupId } : s))
+					{/* Session List */}
+					<SessionList
+						theme={theme}
+						isLiveMode={false}
+						webInterfaceUrl={null}
+						toggleGlobalLive={() => {}}
+						restartWebServer={async () => null}
+						toggleGroup={(groupId) => {
+							setGroups((prev) =>
+								prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g))
 							);
 						}}
 						handleDragStart={(sessionId) => setDraggingSessionId(sessionId)}
@@ -479,45 +458,42 @@ const IntegrationTestWrapper = ({
 							setGroups((prev) =>
 								prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g))
 							);
-							setDraggingSessionId(null);
-						}
-					}}
-					finishRenamingGroup={(groupId, newName) => {
-						setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g)));
-						setEditingGroupId(null);
-					}}
-					finishRenamingSession={(sessId, newName) => {
-						setSessions((prev) => prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s)));
-						setEditingSessionId(null);
-					}}
-					startRenamingGroup={(groupId) => setEditingGroupId(groupId)}
-					startRenamingSession={(sessId) => setEditingSessionId(sessId)}
-					showConfirmation={handleConfirmation}
-					createNewGroup={() => {
-						const newGroup: Group = {
-							id: `group-${Date.now()}`,
-							name: 'New Group',
-							emoji: '📁',
-							collapsed: false,
-						};
-						setGroups((prev) => [...prev, newGroup]);
-					}}
-					setGroupParent={() => {}}
-					addNewSession={() => {
-						const newSession = createMockSession({
-							id: `session-${Date.now()}`,
-							name: `New Session`,
-							autoRunFolderPath: undefined,
-							autoRunSelectedFile: undefined,
-							autoRunContent: '',
-						});
-						setSessions((prev) => [...prev, newSession]);
-						setActiveSessionId(newSession.id);
-					}}
-					onDeleteSession={handleDeleteSession}
-					onEditAgent={() => {}}
-					onNewAgentSession={() => {}}
-				/>
+							setEditingGroupId(null);
+						}}
+						finishRenamingSession={(sessId, newName) => {
+							setSessions((prev) =>
+								prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s))
+							);
+							setEditingSessionId(null);
+						}}
+						startRenamingGroup={(groupId) => setEditingGroupId(groupId)}
+						startRenamingSession={(sessId) => setEditingSessionId(sessId)}
+						showConfirmation={handleConfirmation}
+						createNewGroup={() => {
+							const newGroup: Group = {
+								id: `group-${Date.now()}`,
+								name: 'New Group',
+								emoji: '📁',
+								collapsed: false,
+							};
+							setGroups((prev) => [...prev, newGroup]);
+						}}
+						setGroupParent={() => {}}
+						addNewSession={() => {
+							const newSession = createMockSession({
+								id: `session-${Date.now()}`,
+								name: `New Session`,
+								autoRunFolderPath: undefined,
+								autoRunSelectedFile: undefined,
+								autoRunContent: '',
+							});
+							setSessions((prev) => [...prev, newSession]);
+							setActiveSessionId(newSession.id);
+						}}
+						onDeleteSession={handleDeleteSession}
+						onEditAgent={() => {}}
+						onNewAgentSession={() => {}}
+					/>
 
 					{/* Auto Run Panel (only render if active session exists) */}
 					{activeSession && activeSession.autoRunFolderPath && (
@@ -838,7 +814,7 @@ describe('Auto Run + Session List Integration', () => {
 			const removeButton = await screen.findByText('Remove Agent');
 			fireEvent.click(removeButton);
 
-			// Confirm deletion in the custom confirmation dialog
+			// Confirm deletion in the parent-owned confirmation dialog.
 			const confirmYes = await screen.findByTestId('confirm-yes');
 			fireEvent.click(confirmYes);
 

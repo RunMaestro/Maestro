@@ -23,4 +23,4 @@ if [ "$saw_ref" -eq 1 ] && [ "$only_deletes" -eq 1 ]; then
 	exit 0
 fi
 
-npm run validate:push
+bun run validate:push
