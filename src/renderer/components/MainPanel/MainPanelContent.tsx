@@ -880,7 +880,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			    input's own opaque chrome, stacked above, hides that transient bleed. Stays
 			    below the z-30 tiling drop overlay so drags still hit-test on top. */}
 			{shouldShowInputArea && (
-				<div data-tour="input-area" className="relative z-[3]">
+				<div data-tour="input-area" className="relative z-[3] shrink-0">
 					<InputArea
 						session={activeSession}
 						theme={theme}

@@ -10,12 +10,14 @@
  * (MovementStateSnapshot), so it can place new items without overlapping.
  */
 
-/** add = create/replace by id; update = merge fields; move = reposition; remove
- *  = delete by id; clear = remove all; progress = report an HTML Concerto's
+/** begin = immediately reserve a host-rendered HTML Concerto frame; add =
+ *  create/replace by id; update = merge fields; move = reposition; remove =
+ *  delete by id; clear = remove all; progress = report an HTML Concerto's
  *  current design phase without mutating its window. */
-export type MovementOp = 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
+export type MovementOp = 'begin' | 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
 
 export const MOVEMENT_OPS: readonly MovementOp[] = [
+	'begin',
 	'add',
 	'update',
 	'move',
@@ -38,6 +40,28 @@ export const CONCERTO_CREATION_PHASES: readonly ConcertoCreationPhase[] = [
 	'reviewing',
 	'testing',
 ] as const;
+
+/** Keep score subdivisions compact enough to remain legible inside one measure. */
+export const CONCERTO_PROGRESS_MAX_STEPS = 8;
+
+export type ConcertoProgressNoteValue = 'quarter' | 'eighth' | 'sixteenth';
+
+export const CONCERTO_PROGRESS_NOTE_VALUES: readonly ConcertoProgressNoteValue[] = [
+	'quarter',
+	'eighth',
+	'sixteenth',
+] as const;
+
+/** Musical notation for one unlabeled phase substep. */
+export interface ConcertoProgressNote {
+	value: ConcertoProgressNoteValue;
+	/** The substep is estimated at 1.5 times its base note value. */
+	dotted?: boolean;
+	/** Several strands of work are expected to happen in parallel. */
+	triad?: boolean;
+	/** The substep continues into the next note without a clean boundary. */
+	tie?: boolean;
+}
 
 /** Native BlockView data, or an isolated single-page HTML mockup. */
 export type MovementViewType = 'view' | 'html';
@@ -70,6 +94,12 @@ export interface MovementPayload {
 	revision?: number;
 	/** Current design phase for `progress`; ignored by window mutation ops. */
 	phase?: ConcertoCreationPhase;
+	/** One-based active subdivision within the current design phase. */
+	step?: number;
+	/** Planned subdivisions in the current design phase, from 1 through 8. */
+	steps?: number;
+	/** Planned musical notation for each phase subdivision. */
+	notes?: ConcertoProgressNote[];
 }
 
 /** One item's geometry as returned by the `state` read (for agent awareness). */

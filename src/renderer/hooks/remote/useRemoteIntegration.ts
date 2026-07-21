@@ -18,7 +18,7 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
 import { buildThinkingItems } from '../../utils/thinkingItems';
-import type { ConcertoCreationPhase } from '../../../shared/movement-types';
+import type { ConcertoCreationPhase, ConcertoProgressNote } from '../../../shared/movement-types';
 import {
 	getConcertoDesignerFrameSnapshot,
 	interactWithConcertoDesignerFrame,
@@ -66,7 +66,10 @@ function recordConcertoCreationActivity(
 	movementId: string,
 	phase: ConcertoCreationPhase,
 	revision?: number,
-	reportedTitle?: string
+	reportedTitle?: string,
+	step?: number,
+	steps?: number,
+	notes?: ConcertoProgressNote[]
 ): void {
 	const thinkingItems = buildThinkingItems(useSessionStore.getState().sessions);
 	if (thinkingItems.length !== 1) return;
@@ -90,6 +93,9 @@ function recordConcertoCreationActivity(
 		movementId,
 		title: reportedTitle?.trim() || movement?.title?.trim() || movementId,
 		phase,
+		step,
+		steps,
+		notes,
 		width: movement ? Math.round(movement.width) : undefined,
 		height:
 			movement?.measuredHeight !== undefined
@@ -784,7 +790,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					reply(false);
 					return;
 				}
-				recordConcertoCreationActivity(params.id, params.phase, params.revision, params.title);
+				recordConcertoCreationActivity(
+					params.id,
+					params.phase,
+					params.revision,
+					params.title,
+					params.step,
+					params.steps,
+					params.notes
+				);
 				reply(true);
 				return;
 			}
@@ -800,8 +814,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				useConcertoCreationActivityStore.getState().clearMovement(params.id);
 			} else if (params.id) {
 				let phase: ConcertoCreationPhase = 'refining';
-				if (params.op === 'add') phase = 'composing';
+				if (params.op === 'begin' || params.op === 'add') phase = 'composing';
 				else if (
+					useMovementStore.getState().items.find((movement) => movement.id === params.id)?.preparing
+				) {
+					phase = 'composing';
+				} else if (
 					params.op === 'move' ||
 					(params.body === undefined && params.title === undefined && params.viewType === undefined)
 				) {

@@ -50,52 +50,252 @@ function trackMatchesItem(track: ConcertoCreationTrack, item: ThinkingItem): boo
 	);
 }
 
-function TrackNote({
+type ConcertoPitch = 'C5' | 'D5' | 'E5' | 'F5' | 'G5';
+
+const PHASE_PITCH_CONTOURS: Record<ConcertoCreationPhase, readonly ConcertoPitch[]> = {
+	composing: ['C5', 'D5', 'E5', 'G5', 'F5', 'E5', 'D5', 'C5'],
+	refining: ['E5', 'G5', 'F5', 'G5', 'E5', 'F5', 'D5', 'E5'],
+	arranging: ['G5', 'E5', 'F5', 'D5', 'E5', 'C5', 'D5', 'C5'],
+	reviewing: ['F5', 'E5', 'G5', 'E5', 'D5', 'F5', 'D5', 'C5'],
+	testing: ['G5', 'F5', 'E5', 'D5', 'C5', 'D5', 'C5', 'C5'],
+};
+
+const PITCH_RANK: Record<ConcertoPitch, number> = {
+	G5: 0,
+	F5: 1,
+	E5: 2,
+	D5: 3,
+	C5: 4,
+};
+
+function pitchFor(track: ConcertoCreationTrack, noteIndex: number, number: number): ConcertoPitch {
+	const contour = PHASE_PITCH_CONTOURS[track.phase];
+	return contour[(noteIndex + number - 1) % contour.length];
+}
+
+function noteTopForPitch(pitch: ConcertoPitch, laneHeight: number, triad: boolean): number {
+	const ornamentPadding = triad ? 3 : 0;
+	const minimum = ornamentPadding;
+	const maximum = Math.max(minimum, laneHeight - 6 - ornamentPadding);
+	return minimum + (PITCH_RANK[pitch] / 4) * (maximum - minimum);
+}
+
+function staffBackground(color: string): string {
+	return [10, 30, 50, 70, 90]
+		.map(
+			(position) =>
+				`linear-gradient(to bottom, transparent calc(${position}% - 0.5px), ${color} calc(${position}% - 0.5px), ${color} calc(${position}% + 0.5px), transparent calc(${position}% + 0.5px))`
+		)
+		.join(',');
+}
+
+function TrackPhrase({
 	track,
 	number,
-	position,
-	total,
+	voiceIndex,
+	voiceCount,
+	staffHeight,
 	theme,
 }: {
 	track: ConcertoCreationTrack;
 	number: number;
-	position: number;
-	total: number;
+	voiceIndex: number;
+	voiceCount: number;
+	staffHeight: number;
 	theme: Theme;
 }) {
-	const left = `${((position + 1) / (total + 1)) * 100}%`;
-	const top = [3, 0, 6, 2][(number - 1) % 4];
+	const beamTop = 1;
+	const laneHeight = staffHeight / voiceCount;
+	const laneTop = voiceIndex * laneHeight;
+	const noteValues = track.notes.map((note) => note.value);
+	const noteHeadWidth = track.steps >= 7 ? 6 : track.steps >= 5 ? 7 : 8;
+	const noteHeadHeight = track.steps >= 7 ? 5 : 6;
+	const commonNoteValue = noteValues.every((value) => value === noteValues[0])
+		? noteValues[0]
+		: 'mixed';
+	const notePattern = track.notes
+		.map(
+			(note) =>
+				note.value +
+				(note.dotted ? '+dotted' : '') +
+				(note.triad ? '+triad' : '') +
+				(note.tie ? '+tie' : '')
+		)
+		.join(',');
+	const label = `${track.title}: ${PHASE_LABELS[track.phase]}, step ${track.step} of ${track.steps}`;
 
 	return (
 		<span
 			data-testid={`concerto-note-${track.movementId}`}
 			data-concerto-phase={track.phase}
-			className="absolute h-4 w-3 -translate-x-1/2 animate-pulse"
-			style={{ left, top }}
-			title={`${number}. ${track.title}: ${PHASE_LABELS[track.phase]}`}
-			aria-label={`${track.title}: ${PHASE_LABELS[track.phase]}`}
+			data-concerto-step={track.step}
+			data-concerto-steps={track.steps}
+			data-note-value={commonNoteValue}
+			data-note-pattern={notePattern}
+			data-voice-index={voiceIndex}
+			className="absolute inset-x-0"
+			style={{ top: laneTop, height: laneHeight }}
+			title={`${number}. ${label}`}
+			aria-label={label}
 		>
-			<span
-				className="absolute bottom-0 left-0 h-1.5 w-2.5 -rotate-[18deg] rounded-full"
-				style={{
-					backgroundColor: theme.colors.accent,
-					border: `1px solid ${theme.colors.accent}`,
-					boxShadow: `0 0 6px ${theme.colors.accent}`,
-				}}
-				aria-hidden="true"
-			/>
-			<span
-				className="absolute bottom-1 left-2 h-3 w-px"
-				style={{ backgroundColor: theme.colors.accent }}
-				aria-hidden="true"
-			/>
-			<span
-				className="absolute -right-1.5 -top-1 text-[7px] font-bold leading-none"
-				style={{ color: theme.colors.accent }}
-				aria-hidden="true"
-			>
-				{number}
-			</span>
+			{track.notes.slice(0, -1).map((note, noteIndex) => {
+				const next = track.notes[noteIndex + 1];
+				if (note.value === 'quarter' || next.value === 'quarter') return null;
+				const left = ((noteIndex + 1) * 100) / (track.steps + 1);
+				const nextLeft = ((noteIndex + 2) * 100) / (track.steps + 1);
+				return (
+					<span key={`beam-${noteIndex}`} aria-hidden="true">
+						<span
+							data-testid={`concerto-beam-${track.movementId}-${noteIndex + 1}-1`}
+							className="absolute h-px"
+							style={{
+								left: `${left}%`,
+								top: beamTop,
+								width: `${nextLeft - left}%`,
+								backgroundColor: theme.colors.accent,
+								opacity: 0.8,
+							}}
+						/>
+						{note.value === 'sixteenth' && next.value === 'sixteenth' && (
+							<span
+								data-testid={`concerto-beam-${track.movementId}-${noteIndex + 1}-2`}
+								className="absolute h-px"
+								style={{
+									left: `${left}%`,
+									top: beamTop + 3,
+									width: `${nextLeft - left}%`,
+									backgroundColor: theme.colors.accent,
+									opacity: 0.65,
+								}}
+							/>
+						)}
+					</span>
+				);
+			})}
+			{track.notes.map((note, noteIndex) => {
+				if (!note.tie || noteIndex === track.steps - 1) return null;
+				const pitch = pitchFor(track, noteIndex, number);
+				const nextPitch = pitchFor(track, noteIndex + 1, number);
+				const noteTop = noteTopForPitch(pitch, laneHeight, note.triad === true);
+				const nextNote = track.notes[noteIndex + 1];
+				const nextNoteTop = noteTopForPitch(nextPitch, laneHeight, nextNote.triad === true);
+				const left = ((noteIndex + 1) * 100) / (track.steps + 1);
+				const nextLeft = ((noteIndex + 2) * 100) / (track.steps + 1);
+				return (
+					<span
+						key={`tie-${noteIndex}`}
+						data-testid={`concerto-tie-${track.movementId}-${noteIndex + 1}`}
+						className="absolute h-1 rounded-[50%] border-t"
+						style={{
+							left: `${left + 2}%`,
+							top: Math.min(laneHeight - 4, Math.max(noteTop, nextNoteTop) + 5),
+							width: `${Math.max(4, nextLeft - left - 4)}%`,
+							borderColor: theme.colors.accent,
+							opacity: 0.65,
+						}}
+						aria-hidden="true"
+					/>
+				);
+			})}
+			{track.notes.map((note, noteIndex) => {
+				const noteNumber = noteIndex + 1;
+				const noteState =
+					noteNumber < track.step ? 'complete' : noteNumber === track.step ? 'active' : 'pending';
+				const pitch = pitchFor(track, noteIndex, number);
+				const noteTop = noteTopForPitch(pitch, laneHeight, note.triad === true);
+				const left = `${(noteNumber * 100) / (track.steps + 1)}%`;
+				const filled = noteState !== 'pending';
+				const connectedBefore =
+					noteIndex > 0 &&
+					note.value !== 'quarter' &&
+					track.notes[noteIndex - 1].value !== 'quarter';
+				const connectedAfter =
+					noteIndex < track.steps - 1 &&
+					note.value !== 'quarter' &&
+					track.notes[noteIndex + 1].value !== 'quarter';
+				return (
+					<span
+						key={noteNumber}
+						data-testid={`concerto-subnote-${track.movementId}-${noteNumber}`}
+						data-note-state={noteState}
+						data-note-value={note.value}
+						data-dotted={note.dotted ? 'true' : 'false'}
+						data-triad={note.triad ? 'true' : 'false'}
+						data-tie={note.tie ? 'true' : 'false'}
+						data-flashing={noteState === 'active' ? 'true' : 'false'}
+						data-pitch={pitch}
+						className={`absolute inset-y-0 w-0 ${noteState === 'active' ? 'animate-pulse' : ''}`}
+						style={{ left }}
+						aria-hidden="true"
+					>
+						<span
+							className="absolute w-px"
+							style={{
+								top: note.value === 'quarter' ? Math.max(1, noteTop - 7) : beamTop,
+								height: note.value === 'quarter' ? 8 : Math.max(5, noteTop - beamTop + 2),
+								backgroundColor: theme.colors.accent,
+								opacity: noteState === 'pending' ? 0.4 : 0.9,
+							}}
+						/>
+						{note.value !== 'quarter' && !connectedBefore && !connectedAfter && (
+							<>
+								<span
+									className="absolute h-px w-1.5 origin-left rotate-[18deg]"
+									style={{
+										top: beamTop,
+										backgroundColor: theme.colors.accent,
+										opacity: noteState === 'pending' ? 0.4 : 0.8,
+									}}
+								/>
+								{note.value === 'sixteenth' && (
+									<span
+										className="absolute h-px w-1.5 origin-left rotate-[18deg]"
+										style={{
+											top: beamTop + 3,
+											backgroundColor: theme.colors.accent,
+											opacity: noteState === 'pending' ? 0.4 : 0.65,
+										}}
+									/>
+								)}
+							</>
+						)}
+						{(note.triad ? [-3, 0, 3] : [0]).map((offset) => (
+							<span
+								key={offset}
+								className="absolute -translate-x-1/2 -rotate-[18deg] rounded-full"
+								style={{
+									top: noteTop + offset,
+									width: noteHeadWidth,
+									height: noteHeadHeight,
+									backgroundColor: filled ? theme.colors.accent : theme.colors.bgSidebar,
+									border: `1px solid ${theme.colors.accent}`,
+									opacity: noteState === 'pending' ? 0.55 : noteState === 'complete' ? 0.72 : 1,
+									boxShadow: noteState === 'active' ? `0 0 5px ${theme.colors.accent}` : undefined,
+								}}
+							/>
+						))}
+						{note.dotted && (
+							<span
+								className="absolute h-1 w-1 rounded-full"
+								style={{
+									left: noteHeadWidth / 2 + 1,
+									top: noteTop + 3,
+									backgroundColor: theme.colors.accent,
+									opacity: noteState === 'pending' ? 0.55 : 0.9,
+								}}
+							/>
+						)}
+						{noteState === 'active' && (
+							<span
+								className="absolute -top-0.5 left-1 text-[6px] font-bold leading-none"
+								style={{ color: theme.colors.accent }}
+							>
+								{number}
+							</span>
+						)}
+					</span>
+				);
+			})}
 		</span>
 	);
 }
@@ -119,6 +319,9 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 	const activeTracks = activeItem
 		? tracks.filter((track) => trackMatchesItem(track, activeItem))
 		: [];
+	const staffHeight = Math.max(24, activeTracks.length * 14);
+	const densestPhrase = Math.max(1, ...activeTracks.map((track) => track.steps));
+	const scoreWidth = Math.min(400, 300 + Math.max(0, densestPhrase - 3) * 20);
 
 	const clampPosition = (next: PipelinePosition): PipelinePosition => {
 		const panel = panelRef.current;
@@ -193,8 +396,11 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 			</div>
 
 			<ol
-				className="mx-auto mt-2 flex h-10"
-				style={{ width: 'min(300px, calc(100% - 16px))' }}
+				className="mx-auto mt-2 flex"
+				style={{
+					width: `min(${scoreWidth}px, calc(100% - 16px))`,
+					height: staffHeight + 14,
+				}}
 				aria-label="Concerto creation score"
 			>
 				{CONCERTO_CREATION_PHASES.map((phase, phaseIndex) => {
@@ -211,8 +417,9 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 							className="min-w-0 flex-1"
 						>
 							<div
-								className="relative h-6"
+								className="relative"
 								style={{
+									height: staffHeight,
 									borderLeft: `1px solid ${phaseComplete || phaseActive ? `${theme.colors.accent}99` : theme.colors.border}`,
 									borderRight:
 										phaseIndex === CONCERTO_CREATION_PHASES.length - 1
@@ -223,16 +430,17 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 										: phaseComplete
 											? `${theme.colors.accent}08`
 											: 'transparent',
-									backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 4px, ${theme.colors.border} 4px, ${theme.colors.border} 5px)`,
+									backgroundImage: staffBackground(theme.colors.border),
 								}}
 							>
-								{phaseTracks.map((track, noteIndex) => (
-									<TrackNote
+								{phaseTracks.map((track) => (
+									<TrackPhrase
 										key={track.movementId}
 										track={track}
 										number={activeTracks.indexOf(track) + 1}
-										position={noteIndex}
-										total={phaseTracks.length}
+										voiceIndex={activeTracks.indexOf(track)}
+										voiceCount={activeTracks.length}
+										staffHeight={staffHeight}
 										theme={theme}
 									/>
 								))}
@@ -254,6 +462,8 @@ export const ConcertoCreationPipeline = memo(function ConcertoCreationPipeline({
 						key={track.movementId}
 						data-testid={`concerto-track-${track.movementId}`}
 						data-concerto-phase={track.phase}
+						data-concerto-step={track.step}
+						data-concerto-steps={track.steps}
 						className="flex max-w-full items-baseline gap-1 text-[9px] leading-tight"
 						style={{ color: theme.colors.textMain }}
 					>

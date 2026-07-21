@@ -7,6 +7,7 @@ import type { ThinkingItem } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
+import type { ConcertoProgressNote } from '../../../shared/movement-types';
 
 const THINKING_START = 10_000;
 
@@ -41,7 +42,14 @@ function thinkingItem(): ThinkingItem {
 	};
 }
 
-function addTrack(movementId: string, title: string, phase: 'composing' | 'refining') {
+function addTrack(
+	movementId: string,
+	title: string,
+	phase: 'composing' | 'refining',
+	step?: number,
+	steps?: number,
+	notes?: ConcertoProgressNote[]
+) {
 	useConcertoCreationActivityStore.getState().upsertTrack({
 		sessionId: 'design-session',
 		tabId: 'design-tab',
@@ -49,12 +57,176 @@ function addTrack(movementId: string, title: string, phase: 'composing' | 'refin
 		movementId,
 		title,
 		phase,
+		step,
+		steps,
+		notes,
 	});
 }
 
 describe('ConcertoCreationPipeline', () => {
 	beforeEach(() => {
 		useConcertoCreationActivityStore.setState({ tracks: [] });
+	});
+
+	it('turns planned substeps into a live dotted, pitched rhythm', () => {
+		addTrack('startup', 'Loopline startup', 'refining', 2, 6, [
+			{ value: 'sixteenth' },
+			{ value: 'sixteenth' },
+			{ value: 'sixteenth', dotted: true },
+			{ value: 'sixteenth', triad: true },
+			{ value: 'eighth', tie: true },
+			{ value: 'eighth' },
+		]);
+		render(
+			<ConcertoCreationPipeline
+				thinkingItems={[thinkingItem()]}
+				theme={mockTheme}
+				activeSessionId="design-session"
+				activeTabId="design-tab"
+			/>
+		);
+
+		const phrase = screen.getByTestId('concerto-note-startup');
+		expect(screen.getByRole('list', { name: 'Concerto creation score' })).toHaveStyle({
+			width: 'min(360px, calc(100% - 16px))',
+		});
+		expect(phrase).toHaveAttribute('data-note-value', 'mixed');
+		expect(phrase).toHaveAttribute(
+			'data-note-pattern',
+			'sixteenth,sixteenth,sixteenth+dotted,sixteenth+triad,eighth+tie,eighth'
+		);
+		expect(phrase).toHaveAttribute('data-concerto-step', '2');
+		expect(phrase).toHaveAccessibleName('Loopline startup: Refining, step 2 of 6');
+		expect(screen.getByTestId('concerto-beam-startup-1-1')).toBeInTheDocument();
+		expect(screen.getByTestId('concerto-beam-startup-1-2')).toBeInTheDocument();
+		expect(screen.getAllByTestId(/^concerto-subnote-startup-/)).toHaveLength(6);
+		expect(screen.getByTestId('concerto-subnote-startup-1')).toHaveAttribute(
+			'data-note-state',
+			'complete'
+		);
+		expect(screen.getByTestId('concerto-subnote-startup-2')).toHaveAttribute(
+			'data-note-state',
+			'active'
+		);
+		expect(screen.getByTestId('concerto-subnote-startup-2')).toHaveAttribute(
+			'data-flashing',
+			'true'
+		);
+		expect(screen.getByTestId('concerto-subnote-startup-2')).toHaveAttribute(
+			'data-dotted',
+			'false'
+		);
+		expect(screen.getByTestId('concerto-subnote-startup-2')).toHaveAttribute('data-pitch', 'G5');
+		expect(screen.getByTestId('concerto-subnote-startup-3')).toHaveAttribute('data-dotted', 'true');
+		expect(screen.getByTestId('concerto-subnote-startup-4')).toHaveAttribute('data-triad', 'true');
+		expect(screen.getByTestId('concerto-subnote-startup-5')).toHaveAttribute('data-tie', 'true');
+		expect(screen.getByTestId('concerto-tie-startup-5')).toBeInTheDocument();
+
+		act(() => {
+			useConcertoCreationActivityStore.getState().upsertTrack({
+				sessionId: 'design-session',
+				tabId: 'design-tab',
+				thinkingStartTime: THINKING_START,
+				movementId: 'startup',
+				title: 'Loopline startup',
+				phase: 'refining',
+				step: 4,
+				steps: 6,
+			});
+		});
+
+		expect(screen.getByTestId('concerto-note-startup')).toHaveAttribute('data-concerto-step', '4');
+		expect(screen.getByTestId('concerto-subnote-startup-4')).toHaveAttribute(
+			'data-note-state',
+			'active'
+		);
+
+		act(() => {
+			useConcertoCreationActivityStore.getState().upsertTrack({
+				sessionId: 'design-session',
+				tabId: 'design-tab',
+				thinkingStartTime: THINKING_START,
+				movementId: 'startup',
+				title: 'Loopline startup',
+				phase: 'refining',
+				step: 2,
+				steps: 6,
+			});
+		});
+
+		expect(screen.getByTestId('concerto-note-startup')).toHaveAttribute('data-concerto-step', '4');
+	});
+
+	it('keeps sibling Concerto phrases in separate voice lanes on one staff', () => {
+		addTrack('startup', 'Loopline startup', 'composing', 1, 4);
+		addTrack('runner', 'Subway runner', 'composing', 1, 4);
+		addTrack('console', 'Dispatch console', 'composing', 1, 4);
+		render(
+			<ConcertoCreationPipeline
+				thinkingItems={[thinkingItem()]}
+				theme={mockTheme}
+				activeSessionId="design-session"
+				activeTabId="design-tab"
+			/>
+		);
+
+		expect(screen.getByTestId('concerto-measure-composing').firstElementChild).toHaveStyle({
+			height: '42px',
+		});
+		expect(screen.getByTestId('concerto-note-startup')).toHaveStyle({
+			top: '0px',
+			height: '14px',
+		});
+		expect(screen.getByTestId('concerto-note-runner')).toHaveStyle({
+			top: '14px',
+			height: '14px',
+		});
+		expect(screen.getByTestId('concerto-note-console')).toHaveStyle({
+			top: '28px',
+			height: '14px',
+		});
+	});
+
+	it('recomposes an immediate quarter-note placeholder in place', () => {
+		addTrack('startup', 'Loopline startup', 'composing');
+		render(
+			<ConcertoCreationPipeline
+				thinkingItems={[thinkingItem()]}
+				theme={mockTheme}
+				activeSessionId="design-session"
+				activeTabId="design-tab"
+			/>
+		);
+
+		expect(screen.getByTestId('concerto-note-startup')).toHaveAttribute(
+			'data-note-pattern',
+			'quarter'
+		);
+
+		act(() => {
+			useConcertoCreationActivityStore.getState().upsertTrack({
+				sessionId: 'design-session',
+				tabId: 'design-tab',
+				thinkingStartTime: THINKING_START,
+				movementId: 'startup',
+				title: 'Loopline startup',
+				phase: 'composing',
+				step: 1,
+				steps: 4,
+				notes: [
+					{ value: 'sixteenth' },
+					{ value: 'sixteenth', dotted: true },
+					{ value: 'sixteenth', triad: true },
+					{ value: 'eighth' },
+				],
+			});
+		});
+
+		expect(screen.getByTestId('concerto-note-startup')).toHaveAttribute(
+			'data-note-pattern',
+			'sixteenth,sixteenth+dotted,sixteenth+triad,eighth'
+		);
+		expect(screen.getAllByTestId(/^concerto-subnote-startup-/)).toHaveLength(4);
 	});
 
 	it('renders one shared five-measure staff with one note per Concerto', () => {

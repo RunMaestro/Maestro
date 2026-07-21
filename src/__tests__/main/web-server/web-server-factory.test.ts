@@ -507,6 +507,38 @@ describe('web-server/web-server-factory', () => {
 			await expect(resultPromise).resolves.toBe(true);
 		});
 
+		it('routes a bodyless begin shell without creating an HTML revision', async () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setMovementViewCallback.mock.calls[0][0];
+			const resultPromise = callback({
+				op: 'begin',
+				id: 'mockup',
+				viewType: 'html',
+				title: 'Checkout mockup',
+			});
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:movement'
+			);
+			expect(request).toEqual([
+				'remote:movement',
+				expect.objectContaining({
+					op: 'begin',
+					id: 'mockup',
+					viewType: 'html',
+				}),
+				expect.any(String),
+			]);
+			expect(request?.[1]).not.toHaveProperty('revision');
+			const responseChannel = request?.[2] as string;
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+			responseListener?.({} as never, true);
+
+			await expect(resultPromise).resolves.toBe(true);
+			expect(getConcertoHtmlDocumentRevision('movement', 'mockup')).toBeNull();
+		});
+
 		it('rejects a bodyless transition to HTML when no document exists', async () => {
 			const server = createWebServerFactory(deps)() as any;
 			const callback = server.setMovementViewCallback.mock.calls[0][0];

@@ -1140,13 +1140,12 @@ describe('useRemoteIntegration', () => {
 
 			act(() => {
 				onRemoteMovementHandler?.({
-					op: 'add',
+					op: 'begin',
 					id: 'checkout-flow',
 					viewType: 'html',
 					title: 'Checkout flow',
 					width: 880,
 					height: 560,
-					body: '<main>Checkout</main>',
 				});
 			});
 
@@ -1160,6 +1159,32 @@ describe('useRemoteIntegration', () => {
 				width: 880,
 				height: 560,
 			});
+			expect(useMovementStore.getState().items[0]).toMatchObject({
+				id: 'checkout-flow',
+				preparing: true,
+			});
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'update',
+					id: 'checkout-flow',
+					x: 30,
+					y: 40,
+					width: 840,
+				});
+			});
+			expect(useConcertoCreationActivityStore.getState().tracks[0]?.phase).toBe('composing');
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'add',
+					id: 'checkout-flow',
+					viewType: 'html',
+					title: 'Checkout flow',
+					body: '<main>Checkout</main>',
+				});
+			});
+			expect(useMovementStore.getState().items[0]?.preparing).toBe(false);
 
 			act(() => {
 				onRemoteMovementHandler?.({
@@ -1195,6 +1220,14 @@ describe('useRemoteIntegration', () => {
 					id: 'startup',
 					title: 'Loopline startup',
 					phase: 'composing',
+					step: 2,
+					steps: 4,
+					notes: [
+						{ value: 'sixteenth' },
+						{ value: 'sixteenth', dotted: true },
+						{ value: 'sixteenth', triad: true },
+						{ value: 'eighth' },
+					],
 				});
 				onRemoteMovementHandler?.({
 					op: 'progress',
@@ -1205,8 +1238,26 @@ describe('useRemoteIntegration', () => {
 			});
 
 			expect(useConcertoCreationActivityStore.getState().tracks).toMatchObject([
-				{ movementId: 'startup', title: 'Loopline startup', phase: 'composing' },
-				{ movementId: 'runner', title: 'Subway runner', phase: 'refining' },
+				{
+					movementId: 'startup',
+					title: 'Loopline startup',
+					phase: 'composing',
+					step: 2,
+					steps: 4,
+					notes: [
+						{ value: 'sixteenth' },
+						{ value: 'sixteenth', dotted: true },
+						{ value: 'sixteenth', triad: true },
+						{ value: 'eighth' },
+					],
+				},
+				{
+					movementId: 'runner',
+					title: 'Subway runner',
+					phase: 'refining',
+					step: 1,
+					steps: 1,
+				},
 			]);
 			expect(useMovementStore.getState().items).toEqual([]);
 		});

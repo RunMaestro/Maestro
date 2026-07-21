@@ -12,9 +12,17 @@
  * over the `movement` bridge; the user can drag, resize, close, or stash them all.
  */
 
-import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+	memo,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	type PointerEvent as ReactPointerEvent,
+	type RefObject,
+} from 'react';
 import { createPortal } from 'react-dom';
-import { X, Eye, EyeOff, LayoutGrid, Minus } from 'lucide-react';
+import { X, Eye, EyeOff, LayoutGrid, Minus, Music2 } from 'lucide-react';
 import type { Theme } from '../../types';
 import {
 	MOVEMENT_ITEM_MIN_HEIGHT,
@@ -32,6 +40,45 @@ import type { ModalResizeDirection } from '../../hooks/ui/useResizableModal';
 
 interface MovementOverlayProps {
 	theme: Theme;
+	workspaceBoundaryRef?: RefObject<HTMLElement | null>;
+	workspaceLayout?: MovementWorkspaceLayout;
+	workspaceTopInset?: number;
+}
+
+export type MovementWorkspaceLayout = 'side' | 'stacked';
+
+interface MovementStageBounds {
+	left: number;
+	top: number;
+	width: number;
+	height: number;
+}
+
+export function resolveMovementStageBounds(
+	windowWidth: number,
+	windowHeight: number,
+	boundary: Pick<DOMRect, 'left' | 'right' | 'top'> | null,
+	layout: MovementWorkspaceLayout | undefined,
+	topInset = 0
+): MovementStageBounds {
+	if (!boundary || !layout) return { left: 0, top: 0, width: windowWidth, height: windowHeight };
+	if (layout === 'stacked') {
+		const top = Math.max(0, topInset);
+		return {
+			left: 0,
+			top,
+			width: windowWidth,
+			height: Math.max(0, boundary.top - top),
+		};
+	}
+	const left = Math.max(0, boundary.right);
+	const top = Math.max(0, boundary.top);
+	return {
+		left,
+		top,
+		width: Math.max(0, windowWidth - left),
+		height: Math.max(0, windowHeight - top),
+	};
 }
 
 /** Above app content; below momentary overlays (Center Flash) which sit at 100000. */
@@ -117,6 +164,7 @@ const MovementPanel = memo(function MovementPanel({
 
 	const frameRef = useRef<HTMLDivElement>(null);
 	const isHtml = item.viewType === 'html';
+	const hasHtml = Boolean(item.html);
 	const onClose = () => {
 		window.maestro.process.releaseConcertoHtmlDocument?.('movement', item.id);
 		dismissItem(item.id);
@@ -209,13 +257,75 @@ const MovementPanel = memo(function MovementPanel({
 				}}
 			>
 				{isHtml ? (
-					<ConcertoHtmlPreview
-						surface="movement"
-						id={item.id}
-						revision={item.timestamp}
-						title={item.title ?? item.id}
-						minHeight={item.height ? 0 : 480}
-					/>
+					<div className="relative h-full w-full">
+						{hasHtml ? (
+							<ConcertoHtmlPreview
+								surface="movement"
+								id={item.id}
+								revision={item.timestamp}
+								title={item.title ?? item.id}
+								minHeight={item.height ? 0 : 480}
+							/>
+						) : (
+							<div
+								data-testid="movement-preparing-shell"
+								className="h-full min-h-[240px] w-full overflow-hidden p-6"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textMain,
+								}}
+								aria-live="polite"
+							>
+								<div
+									className="flex h-full flex-col rounded-lg border p-5"
+									style={{ borderColor: theme.colors.border }}
+								>
+									<div
+										className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em]"
+										style={{ color: theme.colors.accent }}
+									>
+										<Music2 className="h-4 w-4 animate-pulse" />
+										Composing
+									</div>
+									<div
+										className="mt-6 h-8 w-2/3 animate-pulse rounded"
+										style={{ backgroundColor: `${theme.colors.accent}24` }}
+									/>
+									<div
+										className="mt-4 h-3 w-full animate-pulse rounded"
+										style={{ backgroundColor: theme.colors.bgActivity }}
+									/>
+									<div
+										className="mt-2 h-3 w-4/5 animate-pulse rounded"
+										style={{ backgroundColor: theme.colors.bgActivity }}
+									/>
+									<div className="mt-auto grid grid-cols-3 gap-3">
+										{[0, 1, 2].map((slot) => (
+											<div
+												key={slot}
+												className="h-20 animate-pulse rounded-md"
+												style={{ backgroundColor: `${theme.colors.accent}12` }}
+											/>
+										))}
+									</div>
+								</div>
+							</div>
+						)}
+						{item.preparing && hasHtml && (
+							<div
+								data-testid="movement-revising-badge"
+								className="pointer-events-none absolute right-3 top-3 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide shadow-lg"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									borderColor: theme.colors.border,
+									color: theme.colors.accent,
+								}}
+							>
+								<Music2 className="h-3 w-3 animate-pulse" />
+								Revising
+							</div>
+						)}
+					</div>
 				) : (
 					<BlockView spec={item.spec} theme={theme} />
 				)}
@@ -230,7 +340,12 @@ const MovementPanel = memo(function MovementPanel({
 	);
 });
 
-export const MovementOverlay = memo(function MovementOverlay({ theme }: MovementOverlayProps) {
+export const MovementOverlay = memo(function MovementOverlay({
+	theme,
+	workspaceBoundaryRef,
+	workspaceLayout,
+	workspaceTopInset = 0,
+}: MovementOverlayProps) {
 	const items = useMovementStore((s) => s.items);
 	const hidden = useMovementStore((s) => s.hidden);
 	const setHidden = useMovementStore((s) => s.setHidden);
@@ -244,20 +359,64 @@ export const MovementOverlay = memo(function MovementOverlay({ theme }: Movement
 		useDebouncedCallback(() => setTaskbarHovered(false), TASKBAR_COLLAPSE_DELAY_MS);
 	const taskbarExpanded = taskbarHovered || taskbarFocused || taskbarPinned;
 	const taskbarItems = [...items].sort((a, b) => a.taskbarOrder - b.taskbarOrder);
+	const [stageBounds, setStageBounds] = useState<MovementStageBounds>(() =>
+		resolveMovementStageBounds(window.innerWidth, window.innerHeight, null, undefined)
+	);
 
-	// Report the window size to the store (the overlay spans the window), so the
-	// agent's `movement state` read knows the space it's composing into.
-	useEffect(() => {
-		const report = () => setViewport(window.innerWidth, window.innerHeight);
+	// Report the actual stage, not the whole window, so both the agent and human
+	// use coordinates relative to the same designable surface beside the chat.
+	useLayoutEffect(() => {
+		const report = () => {
+			const boundary = workspaceBoundaryRef?.current?.getBoundingClientRect() ?? null;
+			const next = resolveMovementStageBounds(
+				window.innerWidth,
+				window.innerHeight,
+				boundary,
+				workspaceLayout,
+				workspaceTopInset
+			);
+			setStageBounds((current) =>
+				current.left === next.left &&
+				current.top === next.top &&
+				current.width === next.width &&
+				current.height === next.height
+					? current
+					: next
+			);
+			setViewport(next.width, next.height);
+		};
 		report();
 		window.addEventListener('resize', report);
-		return () => window.removeEventListener('resize', report);
-	}, [setViewport]);
+		const boundary = workspaceBoundaryRef?.current;
+		const observer =
+			boundary && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(report) : null;
+		if (boundary && observer) observer.observe(boundary);
+		return () => {
+			window.removeEventListener('resize', report);
+			observer?.disconnect();
+		};
+	}, [setViewport, workspaceBoundaryRef, workspaceLayout, workspaceTopInset]);
 
 	if (items.length === 0) return null;
 
 	return createPortal(
-		<div className="fixed inset-0 pointer-events-none" style={{ zIndex: MOVEMENT_Z }}>
+		<div
+			data-testid="movement-stage-root"
+			className="fixed pointer-events-none overflow-hidden"
+			style={{ zIndex: MOVEMENT_Z, ...stageBounds }}
+		>
+			{workspaceLayout && (
+				<div
+					data-testid="movement-stage-backdrop"
+					className="pointer-events-auto absolute inset-0"
+					style={{
+						backgroundColor: theme.colors.bgMain,
+						backgroundImage: `radial-gradient(${theme.colors.border}55 1px, transparent 1px)`,
+						backgroundSize: '20px 20px',
+					}}
+					aria-hidden
+				/>
+			)}
 			<div
 				data-testid="movement-panels"
 				aria-hidden={hidden || undefined}
@@ -291,7 +450,7 @@ export const MovementOverlay = memo(function MovementOverlay({ theme }: Movement
 					data-testid="movement-taskbar"
 					className="h-10 flex items-center gap-1 overflow-hidden rounded-full p-1 shadow-xl transition-[width,opacity] duration-200"
 					style={{
-						width: taskbarExpanded ? 'min(760px, calc(100vw - 24px))' : 44,
+						width: taskbarExpanded ? 'min(760px, calc(100% - 24px))' : 44,
 						backgroundColor: theme.colors.bgSidebar,
 						color: theme.colors.textDim,
 						border: `1px solid ${theme.colors.border}`,

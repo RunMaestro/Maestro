@@ -233,7 +233,10 @@ export function restoreConcertoHtmlDocument(
 }
 
 export function applyMovementHtmlPayload(payload: MovementPayload): MovementPayload {
-	if (payload.op === 'progress') return payload;
+	// `begin` is a host-rendered placeholder, not an HTML document revision.
+	// Existing documents stay registered so a revision can remain visible while
+	// the agent prepares its replacement.
+	if (payload.op === 'begin' || payload.op === 'progress') return payload;
 	if (payload.op === 'clear') {
 		clearSurface('movement');
 		return payload;

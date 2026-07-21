@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import type { RefObject } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MovementOverlay } from '../../../../renderer/components/Movement/MovementOverlay';
 import { applyMovementPayload, useMovementStore } from '../../../../renderer/stores/movementStore';
@@ -100,6 +101,75 @@ describe('MovementOverlay', () => {
 		);
 		expect(useMovementStore.getState().items).toEqual([]);
 		expect(useMovementStore.getState().dismissedItems).toMatchObject([{ id: 'mockup' }]);
+	});
+
+	it('shows a preset shell immediately and keeps a prior frame visible while revising', () => {
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Checkout mockup' });
+		render(<MovementOverlay theme={mockTheme} />);
+
+		expect(screen.getByTestId('movement-preparing-shell')).toHaveTextContent('Composing');
+		expect(screen.queryByTestId('concerto-html-iframe')).not.toBeInTheDocument();
+
+		act(() => {
+			applyMovementPayload({
+				op: 'add',
+				id: 'mockup',
+				viewType: 'html',
+				body: '<main>Checkout</main>',
+				revision: 2,
+			});
+			applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Checkout mockup' });
+		});
+
+		expect(screen.getByTestId('concerto-html-iframe')).toBeInTheDocument();
+		expect(screen.getByTestId('movement-revising-badge')).toHaveTextContent('Revising');
+	});
+
+	it('uses the reserved chat boundary as the coordinate origin and viewport', () => {
+		const boundary = document.createElement('div');
+		vi.spyOn(boundary, 'getBoundingClientRect').mockReturnValue({
+			left: 0,
+			right: 500,
+			top: 40,
+			bottom: 900,
+			width: 500,
+			height: 860,
+			x: 0,
+			y: 40,
+			toJSON: () => ({}),
+		});
+		const originalWidth = window.innerWidth;
+		const originalHeight = window.innerHeight;
+		try {
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+			applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Mockup' });
+			render(
+				<MovementOverlay
+					theme={mockTheme}
+					workspaceBoundaryRef={{ current: boundary } as RefObject<HTMLElement>}
+					workspaceLayout="side"
+				/>
+			);
+
+			expect(screen.getByTestId('movement-stage-root')).toHaveStyle({
+				left: '500px',
+				top: '40px',
+				width: '940px',
+				height: '860px',
+			});
+			expect(screen.getByTestId('movement-stage-backdrop')).toBeInTheDocument();
+			expect(useMovementStore.getState()).toMatchObject({
+				viewportWidth: 940,
+				viewportHeight: 860,
+			});
+		} finally {
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalHeight,
+			});
+		}
 	});
 
 	it('keeps the Maestro viewport current for agent layout reads', () => {

@@ -35,6 +35,8 @@ export interface MovementItemBounds {
 export interface MovementItem {
 	id: string;
 	viewType: MovementViewType;
+	/** A host-rendered shell is visible while authored HTML is still being prepared. */
+	preparing: boolean;
 	/** User-minimized panels stay mounted so interactive HTML state is preserved. */
 	minimized: boolean;
 	/** Stable launcher order, independent from the array's back-to-front layer order. */
@@ -103,6 +105,13 @@ export interface MovementStoreActions {
 }
 
 export type MovementStore = MovementStoreState & MovementStoreActions;
+
+/** True only while at least one Concerto is genuinely present on the stage. */
+export function selectHasVisibleMovement(
+	state: Pick<MovementStoreState, 'items' | 'hidden'>
+): boolean {
+	return !state.hidden && state.items.some((item) => !item.minimized);
+}
 
 /** How much of a panel must stay inside the viewport so its header (the only
  *  drag handle + close button) remains reachable (px). */
@@ -316,6 +325,7 @@ export function applyMovementPayload(p: MovementPayload): void {
 		if (p.body !== undefined) {
 			if (targetViewType === 'html') patch.html = p.body;
 			else patch.spec = parseSpec(p.body);
+			patch.preparing = false;
 			patch.timestamp =
 				targetViewType === 'html' && p.revision !== undefined
 					? p.revision
@@ -325,10 +335,13 @@ export function applyMovementPayload(p: MovementPayload): void {
 		return;
 	}
 
-	// op === 'add'. Preserve position if the id already exists; else cascade.
-	const existing =
-		store.items.find((v) => v.id === p.id) ?? store.dismissedItems.find((v) => v.id === p.id);
-	const viewType = p.viewType ?? existing?.viewType ?? 'view';
+	// `begin` reserves a host-rendered HTML frame. `add` fills that same frame
+	// once authored content exists. Preserve position if the id already exists;
+	// otherwise use the normal cascade.
+	const liveExisting = store.items.find((v) => v.id === p.id);
+	const existing = liveExisting ?? store.dismissedItems.find((v) => v.id === p.id);
+	const isBegin = p.op === 'begin';
+	const viewType = isBegin ? 'html' : (p.viewType ?? existing?.viewType ?? 'view');
 	const step = (cascadeIndex++ % 6) * 32;
 	// A newly-added panel should surface immediately. Updates intentionally do
 	// not change `hidden`, so a live tracker cannot override the user's stash.
@@ -343,7 +356,8 @@ export function applyMovementPayload(p: MovementPayload): void {
 	store.upsertItem({
 		id: p.id,
 		viewType,
-		minimized: existing?.minimized ?? false,
+		preparing: isBegin,
+		minimized: isBegin ? false : (existing?.minimized ?? false),
 		taskbarOrder,
 		...clampPosition(
 			p.x ?? existing?.x ?? 24 + step,
@@ -364,10 +378,20 @@ export function applyMovementPayload(p: MovementPayload): void {
 			viewType === 'view' && p.body !== undefined
 				? parseSpec(p.body)
 				: (existing?.spec ?? { blocks: [] }),
-		html: viewType === 'html' && p.body !== undefined ? p.body : existing?.html,
+		html:
+			viewType === 'html' && p.body !== undefined
+				? p.body
+				: isBegin
+					? liveExisting?.html
+					: existing?.html,
 		sourcePlugin: p.sourcePlugin ?? existing?.sourcePlugin ?? sourcePluginFromViewId(p.id),
-		timestamp: viewType === 'html' && p.revision !== undefined ? p.revision : Date.now(),
+		timestamp: isBegin
+			? (liveExisting?.timestamp ?? Date.now())
+			: viewType === 'html' && p.revision !== undefined
+				? p.revision
+				: Date.now(),
 	});
+	if (isBegin) store.surfaceItem(p.id);
 }
 
 /** Build the snapshot returned to `maestro-cli movement state` (agent awareness). */

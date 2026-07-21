@@ -10,6 +10,7 @@ import {
 	useMovementStore,
 	applyMovementPayload,
 	getMovementSnapshot,
+	selectHasVisibleMovement,
 	MOVEMENT_ITEM_DEFAULT_WIDTH,
 	MOVEMENT_HTML_DEFAULT_WIDTH,
 	MOVEMENT_HTML_DEFAULT_HEIGHT,
@@ -78,6 +79,80 @@ describe('applyMovementPayload', () => {
 			html: '<button>Second</button>',
 			timestamp: 8,
 		});
+	});
+
+	it('reserves a preset HTML frame and replaces it in place on first authored paint', () => {
+		applyMovementPayload({
+			op: 'begin',
+			id: 'mockup',
+			title: 'Checkout flow',
+			x: 80,
+			y: 40,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			id: 'mockup',
+			viewType: 'html',
+			preparing: true,
+			minimized: false,
+			x: 80,
+			y: 40,
+			width: MOVEMENT_HTML_DEFAULT_WIDTH,
+			height: MOVEMENT_HTML_DEFAULT_HEIGHT,
+			html: undefined,
+		});
+
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<main>Checkout</main>',
+			revision: 3,
+		});
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			id: 'mockup',
+			preparing: false,
+			x: 80,
+			y: 40,
+			html: '<main>Checkout</main>',
+			timestamp: 3,
+		});
+	});
+
+	it('keeps a prior prototype visible while a new revision is preparing', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<main>Existing</main>',
+			revision: 4,
+		});
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Revised checkout' });
+
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			preparing: true,
+			html: '<main>Existing</main>',
+			timestamp: 4,
+			title: 'Revised checkout',
+		});
+	});
+
+	it('uses a fresh shell when beginning an id whose prior document was closed', () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<main>Closed revision</main>',
+		});
+		useMovementStore.getState().dismissItem('mockup');
+
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Fresh revision' });
+
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			id: 'mockup',
+			preparing: true,
+			html: undefined,
+		});
+		expect(useMovementStore.getState().dismissedItems).toEqual([]);
 	});
 
 	it('preserves the prior type when an update switches to HTML without a body', () => {
@@ -333,6 +408,22 @@ describe('getMovementSnapshot', () => {
 				{ id: 'back', z: 3 },
 			],
 		});
+	});
+});
+
+describe('selectHasVisibleMovement', () => {
+	beforeEach(reset);
+
+	it('requires a non-minimized item on a non-hidden layer', () => {
+		applyMovementPayload({ op: 'begin', id: 'design', title: 'Design' });
+		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(true);
+
+		useMovementStore.getState().setItemMinimized('design', true);
+		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(false);
+
+		useMovementStore.getState().setItemMinimized('design', false);
+		useMovementStore.getState().setHidden(true);
+		expect(selectHasVisibleMovement(useMovementStore.getState())).toBe(false);
 	});
 });
 
