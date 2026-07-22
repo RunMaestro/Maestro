@@ -130,6 +130,13 @@ export interface UIStoreState {
 	// scheduler (usage-refresh-scheduler.ts) reads the same persisted map and is
 	// the sole driver of background sampling on this cadence.
 	usageRefreshIntervals: Record<string, number>;
+
+	// Namespaced ids (`<pluginId>/<panelId>`) of docked plugin panels the user
+	// collapsed to the reopen rail (PluginPanelSlot). Dock-only affordance; the
+	// frame's non-suppressible provenance line is untouched. Persisted via
+	// settings write-through (mirrors hiddenQuotaAccounts) and hydrated by
+	// loadAllSettings on startup.
+	hiddenPluginPanels: string[];
 }
 
 export interface UIStoreActions {
@@ -221,6 +228,9 @@ export interface UIStoreActions {
 
 	// Set the auto-refresh interval (ms; 0 = off) for a provider quota panel.
 	setUsageRefreshInterval: (providerId: string, ms: number) => void;
+
+	// Toggle a docked plugin panel between shown and collapsed (reopen rail).
+	toggleHiddenPluginPanel: (panelId: string) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -283,6 +293,15 @@ function persistUsageRefreshIntervals(value: Record<string, number>): void {
 	window.maestro?.settings?.set('usageRefreshIntervals', value);
 }
 
+/**
+ * Persist the collapsed docked-plugin-panel id list so a user's hide choice
+ * survives app restarts. Hydrated back into this store on startup by
+ * loadAllSettings in settingsStore.
+ */
+function persistHiddenPluginPanels(value: string[]): void {
+	window.maestro?.settings?.set('hiddenPluginPanels', value);
+}
+
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
@@ -312,6 +331,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	usageDashboardViewMode: 'overview',
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
+	hiddenPluginPanels: [],
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
@@ -432,5 +452,14 @@ export const useUIStore = create<UIStore>()((set) => ({
 			const nextMap = { ...s.usageRefreshIntervals, [providerId]: ms };
 			persistUsageRefreshIntervals(nextMap);
 			return { usageRefreshIntervals: nextMap };
+		}),
+
+	toggleHiddenPluginPanel: (panelId) =>
+		set((s) => {
+			const next = s.hiddenPluginPanels.includes(panelId)
+				? s.hiddenPluginPanels.filter((id) => id !== panelId)
+				: [...s.hiddenPluginPanels, panelId];
+			persistHiddenPluginPanels(next);
+			return { hiddenPluginPanels: next };
 		}),
 }));
