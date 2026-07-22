@@ -160,6 +160,57 @@ describe('TtsrRulesPanel', () => {
 		expect(onSendToAgent.mock.calls[0][0]).toContain('no console.log');
 	});
 
+	it('clears the compose draft after sending it', async () => {
+		const onSendToAgent = vi.fn();
+		render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} onSendToAgent={onSendToAgent} />);
+		await waitFor(() => expect(window.maestro.ttsr.listRules).toHaveBeenCalled());
+
+		const compose = screen.getByPlaceholderText(/force-push/i);
+		fireEvent.change(compose, { target: { value: 'no console.log' } });
+		fireEvent.click(screen.getByRole('button', { name: /write this rule/i }));
+
+		await waitFor(() => expect(onSendToAgent).toHaveBeenCalledTimes(1));
+		expect((compose as HTMLTextAreaElement).value).toBe('');
+	});
+
+	it('keeps the compose draft when the per-rule edit hand-off fires', async () => {
+		const onSendToAgent = vi.fn();
+		window.maestro.ttsr.listRules = vi.fn().mockResolvedValue(listResult({ rules: [makeRule()] }));
+		render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} onSendToAgent={onSendToAgent} />);
+		await screen.findByText('no-force-push');
+
+		const compose = screen.getByPlaceholderText(/force-push/i);
+		fireEvent.change(compose, { target: { value: 'half-typed unrelated draft' } });
+		fireEvent.click(screen.getByRole('button', { name: /edit this rule/i }));
+
+		await waitFor(() => expect(onSendToAgent).toHaveBeenCalledTimes(1));
+		// The edit button sends a fixed instruction; the user's unrelated draft
+		// in the compose box must survive it.
+		expect((compose as HTMLTextAreaElement).value).toBe('half-typed unrelated draft');
+	});
+
+	// An armed delete carries a relative path; if the next project has a rule at
+	// the same path, a second click inside the arm window would delete the WRONG
+	// project's file. Switching projects must disarm.
+	it('disarms a pending delete when the project switches', async () => {
+		window.maestro.ttsr.listRules = vi.fn().mockResolvedValue(listResult({ rules: [makeRule()] }));
+
+		const { rerender } = render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
+		await screen.findByText('no-force-push');
+		fireEvent.click(screen.getByRole('button', { name: 'Delete no-force-push' }));
+		await screen.findByRole('button', { name: 'Confirm delete no-force-push' });
+
+		rerender(<TtsrRulesPanel theme={theme} projectRoot="/other-repo" />);
+		await screen.findByText('no-force-push');
+
+		// The delete button is back in its unarmed state for the new project.
+		expect(
+			screen.queryByRole('button', { name: 'Confirm delete no-force-push' })
+		).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Delete no-force-push' }));
+		expect(window.maestro.ttsr.deleteRule).not.toHaveBeenCalled();
+	});
+
 	it('shows load warnings, which are the only signal an inert rule gives', async () => {
 		window.maestro.ttsr.listRules = vi
 			.fn()

@@ -141,9 +141,10 @@ describe('TtsrStateStore persistence', () => {
 
 		const snapshot = store.snapshot();
 		expect(Object.keys(snapshot)).toHaveLength(MAX_PERSISTED_CONVERSATIONS);
-		// The oldest are gone and the newest survive.
+		// The oldest are gone (25 inserted past the cap evicts indices 0-24) and
+		// the newest survive.
 		expect(snapshot['sess-0|prov-0']).toBeUndefined();
-		expect(snapshot[`sess-${MAX_PERSISTED_CONVERSATIONS + 24}|prov-x`]).toBeUndefined();
+		expect(snapshot['sess-24|prov-24']).toBeUndefined();
 		expect(
 			store.getMessageCount(
 				`sess-${MAX_PERSISTED_CONVERSATIONS + 24}|prov-${MAX_PERSISTED_CONVERSATIONS + 24}`

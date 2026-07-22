@@ -90,6 +90,20 @@ export function TtsrRulesPanel({
 	// project's ttsr.yaml. Only the newest request may commit.
 	const refreshSeq = useRef(0);
 
+	// Project-scoped state must not carry across an agent switch: the old
+	// project's rules would sit on screen until the new list resolves, and an
+	// ARMED DELETE is worse - if the new project has a rule at the same relative
+	// path, the second click inside the 4s window would delete the wrong
+	// project's file.
+	useEffect(() => {
+		setData(EMPTY);
+		setArmedDelete(null);
+		if (disarmTimerRef.current) {
+			clearTimeout(disarmTimerRef.current);
+			disarmTimerRef.current = null;
+		}
+	}, [projectRoot]);
+
 	const refresh = useCallback(async () => {
 		if (!projectRoot || !isTtsrRuleApiAvailable()) return;
 		const seq = ++refreshSeq.current;
@@ -171,12 +185,15 @@ export function TtsrRulesPanel({
 		[globalDisabled, patchSettings, setGlobalDisabled]
 	);
 
+	// `clearDraft` only on the compose-send path: the per-rule "edit this rule"
+	// button sends a fixed instruction and must not wipe an unrelated draft the
+	// user has typed into the compose box.
 	const authorRule = useCallback(
-		async (instruction: string) => {
+		async (instruction: string, clearDraft = false) => {
 			if (!onSendToAgent) return;
 			const prompt = await buildRuleAuthoringPrompt(instruction);
 			onSendToAgent(prompt);
-			setRequest('');
+			if (clearDraft) setRequest('');
 		},
 		[onSendToAgent]
 	);
@@ -283,7 +300,7 @@ export function TtsrRulesPanel({
 						onKeyDown={(e) => {
 							if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && request.trim()) {
 								e.preventDefault();
-								void authorRule(request);
+								void authorRule(request, true);
 							}
 						}}
 						rows={2}
@@ -297,7 +314,7 @@ export function TtsrRulesPanel({
 					/>
 					<button
 						type="button"
-						onClick={() => void authorRule(request)}
+						onClick={() => void authorRule(request, true)}
 						disabled={!request.trim()}
 						className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
@@ -389,7 +406,7 @@ export function TtsrRulesPanel({
 										</div>
 									</div>
 									<div className="flex items-center gap-0.5">
-										<div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+										<div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
 											{onOpenFile && (
 												<button
 													type="button"

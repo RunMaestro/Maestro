@@ -253,9 +253,11 @@ export class TtsrInterruptDriver {
 		// Gate A: only agents that emit their provider session id early enough can
 		// resume the aborted conversation. copilot-cli and grok publish theirs on
 		// the final event, which an aborted turn never reaches, so they degrade to
-		// a fresh turn that restates the goal.
+		// a fresh turn that restates the goal. Optional-chained so an agent id
+		// whose capabilities entry lags behind fails safe to a fresh turn instead
+		// of throwing on the corrective-respawn path.
 		const canResume =
-			TTSR_AGENT_CAPABILITIES[meta.agentId].resume === 'clean' && Boolean(meta.providerSessionId);
+			TTSR_AGENT_CAPABILITIES[meta.agentId]?.resume === 'clean' && Boolean(meta.providerSessionId);
 		const blocks = renderTtsrInterrupt(pending.matches);
 
 		return {
