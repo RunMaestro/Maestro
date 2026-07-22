@@ -27,6 +27,14 @@ function isNonEmptyString(value: unknown): value is string {
  */
 export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
 
+/**
+ * Maximum UTF-8 size of ONE host-to-panel push (`ui.panelPost`). Panel data is
+ * a live update stream, not a bulk transfer, so the per-message cap is small
+ * and deliberate: it bounds what a plugin can force through the sandbox RPC,
+ * the main-to-renderer IPC, and the webview bridge in a single call.
+ */
+export const MAX_PANEL_POST_BYTES = 64 * 1024;
+
 /** Size of JSON data as it crosses a UTF-8 message boundary. */
 export function serializedJsonByteLength(value: unknown): number | null {
 	let serialized: string | undefined;
@@ -404,16 +412,23 @@ export function describeCapability(capability: PluginCapability): string {
 /**
  * The host API version this Maestro build implements. Bumped to 1.15.0 for the
  * additive Board event topics `board.cardStatusChanged` / `board.cardCompleted`
- * / `board.cardBlocked` / `board.decomposed`. (1.14.0 is taken by an upstream
- * change on rc; this branch skips it rather than colliding.)
- * 1.13.0 added the host-mediated `PluginUiSurface` registry and trusted-chrome
- * guard; 1.12.0 added the backward-compatible `net:connect` capability plus its
- * `net.connect` / `net.send` / `net.close` host methods; 1.11.0 added virtual
- * `groupings` contributions and `ui:grouping`; 1.10.0 added data-only
- * `iconPacks`; 1.9.0 added host-rendered `hostViews`, `ui:hostView`, and the
+ * / `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
+ * the card title; never prompts, run output, summaries, or block reasons).
+ * 1.14.0 added the backward-compatible additive `tool.executed` event topic
+ * (metadata-only tool lifecycle: name + timing, never arguments or results)
+ * plus the `ui.panelPost` host-to-panel push method (own-panels-only,
+ * JSON-only, MAX_PANEL_POST_BYTES cap). 1.13.0 added the additive
+ * host-mediated `PluginUiSurface` registry and trusted-chrome guard. 1.12.0
+ * added the backward-compatible additive `net:connect` capability plus its
+ * `net.connect` / `net.send` / `net.close` host methods (hold an outbound
+ * persistent websocket to a host scope, e.g. a Discord/Slack gateway;
+ * egress-classified). 1.11.0 added virtual `groupings` contributions and the
+ * presentation-only `ui:grouping` publish/clear methods; 1.10.0 added the
+ * backward-compatible, data-only `iconPacks` contribution; 1.9.0 added
+ * host-rendered `hostViews`, their `ui:hostView` capability, and the
  * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods; 1.8.0 added
- * `background.list`; 1.7.0 added history/session/tab/transcript write,
- * decision/shell/storage SQL/fs watch/power/background capabilities plus
+ * `background.list`; 1.7.0 added history/session/tab/transcript
+ * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
  * `history.entryAdded` and metadata-only `agent.completed` events; 1.6.0 added
  * `cue.runStarted` / `cue.runFinished`; 1.5.0 added `agent.exited` /
  * `agent.error` / `usage.updated` / `run.completed` plus functional
@@ -1137,6 +1152,7 @@ export const PLUGIN_EVENT_TOPICS = [
 	'cue.runFinished', // a Cue automation run reached a terminal state (status only)
 	'history.entryAdded', // a history entry was added (ids/classification only)
 	'agent.completed', // an agent reached a terminal state (metadata only, no output)
+	'tool.executed', // a tool call started or finished (name + timing only, no arguments or results)
 	'board.cardStatusChanged', // a board card moved between statuses (ids + statuses)
 	'board.cardCompleted', // a board card finished successfully (ids only, no summary)
 	'board.cardBlocked', // a board card needs a human (ids + run outcome, no reason text)
@@ -1224,6 +1240,19 @@ export interface PluginEventPayloads {
 		pipelineId?: string;
 		pipelineName?: string;
 		lineageDepth?: number;
+	};
+	/** A tool call transitioned. Name + timing ONLY: the tool's `state` object,
+	 * arguments and results are content-bearing and must never appear here. */
+	'tool.executed': {
+		sessionId: string;
+		tabId?: string;
+		toolName: string;
+		toolCallId?: string;
+		/** Best-effort lifecycle string (e.g. running / completed / failed) when
+		 * the provider reports one; omitted otherwise. */
+		phase?: string;
+		timestamp: number;
+		durationMs?: number;
 	};
 	/**
 	 * Board card status transition. Every transition the board dispatcher
@@ -1321,6 +1350,7 @@ export const HOST_API = {
 	'ui.runCommand': { capability: 'ui:command' },
 	'ui.hostViewUpdate': { capability: 'ui:hostView' },
 	'ui.hostViewRemove': { capability: 'ui:hostView' },
+	'ui.panelPost': { capability: 'ui:panel' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -1553,6 +1583,10 @@ export interface MaestroUiApi {
 	runCommand(commandId: string, args?: unknown): Promise<unknown>;
 	readonly hostView: MaestroHostViewApi;
 	readonly grouping: MaestroGroupingApi;
+	/** Push a live JSON snapshot to one of this plugin's own declared panels
+	 * (`ui:panel`). Delivered to the panel page as a `maestro:panelData` window
+	 * message; JSON-only, capped at MAX_PANEL_POST_BYTES, no reply channel. */
+	panelPost(panelId: string, data: unknown): Promise<void>;
 }
 
 /** Manage Maestro tabs (`tabs:manage`). */

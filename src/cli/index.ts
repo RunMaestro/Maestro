@@ -84,11 +84,13 @@ import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
+	movementBegin,
 	movementAdd,
 	movementUpdate,
 	movementMove,
 	movementRemove,
 	movementClear,
+	movementProgress,
 	movementState,
 	movementInspect,
 	movementInteract,
@@ -1583,6 +1585,17 @@ const movement = program
 	);
 
 movement
+	.command('begin <id>')
+	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.requiredOption('--title <text>', 'Concerto title shown in its frame')
+	.option('--x <px>', 'X position (px from the Concerto stage left)')
+	.option('--y <px>', 'Y position (px from the Concerto stage top)')
+	.option('--width <px>', 'Shell width in px (default: 880)')
+	.option('--height <px>', 'Shell height in px (default: 560)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementBegin);
+
+movement
 	.command('add <id>')
 	.description('Add (or replace by id) a native data view or interactive HTML mockup')
 	.option('--type <type>', 'view | html (default: view)')
@@ -1634,6 +1647,20 @@ movement
 	.description('Remove all movement items')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementClear);
+
+movement
+	.command('progress <id>')
+	.description("Report one Concerto track's current design phase and subdivision")
+	.requiredOption('--title <text>', 'Concerto title shown in the pipeline')
+	.requiredOption('--phase <phase>', 'composing | refining | arranging | reviewing | testing')
+	.option('--step <n>', 'Active one-based substep (default: 1)')
+	.option('--steps <n>', 'Planned substeps in this phase, 1 through 8 (default: 1)')
+	.option(
+		'--notes <pattern>',
+		'Comma-separated quarter/eighth/sixteenth notes with optional +dotted, +triad, or +tie'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementProgress);
 
 movement
 	.command('state')

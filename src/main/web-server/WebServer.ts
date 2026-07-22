@@ -1249,6 +1249,7 @@ export class WebServer {
 					status: 'running' | 'completed' | 'error';
 					input?: Record<string, unknown>;
 				};
+				parentToolUseId?: string;
 			};
 		}
 	): void {

@@ -89,6 +89,54 @@ describe('useAgentToolExecutionListener', () => {
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
 	});
 
+	it('records tool logs when showTools is true even if showThinking is off', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'off', showTools: true });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'c1',
+		});
+
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(1);
+	});
+
+	it('skips when showTools is false even if showThinking is on', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on', showTools: false });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'c1',
+		});
+
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
+	});
+
+	it('falls back to showThinking when showTools is absent', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'c1',
+		});
+
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(1);
+	});
+
 	it('attributes finalising event to most recent running entry without toolCallId', () => {
 		const tab = createMockAITab({
 			id: 'tab-1',
@@ -155,6 +203,67 @@ describe('useAgentToolExecutionListener', () => {
 
 		const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
 		expect(log.renderStyle).toBe('text-stream');
+	});
+
+	it('stores parentToolUseId in metadata for subagent tool events', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Grep',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'child-1',
+			parentToolUseId: 'toolu_task_1',
+		});
+
+		const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+		expect(log.metadata?.parentToolUseId).toBe('toolu_task_1');
+	});
+
+	it('preserves parentToolUseId when a later event omits it', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Grep',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'child-1',
+			parentToolUseId: 'toolu_task_1',
+		});
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Grep',
+			state: { status: 'completed', output: 'done' },
+			timestamp: 2,
+			toolCallId: 'child-1',
+		});
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(logs).toHaveLength(1);
+		expect(logs[0].metadata?.parentToolUseId).toBe('toolu_task_1');
+		expect(logs[0].metadata?.toolState?.status).toBe('completed');
+	});
+
+	it('omits parentToolUseId for main-transcript tool events', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'c1',
+		});
+
+		const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+		expect(log.metadata?.parentToolUseId).toBeUndefined();
 	});
 
 	it('omits renderStyle on tool logs when session is in api mode', () => {

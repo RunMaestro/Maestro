@@ -294,7 +294,7 @@ interface MaestroAPI {
 				syncHistory?: boolean;
 			};
 		}) => Promise<{ exitCode: number }>;
-		getActiveProcesses: () => Promise<
+		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;
 				toolType: string;
@@ -342,6 +342,13 @@ interface MaestroAPI {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				kind?: 'question';
+				questions?: Array<{
+					question: string;
+					header?: string;
+					options: Array<{ label: string; description?: string }>;
+					multiSelect: boolean;
+				}>;
 			}) => void
 		) => () => void;
 		respondPermission: (
@@ -453,7 +460,7 @@ interface MaestroAPI {
 		onRemoteMovement: (
 			callback: (
 				params: {
-					op: 'add' | 'update' | 'move' | 'remove' | 'clear';
+					op: 'begin' | 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
 					id?: string;
 					viewType?: 'view' | 'html';
 					x?: number;
@@ -464,12 +471,26 @@ interface MaestroAPI {
 					body?: string;
 					sourcePlugin?: string;
 					revision?: number;
+					phase?: 'composing' | 'refining' | 'arranging' | 'reviewing' | 'testing';
+					step?: number;
+					steps?: number;
+					notes?: Array<{
+						value: 'quarter' | 'eighth' | 'sixteenth';
+						dotted?: boolean;
+						triad?: boolean;
+						tie?: boolean;
+					}>;
 				},
 				responseChannel?: string
 			) => void
 		) => () => void;
 		sendMovementAppliedResponse: (responseChannel: string, applied: boolean) => void;
 		releaseConcertoHtmlDocument: (surface: 'movement' | 'cadenza', id: string) => void;
+		restoreConcertoHtmlDocument: (
+			surface: 'movement' | 'cadenza',
+			id: string,
+			html: string
+		) => Promise<number>;
 		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
 		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
 		onRequestMovementDesignerInspection: (
@@ -4025,6 +4046,9 @@ interface MaestroAPI {
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
 		onChanged: (callback: () => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
+		onPanelData: (
+			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
+		) => () => void;
 		onRunUiCommand: (
 			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
 		) => () => void;

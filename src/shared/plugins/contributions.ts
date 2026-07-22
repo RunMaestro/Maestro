@@ -23,6 +23,14 @@ import type { PluginCapability } from './permissions';
 export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
 
 /**
+ * Maximum UTF-8 size of ONE host-to-panel push (`ui.panelPost`). Panel data is
+ * a live update stream, not a bulk transfer, so the per-message cap is small
+ * and deliberate: it bounds what a plugin can force through the sandbox RPC,
+ * the main-to-renderer IPC, and the webview bridge in a single call.
+ */
+export const MAX_PANEL_POST_BYTES = 64 * 1024;
+
+/**
  * Size of JSON data as it crosses a UTF-8 message boundary. Returns null when
  * the value is not serializable, rather than throwing from an input validator.
  */

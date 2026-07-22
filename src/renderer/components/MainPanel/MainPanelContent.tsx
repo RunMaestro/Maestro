@@ -24,6 +24,7 @@ import {
 } from '../../utils/panelLayout';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
+import { toolLogsRecorded } from '../../hooks/agent/internal/helpers/thinkingLogs';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { withMonoFallback } from '../../../shared/fontStack';
@@ -264,6 +265,7 @@ export interface MainPanelContentProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onToggleTabShowTools?: () => void;
 	onToggleTabEnterToSend?: () => void;
 
 	// Wizard callbacks
@@ -428,6 +430,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onToggleTabReadOnlyMode,
 		onToggleTabSaveToHistory,
 		onToggleTabShowThinking,
+		onToggleTabShowTools,
 		onToggleTabEnterToSend,
 		onWizardComplete,
 		onWizardCompleteAndStartAutoRun,
@@ -880,7 +883,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			    input's own opaque chrome, stacked above, hides that transient bleed. Stays
 			    below the z-30 tiling drop overlay so drags still hit-test on top. */}
 			{shouldShowInputArea && (
-				<div data-tour="input-area" className="relative z-[3]">
+				<div data-tour="input-area" className="relative z-[3] shrink-0">
 					<InputArea
 						session={activeSession}
 						theme={theme}
@@ -946,6 +949,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 						tabShowThinking={activeTab?.showThinking ?? 'off'}
 						onToggleTabShowThinking={onToggleTabShowThinking}
+						tabShowTools={
+							activeTab ? toolLogsRecorded(activeTab.showTools, activeTab.showThinking) : true
+						}
+						onToggleTabShowTools={onToggleTabShowTools}
 						supportsThinking={hasCapability('supportsThinkingDisplay')}
 						onOpenPromptComposer={onOpenPromptComposer}
 						shortcuts={shortcuts}

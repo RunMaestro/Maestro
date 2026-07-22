@@ -1036,7 +1036,7 @@ export const MainPanel = React.memo(
 			return (
 				<ErrorBoundary>
 					<div
-						className="flex-1 flex flex-col relative isolate"
+						className="flex-1 h-full min-h-0 max-h-full flex flex-col relative isolate overflow-hidden"
 						style={{
 							minWidth: '400px',
 							backgroundColor: theme.colors.bgMain,
@@ -1404,6 +1404,7 @@ export const MainPanel = React.memo(
 									onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
 									onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
 									onToggleTabShowThinking={props.onToggleTabShowThinking}
+									onToggleTabShowTools={props.onToggleTabShowTools}
 									onToggleTabEnterToSend={props.onToggleTabEnterToSend}
 									onWizardComplete={props.onWizardComplete}
 									onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}

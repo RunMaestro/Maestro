@@ -188,6 +188,16 @@ describe('Process Preload API', () => {
 			expect(mockInvoke).toHaveBeenCalledWith('process:getActiveProcesses');
 			expect(result).toEqual(mockProcesses);
 		});
+
+		it('should pass active-process query options', async () => {
+			mockInvoke.mockResolvedValue([]);
+
+			await api.getActiveProcesses({ includeChildProcesses: false });
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:getActiveProcesses', {
+				includeChildProcesses: false,
+			});
+		});
 	});
 
 	describe('isTerminalBusy', () => {
@@ -424,6 +434,20 @@ describe('Process Preload API', () => {
 			api.releaseConcertoHtmlDocument('cadenza', 'mini-mockup');
 
 			expect(mockSend).toHaveBeenCalledWith('concerto-html:release', 'cadenza', 'mini-mockup');
+		});
+
+		it('restores a recently closed Concerto HTML document', async () => {
+			mockInvoke.mockResolvedValueOnce(23);
+
+			await expect(
+				api.restoreConcertoHtmlDocument('movement', 'mockup', '<button>Fresh</button>')
+			).resolves.toBe(23);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'concerto-html:restore',
+				'movement',
+				'mockup',
+				'<button>Fresh</button>'
+			);
 		});
 
 		it('forwards the expected revision with inspection requests', () => {

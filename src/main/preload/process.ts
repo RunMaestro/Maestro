@@ -13,6 +13,7 @@ import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type { ParsedQuestion } from '../permission-relay/types';
 import type {
 	ConcertoDesignerAction,
 	ConcertoDesignerActionResult,
@@ -236,8 +237,12 @@ export function createProcessApi() {
 		/**
 		 * Get all active processes from ProcessManager
 		 */
-		getActiveProcesses: (): Promise<ActiveProcess[]> =>
-			ipcRenderer.invoke('process:getActiveProcesses'),
+		getActiveProcesses: (options?: {
+			includeChildProcesses?: boolean;
+		}): Promise<ActiveProcess[]> =>
+			options === undefined
+				? ipcRenderer.invoke('process:getActiveProcesses')
+				: ipcRenderer.invoke('process:getActiveProcesses', options),
 
 		/**
 		 * Check whether a terminal tab's PTY has a non-shell foreground process
@@ -288,6 +293,10 @@ export function createProcessApi() {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				// AskUserQuestion requests carry a parsed question payload; ordinary
+				// permission requests omit both fields (unchanged shape).
+				kind?: 'question';
+				questions?: ParsedQuestion[];
 			}) => void
 		): (() => void) => {
 			const handler = (_: unknown, request: Parameters<typeof callback>[0]) => callback(request);
@@ -645,9 +654,9 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Subscribe to remote movement operations (add/update/move/remove/clear) from
-		 * the CLI/web interface. The renderer applies them to the movement store and
-		 * opens the movement view.
+		 * Subscribe to remote movement operations and Concerto progress reports from
+		 * the CLI/web interface. The renderer applies window mutations to the movement
+		 * store and routes progress reports to the creation pipeline.
 		 */
 		onRemoteMovement: (
 			callback: (params: MovementPayload, responseChannel?: string) => void
@@ -667,6 +676,13 @@ export function createProcessApi() {
 		releaseConcertoHtmlDocument: (surface: ConcertoHtmlSurface, id: string): void => {
 			ipcRenderer.send('concerto-html:release', surface, id);
 		},
+
+		/** Restore a recently closed isolated document before recreating its view. */
+		restoreConcertoHtmlDocument: (
+			surface: ConcertoHtmlSurface,
+			id: string,
+			html: string
+		): Promise<number> => ipcRenderer.invoke('concerto-html:restore', surface, id, html),
 
 		/**
 		 * Subscribe to `movement state` reads: the main process sends a request with a

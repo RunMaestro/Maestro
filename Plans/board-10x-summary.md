@@ -61,7 +61,7 @@ Working tree is clean; no `scripts/cdp-*.js` or throwaway files were committed.
 
 ### Bug found and fixed during the gate
 
-Phase 5 bumped `HOST_API_VERSION` to 1.15.0 and added the four `board.*` topics in `src/shared/plugins/events.ts`, but did not update the vendored copy in `packages/plugin-sdk/src/index.ts`. The drift guard was therefore red. It stayed invisible because `npm run test` only globs `src/**`; the SDK suite runs on the `plugin-sdk-publish` workflow, so it would have failed at the next SDK release instead of on this PR. Fixed by vendoring the topics and payloads, moving the SDK's `HOST_API_VERSION` to 1.15.0, updating the drift test's pin, and bumping the package to 0.9.0.
+Phase 5 bumped `HOST_API_VERSION` to 1.15.0 and added the four `board.*` topics in `src/shared/plugins/events.ts`, but did not update the vendored copy in `packages/plugin-sdk/src/index.ts`. The drift guard was therefore red. It stayed invisible because `npm run test` only globs `src/**`; the SDK suite runs on the `plugin-sdk-publish` workflow, so it would have failed at the next SDK release instead of on this PR. Fixed by vendoring the topics and payloads, moving the SDK's `HOST_API_VERSION` to 1.15.0, updating the drift test's pin, and bumping the package to 0.9.0. (After the later merge of upstream `rc`, which shipped its own 0.9.0 for host-API 1.14.0, the package moved to 0.10.0.)
 
 ## Known remaining gaps
 

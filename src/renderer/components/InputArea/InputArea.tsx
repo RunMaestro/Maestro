@@ -6,6 +6,7 @@ import {
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
+import { ConcertoCreationPipeline } from '../ConcertoCreationPipeline';
 import { QuitWhenIdleIndicator } from '../QuitWhenIdleIndicator';
 import { CrossAgentResponseIndicator } from '../CrossAgentResponseIndicator';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -96,6 +97,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		showFlashNotification,
 		tabShowThinking = 'off',
 		onToggleTabShowThinking,
+		tabShowTools = true,
+		onToggleTabShowTools,
 		supportsThinking = false,
 		// Context warning sash props (Phase 6)
 		contextUsage = 0,
@@ -387,6 +390,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				/>
 			)}
 
+			{/* Concerto creation tracks stay separate from the ordinary agent status. */}
+			{session.inputMode === 'ai' && thinkingItems.length > 0 && (
+				<ConcertoCreationPipeline
+					thinkingItems={thinkingItems}
+					theme={theme}
+					activeSessionId={session.id}
+					activeTabId={session.activeTabId}
+				/>
+			)}
+
 			{/* ThinkingStatusPill - only show in AI mode when there are thinking items or AutoRun */}
 			{session.inputMode === 'ai' && (thinkingItems.length > 0 || autoRunState?.isRunning) && (
 				<ThinkingStatusPill
@@ -531,6 +544,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 							tabShowThinking={tabShowThinking}
 							onToggleTabShowThinking={onToggleTabShowThinking}
+							tabShowTools={tabShowTools}
+							onToggleTabShowTools={onToggleTabShowTools}
 							supportsThinking={supportsThinking}
 							currentModel={currentModel}
 							currentEffort={currentEffort}

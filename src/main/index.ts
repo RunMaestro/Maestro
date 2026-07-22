@@ -2516,6 +2516,17 @@ app
 					if (operation === 'remove') return pluginHostViews.remove(pluginId, localId);
 					return blocks === undefined ? false : pluginHostViews.update(pluginId, localId, blocks);
 				},
+				// ui.panelPost: resolve the caller's LOCAL panel id against its own
+				// declarations (a foreign or already-namespaced id never matches), then
+				// broadcast the validated, size-capped JSON to every renderer. The
+				// renderer hands it to the matching panel webview; nothing evaluates it.
+				getPanel: (pluginId, localId) =>
+					pluginManager
+						?.getContributions()
+						.panels.find((p) => p.pluginId === pluginId && p.localId === localId) ?? null,
+				panelPost: (pluginId, panelId, data) => {
+					safeSend('plugins:panel-data', { pluginId, panelId, data });
+				},
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
 						id?: string;
@@ -3544,9 +3555,17 @@ function setupIpcHandlers() {
 					),
 			});
 		} catch (err) {
-			void captureException(err instanceof Error ? err : new Error(String(err)), {
-				operation: 'startup:coworkingBridge',
-			});
+			// EADDRINUSE means another Maestro process already owns the bridge
+			// socket/pipe for this userData slug. Bridge startup is deliberately
+			// non-fatal (the feature degrades to "not available" until the next
+			// launch), so a second instance losing the race is an expected
+			// outcome rather than a defect worth reporting (MAESTRO-WH).
+			const code = (err as NodeJS.ErrnoException | null)?.code;
+			if (code !== 'EADDRINUSE') {
+				void captureException(err instanceof Error ? err : new Error(String(err)), {
+					operation: 'startup:coworkingBridge',
+				});
+			}
 			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
 		}
 	})();

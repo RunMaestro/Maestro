@@ -27,6 +27,7 @@ describe('P0 host RPC contract additions', () => {
 		expect(HOST_METHOD_CAPABILITY['background.unregister']).toBe('background:service');
 		expect(HOST_METHOD_CAPABILITY['ui.hostViewUpdate']).toBe('ui:hostView');
 		expect(HOST_METHOD_CAPABILITY['ui.hostViewRemove']).toBe('ui:hostView');
+		expect(HOST_METHOD_CAPABILITY['ui.panelPost']).toBe('ui:panel');
 	});
 
 	it('includes the P0 methods in the runtime method catalog', () => {
@@ -43,6 +44,7 @@ describe('P0 host RPC contract additions', () => {
 			'background.register',
 			'ui.hostViewUpdate',
 			'ui.hostViewRemove',
+			'ui.panelPost',
 		] as const) {
 			expect(HOST_METHODS).toContain(method);
 		}

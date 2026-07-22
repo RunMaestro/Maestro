@@ -175,6 +175,70 @@ describe('Forwarding Listeners', () => {
 		);
 	});
 
+	it('should emit a metadata-only tool.executed plugin event alongside the renderer forward', () => {
+		const emitPluginEvent = vi.fn();
+		setupForwardingListeners(mockProcessManager, { ...mockDeps, emitPluginEvent });
+
+		const handler = eventHandlers.get('tool-execution');
+		const testSessionId = 'test-session-123';
+		const toolEvent = {
+			toolName: 'read_file',
+			toolCallId: 'call-7',
+			timestamp: 1700000000000,
+			state: { status: 'completed', input: { path: '/secret' }, output: 'file contents' },
+		};
+
+		handler?.(testSessionId, toolEvent);
+
+		// (a) renderer forward is unchanged - still the full tool event.
+		expect(mockSafeSend).toHaveBeenCalledWith('process:tool-execution', testSessionId, toolEvent);
+
+		// (b) plugin event carries name + timing only, never the state blob.
+		expect(emitPluginEvent).toHaveBeenCalledTimes(1);
+		const event = emitPluginEvent.mock.calls[0][0];
+		expect(event.topic).toBe('tool.executed');
+		expect(event.payload).toEqual({
+			sessionId: testSessionId,
+			toolName: 'read_file',
+			toolCallId: 'call-7',
+			timestamp: 1700000000000,
+			phase: 'completed',
+		});
+		expect(event.payload).not.toHaveProperty('state');
+		expect(JSON.stringify(event.payload)).not.toContain('/secret');
+	});
+
+	it('should omit phase when the tool state carries no status string', () => {
+		const emitPluginEvent = vi.fn();
+		setupForwardingListeners(mockProcessManager, { ...mockDeps, emitPluginEvent });
+
+		eventHandlers.get('tool-execution')?.('s1', {
+			toolName: 'bash',
+			timestamp: 5,
+			state: 'raw-string-state',
+		});
+
+		expect(emitPluginEvent.mock.calls[0][0].payload).toEqual({
+			sessionId: 's1',
+			toolName: 'bash',
+			timestamp: 5,
+		});
+	});
+
+	it('should not throw when no plugin event emitter is injected', () => {
+		setupForwardingListeners(mockProcessManager, mockDeps);
+
+		const handler = eventHandlers.get('tool-execution');
+		expect(() =>
+			handler?.('s1', { toolName: 'read_file', timestamp: 1, state: { status: 'running' } })
+		).not.toThrow();
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'process:tool-execution',
+			's1',
+			expect.objectContaining({ toolName: 'read_file' })
+		);
+	});
+
 	it('should forward stderr events to renderer', () => {
 		setupForwardingListeners(mockProcessManager, mockDeps);
 

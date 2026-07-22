@@ -21,6 +21,7 @@ import {
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { checkCustomPath } from '../../../../main/agents/path-prober';
+import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -365,6 +366,7 @@ describe('process IPC handlers', () => {
 	describe('registration', () => {
 		it('should register all process handlers', () => {
 			const expectedChannels = [
+				'concerto-html:restore',
 				'process:spawn',
 				'process:write',
 				'process:broadcast-user-input',
@@ -383,6 +385,24 @@ describe('process IPC handlers', () => {
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
 			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('Concerto HTML restore', () => {
+		it('restores a validated recently closed document', async () => {
+			const handler = handlers.get('concerto-html:restore');
+
+			const revision = await handler!({}, 'movement', 'mockup', '<button>Fresh</button>');
+
+			expect(revision).toBeTypeOf('number');
+		});
+
+		it('rejects an invalid restore request', async () => {
+			const handler = handlers.get('concerto-html:restore');
+
+			await expect(handler!({}, 'bogus', '', null)).rejects.toThrow(
+				'Invalid Concerto HTML restore request'
+			);
 		});
 	});
 
@@ -1391,6 +1411,28 @@ describe('process IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual([]);
+		});
+
+		it('should skip terminal child-process inspection when requested', async () => {
+			mockProcessManager.getAll.mockReturnValue([
+				{
+					sessionId: 'session-2-terminal',
+					toolType: 'terminal',
+					pid: 5678,
+					cwd: '/project2',
+					isTerminal: true,
+					isBatchMode: false,
+					startTime: 1700000001000,
+					command: '/bin/zsh',
+					args: [],
+				},
+			]);
+
+			const handler = handlers.get('process:getActiveProcesses');
+			const result = await handler!({} as any, { includeChildProcesses: false });
+
+			expect(result).toHaveLength(1);
+			expect(getChildProcesses).not.toHaveBeenCalled();
 		});
 
 		it('should strip non-serializable properties from process objects', async () => {

@@ -22,6 +22,7 @@ import { openUrl } from '../../../utils/openUrl';
 import { openMaestroLink } from '../../../utils/openMaestroLink';
 import { RenderedMentionChip } from './RenderedMentionChip';
 import { parseConcertoHref, flashConcertoTarget } from '../../../utils/concertoLinks';
+import { notifyToast } from '../../../stores/notificationStore';
 
 export interface MarkdownLinkBehavior {
 	/** Chat: handle http/file/git destinations inline via openUrl/openPath. */
@@ -109,6 +110,12 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 		// agent's chat can point at a Movement/Cadenza instead of re-typing it.
 		const concertoTarget = parseConcertoHref(href);
 		if (concertoTarget) {
+			const notifyUnavailable = () =>
+				notifyToast({
+					color: 'orange',
+					title: 'Concerto unavailable',
+					message: `The ${concertoTarget.surface} "${concertoTarget.id}" is no longer available. Ask the agent to recreate it.`,
+				});
 			return React.createElement(
 				'button',
 				{
@@ -116,7 +123,9 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
 						e.stopPropagation();
-						flashConcertoTarget(href);
+						void flashConcertoTarget(href).then((opened) => {
+							if (!opened) notifyUnavailable();
+						}, notifyUnavailable);
 					},
 					title: `Show the ${concertoTarget.surface} "${concertoTarget.id}"`,
 					className:

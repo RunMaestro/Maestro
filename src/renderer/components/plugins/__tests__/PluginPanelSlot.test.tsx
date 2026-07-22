@@ -45,6 +45,7 @@ function panel(over: Partial<PanelContribution> = {}): PanelContribution {
 const pluginBridge = {
 	contributions: vi.fn<() => Promise<AggregatedContributions>>(),
 	onChanged: vi.fn(() => () => {}),
+	onPanelData: vi.fn(() => () => {}),
 	invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
 };
 

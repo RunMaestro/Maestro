@@ -1987,7 +1987,7 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Movement ID validation', () => {
-		it.each(['add', 'update', 'move', 'remove'] as const)(
+		it.each(['begin', 'add', 'update', 'move', 'remove', 'progress'] as const)(
 			'rejects surrounding whitespace for movement %s',
 			(op) => {
 				callbacks.movementView = vi.fn().mockResolvedValue(true);
@@ -1998,6 +1998,8 @@ describe('WebSocketMessageHandler', () => {
 					body: op === 'add' ? '{}' : undefined,
 					x: op === 'move' ? 10 : undefined,
 					y: op === 'move' ? 20 : undefined,
+					title: op === 'progress' ? 'Item 1' : undefined,
+					phase: op === 'progress' ? 'composing' : undefined,
 				});
 
 				expect(callbacks.movementView).not.toHaveBeenCalled();
@@ -2044,7 +2046,125 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Movement progress validation', () => {
+		it('forwards a valid Concerto phase without HTML content', async () => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ movementView: callbacks.movementView });
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'progress',
+				id: 'checkout',
+				title: 'Checkout flow',
+				phase: 'reviewing',
+				step: 2,
+				steps: 3,
+				notes: [
+					{ value: 'eighth' },
+					{ value: 'eighth', dotted: true },
+					{ value: 'quarter', triad: true },
+				],
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.movementView).toHaveBeenCalledWith({
+					op: 'progress',
+					id: 'checkout',
+					title: 'Checkout flow',
+					phase: 'reviewing',
+					step: 2,
+					steps: 3,
+					notes: [
+						{ value: 'eighth' },
+						{ value: 'eighth', dotted: true },
+						{ value: 'quarter', triad: true },
+					],
+					viewType: undefined,
+					x: undefined,
+					y: undefined,
+					width: undefined,
+					height: undefined,
+					body: undefined,
+				});
+			});
+		});
+
+		it.each([
+			{ phase: 'sketching', title: 'Checkout flow' },
+			{ phase: 'composing', title: '   ' },
+			{ phase: 'refining', title: 'Checkout flow', step: 0, steps: 4 },
+			{ phase: 'refining', title: 'Checkout flow', step: 5, steps: 4 },
+			{ phase: 'refining', title: 'Checkout flow', step: 1, steps: 9 },
+			{
+				phase: 'refining',
+				title: 'Checkout flow',
+				step: 1,
+				steps: 2,
+				notes: [{ value: 'eighth' }, { value: 'eighth', tie: true }],
+			},
+		])('rejects invalid progress metadata: $phase / $title', (progress) => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'progress',
+				id: 'checkout',
+				...progress,
+			});
+
+			expect(callbacks.movementView).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({ type: 'movement_result', success: false });
+		});
+	});
+
 	describe('Movement HTML validation', () => {
+		it('forwards a host-rendered begin shell without HTML content', async () => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ movementView: callbacks.movementView });
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'begin',
+				id: 'mockup',
+				title: 'Checkout mockup',
+				x: 24,
+				y: 32,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.movementView).toHaveBeenCalledWith({
+					op: 'begin',
+					id: 'mockup',
+					title: 'Checkout mockup',
+					viewType: 'html',
+					x: 24,
+					y: 32,
+					width: undefined,
+					height: undefined,
+					body: undefined,
+					phase: undefined,
+					step: undefined,
+					steps: undefined,
+					notes: undefined,
+				});
+			});
+		});
+
+		it('requires a title for a begin shell', () => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'begin',
+				id: 'mockup',
+			});
+
+			expect(callbacks.movementView).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'movement_result',
+				success: false,
+				error: 'Movement begin requires a non-empty title',
+			});
+		});
+
 		it.each(['add', 'update'] as const)(
 			'requires HTML content for a movement %s that explicitly selects html',
 			(op) => {

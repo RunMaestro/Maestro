@@ -39,6 +39,7 @@ interface PanelMessageEvent {
 
 declare const window: {
 	addEventListener(type: 'message', listener: (event: PanelMessageEvent) => void): void;
+	postMessage(message: unknown, targetOrigin: string): void;
 };
 
 window.addEventListener('message', (event) => {
@@ -53,4 +54,19 @@ window.addEventListener('message', (event) => {
 		commandId: msg.commandId,
 		args: msg.args,
 	});
+});
+
+/**
+ * The one channel pushed INTO the page: host-to-panel data (`ui.panelPost`).
+ * The embedder renderer sends it only after the main process verified the
+ * posting plugin OWNS this panel and that the payload is JSON and under the
+ * size cap. Here the relay is deliberately dumb and total: take the structured-
+ * cloned value and re-post it on the page's own window under one fixed shape.
+ * Nothing is evaluated, `ipcRenderer` is never exposed, no other channel is
+ * relayed, and there is no reply path - the page can only read.
+ * The channel/shape constants are duplicated from
+ * `src/shared/plugins/panel-host.ts` (PANEL_DATA_CHANNEL) - keep them in sync.
+ */
+ipcRenderer.on('maestro:panelData', (_event, data: unknown) => {
+	window.postMessage({ type: 'maestro:panelData', data }, '*');
 });

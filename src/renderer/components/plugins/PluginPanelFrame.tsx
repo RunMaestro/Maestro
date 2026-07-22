@@ -37,8 +37,18 @@ import {
 	pluginPanelPartition,
 	pluginPanelUrl,
 	PANEL_BRIDGE_CHANNEL,
+	PANEL_DATA_CHANNEL,
 } from '../../../shared/plugins/panel-host';
 import { notifyToast } from '../../stores/notificationStore';
+import { captureException } from '../../utils/sentry';
+
+// webview.send throws when the guest webContents is not attached yet (a push can
+// land before the panel finishes loading) or is tearing down - both are expected
+// races for a best-effort UI data frame. Anything else is unexpected.
+function isDetachedWebviewError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /destroyed|disposed|detached|not attached|must be attached/i.test(message);
+}
 
 interface PluginPanelFrameProps {
 	theme: Theme;
@@ -52,6 +62,8 @@ interface PluginPanelFrameProps {
 interface PanelWebviewElement extends HTMLElement {
 	addEventListener(type: string, listener: (event: Event) => void): void;
 	removeEventListener(type: string, listener: (event: Event) => void): void;
+	/** Structured-clone push into the guest (host-to-panel data, one-way). */
+	send(channel: string, ...args: unknown[]): void;
 }
 
 /** Shape of the `ipc-message` event the guest preload emits via sendToHost. */
@@ -101,6 +113,35 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 			webview.removeEventListener('did-fail-load', onFailLoad);
 		};
 	}, [panel.pluginId, failed]);
+
+	// Host-to-panel push (`ui.panelPost`). Main validated ownership, JSON-ness and
+	// size before broadcasting; here we only route the event to the ONE frame
+	// whose panel it names and hand the value to the guest as structured-clone
+	// data. The renderer never inspects or evaluates the payload.
+	useEffect(() => {
+		return window.maestro.plugins.onPanelData(({ panelId, data }) => {
+			if (panelId !== panel.id) return;
+			const webview = webviewRef.current;
+			if (!webview) return;
+			try {
+				webview.send(PANEL_DATA_CHANNEL, data);
+			} catch (error) {
+				// The guest may not be attached yet (or is tearing down); drop the
+				// message rather than surfacing a plugin-triggered error to the user.
+				// Report anything that is NOT that expected race so real regressions
+				// still reach Sentry instead of being silently swallowed.
+				if (!isDetachedWebviewError(error)) {
+					captureException(error, {
+						extra: {
+							where: 'PluginPanelFrame.onPanelData',
+							pluginId: panel.pluginId,
+							panelId: panel.id,
+						},
+					});
+				}
+			}
+		});
+	}, [panel.id, panel.pluginId, failed]);
 
 	return (
 		<div className="flex flex-col h-full min-h-0">

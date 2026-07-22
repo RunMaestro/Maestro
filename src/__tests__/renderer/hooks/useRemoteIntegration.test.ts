@@ -7,6 +7,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
+import { useConcertoCreationActivityStore } from '../../../renderer/stores/concertoCreationActivityStore';
 import type { MovementPayload } from '../../../shared/movement-types';
 import { CONCERTO_DESIGNER_CHANNEL } from '../../../shared/concerto-html';
 import {
@@ -64,6 +65,9 @@ describe('useRemoteIntegration', () => {
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
+	let onRequestMovementDesignerInspectionHandler:
+		| ((id: string, expectedRevision: number, responseChannel: string) => void)
+		| undefined;
 	let onRemoteNewAITabWithPromptHandler:
 		| ((sessionId: string, prompt: string, responseChannel: string, background?: boolean) => void)
 		| undefined;
@@ -306,6 +310,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendMovementAppliedResponse: vi.fn(),
+		onRequestMovementDesignerInspection: vi.fn().mockImplementation((handler) => {
+			onRequestMovementDesignerInspectionHandler = handler;
+			return () => {};
+		}),
+		sendMovementDesignerInspectionResponse: vi.fn(),
 	};
 
 	const mockLive = {
@@ -359,11 +368,13 @@ describe('useRemoteIntegration', () => {
 		onRemoteRemoveQueueItemHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
 		onRemoteMovementHandler = undefined;
+		onRequestMovementDesignerInspectionHandler = undefined;
 
 		// Reset zustand stores so cross-test state doesn't leak.
 		useSessionStore.setState({ sessions: [] });
 		useNotificationStore.setState({ toasts: [] });
 		useMovementStore.setState({ items: [], hidden: false });
+		useConcertoCreationActivityStore.setState({ tracks: [] });
 		clearConcertoDesignerFramesForTests();
 
 		window.maestro = {
@@ -1406,6 +1417,213 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('movement commit acknowledgements', () => {
+		it('tracks the current HTML Concerto phase for one unambiguous busy tab', () => {
+			const thinkingStartTime = Date.now() - 1000;
+			const tab = createMockTab({
+				id: 'design-tab',
+				state: 'busy',
+				thinkingStartTime,
+			});
+			const session = createMockSession({
+				id: 'design-session',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'begin',
+					id: 'checkout-flow',
+					viewType: 'html',
+					title: 'Checkout flow',
+					width: 880,
+					height: 560,
+				});
+			});
+
+			expect(useConcertoCreationActivityStore.getState().tracks[0]).toMatchObject({
+				sessionId: 'design-session',
+				tabId: 'design-tab',
+				thinkingStartTime,
+				movementId: 'checkout-flow',
+				title: 'Checkout flow',
+				phase: 'composing',
+				width: 880,
+				height: 560,
+			});
+			expect(useMovementStore.getState().items[0]).toMatchObject({
+				id: 'checkout-flow',
+				preparing: true,
+			});
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'update',
+					id: 'checkout-flow',
+					x: 30,
+					y: 40,
+					width: 840,
+				});
+			});
+			expect(useConcertoCreationActivityStore.getState().tracks[0]?.phase).toBe('composing');
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'add',
+					id: 'checkout-flow',
+					viewType: 'html',
+					title: 'Checkout flow',
+					body: '<main>Checkout</main>',
+				});
+			});
+			expect(useMovementStore.getState().items[0]?.preparing).toBe(false);
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'update',
+					id: 'checkout-flow',
+					body: '<main>Refined checkout</main>',
+				});
+			});
+			expect(useConcertoCreationActivityStore.getState().tracks[0]?.phase).toBe('refining');
+
+			act(() => {
+				onRemoteMovementHandler?.({ op: 'move', id: 'checkout-flow', x: 40, y: 60 });
+			});
+			expect(useConcertoCreationActivityStore.getState().tracks[0]?.phase).toBe('arranging');
+		});
+
+		it('starts independent Concerto tracks before their windows are mounted', () => {
+			const thinkingStartTime = Date.now() - 1000;
+			const tab = createMockTab({ id: 'design-tab', state: 'busy', thinkingStartTime });
+			const session = createMockSession({
+				id: 'design-session',
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'progress',
+					id: 'startup',
+					title: 'Loopline startup',
+					phase: 'composing',
+					step: 2,
+					steps: 4,
+					notes: [
+						{ value: 'sixteenth' },
+						{ value: 'sixteenth', dotted: true },
+						{ value: 'sixteenth', triad: true },
+						{ value: 'eighth' },
+					],
+				});
+				onRemoteMovementHandler?.({
+					op: 'progress',
+					id: 'runner',
+					title: 'Subway runner',
+					phase: 'refining',
+				});
+			});
+
+			expect(useConcertoCreationActivityStore.getState().tracks).toMatchObject([
+				{
+					movementId: 'startup',
+					title: 'Loopline startup',
+					phase: 'composing',
+					step: 2,
+					steps: 4,
+					notes: [
+						{ value: 'sixteenth' },
+						{ value: 'sixteenth', dotted: true },
+						{ value: 'sixteenth', triad: true },
+						{ value: 'eighth' },
+					],
+				},
+				{
+					movementId: 'runner',
+					title: 'Subway runner',
+					phase: 'refining',
+					step: 1,
+					steps: 1,
+				},
+			]);
+			expect(useMovementStore.getState().items).toEqual([]);
+		});
+
+		it('keeps native Movement updates on the ordinary thinking status', () => {
+			const thinkingStartTime = Date.now() - 1000;
+			const tab = createMockTab({ state: 'busy', thinkingStartTime });
+			const session = createMockSession({
+				state: 'busy',
+				busySource: 'ai',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'add',
+					id: 'metrics',
+					viewType: 'view',
+					body: '{"blocks":[]}',
+				});
+			});
+
+			expect(useConcertoCreationActivityStore.getState().tracks).toEqual([]);
+		});
+
+		it('does not guess which agent owns a Concerto when multiple tabs are busy', () => {
+			const firstTab = createMockTab({
+				id: 'first-tab',
+				state: 'busy',
+				thinkingStartTime: Date.now() - 2000,
+			});
+			const secondTab = createMockTab({
+				id: 'second-tab',
+				state: 'busy',
+				thinkingStartTime: Date.now() - 1000,
+			});
+			const sessions = [
+				createMockSession({
+					id: 'first-session',
+					state: 'busy',
+					busySource: 'ai',
+					aiTabs: [firstTab],
+					activeTabId: firstTab.id,
+				}),
+				createMockSession({
+					id: 'second-session',
+					state: 'busy',
+					busySource: 'ai',
+					aiTabs: [secondTab],
+					activeTabId: secondTab.id,
+				}),
+			];
+			useSessionStore.setState({ sessions });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions })));
+
+			act(() => {
+				onRemoteMovementHandler?.({
+					op: 'add',
+					id: 'ambiguous-mockup',
+					viewType: 'html',
+					body: '<main>Mockup</main>',
+				});
+			});
+
+			expect(useConcertoCreationActivityStore.getState().tracks).toEqual([]);
+		});
+
 		it('still applies plugin movements that do not carry a response channel', () => {
 			const deps = createDeps();
 			renderHook(() => useRemoteIntegration(deps));
@@ -1468,6 +1686,63 @@ describe('useRemoteIntegration', () => {
 				true
 			);
 			frame.remove();
+		});
+
+		it('waits for the surfaced movement to cross a paint boundary before inspection', async () => {
+			const animationFrames: FrameRequestCallback[] = [];
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+				animationFrames.push(callback);
+				return animationFrames.length;
+			});
+			const frame = document.createElement('iframe');
+			document.body.appendChild(frame);
+			vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+				x: 8,
+				y: 12,
+				width: 640,
+				height: 480,
+				top: 12,
+				right: 648,
+				bottom: 492,
+				left: 8,
+				toJSON: () => ({}),
+			});
+			registerConcertoDesignerFrame('movement', 'mockup', 21, frame);
+			handleConcertoDesignerMessage('movement', 'mockup', {
+				source: frame.contentWindow,
+				data: { channel: CONCERTO_DESIGNER_CHANNEL, kind: 'ready' },
+			} as MessageEvent);
+
+			try {
+				renderHook(() => useRemoteIntegration(createDeps()));
+				act(() => {
+					onRequestMovementDesignerInspectionHandler?.('mockup', 21, 'inspection-response');
+				});
+
+				expect(animationFrames).toHaveLength(1);
+				expect(mockProcess.sendMovementDesignerInspectionResponse).not.toHaveBeenCalled();
+
+				await act(async () => {
+					animationFrames.shift()?.(0);
+					await Promise.resolve();
+				});
+				expect(animationFrames).toHaveLength(1);
+				expect(mockProcess.sendMovementDesignerInspectionResponse).not.toHaveBeenCalled();
+
+				await act(async () => {
+					animationFrames.shift()?.(16);
+					await Promise.resolve();
+					await Promise.resolve();
+				});
+
+				expect(mockProcess.sendMovementDesignerInspectionResponse).toHaveBeenCalledWith(
+					'inspection-response',
+					expect.objectContaining({ id: 'mockup', ready: true, revision: 21 })
+				);
+			} finally {
+				rafSpy.mockRestore();
+				frame.remove();
+			}
 		});
 	});
 

@@ -92,6 +92,8 @@ export interface InputAreaProps {
 	showFlashNotification?: (message: string) => void;
 	tabShowThinking?: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
+	tabShowTools?: boolean;
+	onToggleTabShowTools?: () => void;
 	supportsThinking?: boolean;
 	contextUsage?: number;
 	contextWarningsEnabled?: boolean;

@@ -223,7 +223,20 @@ export function releaseConcertoHtmlDocument(surface: ConcertoHtmlSurface, id: st
 	deleteDocument(surface, id);
 }
 
+/** Re-register a recently closed document before its renderer view is recreated. */
+export function restoreConcertoHtmlDocument(
+	surface: ConcertoHtmlSurface,
+	id: string,
+	html: string
+): number {
+	return setDocument(surface, id, html);
+}
+
 export function applyMovementHtmlPayload(payload: MovementPayload): MovementPayload {
+	// `begin` is a host-rendered placeholder, not an HTML document revision.
+	// Existing documents stay registered so a revision can remain visible while
+	// the agent prepares its replacement.
+	if (payload.op === 'begin' || payload.op === 'progress') return payload;
 	if (payload.op === 'clear') {
 		clearSurface('movement');
 		return payload;

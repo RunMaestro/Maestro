@@ -15,6 +15,7 @@ import {
 	GitFork,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
+import type { LogEntry } from '../../../types';
 import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
@@ -28,9 +29,27 @@ import { linkifyNode } from '../../../utils/linkify';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
-import { summarizeToolInput, summarizeToolOutput } from '../utils/toolSummaries';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
+import { ToolBadge } from './ToolBadge';
+
+/**
+ * Shallow content comparison for the nested subagent tool entries. Identity is
+ * useless here (the grouping helper allocates a fresh array per render), and a
+ * child's `toolState.status` flipping running -> completed must re-render the
+ * parent entry that hosts it.
+ */
+const sameSubagentLogs = (prev?: LogEntry[], next?: LogEntry[]): boolean => {
+	if (prev === next) return true;
+	if (!prev || !next) return false;
+	if (prev.length !== next.length) return false;
+	return prev.every(
+		(log, i) =>
+			log.id === next[i].id &&
+			log.text === next[i].text &&
+			log.metadata?.toolState?.status === next[i].metadata?.toolState?.status
+	);
+};
 
 export const LogItem = memo(
 	({
@@ -44,6 +63,7 @@ export const LogItem = memo(
 		lastUserCommand,
 		isExpanded,
 		onToggleExpanded,
+		subagentLogs,
 		localFilterQuery,
 		filterMode,
 		activeLocalFilter,
@@ -496,93 +516,45 @@ export const LogItem = memo(
 						</div>
 					)}
 					{/* Special rendering for tool execution events (shown alongside thinking) */}
-					{log.source === 'tool' &&
-						(() => {
-							// Extract tool input details for display
-							const toolInput = log.metadata?.toolState?.input;
-							const toolSummary =
-								toolInput !== undefined && toolInput !== null
-									? summarizeToolInput(toolInput)
-									: null;
-							// Show the tool result once it has finished. Without this the
-							// compact tool log drops the output entirely (e.g. MCP calls
-							// like squash_repos that take no args render as a bare name).
-							const toolStatus = log.metadata?.toolState?.status;
-							const outputSummary =
-								toolStatus === 'completed' || toolStatus === 'failed' || toolStatus === 'error'
-									? summarizeToolOutput(log.metadata?.toolState?.output)
-									: null;
-
-							return (
-								<div
-									className="px-4 py-1.5 text-xs font-mono border-l-2"
-									style={{
-										color: theme.colors.textMain,
-										borderColor: theme.colors.accent,
-									}}
-								>
-									<div className="flex items-start gap-2">
-										<span
-											className="px-1.5 py-0.5 rounded shrink-0"
-											style={{
-												backgroundColor: `${theme.colors.accent}30`,
-												color: theme.colors.accent,
-											}}
-										>
-											{log.text}
+					{log.source === 'tool' && (
+						<div
+							className="px-4 py-1.5 text-xs font-mono border-l-2"
+							style={{
+								color: theme.colors.textMain,
+								borderColor: theme.colors.accent,
+							}}
+						>
+							<ToolBadge log={log} theme={theme} />
+							{/* Subagent tool calls (claude-code Task): collapsed behind a
+							    count, expanded in place under the parent badge. */}
+							{subagentLogs && subagentLogs.length > 0 && (
+								<div className="mt-1">
+									<button
+										type="button"
+										onClick={() => onToggleExpanded(log.id)}
+										className="flex items-center gap-1 opacity-60 hover:opacity-100 transition-opacity"
+										style={{ color: theme.colors.textMain }}
+										aria-expanded={isExpanded}
+									>
+										{isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+										<span>
+											{subagentLogs.length} tool {subagentLogs.length === 1 ? 'call' : 'calls'}
 										</span>
-										{log.metadata?.toolState?.status === 'running' && (
-											<span
-												className="animate-pulse shrink-0 pt-0.5"
-												style={{ color: theme.colors.warning }}
-											>
-												●
-											</span>
-										)}
-										{log.metadata?.toolState?.status === 'completed' && (
-											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
-												✓
-											</span>
-										)}
-										{log.metadata?.toolState?.status === 'failed' && (
-											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
-												!
-											</span>
-										)}
-										{toolSummary?.description && (
-											<span
-												className="opacity-50 break-words"
-												style={{ color: theme.colors.textMain }}
-											>
-												{toolSummary.description}
-											</span>
-										)}
-									</div>
-									{toolSummary?.detail && (
+									</button>
+									{isExpanded && (
 										<div
-											className="mt-1 ml-1 pl-2 opacity-70 break-words whitespace-pre-wrap border-l"
-											style={{
-												color: theme.colors.textMain,
-												borderColor: `${theme.colors.accent}40`,
-											}}
+											className="mt-1 ml-1 pl-3 flex flex-col gap-1.5 border-l"
+											style={{ borderColor: `${theme.colors.accent}40` }}
 										>
-											{toolSummary.detail}
-										</div>
-									)}
-									{outputSummary && (
-										<div
-											className="mt-1 ml-1 pl-2 opacity-60 break-words whitespace-pre-wrap border-l"
-											style={{
-												color: theme.colors.textMain,
-												borderColor: `${theme.colors.success}40`,
-											}}
-										>
-											{outputSummary}
+											{subagentLogs.map((child) => (
+												<ToolBadge key={child.id} log={child} theme={theme} />
+											))}
 										</div>
 									)}
 								</div>
-							);
-						})()}
+							)}
+						</div>
+					)}
 					{!isHiddenProgressEntry(log) &&
 						log.source !== 'error' &&
 						log.source !== 'thinking' &&
@@ -1043,6 +1015,10 @@ export const LogItem = memo(
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
+			// Nested subagent badges live inside this entry, so their status
+			// transitions have to defeat the memo too. The grouping helper rebuilds
+			// the array each render, so compare contents, not identity.
+			sameSubagentLogs(prevProps.subagentLogs, nextProps.subagentLogs) &&
 			// Cross-agent streaming flips true->false on the final chunk (which may
 			// carry no new text), so the pill/glow needs this to settle.
 			prevProps.log.metadata?.crossAgent?.streaming ===

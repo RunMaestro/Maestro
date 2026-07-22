@@ -1000,6 +1000,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				if (settingsStore.get<{ concerto?: boolean }>('encoreFeatures', {}).concerto !== true)
 					return false;
 				if (
+					params.op !== 'begin' &&
 					params.id &&
 					params.viewType === 'html' &&
 					params.body === undefined &&

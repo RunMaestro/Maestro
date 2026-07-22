@@ -284,6 +284,8 @@ export interface UseSettingsReturn {
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	tabBarWheelScroll: boolean;
+	setTabBarWheelScroll: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
