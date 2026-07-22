@@ -7,7 +7,7 @@
  * wherever it was created.
  *
  * Naming scheme:
- *   branch  `board/<boardId-first-8>/<cardId-first-8>`
+ *   branch  `board/<boardId>/<cardId>`
  *   path    `<sibling-of-projectRoot>/worktrees/<branch>`
  *
  * The path is a SIBLING of the project root on purpose: git (and the agents
@@ -20,22 +20,31 @@
 import { getParentDir, joinPath } from '../formatters';
 import { sanitizeGitBranchName } from '../gitUtils';
 
-/** How many id characters go into a branch segment. Enough to stay unique per board. */
-const ID_SEGMENT_LENGTH = 8;
-
 /** Directory (next to the project root) that holds every worktree checkout. */
 export const BOARD_WORKTREE_DIRNAME = 'worktrees';
 
 /**
+ * One id as one branch/path segment: the FULL id, git-sanitized, with any
+ * surviving `/` flattened so the id can never add hierarchy of its own.
+ *
+ * The full id matters: `board.yaml` is user-editable, so ids are not always
+ * UUIDs - two hand-written ids like `feature-auth` / `feature-api` share a
+ * first-8 prefix, and a truncated scheme would silently hand both cards the
+ * same checkout, defeating isolation.
+ */
+function idSegment(id: string, fallback: string): string {
+	return sanitizeGitBranchName(id).replace(/\//g, '-') || fallback;
+}
+
+/**
  * Branch name for a card's isolated worktree: `board/<board>/<card>`.
  *
- * Both ids are truncated and sanitized so a hand-written board id (`board.yaml`
- * is user-editable) can never produce an invalid ref.
+ * Both ids are sanitized so a hand-written board id (`board.yaml` is
+ * user-editable) can never produce an invalid ref, and kept whole so distinct
+ * ids always yield distinct branches (and therefore distinct checkouts).
  */
 export function boardCardBranchName(boardId: string, cardId: string): string {
-	const board = sanitizeGitBranchName(boardId.slice(0, ID_SEGMENT_LENGTH)) || 'board';
-	const card = sanitizeGitBranchName(cardId.slice(0, ID_SEGMENT_LENGTH)) || 'card';
-	return `board/${board}/${card}`;
+	return `board/${idSegment(boardId, 'board')}/${idSegment(cardId, 'card')}`;
 }
 
 /**

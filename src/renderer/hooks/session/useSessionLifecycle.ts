@@ -212,7 +212,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						retryOnTokenExhaustion,
 						// Board worker pool opt-in (Board Phase 6). Provider-agnostic, so
 						// it survives a provider switch (not cleared in the reset below).
-						boardWorker,
+						// Only applied when the caller passed it: an omitted optional arg
+						// must not clear an existing opt-in during an unrelated save.
+						...(boardWorker === undefined ? {} : { boardWorker }),
 					};
 
 					// If provider changed, reset tabs and provider-specific config

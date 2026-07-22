@@ -78,7 +78,7 @@ export interface DecomposedChild {
 
 /** Compact fallback used when no editable template is supplied. */
 const FALLBACK_TEMPLATE = [
-	'Decompose this task into 2-6 concrete child cards.',
+	'Decompose this task into 2-6 concrete child cards (or a single card restating it if it is already atomic).',
 	'',
 	'Title: {{CARD_TITLE}}',
 	'',

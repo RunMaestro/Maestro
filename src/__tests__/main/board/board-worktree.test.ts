@@ -53,8 +53,20 @@ afterAll(() => {
 });
 
 describe('board worktree naming', () => {
-	it('derives branch board/<board>/<card> from the first eight id characters', () => {
-		expect(boardCardBranchName(BOARD_ID, CARD_ID)).toBe('board/1a2b3c4d/5e6f7a8b');
+	it('derives branch board/<board>/<card> from the FULL ids', () => {
+		expect(boardCardBranchName(BOARD_ID, CARD_ID)).toBe(`board/${BOARD_ID}/${CARD_ID}`);
+	});
+
+	it('keeps distinct ids sharing a prefix on distinct branches (hand-written ids)', () => {
+		// board.yaml is hand-editable, so ids are not always UUIDs. A truncated
+		// scheme gave `feature-auth` and `feature-api` the same checkout.
+		expect(boardCardBranchName(BOARD_ID, 'feature-auth')).not.toBe(
+			boardCardBranchName(BOARD_ID, 'feature-api')
+		);
+	});
+
+	it('flattens a slash inside an id so it cannot add branch hierarchy', () => {
+		expect(boardCardBranchName(BOARD_ID, 'a/b')).toBe(`board/${BOARD_ID}/a-b`);
 	});
 
 	it('puts the checkout in a worktrees folder BESIDE the project, never inside it', () => {
@@ -66,8 +78,8 @@ describe('board worktree naming', () => {
 	it('builds a ref whose path matches its branch', () => {
 		const ref = buildCardWorktreeRef('/repos/project', BOARD_ID, CARD_ID);
 		expect(ref).toEqual({
-			branch: 'board/1a2b3c4d/5e6f7a8b',
-			path: '/repos/worktrees/board/1a2b3c4d/5e6f7a8b',
+			branch: `board/${BOARD_ID}/${CARD_ID}`,
+			path: `/repos/worktrees/board/${BOARD_ID}/${CARD_ID}`,
 		});
 	});
 });

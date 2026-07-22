@@ -102,9 +102,14 @@ export function resolveProfileSpawnOverrides(
  * IPC handlers before persisting caller input.
  *
  * Rules: `id` and `name` must be non-empty strings. `baseAgentId` is optional
- * (a pinned profile has it, a pool role omits it). Optional override fields, when
- * present, must be strings (empty/whitespace is dropped so an accidentally-blank
- * field falls back to the running agent rather than blanking it).
+ * (a pinned profile has it, a pool role omits it). Optional override fields,
+ * when present, must be strings - a present non-string (`model: 42`,
+ * `baseAgentId: {}`) rejects the WHOLE profile rather than being silently
+ * dropped, because a dropped override runs the card with the wrong
+ * model/effort/role and nobody finds out. Only an absent field (or YAML `null`,
+ * which is how an empty `model:` line parses) and a blank/whitespace string
+ * normalize to "not set" (so an accidentally-blank field falls back to the
+ * running agent rather than blanking it).
  */
 export function validateAgentProfile(raw: unknown): AgentProfile | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -116,22 +121,30 @@ export function validateAgentProfile(raw: unknown): AgentProfile | null {
 
 	const profile: AgentProfile = { id, name };
 
-	const optionalString = (value: unknown): string | undefined => {
-		if (typeof value !== 'string') return undefined;
+	/** Sentinel distinguishing "present but not a string" from "absent/blank". */
+	const MALFORMED = Symbol('malformed');
+	const optionalString = (value: unknown): string | undefined | typeof MALFORMED => {
+		if (value === undefined || value === null) return undefined;
+		if (typeof value !== 'string') return MALFORMED;
 		const trimmed = value.trim();
 		return trimmed.length > 0 ? value : undefined;
 	};
 
 	const baseAgentId = optionalString(r.baseAgentId);
+	if (baseAgentId === MALFORMED) return null;
 	if (baseAgentId !== undefined) profile.baseAgentId = baseAgentId.trim();
 
 	const model = optionalString(r.model);
+	if (model === MALFORMED) return null;
 	if (model !== undefined) profile.model = model;
 	const effort = optionalString(r.effort);
+	if (effort === MALFORMED) return null;
 	if (effort !== undefined) profile.effort = effort;
 	const appendSystemPrompt = optionalString(r.appendSystemPrompt);
+	if (appendSystemPrompt === MALFORMED) return null;
 	if (appendSystemPrompt !== undefined) profile.appendSystemPrompt = appendSystemPrompt;
 	const customArgs = optionalString(r.customArgs);
+	if (customArgs === MALFORMED) return null;
 	if (customArgs !== undefined) profile.customArgs = customArgs;
 
 	return profile;

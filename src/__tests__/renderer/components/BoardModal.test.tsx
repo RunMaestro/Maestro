@@ -330,7 +330,7 @@ describe('BoardModal worktree isolation (Phase 4)', () => {
 		const card = boardApi.addCard.mock.calls[0][2];
 		// Branch follows `board/<board-id-8>/<card-id-8>`, checked out in a
 		// worktrees folder BESIDE the project (never nested inside it).
-		expect(card.worktree.branch).toBe(`board/1a2b3c4d/${card.id.slice(0, 8)}`);
+		expect(card.worktree.branch).toBe(`board/1a2b3c4d-b/${card.id}`);
 		expect(card.worktree.path).toBe(`/test/worktrees/${card.worktree.branch}`);
 	});
 
@@ -506,7 +506,7 @@ describe('BoardModal running-card visibility (Phase 6)', () => {
 		// Attempt + a formatted elapsed reading (formatElapsedTime: "1m 5s"). Shown
 		// on the tile badge and again inside the run-details disclosure.
 		expect((await screen.findAllByText(/attempt 2/i)).length).toBeGreaterThan(0);
-		expect(screen.getAllByText(/1m \ds/).length).toBeGreaterThan(0);
+		expect(screen.getAllByText(/1m \d+s/).length).toBeGreaterThan(0);
 		// The worker is a Left Bar agent, resolved through the session store.
 		expect(screen.getAllByText(/Test Session/).length).toBeGreaterThan(0);
 		// The run details disclosure is available WHILE running, not only after.

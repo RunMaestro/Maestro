@@ -424,8 +424,10 @@ function AppStandaloneModalsInner({
 				</Suspense>
 			)}
 
-			{/* --- BOARD MODAL (lazy-loaded, Encore Feature; depends on Maestro Cue) --- */}
-			{encoreFeatures.board && boardModalOpen && (
+			{/* --- BOARD MODAL (lazy-loaded, Encore Feature; depends on Maestro Cue).
+			    Both flags, matching every open path (App.tsx force-close + hamburger):
+			    a setBoardModalOpen(true) while Cue is off must not mount the Board. --- */}
+			{encoreFeatures.board && encoreFeatures.maestroCue && boardModalOpen && (
 				<Suspense fallback={null}>
 					<BoardModal theme={theme} onClose={() => setBoardModalOpen(false)} />
 				</Suspense>

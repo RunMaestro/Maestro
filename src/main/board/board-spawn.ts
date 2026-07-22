@@ -25,7 +25,7 @@
  * the naming helpers in `src/shared/board/worktree.ts` are Electron-free so
  * `maestro-cli board tick` provisions through the identical code path.
  *
- * BRANCH NAMING. `board/<boardId-first-8>/<cardId-first-8>`
+ * BRANCH NAMING. `board/<boardId>/<cardId>` (full sanitized ids)
  * (`boardCardBranchName`), checked out at
  * `<sibling-of-projectRoot>/worktrees/<branch>` (`boardWorktreePath`). The
  * sibling layout matches Auto Run's and is mandatory: `setupWorktreeLocal`

@@ -14,7 +14,7 @@ The board lives in `.maestro/board.yaml` at the project root, alongside `.maestr
 
 ```yaml
 boards:
-  - id: 8f3c...
+  - id: 8f3c1d2e
     name: Backend rework
     maxInProgress: 2 # optional work-in-progress cap
     autoDecompose: false # optional, off by default
@@ -36,8 +36,8 @@ boards:
         parents: [a] # waits until card "a" is done
         status: done
         worktree: # optional: run this card in its own checkout
-          branch: board/8f3c1d2e/b1c2d3e4
-          path: /home/you/worktrees/board/8f3c1d2e/b1c2d3e4
+          branch: board/8f3c1d2e/b
+          path: /home/you/worktrees/board/8f3c1d2e/b
         runs: # one entry per dispatch attempt, appended by the dispatcher
           - attempt: 1
             startedAt: 2026-07-10T00:05:00.000Z
@@ -45,7 +45,7 @@ boards:
             outcome: done
             summary: Added the migration and a round-trip test.
             workerAgentId: agent-2
-            worktreeBranch: board/8f3c1d2e/b1c2d3e4
+            worktreeBranch: board/8f3c1d2e/b
 ```
 
 Cards are written by hand or by the app; the `runs` list, the derived statuses, and the timestamps are the dispatcher's bookkeeping. Each run records one attempt and never disappears, so a card that took three tries keeps all three.
@@ -154,7 +154,7 @@ A card can run in its own git worktree instead of the shared project directory. 
 
 What happens:
 
-- The checkout is created on the card's first run, on branch `board/<board-id>/<card-id>` (first eight characters of each id), in a `worktrees/` folder beside your project directory. Set an explicit path or branch on the card to override either.
+- The checkout is created on the card's first run, on branch `board/<board-id>/<card-id>` (the full ids, sanitized for git, so two cards can never share a checkout), in a `worktrees/` folder beside your project directory. Set an explicit path or branch on the card to override either.
 - Retries reuse the same worktree, so a second attempt continues the work instead of starting from a clean tree.
 - When the card finishes, the branch name appears in the completion toast, as a badge on the card tile, and under the card's **Last run summary**.
 - Nothing is merged or deleted for you. The branch and its checkout stay exactly where the agent left them.
@@ -163,18 +163,18 @@ Merging a finished card branch back yourself:
 
 ```bash
 # From your main checkout
-git merge board/1a2b3c4d/5e6f7a8b
+git merge board/8f3c1d2e/b
 
 # Then, when you no longer need the isolated checkout
-git worktree remove ../worktrees/board/1a2b3c4d/5e6f7a8b
-git branch -d board/1a2b3c4d/5e6f7a8b
+git worktree remove ../worktrees/board/8f3c1d2e/b
+git branch -d board/8f3c1d2e/b
 ```
 
 Worktree cards are local-only: an agent configured to run over an SSH remote executes on the remote host, where a worktree created on your machine does not exist. Such a card is blocked with a clear reason rather than quietly running in the shared project directory. Clear its worktree setting or move it to a local agent.
 
 ## CLI
 
-The Board and Profiles are fully driveable headlessly with `maestro-cli`, mirroring the in-app actions. Every command resolves the project from a target agent.
+The Board and Profiles are fully drivable headlessly with `maestro-cli`, mirroring the in-app actions. Every command resolves the project from a target agent.
 
 ```bash
 # Profiles
@@ -204,7 +204,7 @@ maestro-cli board tick --agent <id-or-name>
 maestro-cli board watch --agent <id-or-name> --interval 60
 ```
 
-`board tick` reuses the same promotion, WIP, and completion logic as the desktop dispatcher and the same agent spawn path as the rest of the CLI, so SSH remotes and profile model/effort/role overrides are honored exactly as they are in the app. Drive an entire board to `done` by adding cards with dependencies, then running `board tick` until nothing is left to promote. Add `--json` to any command for machine-readable output.
+`board tick` reuses the same promotion, WIP, and completion logic as the desktop dispatcher and the same agent spawn path as the rest of the CLI, so SSH remotes and profile model/effort/role overrides are honored exactly as they are in the app. Drive an entire board to completion by adding cards with dependencies, then running `board tick` until every card is terminal (`done` or `blocked`) - a single pass can leave cards `running`, `ready`, or awaiting a retry, so check `board show --json` (card `status` fields) rather than stopping after a quiet tick. Add `--json` to any command for machine-readable output.
 
 A few behaviors worth knowing:
 
@@ -212,4 +212,4 @@ A few behaviors worth knowing:
 - `board delete` refuses a board that still has cards which are not `done` unless you pass `--force`. It takes the whole board, cards and run history included.
 - `board update-card` and `profile update` change only the flags you actually pass. Pass an empty string (`--assignee ""`, `--model ""`) to clear a field. `profile update` keeps the profile's id, so cards assigned to that role keep working; `profile create` would mint a new id and leave them pointing at nothing.
 - A `running` card cannot be edited, and removing one needs `--force`. The CLI has no handle on the in-flight agent process (it belongs to whichever dispatcher started it), so it cannot stop the run for you - use the stop button on the card in the app.
-- `board watch` is just `board tick` on a timer (default 30 seconds, minimum 5), stopped with Ctrl-C. It does not daemonize and takes no lock. If the desktop app is open with Cue running, it is already ticking the same boards: pick one dispatcher per board. Writes are atomic (a crash never corrupts the file), but two dispatchers editing the same board at the same moment can each overwrite the other's latest card transition - the CLI tick is meant for headless projects the app is not also dispatching.
+- `board watch` is just `board tick` on a timer (default 30 seconds, minimum 5), stopped with Ctrl-C. It does not daemonize and takes no lock. Running two dispatchers on the same board (the desktop app with Cue enabled, plus a `watch`) is unsupported: each one can overwrite the other's latest card transition, because their read-modify-write cycles are not serialized across processes (atomic writes only prevent torn files). Pick one dispatcher per board - the CLI tick is meant for headless projects the app is not also dispatching.

@@ -129,16 +129,20 @@ describe('validateAgentProfile', () => {
 		expect(p?.effort).toBeUndefined();
 	});
 
-	it('ignores non-string optional fields', () => {
-		const p = validateAgentProfile({
-			id: 'p1',
-			name: 'Worker',
-			baseAgentId: 'agent-1',
-			model: 42,
-			customArgs: ['--x'],
-		});
+	it('rejects the whole profile when a present optional field is not a string', () => {
+		// A silently-dropped override would run the card with the wrong
+		// model/effort/role; failing closed makes the malformed YAML visible.
+		expect(
+			validateAgentProfile({ id: 'p1', name: 'Worker', baseAgentId: 'agent-1', model: 42 })
+		).toBeNull();
+		expect(validateAgentProfile({ id: 'p1', name: 'Worker', customArgs: ['--x'] })).toBeNull();
+		expect(validateAgentProfile({ id: 'p1', name: 'Worker', baseAgentId: {} })).toBeNull();
+	});
+
+	it('treats YAML null (an empty "model:" line) as absent, not malformed', () => {
+		const p = validateAgentProfile({ id: 'p1', name: 'Worker', model: null, effort: null });
 		expect(p).not.toBeNull();
 		expect(p?.model).toBeUndefined();
-		expect(p?.customArgs).toBeUndefined();
+		expect(p?.effort).toBeUndefined();
 	});
 });

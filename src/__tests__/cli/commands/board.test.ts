@@ -212,9 +212,9 @@ describe('maestro-cli board', () => {
 			json: true,
 		});
 		const created = loadBoards(projectRoot)[0].cards[0];
-		// Branch `board/<board-8>/<card-8>`, checked out BESIDE the project (a
-		// worktree nested inside the repo is refused by git provisioning).
-		expect(created.worktree?.branch).toBe(`board/${b.id.slice(0, 8)}/${created.id.slice(0, 8)}`);
+		// Branch `board/<boardId>/<cardId>` (full ids), checked out BESIDE the
+		// project (a worktree nested inside the repo is refused by git provisioning).
+		expect(created.worktree?.branch).toBe(`board/${b.id}/${created.id}`);
 		expect(created.worktree?.path).toContain(path.join('worktrees', 'board'));
 		expect(created.worktree?.path.startsWith(projectRoot + path.sep)).toBe(false);
 	});
@@ -297,7 +297,7 @@ describe('maestro-cli board', () => {
 		expect(updated.assigneeAgentId).toBe('agent-9');
 		expect(updated.parents).toEqual([]);
 		expect(updated.priority).toBe('high');
-		expect(updated.worktree?.branch).toBe(`board/${b.id.slice(0, 8)}/c1`);
+		expect(updated.worktree?.branch).toBe(`board/${b.id}/c1`);
 	});
 
 	it('board update-card --priority normal clears an explicit priority', async () => {

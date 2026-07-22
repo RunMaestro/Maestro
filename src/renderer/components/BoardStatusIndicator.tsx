@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { LayoutGrid } from 'lucide-react';
 import type { Theme } from '../types';
 import type { Board } from '../../shared/board/types';
@@ -6,6 +6,7 @@ import { countActiveCards } from '../../shared/board/graph';
 import { useSettingsStore } from '../stores/settingsStore';
 import { getModalActions } from '../stores/modalStore';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 
 interface BoardStatusIndicatorProps {
 	/** Project root whose boards to count. Empty => nothing to show. */
@@ -36,17 +37,38 @@ export const BoardStatusIndicator = memo(function BoardStatusIndicator({
 
 	const [counts, setCounts] = useState({ running: 0, ready: 0 });
 
+	// Monotonic request generation: a board.list() that resolves after the
+	// active project changed must not overwrite the new project's counts.
+	const requestGen = useRef(0);
+	// One Sentry report per project: the pill refreshes on every board:changed
+	// push, and re-reporting the same corrupt-file error on each write is noise.
+	const reportedListFailure = useRef(false);
+	useEffect(() => {
+		reportedListFailure.current = false;
+	}, [projectRoot]);
+
 	const refresh = useCallback(async () => {
+		const gen = ++requestGen.current;
 		if (!enabled || !projectRoot) {
 			setCounts({ running: 0, ready: 0 });
 			return;
 		}
 		try {
 			const boards: Board[] = await window.maestro.board.list(projectRoot);
+			if (gen !== requestGen.current) return;
 			setCounts(countActiveCards(boards));
 		} catch (err) {
+			if (gen !== requestGen.current) return;
 			// A corrupt board.yaml already surfaces as a toast from the Board modal;
-			// a header pill must not raise a second one on every write.
+			// a header pill must not raise a second one on every write. It is still
+			// an unexpected failure, so report it (once per project) instead of
+			// silently converting it to zero counts.
+			if (!reportedListFailure.current) {
+				reportedListFailure.current = true;
+				captureException(err, {
+					tags: { operation: 'board:list', surface: 'board-status-indicator' },
+				});
+			}
 			logger.warn(`Board indicator: failed to count cards - ${String(err)}`);
 			setCounts({ running: 0, ready: 0 });
 		}

@@ -600,9 +600,11 @@ export function ExtensionDetails({
 							</div>
 						))}
 
-					{/* Board: the kanban surface lives in its own modal */}
+					{/* Board: the kanban surface lives in its own modal. The open action
+					    also requires the Cue dependency: with Cue off the modal will not
+					    mount (AppStandaloneModals), so an active button would be a no-op. */}
 					{isBoard &&
-						(ext.state === 'enabled' ? (
+						(ext.state === 'enabled' && dependencyMet ? (
 							<button
 								type="button"
 								data-testid="extension-open-board"
@@ -618,7 +620,9 @@ export function ExtensionDetails({
 								className="text-xs rounded-lg border p-3"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 							>
-								Enable Board to open its kanban surface.
+								{ext.state === 'enabled'
+									? `Enable ${dependencyName ?? 'Maestro Cue'} to open the Board.`
+									: 'Enable Board to open its kanban surface.'}
 							</div>
 						))}
 

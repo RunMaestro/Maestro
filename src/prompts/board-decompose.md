@@ -9,7 +9,7 @@ Body:
 
 ## Your job
 
-Break this card into between 2 and 6 child cards. Each child must be:
+Normally, break this card into between 2 and 6 child cards (the single-card exception below is the only time fewer is allowed). Each child must be:
 
 - Concrete and independently actionable (a single, well-scoped piece of work).
 - Ordered by real dependencies. If child B needs child A's output, list A as a dependency of B.

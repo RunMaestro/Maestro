@@ -117,7 +117,24 @@ export function atomicWriteFileSync(filePath: string, contents: string): void {
 	const tmpPath = `${filePath}.tmp`;
 	try {
 		fsSync.writeFileSync(tmpPath, contents, 'utf-8');
-		fsSync.renameSync(tmpPath, filePath);
+		// Same EPERM/EBUSY retry as atomicWriteFile (transient Windows locks from
+		// OneDrive/antivirus), with a synchronous backoff since this path has no
+		// event loop to yield to. Atomics.wait on a throwaway buffer is the only
+		// dependency-free sync sleep that does not spin a core.
+		const maxRetries = 3;
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			try {
+				fsSync.renameSync(tmpPath, filePath);
+				return;
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				if ((code === 'EPERM' || code === 'EBUSY') && attempt < maxRetries) {
+					Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100 * Math.pow(2, attempt));
+					continue;
+				}
+				throw err;
+			}
+		}
 	} catch (err) {
 		try {
 			fsSync.unlinkSync(tmpPath);

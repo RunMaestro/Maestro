@@ -75,9 +75,21 @@ Add a THIRD grant shape alongside the existing two.
    may approve once, or approve and promote the decision into a standing rule.
 
 Properties the rule vocabulary may test are host-owned and metadata-only: agent
-id, agent type, project root prefix, an opt-in boolean set on the agent
+id, agent type, project-root containment, an opt-in boolean set on the agent
 (`boardWorker`), group membership, and current status. Free-form predicates,
 regexes supplied by the plugin, and anything reading transcript content are out.
+
+Project-root containment is NOT a naive string-prefix test. The implementation
+must canonicalize both the granted root and the candidate path (resolving `.`,
+`..`, and symlinks via `realpath`-style resolution, and normalizing case where
+the filesystem is case-insensitive) and then compare with separator-aware
+containment: the candidate is inside the root only when it equals the root or
+extends it at a path-segment boundary, so `/home/me/repo-evil` never matches a
+grant for `/home/me/repo`. `isPathWithin` in `src/shared/board/pool.ts` already
+implements the separator-aware comparison and is the starting point; the
+canonicalization step (symlinks, case) lives in the host because the shared
+helper is fs-free. A candidate whose canonical form escapes the canonical root
+via symlink is outside the grant, full stop.
 
 Grants are persisted in the sealed authorization ledger next to literal grants,
 so they inherit the existing anti-forgery guarantees: a plugin cannot mint or
