@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { Session } from '../../types';
 import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
+import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 
 /** A row in one of the agent-status sections. */
 export interface DashboardAgentRow {
@@ -28,6 +29,9 @@ export interface DashboardAgentRow {
 	description: string;
 	/** Epoch ms of the relevant moment, when known. */
 	timestamp?: number;
+	/** Busy worktree children grouped under this parent, mirroring the Left Bar.
+	 * Set on the parent's row in whichever bucket its own state places it. */
+	worktreeChildren?: DashboardAgentRow[];
 }
 
 /** A row in the recent-activity feed. */
@@ -80,10 +84,12 @@ export function deriveDashboard(
 	sessions: readonly Session[],
 	decisions: readonly PianolaDecisionRecord[]
 ): DashboardData {
-	// Real agents only: never the Pianola agent itself, never worktree children
-	// (they show under their parent in the Left Bar; listing them here is noise).
+	// Top-level agents only (never the Pianola agent itself). Worktree children get
+	// no row of their own here; busy ones are nested under their parent in the
+	// Working bucket below, mirroring the Left Bar.
 	const agents = sessions.filter((s) => !s.isPianola && !s.parentSessionId);
 	const nameById = new Map(sessions.map((s) => [s.id, s.name] as const));
+	const pianolaIds = new Set(sessions.filter((s) => s.isPianola).map((s) => s.id));
 
 	// Newest first. The audit log is stored oldest-last, so reverse a shallow copy.
 	const newestFirst = [...decisions].sort((a, b) => ms(b.timestamp) - ms(a.timestamp));
@@ -99,27 +105,68 @@ export function deriveDashboard(
 		}
 	}
 
+	// Busy worktree children grouped under their parent id (sorted by name so the
+	// Dashboard mirrors the Left Bar's ordering). A parent is listed in whichever
+	// bucket its own state places it, with these children nested beneath it.
+	const busyChildrenByParent = new Map<string, Session[]>();
+	for (const s of sessions) {
+		if (!s.isPianola && s.parentSessionId && s.state === 'busy') {
+			const siblings = busyChildrenByParent.get(s.parentSessionId);
+			if (siblings) siblings.push(s);
+			else busyChildrenByParent.set(s.parentSessionId, [s]);
+		}
+	}
+	const childRowsFor = (parentId: string): DashboardAgentRow[] | undefined => {
+		const kids = busyChildrenByParent.get(parentId);
+		if (!kids || kids.length === 0) return undefined;
+		return kids
+			.slice()
+			.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name))
+			.map((c) => ({
+				key: c.id,
+				sessionId: c.id,
+				agentName: c.name,
+				description: activeTaskLabel(c, 'Working...'),
+			}));
+	};
+
 	const needsInput: DashboardAgentRow[] = agents
 		.filter((s) => s.state === 'waiting_input')
 		.map((s) => {
 			const latest = latestTopicByAgent.get(s.id);
+			const worktreeChildren = childRowsFor(s.id);
 			return {
 				key: s.id,
 				sessionId: s.id,
 				agentName: s.name,
 				description: latest?.topic ?? 'Waiting for your input',
 				timestamp: latest?.timestamp,
+				...(worktreeChildren ? { worktreeChildren } : {}),
 			};
 		});
 
+	// Working now: busy top-level agents, plus any parent with busy worktree
+	// children that is not itself waiting on the user. A waiting parent stays in
+	// "Needs your input" (with its busy children nested there), so no agent is
+	// listed in two buckets. Mirrors the Left Bar.
 	const working: DashboardAgentRow[] = agents
-		.filter((s) => s.state === 'busy')
-		.map((s) => ({
-			key: s.id,
-			sessionId: s.id,
-			agentName: s.name,
-			description: activeTaskLabel(s, 'Working...'),
-		}));
+		.filter(
+			(s) => s.state === 'busy' || (s.state !== 'waiting_input' && busyChildrenByParent.has(s.id))
+		)
+		.map((s) => {
+			const worktreeChildren = childRowsFor(s.id);
+			const childCount = worktreeChildren?.length ?? 0;
+			return {
+				key: s.id,
+				sessionId: s.id,
+				agentName: s.name,
+				description:
+					s.state === 'busy'
+						? activeTaskLabel(s, 'Working...')
+						: `${childCount} worktree${childCount === 1 ? '' : 's'} working`,
+				...(worktreeChildren ? { worktreeChildren } : {}),
+			};
+		});
 
 	// Recently done: idle agents Pianola has actually worked with (they appear in
 	// the decision log), so we do not list every dormant agent as "done". Sorted
@@ -139,15 +186,17 @@ export function deriveDashboard(
 		})
 		.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
-	const activity: DashboardActivityRow[] = newestFirst.map((d) => ({
-		id: d.id + (d.dispatched ? ':done' : ':intent'),
-		sessionId: nameById.has(d.agentId) ? d.agentId : undefined,
-		agentName: agentNameFor(d.agentId, nameById),
-		action: isHandoff(d) ? 'handoff' : d.decision.action,
-		topic: d.classification.topic,
-		timestamp: ms(d.timestamp),
-		dispatched: d.dispatched,
-	}));
+	const activity: DashboardActivityRow[] = newestFirst
+		.filter((d) => !pianolaIds.has(d.agentId))
+		.map((d) => ({
+			id: d.id + (d.dispatched ? ':done' : ':intent'),
+			sessionId: nameById.has(d.agentId) ? d.agentId : undefined,
+			agentName: agentNameFor(d.agentId, nameById),
+			action: isHandoff(d) ? 'handoff' : d.decision.action,
+			topic: d.classification.topic,
+			timestamp: ms(d.timestamp),
+			dispatched: d.dispatched,
+		}));
 
 	return { needsInput, working, recentlyDone, activity };
 }
