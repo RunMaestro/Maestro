@@ -18,6 +18,13 @@ let windowCloseHandler: (() => void) | null = null;
 const webContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 const guestWebContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 
+const mockGuestNavigationHistory = {
+	canGoBack: vi.fn(() => false),
+	goBack: vi.fn(),
+	canGoForward: vi.fn(() => false),
+	goForward: vi.fn(),
+};
+
 const mockGuestWebContents = {
 	getType: vi.fn(() => 'webview'),
 	setWindowOpenHandler: vi.fn(),
@@ -26,6 +33,17 @@ const mockGuestWebContents = {
 	}),
 	executeJavaScript: vi.fn().mockResolvedValue(undefined),
 	paste: vi.fn(),
+	// Edit + navigation surface used by the browser-tab context menu (#1065)
+	cut: vi.fn(),
+	copy: vi.fn(),
+	selectAll: vi.fn(),
+	copyImageAt: vi.fn(),
+	reload: vi.fn(),
+	replaceMisspelling: vi.fn(),
+	navigationHistory: mockGuestNavigationHistory,
+	session: {
+		addWordToSpellCheckerDictionary: vi.fn(),
+	},
 };
 
 // Per-partition panel session double for the plugin render-host branch.
@@ -147,13 +165,25 @@ const { mockScreen } = vi.hoisted(() => {
 	};
 });
 
+// Mock Menu / shell / clipboard for the browser-tab context menu (#1065)
+const mockMenuPopup = vi.fn();
+const mockBuildFromTemplate = vi.fn(() => ({ popup: mockMenuPopup }));
+const mockShellOpenExternal = vi.fn((..._args: unknown[]) => Promise.resolve());
+const mockClipboardWriteText = vi.fn();
+
 vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
 	},
 	Menu: {
-		buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
+		buildFromTemplate: (...args: unknown[]) => mockBuildFromTemplate(...(args as [])),
+	},
+	shell: {
+		openExternal: (...args: unknown[]) => mockShellOpenExternal(...args),
+	},
+	clipboard: {
+		writeText: (...args: unknown[]) => mockClipboardWriteText(...args),
 	},
 	screen: {
 		getAllDisplays: () => mockScreen.getAllDisplays(),
@@ -225,6 +255,11 @@ describe('app-lifecycle/window-manager', () => {
 		// never bleeds between tests (a reused object would skip re-hardening).
 		mockPanelSessions.clear();
 		mockScreen.reset();
+		// Browser-tab context menu (#1065): restore default nav state + popup shape
+		// after clearAllMocks / restoreAllMocks strip the vi.fn implementations.
+		mockGuestNavigationHistory.canGoBack.mockReturnValue(false);
+		mockGuestNavigationHistory.canGoForward.mockReturnValue(false);
+		mockBuildFromTemplate.mockReturnValue({ popup: mockMenuPopup });
 
 		mockWindowStateStore = {
 			store: {
@@ -1803,6 +1838,261 @@ describe('app-lifecycle/window-manager', () => {
 					)
 				);
 			});
+		});
+	});
+
+	// Browser-tab right-click context menu (#1065). The guest <webview> gets no
+	// default context menu from Electron, so guest-webview-security wires one onto
+	// the attached guest webContents. All actions target the guest, not the host.
+	describe('browser-tab context menu (#1065)', () => {
+		const baseDeps = {
+			isDevelopment: false,
+			preloadPath: '/path/to/preload.js',
+			rendererProductionUrl: 'app://app/index.html',
+			devServerUrl: 'http://localhost:5173',
+			useNativeTitleBar: false,
+			autoHideMenuBar: false,
+		};
+
+		// Attaches a browser-tab guest and returns its `context-menu` handler.
+		async function attachGuestAndGetContextMenuHandler() {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				...baseDeps,
+			});
+			windowManager.createWindow();
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+			return guestWebContentsEventHandlers.get('context-menu');
+		}
+
+		function makeParams(overrides: Record<string, unknown> = {}): any {
+			return {
+				isEditable: false,
+				editFlags: {
+					canCut: true,
+					canCopy: true,
+					canPaste: true,
+					canSelectAll: true,
+					canUndo: false,
+					canRedo: false,
+					canDelete: true,
+					canEditRichly: true,
+				},
+				misspelledWord: '',
+				dictionarySuggestions: [],
+				linkURL: '',
+				srcURL: '',
+				mediaType: 'none',
+				selectionText: '',
+				x: 0,
+				y: 0,
+				...overrides,
+			};
+		}
+
+		// Pull the template handed to Menu.buildFromTemplate on the latest popup.
+		function lastTemplate(): any[] {
+			const calls = mockBuildFromTemplate.mock.calls;
+			return calls[calls.length - 1][0] as unknown as any[];
+		}
+
+		function findItem(template: any[], label: string): any {
+			return template.find((item) => item.label === label);
+		}
+
+		it('registers a context-menu handler on the attached browser-tab guest', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			expect(handler).toBeTruthy();
+		});
+
+		it('builds Cut/Copy/Paste/Select All for editable fields and acts on the guest', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams({ isEditable: true }));
+
+			const template = lastTemplate();
+			expect(findItem(template, 'Cut')).toBeTruthy();
+			expect(findItem(template, 'Copy')).toBeTruthy();
+			expect(findItem(template, 'Paste')).toBeTruthy();
+			expect(findItem(template, 'Select All')).toBeTruthy();
+
+			// Actions target the guest webContents, not the host window.
+			findItem(template, 'Paste').click();
+			expect(mockGuestWebContents.paste).toHaveBeenCalledTimes(1);
+			findItem(template, 'Cut').click();
+			expect(mockGuestWebContents.cut).toHaveBeenCalledTimes(1);
+			findItem(template, 'Select All').click();
+			expect(mockGuestWebContents.selectAll).toHaveBeenCalledTimes(1);
+
+			// The menu is popped over the host window.
+			expect(mockMenuPopup).toHaveBeenCalledWith(
+				expect.objectContaining({ window: expect.any(MockBrowserWindow) })
+			);
+		});
+
+		it('disables edit items when editFlags forbid the action', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({
+					isEditable: true,
+					editFlags: {
+						canCut: false,
+						canCopy: false,
+						canPaste: false,
+						canSelectAll: false,
+						canUndo: false,
+						canRedo: false,
+						canDelete: false,
+						canEditRichly: false,
+					},
+				})
+			);
+
+			const template = lastTemplate();
+			expect(findItem(template, 'Cut').enabled).toBe(false);
+			expect(findItem(template, 'Copy').enabled).toBe(false);
+			expect(findItem(template, 'Paste').enabled).toBe(false);
+			expect(findItem(template, 'Select All').enabled).toBe(false);
+		});
+
+		it('offers spellcheck suggestions and Add to Dictionary for a misspelled word', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({
+					isEditable: true,
+					misspelledWord: 'teh',
+					dictionarySuggestions: ['the', 'ten'],
+				})
+			);
+
+			const template = lastTemplate();
+			findItem(template, 'the').click();
+			expect(mockGuestWebContents.replaceMisspelling).toHaveBeenCalledWith('the');
+
+			findItem(template, 'Add to Dictionary').click();
+			expect(mockGuestWebContents.session.addWordToSpellCheckerDictionary).toHaveBeenCalledWith(
+				'teh'
+			);
+		});
+
+		it('shows "No suggestions" (disabled) when a misspelled word has none', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({ isEditable: true, misspelledWord: 'zzxq', dictionarySuggestions: [] })
+			);
+
+			const template = lastTemplate();
+			expect(findItem(template, 'No suggestions').enabled).toBe(false);
+		});
+
+		it('copies a link via clipboard and opens allowed http/https/mailto links externally', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+
+			for (const url of ['https://example.com/', 'http://example.com/', 'mailto:a@b.com']) {
+				mockShellOpenExternal.mockClear();
+				mockClipboardWriteText.mockClear();
+				handler?.({} as any, makeParams({ linkURL: url }));
+				const template = lastTemplate();
+
+				findItem(template, 'Copy Link').click();
+				expect(mockClipboardWriteText).toHaveBeenCalledWith(url);
+
+				const openItem = findItem(template, 'Open Link in Browser');
+				expect(openItem).toBeTruthy();
+				openItem.click();
+				expect(mockShellOpenExternal).toHaveBeenCalledWith(url);
+			}
+		});
+
+		it('never routes dangerous link schemes to shell.openExternal', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+
+			for (const url of [
+				'file:///etc/passwd',
+				'javascript:alert(1)',
+				'data:text/html,<script>1</script>',
+				'chrome://settings',
+				'not-a-url',
+			]) {
+				mockShellOpenExternal.mockClear();
+				handler?.({} as any, makeParams({ linkURL: url }));
+				const template = lastTemplate();
+
+				// Copy Link is still offered, but Open Link in Browser is withheld.
+				expect(findItem(template, 'Copy Link')).toBeTruthy();
+				expect(findItem(template, 'Open Link in Browser')).toBeUndefined();
+				expect(mockShellOpenExternal).not.toHaveBeenCalled();
+			}
+		});
+
+		it('offers Copy Image and Copy Image Address for images', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({ mediaType: 'image', srcURL: 'https://example.com/a.png', x: 12, y: 34 })
+			);
+
+			const template = lastTemplate();
+			findItem(template, 'Copy Image').click();
+			expect(mockGuestWebContents.copyImageAt).toHaveBeenCalledWith(12, 34);
+
+			findItem(template, 'Copy Image Address').click();
+			expect(mockClipboardWriteText).toHaveBeenCalledWith('https://example.com/a.png');
+		});
+
+		it('offers Copy for a text selection and acts on the guest', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.({} as any, makeParams({ selectionText: 'hello world' }));
+
+			const template = lastTemplate();
+			findItem(template, 'Copy').click();
+			expect(mockGuestWebContents.copy).toHaveBeenCalledTimes(1);
+		});
+
+		it('always offers navigation and reflects back/forward availability', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			mockGuestNavigationHistory.canGoBack.mockReturnValue(true);
+			mockGuestNavigationHistory.canGoForward.mockReturnValue(false);
+			handler?.({} as any, makeParams());
+
+			const template = lastTemplate();
+			const back = findItem(template, 'Back');
+			const forward = findItem(template, 'Forward');
+			expect(back.enabled).toBe(true);
+			expect(forward.enabled).toBe(false);
+
+			back.click();
+			expect(mockGuestNavigationHistory.goBack).toHaveBeenCalledTimes(1);
+			findItem(template, 'Reload').click();
+			expect(mockGuestWebContents.reload).toHaveBeenCalledTimes(1);
+		});
+
+		it('joins sections with separators without leading/trailing/doubled dividers', async () => {
+			const handler = await attachGuestAndGetContextMenuHandler();
+			handler?.(
+				{} as any,
+				makeParams({
+					linkURL: 'https://example.com/',
+					mediaType: 'image',
+					srcURL: 'https://example.com/a.png',
+					selectionText: 'sel',
+				})
+			);
+
+			const template = lastTemplate();
+			expect(template[0].type).not.toBe('separator');
+			expect(template[template.length - 1].type).not.toBe('separator');
+			for (let i = 1; i < template.length; i++) {
+				if (template[i].type === 'separator') {
+					expect(template[i - 1].type).not.toBe('separator');
+				}
+			}
 		});
 	});
 
