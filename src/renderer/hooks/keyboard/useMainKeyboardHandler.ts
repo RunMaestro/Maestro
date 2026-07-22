@@ -1172,9 +1172,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 											return {
 												...tab,
 												showThinking: 'off',
-												logs: tab.logs.filter(
-													(l) => l.source !== 'thinking' && l.source !== 'tool'
-												),
+												logs: tab.logs.filter((l) => l.source !== 'thinking'),
 											};
 										}
 										return { ...tab, showThinking: newMode };

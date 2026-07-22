@@ -14,6 +14,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useMessageGistStore } from '../../stores/messageGistStore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { collapseAiResponseLogs } from './utils/collapseAiResponseLogs';
+import { toolLogsRecorded } from '../../hooks/agent/internal/helpers/thinkingLogs';
 import { groupSubagentToolLogs } from './utils/groupSubagentToolLogs';
 import { LogItem } from './components/LogItem';
 import { OutputSearchBar } from './components/OutputSearchBar';
@@ -125,7 +126,20 @@ export const TerminalOutput = memo(
 
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
-		const collapsedLogs = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
+		// Collapse FIRST so tool logs still act as response boundaries
+		// (collapseAiResponseLogs treats source:'tool' as a boundary between
+		// assistant segments); only THEN hide them. Tool visibility is a pure render
+		// concern: tool events are always recorded (useAgentToolExecutionListener),
+		// so hiding here keeps toggling from mutating log storage (the flicker bug)
+		// and preserves running->completed correlation.
+		const collapsedAll = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
+		const toolsVisible = activeTab
+			? toolLogsRecorded(activeTab.showTools, activeTab.showThinking)
+			: true;
+		const collapsedLogs = useMemo(
+			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
+			[collapsedAll, toolsVisible]
+		);
 		// Nest subagent tool badges (claude-code Task) under the tool entry that
 		// spawned them; orphans and non-claude agents pass through untouched.
 		const { logs: filteredLogs, childrenByParentId } = useMemo(

@@ -1907,7 +1907,7 @@ describe('useTabHandlers', () => {
 	// ========================================================================
 
 	describe('handleToggleTabShowThinking log clearing', () => {
-		it('clears thinking and tool logs when cycling to off', () => {
+		it('clears thinking logs but keeps tool logs when cycling to off', () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
 				showThinking: 'sticky',
@@ -1927,10 +1927,11 @@ describe('useTabHandlers', () => {
 
 			const session = getSession();
 			expect(session.aiTabs[0].showThinking).toBe('off');
-			// thinking and tool logs should be filtered out
+			// Thinking logs are removed; tool logs are always recorded and render-gated,
+			// so they survive a thinking-off toggle.
 			const logSources = session.aiTabs[0].logs.map((l) => l.source);
 			expect(logSources).not.toContain('thinking');
-			expect(logSources).not.toContain('tool');
+			expect(logSources).toContain('tool');
 			expect(logSources).toContain('user');
 			expect(logSources).toContain('ai');
 		});
