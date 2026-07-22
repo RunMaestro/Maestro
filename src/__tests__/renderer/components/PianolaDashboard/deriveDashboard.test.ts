@@ -85,14 +85,15 @@ describe('deriveDashboard', () => {
 		expect(recentlyDone.find((r) => r.sessionId === 'e')).toBeUndefined();
 	});
 
-	it('excludes the Pianola agent from every bucket', () => {
+	it('excludes the Pianola agent and its own decisions from every bucket', () => {
 		const { needsInput, working, recentlyDone, activity } = deriveDashboard(
 			[session({ id: 'pia', state: 'busy', isPianola: true })],
-			[]
+			[decision('pia', 'internal self-check')]
 		);
 		expect(needsInput).toHaveLength(0);
 		expect(working).toHaveLength(0);
 		expect(recentlyDone).toHaveLength(0);
+		// Recent decisions must not surface the Pianola session's own decisions.
 		expect(activity).toHaveLength(0);
 	});
 
@@ -129,6 +130,38 @@ describe('deriveDashboard', () => {
 			[]
 		);
 		expect(working).toHaveLength(0);
+	});
+
+	it('nests a busy child under a waiting parent in needsInput, not in Working', () => {
+		const sessions = [
+			session({ id: 'parent', state: 'waiting_input', name: 'Parent' }),
+			session({
+				id: 'child',
+				state: 'busy',
+				parentSessionId: 'parent',
+				name: 'Child',
+				activeTabId: 't1',
+				aiTabs: [{ id: 't1', name: 'fixing tests' }] as Session['aiTabs'],
+			}),
+		];
+		const { needsInput, working } = deriveDashboard(sessions, []);
+		// The waiting parent stays in needsInput, with the busy child nested there.
+		expect(needsInput).toHaveLength(1);
+		expect(needsInput[0].sessionId).toBe('parent');
+		expect(needsInput[0].worktreeChildren?.map((c) => c.sessionId)).toEqual(['child']);
+		// It must NOT also appear in Working (no double-listing).
+		expect(working.find((r) => r.sessionId === 'parent')).toBeUndefined();
+		expect(working).toHaveLength(0);
+	});
+
+	it('sorts busy worktree children by name, ignoring leading emojis', () => {
+		const sessions = [
+			session({ id: 'parent', state: 'idle', name: 'Parent' }),
+			session({ id: 'a', state: 'busy', parentSessionId: 'parent', name: 'Beta' }),
+			session({ id: 'z', state: 'busy', parentSessionId: 'parent', name: '🐛 Alpha' }),
+		];
+		const { working } = deriveDashboard(sessions, []);
+		expect(working[0].worktreeChildren?.map((c) => c.agentName)).toEqual(['🐛 Alpha', 'Beta']);
 	});
 
 	it('feeds activity newest-first and splits handoffs out from escalations', () => {
