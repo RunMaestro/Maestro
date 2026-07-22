@@ -21,6 +21,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { abbreviateGroupName } from '../../shared/formatters';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -424,7 +425,7 @@ export const SessionItem = memo(function SessionItem({
 								{jumpNumber}
 							</div>
 						)}
-						<Activity className="w-3 h-3" /> {session.toolType}
+						<Activity className="w-3 h-3" /> {getAgentDisplayName(session.toolType)}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 					</div>
 				)}
