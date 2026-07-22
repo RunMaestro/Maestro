@@ -59,6 +59,7 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(),
+	readHistory: vi.fn(),
 }));
 
 // Mock cli-activity
@@ -89,9 +90,11 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from '../../../cli/services/agent-spawner';
-import { addHistoryEntry, readGroups } from '../../../cli/services/storage';
+import { addHistoryEntry, readGroups, readHistory } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { logger } from '../../../main/utils/logger';
+import type { HistoryEntry } from '../../../shared/types';
 
 describe('batch-processor', () => {
 	// Helper to create mock session
@@ -132,6 +135,8 @@ describe('batch-processor', () => {
 		vi.mocked(readGroups).mockReturnValue([
 			{ id: 'group-456', name: 'Test Group', emoji: '🧪', collapsed: false },
 		]);
+		// By default, no persisted history so reconciliation is a no-op.
+		vi.mocked(readHistory).mockReturnValue([]);
 		// By default, return 0 tasks to prevent infinite loops
 		vi.mocked(readDocAndCountTasks).mockReturnValue({ content: '', taskCount: 0 });
 		vi.mocked(readDocAndGetTasks).mockReturnValue({ content: '', tasks: [] });
@@ -1005,6 +1010,138 @@ describe('batch-processor', () => {
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
 			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
+		});
+	});
+
+	describe('runPlaybook - history reconciliation', () => {
+		// Completes exactly one checkbox in the current run, with the given usage.
+		const oneTaskRun = (taskCost = 0.01) => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: taskCost,
+					contextWindow: 200000,
+				},
+			});
+		};
+
+		// Minimal AUTO per-task history entry (carries completedTaskCount, like a
+		// real persisted task row).
+		const taskEntry = (timestamp: number, cost: number): HistoryEntry => ({
+			id: `e-${timestamp}`,
+			type: 'AUTO',
+			timestamp,
+			summary: '[tasks] Task completed',
+			fullResponse: '',
+			projectPath: '/path/to/project',
+			sessionId: 'session-123',
+			success: true,
+			elapsedTimeMs: 1000,
+			completedTaskCount: 1,
+			usageStats: {
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: cost,
+				contextWindow: 200000,
+			},
+		});
+
+		it('reconciles cumulative totals across a restart (no intervening summary)', async () => {
+			oneTaskRun(0.01);
+			// History holds 3 task rows from before a restart plus this run's 1 row.
+			// None are preceded by an "Auto Run completed" summary, so all belong to
+			// the same logical session and the totals should span the restart.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				taskEntry(4, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(4);
+			expect(complete?.totalCost).toBeCloseTo(0.07, 5);
+		});
+
+		it('does not absorb a previously-completed run on the same session', async () => {
+			oneTaskRun(0.01);
+			// A prior run wrote 3 task rows then an "Auto Run completed" summary
+			// (t=4). This run added 1 row (t=5). Only rows after the last summary
+			// should count.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				{
+					id: 'summary-1',
+					type: 'AUTO',
+					timestamp: 4,
+					summary: 'Auto Run completed: 3 tasks in 1 loop',
+					fullResponse: '',
+					projectPath: '/path/to/project',
+					sessionId: 'session-123',
+					success: true,
+					elapsedTimeMs: 3000,
+				},
+				taskEntry(5, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.01, 5);
+		});
+
+		it('does not undercount the current run when history lags behind', async () => {
+			// Current run completes one task; history read returns nothing (e.g. the
+			// per-task write has not been flushed yet). Reconciliation must keep the
+			// in-memory total, not clobber it to zero.
+			oneTaskRun(0.05);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.05, 5);
+		});
+
+		it('falls back to in-memory counters and warns when history read throws', async () => {
+			oneTaskRun(0.05);
+			vi.mocked(readHistory).mockImplementation(() => {
+				throw new Error('disk read failed');
+			});
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.05, 5);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'History reconciliation failed, using in-memory counters',
+				session.name,
+				expect.objectContaining({ sessionId: session.id })
+			);
 		});
 	});
 
