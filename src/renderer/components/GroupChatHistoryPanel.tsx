@@ -431,6 +431,12 @@ const TYPE_FILTER_CONFIG: {
 	{ type: 'error', label: 'Error', icon: AlertTriangle },
 ];
 
+// Lookup the same icon + label used by the filter pills, keyed by entry type,
+// so per-entry badges stay in sync with the filter pills automatically.
+const TYPE_CONFIG_BY_TYPE = Object.fromEntries(
+	TYPE_FILTER_CONFIG.map((config) => [config.type, config])
+) as Record<GroupChatHistoryEntryType, (typeof TYPE_FILTER_CONFIG)[number]>;
+
 // All entry types for default filter state
 const ALL_ENTRY_TYPES = new Set<GroupChatHistoryEntryType>([
 	'delegation',
@@ -671,10 +677,28 @@ export function GroupChatHistoryPanel({
 									>
 										{entry.participantName}
 									</span>
-									{/* Timestamp */}
-									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
-										{formatTime(entry.timestamp)}
-									</span>
+									<div className="flex items-center gap-2">
+										{/* Entry type badge - mirrors the filter pill icon + label */}
+										{(() => {
+											const typeConfig = TYPE_CONFIG_BY_TYPE[entry.type];
+											if (!typeConfig) return null;
+											const { label, icon: TypeIcon } = typeConfig;
+											return (
+												<span
+													className="flex items-center gap-1 text-[10px] font-bold uppercase"
+													style={{ color: theme.colors.accent }}
+													title={`${label} entry`}
+												>
+													<TypeIcon className="w-2.5 h-2.5" />
+													{label}
+												</span>
+											);
+										})()}
+										{/* Timestamp */}
+										<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+											{formatTime(entry.timestamp)}
+										</span>
+									</div>
 								</div>
 
 								{/* Summary - strip markdown for clean display */}

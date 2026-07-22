@@ -334,6 +334,8 @@ export interface SettingsStoreState {
 	enterToSendAIExpanded: boolean;
 	forcedParallelExecution: boolean;
 	forcedParallelAcknowledged: boolean;
+	/** When forced parallel is on, treat EVERY send as a force-send (no modifier needed). */
+	forcedParallelAlways: boolean;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -496,6 +498,7 @@ export interface SettingsStoreActions {
 	setEnterToSendAIExpanded: (value: boolean) => void;
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
+	setForcedParallelAlways: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -724,6 +727,25 @@ export function sanitizeLoadedAutoRunMaxTaskDurationMin(raw: unknown): number {
 // Store Implementation
 // ============================================================================
 
+/**
+ * Resolve whether a send should force-parallel (bypass the busy-agent queue).
+ *
+ * The feature is a two-level opt-in:
+ *  - `forcedParallelExecution` off  → never force (gate closed).
+ *  - on, "modifier" mode            → force only when the caller passed the
+ *    explicit override (the ⌘⇧↩ shortcut or the Force Send button).
+ *  - on, "always" mode              → force EVERY send, no modifier needed.
+ *
+ * Single source of truth for all send paths (inline composer, expanded
+ * composer, custom commands). Reads the store directly so callers don't
+ * duplicate the truth table.
+ */
+export function resolveForceParallel(optionForce?: boolean): boolean {
+	const s = useSettingsStore.getState();
+	if (!s.forcedParallelExecution) return false;
+	return optionForce === true || s.forcedParallelAlways;
+}
+
 export const useSettingsStore = create<SettingsStore>()((set, get) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
@@ -754,6 +776,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		enterToSendAIExpanded: false,
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
+		forcedParallelAlways: false,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -995,6 +1018,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setForcedParallelAcknowledged: (value) => {
 			set({ forcedParallelAcknowledged: value });
 			window.maestro.settings.set('forcedParallelAcknowledged', value);
+		},
+
+		setForcedParallelAlways: (value) => {
+			set({ forcedParallelAlways: value });
+			window.maestro.settings.set('forcedParallelAlways', value);
 		},
 
 		setDefaultSaveToHistory: (value) => {
@@ -2382,6 +2410,8 @@ export async function loadAllSettings(): Promise<void> {
 			patch.forcedParallelExecution = allSettings['forcedParallelExecution'] as boolean;
 		if (allSettings['forcedParallelAcknowledged'] !== undefined)
 			patch.forcedParallelAcknowledged = allSettings['forcedParallelAcknowledged'] as boolean;
+		if (allSettings['forcedParallelAlways'] !== undefined)
+			patch.forcedParallelAlways = allSettings['forcedParallelAlways'] as boolean;
 
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;

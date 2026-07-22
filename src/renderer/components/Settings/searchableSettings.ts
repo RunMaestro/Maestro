@@ -145,6 +145,9 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'mode',
 			'ai interaction mode',
 			'cmd+enter',
+			'always force send',
+			'send trigger',
+			'modifier',
 		],
 	},
 	{

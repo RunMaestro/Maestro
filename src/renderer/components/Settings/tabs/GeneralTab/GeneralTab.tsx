@@ -81,6 +81,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				enterToSendAIExpanded={settings.enterToSendAIExpanded}
 				setEnterToSendAIExpanded={settings.setEnterToSendAIExpanded}
 				forcedParallelExecution={settings.forcedParallelExecution}
+				forcedParallelAlways={settings.forcedParallelAlways}
+				setForcedParallelAlways={settings.setForcedParallelAlways}
 				shortcuts={settings.shortcuts}
 				forcedParallelWarning={forcedParallelWarning}
 			/>
