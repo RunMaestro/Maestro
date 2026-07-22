@@ -273,6 +273,10 @@ program
 	.option('--exit-criteria <text>', 'What "done" looks like and when to declare a deadlock')
 	.option('--max-iterations <n>', 'Cap iterations (default: infinite)')
 	.option('--no-history', 'Do not write history entries')
+	.option(
+		'--visible',
+		'Launch as a desktop-visible Auto Run (parity with the UI Go button); requires the running desktop app'
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {

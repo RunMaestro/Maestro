@@ -1173,6 +1173,50 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// Bridge for launching a desktop-visible Goal-Driven Auto Run (parity with
+		// the UI Go button) from `maestro-cli goal-run --visible`. Mirrors the
+		// `configureAutoRun` bridge but returns the AI tab id the run attached to so
+		// the CLI can hand back an addressable `maestro://` deep link.
+		server.setLaunchGoalRunCallback(async (sessionId, config) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for launchGoalRun', 'WebServer');
+				return { success: false, error: 'Main window not available' };
+			}
+
+			return new Promise<{ success: boolean; tabId?: string; error?: string }>((resolve) => {
+				const responseChannel = `remote:launchGoalRun:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (
+					_event: Electron.IpcMainEvent,
+					result: { success: boolean; tabId?: string; error?: string } | undefined
+				) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || { success: false, error: 'No response' });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for launchGoalRun', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Web contents not available' });
+					return;
+				}
+				mainWindow.webContents.send('remote:launchGoalRun', sessionId, config, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`launchGoalRun callback timed out for session ${sessionId}`, 'WebServer');
+					resolve({ success: false, error: 'Timeout' });
+				}, 10000);
+			});
+		});
+
 		// Set up callback for web server to update the Auto Run folder on a session.
 		// Mirrors `configureAutoRun` IPC pattern: bridge to renderer via remote IPC,
 		// renderer-side `handleAutoRunFolderSelected` reloads docs and persists the

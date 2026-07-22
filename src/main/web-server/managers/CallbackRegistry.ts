@@ -29,6 +29,7 @@ import type {
 	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	LaunchGoalRunCallback,
 	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
@@ -148,6 +149,7 @@ export interface WebServerCallbacks {
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
+	launchGoalRun: LaunchGoalRunCallback | null;
 	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
 	getHistory: GetHistoryCallback | null;
 	getAutoRunDocs: GetAutoRunDocsCallback | null;
@@ -235,6 +237,7 @@ export class CallbackRegistry {
 		newAITabWithPrompt: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
+		launchGoalRun: null,
 		setSessionAutoRunFolder: null,
 		getHistory: null,
 		getAutoRunDocs: null,
@@ -436,6 +439,14 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
 		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
 		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
+	async launchGoalRun(
+		sessionId: string,
+		config: { goal: string; exitCriteria: string; maxIterations: number | null }
+	): Promise<{ success: boolean; tabId?: string; error?: string }> {
+		if (!this.callbacks.launchGoalRun) return { success: false, error: 'Not configured' };
+		return this.callbacks.launchGoalRun(sessionId, config);
 	}
 
 	async setSessionAutoRunFolder(
@@ -941,6 +952,10 @@ export class CallbackRegistry {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbacks.configureAutoRun = callback;
+	}
+
+	setLaunchGoalRunCallback(callback: LaunchGoalRunCallback): void {
+		this.callbacks.launchGoalRun = callback;
 	}
 
 	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {

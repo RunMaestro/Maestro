@@ -141,11 +141,15 @@ describe('useRemoteIntegration', () => {
 		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteLaunchGoalRun: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
 		onRemoteSetAutoRunFolder: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		sendRemoteNewTabResponse: vi.fn(),
 		sendRemoteConfigureAutoRunResponse: vi.fn(),
+		sendRemoteLaunchGoalRunResponse: vi.fn(),
 		sendRemoteSetAutoRunFolderResponse: vi.fn(),
 		onRemoteGetAutoRunDocs: vi.fn().mockImplementation(() => {
 			return () => {};

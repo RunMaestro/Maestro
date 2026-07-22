@@ -774,6 +774,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle remote launch-goal-run from the CLI (`goal-run --visible`). Starts a
+	// desktop-visible Goal-Driven Auto Run in the same UI surface as the Go button.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteLaunchGoalRun(
+			(
+				sessionId: string,
+				config: { goal: string; exitCriteria: string; maxIterations: number | null },
+				responseChannel: string
+			) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:launchGoalRun', {
+						detail: { sessionId, config, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
 	// git worktree branched off a parent agent, without an Auto Run playbook.
 	useEffect(() => {

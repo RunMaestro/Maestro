@@ -490,6 +490,18 @@ export type ConfigureAutoRunCallback = (
 ) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 
 /**
+ * Callback type for launching a desktop-visible Goal-Driven Auto Run. Powers
+ * `maestro-cli goal-run --visible`: the desktop app starts the goal loop in the
+ * same UI surface as the Go/Spec buttons and returns the AI tab it attached to
+ * so the caller can build an addressable `maestro://` deep link.
+ */
+export type LaunchGoalRunResult = { success: boolean; tabId?: string; error?: string };
+export type LaunchGoalRunCallback = (
+	sessionId: string,
+	config: { goal: string; exitCriteria: string; maxIterations: number | null }
+) => Promise<LaunchGoalRunResult>;
+
+/**
  * Callback type for fetching current theme.
  */
 export type GetThemeCallback = () => Theme | null;
