@@ -61,12 +61,16 @@ function readManifest(dir: string): PluginManifest | null {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
 		throw error;
 	}
+	let parsed: unknown;
 	try {
-		return validatePluginManifest(JSON.parse(raw) as unknown).manifest;
+		parsed = JSON.parse(raw);
 	} catch {
-		// Malformed JSON -> no usable manifest (validation returns null on its own).
+		// Malformed JSON -> no usable manifest.
 		return null;
 	}
+	// validatePluginManifest returns { manifest: null } for an invalid shape; an
+	// actual throw here would be an unexpected bug, so let it reach onError/Sentry.
+	return validatePluginManifest(parsed).manifest;
 }
 
 export interface SeedBundledPluginsDeps {
