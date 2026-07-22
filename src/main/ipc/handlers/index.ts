@@ -64,6 +64,7 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerTtsrHandlers } from './ttsr';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
@@ -140,6 +141,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerTtsrHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
 export { registerPluginsHandlers };
@@ -363,6 +365,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
+	// Register TTSR rule/settings CRUD (Right Bar Rules tab)
+	registerTtsrHandlers();
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)

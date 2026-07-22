@@ -103,6 +103,8 @@ export interface UseRightPanelPropsDeps {
 
 	// File linking
 	handleMainPanelFileClick: (path: string) => void;
+	/** Send a composed prompt to the active agent (TTSR rule authoring hand-off). */
+	handleSendPromptToAgent: (prompt: string) => void;
 
 	// Document Graph handlers
 	handleFocusFileInGraph: (relativePath: string) => void;
@@ -177,6 +179,10 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			// File linking
 			onFileClick: deps.handleMainPanelFileClick,
 
+			// TTSR rules tab: authoring is delegated to the agent, so the panel
+			// needs a way to put a composed prompt in front of it.
+			onSendPromptToAgent: deps.handleSendPromptToAgent,
+
 			// Document Graph
 			onFocusFileInGraph: deps.handleFocusFileInGraph,
 
@@ -217,6 +223,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			deps.handleOpenMarketplace,
 			deps.handleLaunchWizardTab,
 			deps.handleMainPanelFileClick,
+			deps.handleSendPromptToAgent,
 			deps.handleFocusFileInGraph,
 			deps.handleOpenBrowserTabAt,
 			// Refs (stable)

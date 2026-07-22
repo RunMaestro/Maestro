@@ -49,6 +49,10 @@ vi.mock('../../../renderer/components/AutoRun', () => ({
 	AutoRun: vi.fn((props) => <div data-testid="auto-run">AutoRun</div>),
 }));
 
+vi.mock('../../../renderer/components/TtsrRulesPanel', () => ({
+	TtsrRulesPanel: vi.fn(() => <div data-testid="ttsr-rules-panel">TtsrRulesPanel</div>),
+}));
+
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys) => keys.join('+')),
 	isMacOS: vi.fn(() => false),
@@ -152,6 +156,17 @@ describe('RightPanel', () => {
 		autoRunPreviewScrollPos: 0,
 	};
 
+	/** Current Encore flags, so a test can flip one without dropping the rest. */
+	const encoreFeatures = () => useSettingsStore.getState().encoreFeatures;
+
+	/** Both halves of the TTSR gate the Rules tab is bound to. */
+	const enableTtsr = () => {
+		useSettingsStore.setState({
+			encoreFeatures: { ...encoreFeatures(), ttsr: true },
+			ttsrEnabled: true,
+		});
+	};
+
 	const mockShortcuts: Record<string, Shortcut> = {
 		toggleRightPanel: {
 			id: 'toggleRightPanel',
@@ -214,6 +229,10 @@ describe('RightPanel', () => {
 			shortcuts: mockShortcuts,
 			showHiddenFiles: false,
 			autoRunDisabled: false,
+			// The store is module-level, so the TTSR gate has to be reset explicitly
+			// or a test that turns it on leaks the Rules tab into every later one.
+			encoreFeatures: { ...encoreFeatures(), ttsr: false },
+			ttsrEnabled: false,
 		});
 		useFileExplorerStore.setState({
 			fileTreeFilter: '',
@@ -358,6 +377,64 @@ describe('RightPanel', () => {
 			expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
 			expect(screen.queryByRole('button', { name: 'Auto Run' })).not.toBeInTheDocument();
+		});
+
+		it('should show the Rules tab only while the TTSR gate is on', () => {
+			enableTtsr();
+			const props = createDefaultProps();
+			const { rerender } = render(<RightPanel {...props} />);
+			expect(screen.getByRole('button', { name: 'Rules' })).toBeInTheDocument();
+
+			act(() => {
+				useSettingsStore.setState({ encoreFeatures: { ...encoreFeatures(), ttsr: false } });
+			});
+			rerender(<RightPanel {...props} />);
+			expect(screen.queryByRole('button', { name: 'Rules' })).not.toBeInTheDocument();
+		});
+
+		// Without the reset the tab button disappears but the selection stays on
+		// `rules`, leaving the whole panel body blank until the user clicks away.
+		it('should leave the Rules tab when its Encore flag is turned off', () => {
+			enableTtsr();
+			useUIStore.setState({ activeRightTab: 'rules' });
+			const setActiveRightTab = vi.fn();
+			const props = createDefaultProps({ setActiveRightTab });
+			const { rerender } = render(<RightPanel {...props} />);
+
+			expect(screen.getByTestId('ttsr-rules-panel')).toBeInTheDocument();
+			expect(setActiveRightTab).not.toHaveBeenCalled();
+
+			act(() => {
+				useSettingsStore.setState({ encoreFeatures: { ...encoreFeatures(), ttsr: false } });
+			});
+			rerender(<RightPanel {...props} />);
+
+			expect(setActiveRightTab).toHaveBeenCalledWith('files');
+			expect(screen.queryByTestId('ttsr-rules-panel')).not.toBeInTheDocument();
+		});
+
+		it('should leave the Rules tab when the ttsrEnabled setting is turned off', () => {
+			enableTtsr();
+			useUIStore.setState({ activeRightTab: 'rules' });
+			const setActiveRightTab = vi.fn();
+			const props = createDefaultProps({ setActiveRightTab });
+			const { rerender } = render(<RightPanel {...props} />);
+
+			act(() => {
+				useSettingsStore.setState({ ttsrEnabled: false });
+			});
+			rerender(<RightPanel {...props} />);
+
+			expect(setActiveRightTab).toHaveBeenCalledWith('files');
+		});
+
+		it('should not touch the active tab while the TTSR gate is on', () => {
+			enableTtsr();
+			useUIStore.setState({ activeRightTab: 'rules' });
+			const setActiveRightTab = vi.fn();
+			render(<RightPanel {...createDefaultProps({ setActiveRightTab })} />);
+
+			expect(setActiveRightTab).not.toHaveBeenCalled();
 		});
 	});
 

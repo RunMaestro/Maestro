@@ -163,6 +163,13 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Symphony
 		symphonyRegistryUrls: [],
 		setSymphonyRegistryUrls: vi.fn(),
+		// TTSR
+		ttsrEnabled: false,
+		setTtsrEnabled: vi.fn(),
+		ttsrDisabledRules: [],
+		setTtsrDisabledRules: vi.fn(),
+		ttsrContextMode: 'keep',
+		setTtsrContextMode: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));

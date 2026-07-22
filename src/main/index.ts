@@ -33,6 +33,12 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { installTtsrRuntime, type TtsrRuntime } from './ttsr';
+import {
+	DEFAULT_TTSR_CONTEXT_MODE,
+	isTtsrContextMode,
+	type TtsrContextMode,
+} from '../shared/ttsr-types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -165,6 +171,7 @@ import {
 	registerCrossAgentHandlers,
 	registerCueHandlers,
 	registerCueBackupHandlers,
+	registerTtsrHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
 	registerMaestroCliHandlers,
@@ -499,6 +506,8 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+/** Time-Traveling Stream Rules runtime; null until the process manager exists. */
+let ttsrRuntime: TtsrRuntime | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
 let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
 let pluginManager: PluginManager | null = null;
@@ -726,6 +735,42 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 		return;
 	}
 	pluginHostViews.sync();
+});
+
+// ── TTSR gate snapshot ──
+// These four values are read from the stdout hot path: `TtsrRuntime.observe`
+// consults the gate for EVERY parsed event of EVERY agent, and the enabled path
+// re-reads the rest several times per event. electron-store (conf 10.x) re-reads
+// and re-parses the whole settings JSON file on every `get`, so reading them live
+// would mean synchronous disk I/O per token. Snapshot them here and refresh on
+// change, so the deps handed to `installTtsrRuntime` only ever read memory and a
+// toggle still takes effect without an app restart.
+let ttsrEnabledSetting = store.get('ttsrEnabled', false) === true;
+let ttsrEncoreFlag = (store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true;
+let ttsrDisabledRuleNames = readTtsrDisabledRules(store.get('ttsrDisabledRules', []));
+let ttsrContextModeSetting: TtsrContextMode = readTtsrContextMode(
+	store.get('ttsrContextMode', DEFAULT_TTSR_CONTEXT_MODE)
+);
+
+function readTtsrContextMode(value: unknown): TtsrContextMode {
+	return isTtsrContextMode(value) ? value : DEFAULT_TTSR_CONTEXT_MODE;
+}
+
+function readTtsrDisabledRules(value: unknown): string[] {
+	return Array.isArray(value) ? (value as string[]) : [];
+}
+
+store.onDidChange('ttsrEnabled', (value) => {
+	ttsrEnabledSetting = value === true;
+});
+store.onDidChange('encoreFeatures', (value) => {
+	ttsrEncoreFlag = (value as Record<string, boolean> | undefined)?.ttsr === true;
+});
+store.onDidChange('ttsrDisabledRules', (value) => {
+	ttsrDisabledRuleNames = readTtsrDisabledRules(value);
+});
+store.onDidChange('ttsrContextMode', (value) => {
+	ttsrContextModeSetting = readTtsrContextMode(value);
 });
 
 // A `decision` cadenza's chosen option replies to the owning agent: inject the
@@ -1016,6 +1061,20 @@ app
 		processManager = new ProcessManager(
 			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true
 		);
+		// Time-Traveling Stream Rules: watch every agent's normalized output
+		// stream and match `.maestro/rules/*.md`. Gated live on the `ttsr` Encore
+		// flag AND the `ttsrEnabled` setting, so it is a no-op while off.
+		ttsrRuntime = installTtsrRuntime(processManager, {
+			// In-memory reads only (see the TTSR gate snapshot above): these run on
+			// the stdout hot path, so a `store.get` here would be a disk read per
+			// parsed event.
+			isGloballyEnabled: () => ttsrEnabledSetting && ttsrEncoreFlag,
+			getDisabledRules: () => ttsrDisabledRuleNames,
+			// Fallback teardown mode for projects whose `.maestro/ttsr.yaml` does
+			// not name one; a project that does still wins.
+			getContextMode: () => ttsrContextModeSetting,
+			safeSend,
+		});
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
 
@@ -2998,6 +3057,9 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		// TTSR repeat bookkeeping is written debounced; force the last write out so
+		// a rule that fired seconds before quit is still remembered next launch.
+		app.on('will-quit', () => ttsrRuntime?.flushState());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
@@ -3209,6 +3271,13 @@ function setupIpcHandlers() {
 		sessionsStore,
 	});
 
+	// TTSR rule + per-project settings CRUD (Right Bar Rules tab). A write from
+	// the UI drops the runtime's cached rules straight away; the file watcher
+	// would also catch it, a debounce later.
+	registerTtsrHandlers({
+		onRulesChanged: (projectRoot: string) => ttsrRuntime?.invalidateRules(projectRoot),
+	});
+
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
 	registerAgentsHandlers({
 		getAgentDetector: () => agentDetector,
@@ -3227,6 +3296,12 @@ function setupIpcHandlers() {
 		safeSend,
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
+		// TTSR folds any queued `<system-reminder>` into this conversation's next
+		// prompt, and clears the queue only once that prompt has really been
+		// spawned. Returns '' while the feature is off, so the spawn path is
+		// unchanged.
+		peekTtsrReminders: (sessionId: string) =>
+			ttsrRuntime?.peekDeferredReminders(sessionId) ?? { text: '', commit: () => {} },
 		getCueProcesses: () => {
 			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete

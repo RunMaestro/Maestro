@@ -24,9 +24,36 @@
 const REGEX_AI_TAB = /^(.+)-ai-(.+?)(?:-fp-\d+)?$/;
 const AI_LEGACY_SUFFIX = '-ai';
 
-export function resolveOwningMaestroSessionId(spawnSessionId: string): string {
+/** An AI-tab spawn id, split into the owning agent and its tab. */
+export interface ParsedAiTabSpawnId {
+	maestroSessionId: string;
+	tabId: string;
+	/** True for a forced-parallel spawn (`…-fp-{timestamp}`). */
+	forcedParallel: boolean;
+}
+
+/**
+ * Split an AI-tab spawn id, or return `null` for any other spawn flavor
+ * (synopsis-, batch-, group-chat-, bare terminal ids, legacy `{id}-ai`).
+ *
+ * This is the main-process counterpart of the renderer's `parseSessionId`, and
+ * the two must agree: a caller that acts on one side of the IPC boundary and is
+ * resolved on the other (TTSR aborts in main, respawns in the renderer) breaks
+ * silently when they disagree about what an AI-tab id looks like.
+ */
+export function parseAiTabSpawnId(spawnSessionId: string): ParsedAiTabSpawnId | null {
 	const m = spawnSessionId.match(REGEX_AI_TAB);
-	if (m) return m[1];
+	if (!m) return null;
+	return {
+		maestroSessionId: m[1],
+		tabId: m[2],
+		forcedParallel: /-fp-\d+$/.test(spawnSessionId),
+	};
+}
+
+export function resolveOwningMaestroSessionId(spawnSessionId: string): string {
+	const parsed = parseAiTabSpawnId(spawnSessionId);
+	if (parsed) return parsed.maestroSessionId;
 	if (spawnSessionId.endsWith(AI_LEGACY_SUFFIX)) {
 		return spawnSessionId.slice(0, -AI_LEGACY_SUFFIX.length);
 	}

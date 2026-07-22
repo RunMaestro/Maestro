@@ -9,7 +9,14 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
 import { getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
-import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
+import type {
+	ManagedProcess,
+	UsageStats,
+	UsageTotals,
+	AgentError,
+	ParsedEventObserver,
+} from '../types';
+import { captureException } from '../../utils/sentry';
 import type { DataBufferManager } from './DataBufferManager';
 
 interface StdoutHandlerDependencies {
@@ -264,11 +271,20 @@ export class StdoutHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
+	private parsedEventObserver: ParsedEventObserver | null = null;
 
 	constructor(deps: StdoutHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
+	}
+
+	/**
+	 * Install (or clear, with `null`) the parsed-event observer. Late-bound so
+	 * the consumer can be built after the process manager it observes.
+	 */
+	setParsedEventObserver(observer: ParsedEventObserver | null): void {
+		this.parsedEventObserver = observer;
 	}
 
 	/**
@@ -469,6 +485,23 @@ export class StdoutHandler {
 		const event = outputParser.parseJsonObject(parsed);
 
 		if (!event) return;
+
+		// Stream observation seam (Time-Traveling Stream Rules). The observer reads
+		// the feature gate live and returns before doing any work while TTSR is
+		// off, so this stays a null check plus one no-op call.
+		// A throwing observer must never take the agent's output stream down with
+		// it, so it is contained here and reported rather than propagated.
+		if (this.parsedEventObserver) {
+			try {
+				this.parsedEventObserver(sessionId, event);
+			} catch (error) {
+				logger.error('[StdoutHandler] Parsed-event observer threw', 'StdoutHandler', {
+					sessionId,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				void captureException(error, { sessionId, operation: 'parsedEventObserver' });
+			}
+		}
 
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.

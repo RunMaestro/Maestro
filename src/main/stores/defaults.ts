@@ -89,6 +89,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// TTSR: master runtime switch (AND'd with the `ttsr` Encore flag), globally
+	// disabled rule names, interrupt teardown mode, and the built-in rule enable map
+	ttsrEnabled: false,
+	ttsrDisabledRules: [],
+	ttsrContextMode: 'keep',
 	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
 	coworkingBrowserInteraction: [],
 	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)

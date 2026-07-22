@@ -48,6 +48,14 @@ export interface CueSettingsState {
 	handleQueueSizeBlur: () => void;
 }
 
+export interface TtsrSettingsState {
+	newDisabledRule: string;
+	disabledRuleError: string | null;
+	setNewDisabledRule: (value: string) => void;
+	addDisabledRule: () => void;
+	removeDisabledRule: (name: string) => void;
+}
+
 export interface DirectorNotesTile {
 	id: ToolType;
 	name: string;

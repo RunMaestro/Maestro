@@ -3912,6 +3912,42 @@ interface MaestroAPI {
 		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
+	// TTSR API (Time-Traveling Stream Rules - main-authoritative, push events only)
+	ttsr: {
+		onAbortPending: (
+			callback: (payload: import('../shared/ttsr-types').TtsrAbortPendingPayload) => void
+		) => () => void;
+		onTriggered: (
+			callback: (payload: import('../shared/ttsr-types').TtsrTriggeredPayload) => void
+		) => () => void;
+		onAbortCleared: (
+			callback: (payload: import('../shared/ttsr-types').TtsrAbortClearedPayload) => void
+		) => () => void;
+		onMatched: (
+			callback: (payload: import('../shared/ttsr-types').TtsrMatchedPayload) => void
+		) => () => void;
+		onRulesChanged: (
+			callback: (payload: import('../shared/ttsr-types').TtsrRulesChangedPayload) => void
+		) => () => void;
+		// Rule management. Project-scoped: rules live in each project's
+		// .maestro/rules/, so every call names the project it acts on.
+		listRules: (projectRoot: string) => Promise<import('../shared/ttsr-types').TtsrRuleListResult>;
+		readRule: (projectRoot: string, path: string) => Promise<string | null>;
+		writeRule: (projectRoot: string, path: string, content: string) => Promise<{ path: string }>;
+		deleteRule: (projectRoot: string, path: string) => Promise<{ deleted: boolean }>;
+		validateRule: (
+			content: string,
+			path?: string
+		) => Promise<import('../shared/ttsr-types').TtsrRuleValidation>;
+		readProjectSettings: (
+			projectRoot: string
+		) => Promise<import('../shared/ttsr-types').TtsrProjectSettings>;
+		writeProjectSettings: (
+			projectRoot: string,
+			settings: Partial<import('../shared/ttsr-types').TtsrProjectSettings>
+		) => Promise<{ path: string }>;
+	};
+
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
 	cueBackup: {
 		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;

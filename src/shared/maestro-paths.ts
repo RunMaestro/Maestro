@@ -22,6 +22,12 @@ export const CUE_CONFIG_PATH = '.maestro/cue.yaml';
 /** Default directory for Cue prompt files */
 export const CUE_PROMPTS_DIR = '.maestro/prompts';
 
+/** Time-Traveling Stream Rules (TTSR) configuration file */
+export const TTSR_CONFIG_PATH = '.maestro/ttsr.yaml';
+
+/** Directory holding one frontmatter-markdown TTSR rule per file */
+export const TTSR_RULES_DIR = '.maestro/rules';
+
 /**
  * Where rendered diagrams (agent-authored inline SVG, Mermaid charts) are saved.
  * Every "Save Image" surface writes here so diagrams land next to the project
@@ -53,4 +59,14 @@ export function cuePromptFilePath(
 	const base = `${sanitize(agentName)}-${sanitize(pipelineName)}`;
 	const filename = suffix ? `${base}-${suffix}.md` : `${base}.md`;
 	return `${CUE_PROMPTS_DIR}/${filename}`;
+}
+
+/**
+ * Generate a rule file path for a TTSR rule.
+ * Convention: .maestro/rules/{ruleName}.md
+ * Spaces are replaced with underscores.
+ */
+export function ttsrRuleFilePath(ruleName: string): string {
+	const sanitized = ruleName.replace(/\s+/g, '_').toLowerCase();
+	return `${TTSR_RULES_DIR}/${sanitized}.md`;
 }

@@ -32,6 +32,16 @@ export type {
 
 // Re-export Symphony types for session metadata
 export type { SymphonySessionMetadata } from '../../shared/symphony-types';
+export type {
+	TtsrContextMode,
+	TtsrProjectSettings,
+	TtsrRule,
+	TtsrRuleListEntry,
+	TtsrRuleListResult,
+	TtsrRulesChangedPayload,
+	TtsrRuleValidation,
+	TtsrScope,
+} from '../../shared/ttsr-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 
@@ -62,7 +72,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'autorun';
+export type RightPanelTab = 'files' | 'history' | 'autorun' | 'rules';
 /**
  * Tabs in the Usage Dashboard modal. Shared so the in-memory uiStore can
  * remember the last-selected tab across dashboard opens (resets on restart).
@@ -1119,6 +1129,10 @@ export interface ProcessConfig {
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// Set only on a TTSR corrective respawn: the id from `ttsr:triggered`, echoed
+	// back so main recognises its own corrective turn by correlation rather than
+	// by inspecting the prompt.
+	ttsrCorrelationId?: string;
 }
 
 // DirectoryEntry and ShellInfo re-exported from shared/types above
@@ -1266,6 +1280,11 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// TTSR (Time-Traveling Stream Rules) - watch agent output streams and
+	// interrupt a turn that violates a project rule. Off by default. Optional so
+	// existing literals (older test fixtures, persisted settings without the
+	// key) continue to type-check.
+	ttsr?: boolean;
 }
 
 // Director's Notes settings for synopsis generation
