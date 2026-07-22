@@ -744,13 +744,17 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 // toggle still takes effect without an app restart.
 let ttsrEnabledSetting = store.get('ttsrEnabled', false) === true;
 let ttsrEncoreFlag = (store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true;
-let ttsrDisabledRuleNames = store.get('ttsrDisabledRules', []) as string[];
+let ttsrDisabledRuleNames = readTtsrDisabledRules(store.get('ttsrDisabledRules', []));
 let ttsrContextModeSetting: TtsrContextMode = readTtsrContextMode(
 	store.get('ttsrContextMode', DEFAULT_TTSR_CONTEXT_MODE)
 );
 
 function readTtsrContextMode(value: unknown): TtsrContextMode {
 	return isTtsrContextMode(value) ? value : DEFAULT_TTSR_CONTEXT_MODE;
+}
+
+function readTtsrDisabledRules(value: unknown): string[] {
+	return Array.isArray(value) ? (value as string[]) : [];
 }
 
 store.onDidChange('ttsrEnabled', (value) => {
@@ -760,7 +764,7 @@ store.onDidChange('encoreFeatures', (value) => {
 	ttsrEncoreFlag = (value as Record<string, boolean> | undefined)?.ttsr === true;
 });
 store.onDidChange('ttsrDisabledRules', (value) => {
-	ttsrDisabledRuleNames = Array.isArray(value) ? (value as string[]) : [];
+	ttsrDisabledRuleNames = readTtsrDisabledRules(value);
 });
 store.onDidChange('ttsrContextMode', (value) => {
 	ttsrContextModeSetting = readTtsrContextMode(value);

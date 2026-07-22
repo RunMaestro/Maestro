@@ -166,8 +166,15 @@ export function deleteTtsrRuleFile(projectRoot: string, relativePath: string): b
  * `ignored` predicate keeps the watch as narrow as the old path list: the rest
  * of `.maestro` (Working docs, cue.yaml, diagrams) is never traversed.
  *
- * A project with no `.maestro` directory at all has nothing to watch; its first
- * rule arrives through the IPC write path, which invalidates the cache itself.
+ * The anchor itself gets the same treatment: chokidar cannot watch a path that
+ * does not exist when the watcher is created, and the runtime arms this watcher
+ * once per project and never re-arms it. In a project with no `.maestro` yet
+ * (the fresh-repo case, where the agent authoring the FIRST rule is the primary
+ * flow and writes with its own file tools, never through IPC), the watcher
+ * would be born dead and stay dead for the life of the app. So the directory is
+ * created up front - the same `mkdir -p` the write paths above already do. A
+ * project where that fails (read-only checkout) throws out to the runtime's
+ * existing unwatchable-project handling.
  *
  * Uses the same `torn` guard as the Cue watcher so an event that slips past
  * `close()` cannot trigger a refresh on a torn-down session.
@@ -185,6 +192,11 @@ export function watchTtsrConfigFiles(
 	const rulesDir = path.join(projectRoot, TTSR_RULES_DIR);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
+
+	// A missing anchor means a watcher that never fires (see the doc comment).
+	if (!fs.existsSync(maestroDir)) {
+		fs.mkdirSync(maestroDir, { recursive: true });
+	}
 
 	const isWatched = (filePath: string): boolean => {
 		if (filePath === maestroDir || filePath === rulesDir || filePath === configPath) return true;

@@ -205,6 +205,15 @@ export class TtsrSpawnRegistry {
 	/**
 	 * Drop a finished turn. Phase 3 reads the meta while handling the abort's
 	 * `exit`, so callers must consume before clearing.
+	 *
+	 * Deliberately does NOT touch `pendingCorrective`: when the aborted process
+	 * outlives the driver's exit timeout, the corrective turn is announced while
+	 * the process is still running, and its late exit lands here BEFORE the
+	 * respawn arrives. Dropping the pending entry on that exit would strip the
+	 * respawn of its goal carry-over in exactly the hung-process case. A pending
+	 * entry whose respawn never comes is consumed by the session's next spawn
+	 * instead (see {@link TtsrSpawnRegistry.resolveCorrective} - the next spawn
+	 * is the corrective turn's deadline).
 	 */
 	clear(sessionId: string): void {
 		this.entries.delete(sessionId);

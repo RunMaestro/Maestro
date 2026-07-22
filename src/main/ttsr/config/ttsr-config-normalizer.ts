@@ -101,9 +101,13 @@ function readQuantifier(source: string, index: number): { end: number; repeats: 
  * exponentially many splits of the same input before failing.
  *
  * Deliberately a heuristic, not an analyzer: it rejects the nested-quantifier
- * shape and nothing else, which costs a handful of legitimate-but-rewritable
- * patterns and buys the guarantee that the obvious attack is not expressible.
- * The scan-length ceiling in `ttsr-matcher.ts` is the other half of the defense.
+ * shape and nothing else. Other exponential shapes still pass - the classic
+ * alternation-overlap bomb `(a|a)+x` is one, and polynomial stacks like
+ * `a*a*a*x` another - and the scan ceiling in `ttsr-matcher.ts` bounds but does
+ * not eliminate their cost (an overlap bomb wedges on far less than 32KB). So
+ * treat this pair as raising the bar, not as a guarantee: rule files remain
+ * `.maestro/cue.yaml`-class trusted content (see `ttsr-rule-authoring.md`), and
+ * anything stronger needs a real analyzer or a match-time budget.
  */
 function hasNestedQuantifier(source: string): boolean {
 	/** One open group; `unbounded` once its body can repeat without a bound. */

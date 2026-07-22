@@ -28,6 +28,7 @@ import { getBatchState, selectAutoRunForcesReadOnly } from '../stores/batchStore
 import { notifyToast } from '../stores/notificationStore';
 import { useSessionStore, updateAiTab, updateSessionWith } from '../stores/sessionStore';
 import { useTtsrStore } from '../stores/ttsrStore';
+import { isWebDesktop } from '../utils/runtimeContext';
 import { useOwnedSessionGate } from './agent/internal/useOwnedSessionGate';
 import type { LogEntry, Session } from '../types';
 
@@ -68,12 +69,16 @@ function releaseAfterFailedRespawn(
 		thinkingStartTime: undefined,
 		logs: [...current.logs, systemLog(`TTSR could not resume the turn: ${message}`)],
 	}));
-	updateSessionWith(session.id, (current) => ({
-		...current,
-		state: 'idle',
-		busySource: undefined,
-		thinkingStartTime: undefined,
-	}));
+	// Session-level release follows the same rule as `useAgentExitListener`:
+	// another tab mid-turn keeps the agent busy. Only the interrupted tab's turn
+	// died here; flipping the whole session idle would wipe a sibling tab's
+	// spinner (and thinkingStartTime) while it is still streaming.
+	updateSessionWith(session.id, (current) => {
+		const anyTabStillBusy = current.aiTabs.some((tab) => tab.state === 'busy');
+		return anyTabStillBusy
+			? current
+			: { ...current, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
+	});
 	useTtsrStore.getState().clearAbortPending(payload.sessionId);
 
 	notifyToast({
@@ -146,10 +151,14 @@ export async function runTtsrCorrectiveTurn(payload: TtsrTriggeredPayload): Prom
 export function useTtsr(enabled: boolean): void {
 	// `ttsr:triggered` is broadcast to EVERY window and to every web-desktop
 	// bridge client (see the MULTI-WINDOW INVARIANT in `safe-send.ts`), so the
-	// corrective respawn has to be window-scoped exactly like the `process:*`
-	// listeners are. Two renderers spawning it would race in ProcessManager:
-	// the second spawn kills the first mid-flight, and if the first already
-	// reached the provider the `<system-interrupt>` lands twice.
+	// corrective respawn has to be spawned by exactly one renderer. Two spawning
+	// it would race in ProcessManager: the second spawn kills the first
+	// mid-flight, and if the first already reached the provider the
+	// `<system-interrupt>` lands twice. Desktop windows are covered by the
+	// ownership gate below; web-desktop clients are NOT (their `ownsSession` is
+	// a permit-all by design - a browser client mirrors every agent), so they
+	// never respawn at all. The desktop primary window is always alive to do it:
+	// the web server that serves these clients runs inside the Electron app.
 	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
@@ -165,8 +174,9 @@ export function useTtsr(enabled: boolean): void {
 
 		const offTriggered = bridge.onTriggered((payload) => {
 			// Display state is per-renderer, so every window records the payload;
-			// only the owning one actually respawns the turn.
+			// only the owning desktop window actually respawns the turn.
 			useTtsrStore.getState().noteTriggered(payload);
+			if (isWebDesktop()) return;
 			if (!ownedGate.current?.(payload.sessionId)) return;
 			void runTtsrCorrectiveTurn(payload);
 		});

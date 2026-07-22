@@ -83,16 +83,26 @@ export function TtsrRulesPanel({
 		};
 	}, []);
 
+	// Monotonic guard against out-of-order list responses: the panel survives
+	// agent switches (same instance, new projectRoot), so a slow list for the
+	// OLD project can resolve after the new project's list already landed - and
+	// a toggle would then write the old project's rule names into the new
+	// project's ttsr.yaml. Only the newest request may commit.
+	const refreshSeq = useRef(0);
+
 	const refresh = useCallback(async () => {
 		if (!projectRoot || !isTtsrRuleApiAvailable()) return;
+		const seq = ++refreshSeq.current;
 		setLoading(true);
 		try {
-			setData(await ttsrService.listRules(projectRoot));
+			const result = await ttsrService.listRules(projectRoot);
+			if (seq !== refreshSeq.current) return;
+			setData(result);
 		} catch (error) {
 			logger.error('[TTSR] Failed to list rules', undefined, error);
 			notifyToast({ color: 'red', title: 'TTSR', message: 'Could not read this project’s rules.' });
 		} finally {
-			setLoading(false);
+			if (seq === refreshSeq.current) setLoading(false);
 		}
 	}, [projectRoot]);
 

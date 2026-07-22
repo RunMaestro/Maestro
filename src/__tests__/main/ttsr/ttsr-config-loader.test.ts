@@ -456,6 +456,34 @@ describe('loadTtsrConfigDetailed', () => {
 		}
 	}, 15_000);
 
+	// Regression: the `.maestro` anchor itself is the same trap one level up.
+	// Chokidar cannot watch a directory that does not exist when the watcher is
+	// created, and the runtime arms one watcher per project and never re-arms
+	// it. In a fresh repo (no `.maestro` at all - exactly the project whose
+	// first rule an agent is about to author with its own file tools), the
+	// watcher was born dead and the rule stayed invisible until app restart.
+	it('fires for the first rule authored in a project with no .maestro directory', async () => {
+		expect(fs.existsSync(path.join(projectRoot, '.maestro'))).toBe(false);
+
+		const onChange = vi.fn();
+		let cleanup!: () => void;
+		await new Promise<void>((resolve) => {
+			cleanup = watchTtsrConfig(projectRoot, onChange, { onReady: resolve });
+		});
+
+		try {
+			writeRule(
+				'first.md',
+				['---', 'description: First', 'condition: "x"', '---', 'Body.'].join('\n')
+			);
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+
+			expect(onChange).toHaveBeenCalled();
+		} finally {
+			cleanup();
+		}
+	}, 15_000);
+
 	// An agent authoring a rule writes the file several times in a second (draft,
 	// fix the regex, fix the body), and each write is its own chokidar event.
 	// The debounce is what keeps a half-written intermediate state from becoming

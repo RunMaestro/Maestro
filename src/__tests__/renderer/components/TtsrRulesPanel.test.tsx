@@ -83,6 +83,31 @@ describe('TtsrRulesPanel', () => {
 		expect(screen.getByText('tool:bash · always')).toBeInTheDocument();
 	});
 
+	// The panel survives agent switches (same instance, new projectRoot), so a
+	// slow list for the old project can resolve AFTER the new project's list. If
+	// it were allowed to commit, a toggle would write the old project's rule
+	// names into the new project's ttsr.yaml.
+	it('drops a stale list response that resolves after a project switch', async () => {
+		let resolveSlow!: (result: TtsrRuleListResult) => void;
+		const slow = new Promise<TtsrRuleListResult>((resolve) => {
+			resolveSlow = resolve;
+		});
+		window.maestro.ttsr.listRules = vi
+			.fn()
+			.mockImplementationOnce(() => slow)
+			.mockResolvedValue(listResult({ rules: [makeRule({ name: 'new-project-rule' })] }));
+
+		const { rerender } = render(<TtsrRulesPanel theme={theme} projectRoot="/old-repo" />);
+		rerender(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
+
+		expect(await screen.findByText('new-project-rule')).toBeInTheDocument();
+
+		// The old project's list arrives last; it must not clobber the new list.
+		resolveSlow(listResult({ rules: [makeRule({ name: 'old-project-rule' })] }));
+		await waitFor(() => expect(screen.queryByText('old-project-rule')).not.toBeInTheDocument());
+		expect(screen.getByText('new-project-rule')).toBeInTheDocument();
+	});
+
 	it('prompts to pick an agent when none is active', () => {
 		render(<TtsrRulesPanel theme={theme} projectRoot={null} />);
 

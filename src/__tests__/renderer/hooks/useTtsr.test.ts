@@ -16,6 +16,16 @@ vi.mock('../../../renderer/contexts/WindowContext', () => ({
 	useWindowContextOptional: () => (mockOwnsSession ? { ownsSession: mockOwnsSession } : null),
 }));
 
+// Controlled runtime context: web-desktop clients mirror every agent (their
+// ownership predicate is a permit-all), so the hook must refuse to respawn
+// there outright - the desktop primary window, always alive because it hosts
+// the web server, is the one that spawns.
+let mockIsWebDesktop = false;
+vi.mock('../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/utils/runtimeContext')>()),
+	isWebDesktop: () => mockIsWebDesktop,
+}));
+
 const mockNotifyToast = vi.fn();
 vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
@@ -300,6 +310,34 @@ describe('runTtsrCorrectiveTurn', () => {
 		expect(mockNotifyToast.mock.calls[0][0].message).toContain('no-console-log');
 	});
 
+	// Same rule `useAgentExitListener` follows: only the interrupted tab's turn
+	// died, so a sibling tab mid-turn keeps the agent busy. Forcing the whole
+	// session idle here would wipe the sibling's spinner while it still streams.
+	it('keeps the session busy when a sibling tab is still mid-turn', async () => {
+		const tab1 = createMockAITab({ id: 'tab-1', state: 'busy' });
+		const tab2 = createMockAITab({ id: 'tab-2', state: 'busy' });
+		const session = createMockSession({
+			id: 'session-1',
+			aiTabs: [tab1, tab2],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+		});
+		useSessionStore.getState().setSessions([session]);
+		useTtsrStore.getState().noteAbortPending(makeAbortPending());
+		window.maestro.process.spawn = vi.fn().mockRejectedValue(new Error('spawn failed'));
+
+		await expect(runTtsrCorrectiveTurn(makePayload())).resolves.toBe(false);
+
+		const after = useSessionStore.getState().sessions[0];
+		// The interrupted tab is released...
+		expect(after.aiTabs.find((tab) => tab.id === 'tab-1')?.state).toBe('idle');
+		// ...but tab-2 is still mid-turn, so the agent stays busy.
+		expect(after.aiTabs.find((tab) => tab.id === 'tab-2')?.state).toBe('busy');
+		expect(after.state).toBe('busy');
+		expect(after.busySource).toBe('ai');
+	});
+
 	it('releases the session when the agent is not installed', async () => {
 		seedSession();
 		useSessionStore
@@ -371,6 +409,27 @@ describe('useTtsr subscription wiring', () => {
 		expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		// Display state is per-renderer, so it is still recorded here.
 		expect(useTtsrStore.getState().lastTriggered['session-1-ai-tab-1']).toBeDefined();
+	});
+
+	it('does NOT respawn in a web-desktop client, even though it "owns" every agent', async () => {
+		seedSession();
+		mockIsWebDesktop = true;
+		try {
+			const { listeners } = wireBridge();
+
+			renderHook(() => useTtsr(true));
+			listeners.triggered?.(makePayload());
+			await Promise.resolve();
+
+			// A browser client's ownsSession is a permit-all, so the ownership gate
+			// alone would let it spawn a duplicate corrective turn alongside the
+			// desktop window's. The web-desktop check is what closes that race.
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			// Display state is per-renderer, so it is still recorded here.
+			expect(useTtsrStore.getState().lastTriggered['session-1-ai-tab-1']).toBeDefined();
+		} finally {
+			mockIsWebDesktop = false;
+		}
 	});
 
 	it('respawns in the window that DOES own the agent', async () => {

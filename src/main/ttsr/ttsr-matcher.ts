@@ -145,9 +145,11 @@ export function ruleAppliesToContext(
  * This is a security invariant, not a tuning knob. Rule patterns come from the
  * opened project's `.maestro/rules/*.md`, so a hostile repo controls regexes
  * that run on the main process's stdout hot path, and backtracking cost grows
- * with input length. Bounding the input is one half of keeping a bad pattern
- * from wedging Electron's main process; the normalizer's nested-quantifier gate
- * is the other half. Raising or removing this reopens that hole.
+ * with input length. Bounding the input, together with the normalizer's
+ * nested-quantifier gate, raises the bar against a bad pattern wedging
+ * Electron's main process (neither is airtight on its own - see the gate's doc
+ * comment for the shapes that still pass). Raising or removing this reopens
+ * the input-length half of that hole.
  *
  * Prose already arrives bounded (one delta plus a 1KB overlap, off a 32KB
  * per-stream buffer in `TtsrManager`). Tool payloads do not - a single `Write`
