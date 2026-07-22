@@ -9,6 +9,25 @@ import { memo, useState, useEffect, useRef } from 'react';
 import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
+import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
+import { useUIStore } from '../stores/uiStore';
+
+/**
+ * Open the live Thought Stream for a session and make sure it's visible.
+ *
+ * The Thought Stream is docked inside the Right Panel and renders nothing while
+ * that panel is collapsed (see ThoughtStreamPanel), so we open the Right Panel
+ * too. Capture itself is session-agnostic (useThoughtStreamCaptureListener taps
+ * the raw thinking stream for any owned session), so this works for a regular
+ * interactive "thinking" session, not just an Auto Run - it's what turns the
+ * previously inert status pill into a "zoom in and see what the agent is doing"
+ * affordance. Uses getState() so wiring a click handler doesn't add a store
+ * subscription to the memoized pill.
+ */
+function openThoughtStreamForSession(sessionId: string): void {
+	useUIStore.getState().setRightPanelOpen(true);
+	useThoughtStreamStore.getState().openPanel(sessionId);
+}
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -121,7 +140,10 @@ const ThinkingItemRow = memo(
 
 		return (
 			<button
-				onClick={() => onSessionClick?.(session.id, tab?.id)}
+				onClick={() => {
+					onSessionClick?.(session.id, tab?.id);
+					openThoughtStreamForSession(session.id);
+				}}
 				className="flex items-center justify-between gap-3 w-full px-3 py-2 text-left hover:bg-white/5 transition-colors"
 				style={{ color: theme.colors.textMain }}
 			>
@@ -671,10 +693,17 @@ function ThinkingStatusPillInner({
 					<div className="pill-seg-claude-id flex items-center gap-2 min-w-0">
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
-							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
+							onClick={() => {
+								onSessionClick?.(primarySession.id, primaryTab?.id);
+								openThoughtStreamForSession(primarySession.id);
+							}}
 							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
 							style={{ color: theme.colors.accent }}
-							title={agentSessionId ? `Claude Session: ${agentSessionId}` : 'Claude Session'}
+							title={
+								agentSessionId
+									? `View live thoughts · Claude Session: ${agentSessionId}`
+									: 'View live thoughts'
+							}
 						>
 							{displayClaudeId}
 						</button>

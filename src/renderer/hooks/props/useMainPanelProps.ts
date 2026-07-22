@@ -184,6 +184,7 @@ export interface UseMainPanelPropsDeps {
 	// Unified tab system handlers (Phase 4) - paint state is self-sourced in MainPanel
 	handleFileTabSelect: (tabId: string) => void;
 	handleFileTabClose: (tabId: string) => void;
+	handleFileTabRename: (tabId: string) => void;
 	handleNewFileTab: () => void;
 	handleNewBrowserTab: (options?: { ephemeral?: boolean }) => void;
 	handleBrowserTabSelect: (tabId: string) => void;
@@ -405,6 +406,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			// Unified tab system handlers (Phase 4) - paint self-sourced in MainPanel
 			onFileTabSelect: deps.handleFileTabSelect,
 			onFileTabClose: deps.handleFileTabClose,
+			onFileTabRename: deps.handleFileTabRename,
 			onNewFileTab: deps.handleNewFileTab,
 			onNewBrowserTab: deps.handleNewBrowserTab,
 			onBrowserTabSelect: deps.handleBrowserTabSelect,
@@ -651,6 +653,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleCloseTabsRight,
 			deps.handleFileTabSelect,
 			deps.handleFileTabClose,
+			deps.handleFileTabRename,
 			deps.handleNewFileTab,
 			deps.handleNewBrowserTab,
 			deps.handleBrowserTabSelect,

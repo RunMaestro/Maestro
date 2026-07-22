@@ -103,6 +103,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'Roboto Mono, Menlo, "Courier New", monospace',
 		category: 'appearance',
 	},
+	terminalFontFamily: {
+		description:
+			'Font family for the command terminal, independent of the UI font. Accepts any CSS font-family string. When empty, the terminal inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
 	customFonts: {
 		description: 'List of user-installed custom font names available in the font picker.',
 		type: 'array',
@@ -535,7 +542,8 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 
 	// --- LLM / Provider ---
 	llmProvider: {
-		description: 'LLM provider for built-in AI features. E.g., openrouter, anthropic, openai.',
+		description:
+			'LLM provider for built-in AI features. E.g., openrouter, requesty, anthropic, ollama.',
 		type: 'string',
 		default: 'openrouter',
 		category: 'advanced',

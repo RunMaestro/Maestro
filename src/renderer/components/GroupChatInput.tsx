@@ -643,6 +643,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							ref={inputRef}
 							value={message}
 							onChange={handleChange}
+							onBlur={flushDraft}
 							onKeyDown={handleKeyDown}
 							onPaste={handlePasteWrapped}
 							onDrop={handleDropWrapped}

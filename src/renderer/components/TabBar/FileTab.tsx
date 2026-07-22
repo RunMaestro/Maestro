@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
 	X,
 	Pencil,
+	Edit2,
 	Copy,
 	Clipboard,
 	ExternalLink,
@@ -43,6 +44,8 @@ export interface FileTabProps {
 	isDragging: boolean;
 	isDragOver: boolean;
 	registerRef?: (el: HTMLDivElement | null) => void;
+	/** Stable callback - receives tabId - opens the rename modal for this file tab */
+	onRename?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -97,6 +100,7 @@ export const FileTab = memo(function FileTab({
 	isDragging,
 	isDragOver,
 	registerRef,
+	onRename,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -208,6 +212,15 @@ export const FileTab = memo(function FileTab({
 			setOverlayOpen(false);
 		},
 		[tab.path, setOverlayOpen]
+	);
+
+	const handleRenameClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onRename?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onRename, tab.id, setOverlayOpen]
 	);
 
 	const handleMoveToFirstClick = useCallback(
@@ -406,7 +419,7 @@ export const FileTab = memo(function FileTab({
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
-				{displayName ?? tab.name}
+				{tab.customName || displayName || tab.name}
 			</span>
 
 			{/* Extension badge - small rounded pill, uppercase without leading dot */}
@@ -464,6 +477,24 @@ export const FileTab = memo(function FileTab({
 						>
 							{/* Actions */}
 							<div className="p-1">
+								{/* Rename - primary action, mirrors AI/browser tab overlays */}
+								{onRename && (
+									<>
+										<button
+											onClick={handleRenameClick}
+											className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+											style={{ color: theme.colors.textMain }}
+										>
+											<Edit2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+											Rename Tab
+											{tabShortcuts.renameTab && (
+												<ShortcutHint keys={tabShortcuts.renameTab.keys} />
+											)}
+										</button>
+										<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+									</>
+								)}
+
 								{/* Copy File Path */}
 								<button
 									onClick={handleCopyFilePath}

@@ -86,7 +86,7 @@ export type SettingsTab =
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
-export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
+export type LLMProvider = 'openrouter' | 'requesty' | 'anthropic' | 'ollama';
 
 // Inline wizard types for per-session/per-tab wizard state
 export type WizardMode = 'new' | 'iterate' | null;
@@ -611,6 +611,9 @@ export interface FilePreviewTab {
 	id: string; // Unique tab ID (UUID)
 	path: string; // Full file path
 	name: string; // Filename without extension (displayed as tab name)
+	// User-assigned tab name. When set, it locks the displayed label and overrides
+	// both the filename and the ambiguity-disambiguated label until the user clears it.
+	customName?: string;
 	extension: string; // File extension with dot (e.g., '.md', '.ts') - shown as badge
 	content: string; // File content (stored directly for simplicity - file previews are typically small)
 	scrollTop: number; // Saved scroll position

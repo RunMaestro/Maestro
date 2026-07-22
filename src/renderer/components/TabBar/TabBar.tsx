@@ -69,6 +69,7 @@ function TabBarInner({
 	activeFileTabId,
 	onFileTabSelect,
 	onFileTabClose,
+	onFileTabRename,
 	activeBrowserTabId,
 	onBrowserTabSelect,
 	onBrowserTabClose,
@@ -739,6 +740,7 @@ function TabBarInner({
 										isDragging={draggingTabId === fileTab.id}
 										isDragOver={dragOverTabId === fileTab.id}
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
+										onRename={onFileTabRename}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}

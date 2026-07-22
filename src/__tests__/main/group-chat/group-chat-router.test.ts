@@ -89,6 +89,7 @@ import {
 } from '../../../main/group-chat/group-chat-moderator';
 import {
 	addParticipant,
+	removeParticipant,
 	clearAllParticipantSessionsGlobal,
 } from '../../../main/group-chat/group-chat-agent';
 import {
@@ -828,6 +829,49 @@ describe('group-chat-router', () => {
 					name: 'CIA Agent (Super Cool)',
 				}),
 			]);
+		});
+
+		it('does not re-add a participant the user just removed (issue #1100)', async () => {
+			// Regression: a moderator turn that finishes after the user removes a
+			// participant must not resurrect them via an @mention. This is the
+			// large-group-chat "removal does not persist" bug.
+			const chat = await createTestChatWithModerator('Removed Participant Guard Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setGetSessionsCallback(() => [
+				{
+					id: 'session-client',
+					name: 'Client',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+				},
+			]);
+
+			await removeParticipant(chat.id, 'Client', mockProcessManager);
+
+			// Moderator output mentions the just-removed participant.
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: keep working on the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants.map((p) => p.name)).not.toContain('Client');
+		});
+
+		it('clears the removal guard when the user explicitly re-adds the participant', async () => {
+			// The guard must not permanently suppress a participant: an explicit
+			// re-add restores them, and only a fresh removal re-arms the guard.
+			const chat = await createTestChatWithModerator('Removed Participant Reset Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			await removeParticipant(chat.id, 'Client', mockProcessManager);
+			// Explicit re-add clears the guard and restores the participant.
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants.map((p) => p.name)).toContain('Client');
 		});
 
 		it('auto-adds a stronger-matching session despite a weak existing participant alias', async () => {

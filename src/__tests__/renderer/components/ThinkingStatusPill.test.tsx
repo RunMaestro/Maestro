@@ -15,6 +15,8 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThinkingStatusPill } from '../../../renderer/components/ThinkingStatusPill';
+import { useThoughtStreamStore } from '../../../renderer/stores/thoughtStreamStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, BatchRunState, AITab, ThinkingItem } from '../../../renderer/types';
 import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -321,6 +323,57 @@ describe('ThinkingStatusPill', () => {
 			fireEvent.click(claudeIdButton);
 
 			expect(onSessionClick).toHaveBeenCalledWith('session-abc', 'tab-999');
+		});
+	});
+
+	// Clicking the (previously inert) status pill opens the live Thought Stream for that
+	// session and un-collapses the Right Panel it's docked in - the "zoom in and see what
+	// the agent is doing" affordance requested in #1231.
+	describe('thought stream integration', () => {
+		beforeEach(() => {
+			useThoughtStreamStore.setState({
+				panelSessionId: null,
+				minimized: false,
+				buffers: {},
+				capturing: {},
+			});
+			useUIStore.setState({ rightPanelOpen: false });
+		});
+
+		it('opens the thought stream for the primary session when the task name is clicked', () => {
+			const item = createThinkingItem({
+				id: 'session-xyz',
+				name: 'Live Agent',
+				agentSessionId: 'claude-789',
+			});
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			// agentSessionId 'claude-789' -> displayClaudeId 'CLAUDE-7'
+			fireEvent.click(screen.getByText('CLAUDE-7'));
+
+			const streamState = useThoughtStreamStore.getState();
+			expect(streamState.panelSessionId).toBe('session-xyz');
+			expect(streamState.capturing['session-xyz']).toBe(true);
+			// Panel is docked in the Right Panel, so opening it must also reveal that panel.
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		it('opens the thought stream for a session picked from the dropdown', () => {
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary' }),
+			];
+			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
+
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
+			const secondaryRow = screen
+				.getAllByRole('button')
+				.find((row) => row.textContent?.includes('Secondary'));
+			expect(secondaryRow).toBeDefined();
+			fireEvent.click(secondaryRow!);
+
+			expect(useThoughtStreamStore.getState().panelSessionId).toBe('sess-2');
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
 		});
 	});
 

@@ -1080,6 +1080,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 							ctx.setRenameTabModalOpen(true);
 							trackShortcut('renameTab');
 						}
+					} else if (activeSession.activeFileTabId) {
+						// File tabs keep inputMode 'ai' but outrank the AI tab in render
+						// precedence, so rename the visible file tab, not the hidden AI tab.
+						const activeFileTabId = activeSession.activeFileTabId;
+						const fileTab = activeSession.filePreviewTabs?.find(
+							(t: { id: string }) => t.id === activeFileTabId
+						);
+						if (fileTab) {
+							ctx.setRenameTabId(fileTab.id);
+							ctx.setRenameTabInitialName(fileTab.customName ?? '');
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
 					} else if (activeSession.activeBrowserTabId) {
 						const browserTab = activeSession.browserTabs?.find(
 							(t: { id: string }) => t.id === activeSession.activeBrowserTabId

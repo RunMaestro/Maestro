@@ -571,6 +571,27 @@ export const THEMES: Record<ThemeId, Theme> = {
 			error: '#ff5555',
 		},
 	},
+	'indigo-blue': {
+		id: 'indigo-blue',
+		name: 'Indigo Blue',
+		mode: 'dark',
+		colors: {
+			bgMain: '#010204',
+			bgTitleBar: '#010204',
+			bgSidebar: '#020203',
+			bgActivity: '#030507',
+			border: '#06070a',
+			textMain: '#f2ebc0',
+			textDim: '#c7c2b3',
+			accent: '#1f2f63',
+			accentDim: 'rgba(14, 22, 46, 1)',
+			accentText: '#a9b8df',
+			accentForeground: '#ffffff',
+			success: '#a5b0ca',
+			warning: '#d0a795',
+			error: '#ff5555',
+		},
+	},
 	// Light themes
 	'github-light': {
 		id: 'github-light',

@@ -137,6 +137,24 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 export type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
 
 /**
+ * Grooming failures that are expected, user-environment conditions rather than
+ * Maestro bugs. `resetContext` below always recovers from them by starting the
+ * participant on a fresh session, so reporting them to Sentry is pure noise.
+ *
+ * - "Session not found ..." - the participant's provider session was deleted
+ *   mid-summary (MAESTRO-JB).
+ * - "Agent <id> is not available" - the participant's agent binary isn't
+ *   installed or detected on this machine (MAESTRO-KA).
+ *
+ * Anything else still reports, so a genuine fault in the grooming path keeps
+ * surfacing.
+ */
+export function isExpectedGroomingFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /Session not found/i.test(message) || /Agent .* is not available/i.test(message);
+}
+
+/**
  * Generic process manager interface that matches both IProcessManager and ProcessManager
  */
 interface GenericProcessManager {
@@ -797,13 +815,10 @@ Respond with ONLY the summary text, no additional commentary.`;
 						durationMs: result.durationMs,
 					});
 				} catch (error) {
-					// A summary that fails because the participant's session was already
-					// deleted ("Session not found ...") is an expected, fully-recovered
-					// condition - we fall back to a fresh session just below. Don't
-					// report that to Sentry (MAESTRO-JB); only surface unexpected
-					// grooming failures.
-					const message = error instanceof Error ? error.message : String(error);
-					if (!/Session not found/i.test(message)) {
+					// Expected grooming failures are fully recovered by the fresh-session
+					// fallback just below, so they aren't worth a Sentry breadcrumb. Only
+					// unexpected grooming failures get reported.
+					if (!isExpectedGroomingFailure(error)) {
 						void captureException(error);
 					}
 					logger.warn(`Summary generation failed for ${participantName}: ${error}`, LOG_CONTEXT);

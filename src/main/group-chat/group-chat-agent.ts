@@ -39,6 +39,38 @@ function getParticipantKey(groupChatId: string, participantName: string): string
 }
 
 /**
+ * Participants the user has explicitly removed this session, keyed like
+ * activeParticipantSessions. The moderator's turn-completion handler auto-adds
+ * any @mentioned session that isn't currently a participant. Without this
+ * guard, a moderator turn that was already in flight when the user removed a
+ * participant would re-add them the moment it finished (and its output almost
+ * always @mentions that participant), silently reverting the removal on disk.
+ * The race window is wider the larger the chat - long moderator turns and a
+ * removed participant that is more likely to be mentioned - which is why the
+ * removal appeared not to persist in large group chats (issue #1100). The
+ * entry is cleared once the participant is added back through any path.
+ */
+const recentlyRemovedParticipants = new Set<string>();
+
+/**
+ * Record that the user explicitly removed a participant so an in-flight or
+ * subsequent moderator turn cannot auto-add them before the user re-adds them.
+ */
+export function markParticipantRemoved(groupChatId: string, participantName: string): void {
+	recentlyRemovedParticipants.add(getParticipantKey(groupChatId, participantName));
+}
+
+/**
+ * Whether the user explicitly removed this participant and has not re-added them.
+ */
+export function wasParticipantRecentlyRemoved(
+	groupChatId: string,
+	participantName: string
+): boolean {
+	return recentlyRemovedParticipants.has(getParticipantKey(groupChatId, participantName));
+}
+
+/**
  * Generate the system prompt for a participant.
  * Uses template from src/prompts/group-chat-participant.md
  */
@@ -137,6 +169,11 @@ export async function addParticipant(
 
 	// Add participant to the group chat
 	await addParticipantToChat(groupChatId, participant);
+	// The participant is a member again, so drop any removal guard. This keeps
+	// the guard from going stale and lets an explicit re-add (or a user @mention)
+	// override an earlier removal. The moderator auto-add path checks the guard
+	// before it ever reaches here, so this cannot defeat that block.
+	recentlyRemovedParticipants.delete(getParticipantKey(groupChatId, name));
 	logger.debug(`[GroupChat:Debug] Participant added to chat storage`);
 	logger.debug(`[GroupChat:Debug] =====================================`);
 
@@ -238,7 +275,11 @@ export async function removeParticipant(
 	// Preserve the idempotent "chat-missing is a no-op" contract rather than
 	// leaking that race to IPC callers.
 	try {
-		return await removeParticipantFromChatWithResult(groupChatId, participantName);
+		const result = await removeParticipantFromChatWithResult(groupChatId, participantName);
+		// Guard against the moderator's turn-completion auto-add re-adding this
+		// participant before the user re-adds them (issue #1100).
+		markParticipantRemoved(groupChatId, participantName);
+		return result;
 	} catch (error) {
 		if (error instanceof Error && error.message === `Group chat not found: ${groupChatId}`) {
 			return null;

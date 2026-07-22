@@ -1059,6 +1059,21 @@ function MaestroConsoleInner() {
 		[setRenameTabId, setRenameTabInitialName, setRenameTabModalOpen]
 	);
 
+	// Opens the rename modal for a file preview tab. Pre-fills with any existing
+	// user-assigned name (empty when the tab still shows the filename).
+	const handleRequestFileTabRename = useCallback(
+		(tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) return;
+			const tab = session.filePreviewTabs?.find((t) => t.id === tabId);
+			if (!tab) return;
+			setRenameTabId(tabId);
+			setRenameTabInitialName(tab.customName ?? '');
+			setRenameTabModalOpen(true);
+		},
+		[setRenameTabId, setRenameTabInitialName, setRenameTabModalOpen]
+	);
+
 	// Clears a browser tab's user-assigned name, letting the website set the
 	// tab title again on the next navigation/title update.
 	const handleResetBrowserTabName = useCallback((tabId: string) => {
@@ -2736,6 +2751,7 @@ function MaestroConsoleInner() {
 		// Unified tab system handlers (Phase 4) - paint self-sourced in MainPanel
 		handleFileTabSelect: handleSelectFileTab,
 		handleFileTabClose: handleCloseFileTab,
+		handleFileTabRename: handleRequestFileTabRename,
 		handleNewFileTab,
 		handleNewBrowserTab,
 		handleBrowserTabSelect: handleSelectBrowserTab,

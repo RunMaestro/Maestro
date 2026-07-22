@@ -325,6 +325,7 @@ export interface SettingsStoreState {
 	shellEnvVars: Record<string, string>;
 	ghPath: string;
 	fontFamily: string;
+	terminalFontFamily: string;
 	fontSize: number;
 	activeThemeId: ThemeId;
 	customThemeColors: ThemeColors;
@@ -486,6 +487,7 @@ export interface SettingsStoreActions {
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
 	setFontFamily: (value: string) => void;
+	setTerminalFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
@@ -743,6 +745,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		shellEnvVars: {},
 		ghPath: '',
 		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		terminalFontFamily: '',
 		fontSize: 14,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -947,6 +950,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setFontFamily: (value) => {
 			set({ fontFamily: value });
 			window.maestro.settings.set('fontFamily', value);
+		},
+
+		setTerminalFontFamily: (value) => {
+			set({ terminalFontFamily: value });
+			window.maestro.settings.set('terminalFontFamily', value);
 		},
 
 		setFontSize: (value) => {
@@ -2350,6 +2358,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['fontFamily'] !== undefined)
 			patch.fontFamily = allSettings['fontFamily'] as string;
 
+		if (allSettings['terminalFontFamily'] !== undefined)
+			patch.terminalFontFamily = allSettings['terminalFontFamily'] as string;
+
 		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 
 		if (allSettings['activeThemeId'] !== undefined)
@@ -3132,6 +3143,7 @@ export function getSettingsActions() {
 		setShellEnvVars: state.setShellEnvVars,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
+		setTerminalFontFamily: state.setTerminalFontFamily,
 		setFontSize: state.setFontSize,
 		setActiveThemeId: state.setActiveThemeId,
 		setCustomThemeColors: state.setCustomThemeColors,

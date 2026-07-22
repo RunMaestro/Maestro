@@ -2287,6 +2287,116 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	// File preview tabs keep inputMode 'ai' but outrank the AI tab in render
+	// precedence, so Cmd+Shift+R must rename the visible file tab rather than
+	// the hidden AI tab behind it.
+	describe('rename tab precedence (file preview tabs)', () => {
+		function createFileTabRenameContext(overrides: Record<string, unknown> = {}) {
+			return createMockContext({
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'ai',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [{ id: 'file-tab-1', path: '/test.ts', customName: 'My File' }],
+					activeFileTabId: 'file-tab-1',
+				},
+				activeSessionId: 'session-1',
+				setSessions: vi.fn(),
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'renameTab',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				...overrides,
+			});
+		}
+
+		function pressRenameShortcut() {
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'R',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+		}
+
+		it('Cmd+Shift+R renames the active file preview tab, not the AI tab behind it', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabId = vi.fn();
+			const mockSetRenameTabInitialName = vi.fn();
+			const mockSetRenameTabModalOpen = vi.fn();
+			const mockGetActiveTab = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createFileTabRenameContext({
+				setRenameTabId: mockSetRenameTabId,
+				setRenameTabInitialName: mockSetRenameTabInitialName,
+				setRenameTabModalOpen: mockSetRenameTabModalOpen,
+				getActiveTab: mockGetActiveTab,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabId).toHaveBeenCalledWith('file-tab-1');
+			expect(mockSetRenameTabInitialName).toHaveBeenCalledWith('My File');
+			expect(mockSetRenameTabModalOpen).toHaveBeenCalledWith(true);
+			expect(mockGetActiveTab).not.toHaveBeenCalled();
+		});
+
+		it('seeds an empty initial name when the file tab has no custom name', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabInitialName = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createFileTabRenameContext({
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'ai',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [{ id: 'file-tab-1', path: '/test.ts' }],
+					activeFileTabId: 'file-tab-1',
+				},
+				setRenameTabId: vi.fn(),
+				setRenameTabInitialName: mockSetRenameTabInitialName,
+				setRenameTabModalOpen: vi.fn(),
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabInitialName).toHaveBeenCalledWith('');
+		});
+
+		it('falls back to the AI tab when no file preview tab is active', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabId = vi.fn();
+			const mockGetActiveTab = vi.fn().mockReturnValue({ id: 'ai-tab-1', name: 'AI Tab 1' });
+
+			result.current.keyboardHandlerRef.current = createFileTabRenameContext({
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'ai',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [],
+					activeFileTabId: null,
+				},
+				setRenameTabId: mockSetRenameTabId,
+				setRenameTabInitialName: vi.fn(),
+				setRenameTabModalOpen: vi.fn(),
+				getActiveTab: mockGetActiveTab,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockGetActiveTab).toHaveBeenCalled();
+			expect(mockSetRenameTabId).toHaveBeenCalledWith('ai-tab-1');
+		});
+	});
+
 	describe('Cmd+E markdown toggle (toggleMarkdownMode)', () => {
 		it('should toggle chatRawTextMode when on AI tab with no file tab', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
