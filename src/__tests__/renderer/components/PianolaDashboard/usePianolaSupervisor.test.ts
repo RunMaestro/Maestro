@@ -9,6 +9,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { usePianolaSupervisor } from '../../../../renderer/components/PianolaDashboard/usePianolaSupervisor';
 import type { PianolaSupervisorSnapshot } from '../../../../main/ipc/handlers/pianola';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
+import { captureException } from '../../../../renderer/utils/sentry';
+
+vi.mock('../../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
+vi.mock('../../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
 	let resolve!: (v: T) => void;
@@ -100,5 +105,15 @@ describe('usePianolaSupervisor', () => {
 		});
 		// The mutation result must survive the late, stale poll.
 		expect(result.current.watched).toHaveLength(1);
+	});
+
+	it('surfaces a toast and reports to Sentry when a mutation fails', async () => {
+		addImpl = () => Promise.reject(new Error('disk full'));
+		const { result } = renderHook(() => usePianolaSupervisor());
+		await act(async () => {
+			await result.current.watch('a', 'x');
+		});
+		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }));
+		expect(captureException).toHaveBeenCalled();
 	});
 });
