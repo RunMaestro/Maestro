@@ -641,10 +641,26 @@ interface MaestroAPI {
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				icon: string | undefined,
+				color: string | undefined,
 				responseChannel: string
 			) => void
 		) => () => void;
-		sendRemoteCreateGroupResponse: (responseChannel: string, result: { id: string } | null) => void;
+		sendRemoteCreateGroupResponse: (
+			responseChannel: string,
+			result: import('../shared/types').GroupAppearanceEcho | null
+		) => void;
+		onRemoteUpdateGroup: (
+			callback: (
+				groupId: string,
+				updates: import('../shared/types').UpdateGroupPayload,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdateGroupResponse: (
+			responseChannel: string,
+			result: import('../shared/types').GroupAppearanceEcho | null
+		) => void;
 		onRemoteRenameGroup: (
 			callback: (groupId: string, name: string, responseChannel: string) => void
 		) => () => void;

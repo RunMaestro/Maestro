@@ -1184,11 +1184,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				icon: string | undefined,
+				color: string | undefined,
 				responseChannel: string
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCreateGroup', {
-						detail: { name, emoji, parentGroupId, responseChannel },
+						detail: { name, emoji, parentGroupId, icon, color, responseChannel },
 					})
 				);
 			}
@@ -1199,6 +1201,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteRenameGroup', {
 						detail: { groupId, name, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeUpdateGroup = window.maestro.process.onRemoteUpdateGroup(
+			(groupId, updates, responseChannel) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteUpdateGroup', {
+						detail: { groupId, updates, responseChannel },
 					})
 				);
 			}
@@ -1231,6 +1243,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeUpdateSessionConfig();
 			unsubscribeCreateGroup();
 			unsubscribeRenameGroup();
+			unsubscribeUpdateGroup();
 			unsubscribeDeleteGroup();
 			unsubscribeMoveSessionToGroup();
 		};

@@ -10,7 +10,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { UsageStats } from '../../shared/types';
+import type { UsageStats, GroupAppearanceEcho, UpdateGroupPayload } from '../../shared/types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 
@@ -1484,6 +1484,8 @@ export function createProcessApi() {
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				icon: string | undefined,
+				color: string | undefined,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -1492,20 +1494,52 @@ export function createProcessApi() {
 				name: string,
 				emoji: string | undefined,
 				parentGroupId: string | undefined,
+				icon: string | undefined,
+				color: string | undefined,
 				responseChannel: string
 			) => {
-				callback(name, emoji, parentGroupId, responseChannel);
+				callback(name, emoji, parentGroupId, icon, color, responseChannel);
 			};
 			ipcRenderer.on('remote:createGroup', handler);
 			return () => ipcRenderer.removeListener('remote:createGroup', handler);
 		},
 
 		/**
-		 * Send response for remote create group
+		 * Send response for remote create group. Echoes the persisted group
+		 * appearance so the CLI can confirm icon/color were applied.
 		 */
 		sendRemoteCreateGroupResponse: (
 			responseChannel: string,
-			result: { id: string } | null
+			result: GroupAppearanceEcho | null
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote update group from web interface
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteUpdateGroup: (
+			callback: (groupId: string, updates: UpdateGroupPayload, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				groupId: string,
+				updates: UpdateGroupPayload,
+				responseChannel: string
+			) => {
+				callback(groupId, updates, responseChannel);
+			};
+			ipcRenderer.on('remote:updateGroup', handler);
+			return () => ipcRenderer.removeListener('remote:updateGroup', handler);
+		},
+
+		/**
+		 * Send response for remote update group (persisted group echo, or null).
+		 */
+		sendRemoteUpdateGroupResponse: (
+			responseChannel: string,
+			result: GroupAppearanceEcho | null
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

@@ -28,8 +28,11 @@ import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { notifyToast } from '../../stores/notificationStore';
 import {
 	canCreateGroupInside,
+	canSetGroupParent,
 	removeGroupAndPromoteChildren,
 } from '../../../shared/groupHierarchy';
+import { DEFAULT_GROUP_EMOJI } from '../../../shared/groupAppearance';
+import type { GroupAppearanceEcho, UpdateGroupPayload } from '../../../shared/types';
 
 // ============================================================================
 // Dependencies interface
@@ -71,6 +74,18 @@ export interface UseAppRemoteEventListenersDeps {
 	skipCurrentDocument: (sessionId: string) => void;
 	/** Abort a paused-on-error batch run entirely */
 	abortBatchOnError: (sessionId: string) => void;
+}
+
+/** Project a persisted group down to the appearance subset echoed to the CLI. */
+function groupToAppearanceEcho(group: Group): GroupAppearanceEcho {
+	return {
+		id: group.id,
+		name: group.name,
+		emoji: group.emoji,
+		...(group.icon ? { icon: group.icon } : {}),
+		...(group.color ? { color: group.color } : {}),
+		...(group.parentGroupId ? { parentGroupId: group.parentGroupId } : {}),
+	};
 }
 
 // ============================================================================
@@ -1427,6 +1442,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			name,
 			emoji,
 			parentGroupId: requestedParentGroupId,
+			icon,
+			color,
 			responseChannel,
 		} = (e as CustomEvent).detail;
 		const trimmed = name.trim();
@@ -1443,18 +1460,70 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 		const newGroupId = `group-${generateId()}`;
-		setGroups((prev: Group[]) => [
-			...prev,
-			{
-				id: newGroupId,
-				name: trimmed.toUpperCase(),
-				emoji: emoji || '\u{1F4C2}',
-				kind: 'user',
-				...(parentGroupId ? { parentGroupId } : {}),
-				collapsed: false,
-			},
-		]);
-		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
+		const newGroup: Group = {
+			id: newGroupId,
+			name: trimmed.toUpperCase(),
+			emoji: emoji || DEFAULT_GROUP_EMOJI,
+			kind: 'user',
+			...(icon ? { icon } : {}),
+			...(color ? { color } : {}),
+			...(parentGroupId ? { parentGroupId } : {}),
+			collapsed: false,
+		};
+		setGroups((prev: Group[]) => [...prev, newGroup]);
+		// Echo the persisted appearance so the CLI can confirm icon/color landed.
+		window.maestro.process.sendRemoteCreateGroupResponse(
+			responseChannel,
+			groupToAppearanceEcho(newGroup)
+		);
+	});
+
+	// Handle remote update group from web interface (name/appearance/hierarchy)
+	useEventListener('maestro:remoteUpdateGroup', (e: Event) => {
+		const { groupId, updates, responseChannel } = (e as CustomEvent).detail as {
+			groupId: string;
+			updates: UpdateGroupPayload;
+			responseChannel: string;
+		};
+		const state = useSessionStore.getState();
+		const existing = state.groups.find((g) => g.id === groupId);
+		if (!existing) {
+			window.maestro.process.sendRemoteUpdateGroupResponse(responseChannel, null);
+			return;
+		}
+
+		const clear = updates.clear ?? [];
+		const patch: Partial<Group> = {};
+		if (typeof updates.name === 'string' && updates.name.trim()) {
+			patch.name = updates.name.trim().toUpperCase();
+		}
+		if (typeof updates.emoji === 'string') patch.emoji = updates.emoji;
+		if (typeof updates.icon === 'string') patch.icon = updates.icon;
+		if (typeof updates.color === 'string') patch.color = updates.color;
+		if (typeof updates.parentGroupId === 'string') patch.parentGroupId = updates.parentGroupId;
+
+		// Explicit clears reset fields (key present, value undefined -> dropped on
+		// persist). Clearing the parent promotes the group to the top level.
+		if (clear.includes('emoji')) patch.emoji = DEFAULT_GROUP_EMOJI;
+		if (clear.includes('icon')) patch.icon = undefined;
+		if (clear.includes('color')) patch.color = undefined;
+		if (clear.includes('parent')) patch.parentGroupId = undefined;
+
+		// Validate a requested reparent before mutating, so an invalid parent
+		// fails loudly instead of silently no-op'ing (no partial mutation).
+		if (typeof patch.parentGroupId === 'string') {
+			if (!canSetGroupParent(state.groups, groupId, patch.parentGroupId)) {
+				window.maestro.process.sendRemoteUpdateGroupResponse(responseChannel, null);
+				return;
+			}
+		}
+
+		state.updateGroup(groupId, patch);
+		const updated = useSessionStore.getState().groups.find((g) => g.id === groupId);
+		window.maestro.process.sendRemoteUpdateGroupResponse(
+			responseChannel,
+			updated ? groupToAppearanceEcho(updated) : null
+		);
 	});
 
 	// Handle remote rename group from web interface

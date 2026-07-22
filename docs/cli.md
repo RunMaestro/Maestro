@@ -441,7 +441,7 @@ The flag table below covers `create-agent`:
 | `--auto-run-folder <path>`        | Auto Run / playbooks folder for this agent               | `<cwd>/.maestro/playbooks` |
 | `--json`                          | Machine-readable JSON output                             | -                          |
 
-### Creating and Removing Groups
+### Creating, Updating, and Removing Groups
 
 Manage Left Bar groups from the command line. Requires the Maestro desktop app to be running. Use a group ID with `create-agent -g` or `update-agent --group` to place agents into it, and `update-agent --group none` to move an agent back out.
 
@@ -452,8 +452,23 @@ maestro-cli create-group "Backend"
 # Create a group with an emoji icon
 maestro-cli create-group "Backend" -e 🔧
 
-# Machine-readable output (returns the new group ID)
+# Create a group with a built-in icon and a label color
+maestro-cli create-group "Backend" --icon rocket --color '#3B82F6'
+
+# Create a group nested inside a root group
+maestro-cli create-group "API" --parent <root-group-id>
+
+# Machine-readable output (returns the new group ID + effective appearance)
 maestro-cli create-group "Backend" --json
+
+# Update a group's name, appearance, or parent
+maestro-cli update-group <group-id> --name "Platform"
+maestro-cli update-group <group-id> --icon shield --color '#22C55E'
+maestro-cli update-group <group-id> --parent <root-group-id>
+
+# Clear appearance/hierarchy fields (clearing --parent promotes to the top level)
+maestro-cli update-group <group-id> --clear-icon --clear-color
+maestro-cli update-group <group-id> --clear-parent
 
 # Remove an (empty) group
 maestro-cli remove-group <group-id>
@@ -461,18 +476,38 @@ maestro-cli remove-group <group-id>
 # Remove a group that still has agents (ungroups them first)
 maestro-cli remove-group <group-id> --force
 
-# Rename a group
+# Rename a group (kept for backward compatibility; update-group --name is equivalent)
 maestro-cli rename-group <group-id> "Frontend"
 ```
 
 Removing a group never deletes the agents inside it: the desktop ungroups any members (moves them to no group) and then removes the group. `remove-group` refuses a non-empty group unless you pass `--force`, so you don't accidentally scatter a populated group. Group IDs support partial-ID resolution.
 
+**Appearance and hierarchy.** `--emoji` and `--icon` are mutually exclusive; `--color` combines with either. Icon IDs are the built-ins (`folder`, `briefcase`, `rocket`, `code`, `star`, `heart`, `lightbulb`, `target`, `calendar`, `book`, `layers`, `shield`, `wrench`, `palette`, `archive`, `zap`) or a plugin-namespaced ID. Colors are `#RRGGBB` hex (normalized to uppercase) or a plugin-namespaced color ID. Invalid values fail before any change is made. When you request icon/color, the desktop echoes the effective persisted appearance; an older desktop that cannot apply them fails with a clear version-mismatch message instead of reporting a false success. `list groups --json` includes `icon`, `color`, and `parentGroupId`.
+
 `create-group` flags:
 
-| Flag                  | Description                  | Default |
-| --------------------- | ---------------------------- | ------- |
-| `-e, --emoji <emoji>` | Emoji icon for the group     | -       |
-| `--json`              | Machine-readable JSON output | -       |
+| Flag                  | Description                                                               | Default |
+| --------------------- | ------------------------------------------------------------------------- | ------- |
+| `-e, --emoji <emoji>` | Emoji icon for the group (mutually exclusive with `--icon`)               | -       |
+| `--icon <icon-id>`    | Built-in or plugin-namespaced icon ID (mutually exclusive with `--emoji`) | -       |
+| `--color <color>`     | Label color as `#RRGGBB` hex or a plugin-namespaced color ID              | -       |
+| `--parent <group-id>` | Create inside this root group                                             | -       |
+| `--json`              | Machine-readable JSON output                                              | -       |
+
+`update-group` flags:
+
+| Flag                  | Description                                                               | Default |
+| --------------------- | ------------------------------------------------------------------------- | ------- |
+| `--name <name>`       | New group name                                                            | -       |
+| `-e, --emoji <emoji>` | Emoji icon (mutually exclusive with `--icon`)                             | -       |
+| `--icon <icon-id>`    | Built-in or plugin-namespaced icon ID (mutually exclusive with `--emoji`) | -       |
+| `--color <color>`     | Label color as `#RRGGBB` hex or a plugin-namespaced color ID              | -       |
+| `--parent <group-id>` | Move this group inside a root group                                       | -       |
+| `--clear-emoji`       | Reset the emoji to the default folder icon                                | -       |
+| `--clear-icon`        | Remove the custom icon                                                    | -       |
+| `--clear-color`       | Remove the label color                                                    | -       |
+| `--clear-parent`      | Promote the group to the top level                                        | -       |
+| `--json`              | Machine-readable JSON output                                              | -       |
 
 `remove-group` flags:
 

@@ -141,8 +141,11 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getSettings: vi.fn().mockReturnValue({}),
 		setSetting: vi.fn().mockResolvedValue(true),
 		getGroups: vi.fn().mockReturnValue([]),
-		createGroup: vi.fn().mockResolvedValue({ id: 'group-1' }),
+		createGroup: vi.fn().mockResolvedValue({ id: 'group-1', name: 'Group 1', emoji: '📁' }),
 		renameGroup: vi.fn().mockResolvedValue(true),
+		updateGroup: vi
+			.fn()
+			.mockResolvedValue({ id: 'group-1', name: 'GROUP 1', emoji: '📁', icon: 'rocket' }),
 		deleteGroup: vi.fn().mockResolvedValue(true),
 		moveSessionToGroup: vi.fn().mockResolvedValue(true),
 		createSession: vi.fn().mockResolvedValue({ sessionId: 'new-session-1' }),
@@ -2877,8 +2880,74 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGroup).toHaveBeenCalledWith('Project', '📁', 'company');
+				expect(callbacks.createGroup).toHaveBeenCalledWith(
+					'Project',
+					'📁',
+					'company',
+					undefined,
+					undefined
+				);
 			});
+		});
+
+		it('forwards icon/color when creating a group and echoes the persisted group', async () => {
+			handler.handleMessage(client, {
+				type: 'create_group',
+				name: 'Project',
+				icon: 'rocket',
+				color: '#EF4444',
+				requestId: 'request-icon',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGroup).toHaveBeenCalledWith(
+					'Project',
+					undefined,
+					undefined,
+					'rocket',
+					'#EF4444'
+				);
+			});
+			const payload = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(payload.type).toBe('create_group_result');
+			expect(payload.success).toBe(true);
+			expect(payload.group).toMatchObject({ id: 'group-1' });
+		});
+
+		it('forwards update_group and echoes the persisted group', async () => {
+			handler.handleMessage(client, {
+				type: 'update_group',
+				groupId: 'group-1',
+				name: 'Group 1',
+				icon: 'rocket',
+				clear: ['color', 'parent'],
+				requestId: 'request-update',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', {
+					name: 'Group 1',
+					icon: 'rocket',
+					clear: ['color', 'parent'],
+				});
+			});
+			const payload = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(payload.type).toBe('update_group_result');
+			expect(payload.success).toBe(true);
+			expect(payload.group).toMatchObject({ id: 'group-1', icon: 'rocket' });
+		});
+
+		it('rejects an update_group with no updates', () => {
+			handler.handleMessage(client, {
+				type: 'update_group',
+				groupId: 'group-1',
+				requestId: 'request-empty',
+			});
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.type).toBe('error');
+			expect(payload.message).toContain('No group updates');
 		});
 
 		it('rejects non-string parentGroupId values instead of creating a root group', () => {

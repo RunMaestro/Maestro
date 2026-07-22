@@ -19,7 +19,12 @@ import { getSshRemoteById } from '../stores';
 import { isImageRef, resolveToDataUrlSync } from '../storage/session-image-store';
 import { parseGitBranches } from '../../shared/gitUtils';
 import type { Shortcut } from '../../shared/shortcut-types';
-import type { WebPlaybook, CueSubscriptionInfo, CueActivityEntry } from './types';
+import type {
+	WebPlaybook,
+	CueSubscriptionInfo,
+	CueActivityEntry,
+	UpdateGroupPayload,
+} from './types';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementStateSnapshot } from '../../shared/movement-types';
@@ -1754,48 +1759,58 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to create a group
 		// Uses IPC request-response pattern
-		server.setCreateGroupCallback(async (name: string, emoji?: string, parentGroupId?: string) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for createGroup', 'WebServer');
-				return null;
-			}
-
-			return new Promise((resolve) => {
-				const responseChannel = `remote:createGroup:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					resolve(result || null);
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for createGroup', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve(null);
-					return;
+		server.setCreateGroupCallback(
+			async (
+				name: string,
+				emoji?: string,
+				parentGroupId?: string,
+				icon?: string,
+				color?: string
+			) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for createGroup', 'WebServer');
+					return null;
 				}
-				mainWindow.webContents.send(
-					'remote:createGroup',
-					name,
-					emoji,
-					parentGroupId,
-					responseChannel
-				);
 
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(`createGroup callback timed out`, 'WebServer');
-					resolve(null);
-				}, 5000);
-			});
-		});
+				return new Promise((resolve) => {
+					const responseChannel = `remote:createGroup:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						resolve(result || null);
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for createGroup', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve(null);
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:createGroup',
+						name,
+						emoji,
+						parentGroupId,
+						icon,
+						color,
+						responseChannel
+					);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(`createGroup callback timed out`, 'WebServer');
+						resolve(null);
+					}, 5000);
+				});
+			}
+		);
 
 		// Set up callback for web server to rename a group
 		// Uses IPC request-response pattern
@@ -1832,6 +1847,45 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					ipcMain.removeListener(responseChannel, handleResponse);
 					logger.warn(`renameGroup callback timed out for group ${groupId}`, 'WebServer');
 					resolve(false);
+				}, 5000);
+			});
+		});
+
+		// Set up callback for web server to update a group's name/appearance/parent
+		// Uses IPC request-response pattern; resolves to the persisted group echo.
+		server.setUpdateGroupCallback(async (groupId: string, updates: UpdateGroupPayload) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for updateGroup', 'WebServer');
+				return null;
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:updateGroup:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || null);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for updateGroup', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(null);
+					return;
+				}
+				mainWindow.webContents.send('remote:updateGroup', groupId, updates, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`updateGroup callback timed out for group ${groupId}`, 'WebServer');
+					resolve(null);
 				}, 5000);
 			});
 		});

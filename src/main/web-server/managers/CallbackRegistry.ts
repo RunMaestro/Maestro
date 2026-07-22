@@ -53,6 +53,8 @@ import type {
 	GetGroupsCallback,
 	CreateGroupCallback,
 	RenameGroupCallback,
+	UpdateGroupCallback,
+	UpdateGroupPayload,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -115,6 +117,7 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
+import type { GroupAppearanceEcho } from '../../../shared/types';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
 
@@ -167,6 +170,7 @@ export interface WebServerCallbacks {
 	getGroups: GetGroupsCallback | null;
 	createGroup: CreateGroupCallback | null;
 	renameGroup: RenameGroupCallback | null;
+	updateGroup: UpdateGroupCallback | null;
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
@@ -254,6 +258,7 @@ export class CallbackRegistry {
 		getGroups: null,
 		createGroup: null,
 		renameGroup: null,
+		updateGroup: null,
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
@@ -561,15 +566,25 @@ export class CallbackRegistry {
 	async createGroup(
 		name: string,
 		emoji?: string,
-		parentGroupId?: string
-	): Promise<{ id: string } | null> {
+		parentGroupId?: string,
+		icon?: string,
+		color?: string
+	): Promise<GroupAppearanceEcho | null> {
 		if (!this.callbacks.createGroup) return null;
-		return this.callbacks.createGroup(name, emoji, parentGroupId);
+		return this.callbacks.createGroup(name, emoji, parentGroupId, icon, color);
 	}
 
 	async renameGroup(groupId: string, name: string): Promise<boolean> {
 		if (!this.callbacks.renameGroup) return false;
 		return this.callbacks.renameGroup(groupId, name);
+	}
+
+	async updateGroup(
+		groupId: string,
+		updates: UpdateGroupPayload
+	): Promise<GroupAppearanceEcho | null> {
+		if (!this.callbacks.updateGroup) return null;
+		return this.callbacks.updateGroup(groupId, updates);
 	}
 
 	async deleteGroup(groupId: string): Promise<boolean> {
@@ -1017,6 +1032,10 @@ export class CallbackRegistry {
 
 	setRenameGroupCallback(callback: RenameGroupCallback): void {
 		this.callbacks.renameGroup = callback;
+	}
+
+	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
+		this.callbacks.updateGroup = callback;
 	}
 
 	setDeleteGroupCallback(callback: DeleteGroupCallback): void {
