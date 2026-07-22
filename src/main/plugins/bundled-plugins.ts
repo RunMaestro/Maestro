@@ -48,12 +48,23 @@ export function bundledPluginsRoot(): string | null {
 	return null;
 }
 
-/** Parse + validate a plugin dir's manifest, or null when unreadable/invalid. */
+/** Parse + validate a plugin dir's manifest. Returns null for an absent or
+ * malformed/invalid manifest (both normal "not a usable plugin dir" cases) and
+ * rethrows unexpected I/O errors so they reach the caller's onError/Sentry. */
 function readManifest(dir: string): PluginManifest | null {
+	let raw: string;
 	try {
-		const raw = JSON.parse(fs.readFileSync(path.join(dir, MANIFEST_FILENAME), 'utf-8')) as unknown;
-		return validatePluginManifest(raw).manifest;
+		raw = fs.readFileSync(path.join(dir, MANIFEST_FILENAME), 'utf-8');
+	} catch (error) {
+		// An absent manifest just means "not a plugin dir". Any other I/O failure
+		// (permissions, etc.) is unexpected: surface it rather than skip silently.
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	}
+	try {
+		return validatePluginManifest(JSON.parse(raw) as unknown).manifest;
 	} catch {
+		// Malformed JSON -> no usable manifest (validation returns null on its own).
 		return null;
 	}
 }
@@ -83,17 +94,17 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
 		const src = path.join(root, entry.name);
-		const bundled = readManifest(src);
-		const id = bundled?.id;
-		if (!id || !isSafePluginFolderName(id)) continue;
-		// Identity guard: the bundled folder name must equal the declared id, so a
-		// signed bundle can never target a DIFFERENT plugin's directory in the
-		// writable plugins tree.
-		if (entry.name !== id) {
-			deps.onLog?.(`bundled plugin dir "${entry.name}" declares id "${id}"; skipped`);
-			continue;
-		}
 		try {
+			const bundled = readManifest(src);
+			const id = bundled?.id;
+			if (!id || !isSafePluginFolderName(id)) continue;
+			// Identity guard: the bundled folder name must equal the declared id, so a
+			// signed bundle can never target a DIFFERENT plugin's directory in the
+			// writable plugins tree.
+			if (entry.name !== id) {
+				deps.onLog?.(`bundled plugin dir "${entry.name}" declares id "${id}"; skipped`);
+				continue;
+			}
 			// Trust gate: only seed a bundled plugin that verifies `trusted`.
 			const sig = verifyPluginSignature(src, trusted);
 			if (sig.status !== 'trusted') {

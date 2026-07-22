@@ -135,13 +135,18 @@ describe('seedBundledPlugins', () => {
 		h.sigStatus[dest] = 'trusted';
 		const errors: unknown[] = [];
 		const cpSync = vi.mocked(fs.cpSync);
-		cpSync.mockImplementationOnce(() => {
+		cpSync.mockImplementationOnce((_source, destination) => {
+			// Partial copy: write bytes into the staging dir, then fail. A non-atomic
+			// direct copy into dest would corrupt the live install here; the
+			// temp-sibling + rollback must leave the live copy untouched.
+			const staging = String(destination);
+			fs.mkdirSync(staging, { recursive: true });
+			fs.writeFileSync(path.join(staging, 'live.txt'), 'partial');
 			throw new Error('disk full');
 		});
 		seedBundledPlugins({ trustedKeys, onError: (e) => errors.push(e) });
-		// The failed copy staged into a temp sibling first, so the live install
-		// and its file are untouched, and the error surfaced.
-		expect(fs.existsSync(path.join(dest, 'live.txt'))).toBe(true);
-		expect(errors.length).toBeGreaterThan(0);
+		// The live install and its file survive byte-for-byte, and the error surfaced.
+		expect(fs.readFileSync(path.join(dest, 'live.txt'), 'utf8')).toBe('in use');
+		expect(errors).toContainEqual(expect.objectContaining({ message: 'disk full' }));
 	});
 });
