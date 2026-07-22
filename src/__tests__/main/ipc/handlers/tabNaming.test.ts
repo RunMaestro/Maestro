@@ -1158,6 +1158,80 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		// Regression for #1110: on the TUI path maestro-p strips the headless-only
+		// flags (including the `--tools ""` guard), so naming runs a real agentic
+		// turn and its raw terminal transcript is thinking/response prose, not
+		// stream-json. Scraping that buffer put a sentence fragment on the tab,
+		// which users saw as the response streaming into the tab name. Prose has no
+		// angle brackets, so STRUCTURAL_NOISE_RE can't catch it - we must decline.
+		it('returns null instead of scraping a plain-text TUI transcript for a name', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// A realistic maestro-p TUI transcript: short prose lines that clear the
+			// 40-char filter and carry no structural noise.
+			onDataCallback?.(
+				'tab-naming-mock-uuid-1234',
+				'I should look at the auth flow\nLet me start with the form\n'
+			);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			await expect(resultPromise).resolves.toBeNull();
+		});
+
+		it('still accepts a stream-json name on the TUI path', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			onDataCallback?.(
+				'tab-naming-mock-uuid-1234',
+				`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Login Form' })}\n`
+			);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			await expect(resultPromise).resolves.toBe('Login Form');
+		});
+
 		it('spawns plain claude when the agent is API-only (enableMaestroP false)', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
 			const finish = wireProcessEvents();
