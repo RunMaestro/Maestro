@@ -34,10 +34,6 @@ vi.mock('../../../renderer/utils/sentry', () => ({
 
 vi.mock('../../../renderer/utils/spawnHelpers', () => ({
 	prepareMaestroSystemPrompt: vi.fn().mockResolvedValue('mock-system-prompt'),
-	getStdinFlags: vi.fn().mockReturnValue({
-		sendPromptViaStdin: false,
-		sendPromptViaStdinRaw: false,
-	}),
 }));
 
 // ============================================================================

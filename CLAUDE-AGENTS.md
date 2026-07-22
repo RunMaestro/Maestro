@@ -43,6 +43,7 @@ Each agent declares capabilities that control UI feature availability. See `src/
 | `usesJsonLineOutput`          | Uses JSONL output in batch mode          | CLI batch parsing strategy |
 | `usesCombinedContextWindow`   | Uses combined input+output context       | Context bar display mode   |
 | `supportsStreamJsonInput`     | Accepts stream-json input via stdin      | Image input method         |
+| `supportsPromptViaStdin`      | CLI reads the prompt from stdin          | Windows prompt delivery    |
 | `imageResumeMode?`            | Image handling on resume (optional)      | Resume image strategy      |
 
 ### Accessing Capabilities

@@ -99,6 +99,17 @@ export interface AgentCapabilities {
 	/** Agent supports --input-format stream-json for image input via stdin */
 	supportsStreamJsonInput: boolean;
 
+	/**
+	 * Agent's CLI reads the prompt from stdin when it is not passed as an
+	 * argument. Windows spawns deliver the prompt over stdin instead of argv to
+	 * stay under the ~32K CreateProcess command-line limit, which only works for
+	 * CLIs that actually read stdin. An agent that accepts the prompt solely as a
+	 * positional argument (Oh My Pi) would otherwise start with no prompt at all,
+	 * emit its session line, and exit 0 without ever calling the model.
+	 * False keeps the prompt in argv on every platform.
+	 */
+	supportsPromptViaStdin: boolean;
+
 	/** Agent emits streaming thinking/reasoning content that can be displayed */
 	supportsThinkingDisplay: boolean;
 
@@ -170,6 +181,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsResultMessages: false,
 	supportsModelSelection: false,
 	supportsStreamJsonInput: false,
+	supportsPromptViaStdin: false,
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,

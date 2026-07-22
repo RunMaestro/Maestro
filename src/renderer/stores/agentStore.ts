@@ -33,7 +33,7 @@ import type {
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore, selectSessionById } from './sessionStore';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
@@ -420,12 +420,6 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					activeTabId: targetTab.id,
 				});
 
-				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-					isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
-					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages: !!hasImages,
-				});
-
 				logger.info('[processQueuedItem] Spawning agent with queued message:', undefined, {
 					sessionId: targetSessionId,
 					toolType: session.toolType,
@@ -459,8 +453,6 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-					sendPromptViaStdin,
-					sendPromptViaStdinRaw,
 				});
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
@@ -540,14 +532,6 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						pendingAICommandForSynopsis: matchingCommand.command,
 					}));
 
-					// Compute stdin flags for command spawn (commands never have images)
-					const { sendPromptViaStdin: cmdSendViaStdin, sendPromptViaStdinRaw: cmdSendViaStdinRaw } =
-						getStdinFlags({
-							isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
-							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-							hasImages: false,
-						});
-
 					// Spawn agent with the prompt
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
@@ -568,8 +552,6 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-						sendPromptViaStdin: cmdSendViaStdin,
-						sendPromptViaStdinRaw: cmdSendViaStdinRaw,
 					});
 				} else {
 					// Unknown command - add error log and reset to idle

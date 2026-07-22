@@ -132,6 +132,9 @@ describe('Tab Naming IPC Handlers', () => {
 		],
 		batchModeArgs: ['--print'],
 		readOnlyArgs: ['--permission-mode', 'plan'],
+		capabilities: {
+			supportsPromptViaStdin: true,
+		},
 	};
 
 	beforeEach(async () => {
@@ -878,6 +881,47 @@ describe('Tab Naming IPC Handlers', () => {
 
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({ sendPromptViaStdinRaw: true })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw for agents that never read stdin', async () => {
+			// omp takes the prompt positionally; stdin delivery would name nothing.
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				id: 'omp',
+				command: 'omp',
+				path: '/home/user/.bun/bin/omp',
+				capabilities: { supportsPromptViaStdin: false },
+			} as AgentConfig);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'long first message',
+				agentType: 'omp',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
 			);
 
 			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');

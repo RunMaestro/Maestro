@@ -218,6 +218,7 @@ interface AgentCapabilities {
 	supportsResultMessages: boolean; // Distinct "done" events
 	supportsModelSelection: boolean; // --model flag
 	supportsStreamJsonInput: boolean; // stdin image input
+	supportsPromptViaStdin: boolean; // CLI reads the prompt from stdin
 	supportsThinkingDisplay: boolean; // Thinking/reasoning content
 	supportsContextMerge: boolean; // Receive transferred context
 	supportsContextExport: boolean; // Export context for transfer

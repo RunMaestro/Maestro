@@ -13,7 +13,6 @@ import type { ToolType, ProcessConfig } from '../types';
 import type { InlineWizardMessage } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
-import { getStdinFlags } from '../utils/spawnHelpers';
 import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../utils/grokWizard';
 import {
 	parseStructuredOutput,
@@ -671,20 +670,6 @@ export async function sendWizardMessage(
 		// Build args for the agent
 		const argsForSpawn = agent ? buildArgsForAgent(agent) : [];
 
-		const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
-			getStdinFlags({
-				isSshSession: !!session.sessionSshRemoteConfig?.enabled,
-				supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
-				hasImages: false, // Inline wizard never sends images
-			});
-		logger.info(`Using stdin for Windows`, '[InlineWizardConversation]', {
-			sessionId: session.sessionId,
-			platform: navigator.platform,
-			promptLength: fullPrompt.length,
-			sendViaStdin,
-			sendViaStdinRaw,
-		});
-
 		// Spawn agent and collect output
 		const result = await new Promise<InlineWizardSendResult>((resolve) => {
 			let outputBuffer = '';
@@ -866,7 +851,6 @@ export async function sendWizardMessage(
 				agentCommand: agent?.command,
 				cwd: session.directoryPath,
 				historyLength: conversationHistory.length,
-				sendViaStdin,
 				hasAgent: !!agent,
 				isRemote: isRemoteSession,
 			});
@@ -879,10 +863,6 @@ export async function sendWizardMessage(
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: fullPrompt,
-					// For stream-json agents (Claude Code, Codex): use JSON format via stdin
-					// For other agents (OpenCode, etc.): use raw text via stdin
-					sendPromptViaStdin: sendViaStdin,
-					sendPromptViaStdinRaw: sendViaStdinRaw,
 					// Pass SSH config for remote execution
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					// Pass session-level overrides

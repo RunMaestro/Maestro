@@ -333,6 +333,7 @@ describe('agent-capabilities', () => {
 				'supportsBatchMode',
 				'supportsStreaming',
 				'supportsStreamJsonInput',
+				'supportsPromptViaStdin',
 				'supportsResultMessages',
 				'supportsModelSelection',
 				'requiresPromptToStart',

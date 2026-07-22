@@ -55,6 +55,7 @@ describe('group-chat-config', () => {
 			it('should return shell config for stream-json agent on Windows', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: true,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('claude-code');
@@ -68,6 +69,7 @@ describe('group-chat-config', () => {
 			it('should return shell config for non-stream-json agent on Windows', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: false,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('opencode');
@@ -81,6 +83,7 @@ describe('group-chat-config', () => {
 			it('should NOT apply Windows config when SSH is enabled', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: true,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const sshConfig: SpawnSshConfig = {
@@ -101,6 +104,7 @@ describe('group-chat-config', () => {
 			it('should apply Windows config when SSH is disabled', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: true,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const sshConfig: SpawnSshConfig = {
@@ -118,6 +122,7 @@ describe('group-chat-config', () => {
 			it('should apply Windows config when sshConfig is undefined', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: false,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('opencode', undefined);
@@ -136,6 +141,7 @@ describe('group-chat-config', () => {
 				});
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: true,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('claude-code');
@@ -156,6 +162,7 @@ describe('group-chat-config', () => {
 			it('should return no-op config on Linux', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: true,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('claude-code');
@@ -172,6 +179,7 @@ describe('group-chat-config', () => {
 				Object.defineProperty(process, 'platform', { value: 'darwin' });
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: false,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('opencode');
@@ -191,6 +199,7 @@ describe('group-chat-config', () => {
 			it('should correctly identify Claude Code as stream-json capable', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: true,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('claude-code');
@@ -200,9 +209,24 @@ describe('group-chat-config', () => {
 				expect(result.sendPromptViaStdinRaw).toBe(false);
 			});
 
+			it('keeps the prompt in argv for agents that never read stdin', () => {
+				// omp takes the prompt positionally: handing it stdin would start the
+				// turn with no prompt at all.
+				vi.mocked(getAgentCapabilities).mockReturnValue({
+					supportsStreamJsonInput: false,
+					supportsPromptViaStdin: false,
+				} as any);
+
+				const result = getWindowsSpawnConfig('omp');
+
+				expect(result.sendPromptViaStdin).toBe(false);
+				expect(result.sendPromptViaStdinRaw).toBe(false);
+			});
+
 			it('should correctly identify Codex as stream-json capable', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: true,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('codex');
@@ -215,6 +239,7 @@ describe('group-chat-config', () => {
 			it('should correctly identify OpenCode as non-stream-json', () => {
 				vi.mocked(getAgentCapabilities).mockReturnValue({
 					supportsStreamJsonInput: false,
+					supportsPromptViaStdin: true,
 				} as any);
 
 				const result = getWindowsSpawnConfig('opencode');

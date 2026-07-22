@@ -191,7 +191,11 @@ if (e.altKey && process.platform === 'darwin') {
 
 ```typescript
 // cmd.exe has ~8KB command line limit
-// Use sendPromptViaStdin to bypass this for long prompts
+// handleProcessSpawn sets sendPromptViaStdin/Raw to bypass this for long prompts.
+// It is decided in MAIN, from isWindows() and the agent's supportsPromptViaStdin
+// capability - never by a renderer. A web-desktop client is a browser that may
+// run on a different OS than the host, and a CLI that takes the prompt only as a
+// positional argument (omp) would start with no prompt at all.
 ```
 
 ### 6. Git Operations

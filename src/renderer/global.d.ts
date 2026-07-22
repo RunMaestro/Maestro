@@ -77,9 +77,9 @@ interface ProcessConfig {
 	};
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
-	// Windows command line length workaround
-	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
-	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
+	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
+	// neither of which a renderer (possibly a browser on another OS) can know.
 	// Claude token-source selection. Normally resolved server-side from the
 	// persisted session by sessionId, but spawns using a synthetic sessionId
 	// (e.g. background synopsis) forward these inline so the handler can resolve.
