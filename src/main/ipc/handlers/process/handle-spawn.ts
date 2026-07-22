@@ -203,6 +203,9 @@ export async function handleProcessSpawn(
 	// exited 0, which left the tab holding an agent session id omp never persisted,
 	// so every later turn failed to resume it too.
 	// ========================================================================
+	// An agent that has not declared the capability keeps its prompt in argv: an
+	// over-long command line fails loudly at spawn, while stdin delivery to a CLI
+	// that ignores stdin fails silently and poisons the tab's session id.
 	const hostDeliversPromptViaStdin =
 		isWindows() && !isSshEnabled && (agent?.capabilities?.supportsPromptViaStdin ?? false);
 	const promptHasImages = !!config.images?.length;
