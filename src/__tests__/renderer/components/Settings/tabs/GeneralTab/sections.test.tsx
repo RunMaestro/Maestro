@@ -72,6 +72,8 @@ describe('GeneralTab section components', () => {
 				enterToSendAIExpanded={false}
 				setEnterToSendAIExpanded={setEnterToSendAIExpanded}
 				forcedParallelExecution={false}
+				forcedParallelAlways={false}
+				setForcedParallelAlways={vi.fn()}
 				shortcuts={{ forcedParallelSend: { keys: ['Meta', 'Shift', 'Enter'] } } as any}
 				forcedParallelWarning={warning}
 			/>
@@ -90,6 +92,8 @@ describe('GeneralTab section components', () => {
 		fireEvent.click(screen.getByRole('switch', { name: 'Forced Parallel Execution' }));
 		expect(warning.handleToggle).toHaveBeenCalled();
 		expect(screen.getAllByText('Ctrl+Shift+Enter')).toHaveLength(2);
+		// Send-trigger segmented control is hidden while the feature is off.
+		expect(screen.queryByText('Send trigger')).not.toBeInTheDocument();
 	});
 
 	it('uses the platform-aware default forced parallel shortcut fallback', () => {
@@ -101,12 +105,56 @@ describe('GeneralTab section components', () => {
 				enterToSendAIExpanded={false}
 				setEnterToSendAIExpanded={vi.fn()}
 				forcedParallelExecution={false}
+				forcedParallelAlways={false}
+				setForcedParallelAlways={vi.fn()}
 				shortcuts={undefined as any}
 				forcedParallelWarning={forcedParallelState()}
 			/>
 		);
 
 		expect(screen.getAllByText('Ctrl+Shift+Enter')).toHaveLength(2);
+	});
+
+	it('reveals the Modifier/Always segmented control and wires it when forced parallel is on', () => {
+		const setForcedParallelAlways = vi.fn();
+		const { rerender } = render(
+			<InputBehaviorSection
+				theme={mockTheme}
+				enterToSendAI={true}
+				setEnterToSendAI={vi.fn()}
+				enterToSendAIExpanded={false}
+				setEnterToSendAIExpanded={vi.fn()}
+				forcedParallelExecution={true}
+				forcedParallelAlways={false}
+				setForcedParallelAlways={setForcedParallelAlways}
+				shortcuts={{ forcedParallelSend: { keys: ['Meta', 'Shift', 'Enter'] } } as any}
+				forcedParallelWarning={forcedParallelState()}
+			/>
+		);
+
+		expect(screen.getByText('Send trigger')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('radio', { name: 'Always' }));
+		expect(setForcedParallelAlways).toHaveBeenCalledWith(true);
+
+		// In Always mode the modifier chip is ghosted (line-through) and the
+		// warning copy switches to the no-modifier wording.
+		rerender(
+			<InputBehaviorSection
+				theme={mockTheme}
+				enterToSendAI={true}
+				setEnterToSendAI={vi.fn()}
+				enterToSendAIExpanded={false}
+				setEnterToSendAIExpanded={vi.fn()}
+				forcedParallelExecution={true}
+				forcedParallelAlways={true}
+				setForcedParallelAlways={setForcedParallelAlways}
+				shortcuts={{ forcedParallelSend: { keys: ['Meta', 'Shift', 'Enter'] } } as any}
+				forcedParallelWarning={forcedParallelState()}
+			/>
+		);
+
+		expect(screen.getByText('Every message force-sends')).toBeInTheDocument();
+		expect(screen.getByRole('radio', { name: 'Always' })).toHaveAttribute('aria-checked', 'true');
 	});
 
 	it('shows and changes history synopsis debounce only when history is enabled', () => {

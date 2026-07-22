@@ -6,6 +6,7 @@ import {
 	clampAutoRunMaxTaskDurationMin,
 	sanitizeLoadedAutoRunMaxTaskDurationMin,
 	DEFAULT_AUTORUN_MAX_TASK_DURATION_MIN,
+	resolveForceParallel,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -144,6 +145,7 @@ function resetStore() {
 		wakatimeEnabled: false,
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
+		forcedParallelAlways: false,
 	});
 }
 
@@ -721,6 +723,46 @@ describe('settingsStore', () => {
 
 			it('forcedParallelAcknowledged defaults to false', () => {
 				expect(useSettingsStore.getState().forcedParallelAcknowledged).toBe(false);
+			});
+
+			it('setForcedParallelAlways updates state and persists', () => {
+				useSettingsStore.getState().setForcedParallelAlways(true);
+				expect(useSettingsStore.getState().forcedParallelAlways).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('forcedParallelAlways', true);
+			});
+
+			it('forcedParallelAlways defaults to false', () => {
+				expect(useSettingsStore.getState().forcedParallelAlways).toBe(false);
+			});
+
+			describe('resolveForceParallel', () => {
+				it('never forces when the feature is off, regardless of option or always mode', () => {
+					useSettingsStore.setState({
+						forcedParallelExecution: false,
+						forcedParallelAlways: true,
+					});
+					expect(resolveForceParallel(true)).toBe(false);
+					expect(resolveForceParallel(false)).toBe(false);
+				});
+
+				it('modifier mode forces only when the caller passes the explicit override', () => {
+					useSettingsStore.setState({
+						forcedParallelExecution: true,
+						forcedParallelAlways: false,
+					});
+					expect(resolveForceParallel(true)).toBe(true);
+					expect(resolveForceParallel(false)).toBe(false);
+					expect(resolveForceParallel(undefined)).toBe(false);
+				});
+
+				it('always mode forces every send even without the override', () => {
+					useSettingsStore.setState({
+						forcedParallelExecution: true,
+						forcedParallelAlways: true,
+					});
+					expect(resolveForceParallel(undefined)).toBe(true);
+					expect(resolveForceParallel(false)).toBe(true);
+				});
 			});
 		});
 	});

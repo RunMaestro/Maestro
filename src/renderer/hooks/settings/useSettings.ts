@@ -396,6 +396,8 @@ export interface UseSettingsReturn {
 	setForcedParallelExecution: (value: boolean) => void;
 	forcedParallelAcknowledged: boolean;
 	setForcedParallelAcknowledged: (value: boolean) => void;
+	forcedParallelAlways: boolean;
+	setForcedParallelAlways: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;

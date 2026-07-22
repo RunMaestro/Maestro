@@ -15,6 +15,8 @@ interface InputBehaviorSectionProps {
 	enterToSendAIExpanded: boolean;
 	setEnterToSendAIExpanded: (enabled: boolean) => void;
 	forcedParallelExecution: boolean;
+	forcedParallelAlways: boolean;
+	setForcedParallelAlways: (enabled: boolean) => void;
 	shortcuts: GeneralTabSettings['shortcuts'];
 	forcedParallelWarning: ForcedParallelWarningState;
 }
@@ -26,12 +28,18 @@ export function InputBehaviorSection({
 	enterToSendAIExpanded,
 	setEnterToSendAIExpanded,
 	forcedParallelExecution,
+	forcedParallelAlways,
+	setForcedParallelAlways,
 	shortcuts,
 	forcedParallelWarning,
 }: InputBehaviorSectionProps) {
 	const forcedParallelShortcut = shortcuts?.forcedParallelSend
 		? formatShortcutKeys(shortcuts.forcedParallelSend.keys)
 		: formatShortcutKeys(['Meta', 'Shift', 'Enter']);
+
+	// "Always" mode makes every send a force-send, so the modifier shortcut is
+	// redundant — we ghost it out to signal that.
+	const alwaysMode = forcedParallelExecution && forcedParallelAlways;
 
 	return (
 		<div data-setting-id="general-input-behavior">
@@ -118,8 +126,10 @@ export function InputBehaviorSection({
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textMain,
-								opacity: forcedParallelExecution ? 1 : 0.5,
+								opacity: !forcedParallelExecution || alwaysMode ? 0.35 : 1,
+								textDecoration: alwaysMode ? 'line-through' : 'none',
 							}}
+							title={alwaysMode ? 'Not needed in Always mode - every send is forced' : undefined}
 						>
 							{forcedParallelShortcut}
 						</span>
@@ -152,11 +162,68 @@ export function InputBehaviorSection({
 				>
 					<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
 					<span>
-						When enabled, use <strong>{forcedParallelShortcut}</strong> to send messages even while
-						the agent is busy. Parallel writes to the same files may cause one to overwrite the
-						other.
+						{alwaysMode ? (
+							<>
+								<strong>Every message force-sends</strong>, even while the agent is busy - no
+								modifier needed. Parallel writes to the same files may cause one to overwrite the
+								other.
+							</>
+						) : (
+							<>
+								When enabled, use <strong>{forcedParallelShortcut}</strong> to send messages even
+								while the agent is busy. Parallel writes to the same files may cause one to
+								overwrite the other.
+							</>
+						)}
 					</span>
 				</div>
+
+				{forcedParallelExecution && (
+					<div className="mt-3">
+						<div className="text-[11px] font-bold opacity-60 uppercase mb-1.5">Send trigger</div>
+						<div
+							className="inline-flex rounded overflow-hidden"
+							style={{ border: `1px solid ${theme.colors.border}` }}
+							role="radiogroup"
+							aria-label="Forced parallel send trigger"
+						>
+							<button
+								onClick={() => setForcedParallelAlways(false)}
+								className="px-3 py-1.5 text-xs font-medium transition-colors"
+								style={{
+									backgroundColor: !forcedParallelAlways
+										? theme.colors.accent
+										: theme.colors.bgActivity,
+									color: !forcedParallelAlways ? theme.colors.bgMain : theme.colors.textMain,
+								}}
+								role="radio"
+								aria-checked={!forcedParallelAlways}
+							>
+								Modifier
+							</button>
+							<button
+								onClick={() => setForcedParallelAlways(true)}
+								className="px-3 py-1.5 text-xs font-medium transition-colors"
+								style={{
+									backgroundColor: forcedParallelAlways
+										? theme.colors.accent
+										: theme.colors.bgActivity,
+									color: forcedParallelAlways ? theme.colors.bgMain : theme.colors.textMain,
+									borderLeft: `1px solid ${theme.colors.border}`,
+								}}
+								role="radio"
+								aria-checked={forcedParallelAlways}
+							>
+								Always
+							</button>
+						</div>
+						<p className="text-xs opacity-50 mt-1.5">
+							{forcedParallelAlways
+								? 'Every send force-sends past a busy agent. No modifier required.'
+								: `Use ${forcedParallelShortcut} to force-send past a busy agent. A normal send queues as usual.`}
+						</p>
+					</div>
+				)}
 			</div>
 
 			<ForcedParallelWarningModal

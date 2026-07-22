@@ -17,7 +17,7 @@ import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { resolveForceParallel } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
 
 let cachedImageOnlyPrompt: string = '';
@@ -346,9 +346,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Forced parallel: explicit user override (Cmd+Shift+Enter / Force Send button).
 							// Mirrors the regular message path — only THIS tab's state matters; cross-tab
 							// busyness and AutoRun are intentionally bypassed.
-							const forceParallel =
-								options?.forceParallel === true &&
-								useSettingsStore.getState().forcedParallelExecution;
+							const forceParallel = resolveForceParallel(options?.forceParallel);
 							const sessionIsIdle = forceParallel
 								? activeTab?.state !== 'busy'
 								: activeSession.state !== 'busy' && !isAutoRunActive;
@@ -580,9 +578,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// so we need to explicitly check the batch state to prevent write conflicts
 				const isAutoRunActive = getBatchState(activeSession.id).isRunning;
 
-				// Forced parallel: user explicitly chose to bypass queue via modifier shortcut
-				const forceParallel =
-					options?.forceParallel === true && useSettingsStore.getState().forcedParallelExecution;
+				// Forced parallel: user bypassed the queue via the modifier shortcut,
+				// or "always" mode is on (every send force-parallels).
+				const forceParallel = resolveForceParallel(options?.forceParallel);
 
 				// Determine if we should queue this message
 				// Read-only tabs can run in parallel - only queue if this specific tab is busy
@@ -656,8 +654,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// override — skip the Auto Run gate, but still honor the tab's own readOnlyMode setting.
 			const activeTabForEntry = currentMode === 'ai' ? getActiveTab(activeSession) : null;
 			const currentBatchState = getBatchState(activeSession.id);
-			const isForceParallelEntry =
-				options?.forceParallel === true && useSettingsStore.getState().forcedParallelExecution;
+			const isForceParallelEntry = resolveForceParallel(options?.forceParallel);
 			const isAutoRunReadOnly =
 				currentBatchState.isRunning && !currentBatchState.worktreeActive && !isForceParallelEntry;
 			const isReadOnlyEntry = activeTabForEntry?.readOnlyMode === true || isAutoRunReadOnly;
@@ -1101,8 +1098,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// For batch mode (Claude), include tab ID in session ID to prevent process collision
 			// This ensures each tab's process has a unique identifier
 			const activeTabForSpawn = getActiveTab(activeSession);
-			const isForceParallel =
-				options?.forceParallel === true && useSettingsStore.getState().forcedParallelExecution;
+			const isForceParallel = resolveForceParallel(options?.forceParallel);
 			const targetSessionId =
 				currentMode === 'ai'
 					? `${activeSession.id}-ai-${activeTabForSpawn?.id || 'default'}`
