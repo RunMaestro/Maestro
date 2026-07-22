@@ -107,13 +107,26 @@ describe('usePianolaSupervisor', () => {
 		expect(result.current.watched).toHaveLength(1);
 	});
 
-	it('surfaces a toast and reports to Sentry when a mutation fails', async () => {
+	it('reports an unexpected mutation failure (toast + Sentry) but resolves', async () => {
+		// A watch toggle is a recoverable user action: it surfaces + reports the
+		// error, then RESOLVES rather than rejecting (mirroring PianolaModal's
+		// handlers) so a fire-and-forget click never becomes an unhandled rejection.
 		addImpl = () => Promise.reject(new Error('disk full'));
+		const { result } = renderHook(() => usePianolaSupervisor());
+		await act(async () => {
+			await expect(result.current.watch('a', 'x')).resolves.toBeUndefined();
+		});
+		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }));
+		expect(captureException).toHaveBeenCalled();
+	});
+
+	it('toasts but does not report an expected PianolaDisabled mutation failure', async () => {
+		addImpl = () => Promise.reject(new Error('PianolaDisabled'));
 		const { result } = renderHook(() => usePianolaSupervisor());
 		await act(async () => {
 			await result.current.watch('a', 'x');
 		});
 		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }));
-		expect(captureException).toHaveBeenCalled();
+		expect(captureException).not.toHaveBeenCalled();
 	});
 });

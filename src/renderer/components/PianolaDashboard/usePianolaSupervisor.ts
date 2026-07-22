@@ -177,12 +177,17 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 			} catch (err) {
 				mutationEpochRef.current += 1;
 				const error = err instanceof Error ? err : new Error(String(err));
+				// A watch toggle is a recoverable user action: surface the failure and,
+				// for unexpected errors, report it - then resolve rather than reject so a
+				// fire-and-forget click never becomes an unhandled rejection. Mirrors the
+				// PianolaModal rule/suggestion handlers (toast + gated captureException).
 				notifyToast({
 					color: 'red',
 					title: 'Pianola watch action failed',
 					message: `Could not ${action}: ${error.message}`,
 				});
-				captureException(error, { extra: { operation: 'pianola-supervisor-mutate', action } });
+				if (!isPianolaDisabled(error))
+					captureException(error, { tags: { feature: 'pianola' }, extra: { action } });
 			}
 		},
 		[]
