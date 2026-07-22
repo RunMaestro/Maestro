@@ -86,11 +86,14 @@ describe('deriveDashboard', () => {
 	});
 
 	it('excludes the Pianola agent from every bucket', () => {
-		const { working } = deriveDashboard(
+		const { needsInput, working, recentlyDone, activity } = deriveDashboard(
 			[session({ id: 'pia', state: 'busy', isPianola: true })],
 			[]
 		);
+		expect(needsInput).toHaveLength(0);
 		expect(working).toHaveLength(0);
+		expect(recentlyDone).toHaveLength(0);
+		expect(activity).toHaveLength(0);
 	});
 
 	it('groups a busy worktree child under its parent in Working, even when the parent is idle', () => {

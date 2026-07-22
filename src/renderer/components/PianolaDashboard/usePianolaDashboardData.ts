@@ -83,8 +83,9 @@ export function deriveDashboard(
 	sessions: readonly Session[],
 	decisions: readonly PianolaDecisionRecord[]
 ): DashboardData {
-	// Real agents only: never the Pianola agent itself, never worktree children
-	// (they show under their parent in the Left Bar; listing them here is noise).
+	// Top-level agents only (never the Pianola agent itself). Worktree children get
+	// no row of their own here; busy ones are nested under their parent in the
+	// Working bucket below, mirroring the Left Bar.
 	const agents = sessions.filter((s) => !s.isPianola && !s.parentSessionId);
 	const nameById = new Map(sessions.map((s) => [s.id, s.name] as const));
 
