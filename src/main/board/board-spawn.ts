@@ -310,7 +310,10 @@ function resolveBaseSession(
  * the board deps' `decompose` step. The `promptText` is the filled
  * `board-decompose` template (built by {@link buildDecomposePrompt}); we do NOT
  * prepend the role preamble here because decomposition is a structured task, not
- * the card's own work.
+ * the card's own work. For the same reason it always runs in the shared
+ * `projectRoot`, never the card's isolated worktree: it is a read-only planning
+ * pass whose output is the JSON child list, and the worktree (when requested)
+ * belongs to the card's own run.
  */
 export async function decomposeBoardCard(
 	projectRoot: string,

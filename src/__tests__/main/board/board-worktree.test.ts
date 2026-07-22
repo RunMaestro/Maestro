@@ -32,9 +32,12 @@ function git(args: string[], cwd: string): void {
 }
 
 beforeAll(() => {
-	// realpath: macOS hands out /var/... symlinks for tmpdir, which git resolves
-	// to /private/var/... and would break the path comparisons below.
-	tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-wt-')));
+	// realpath.native: macOS hands out /var/... symlinks for tmpdir (git resolves
+	// them to /private/var/...) and Windows runners hand out 8.3 short names
+	// (RUNNER~1, which git expands to the long form). Either spelling difference
+	// would break setupWorktreeLocal's same-repo path comparison on reuse; only
+	// the .native variant expands short names.
+	tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-board-wt-')));
 	projectRoot = path.join(tmpRoot, 'project');
 	fs.mkdirSync(projectRoot);
 	git(['init', '-b', 'main'], projectRoot);

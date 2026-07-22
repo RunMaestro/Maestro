@@ -45,6 +45,7 @@ import {
 	boardWatch,
 } from '../../../cli/commands/board';
 import { createBoard, addCard, loadBoards } from '../../../main/board/board-storage';
+import { upsertProfile } from '../../../main/profiles/profile-storage';
 import type { BoardCard } from '../../../shared/board/types';
 
 function card(id: string, overrides: Partial<BoardCard> = {}): BoardCard {
@@ -497,6 +498,42 @@ describe('maestro-cli board', () => {
 
 			expect(mockSpawnAgent.mock.calls[0][1]).toBe(repoRoot);
 			expect(loadBoards(repoRoot)[0].cards[0].runs?.[0].worktreePath).toBeUndefined();
+		});
+
+		it('dispatches a role-only card to a pool worker known only by cwd (desktop parity)', async () => {
+			// A stored worker record may carry cwd but no projectRoot; the desktop
+			// pool wiring falls back (projectRoot || cwd || fullPath), so the CLI
+			// must not drop such a worker or role-only cards sit ready forever.
+			upsertProfile(repoRoot, { id: 'p1', name: 'Builder' });
+			const worker = {
+				id: 'agent-2',
+				name: 'Worker',
+				toolType: 'claude-code',
+				projectRoot: '',
+				cwd: repoRoot,
+				boardWorker: true,
+			};
+			mockReadSessions.mockReturnValue([worker]);
+			mockGetSessionById.mockImplementation((id: string) =>
+				id === 'agent-2'
+					? worker
+					: {
+							id: 'agent-1',
+							name: 'Alpha',
+							toolType: 'claude-code',
+							projectRoot: repoRoot,
+							cwd: repoRoot,
+						}
+			);
+			const board = createBoard(repoRoot, 'Pool board');
+			addCard(repoRoot, board.id, card('c1', { status: 'ready' }));
+
+			await boardTick({ agent: 'Alpha', json: true });
+
+			expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+			const stored = loadBoards(repoRoot).find((b) => b.id === board.id)?.cards[0];
+			expect(stored?.status).toBe('done');
+			expect(stored?.runs?.[0].workerAgentId).toBe('agent-2');
 		});
 
 		it('blocks an isolated card on an SSH remote instead of running in the project root', async () => {

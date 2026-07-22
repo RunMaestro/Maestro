@@ -886,7 +886,10 @@ function resolveCliAssignment(
 				projectRoot,
 				sessions.map((s) => ({
 					id: s.id,
-					dir: s.projectRoot,
+					// Same fallback chain as the desktop pool wiring (index.ts): a
+					// worker whose stored record carries only cwd must not vanish
+					// from CLI dispatch. SessionInfo has no fullPath to fall back to.
+					dir: s.projectRoot || s.cwd,
 					boardWorker: s.boardWorker === true,
 				}))
 			);
@@ -978,7 +981,16 @@ async function spawnCard(
 	};
 }
 
-/** Build the auto-decompose spawn callback backed by the CLI spawn path. */
+/**
+ * Build the auto-decompose spawn callback backed by the CLI spawn path.
+ *
+ * Decomposition always runs in `projectRoot`, even for a triage card that
+ * requests worktree isolation (desktop parity: `decomposeBoardCard` does the
+ * same). It is a read-the-repo planning pass whose only output is the JSON
+ * child list; the card's own work - the part that mutates files - is what runs
+ * in the isolated checkout, and provisioning a worktree just to read from it
+ * would cost a checkout per triage card for nothing.
+ */
 function makeDecomposeSpawn(projectRoot: string, sessions: SessionInfo[]): DecomposeSpawn {
 	return async (prompt: string, triageCard: BoardCard) => {
 		const assignment = resolveCliAssignment(projectRoot, triageCard, new Set(), sessions);
