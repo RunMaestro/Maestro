@@ -36,12 +36,25 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 	return (
 		<div className="space-y-5">
-			<FontFamilySection
-				theme={theme}
-				fontFamily={settings.fontFamily}
-				setFontFamily={settings.setFontFamily}
-				fontConfiguration={fontConfiguration}
-			/>
+			<div data-setting-id="display-font-family">
+				<FontFamilySection
+					theme={theme}
+					fontFamily={settings.fontFamily}
+					setFontFamily={settings.setFontFamily}
+					fontConfiguration={fontConfiguration}
+				/>
+			</div>
+			<div data-setting-id="display-terminal-font-family">
+				<FontFamilySection
+					theme={theme}
+					heading="Terminal Font"
+					description="Font for the command terminal. Leave on 'Same as interface font' to inherit the UI font, or pick any installed font (e.g. a Nerd Font for shell prompt symbols)."
+					fontFamily={settings.terminalFontFamily}
+					setFontFamily={settings.setTerminalFontFamily}
+					fontConfiguration={fontConfiguration}
+					inheritOption={{ value: '', label: 'Same as interface font' }}
+				/>
+			</div>
 			<FontSizeSection
 				theme={theme}
 				fontSize={settings.fontSize}

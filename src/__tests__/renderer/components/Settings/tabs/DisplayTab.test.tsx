@@ -341,8 +341,10 @@ describe('DisplayTab', () => {
 			expect(screen.getByText('Interface Font')).toBeInTheDocument();
 		});
 
-		it('should show loading message while fonts are being detected', async () => {
-			// Make font detection slow so we can observe the loading state
+		it('should keep the font select mounted while fonts are being detected', async () => {
+			// Make font detection slow so we can observe the in-flight state.
+			// The select must stay mounted during load (the #1228 fix); previously a
+			// "Loading fonts..." placeholder replaced it and swallowed the first click.
 			let resolveFonts: (value: string[]) => void;
 			(window as any).maestro.fonts.detect = vi.fn(
 				() =>
@@ -358,14 +360,14 @@ describe('DisplayTab', () => {
 			});
 
 			// Trigger font loading by focusing the select
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			fireEvent.focus(fontSelect);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(10);
 			});
 
-			expect(screen.getByText('Loading fonts...')).toBeInTheDocument();
+			expect(screen.getAllByRole('combobox')[0]).toBeInTheDocument();
 
 			// Resolve the font detection
 			await act(async () => {
@@ -381,7 +383,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			fireEvent.focus(fontSelect);
 
 			await act(async () => {
@@ -398,7 +400,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			fireEvent.click(fontSelect);
 
 			await act(async () => {
@@ -415,7 +417,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			fireEvent.change(fontSelect, { target: { value: 'Monaco' } });
 
 			expect(mockSetFontFamily).toHaveBeenCalledWith('Monaco');
@@ -428,7 +430,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const fontSelect = screen.getByRole('combobox') as HTMLSelectElement;
+			const fontSelect = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
 			expect(fontSelect.value).toBe('Menlo');
 		});
 
@@ -439,7 +441,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 
 			// First focus triggers load
 			fireEvent.focus(fontSelect);
@@ -471,7 +473,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: 'My Custom Font' } });
 
 			// Scope to the font input's parent container to avoid ambiguous "Add" button
@@ -494,7 +496,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: 'My Custom Font' } });
 			fireEvent.keyDown(customFontInput, { key: 'Enter' });
 
@@ -514,7 +516,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: '   ' } });
 
 			const fontContainer = customFontInput.closest('div')!.parentElement!;
@@ -543,7 +545,7 @@ describe('DisplayTab', () => {
 			});
 
 			// Trigger font loading to populate customFonts
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			fireEvent.focus(fontSelect);
 
 			await act(async () => {
@@ -581,7 +583,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 
 			// Add first font
 			fireEvent.change(customFontInput, { target: { value: 'DuplicateFont' } });
@@ -619,7 +621,7 @@ describe('DisplayTab', () => {
 			});
 
 			// Trigger font loading
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 
 			await act(async () => {
 				fireEvent.focus(fontSelect);
@@ -631,7 +633,7 @@ describe('DisplayTab', () => {
 			});
 
 			// Re-query the combobox after state updates (component re-renders)
-			const updatedSelect = screen.getByRole('combobox');
+			const updatedSelect = screen.getAllByRole('combobox')[0];
 			const options = updatedSelect.querySelectorAll('option');
 			const optionValues = Array.from(options).map((o) => o.getAttribute('value'));
 			expect(optionValues).toContain('SavedFont1');
@@ -1653,7 +1655,7 @@ describe('DisplayTab', () => {
 			});
 
 			// Trigger font loading
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			fireEvent.focus(fontSelect);
 
 			await act(async () => {
@@ -1661,7 +1663,7 @@ describe('DisplayTab', () => {
 			});
 
 			// After the rejection resolves, the select should reappear (fontLoading goes false)
-			const fontSelectAfter = screen.getByRole('combobox');
+			const fontSelectAfter = screen.getAllByRole('combobox')[0];
 			expect(fontSelectAfter).toBeInTheDocument();
 			expect(consoleSpy).toHaveBeenCalledWith(
 				'Failed to load fonts:',
@@ -1686,7 +1688,7 @@ describe('DisplayTab', () => {
 			});
 
 			// Common fonts should be in the dropdown (before any loading is triggered)
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			const options = fontSelect.querySelectorAll('option');
 			// Option textContent has trailing whitespace from the JSX (font name + space + conditional)
 			const optionValues = Array.from(options).map((o) => o.getAttribute('value'));
@@ -1709,7 +1711,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 			const options = fontSelect.querySelectorAll('option');
 			const optionTexts = Array.from(options).map((o) => o.textContent?.trim());
 
@@ -1733,7 +1735,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByPlaceholderText('Add custom font name...')).toBeInTheDocument();
+			expect(screen.getAllByPlaceholderText('Add custom font name...')[0]).toBeInTheDocument();
 		});
 
 		it('should show font availability indicators after loading', async () => {
@@ -1747,7 +1749,7 @@ describe('DisplayTab', () => {
 			});
 
 			// Trigger font loading
-			const fontSelect = screen.getByRole('combobox');
+			const fontSelect = screen.getAllByRole('combobox')[0];
 
 			await act(async () => {
 				fireEvent.focus(fontSelect);
@@ -1760,7 +1762,7 @@ describe('DisplayTab', () => {
 
 			// After fonts are loaded, unavailable fonts should show "(Not Found)"
 			// Re-query after state updates
-			const updatedSelect = screen.getByRole('combobox');
+			const updatedSelect = screen.getAllByRole('combobox')[0];
 			const options = updatedSelect.querySelectorAll('option');
 
 			// Find the Monaco option by value and check its text
@@ -1783,7 +1785,7 @@ describe('DisplayTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			const fontContainer = customFontInput.closest('div')!.parentElement!;
 			expect(within(fontContainer).getByRole('button', { name: 'Add' })).toBeInTheDocument();
 		});

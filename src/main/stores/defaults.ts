@@ -56,6 +56,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	shortcuts: {},
 	fontSize: 14,
 	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+	terminalFontFamily: '',
 	customFonts: [],
 	logLevel: 'info',
 	defaultShell: getDefaultShell(),
