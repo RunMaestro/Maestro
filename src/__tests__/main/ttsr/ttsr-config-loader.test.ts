@@ -174,9 +174,34 @@ describe('loadTtsrConfigDetailed', () => {
 		expect(result.warnings.join('\n')).toContain('nested quantifier');
 	});
 
+	// The second exponential shape: a quantified group whose alternation
+	// branches can begin on the same character, so every character of a matching
+	// prefix doubles the ways to split it. `(a|aa)+x` freezes the engine on well
+	// under 32KB of input, which the scan ceiling alone cannot prevent.
+	it.each([
+		['(a|a)+x', 'identical branches'],
+		['(a|aa)+x', 'one branch a prefix of the other'],
+		['(\\d|\\w)+!', 'overlapping escape classes'],
+		['(a|)+b', 'an empty branch matches everywhere'],
+		['(?:x|xy)*z', 'non-capturing group is no safer'],
+		['(foo|fee)+!', 'same first character'],
+	])('drops the overlapping-alternation pattern %s (%s)', (pattern) => {
+		writeRule(
+			'overlap-bomb.md',
+			['---', 'description: Hostile pattern', `condition: '${pattern}'`, '---', 'Body.'].join('\n')
+		);
+
+		const result = loadTtsrConfigDetailed(projectRoot);
+
+		expect(result.rules).toHaveLength(0);
+		expect(result.warnings.join('\n')).toContain('overlapping alternation');
+	});
+
 	it.each([
 		'console\\.log\\(',
 		'(TODO|FIXME):',
+		'(yes|no)+',
+		'(f(?:oo|ee))+',
 		'\\s+$',
 		'(foo)?bar',
 		'a{2,4}',

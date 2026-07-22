@@ -253,7 +253,7 @@ export class TtsrManager {
 		}
 
 		// ── Tool content: what is being written, or the command being run ──
-		for (const snapshot of extractToolSnapshots(event)) {
+		for (const snapshot of extractToolSnapshots(event, ctx.cwd)) {
 			matches.push(
 				...this.evaluate(sessionId, rules, snapshot.content, {
 					agentId: ctx.agentId,
@@ -302,7 +302,7 @@ export class TtsrManager {
 		const state = this.session(sessionId);
 		const matches: TtsrMatch[] = [];
 
-		for (const snapshot of extractToolSnapshots(event)) {
+		for (const snapshot of extractToolSnapshots(event, ctx.cwd)) {
 			if (!this.astMatcher.supports(snapshot.filePath)) continue;
 
 			// Skip a payload identical to the last one seen for the same target: an

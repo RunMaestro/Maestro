@@ -29,12 +29,26 @@ import type { ParsedEvent } from '../parsers/agent-output-parser';
  * thing - and since editing rules is exactly how a user asks an agent to set
  * TTSR up, that is not a corner case but the main authoring path.
  *
- * Accepts absolute or project-relative paths, either separator.
+ * Accepts absolute or project-relative paths, either separator. The check is
+ * anchored, not a substring test: a NESTED `.maestro/rules/` (a fixture, a
+ * vendored repo, a sub-project like `fixtures/.maestro/rules/example.md`) is
+ * ordinary project content whose edits must stay visible to the matcher -
+ * suppressing it would both hide real violations and hand the agent a
+ * directory name that mutes every tool rule. A project-relative path counts
+ * only when it starts at the root; an absolute path only when it resolves
+ * inside THIS project's own config (which needs `projectRoot` - without it, an
+ * absolute path is never treated as TTSR config).
  */
-export function isTtsrConfigPath(filePath: string | undefined): boolean {
+export function isTtsrConfigPath(filePath: string | undefined, projectRoot?: string): boolean {
 	if (!filePath) return false;
 	const normalized = filePath.replace(/\\/g, '/');
-	return normalized.includes(`${TTSR_RULES_DIR}/`) || normalized.endsWith(TTSR_CONFIG_PATH);
+	if (normalized.startsWith(`${TTSR_RULES_DIR}/`) || normalized === TTSR_CONFIG_PATH) return true;
+	if (!projectRoot) return false;
+	const rootPosix = projectRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+	return (
+		normalized.startsWith(`${rootPosix}/${TTSR_RULES_DIR}/`) ||
+		normalized === `${rootPosix}/${TTSR_CONFIG_PATH}`
+	);
 }
 
 /** Either TTSR config location, as an alternation safe to embed in a regex. */
@@ -285,12 +299,12 @@ function snapshotFromInput(toolName: string, rawInput: unknown): TtsrToolSnapsho
  * distinguishing a violation from a description of one. Rules meant for the
  * authoring flow should be scoped to tool sources rather than to prose.
  */
-export function extractToolSnapshots(event: ParsedEvent): TtsrToolSnapshot[] {
+export function extractToolSnapshots(event: ParsedEvent, projectRoot?: string): TtsrToolSnapshot[] {
 	const snapshots: TtsrToolSnapshot[] = [];
 
 	const add = (snapshot: TtsrToolSnapshot | null): void => {
 		if (!snapshot) return;
-		if (isTtsrConfigPath(snapshot.filePath)) return;
+		if (isTtsrConfigPath(snapshot.filePath, projectRoot)) return;
 		if (snapshot.source === 'tool:bash' && isTtsrConfigWriteCommand(snapshot.content)) return;
 		snapshots.push(snapshot);
 	};

@@ -116,11 +116,11 @@ describe('TTSR config files are never matched', () => {
 	// editing rules is how a user asks an agent to set TTSR up - so without this
 	// carve-out the authoring path trips the rules it is authoring.
 	it.each([
-		['project-relative', '.maestro/rules/no-console-log.md'],
-		['absolute', '/repo/.maestro/rules/no-console-log.md'],
-		['windows separators', 'C:\\repo\\.maestro\\rules\\no-console-log.md'],
-		['the settings file', '/repo/.maestro/ttsr.yaml'],
-	])('drops a write to %s', (_label, filePath) => {
+		['project-relative', '.maestro/rules/no-console-log.md', '/repo'],
+		['absolute', '/repo/.maestro/rules/no-console-log.md', '/repo'],
+		['windows separators', 'C:\\repo\\.maestro\\rules\\no-console-log.md', 'C:\\repo'],
+		['the settings file', '/repo/.maestro/ttsr.yaml', '/repo'],
+	])('drops a write to %s', (_label, filePath, projectRoot) => {
 		const event: ParsedEvent = {
 			type: 'tool_use',
 			toolUseBlocks: [
@@ -131,7 +131,29 @@ describe('TTSR config files are never matched', () => {
 			],
 		};
 
-		expect(extractToolSnapshots(event)).toEqual([]);
+		expect(extractToolSnapshots(event, projectRoot)).toEqual([]);
+	});
+
+	// The carve-out is anchored, not a substring test. A nested `.maestro/rules/`
+	// (fixture, vendored repo, sub-project) is ordinary content: suppressing it
+	// would hide real violations behind a directory name.
+	it.each([
+		['a relative nested rules dir', 'fixtures/.maestro/rules/example.md', '/repo'],
+		['an absolute nested rules dir', '/repo/fixtures/.maestro/rules/example.md', '/repo'],
+		["another project's rules dir", '/other-repo/.maestro/rules/example.md', '/repo'],
+		['an absolute path with no known root', '/repo/.maestro/rules/example.md', undefined],
+	])('still matches a write to %s', (_label, filePath, projectRoot) => {
+		const event: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{
+					name: 'Write',
+					input: { file_path: filePath, content: 'console.log(1)' },
+				},
+			],
+		};
+
+		expect(extractToolSnapshots(event, projectRoot)).toHaveLength(1);
 	});
 
 	// A `tool:bash` snapshot carries no `filePath`, so the path guard above cannot

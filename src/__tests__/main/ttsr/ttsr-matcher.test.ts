@@ -181,14 +181,46 @@ describe('findRegexMatch', () => {
 	// The scan-length ceiling is a security invariant: repo-supplied patterns run
 	// on the main process's stdout hot path, and backtracking cost grows with the
 	// input. Prose arrives pre-bounded by the manager's 32KB buffer, but a tool
-	// payload (one `Write` of a huge file) reaches the matcher whole.
-	it('scans at most TTSR_MAX_SCAN_CHARS of an oversized payload', () => {
+	// payload (one `Write` of a huge file) reaches the matcher whole - so it is
+	// scanned in bounded windows rather than truncated: the whole payload is
+	// covered, but no single evaluation sees more than the ceiling.
+	it('finds a match past TTSR_MAX_SCAN_CHARS via windowed scanning', () => {
 		const rule = makeRule({ condition: ['NEEDLE'] });
 		const filler = 'x'.repeat(TTSR_MAX_SCAN_CHARS);
 
 		expect(findRegexMatch(rule, `${filler.slice(0, 100)}NEEDLE`)).toBe('NEEDLE');
-		// Past the ceiling the payload is simply not scanned, rather than handing
-		// an unbounded input to a pattern the project controls.
-		expect(findRegexMatch(rule, `${filler}NEEDLE`)).toBeNull();
+		// A prohibited construct at the very end of a large valid file must still
+		// fire the rule (a truncating scan silently missed it).
+		expect(findRegexMatch(rule, `${filler}NEEDLE`)).toBe('NEEDLE');
+		expect(findRegexMatch(rule, `${filler.repeat(4)}NEEDLE`)).toBe('NEEDLE');
+	});
+
+	it('finds a match straddling a window boundary within the overlap', () => {
+		const rule = makeRule({ condition: ['NEEDLE'] });
+		// Place the needle so it starts just before the first window's end and
+		// finishes past it: the next window re-reads the 1KB overlap and sees it
+		// whole.
+		const before = 'x'.repeat(TTSR_MAX_SCAN_CHARS - 3);
+		const after = 'y'.repeat(TTSR_MAX_SCAN_CHARS);
+
+		expect(findRegexMatch(rule, `${before}NEEDLE${after}`)).toBe('NEEDLE');
+	});
+
+	it('never hands a single evaluation more than TTSR_MAX_SCAN_CHARS', () => {
+		const seen: number[] = [];
+		const spy = {
+			compiledCondition: [
+				new (class extends RegExp {
+					exec(input: string): RegExpExecArray | null {
+						seen.push(input.length);
+						return null;
+					}
+				})('NEVER'),
+			],
+		};
+		findRegexMatch(spy, 'x'.repeat(TTSR_MAX_SCAN_CHARS * 3));
+
+		expect(seen.length).toBeGreaterThan(1);
+		for (const length of seen) expect(length).toBeLessThanOrEqual(TTSR_MAX_SCAN_CHARS);
 	});
 });

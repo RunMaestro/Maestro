@@ -14,15 +14,15 @@ OMP owns the model's token stream: it can `agent.abort()`, `replaceMessages(...)
 
 Therefore TTSR in Maestro is rebuilt around three real primitives that already exist:
 
-| OMP primitive | Maestro analog | Source |
-|---|---|---|
-| observe `text_delta` / `thinking_delta` / `toolcall_delta` | tap the normalized `ParsedEvent` inside `StdoutHandler.handleParsedEvent` (post `parseJsonObject`) | `src/main/process-manager/handlers/StdoutHandler.ts` ~L466; `src/main/parsers/agent-output-parser.ts` L48-150 |
-| `edit/write matcherDigest` (AST) | the tool call's `input`/`toolState.input` (file path + content) where the parser surfaces it | per-parser, see matrix |
-| `agent.abort()` | `ProcessManager.interrupt(sessionId)` (SIGINT, 2000ms escalate to `kill`) | `src/main/process-manager/ProcessManager.ts` @242 |
-| `agent.continue()` + injected `<system-interrupt>` | **kill in-flight process, wait for exit, re-`spawn()` with `prompt=<corrective>` + `agentSessionId=<capturedProviderId>`** so `resumeArgs` re-attaches the conversation | `handle-spawn.ts`; `src/main/utils/agent-args.ts` @179 |
-| `TtsrManager` per-rule repeat/injection state | **main-process authoritative store** keyed by `(maestroSessionId, providerSessionId, ruleName)`; renderer state is display-only | new `src/main/ttsr/` store |
-| `afterToolCall` in-band `<system-reminder>` | deferred reminder queued main-side, **prepended to the next prompt** for that conversation (no tool-result hook exists) | new |
-| `TtsrNotificationComponent` | `notifyToast` via the existing `remote:notifyToast` bridge | `src/main/cue/cue-notify-bridge.ts`; `src/renderer/stores/notificationStore.ts` |
+| OMP primitive                                              | Maestro analog                                                                                                                                                          | Source                                                                                                        |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| observe `text_delta` / `thinking_delta` / `toolcall_delta` | tap the normalized `ParsedEvent` inside `StdoutHandler.handleParsedEvent` (post `parseJsonObject`)                                                                      | `src/main/process-manager/handlers/StdoutHandler.ts` ~L466; `src/main/parsers/agent-output-parser.ts` L48-150 |
+| `edit/write matcherDigest` (AST)                           | the tool call's `input`/`toolState.input` (file path + content) where the parser surfaces it                                                                            | per-parser, see matrix                                                                                        |
+| `agent.abort()`                                            | `ProcessManager.interrupt(sessionId)` (SIGINT, 2000ms escalate to `kill`)                                                                                               | `src/main/process-manager/ProcessManager.ts` @242                                                             |
+| `agent.continue()` + injected `<system-interrupt>`         | **kill in-flight process, wait for exit, re-`spawn()` with `prompt=<corrective>` + `agentSessionId=<capturedProviderId>`** so `resumeArgs` re-attaches the conversation | `handle-spawn.ts`; `src/main/utils/agent-args.ts` @179                                                        |
+| `TtsrManager` per-rule repeat/injection state              | **main-process authoritative store** keyed by `(maestroSessionId, providerSessionId, ruleName)`; renderer state is display-only                                         | new `src/main/ttsr/` store                                                                                    |
+| `afterToolCall` in-band `<system-reminder>`                | deferred reminder queued main-side, **prepended to the next prompt** for that conversation (no tool-result hook exists)                                                 | new                                                                                                           |
+| `TtsrNotificationComponent`                                | `notifyToast` via the existing `remote:notifyToast` bridge                                                                                                              | `src/main/cue/cue-notify-bridge.ts`; `src/renderer/stores/notificationStore.ts`                               |
 
 **Two fidelity gaps vs OMP that must be stated up front (not silently dropped):**
 
@@ -39,19 +39,19 @@ Therefore TTSR in Maestro is rebuilt around three real primitives that already e
 
 TTSR cannot be uniformly specified from the parser layer alone; each external CLI exposes a different control surface. Support is defined per agent along five axes, verified in parser source:
 
-| Agent | Live prose stream | Live thinking stream | Tool events + file path | Edit content for AST | Interrupt | Clean mid-turn resume | **Detection tier** |
-|---|---|---|---|---|---|---|---|
-| **claude-code** | whole-block, only via `handleParsedEvent` tap (NOT `thinking-chunk`; prose is reasoning-gated) | yes (`thinking-chunk`) | yes (`toolUseBlocks`) | **yes** full `input.content` -> AST feasible | yes | yes (id emitted early) | **A (live mid-turn)** |
-| **codex** | commentary via tap (NOT `thinking-chunk`) | yes (`thinking-chunk`) | yes (`function_call`/`shell`) | patch/diff only -> AST **partial** (needs patch apply / disk read) | yes | yes (`thread_id` early) | **A** (AST partial) |
-| **opencode** | **none live** (`text` -> `result` at end only) | **none live** | yes (`toolState.input`) | **yes** `input.content` -> AST feasible (at tool-call time) | yes (child; SDK path separate) | yes (`sessionID` early) | **B (end-of-turn for prose; tool/AST at tool-call)** |
-| **factory-droid** | yes via `thinking-chunk` (all partials forwarded) | none separate | **NO tool events** | **no** -> AST infeasible | yes | yes | **A** (prose only, no tool/AST) |
-| **copilot-cli** | true token deltas via tap (excluded from `thinking-chunk`) | deltas via tap | yes (`tool.execution_start`) | **yes** args content -> AST feasible | yes | **partial** (id only on final event) | **A detect / degraded reinject** |
-| **grok** | token deltas via tap (reasoning-gated) | yes via `thinking-chunk` (`thought`) | **NO** (tool telemetry only on disk `events.jsonl`) | **no** -> AST infeasible | yes | **partial** (no init event; id only final) | **A detect / degraded reinject** |
-| **terminal** | raw PTY `data` (batched) | n/a | n/a | n/a | yes (`\x03`) | n/a (not a conversation) | **C (raw-only; out of scope v1)** |
+| Agent             | Live prose stream                                                                              | Live thinking stream                 | Tool events + file path                             | Edit content for AST                                               | Interrupt                      | Clean mid-turn resume                      | **Detection tier**                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------ | --------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------ | ------------------------------------------ | ---------------------------------------------------- |
+| **claude-code**   | whole-block, only via `handleParsedEvent` tap (NOT `thinking-chunk`; prose is reasoning-gated) | yes (`thinking-chunk`)               | yes (`toolUseBlocks`)                               | **yes** full `input.content` -> AST feasible                       | yes                            | yes (id emitted early)                     | **A (live mid-turn)**                                |
+| **codex**         | commentary via tap (NOT `thinking-chunk`)                                                      | yes (`thinking-chunk`)               | yes (`function_call`/`shell`)                       | patch/diff only -> AST **partial** (needs patch apply / disk read) | yes                            | yes (`thread_id` early)                    | **A** (AST partial)                                  |
+| **opencode**      | **none live** (`text` -> `result` at end only)                                                 | **none live**                        | yes (`toolState.input`)                             | **yes** `input.content` -> AST feasible (at tool-call time)        | yes (child; SDK path separate) | yes (`sessionID` early)                    | **B (end-of-turn for prose; tool/AST at tool-call)** |
+| **factory-droid** | yes via `thinking-chunk` (all partials forwarded)                                              | none separate                        | **NO tool events**                                  | **no** -> AST infeasible                                           | yes                            | yes                                        | **A** (prose only, no tool/AST)                      |
+| **copilot-cli**   | true token deltas via tap (excluded from `thinking-chunk`)                                     | deltas via tap                       | yes (`tool.execution_start`)                        | **yes** args content -> AST feasible                               | yes                            | **partial** (id only on final event)       | **A detect / degraded reinject**                     |
+| **grok**          | token deltas via tap (reasoning-gated)                                                         | yes via `thinking-chunk` (`thought`) | **NO** (tool telemetry only on disk `events.jsonl`) | **no** -> AST infeasible                                           | yes                            | **partial** (no init event; id only final) | **A detect / degraded reinject**                     |
+| **terminal**      | raw PTY `data` (batched)                                                                       | n/a                                  | n/a                                                 | n/a                                                                | yes (`\x03`)                   | n/a (not a conversation)                   | **C (raw-only; out of scope v1)**                    |
 
 **Detection tiers drive the runtime design:**
 
-- **Tier A (live mid-turn abort):** claude-code, codex, factory-droid, copilot-cli (prose), grok (thinking). The monitor can match mid-generation and abort before more bad output. copilot-cli/grok can *detect* live but cannot *cleanly resume* mid-turn (their provider session id is only on the final event), so their reinject degrades to a fresh, non-resumed corrective prompt that restates the goal.
+- **Tier A (live mid-turn abort):** claude-code, codex, factory-droid, copilot-cli (prose), grok (thinking). The monitor can match mid-generation and abort before more bad output. copilot-cli/grok can _detect_ live but cannot _cleanly resume_ mid-turn (their provider session id is only on the final event), so their reinject degrades to a fresh, non-resumed corrective prompt that restates the goal.
 - **Tier B (end-of-turn detection):** opencode prose/thinking (arrives only as final `result`). AST-on-edit for every agent is effectively end-of-current-edit (post-write). These fire a corrective follow-up turn, not a mid-token abort.
 - **Tier C (raw-only / excluded):** terminal has only batched raw PTY output and no structured streams; regex-over-raw only, and it is not a resumable conversation. Exclude from v1.
 
@@ -95,18 +95,18 @@ Rules are frontmatter-markdown, one file per rule, under a new project dir - the
 
 ```yaml
 ---
-name: no-console-log          # optional; derived from filename if absent
-description: Flag stray console.log in shipped source   # required for UI listing
-condition:                    # regex triggers, OR'd (string or list)
+name: no-console-log # optional; derived from filename if absent
+description: Flag stray console.log in shipped source # required for UI listing
+condition: # regex triggers, OR'd (string or list)
   - "console\\.log\\("
-astCondition:                 # ast-grep patterns, OR'd; edit/write tool streams only
-  - "console.log($$$ARGS)"
-scope: [text, thinking, tool:edit, tool:write]  # which streams this matches
-globs: ["src/**/*.ts"]        # path gate for tool-source matches
-interruptMode: always         # never | prose-only | tool-only | always
-repeatMode: after-gap         # once | after-gap
-repeatGap: 3                  # turns; only for after-gap
-agents: [claude-code, codex, opencode]  # NEW (Maestro): per-agent applicability
+astCondition: # ast-grep patterns, OR'd; edit/write tool streams only
+  - 'console.log($$$ARGS)'
+scope: [text, thinking, tool:edit, tool:write] # which streams this matches
+globs: ['src/**/*.ts'] # path gate for tool-source matches
+interruptMode: always # never | prose-only | tool-only | always
+repeatMode: after-gap # once | after-gap
+repeatGap: 3 # turns; only for after-gap
+agents: [claude-code, codex, opencode] # NEW (Maestro): per-agent applicability
 ---
 Do not leave `console.log` in shipped source. Use the project logger instead.
 ```
@@ -229,19 +229,20 @@ Do the corrective respawn through the same machinery the renderer uses for a nor
 
 ```ts
 interface TtsrTriggeredPayload {
-	sessionId: string;          // Maestro process/session id: `${session.id}-ai-${tabId}`
+	sessionId: string; // Maestro process/session id: `${session.id}-ai-${tabId}`
 	tabId: string;
-	toolType: AgentId;          // drives resumeArgs shape + tier/degradation choice
-	rules: TtsrRuleRef[];       // { name, path } of each fired rule (for the injection template + activity log)
-	injectionPrompt: string;    // rendered <system-interrupt> block(s)
+	toolType: AgentId; // drives resumeArgs shape + tier/degradation choice
+	rules: TtsrRuleRef[]; // { name, path } of each fired rule (for the injection template + activity log)
+	injectionPrompt: string; // rendered <system-interrupt> block(s)
 	mode: 'resume' | 'fresh';
 	providerSessionId?: string; // REQUIRED when mode === 'resume'; the id captured main-side from the `session-id` event (Gate B authoritative), passed as agentSessionId so buildAgentArgs appends resumeArgs
-	originalGoal: string;       // the user prompt that started the aborted turn; REQUIRED for mode === 'fresh' to restate context, useful for resume transcripts too
+	originalGoal: string; // the user prompt that started the aborted turn; REQUIRED for mode === 'fresh' to restate context, useful for resume transcripts too
 	contextMode: 'keep' | 'discard';
 }
 ```
 
-  The main engine owns the authoritative `providerSessionId` (from the `session-id` event, Gate B) and the `originalGoal` (= `originalPrompt` from the TTSR spawn registry populated at spawn time, Phase 2a - `ManagedProcess` itself retains no prompt), so both travel in the payload rather than being re-read from the renderer's cache. The renderer's execution layer (`src/renderer/hooks/agent/useAgentExecution.ts`, resume spawn @778-828) then performs the corrective spawn: `prompt = injectionPrompt`, `agentSessionId = providerSessionId` (for `mode: 'resume'`, so `buildAgentArgs` @179 appends `resumeArgs`), or a fresh spawn whose prompt is `injectionPrompt` + a restatement of `originalGoal` (`mode: 'fresh'` for degraded agents). Routing the respawn through the renderer keeps conversation UI state (tab state, execution queue, message list) coherent; the IPC round-trip is negligible (~ms) vs token latency, and the renderer is always alive while an agent runs.
+The main engine owns the authoritative `providerSessionId` (from the `session-id` event, Gate B) and the `originalGoal` (= `originalPrompt` from the TTSR spawn registry populated at spawn time, Phase 2a - `ManagedProcess` itself retains no prompt), so both travel in the payload rather than being re-read from the renderer's cache. The renderer's execution layer (`src/renderer/hooks/agent/useAgentExecution.ts`, resume spawn @778-828) then performs the corrective spawn: `prompt = injectionPrompt`, `agentSessionId = providerSessionId` (for `mode: 'resume'`, so `buildAgentArgs` @179 appends `resumeArgs`), or a fresh spawn whose prompt is `injectionPrompt` + a restatement of `originalGoal` (`mode: 'fresh'` for degraded agents). Routing the respawn through the renderer keeps conversation UI state (tab state, execution queue, message list) coherent; the IPC round-trip is negligible (~ms) vs token latency, and the renderer is always alive while an agent runs.
+
 - The renderer honors `ttsrAbortPending` in its exit handling (`useInterruptHandler` / exit listener) to **suppress** the normal "turn failed/aborted" UI and instead show a TTSR interruption marker, then run the corrective spawn. This mirrors OMP suppressing the aborted stop-reason during TTSR.
 
 **Injection content** (copy OMP `ttsr-interrupt.md` template, `omp://ttsr-injection-lifecycle.md` section 4):
@@ -330,14 +331,14 @@ A `TtsrModal` (copy `src/renderer/components/CueModal/CueModal.tsx` shell + tabs
 
 ## Scope summary (what "all agent types" honestly means)
 
-| Agent | Regex on prose | Regex on thinking | AST on edits | Interrupt+resume | Deferred reminders | Status |
-|---|:-:|:-:|:-:|:-:|:-:|---|
-| claude-code | live | live | yes | clean | yes | **full** |
-| codex | live | live | partial (patch) | clean | yes | **full (AST partial)** |
-| opencode | end-of-turn | end-of-turn | yes (at tool-call) | clean | yes | **supported (no live prose abort)** |
-| factory-droid | live | - | no | clean | yes | **prose only** |
-| copilot-cli | live | live | yes | degraded (fresh) | yes | **supported (degraded reinject)** |
-| grok | live (via tap) | live | no | degraded (fresh) | yes | **prose/thinking only, degraded reinject** |
-| terminal | - | - | - | - | - | **out of scope v1 (raw PTY only)** |
+| Agent         | Regex on prose | Regex on thinking |    AST on edits    | Interrupt+resume | Deferred reminders | Status                                     |
+| ------------- | :------------: | :---------------: | :----------------: | :--------------: | :----------------: | ------------------------------------------ |
+| claude-code   |      live      |       live        |        yes         |      clean       |        yes         | **full**                                   |
+| codex         |      live      |       live        |  partial (patch)   |      clean       |        yes         | **full (AST partial)**                     |
+| opencode      |  end-of-turn   |    end-of-turn    | yes (at tool-call) |      clean       |        yes         | **supported (no live prose abort)**        |
+| factory-droid |      live      |         -         |         no         |      clean       |        yes         | **prose only**                             |
+| copilot-cli   |      live      |       live        |        yes         | degraded (fresh) |        yes         | **supported (degraded reinject)**          |
+| grok          | live (via tap) |       live        |         no         | degraded (fresh) |        yes         | **prose/thinking only, degraded reinject** |
+| terminal      |       -        |         -         |         -          |        -         |         -          | **out of scope v1 (raw PTY only)**         |
 
 Every AI agent type gets regex-based TTSR (live or end-of-turn) and corrective reinjection. AST and clean mid-turn resume vary by control surface, which is exactly why Gate A (the capability matrix) is the first design gate, not an afterthought.

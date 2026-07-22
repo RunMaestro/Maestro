@@ -145,35 +145,59 @@ export function ruleAppliesToContext(
  * This is a security invariant, not a tuning knob. Rule patterns come from the
  * opened project's `.maestro/rules/*.md`, so a hostile repo controls regexes
  * that run on the main process's stdout hot path, and backtracking cost grows
- * with input length. Bounding the input, together with the normalizer's
- * nested-quantifier gate, raises the bar against a bad pattern wedging
- * Electron's main process (neither is airtight on its own - see the gate's doc
- * comment for the shapes that still pass). Raising or removing this reopens
- * the input-length half of that hole.
+ * superlinearly with input length. Bounding each evaluation's input, together
+ * with the normalizer's backtracking gate, raises the bar against a bad
+ * pattern wedging Electron's main process (neither is airtight on its own -
+ * see the gate's doc comment for the shapes that still pass). Raising or
+ * removing this reopens the input-length half of that hole.
  *
  * Prose already arrives bounded (one delta plus a 1KB overlap, off a 32KB
  * per-stream buffer in `TtsrManager`). Tool payloads do not - a single `Write`
- * can carry megabytes - so the ceiling is enforced here, at the one place every
- * rule regex actually runs.
+ * can carry megabytes - so `findRegexMatch` scans them in windows of this
+ * size: the WHOLE payload is covered (a rule hit at the end of a large file
+ * still fires), but no single evaluation ever sees more than this many
+ * characters.
  */
 export const TTSR_MAX_SCAN_CHARS = 32_768;
 
 /**
+ * Overlap carried between adjacent scan windows so a match spanning a window
+ * boundary still fires. Mirrors `SCAN_OVERLAP_CHARS` in `TtsrManager` (the
+ * streaming-prose equivalent): a match longer than this that happens to
+ * straddle a boundary is the accepted cost of bounded evaluations.
+ */
+export const TTSR_SCAN_OVERLAP_CHARS = 1_024;
+
+/**
  * First regex hit for this rule, or `null`. Returns the matched substring so
  * the activity log can show what tripped the rule.
+ *
+ * Oversized inputs are scanned window by window (see TTSR_MAX_SCAN_CHARS), so
+ * total work stays linear in payload size while each evaluation stays bounded.
  */
 export function findRegexMatch(
 	rule: Pick<LoadedTtsrRule, 'compiledCondition'>,
 	text: string
 ): string | null {
 	if (!text) return null;
-	// Only allocates in the rare oversized case; see TTSR_MAX_SCAN_CHARS.
-	const scanned = text.length > TTSR_MAX_SCAN_CHARS ? text.slice(0, TTSR_MAX_SCAN_CHARS) : text;
-	for (const regex of rule.compiledCondition) {
-		// Guard against sticky/global patterns carrying `lastIndex` between calls.
-		if (regex.global || regex.sticky) regex.lastIndex = 0;
-		const match = regex.exec(scanned);
-		if (match) return match[0];
+
+	const scanWindow = (window: string): string | null => {
+		for (const regex of rule.compiledCondition) {
+			// Guard against sticky/global patterns carrying `lastIndex` between calls.
+			if (regex.global || regex.sticky) regex.lastIndex = 0;
+			const match = regex.exec(window);
+			if (match) return match[0];
+		}
+		return null;
+	};
+
+	// The common case (input under the ceiling): one evaluation, no slicing.
+	if (text.length <= TTSR_MAX_SCAN_CHARS) return scanWindow(text);
+
+	const step = TTSR_MAX_SCAN_CHARS - TTSR_SCAN_OVERLAP_CHARS;
+	for (let from = 0; from < text.length; from += step) {
+		const match = scanWindow(text.slice(from, from + TTSR_MAX_SCAN_CHARS));
+		if (match) return match;
 	}
 	return null;
 }

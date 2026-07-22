@@ -91,27 +91,126 @@ function readQuantifier(source: string, index: number): { end: number; repeats: 
 	return { end: close + 1, repeats: max > 1 };
 }
 
+/** Drop a group's `?:` / `?<name>` / lookaround prefix so branch analysis sees terms. */
+function stripGroupPrefix(body: string): string {
+	if (!body.startsWith('?')) return body;
+	if (body.startsWith('?:') || body.startsWith('?=') || body.startsWith('?!')) {
+		return body.slice(2);
+	}
+	if (body.startsWith('?<=') || body.startsWith('?<!')) return body.slice(3);
+	const named = body.match(/^\?<[^>]+>/);
+	return named ? body.slice(named[0].length) : body;
+}
+
+/**
+ * Split a group body on its TOP-LEVEL `|`s. Returns `null` when the body has
+ * no top-level alternation.
+ */
+function splitTopLevelBranches(body: string): string[] | null {
+	const branches: string[] = [];
+	let depth = 0;
+	let inClass = false;
+	let start = 0;
+
+	for (let i = 0; i < body.length; i += 1) {
+		const ch = body[i];
+		if (ch === '\\') {
+			i += 1;
+			continue;
+		}
+		if (inClass) {
+			if (ch === ']') inClass = false;
+			continue;
+		}
+		if (ch === '[') inClass = true;
+		else if (ch === '(') depth += 1;
+		else if (ch === ')') depth -= 1;
+		else if (ch === '|' && depth === 0) {
+			branches.push(body.slice(start, i));
+			start = i + 1;
+		}
+	}
+	if (branches.length === 0) return null;
+	branches.push(body.slice(start));
+	return branches;
+}
+
+/**
+ * What a branch's first term can start with, coarsely: one literal character,
+ * anything (`wild`: classes, `.`, escape classes, sub-groups, anchors), or
+ * nothing at all (an empty branch, which matches the empty string).
+ */
+type FirstSet = { kind: 'literal'; ch: string } | { kind: 'wild' } | { kind: 'empty' };
+
+function firstSetOf(branch: string): FirstSet {
+	if (branch.length === 0) return { kind: 'empty' };
+	const ch = branch[0];
+	if (ch === '\\') {
+		const next = branch[1];
+		// Escape classes (\d, \w, \s and negations) and zero-width escapes
+		// (\b, \B) can start anywhere - treat as overlapping everything.
+		if (!next || /[dDwWsSbB]/.test(next)) return { kind: 'wild' };
+		return { kind: 'literal', ch: next };
+	}
+	if (ch === '[' || ch === '.' || ch === '(' || ch === '^' || ch === '$') return { kind: 'wild' };
+	return { kind: 'literal', ch };
+}
+
+/** Can two branches begin on the same character? (Approximate, errs to yes.) */
+function firstSetsOverlap(a: FirstSet, b: FirstSet): boolean {
+	// An empty branch matches ε, which a repeating quantifier can take any
+	// number of times - ambiguous against everything, including another ε.
+	if (a.kind === 'empty' || b.kind === 'empty') return true;
+	if (a.kind === 'wild' || b.kind === 'wild') return true;
+	return a.ch === b.ch;
+}
+
+/**
+ * Does this group body hold a top-level alternation whose branches can start
+ * on the same character? Under a repeating quantifier that is the classic
+ * ambiguity bomb - `(a|a)+x`, `(a|aa)+x`, `(\d|\w)+!` - where every character
+ * of a matching prefix doubles the ways to split it.
+ */
+function hasOverlappingAlternation(body: string): boolean {
+	const branches = splitTopLevelBranches(stripGroupPrefix(body));
+	if (!branches) return false;
+	const sets = branches.map(firstSetOf);
+	for (let i = 0; i < sets.length; i += 1) {
+		for (let j = i + 1; j < sets.length; j += 1) {
+			if (firstSetsOverlap(sets[i], sets[j])) return true;
+		}
+	}
+	return false;
+}
+
 /**
  * Heuristic catastrophic-backtracking gate for repo-supplied patterns.
  *
  * Rules load from the opened project's `.maestro/rules/*.md`, so a hostile (or
  * simply careless) repo picks the regexes that run on the main process's stdout
- * hot path. The classic wedge is a quantified group whose body is itself
- * unbounded - `(a+)+$`, `(x*)+`, `(\s+)  {2,}` - which makes the engine explore
- * exponentially many splits of the same input before failing.
+ * hot path. Two shapes make the engine explore exponentially many splits of
+ * the same input before failing, and both are refused at load time:
  *
- * Deliberately a heuristic, not an analyzer: it rejects the nested-quantifier
- * shape and nothing else. Other exponential shapes still pass - the classic
- * alternation-overlap bomb `(a|a)+x` is one, and polynomial stacks like
- * `a*a*a*x` another - and the scan ceiling in `ttsr-matcher.ts` bounds but does
- * not eliminate their cost (an overlap bomb wedges on far less than 32KB). So
- * treat this pair as raising the bar, not as a guarantee: rule files remain
- * `.maestro/cue.yaml`-class trusted content (see `ttsr-rule-authoring.md`), and
- * anything stronger needs a real analyzer or a match-time budget.
+ * - a quantified group whose body is itself unbounded: `(a+)+$`, `(x*)+`,
+ *   `(\s+){2,}` (nested quantifier);
+ * - a quantified group whose top-level alternation branches can begin on the
+ *   same character: `(a|a)+x`, `(a|aa)+x`, `(\d|\w)+!` (overlapping
+ *   alternation). First-character overlap approximates real ambiguity and errs
+ *   toward rejection - `(foo|fee)+` is refused too, and rewritable as
+ *   `(f(?:oo|ee))+`.
+ *
+ * Still a heuristic, not an analyzer: polynomial stacks like `a*a*a*x` pass,
+ * and the scan ceiling in `ttsr-matcher.ts` bounds but does not eliminate
+ * their cost. Treat the pair as raising the bar, not as a guarantee: rule
+ * files remain `.maestro/cue.yaml`-class trusted content (see
+ * `ttsr-rule-authoring.md`), and anything stronger needs a real analyzer or a
+ * match-time budget.
+ *
+ * Returns the reason a pattern was refused, or `null` when it passes.
  */
-function hasNestedQuantifier(source: string): boolean {
+function backtrackingRisk(source: string): string | null {
 	/** One open group; `unbounded` once its body can repeat without a bound. */
-	const groups: Array<{ unbounded: boolean }> = [];
+	const groups: Array<{ unbounded: boolean; start: number }> = [];
 	let inClass = false;
 
 	for (let i = 0; i < source.length; i += 1) {
@@ -129,17 +228,24 @@ function hasNestedQuantifier(source: string): boolean {
 			continue;
 		}
 		if (ch === '(') {
-			groups.push({ unbounded: false });
+			groups.push({ unbounded: false, start: i + 1 });
 			continue;
 		}
 		if (ch === ')') {
 			const group = groups.pop();
 			const quantifier = readQuantifier(source, i + 1);
 			if (!quantifier) continue;
+			const bodyEnd = i;
 			i = quantifier.end - 1;
-			if (quantifier.repeats && group?.unbounded) return true;
+			if (!quantifier.repeats) continue;
+			if (group?.unbounded) {
+				return 'nested quantifier can backtrack catastrophically; rewrite it without a quantified group whose body is itself unbounded';
+			}
+			if (group && hasOverlappingAlternation(source.slice(group.start, bodyEnd))) {
+				return 'overlapping alternation under a quantifier can backtrack catastrophically; rewrite the branches so they cannot begin on the same character';
+			}
 			// A repeating group is itself an unbounded term for its parent.
-			if (quantifier.repeats && groups.length > 0) {
+			if (groups.length > 0) {
 				groups[groups.length - 1].unbounded = true;
 			}
 			continue;
@@ -154,7 +260,7 @@ function hasNestedQuantifier(source: string): boolean {
 		}
 	}
 
-	return false;
+	return null;
 }
 
 /**
@@ -230,11 +336,9 @@ export function parseTtsrRule(raw: string, relativePath: string): ParsedTtsrRule
 	const compiledCondition: RegExp[] = [];
 	const condition: string[] = [];
 	for (const source of toStringArray(fm.condition)) {
-		if (hasNestedQuantifier(source)) {
-			warnings.push(
-				`${label}: regex "${source}" dropped (nested quantifier can backtrack catastrophically; ` +
-					'rewrite it without a quantified group whose body is itself unbounded)'
-			);
+		const risk = backtrackingRisk(source);
+		if (risk) {
+			warnings.push(`${label}: regex "${source}" dropped (${risk})`);
 			continue;
 		}
 		try {

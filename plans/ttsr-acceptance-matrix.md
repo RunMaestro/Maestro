@@ -132,11 +132,15 @@ during the Phase 4 hardening pass.
    the agent (repo-controlled prompt injection), and rule regexes execute in the
    Electron main process against live agent output. Two bounds keep the regex
    half from being a denial of service: the normalizer refuses patterns with a
-   quantified group over an unbounded body (`(a+)+`, `(x*)+`, `(\d+){2,}`) with
-   a load warning, exactly like an uncompilable pattern, and `findRegexMatch`
-   scans at most `TTSR_MAX_SCAN_CHARS` (32KB) per evaluation. Both are security
-   invariants rather than tuning knobs. Regexes are case-sensitive with no flags
-   surface: there is no way for a rule to request `i`, `m`, or `s`.
+   quantified group over an unbounded body (`(a+)+`, `(x*)+`, `(\d+){2,}`) or
+   with an overlapping alternation under a quantifier (`(a|aa)+x`, `(\d|\w)+!`)
+   with a load warning, exactly like an uncompilable pattern, and
+   `findRegexMatch` hands no single evaluation more than `TTSR_MAX_SCAN_CHARS`
+   (32KB): oversized tool payloads are scanned in bounded windows with a 1KB
+   overlap, so the whole payload is covered without ever growing one
+   evaluation's input. Both are security invariants rather than tuning knobs.
+   Regexes are case-sensitive with no flags surface: there is no way for a rule
+   to request `i`, `m`, or `s`.
 
 ## Feature-off safety
 

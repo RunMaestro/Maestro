@@ -188,8 +188,6 @@ export function watchTtsrConfigFiles(
 	opts?: { onReady?: () => void }
 ): () => void {
 	const maestroDir = path.join(projectRoot, MAESTRO_DIR);
-	const configPath = path.join(projectRoot, TTSR_CONFIG_PATH);
-	const rulesDir = path.join(projectRoot, TTSR_RULES_DIR);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let torn = false;
 
@@ -198,9 +196,24 @@ export function watchTtsrConfigFiles(
 		fs.mkdirSync(maestroDir, { recursive: true });
 	}
 
-	const isWatched = (filePath: string): boolean => {
-		if (filePath === maestroDir || filePath === rulesDir || filePath === configPath) return true;
-		return path.dirname(filePath) === rulesDir && path.extname(filePath).toLowerCase() === '.md';
+	// The `ignored` predicate runs inside anymatch, which posix-normalizes every
+	// candidate path (backslashes to forward slashes) BEFORE calling a function
+	// matcher. Comparing against `path.join`-built strings therefore fails for
+	// every path on Windows - everything gets ignored and the watcher never
+	// fires - so the comparison targets are normalized the same way up front.
+	const toPosix = (value: string): string => value.replace(/\\/g, '/');
+	const maestroDirPosix = toPosix(maestroDir);
+	const configPathPosix = toPosix(path.join(projectRoot, TTSR_CONFIG_PATH));
+	const rulesDirPosix = toPosix(path.join(projectRoot, TTSR_RULES_DIR));
+
+	const isWatched = (candidate: string): boolean => {
+		const filePath = toPosix(candidate);
+		if (filePath === maestroDirPosix || filePath === rulesDirPosix || filePath === configPathPosix)
+			return true;
+		return (
+			path.posix.dirname(filePath) === rulesDirPosix &&
+			path.posix.extname(filePath).toLowerCase() === '.md'
+		);
 	};
 
 	const watcher = chokidar.watch(maestroDir, {
