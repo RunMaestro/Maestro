@@ -1582,7 +1582,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: 'My Custom Font' } });
 			// Scope to the font input's parent container to avoid ambiguous "Add" button matches
 			const fontContainer = customFontInput.closest('div')!.parentElement!;
@@ -1602,7 +1602,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: 'My Custom Font' } });
 			fireEvent.keyDown(customFontInput, { key: 'Enter' });
 
@@ -1620,7 +1620,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: '   ' } });
 			// Scope to the font input's parent container to avoid ambiguous "Add" button matches
 			const fontContainer = customFontInput.closest('div')!.parentElement!;
