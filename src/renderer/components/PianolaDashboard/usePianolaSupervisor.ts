@@ -12,7 +12,7 @@
  * when the Encore flag is off, which we treat as "nothing watched".
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { Session } from '../../types';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
@@ -20,6 +20,7 @@ import type {
 	PianolaSupervisorHealth,
 	PianolaSupervisedState,
 } from '../../../main/pianola/pianola-supervisor';
+import type { PianolaSupervisorSnapshot } from '../../../main/ipc/handlers/pianola';
 
 /** A currently-watched agent, with live daemon health when a child is running. */
 export interface WatchedAgentRow {
@@ -106,6 +107,12 @@ export interface PianolaSupervisorState {
 	refresh: () => void;
 }
 
+/** True when an IPC rejection is the gated 'PianolaDisabled' error (feature off). */
+function isPianolaDisabled(err: unknown): boolean {
+	const message = err instanceof Error ? err.message : String(err);
+	return message.includes('PianolaDisabled');
+}
+
 /**
  * Live watch state. Subscribes to the session store and polls the supervisor
  * registry; the mutators write through `window.maestro.pianola.supervisor` and
@@ -116,58 +123,78 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 	const sessions = useSessionStore((s) => s.sessions);
 	const [targets, setTargets] = useState<PianolaSupervisedTarget[]>([]);
 	const [health, setHealth] = useState<PianolaSupervisorHealth[]>([]);
-	const [nonce, setNonce] = useState(0);
+	// Mutations (add/remove/setEnabled) are authoritative: each bumps this epoch
+	// before and after its IPC call and always applies its returned snapshot. A
+	// poll captures the epoch when it starts and applies only if it is unchanged
+	// on resolve, so a poll overlapping a mutation can never clobber the newer
+	// mutation result with a stale snapshot.
+	const mutationEpochRef = useRef(0);
+	const mountedRef = useRef(true);
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
 
-	const refresh = useCallback(() => setNonce((n) => n + 1), []);
+	const load = useCallback(async () => {
+		const epoch = mutationEpochRef.current;
+		try {
+			const snap = await window.maestro.pianola.supervisor.list();
+			if (mountedRef.current && mutationEpochRef.current === epoch) {
+				setTargets(snap.targets);
+				setHealth(snap.health);
+			}
+		} catch (err) {
+			// Feature turned off -> clear stale watched rows (nothing is watched when
+			// Pianola is disabled). A transient IPC error keeps the last snapshot so
+			// the list does not flicker; a mutation during the poll wins (epoch moved).
+			if (mountedRef.current && mutationEpochRef.current === epoch && isPianolaDisabled(err)) {
+				setTargets([]);
+				setHealth([]);
+			}
+		}
+	}, []);
 
 	useEffect(() => {
-		let cancelled = false;
-		const tick = async () => {
-			try {
-				const snap = await window.maestro.pianola.supervisor.list();
-				if (!cancelled) {
-					setTargets(snap.targets);
-					setHealth(snap.health);
-				}
-			} catch {
-				// 'PianolaDisabled' or transient IPC error: leave the last snapshot.
-			}
-		};
-		void tick();
-		const id = setInterval(tick, POLL_MS);
-		return () => {
-			cancelled = true;
-			clearInterval(id);
-		};
-	}, [nonce]);
+		void load();
+		const id = setInterval(() => void load(), POLL_MS);
+		return () => clearInterval(id);
+	}, [load]);
+
+	const mutate = useCallback(async (op: Promise<PianolaSupervisorSnapshot>): Promise<void> => {
+		mutationEpochRef.current += 1; // invalidate polls issued before this mutation
+		const snap = await op;
+		mutationEpochRef.current += 1; // invalidate polls issued during this mutation
+		if (mountedRef.current) {
+			setTargets(snap.targets);
+			setHealth(snap.health);
+		}
+	}, []);
+
+	const watch = useCallback(
+		(agentId: string, tabId: string) =>
+			mutate(
+				window.maestro.pianola.supervisor.add({ kind: 'watch', agentId, tabId, enabled: true })
+			),
+		[mutate]
+	);
+	const unwatch = useCallback(
+		(targetId: string) => mutate(window.maestro.pianola.supervisor.remove(targetId)),
+		[mutate]
+	);
+	const setEnabled = useCallback(
+		(targetId: string, enabled: boolean) =>
+			mutate(window.maestro.pianola.supervisor.setEnabled(targetId, enabled)),
+		[mutate]
+	);
 
 	const { watched, watchable } = useMemo(
 		() => deriveWatchState(sessions, targets, health),
 		[sessions, targets, health]
 	);
 
-	const watch = useCallback(async (agentId: string, tabId: string) => {
-		const snap = await window.maestro.pianola.supervisor.add({
-			kind: 'watch',
-			agentId,
-			tabId,
-			enabled: true,
-		});
-		setTargets(snap.targets);
-		setHealth(snap.health);
-	}, []);
-
-	const unwatch = useCallback(async (targetId: string) => {
-		const snap = await window.maestro.pianola.supervisor.remove(targetId);
-		setTargets(snap.targets);
-		setHealth(snap.health);
-	}, []);
-
-	const setEnabled = useCallback(async (targetId: string, enabled: boolean) => {
-		const snap = await window.maestro.pianola.supervisor.setEnabled(targetId, enabled);
-		setTargets(snap.targets);
-		setHealth(snap.health);
-	}, []);
+	const refresh = useCallback(() => void load(), [load]);
 
 	return { watched, watchable, watch, unwatch, setEnabled, refresh };
 }
