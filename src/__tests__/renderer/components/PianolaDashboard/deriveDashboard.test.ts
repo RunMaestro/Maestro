@@ -85,12 +85,46 @@ describe('deriveDashboard', () => {
 		expect(recentlyDone.find((r) => r.sessionId === 'e')).toBeUndefined();
 	});
 
-	it('excludes the Pianola agent and worktree children from every bucket', () => {
+	it('excludes the Pianola agent from every bucket', () => {
+		const { working } = deriveDashboard(
+			[session({ id: 'pia', state: 'busy', isPianola: true })],
+			[]
+		);
+		expect(working).toHaveLength(0);
+	});
+
+	it('groups a busy worktree child under its parent in Working, even when the parent is idle', () => {
 		const sessions = [
-			session({ id: 'pia', state: 'busy', isPianola: true }),
-			session({ id: 'wt', state: 'busy', parentSessionId: 'parent' }),
+			session({ id: 'parent', state: 'idle', name: 'Parent' }),
+			session({
+				id: 'child',
+				state: 'busy',
+				parentSessionId: 'parent',
+				name: 'Child',
+				activeTabId: 't1',
+				aiTabs: [{ id: 't1', name: 'fixing tests' }] as Session['aiTabs'],
+			}),
 		];
-		const { working } = deriveDashboard(sessions, []);
+		// Parent has prior decision history, so absent the busy child it would land
+		// in recentlyDone; surfacing it via the child must move it to Working only.
+		const decisions = [decision('parent', 'earlier work')];
+		const { working, recentlyDone } = deriveDashboard(sessions, decisions);
+
+		expect(working).toHaveLength(1);
+		expect(working[0].sessionId).toBe('parent');
+		expect(working[0].worktreeChildren?.map((c) => c.sessionId)).toEqual(['child']);
+		expect(working[0].worktreeChildren?.[0].description).toBe('fixing tests');
+		// The busy child is not also a separate top-level row.
+		expect(working.filter((r) => r.sessionId === 'child')).toHaveLength(0);
+		// ...and the parent isn't double-listed in recentlyDone.
+		expect(recentlyDone.find((r) => r.sessionId === 'parent')).toBeUndefined();
+	});
+
+	it('adds no Working row for a busy worktree child whose parent is absent', () => {
+		const { working } = deriveDashboard(
+			[session({ id: 'wt', state: 'busy', parentSessionId: 'ghost' })],
+			[]
+		);
 		expect(working).toHaveLength(0);
 	});
 

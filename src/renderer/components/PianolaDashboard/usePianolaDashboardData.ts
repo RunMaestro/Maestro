@@ -28,6 +28,9 @@ export interface DashboardAgentRow {
 	description: string;
 	/** Epoch ms of the relevant moment, when known. */
 	timestamp?: number;
+	/** Busy worktree children grouped under this parent agent, mirroring the Left
+	 * Bar. Only set on Working-section rows. */
+	worktreeChildren?: DashboardAgentRow[];
 }
 
 /** A row in the recent-activity feed. */
@@ -112,14 +115,41 @@ export function deriveDashboard(
 			};
 		});
 
+	// Working now: busy top-level agents, plus any parent with busy worktree
+	// children (shown even when the parent itself is idle, mirroring the Left Bar),
+	// with those busy children nested under it.
+	const busyChildrenByParent = new Map<string, Session[]>();
+	for (const s of sessions) {
+		if (!s.isPianola && s.parentSessionId && s.state === 'busy') {
+			const siblings = busyChildrenByParent.get(s.parentSessionId);
+			if (siblings) siblings.push(s);
+			else busyChildrenByParent.set(s.parentSessionId, [s]);
+		}
+	}
 	const working: DashboardAgentRow[] = agents
-		.filter((s) => s.state === 'busy')
-		.map((s) => ({
-			key: s.id,
-			sessionId: s.id,
-			agentName: s.name,
-			description: activeTaskLabel(s, 'Working...'),
-		}));
+		.filter((s) => s.state === 'busy' || busyChildrenByParent.has(s.id))
+		.map((s) => {
+			const children = busyChildrenByParent.get(s.id) ?? [];
+			return {
+				key: s.id,
+				sessionId: s.id,
+				agentName: s.name,
+				description:
+					s.state === 'busy'
+						? activeTaskLabel(s, 'Working...')
+						: `${children.length} worktree${children.length === 1 ? '' : 's'} working`,
+				...(children.length > 0
+					? {
+							worktreeChildren: children.map((c) => ({
+								key: c.id,
+								sessionId: c.id,
+								agentName: c.name,
+								description: activeTaskLabel(c, 'Working...'),
+							})),
+						}
+					: {}),
+			};
+		});
 
 	// Recently done: idle agents Pianola has actually worked with (they appear in
 	// the decision log), so we do not list every dormant agent as "done". Sorted

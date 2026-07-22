@@ -18,6 +18,7 @@ import {
 	ShieldQuestion,
 	MessageSquareReply,
 	EyeOff,
+	GitBranch,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
@@ -82,30 +83,59 @@ function AgentRow({
 	onJump: (sessionId: string) => void;
 }): React.ReactElement {
 	const clickable = !!row.sessionId;
+	const children = row.worktreeChildren ?? [];
 	return (
-		<button
-			type="button"
-			disabled={!clickable}
-			onClick={() => row.sessionId && onJump(row.sessionId)}
-			className="w-full text-left rounded px-3 py-2 flex items-center gap-3 transition-colors hover:bg-white/5 disabled:cursor-default"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${accent}` }}
-			title={clickable ? `Jump to ${row.agentName}` : row.agentName}
-		>
-			<span
-				className="text-sm font-medium truncate shrink-0 max-w-[40%]"
-				style={{ color: theme.colors.textMain }}
+		<div className="flex flex-col gap-1">
+			<button
+				type="button"
+				disabled={!clickable}
+				onClick={() => row.sessionId && onJump(row.sessionId)}
+				className="w-full text-left rounded px-3 py-2 flex items-center gap-3 transition-colors hover:bg-white/5 disabled:cursor-default"
+				style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${accent}` }}
+				title={clickable ? `Jump to ${row.agentName}` : row.agentName}
 			>
-				{row.agentName}
-			</span>
-			<span className="text-sm truncate flex-1" style={{ color: theme.colors.textDim }}>
-				{row.description}
-			</span>
-			{row.timestamp !== undefined && (
-				<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
-					{formatRelativeTime(row.timestamp)}
+				<span
+					className="text-sm font-medium truncate shrink-0 max-w-[40%]"
+					style={{ color: theme.colors.textMain }}
+				>
+					{row.agentName}
 				</span>
+				<span className="text-sm truncate flex-1" style={{ color: theme.colors.textDim }}>
+					{row.description}
+				</span>
+				{row.timestamp !== undefined && (
+					<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
+						{formatRelativeTime(row.timestamp)}
+					</span>
+				)}
+			</button>
+			{children.length > 0 && (
+				<div className="flex flex-col gap-1 pl-4">
+					{children.map((child) => (
+						<button
+							key={child.key}
+							type="button"
+							disabled={!child.sessionId}
+							onClick={() => child.sessionId && onJump(child.sessionId)}
+							className="w-full text-left rounded px-3 py-1.5 flex items-center gap-2 transition-colors hover:bg-white/5 disabled:cursor-default"
+							style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${accent}` }}
+							title={child.sessionId ? `Jump to ${child.agentName}` : child.agentName}
+						>
+							<GitBranch className="w-3 h-3 shrink-0" style={{ color: theme.colors.textDim }} />
+							<span
+								className="text-xs font-medium truncate shrink-0 max-w-[45%]"
+								style={{ color: theme.colors.textMain }}
+							>
+								{child.agentName}
+							</span>
+							<span className="text-xs truncate flex-1" style={{ color: theme.colors.textDim }}>
+								{child.description}
+							</span>
+						</button>
+					))}
+				</div>
 			)}
-		</button>
+		</div>
 	);
 }
 
