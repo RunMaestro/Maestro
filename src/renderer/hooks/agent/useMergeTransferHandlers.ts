@@ -26,7 +26,7 @@ import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 // ============================================================================
 // Dependencies interface
@@ -497,16 +497,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 						throw new Error(`${targetSession.toolType} agent has no command configured`);
 					}
 
-					// Determine whether to send the prompt via stdin on Windows to avoid
-					// exceeding the command line length limit. Context transfer prompts
-					// contain the full conversation history and can easily exceed ~8KB.
-					const isSshSession = Boolean(targetSession.sessionSshRemoteConfig?.enabled);
-					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-						isSshSession,
-						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Context transfer never sends images
-					});
-
 					const effectivePrompt = contextMessage;
 
 					const appendSystemPrompt = await prepareMaestroSystemPrompt({
@@ -534,8 +524,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 						sessionSshRemoteConfig: targetSession.sessionSshRemoteConfig,
 						// Windows stdin handling - context transfer prompts contain the
 						// full conversation history and can easily exceed shell limits
-						sendPromptViaStdin,
-						sendPromptViaStdinRaw,
 					});
 				} catch (error) {
 					captureException(error, {

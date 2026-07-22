@@ -4,7 +4,7 @@ import { createTabAtPosition, getTabDisplayName, getActiveTab } from '../../util
 import { notifyToast } from '../../stores/notificationStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 /**
  * Fork conversation at a log id into a new AI tab.
@@ -193,13 +193,6 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					throw new Error(`${session.toolType} agent has no command configured`);
 				}
 
-				const isSshSession = Boolean(session.sessionSshRemoteConfig?.enabled);
-				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-					isSshSession,
-					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages: false,
-				});
-
 				const effectivePrompt = contextMessage;
 
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
@@ -224,8 +217,6 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					sessionCustomEffort: session.customEffort,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-					sendPromptViaStdin,
-					sendPromptViaStdinRaw,
 				});
 			} catch (error) {
 				captureException(error, {

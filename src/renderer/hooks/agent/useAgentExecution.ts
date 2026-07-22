@@ -10,7 +10,7 @@ import type {
 } from '../../types';
 import { getActiveTab, resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import {
 	hasRunnableQueueItem,
@@ -584,14 +584,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						}
 					}
 
-					// Spawn the agent for batch processing
-					// Use effectiveCwd which may be a worktree path for parallel execution
-					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-						isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Batch/Auto Run does not send images
-					});
-
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
 					window.maestro.process
 						.spawn({
@@ -625,8 +617,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
 						})
 						.catch((err: unknown) => {
 							resolveOnce({
@@ -785,11 +775,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							effectiveSessionSshRemoteConfig = mainSession.sessionSshRemoteConfig;
 						}
 					}
-					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Resume path does not send images
-					});
 					window.maestro.process
 						.spawn({
 							sessionId: targetSessionId,
@@ -820,8 +805,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							...getClaudeTokenSourceFields(sessionConfig),
 							// Always use effective SSH remote config if available
 							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
 						})
 						.catch(() => {
 							cleanup();

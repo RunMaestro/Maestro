@@ -10,7 +10,7 @@
 
 import type { AdditionalDirectory, Session, ToolType, ProcessConfig } from '../types';
 import { createMergedSession } from './tabHelpers';
-import { getStdinFlags, prepareMaestroSystemPrompt } from './spawnHelpers';
+import { prepareMaestroSystemPrompt } from './spawnHelpers';
 import { logger } from './logger';
 
 /**
@@ -90,8 +90,6 @@ export interface BuildSpawnConfigOptions {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
-	/** Whether the prompt includes images (default: false) */
-	hasImages?: boolean;
 	/** Maestro system prompt to append (injected via --append-system-prompt) */
 	appendSystemPrompt?: string;
 }
@@ -138,7 +136,6 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomContextWindow,
 		sessionAdditionalDirectories,
 		sessionSshRemoteConfig,
-		hasImages = false,
 		appendSystemPrompt,
 	} = options;
 
@@ -160,15 +157,6 @@ export async function buildSpawnConfigForAgent(
 	if (!command) {
 		throw new Error(`${toolType} agent has no command configured`);
 	}
-
-	// Determine whether to send the prompt via stdin on Windows to avoid
-	// exceeding the command line length limit (~8KB cmd.exe).
-	const isSshSession = Boolean(sessionSshRemoteConfig?.enabled);
-	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-		isSshSession,
-		supportsStreamJsonInput: agentConfig.capabilities?.supportsStreamJsonInput ?? false,
-		hasImages,
-	});
 
 	// Build the spawn config
 	// The main process will use the agent's argument builders (resumeArgs, readOnlyArgs, etc.)
@@ -197,9 +185,6 @@ export async function buildSpawnConfigForAgent(
 		sessionAdditionalDirectories,
 		// Per-session SSH remote config (takes precedence over agent-level SSH config)
 		sessionSshRemoteConfig,
-		// Windows stdin handling - send prompt via stdin to avoid command line length limits
-		sendPromptViaStdin,
-		sendPromptViaStdinRaw,
 	};
 
 	return spawnConfig;

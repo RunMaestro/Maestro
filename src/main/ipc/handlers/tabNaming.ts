@@ -502,7 +502,13 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// cmd.exe's ~8KB command-line limit (ENAMETOOLONG on spawn).
 						// Tab naming concatenates a multi-KB system prompt with the user
 						// message, so a long first message easily exceeds the limit.
-						const sendPromptViaStdinRaw = isWindows() && !config.sessionSshRemoteConfig?.enabled;
+						// Only for CLIs that actually read stdin - one that takes the
+						// prompt positionally (omp) would run with no prompt and name
+						// nothing.
+						const sendPromptViaStdinRaw =
+							isWindows() &&
+							!config.sessionSshRemoteConfig?.enabled &&
+							(agent.capabilities?.supportsPromptViaStdin ?? false);
 
 						// Spawn the process
 						// When using SSH with stdin, pass the flag so ChildProcessSpawner

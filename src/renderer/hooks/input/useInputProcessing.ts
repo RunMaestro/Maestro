@@ -9,7 +9,7 @@ import type {
 	BatchRunState,
 } from '../../types';
 import { getActiveTab, getBusyTabs, extractQuickTabName } from '../../utils/tabHelpers';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
@@ -1350,13 +1350,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeTabId: targetTabId,
 						});
 
-						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-							isSshSession:
-								!!freshSession.sshRemoteId || !!freshSession.sessionSshRemoteConfig?.enabled,
-							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-							hasImages: hasImages ?? false,
-						});
-
 						// Spawn agent with generic config - the main process will use agent-specific
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
@@ -1382,11 +1375,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomContextWindow: freshSession.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
-							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues
-							// For stream-json agents with images: use JSON format via stdin
-							// For text-only or non-stream-json agents: use raw text via stdin
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
 						});
 					} catch (error) {
 						logger.error('Failed to spawn agent batch process:', undefined, error);

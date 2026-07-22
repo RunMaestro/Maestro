@@ -3558,4 +3558,122 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.prompt).toContain('Do work.');
 		});
 	});
+
+	describe('prompt delivery (argv vs stdin)', () => {
+		// Windows hands the prompt to the child over stdin instead of argv to stay
+		// under the ~32K CreateProcess limit. The decision belongs to the HOST and
+		// the agent's CLI - never to the caller, which may be a web-desktop browser
+		// running on a different OS than the machine that spawns the agent.
+
+		const setHostWindows = async (value: boolean) => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			vi.mocked(isWindows).mockReturnValue(value);
+		};
+
+		afterEach(async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			vi.mocked(isWindows).mockReset();
+			vi.mocked(isWindows).mockImplementation(() => process.platform === 'win32');
+		});
+
+		const stdinCapableAgent = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			path: '/usr/local/bin/claude',
+			capabilities: { supportsStreamJsonInput: true, supportsPromptViaStdin: true },
+		};
+
+		// omp takes the prompt as a positional argument only. Handing it stdin makes
+		// it run with no prompt at all: it prints its session line and exits 0.
+		const positionalOnlyAgent = {
+			id: 'omp',
+			name: 'Oh My Pi',
+			path: '/home/user/.bun/bin/omp',
+			capabilities: { supportsStreamJsonInput: false, supportsPromptViaStdin: false },
+		};
+
+		const spawnWith = async (config: Record<string, unknown>) => {
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				cwd: '/home/user/project',
+				args: [],
+				prompt: 'Hello world',
+				...config,
+			});
+			return mockProcessManager.spawn.mock.calls[0][0];
+		};
+
+		it('ignores a caller asking for stdin delivery on a non-Windows host', async () => {
+			// The web-desktop regression: a browser on Windows drove a Linux host and
+			// asked for stdin delivery, so omp spawned with no prompt at all.
+			await setHostWindows(false);
+			mockAgentDetector.getAgent.mockResolvedValue(positionalOnlyAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'omp',
+				command: 'omp',
+				sendPromptViaStdinRaw: true,
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+			expect(spawnCall.prompt).toContain('Hello world');
+		});
+
+		it('keeps the prompt in argv on Windows for agents that never read stdin', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(positionalOnlyAgent);
+
+			const spawnCall = await spawnWith({ toolType: 'omp', command: 'omp' });
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+		});
+
+		it('enables raw stdin delivery on a Windows host even when the caller did not ask', async () => {
+			// Mirror case: a macOS browser driving a Windows host must still get the
+			// argv-length workaround.
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				sendPromptViaStdinRaw: false,
+			});
+
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+		});
+
+		it('uses stream-json stdin on Windows when images accompany the prompt', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				images: ['/tmp/shot.png'],
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(true);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+		});
+
+		it('leaves stdin delivery off for SSH sessions (the SSH script owns stdin)', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+		});
+	});
 });

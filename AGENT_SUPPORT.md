@@ -138,6 +138,7 @@ interface AgentCapabilities {
 	supportsImageInputOnResume: boolean; // Can receive images when resuming a session
 	supportsSlashCommands: boolean; // Has discoverable slash commands
 	supportsStreamJsonInput: boolean; // Accepts --input-format stream-json for image stdin
+	supportsPromptViaStdin: boolean; // CLI reads the prompt from stdin when it is not an argument
 
 	// Storage & tracking
 	supportsSessionStorage: boolean; // Persists provider sessions we can browse
@@ -188,6 +189,7 @@ interface AgentCapabilities {
 | `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                          |
 | `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                            |
 | `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                          |
+| `supportsPromptViaStdin`        | Windows sends long prompts over stdin             | Prompt always stays in argv (~32K limit applies)                 |
 | `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                       |
 | `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                    |
 | `supportsUsageStats`            | Token usage display                               | Display hidden                                                   |
@@ -256,6 +258,7 @@ When adding a new agent, start with all capabilities set to `false`:
   supportsImageInputOnResume: false,
   supportsSlashCommands: false,
   supportsStreamJsonInput: false,
+  supportsPromptViaStdin: false,
   supportsSessionStorage: false,
   supportsCostTracking: false,
   supportsUsageStats: false,
@@ -379,6 +382,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInputOnResume: false, // true if images work on resume
 		supportsSlashCommands: false,
 		supportsStreamJsonInput: false, // true if --input-format stream-json
+		supportsPromptViaStdin: false, // true ONLY if the CLI reads the prompt from stdin - verify it
 		supportsSessionStorage: false, // Enable if you implement storage
 		supportsCostTracking: false, // Enable if API-based with costs
 		supportsUsageStats: true, // If token counts in output
