@@ -9,7 +9,6 @@ import {
 	MoreHorizontal,
 	PenLine,
 	Pin,
-	Wrench,
 	X,
 } from 'lucide-react';
 import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
@@ -55,8 +54,6 @@ interface ToolbarControlsProps {
 	onToggleTabSaveToHistory?: () => void;
 	tabShowThinking: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
-	tabShowTools: boolean;
-	onToggleTabShowTools?: () => void;
 	supportsThinking: boolean;
 	currentModel?: string;
 	currentEffort?: string;
@@ -92,8 +89,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 	onToggleTabSaveToHistory,
 	tabShowThinking,
 	onToggleTabShowThinking,
-	tabShowTools,
-	onToggleTabShowTools,
 	supportsThinking,
 	currentModel,
 	currentEffort,
@@ -379,29 +374,6 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<Brain className="w-3 h-3" />
 						<span>Thinking</span>
 						{tabShowThinking === 'sticky' && <Pin className="w-2.5 h-2.5" />}
-					</button>
-				)}
-				{isAiMode && onToggleTabShowTools && (
-					<button
-						onClick={onToggleTabShowTools}
-						className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							tabShowTools ? '' : 'opacity-40 hover:opacity-70'
-						}`}
-						style={{
-							backgroundColor: tabShowTools ? `${theme.colors.accentText}25` : 'transparent',
-							color: tabShowTools ? theme.colors.accentText : theme.colors.textDim,
-							border: tabShowTools
-								? `1px solid ${theme.colors.accentText}50`
-								: '1px solid transparent',
-						}}
-						title={
-							tabShowTools
-								? 'Show Tools - Click to hide tool activity'
-								: 'Show Tools - Click to show tool activity'
-						}
-					>
-						<Wrench className="w-3 h-3" />
-						<span>Tools</span>
 					</button>
 				)}
 				<button

@@ -57,6 +57,7 @@ const mockSetAutoResumeCheckIntervalHours = vi.fn();
 const mockSetAutoResumeGiveUpDays = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
+const mockSetShowToolCalls = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
 const mockSetPreventSleepEnabled = vi.fn();
 const mockSetDisableGpuAcceleration = vi.fn();
@@ -104,6 +105,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',
 		setDefaultShowThinking: mockSetDefaultShowThinking,
+		showToolCalls: true,
+		setShowToolCalls: mockSetShowToolCalls,
 		// Tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: mockSetAutomaticTabNamingEnabled,
@@ -929,6 +932,44 @@ describe('GeneralTab', () => {
 			});
 
 			expect(screen.getByText('Thinking streams live and stays visible')).toBeInTheDocument();
+		});
+	});
+
+	describe('Tool Calls', () => {
+		it('renders the tool calls toggle', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			expect(screen.getByText('Show tool calls in responses')).toBeInTheDocument();
+		});
+
+		it('calls setShowToolCalls when toggled', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			fireEvent.click(screen.getByRole('switch', { name: 'Show tool calls in responses' }));
+			// Clicking the switch fires exactly once; the wrapper onClick must not
+			// also fire (ToggleSwitch stops propagation).
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(false);
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('toggles once when the row is activated by keyboard', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const section = screen
+				.getByText('Show tool calls in responses')
+				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
+			// Enter on the row toggles once; the target-guard in onKeyDown keeps a
+			// focused nested switch from also triggering the row handler.
+			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
 		});
 	});
 

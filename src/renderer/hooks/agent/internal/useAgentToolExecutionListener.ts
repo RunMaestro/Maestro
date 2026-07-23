@@ -58,8 +58,8 @@ export function useAgentToolExecutionListener(): void {
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab) return s;
-						// Always record tool events regardless of the tab's `showTools`
-						// setting. Visibility is a pure render concern (TerminalOutput
+						// Always record tool events regardless of the global tool-call
+						// visibility setting. Visibility is a pure render concern (TerminalOutput
 						// hides `source:'tool'` entries when tools are off), so recording
 						// unconditionally keeps running->completed correlation intact
 						// across a mid-run toggle and avoids the transcript churn that

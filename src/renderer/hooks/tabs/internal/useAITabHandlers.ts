@@ -5,7 +5,6 @@ import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
 import type { Session } from '../../../types';
-import { toolLogsRecorded } from '../../agent/internal/helpers/thinkingLogs';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
@@ -351,8 +350,8 @@ export function useAITabHandlers(): AITabHandlersReturn {
 			const newMode = cycleThinkingMode(tab.showThinking);
 			if (newMode === 'off') {
 				// Only thinking logs are storage-gated. Tool logs are always recorded
-				// and hidden purely at render (see `showTools` + TerminalOutput), so
-				// turning thinking off must never drop them.
+				// and hidden purely at render (see the global tool-call visibility
+				// setting + TerminalOutput), so turning thinking off must never drop them.
 				return {
 					...tab,
 					showThinking: 'off',
@@ -360,24 +359,6 @@ export function useAITabHandlers(): AITabHandlersReturn {
 				};
 			}
 			return { ...tab, showThinking: newMode };
-		});
-	}, []);
-
-	const handleToggleTabShowTools = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-		const currentActiveTab = getActiveTab(session);
-		if (!currentActiveTab) return;
-
-		updateAiTab(session.id, currentActiveTab.id, (tab) => {
-			// Flip the effective value: when showTools is absent it inherits the
-			// tab's thinking on/off state, so the first click toggles that.
-			// Visibility is a pure render concern (TerminalOutput filters
-			// `source:'tool'`); tool events are always recorded, so this only flips
-			// the flag and never mutates logs - a mid-run toggle no longer churns the
-			// transcript (the flicker bug) and running->completed correlation survives.
-			const effective = toolLogsRecorded(tab.showTools, tab.showThinking);
-			return { ...tab, showTools: !effective };
 		});
 	}, []);
 
@@ -408,7 +389,6 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
-		handleToggleTabShowTools,
 		handleToggleTabEnterToSend,
 	};
 }

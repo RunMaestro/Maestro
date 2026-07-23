@@ -14,7 +14,6 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useMessageGistStore } from '../../stores/messageGistStore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { collapseAiResponseLogs } from './utils/collapseAiResponseLogs';
-import { toolLogsRecorded } from '../../hooks/agent/internal/helpers/thinkingLogs';
 import { groupSubagentToolLogs } from './utils/groupSubagentToolLogs';
 import { LogItem } from './components/LogItem';
 import { OutputSearchBar } from './components/OutputSearchBar';
@@ -133,9 +132,7 @@ export const TerminalOutput = memo(
 		// so hiding here keeps toggling from mutating log storage (the flicker bug)
 		// and preserves running->completed correlation.
 		const collapsedAll = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
-		const toolsVisible = activeTab
-			? toolLogsRecorded(activeTab.showTools, activeTab.showThinking)
-			: true;
+		const toolsVisible = useSettingsStore((s) => s.showToolCalls);
 		const collapsedLogs = useMemo(
 			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
 			[collapsedAll, toolsVisible]

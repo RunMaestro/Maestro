@@ -19,6 +19,7 @@ import {
 	collapseAiResponseLogs,
 } from '../../../renderer/components/TerminalOutput';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 
 // Mock dependencies
@@ -134,7 +135,6 @@ const createDefaultSession = (overrides: Partial<Session> = {}): Session => ({
 			agentSessionId: 'claude-123',
 			logs: [],
 			isUnread: false,
-			showTools: true,
 		},
 	],
 	activeTabId: 'tab-1',
@@ -180,6 +180,7 @@ describe('TerminalOutput', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		useSettingsStore.setState({ showToolCalls: true });
 	});
 
 	afterEach(() => {
@@ -215,9 +216,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -231,9 +230,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User input here', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -253,9 +250,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -271,9 +266,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -287,9 +280,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Regular message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -307,9 +298,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: errorText, source: 'error' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -337,9 +326,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -359,9 +346,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -415,9 +400,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -682,9 +665,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Copy this text', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1135,9 +1116,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1162,7 +1141,6 @@ describe('TerminalOutput', () => {
 						agentSessionId: 'claude-123',
 						logs: newLogs,
 						isUnread: false,
-						showTools: true,
 					},
 				],
 			};
@@ -1182,9 +1160,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1202,9 +1178,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1230,9 +1204,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1262,9 +1234,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1286,9 +1256,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1320,9 +1288,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'AI response', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1341,9 +1307,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Error output', source: 'stderr' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1367,9 +1331,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1389,9 +1351,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1421,9 +1381,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1456,9 +1414,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1477,9 +1433,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1505,9 +1459,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1526,9 +1478,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1555,9 +1505,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1599,9 +1547,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1622,9 +1568,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1647,9 +1591,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1669,9 +1611,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1692,9 +1632,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: codeBlockText, source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1716,9 +1654,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1739,9 +1675,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1764,9 +1698,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1787,9 +1719,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1810,9 +1740,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1833,9 +1761,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1858,9 +1784,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1881,9 +1805,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1906,9 +1828,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1929,9 +1849,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1953,9 +1871,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -1995,9 +1911,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2033,9 +1947,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2061,9 +1973,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2074,7 +1984,7 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('npm run test')).toBeInTheDocument();
 		});
 
-		it('hides tool logs at render when the tab has showTools:false', () => {
+		it('hides tool logs at render when showToolCalls is off', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
 					text: 'Bash',
@@ -2084,12 +1994,11 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: false },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
+			useSettingsStore.setState({ showToolCalls: false });
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			// Tool events stay recorded in state; the tab hid them, so the badge must
@@ -2113,12 +2022,11 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: false },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
+			useSettingsStore.setState({ showToolCalls: false });
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			// The tool badge is hidden, but the two replies stay separate.
@@ -2156,9 +2064,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2193,9 +2099,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2217,9 +2121,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2249,9 +2151,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2281,9 +2181,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2317,9 +2215,7 @@ describe('TerminalOutput', () => {
 				];
 
 				const session = createDefaultSession({
-					tabs: [
-						{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-					],
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 					activeTabId: 'tab-1',
 				});
 
@@ -2349,9 +2245,7 @@ describe('TerminalOutput', () => {
 				];
 
 				const session = createDefaultSession({
-					tabs: [
-						{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-					],
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 					activeTabId: 'tab-1',
 				});
 
@@ -2377,9 +2271,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2405,9 +2297,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2434,9 +2324,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2458,9 +2346,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2483,9 +2369,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2515,9 +2399,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2542,9 +2424,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2569,9 +2449,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2597,7 +2475,6 @@ describe('TerminalOutput', () => {
 						agentSessionId: 'claude-123',
 						logs: newLogs,
 						isUnread: false,
-						showTools: true,
 					},
 				],
 			};
@@ -2620,9 +2497,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2659,7 +2534,6 @@ describe('TerminalOutput', () => {
 						agentSessionId: 'claude-123',
 						logs: newLogs,
 						isUnread: false,
-						showTools: true,
 					},
 				],
 			};
@@ -2678,9 +2552,7 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2706,7 +2578,6 @@ describe('TerminalOutput', () => {
 						agentSessionId: 'claude-123',
 						logs: newLogs,
 						isUnread: false,
-						showTools: true,
 					},
 				],
 			};
@@ -2714,7 +2585,10 @@ describe('TerminalOutput', () => {
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Follow-scroll is armed by a MutationObserver microtask that schedules a
+				// rAF; the async variant drains microtasks between timer steps so the
+				// scroll deterministically fires on slow CI runners.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
@@ -2750,7 +2624,10 @@ describe('TerminalOutput', () => {
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Follow-scroll is armed by a MutationObserver microtask that schedules a
+				// rAF; the async variant drains microtasks between timer steps so the
+				// scroll deterministically fires on slow CI runners.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			// Terminal mode always auto-scrolls
@@ -2767,9 +2644,7 @@ describe('TerminalOutput', () => {
 				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
 			];
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2827,13 +2702,16 @@ describe('TerminalOutput', () => {
 						agentSessionId: 'claude-123',
 						logs: newLogs,
 						isUnread: false,
-						showTools: true,
 					},
 				],
 			};
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Drain the MutationObserver microtask (it schedules the follow rAF) and
+				// advance that rAF in one deterministic step. The async variant flushes
+				// microtasks between timer steps, so a slow CI runner cannot advance
+				// timers before the observer arms the scroll (Windows shard flake).
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
@@ -2852,9 +2730,7 @@ describe('TerminalOutput', () => {
 				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
 			];
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2964,9 +2840,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -2983,9 +2857,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3016,9 +2888,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3050,9 +2920,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3082,9 +2950,7 @@ describe('TerminalOutput', () => {
 
 			const session = createDefaultSession({
 				enableMaestroP: true,
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3119,9 +2985,7 @@ describe('TerminalOutput', () => {
 			const session = createDefaultSession({
 				enableMaestroP: true,
 				maestroPMode: 'interactive',
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3144,9 +3008,7 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3195,9 +3057,7 @@ describe('helper function behaviors (tested via component)', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: markdownText, source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3218,9 +3078,7 @@ describe('helper function behaviors (tested via component)', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: markdownText, source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [
-					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true },
-				],
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
 
@@ -3251,7 +3109,7 @@ describe('memoization behavior', () => {
 		const logs: LogEntry[] = [createLogEntry({ id: 'log-1', text: 'Test', source: 'stdout' })];
 
 		const session = createDefaultSession({
-			tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true }],
+			tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 			activeTabId: 'tab-1',
 		});
 
@@ -3273,7 +3131,7 @@ describe('memoization behavior', () => {
 		];
 
 		const session = createDefaultSession({
-			tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showTools: true }],
+			tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 			activeTabId: 'tab-1',
 		});
 

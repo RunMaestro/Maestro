@@ -837,7 +837,6 @@ export interface CreateTabOptions {
 	usageStats?: UsageStats; // Token usage stats
 	saveToHistory?: boolean; // Whether to save synopsis to history after completions
 	showThinking?: ThinkingMode; // Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent)
-	showTools?: boolean; // Tool-badge display, independent of showThinking. Defaults to true for new tabs.
 	/** When false, append the tab without making it active (background create).
 	 *  The current active tab/file/browser/terminal/group and inputMode are all
 	 *  preserved so the user's visible view never changes. Default true. */
@@ -889,7 +888,6 @@ export function createTab(
 		usageStats,
 		saveToHistory = true,
 		showThinking = 'off',
-		showTools = true,
 		activate = true,
 	} = options;
 
@@ -907,7 +905,6 @@ export function createTab(
 		state: 'idle',
 		saveToHistory,
 		showThinking,
-		showTools,
 	};
 
 	// Update the session with the new tab added. When `activate` is true (the
