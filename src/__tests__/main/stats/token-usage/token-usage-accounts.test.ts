@@ -36,6 +36,19 @@ import { _internal } from '../../../../main/stats/token-usage/token-usage-access
 
 const { discoverClaudeAccounts } = _internal;
 
+// Build fixture paths through path.resolve/path.join so they match what the
+// accessor produces (`path.resolve(dir)`) on every platform. On POSIX these
+// stay `/home/u/.claude`; on Windows path.resolve rewrites a drive-less
+// absolute path to `<drive>:\home\u\.claude`, which is exactly what the
+// accessor normalizes its input to - so asserting native paths keeps the test
+// green on the Windows CI leg instead of hard-coding POSIX separators.
+const claude = path.resolve('/home/u/.claude');
+const claudeGmail = path.resolve('/home/u/.claude-gmail');
+const claudeSmash = path.resolve('/home/u/.claude-smash');
+const claudeWork = path.resolve('/home/u/.claude-work');
+const claudeFresh = path.resolve('/home/u/.claude-fresh');
+const projects = (dir: string) => path.join(dir, 'projects');
+
 /** Resolve each dir's projects/ to itself (i.e. no symlinks - genuinely separate). */
 function realpathIdentity() {
 	realpath.mockImplementation(async (p: string) => p);
@@ -47,64 +60,58 @@ beforeEach(() => {
 
 describe('discoverClaudeAccounts', () => {
 	it('collapses config dirs that symlink to a shared projects tree', async () => {
-		discoverClaudeConfigDirs.mockResolvedValue([
-			'/home/u/.claude',
-			'/home/u/.claude-gmail',
-			'/home/u/.claude-smash',
-		]);
+		discoverClaudeConfigDirs.mockResolvedValue([claude, claudeGmail, claudeSmash]);
 		// All three point their projects/ at the same real pool.
-		realpath.mockResolvedValue('/home/u/.claude/projects');
+		realpath.mockResolvedValue(projects(claude));
 
 		const accounts = await discoverClaudeAccounts();
 
 		// One shared pool -> read exactly once, not three times.
-		expect(accounts).toEqual(['/home/u/.claude']);
+		expect(accounts).toEqual([claude]);
 	});
 
 	it('keeps genuinely separate accounts distinct', async () => {
-		discoverClaudeConfigDirs.mockResolvedValue(['/home/u/.claude', '/home/u/.claude-work']);
+		discoverClaudeConfigDirs.mockResolvedValue([claude, claudeWork]);
 		realpathIdentity();
 
 		const accounts = await discoverClaudeAccounts();
 
 		expect(accounts).toHaveLength(2);
-		expect(accounts).toContain('/home/u/.claude');
-		expect(accounts).toContain('/home/u/.claude-work');
+		expect(accounts).toContain(claude);
+		expect(accounts).toContain(claudeWork);
 	});
 
 	it('reads a shared pool once while still reading a separate account', async () => {
 		discoverClaudeConfigDirs.mockResolvedValue([
-			'/home/u/.claude',
-			'/home/u/.claude-gmail', // symlinked to the shared pool
-			'/home/u/.claude-work', // its own pool
+			claude,
+			claudeGmail, // symlinked to the shared pool
+			claudeWork, // its own pool
 		]);
 		realpath.mockImplementation(async (p: string) =>
-			p.startsWith('/home/u/.claude-work')
-				? '/home/u/.claude-work/projects'
-				: '/home/u/.claude/projects'
+			p.startsWith(claudeWork) ? projects(claudeWork) : projects(claude)
 		);
 
 		const accounts = await discoverClaudeAccounts();
 
 		expect(accounts).toHaveLength(2);
-		expect(accounts).toContain('/home/u/.claude');
-		expect(accounts).toContain('/home/u/.claude-work');
-		expect(accounts).not.toContain('/home/u/.claude-gmail');
+		expect(accounts).toContain(claude);
+		expect(accounts).toContain(claudeWork);
+		expect(accounts).not.toContain(claudeGmail);
 	});
 
 	it('keeps an account whose projects tree does not exist yet', async () => {
-		discoverClaudeConfigDirs.mockResolvedValue(['/home/u/.claude', '/home/u/.claude-fresh']);
+		discoverClaudeConfigDirs.mockResolvedValue([claude, claudeFresh]);
 		realpath.mockImplementation(async (p: string) => {
-			if (p.startsWith('/home/u/.claude-fresh')) throw new Error('ENOENT');
-			return '/home/u/.claude/projects';
+			if (p.startsWith(claudeFresh)) throw new Error('ENOENT');
+			return projects(claude);
 		});
 
 		const accounts = await discoverClaudeAccounts();
 
 		// A brand-new account with no transcripts yet still appears rather than
 		// silently collapsing into another account.
-		expect(accounts).toContain('/home/u/.claude-fresh');
-		expect(accounts).toContain('/home/u/.claude');
+		expect(accounts).toContain(claudeFresh);
+		expect(accounts).toContain(claude);
 	});
 
 	it('falls back to the default ~/.claude when discovery finds nothing', async () => {
