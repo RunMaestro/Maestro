@@ -224,4 +224,101 @@ describe('GroupChatList', () => {
 			expect(onSortAlphabeticalChange).toHaveBeenCalledWith(false);
 		});
 	});
+
+	// ========================================================================
+	// Single-line header contract
+	// ========================================================================
+	// The section header must NEVER wrap to a second row as the sidebar
+	// narrows; instead it progressively drops the count badge, then the
+	// archived count, then the "New Chat" label (see the `@container gcheader`
+	// rules in src/renderer/index.css).
+	//
+	// jsdom has no layout engine and does not evaluate container queries, so
+	// these tests CANNOT assert "the label is hidden at 275px". What they pin
+	// down is the markup contract the CSS depends on: the container context,
+	// the anti-wrap utilities, and the hook classes. If a refactor drops any
+	// of them the CSS silently stops applying and the wrapping bug returns
+	// with no other test failing. The companion cross-file check lives in
+	// groupChatHeaderResponsive.regression.test.ts.
+	describe('single-line header contract', () => {
+		const archivedChat: GroupChat = { ...baseChat, id: 'gc-archived', archived: true };
+
+		/** The header row is the element that owns the container-query context. */
+		function getHeader(container: HTMLElement): HTMLElement {
+			const header = container.querySelector('.gc-header-container');
+			expect(header).not.toBeNull();
+			return header as HTMLElement;
+		}
+
+		it('establishes the container-query context on the header row', () => {
+			// Without this class `container-name: gcheader` never applies and
+			// every @container rule below silently no-ops.
+			const { container } = renderList();
+			expect(getHeader(container)).toBeTruthy();
+		});
+
+		it('keeps the title from wrapping and the controls from shrinking', () => {
+			// These two utilities are what structurally guarantee a single line
+			// regardless of whether container queries are supported at all.
+			const { container } = renderList();
+			const header = getHeader(container);
+
+			const title = header.querySelector('.whitespace-nowrap');
+			expect(title).not.toBeNull();
+			expect(title?.textContent).toContain('Group Chats');
+
+			// The right-hand control cluster must not be compressed into a wrap.
+			const controls = header.lastElementChild as HTMLElement;
+			expect(controls.className).toContain('shrink-0');
+		});
+
+		it('tags the group chat count badge as droppable', () => {
+			const { container } = renderList({ groupChats: [baseChat] });
+			const badge = getHeader(container).querySelector('.gc-count-badge');
+			expect(badge).not.toBeNull();
+			expect(badge?.textContent).toBe('1');
+		});
+
+		it('tags the archived count as droppable but keeps the archive button itself', () => {
+			// Only the NUMBER may drop at narrow widths - the button must stay
+			// reachable, so the hook class belongs on the count span, never on
+			// the button.
+			const { container } = renderList({
+				groupChats: [baseChat, archivedChat],
+				onArchiveGroupChat: vi.fn(),
+			});
+			const count = getHeader(container).querySelector('.gc-archived-count');
+			expect(count).not.toBeNull();
+			expect(count?.textContent).toBe('1');
+			expect(count?.tagName).toBe('SPAN');
+			expect((count as HTMLElement).closest('button')).not.toBeNull();
+		});
+
+		it('keeps the "+" visible when the New Chat label drops', () => {
+			// The label is the only droppable part; the plus sign has no hook
+			// class, so the button never collapses to zero content.
+			const { container } = renderList();
+			const label = getHeader(container).querySelector('.gc-newchat-label');
+			expect(label).not.toBeNull();
+			expect(label?.textContent).toBe('New Chat');
+
+			const button = (label as HTMLElement).closest('button') as HTMLElement;
+			expect(button.textContent).toContain('+');
+		});
+
+		it('keeps an accessible name on the New Chat button once the label is hidden', () => {
+			// With the label display:none the accessible name falls back to the
+			// title attribute, so a collapsed "+" button is still identifiable.
+			const { getByTitle } = renderList();
+			expect(getByTitle('New Group Chat')).toBeTruthy();
+		});
+
+		it('still fires onNewGroupChat when only the "+" is showing', () => {
+			// Hiding the label is purely visual - the click target is the button.
+			const onNewGroupChat = vi.fn();
+			const { getByTitle } = renderList({ onNewGroupChat });
+			fireEvent.click(getByTitle('New Group Chat'));
+			expect(onNewGroupChat).toHaveBeenCalled();
+		});
+	});
 });
