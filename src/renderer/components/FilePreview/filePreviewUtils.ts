@@ -1,6 +1,7 @@
 import GithubSlugger from 'github-slugger';
 import type { TocEntry } from './types';
 import { formatSize } from '../../../shared/formatters';
+import { countMarkdownTasks as countSharedMarkdownTasks } from '../../../shared/markdownTasks';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -338,23 +339,8 @@ export const formatDateTime = (isoString: string): string => {
 
 /** Count markdown task checkboxes (- [ ] and - [x]), skipping code fences */
 export const countMarkdownTasks = (content: string): { open: number; closed: number } => {
-	const lines = content.split('\n');
-	let inCodeFence = false;
-	let open = 0;
-	let closed = 0;
-
-	for (const line of lines) {
-		if (/^ {0,3}(`{3,}|~{3,})/.test(line)) {
-			inCodeFence = !inCodeFence;
-			continue;
-		}
-		if (inCodeFence) continue;
-
-		if (/^[\s]*[-*]\s*\[\s*\]/.test(line)) open++;
-		if (/^[\s]*[-*]\s*\[[xX]\]/.test(line)) closed++;
-	}
-
-	return { open, closed };
+	const counts = countSharedMarkdownTasks(content);
+	return { open: counts.total - counts.completed, closed: counts.completed };
 };
 
 /** Extract headings from markdown content for table of contents */

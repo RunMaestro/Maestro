@@ -21,6 +21,11 @@ import { generateUUID } from '../../shared/uuid';
 import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import {
+	countUncheckedMarkdownTasks,
+	extractUncheckedMarkdownTasks,
+	uncheckAllMarkdownTasks,
+} from '../../shared/markdownTasks';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import {
 	getClaudeTokenMode,
@@ -1169,10 +1174,9 @@ export function readDocAndCountTasks(
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
-		const matches = content.match(/^[\s]*-\s*\[\s*\]\s*.+$/gm);
 		return {
 			content,
-			taskCount: matches ? matches.length : 0,
+			taskCount: countUncheckedMarkdownTasks(content),
 		};
 	} catch {
 		return { content: '', taskCount: 0 };
@@ -1190,9 +1194,7 @@ export function readDocAndGetTasks(
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
-		const matches = content.match(/^[\s]*-\s*\[\s*\]\s*(.+)$/gm);
-		const tasks = matches ? matches.map((m) => m.replace(/^[\s]*-\s*\[\s*\]\s*/, '').trim()) : [];
-		return { content, tasks };
+		return { content, tasks: extractUncheckedMarkdownTasks(content) };
 	} catch {
 		return { content: '', tasks: [] };
 	}
@@ -1202,7 +1204,7 @@ export function readDocAndGetTasks(
  * Uncheck all markdown checkboxes in content (for reset-on-completion)
  */
 export function uncheckAllTasks(content: string): string {
-	return content.replace(/^(\s*-\s*)\[x\]/gim, '$1[ ]');
+	return uncheckAllMarkdownTasks(content);
 }
 
 /**

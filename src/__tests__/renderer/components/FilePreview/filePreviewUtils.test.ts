@@ -216,6 +216,13 @@ describe('filePreviewUtils', () => {
 			expect(result.open).toBe(1);
 			expect(result.closed).toBe(0);
 		});
+
+		it('does not close a longer fence with a shorter delimiter', () => {
+			const content = '````markdown\n```\n- [ ] inside fence\n````\n- [ ] outside';
+			const result = countMarkdownTasks(content);
+			expect(result.open).toBe(1);
+			expect(result.closed).toBe(0);
+		});
 	});
 
 	describe('extractHeadings', () => {

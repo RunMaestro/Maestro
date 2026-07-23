@@ -162,6 +162,15 @@ describe('agent-spawner', () => {
 			expect(result.content).toContain('First task');
 		});
 
+		it('should ignore unchecked tasks inside fenced code blocks', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`- [ ] Real task
+\`\`\`
+- [ ] Example task
+\`\`\``);
+
+			expect(readDocAndCountTasks('/playbooks', 'tasks').taskCount).toBe(1);
+		});
+
 		it('should return zero count for document with no unchecked tasks', () => {
 			vi.mocked(fs.readFileSync).mockReturnValue(`
 # Task List
@@ -270,6 +279,15 @@ text - [ ] This should not count
 			const result = readDocAndGetTasks('/playbooks', 'tasks');
 
 			expect(result.tasks).toEqual(['First task', 'Second task with details', 'Third task']);
+		});
+
+		it('should ignore task text inside fenced code blocks', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`~~~markdown
+- [ ] Example task
+~~~
+- [ ] Real task`);
+
+			expect(readDocAndGetTasks('/playbooks', 'tasks').tasks).toEqual(['Real task']);
 		});
 
 		it('should return empty array for document with no unchecked tasks', () => {
@@ -388,6 +406,18 @@ Some text with [x] in it that's not a checkbox
 			expect(result).toContain('# Title');
 			expect(result).toContain('Some text with [x] in it');
 			expect(result).toContain('- [ ] Real checkbox');
+		});
+
+		it('should not modify checked tasks inside fenced code blocks', () => {
+			const content = `- [x] Real task
+\`\`\`
+- [x] Example task
+\`\`\``;
+
+			expect(uncheckAllTasks(content)).toBe(`- [ ] Real task
+\`\`\`
+- [x] Example task
+\`\`\``);
 		});
 
 		it('should handle empty content', () => {
