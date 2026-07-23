@@ -2021,6 +2021,37 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 }
 
 /**
+ * Land a session on one of its AI tabs - the shared "jump to this conversation"
+ * transform behind every navigation affordance (notification toast, deep link,
+ * the thinking status pill).
+ *
+ * Handles the three cases a jump can hit, in order:
+ *   1. The tab is still open - reveal it first (a hidden cross-agent consult tab
+ *      is reachable ONLY by a deliberate jump, so focusing a tab the strip won't
+ *      render would strand the user), then activate it through setActiveTab so a
+ *      tab living inside a tiled group focuses its pane instead of being orphaned.
+ *   2. The tab was closed - restore it from the closed-tab history so the jump
+ *      lands on that conversation rather than whatever tab happens to be active.
+ *   3. No tabId (or it aged out of history) - just force the AI view.
+ *
+ * @param session - The session to update
+ * @param tabId - The AI tab to land on. Omit to force the AI view only.
+ */
+export function focusAiTabInSession(session: Session, tabId?: string): Session {
+	if (tabId && session.aiTabs?.some((t) => t.id === tabId)) {
+		const revealed = revealAiTab(session, tabId);
+		return setActiveTab(revealed, tabId)?.session ?? { ...revealed, ...aiTabFocusFields(tabId) };
+	}
+	if (tabId) {
+		const reopened = reopenClosedAiTabById(session, tabId);
+		if (reopened) {
+			return { ...reopened.session, ...aiTabFocusFields(reopened.tabId) };
+		}
+	}
+	return { ...session, ...aiTabFocusFields() };
+}
+
+/**
  * Field patch for flipping a tab's read-only state.
  *
  * Keeps the legacy `readOnlyMode` boolean and the 3-way `permissionMode` in

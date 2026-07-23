@@ -38,6 +38,7 @@ import {
 	aiTabFocusFields,
 	computeQueuedTabIds,
 	computeUnreadGroupIds,
+	focusAiTabInSession,
 } from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
@@ -884,16 +885,17 @@ export const MainPanel = React.memo(
 			}
 		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
-		// Memoized session click handler for InputArea's ThinkingStatusPill
-		// Avoids creating new function reference on every render
+		// Memoized session click handler for InputArea's ThinkingStatusPill.
+		// Targets the clicked session by ID rather than routing through onTabSelect
+		// (which resolves whichever agent is active at event time) - the pill lists
+		// thinking tabs across ALL agents, so a cross-agent jump must not depend on
+		// the active-session switch having landed first.
 		const handleSessionClick = useCallback(
 			(sessionId: string, tabId?: string) => {
 				setActiveSessionId(sessionId);
-				if (tabId && onTabSelect) {
-					onTabSelect(tabId);
-				}
+				updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 			},
-			[setActiveSessionId, onTabSelect]
+			[setActiveSessionId]
 		);
 
 		// File preview handlers (memos + callbacks)

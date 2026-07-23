@@ -40,6 +40,7 @@ import {
 	reopenClosedAiTabById,
 	setActiveTab,
 	aiTabFocusFields,
+	focusAiTabInSession,
 	getWriteModeTab,
 	getBusyTabs,
 	getNavigableTabs,
@@ -1197,6 +1198,86 @@ describe('tabHelpers', () => {
 			expect(next.activeFileTabId).toBeNull();
 			expect(next.activeTerminalTabId).toBeNull();
 			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.activeTabId).toBe('tab-1');
+			expect(next.inputMode).toBe('ai');
+		});
+	});
+
+	// Shared jump transform behind toasts, deep links, and the thinking status pill.
+	describe('focusAiTabInSession', () => {
+		it('lands on an open tab and clears every non-AI view', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				activeBrowserTabId: 'browser-1',
+				inputMode: 'terminal',
+			});
+
+			const next = focusAiTabInSession(session, 'tab-2');
+
+			expect(next.activeTabId).toBe('tab-2');
+			expect(next.activeFileTabId).toBeNull();
+			expect(next.activeTerminalTabId).toBeNull();
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.inputMode).toBe('ai');
+		});
+
+		it('reveals a hidden cross-agent consult tab it jumps to', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-hidden', hidden: true })],
+				activeTabId: 'tab-1',
+			});
+
+			const next = focusAiTabInSession(session, 'tab-hidden');
+
+			expect(next.activeTabId).toBe('tab-hidden');
+			expect(next.aiTabs.find((t) => t.id === 'tab-hidden')?.hidden).toBe(false);
+		});
+
+		it('reopens a closed tab from history instead of landing on the active one', () => {
+			const closed = createMockTab({ id: 'closed-1', agentSessionId: 'session-closed' });
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+				unifiedClosedTabHistory: [
+					{ type: 'ai' as const, tab: closed, unifiedIndex: 0, closedAt: Date.now() },
+				],
+			});
+
+			const next = focusAiTabInSession(session, 'closed-1');
+
+			expect(next.aiTabs).toHaveLength(2);
+			expect(next.activeTabId).not.toBe('tab-1');
+			expect(next.inputMode).toBe('ai');
+		});
+
+		it('forces the AI view without changing the active tab when no tabId is given', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				activeBrowserTabId: 'browser-1',
+			});
+
+			const next = focusAiTabInSession(session);
+
+			expect(next.activeTabId).toBe('tab-1');
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.inputMode).toBe('ai');
+		});
+
+		it('falls back to the AI view when the requested tab is gone entirely', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				unifiedClosedTabHistory: [],
+				closedTabHistory: [],
+			});
+
+			const next = focusAiTabInSession(session, 'does-not-exist');
+
 			expect(next.activeTabId).toBe('tab-1');
 			expect(next.inputMode).toBe('ai');
 		});

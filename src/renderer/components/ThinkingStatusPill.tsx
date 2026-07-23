@@ -9,25 +9,6 @@ import { memo, useState, useEffect, useRef } from 'react';
 import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
-import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
-import { useUIStore } from '../stores/uiStore';
-
-/**
- * Open the live Thought Stream for a session and make sure it's visible.
- *
- * The Thought Stream is docked inside the Right Panel and renders nothing while
- * that panel is collapsed (see ThoughtStreamPanel), so we open the Right Panel
- * too. Capture itself is session-agnostic (useThoughtStreamCaptureListener taps
- * the raw thinking stream for any owned session), so this works for a regular
- * interactive "thinking" session, not just an Auto Run - it's what turns the
- * previously inert status pill into a "zoom in and see what the agent is doing"
- * affordance. Uses getState() so wiring a click handler doesn't add a store
- * subscription to the memoized pill.
- */
-function openThoughtStreamForSession(sessionId: string): void {
-	useUIStore.getState().setRightPanelOpen(true);
-	useThoughtStreamStore.getState().openPanel(sessionId);
-}
 
 interface ThinkingStatusPillProps {
 	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
@@ -140,10 +121,7 @@ const ThinkingItemRow = memo(
 
 		return (
 			<button
-				onClick={() => {
-					onSessionClick?.(session.id, tab?.id);
-					openThoughtStreamForSession(session.id);
-				}}
+				onClick={() => onSessionClick?.(session.id, tab?.id)}
 				className="flex items-center justify-between gap-3 w-full px-3 py-2 text-left hover:bg-white/5 transition-colors"
 				style={{ color: theme.colors.textMain }}
 			>
@@ -641,14 +619,18 @@ function ThinkingStatusPillInner({
 					style={{ backgroundColor: theme.colors.warning }}
 				/>
 
-				{/* Maestro session name - always visible, not clickable, truncates on narrow widths */}
-				<span
-					className="text-xs font-medium truncate min-w-0"
+				{/* Maestro session name - always visible, truncates on narrow widths. Clickable:
+				    it jumps to the thinking tab, same as the tab-name segment. The tab-name
+				    segment is the first thing container queries drop on narrow widths, so the
+				    name has to carry the jump too or the pill loses its only affordance. */}
+				<button
+					onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
+					className="text-xs font-medium truncate min-w-0 hover:underline cursor-pointer"
 					style={{ color: theme.colors.textMain }}
-					title={fullTooltip}
+					title={`Jump to this tab · ${fullTooltip}`}
 				>
 					{maestroSessionName}
-				</span>
+				</button>
 
 				{/* Token info / Thinking placeholder - carries its own divider so hiding the
 				    segment on narrow widths (pill-seg-tokens) takes the divider with it */}
@@ -693,16 +675,13 @@ function ThinkingStatusPillInner({
 					<div className="pill-seg-claude-id flex items-center gap-2 min-w-0">
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
-							onClick={() => {
-								onSessionClick?.(primarySession.id, primaryTab?.id);
-								openThoughtStreamForSession(primarySession.id);
-							}}
+							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
 							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
 							style={{ color: theme.colors.accent }}
 							title={
 								agentSessionId
-									? `View live thoughts · Claude Session: ${agentSessionId}`
-									: 'View live thoughts'
+									? `Jump to this tab · Claude Session: ${agentSessionId}`
+									: 'Jump to this tab'
 							}
 						>
 							{displayClaudeId}
