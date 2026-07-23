@@ -26,7 +26,16 @@ jobs:
           - os: macos-15
             platform: mac
             arch: universal
-          - os: ubuntu-latest
+          # Pinned to ubuntu-22.04 (not ubuntu-latest). The x64 native modules
+          # (better-sqlite3, node-pty) are compiled from source on this runner,
+          # so the runner's glibc sets the floor for the shipped binaries.
+          # ubuntu-latest is a moving label (now 24.04, glibc 2.39); building on a
+          # newer glibc can raise that floor above Ubuntu 22.04's glibc 2.35, which
+          # makes the native modules fail to load there with "version 'GLIBC_x.y'
+          # not found" (this has broken the Cue and stats databases on 22.04 before).
+          # 22.04 is the oldest supported target, so keep this pinned. Enforced per
+          # build by .github/scripts/verify-glibc-floor.sh.
+          - os: ubuntu-22.04
             platform: linux
             arch: x64
           # ARM64 Linux requires native ARM64 runner for node-pty native module
@@ -405,6 +414,14 @@ jobs:
             find "$UNPACKED_DIR" -name "*.node" 2>/dev/null || echo "Directory not found"
             exit 1
           fi
+
+      # Guard the glibc floor: fail the build if any shipped x64 native module
+      # requires a glibc newer than Ubuntu 22.04 provides (glibc 2.35). This is a
+      # backstop against runner/toolchain drift silently re-breaking 22.04 users,
+      # and runs regardless of which image built the package.
+      - name: Verify GLIBC floor (Linux x64)
+        if: matrix.platform == 'linux'
+        run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-unpacked/resources/app.asar.unpacked
 
       # Verify native modules are correctly included in unpacked resources (Linux ARM64)
       - name: Verify native modules in package (Linux ARM64)
