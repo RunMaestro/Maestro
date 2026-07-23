@@ -168,7 +168,6 @@ export interface MainPanelProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
-	onToggleTabShowTools?: () => void;
 	onToggleTabEnterToSend?: () => void;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;

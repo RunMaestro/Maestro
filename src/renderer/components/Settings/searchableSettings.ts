@@ -233,6 +233,26 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-tool-calls',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Tool Calls',
+		description:
+			'Show or hide tool-call activity (tool badges and their input/output) in AI responses.',
+		keywords: [
+			'tool',
+			'tools',
+			'tool call',
+			'tool calls',
+			'tool activity',
+			'badge',
+			'wrench',
+			'hide',
+			'show',
+			'function call',
+		],
+	},
+	{
 		id: 'general-tab-behavior',
 		tab: 'general',
 		tabLabel: 'General',

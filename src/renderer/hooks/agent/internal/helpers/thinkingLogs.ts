@@ -18,19 +18,3 @@ import type { ThinkingMode } from '../../../../types';
 export function thinkingLogsRecorded(showThinking: ThinkingMode | boolean | undefined): boolean {
 	return !!showThinking && showThinking !== 'off';
 }
-
-/**
- * Whether a tab's tool-execution log entries are actually recorded.
- *
- * Tool visibility is a distinct concern from reasoning visibility: a user can
- * want to see which tools ran without streaming thinking text. `showTools`
- * governs it independently of `showThinking`. When `showTools` is absent (tabs
- * persisted before the field existed) we fall back to the tab's thinking state
- * so upgrades see no behavior change; new tabs default `showTools` to `true`.
- */
-export function toolLogsRecorded(
-	showTools: boolean | undefined,
-	showThinking: ThinkingMode | boolean | undefined
-): boolean {
-	return showTools ?? thinkingLogsRecorded(showThinking);
-}

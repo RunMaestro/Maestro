@@ -109,6 +109,9 @@ export interface UseSettingsReturn {
 	// Default thinking toggle (three states: 'off' | 'on' | 'sticky')
 	defaultShowThinking: ThinkingMode;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	// Global tool-call visibility toggle (Settings -> General)
+	showToolCalls: boolean;
+	setShowToolCalls: (value: boolean) => void;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;

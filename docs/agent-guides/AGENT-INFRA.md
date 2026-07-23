@@ -418,10 +418,10 @@ the renderer merges and draws.
    The listener builds a deterministic log id `tool-${toolCallId}` and merges by
    id, so a `running` cell transitions in place to `completed`/`failed`. Without
    a `toolCallId` it attributes a finalizing event to the most recent still
-   `running` entry of the same `toolName`, else appends a fresh entry. Recording
-   is gated by `toolLogsRecorded(tab.showTools, tab.showThinking)` (Phase 4):
-   tool visibility is its own per-tab toggle and only falls back to `showThinking`
-   when `showTools` is absent.
+   `running` entry of the same `toolName`, else appends a fresh entry. Tool
+   events are always recorded; visibility is a pure render concern gated by the
+   global `showToolCalls` setting (Settings -> General), which TerminalOutput
+   reads to hide `source:'tool'` entries when off.
 5. **Render** (`src/renderer/components/TerminalOutput/components/LogItem.tsx` +
    `src/renderer/components/TerminalOutput/utils/toolSummaries.ts`). `LogItem`
    draws the tool badge and its status; `toolSummaries.ts` turns `toolState.input`

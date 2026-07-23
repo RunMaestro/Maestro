@@ -417,6 +417,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'off',
 		category: 'editor',
 	},
+	showToolCalls: {
+		description:
+			'Show tool-call activity (tool badges and their input/output) in AI responses. When false, tool calls are hidden from the transcript.',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 	leftSidebarWidth: {
 		description: 'Width of the left sidebar (agent list) in pixels. Range: 256-600.',
 		type: 'number',

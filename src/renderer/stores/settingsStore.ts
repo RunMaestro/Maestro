@@ -339,6 +339,7 @@ export interface SettingsStoreState {
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
+	showToolCalls: boolean;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
@@ -502,6 +503,7 @@ export interface SettingsStoreActions {
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	setShowToolCalls: (value: boolean) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
 	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
@@ -780,6 +782,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
+		showToolCalls: true,
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
@@ -1039,6 +1042,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setDefaultShowThinking: (value) => {
 			set({ defaultShowThinking: value });
 			window.maestro.settings.set('defaultShowThinking', value);
+		},
+
+		setShowToolCalls: (value) => {
+			set({ showToolCalls: value });
+			window.maestro.settings.set('showToolCalls', value);
 		},
 
 		setLeftSidebarWidth: (value) => {
@@ -2426,6 +2434,9 @@ export async function loadAllSettings(): Promise<void> {
 				typeof raw === 'boolean' ? (raw ? 'on' : 'off') : (raw as ThinkingMode);
 		}
 
+		if (allSettings['showToolCalls'] !== undefined)
+			patch.showToolCalls = allSettings['showToolCalls'] as boolean;
+
 		// leftSidebarWidth: clamp on load
 		if (allSettings['leftSidebarWidth'] !== undefined)
 			patch.leftSidebarWidth = Math.max(
@@ -3182,6 +3193,7 @@ export function getSettingsActions() {
 		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
 		setSynopsisDebounceSeconds: state.setSynopsisDebounceSeconds,
 		setDefaultShowThinking: state.setDefaultShowThinking,
+		setShowToolCalls: state.setShowToolCalls,
 		setLeftSidebarWidth: state.setLeftSidebarWidth,
 		setRightPanelWidth: state.setRightPanelWidth,
 		setModalSize: state.setModalSize,

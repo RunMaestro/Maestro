@@ -57,6 +57,7 @@ const mockSetAutoResumeCheckIntervalHours = vi.fn();
 const mockSetAutoResumeGiveUpDays = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
+const mockSetShowToolCalls = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
 const mockSetPreventSleepEnabled = vi.fn();
 const mockSetDisableGpuAcceleration = vi.fn();
@@ -104,6 +105,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',
 		setDefaultShowThinking: mockSetDefaultShowThinking,
+		showToolCalls: true,
+		setShowToolCalls: mockSetShowToolCalls,
 		// Tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: mockSetAutomaticTabNamingEnabled,
@@ -929,6 +932,26 @@ describe('GeneralTab', () => {
 			});
 
 			expect(screen.getByText('Thinking streams live and stays visible')).toBeInTheDocument();
+		});
+	});
+
+	describe('Tool Calls', () => {
+		it('renders the tool calls toggle', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			expect(screen.getByText('Show tool calls in responses')).toBeInTheDocument();
+		});
+
+		it('calls setShowToolCalls when toggled', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			fireEvent.click(screen.getByRole('switch', { name: 'Show tool calls in responses' }));
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(false);
 		});
 	});
 
