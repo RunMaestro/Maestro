@@ -172,6 +172,8 @@ This allows you to develop and test different branches simultaneously without po
 
 **Note:** The browser (web-desktop) dev server (`npm run dev:web-desktop`) runs on its own fixed port (5176).
 
+**Pushing from a worktree whose `node_modules` may be reconciled in the background:** the `pre-push` hook runs `validate:push`, which invokes `prettier`, `tsc`, `eslint`, and `vitest` as bare commands resolved from `node_modules/.bin`. A package-manager install links those `.bin` shims last (after unpacking the package directories), so if an install is mid-flight the package exists but its shim is briefly absent and the push fails with a cryptic `command not found` (exit 127). The hook now preflights those four shims and fails with an actionable message instead, but the deterministic fix is to let the install settle first: run `npm ci`, confirm `ls node_modules/.bin/prettier` resolves, then push. Prefer that over hand-creating individual `.bin` symlinks, which masks a partial install rather than completing it.
+
 ## Testing
 
 Run the test suite with Jest:

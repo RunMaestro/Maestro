@@ -23,4 +23,22 @@ if [ "$saw_ref" -eq 1 ] && [ "$only_deletes" -eq 1 ]; then
 	exit 0
 fi
 
+# Preflight: confirm the toolchain is actually linked before running validate:push.
+# validate:push invokes prettier/tsc/eslint/vitest as bare commands resolved from
+# node_modules/.bin. A package-manager install links those .bin shims LAST (after
+# unpacking package dirs), so during an in-flight or interrupted install the package
+# exists but its shim is briefly missing - the gate then dies with a cryptic
+# "command not found" (exit 127) that reads like a broken push. This happens in the
+# auto-managed worktrees whose node_modules is reconciled out from under a push.
+# Turn that into an actionable message and stop before the confusing failure.
+for bin in prettier tsc eslint vitest; do
+	if [ ! -e "node_modules/.bin/$bin" ]; then
+		echo "[pre-push] node_modules/.bin/$bin is missing - dependencies are not fully linked."
+		echo "[pre-push] A node_modules install is likely in flight or was interrupted."
+		echo "[pre-push] Run 'npm ci' (or wait for the worktree to settle), verify"
+		echo "[pre-push] 'node_modules/.bin/prettier' resolves, then re-push."
+		exit 1
+	fi
+done
+
 npm run validate:push
