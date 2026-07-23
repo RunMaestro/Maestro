@@ -26,6 +26,10 @@ export interface SubmitLeaderboardTimeDeltaArgs {
 	 * Auto Run (e.g. Cue), so `totalRuns` keeps matching the local value.
 	 */
 	deltaRuns?: number;
+	/** What earned this time. Lets the server treat Cue's higher submission
+	 * frequency differently (notification suppression) without inferring it
+	 * from `deltaRuns === 0`. */
+	source?: 'auto-run' | 'cue';
 }
 
 /**
@@ -39,7 +43,7 @@ export interface SubmitLeaderboardTimeDeltaArgs {
 export async function submitLeaderboardTimeDelta(
 	args: SubmitLeaderboardTimeDeltaArgs
 ): Promise<void> {
-	const { deltaMs, deltaRuns = 0 } = args;
+	const { deltaMs, deltaRuns = 0, source } = args;
 	if (deltaMs <= 0) return;
 
 	const state = useSettingsStore.getState();
@@ -71,6 +75,7 @@ export async function submitLeaderboardTimeDelta(
 			deltaMs,
 			deltaRuns,
 			clientTotalTimeMs: stats.cumulativeTimeMs,
+			source,
 		});
 
 		if (result.success) {

@@ -832,7 +832,7 @@ describe('useAutoRunAchievements', () => {
 			expect(callArg.isNewRecord).toBe(false);
 		});
 
-		it('submits the same delta to the leaderboard with deltaRuns left at 0', () => {
+		it('submits the same delta to the leaderboard tagged as cue, deltaRuns left at 0', () => {
 			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
 
 			act(() => {
@@ -840,7 +840,10 @@ describe('useAutoRunAchievements', () => {
 			});
 
 			expect(mockSubmitLeaderboardTimeDelta).toHaveBeenCalledTimes(1);
-			expect(mockSubmitLeaderboardTimeDelta).toHaveBeenCalledWith({ deltaMs: 180000 });
+			expect(mockSubmitLeaderboardTimeDelta).toHaveBeenCalledWith({
+				deltaMs: 180000,
+				source: 'cue',
+			});
 		});
 
 		it('does not submit a leaderboard delta for unrelated Cue payloads', () => {

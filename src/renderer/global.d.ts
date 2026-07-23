@@ -2775,6 +2775,10 @@ interface MaestroAPI {
 			// Installation tracking for multi-device differentiation
 			installationId?: string; // Unique GUID per Maestro installation (auto-injected by main process)
 			clientTotalTimeMs?: number; // Client's self-proclaimed total time (for discrepancy detection)
+			// What earned this time. Absent means 'auto-run' (older clients predate
+			// this field). Cue submissions are far more frequent, so the server keys
+			// off this to suppress per-submission Discord notifications.
+			source?: 'auto-run' | 'cue';
 		}) => Promise<{
 			success: boolean;
 			message: string;

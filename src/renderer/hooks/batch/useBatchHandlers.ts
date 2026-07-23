@@ -374,6 +374,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								deltaMs: info.elapsedTimeMs,
 								deltaRuns: 1,
 								clientTotalTimeMs: updatedCumulativeTimeMs,
+								source: 'auto-run',
 							})
 							.then((result) => {
 								if (result.success) {

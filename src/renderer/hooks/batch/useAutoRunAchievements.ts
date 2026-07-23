@@ -118,7 +118,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 				// the Auto Run timer above shares that helper, and Auto Run
 				// already submits its full elapsed time once on completion
 				// (useBatchHandlers) — submitting per tick too would double-count.
-				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs });
+				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs, source: 'cue' });
 			}
 		});
 		return unsubscribe;
