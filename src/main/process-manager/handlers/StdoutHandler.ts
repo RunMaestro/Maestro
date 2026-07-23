@@ -514,20 +514,21 @@ export class StdoutHandler {
 			// Thinking panel routing:
 			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
 			//   and flush once at exit).
-			// - Agents that split thought vs answer (Grok, Codex, Claude, OpenCode):
-			//   only isReasoning deltas → thinking-chunk. Grok streams the final
-			//   answer as partial `text` without isReasoning; dumping those into
-			//   the thinking panel makes the wizard look finished while tools
-			//   still run (Grok emits no tool events on the stream).
-			// - Factory Droid: streams assistant partials without isReasoning, so
-			//   keep the pre-Grok behavior of forwarding all partials.
+			// - Grok / Codex / OpenCode: only isReasoning deltas → thinking-chunk.
+			//   These stream the final answer as partial `text` WITHOUT isReasoning;
+			//   dumping those into the thinking panel makes the wizard look finished
+			//   while tools still run (Grok emits no tool events on the stream).
+			// - Claude Code + Factory Droid: forward ALL partials. Claude's assistant
+			//   text arrives as partials with isReasoning undefined; that live preview
+			//   is exactly what drives the thinking display during a turn, and the
+			//   renderer replaces it with the final `result` (useBatchedSessionUpdates
+			//   drops non-sticky thinking/tool logs when assistant stdout arrives,
+			//   cleanupExitedTabLogs on exit). Gating Claude on isReasoning silenced the
+			//   inline thinking display for every ordinary (non-extended-thinking) turn.
 			const toolType = managedProcess.toolType;
 			if (toolType !== 'copilot-cli') {
 				const requiresReasoningTag =
-					toolType === 'grok' ||
-					toolType === 'codex' ||
-					toolType === 'claude-code' ||
-					toolType === 'opencode';
+					toolType === 'grok' || toolType === 'codex' || toolType === 'opencode';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}

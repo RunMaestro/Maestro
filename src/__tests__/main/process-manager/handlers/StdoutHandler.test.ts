@@ -2408,6 +2408,57 @@ describe('StdoutHandler - single JSON parse per line', () => {
 		});
 	});
 
+	describe('Claude thinking-chunk routing', () => {
+		// Regression: claude-code was lumped into the isReasoning gate meant for
+		// Grok/Codex/OpenCode. Claude's ordinary assistant text arrives as partials
+		// with isReasoning undefined, so the gate dropped every thinking-chunk on a
+		// normal (non-extended-thinking) turn and the inline thinking display stopped
+		// streaming (the busy-state ThinkingStatusPill is a separate concern).
+		it('emits thinking-chunk for ordinary assistant text partials (isReasoning undefined)', () => {
+			const parser = new ClaudeOutputParser();
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				session_id: 'sess-1',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'Here is my answer' }] },
+			});
+
+			// Live preview streams to the thinking panel...
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Here is my answer');
+			// ...and the same text still accumulates for the final result emit.
+			expect(proc.streamedText).toBe('Here is my answer');
+		});
+
+		it('emits thinking-chunk for extended-thinking blocks and keeps them out of streamedText', () => {
+			const parser = new ClaudeOutputParser();
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser,
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				session_id: 'sess-1',
+				message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Let me reason' }] },
+			});
+
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Let me reason');
+			// Reasoning is internal - it must not leak into the final response text.
+			expect(proc.streamedText).toBe('');
+		});
+	});
+
 	describe('SSH auth_expired login guidance by agentId', () => {
 		function mockAuthParser(agentId: string, message: string) {
 			return {
