@@ -74,6 +74,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetGroupsCallback = vi.fn();
 			setCreateGroupCallback = vi.fn();
 			setRenameGroupCallback = vi.fn();
+			setUpdateGroupCallback = vi.fn();
 			setDeleteGroupCallback = vi.fn();
 			setMoveSessionToGroupCallback = vi.fn();
 			setCreateSessionCallback = vi.fn();

@@ -194,6 +194,36 @@ export interface Group {
 	collapsed: boolean;
 }
 
+/**
+ * Subset of a persisted {@link Group} echoed back to the CLI after a create or
+ * update so it can confirm the effective (normalized) appearance and detect a
+ * version mismatch (an older desktop that silently ignored icon/color fields
+ * would not return this object).
+ */
+export interface GroupAppearanceEcho {
+	id: string;
+	name: string;
+	emoji: string;
+	icon?: string;
+	color?: string;
+	parentGroupId?: string;
+}
+
+/** Group fields that an update can explicitly clear (reset to default/unset). */
+export type GroupClearField = 'emoji' | 'icon' | 'color' | 'parent';
+
+/** Payload for a group update (name/appearance/hierarchy). Fields left absent
+ * are unchanged; `clear` explicitly resets fields (e.g. clearing `parent`
+ * promotes the group to the top level). */
+export interface UpdateGroupPayload {
+	name?: string;
+	emoji?: string;
+	icon?: string;
+	color?: string;
+	parentGroupId?: string;
+	clear?: GroupClearField[];
+}
+
 export function isWorktreeGroup(group: Group): boolean {
 	return group.kind === 'worktree' || group.emoji === '🌳';
 }

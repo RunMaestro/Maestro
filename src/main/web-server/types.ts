@@ -8,6 +8,8 @@ import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
+import type { GroupAppearanceEcho, UpdateGroupPayload } from '../../shared/types';
+export type { UpdateGroupPayload, GroupClearField } from '../../shared/types';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -754,9 +756,15 @@ export type GetGroupsCallback = () => GroupData[];
 export type CreateGroupCallback = (
 	name: string,
 	emoji?: string,
-	parentGroupId?: string
-) => Promise<{ id: string } | null>;
+	parentGroupId?: string,
+	icon?: string,
+	color?: string
+) => Promise<GroupAppearanceEcho | null>;
 export type RenameGroupCallback = (groupId: string, name: string) => Promise<boolean>;
+export type UpdateGroupCallback = (
+	groupId: string,
+	updates: UpdateGroupPayload
+) => Promise<GroupAppearanceEcho | null>;
 export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
 export type MoveSessionToGroupCallback = (
 	sessionId: string,

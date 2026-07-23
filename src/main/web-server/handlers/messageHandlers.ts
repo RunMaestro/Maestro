@@ -79,7 +79,10 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
+	UpdateGroupPayload,
+	GroupClearField,
 } from '../types';
+import type { GroupAppearanceEcho } from '../../../shared/types';
 
 /** Canonical Toast / Center Flash color set (shared design language). */
 const NOTIFY_COLORS: readonly NotifyCenterFlashColor[] = [
@@ -301,9 +304,15 @@ export interface MessageHandlerCallbacks {
 	createGroup: (
 		name: string,
 		emoji?: string,
-		parentGroupId?: string
-	) => Promise<{ id: string } | null>;
+		parentGroupId?: string,
+		icon?: string,
+		color?: string
+	) => Promise<GroupAppearanceEcho | null>;
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
+	updateGroup: (
+		groupId: string,
+		updates: UpdateGroupPayload
+	) => Promise<GroupAppearanceEcho | null>;
 	deleteGroup: (groupId: string) => Promise<boolean>;
 	moveSessionToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
 	createSession: (
@@ -665,6 +674,10 @@ export class WebSocketMessageHandler {
 
 			case 'rename_group':
 				this.handleRenameGroup(client, message);
+				break;
+
+			case 'update_group':
+				this.handleUpdateGroup(client, message);
 				break;
 
 			case 'delete_group':
@@ -3271,6 +3284,8 @@ export class WebSocketMessageHandler {
 	private handleCreateGroup(client: WebClient, message: WebClientMessage): void {
 		const name = message.name as string;
 		const emoji = message.emoji as string | undefined;
+		const icon = message.icon as string | undefined;
+		const color = message.color as string | undefined;
 		const requestedParentGroupId = message.parentGroupId;
 
 		if (
@@ -3294,17 +3309,78 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.createGroup(name, emoji, parentGroupId)
+			.createGroup(name, emoji, parentGroupId, icon, color)
 			.then((result) => {
 				this.send(client, {
 					type: 'create_group_result',
 					success: !!result,
 					groupId: result?.id,
+					// Echo the effective persisted appearance so the CLI can confirm
+					// icon/color were applied (and detect an older desktop that
+					// ignored them).
+					group: result ?? undefined,
 					requestId: message.requestId,
 				});
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to create group: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle update_group message - update a group's name/appearance/hierarchy.
+	 * Appearance and reparenting are validated by the renderer before any state
+	 * change; the effective persisted group is echoed back for CLI readback.
+	 */
+	private handleUpdateGroup(client: WebClient, message: WebClientMessage): void {
+		const groupId = message.groupId as string;
+
+		if (!groupId || typeof groupId !== 'string') {
+			this.sendError(client, 'Missing or invalid groupId');
+			return;
+		}
+
+		const rawClear = Array.isArray(message.clear) ? (message.clear as unknown[]) : [];
+		const allowedClear: GroupClearField[] = ['emoji', 'icon', 'color', 'parent'];
+		const clear = rawClear.filter((f): f is GroupClearField =>
+			allowedClear.includes(f as GroupClearField)
+		);
+
+		const updates: UpdateGroupPayload = {
+			...(typeof message.name === 'string' ? { name: message.name } : {}),
+			...(typeof message.emoji === 'string' ? { emoji: message.emoji } : {}),
+			...(typeof message.icon === 'string' ? { icon: message.icon } : {}),
+			...(typeof message.color === 'string' ? { color: message.color } : {}),
+			...(typeof message.parentGroupId === 'string'
+				? { parentGroupId: message.parentGroupId }
+				: {}),
+			...(clear.length > 0 ? { clear } : {}),
+		};
+
+		if (Object.keys(updates).length === 0) {
+			this.sendError(client, 'No group updates provided');
+			return;
+		}
+
+		if (!this.callbacks.updateGroup) {
+			this.sendError(client, 'Group updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.updateGroup(groupId, updates)
+			.then((result) => {
+				this.send(client, {
+					type: 'update_group_result',
+					success: !!result,
+					groupId,
+					group: result ?? undefined,
+					error: result ? undefined : 'Group not found or update rejected',
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to update group: ${error.message}`);
 			});
 	}
 

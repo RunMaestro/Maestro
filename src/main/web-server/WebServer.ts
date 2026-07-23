@@ -47,6 +47,7 @@ import type {
 	AutoRunState,
 	AutoRunDocument,
 	CliActivity,
+	UpdateGroupPayload,
 	NotificationEvent,
 	SessionBroadcastData,
 	WebClient,
@@ -95,6 +96,7 @@ import type {
 	GetGroupsCallback,
 	CreateGroupCallback,
 	RenameGroupCallback,
+	UpdateGroupCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -544,6 +546,10 @@ export class WebServer {
 		this.callbackRegistry.setRenameGroupCallback(callback);
 	}
 
+	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
+		this.callbackRegistry.setUpdateGroupCallback(callback);
+	}
+
 	setDeleteGroupCallback(callback: DeleteGroupCallback): void {
 		this.callbackRegistry.setDeleteGroupCallback(callback);
 	}
@@ -952,10 +958,17 @@ export class WebServer {
 			getSettings: () => this.callbackRegistry.getSettings(),
 			setSetting: async (key: string, value: any) => this.callbackRegistry.setSetting(key, value),
 			getGroups: () => this.callbackRegistry.getGroups(),
-			createGroup: async (name: string, emoji?: string, parentGroupId?: string) =>
-				this.callbackRegistry.createGroup(name, emoji, parentGroupId),
+			createGroup: async (
+				name: string,
+				emoji?: string,
+				parentGroupId?: string,
+				icon?: string,
+				color?: string
+			) => this.callbackRegistry.createGroup(name, emoji, parentGroupId, icon, color),
 			renameGroup: async (groupId: string, name: string) =>
 				this.callbackRegistry.renameGroup(groupId, name),
+			updateGroup: async (groupId: string, updates: UpdateGroupPayload) =>
+				this.callbackRegistry.updateGroup(groupId, updates),
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),
