@@ -76,6 +76,7 @@ import type {
 	RemoveQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	LaunchGoalRunCallback,
 	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
@@ -483,6 +484,10 @@ export class WebServer {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbackRegistry.setConfigureAutoRunCallback(callback);
+	}
+
+	setLaunchGoalRunCallback(callback: LaunchGoalRunCallback): void {
+		this.callbackRegistry.setLaunchGoalRunCallback(callback);
 	}
 
 	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
@@ -970,6 +975,10 @@ export class WebServer {
 				sessionId: string,
 				config: Parameters<CallbackRegistry['configureAutoRun']>[1]
 			) => this.callbackRegistry.configureAutoRun(sessionId, config),
+			launchGoalRun: async (
+				sessionId: string,
+				config: Parameters<CallbackRegistry['launchGoalRun']>[1]
+			) => this.callbackRegistry.launchGoalRun(sessionId, config),
 			setSessionAutoRunFolder: async (sessionId: string, folderPath: string) =>
 				this.callbackRegistry.setSessionAutoRunFolder(sessionId, folderPath),
 			getSessions: () => this.callbackRegistry.getSessions(),

@@ -290,6 +290,10 @@ export interface MessageHandlerCallbacks {
 			};
 		}
 	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
+	launchGoalRun: (
+		sessionId: string,
+		config: { goal: string; exitCriteria: string; maxIterations: number | null }
+	) => Promise<{ success: boolean; tabId?: string; error?: string }>;
 	setSessionAutoRunFolder: (
 		sessionId: string,
 		folderPath: string
@@ -617,6 +621,9 @@ export class WebSocketMessageHandler {
 				this.handleRefreshAutoRunDocs(client, message);
 				break;
 
+			case 'launch_goal_run':
+				this.handleLaunchGoalRun(client, message);
+				break;
 			case 'configure_auto_run':
 				this.handleConfigureAutoRun(client, message);
 				break;
@@ -1735,6 +1742,74 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to refresh auto-run docs: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle launch_goal_run message - start a desktop-visible Goal-Driven Auto
+	 * Run on an agent so it appears in the same UI surface as the Go/Spec buttons.
+	 * Powers `maestro-cli goal-run --visible`.
+	 */
+	private handleLaunchGoalRun(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const goal = typeof message.goal === 'string' ? message.goal.trim() : '';
+		// Goals can contain user-authored content with secrets or PII — log length only.
+		logger.info(
+			`[Web] Received launch_goal_run message: session=${sessionId}, goalLength=${goal.length}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'launch_goal_run_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId) {
+			sendErrorResult('Missing sessionId');
+			return;
+		}
+		if (!goal) {
+			sendErrorResult('Missing or empty goal');
+			return;
+		}
+
+		// maxIterations: null/undefined => infinite; otherwise a finite positive int.
+		let maxIterations: number | null = null;
+		if (message.maxIterations !== undefined && message.maxIterations !== null) {
+			const n = Number(message.maxIterations);
+			if (!Number.isFinite(n) || n < 1) {
+				sendErrorResult('maxIterations must be a positive integer or null');
+				return;
+			}
+			maxIterations = Math.floor(n);
+		}
+
+		const exitCriteria = typeof message.exitCriteria === 'string' ? message.exitCriteria : '';
+
+		if (!this.callbacks.launchGoalRun) {
+			sendErrorResult('Visible goal run not configured');
+			return;
+		}
+
+		this.callbacks
+			.launchGoalRun(sessionId, { goal, exitCriteria, maxIterations })
+			.then((result) => {
+				this.send(client, {
+					type: 'launch_goal_run_result',
+					success: result.success,
+					sessionId,
+					...(result.tabId ? { tabId: result.tabId } : {}),
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to launch goal run: ${error.message}`);
 			});
 	}
 
