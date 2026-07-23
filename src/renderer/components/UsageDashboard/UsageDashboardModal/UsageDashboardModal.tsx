@@ -48,6 +48,7 @@ import {
 	OverviewView,
 	ProviderQuotaUsageView,
 	ShortcutsView,
+	TokensView,
 } from './views';
 import { ResizeHandles } from '../../ui/ResizeHandles';
 
@@ -184,6 +185,7 @@ export function UsageDashboardModal({
 						viewMode === 'cue' ||
 						viewMode === 'agent-overview' ||
 						viewMode === 'shortcuts' ||
+						viewMode === 'tokens' ||
 						viewMode === 'anthropic-usage' ||
 						viewMode === 'codex-usage'
 							? 'overview'
@@ -219,6 +221,20 @@ export function UsageDashboardModal({
 
 		if (viewMode === 'shortcuts') {
 			return <ShortcutsView key={viewMode} timeRange={timeRange} theme={theme} />;
+		}
+
+		// Token usage is read from each agent's on-disk transcripts, not the stats
+		// DB, so this tab has data even when no query events were recorded. Must
+		// stay above the `totalQueries === 0` empty-state gate below.
+		if (viewMode === 'tokens') {
+			return (
+				<TokensView
+					key={viewMode}
+					timeRange={timeRange}
+					theme={theme}
+					colorBlindMode={colorBlindMode}
+				/>
+			);
 		}
 
 		if (viewMode === 'anthropic-usage' || viewMode === 'codex-usage') {

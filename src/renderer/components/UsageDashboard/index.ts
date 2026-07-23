@@ -7,5 +7,6 @@
 
 export { UsageDashboardModal } from './UsageDashboardModal';
 export { SessionStats } from './SessionStats';
+export { TokenStats } from './TokenStats';
 export { ClaudePlanUsage } from './ClaudePlanUsage';
 export { CodexPlanUsage } from './CodexPlanUsage';

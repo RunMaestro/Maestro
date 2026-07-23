@@ -6,3 +6,4 @@ export { DashboardTabPanel } from './DashboardTabPanel';
 export { OverviewView } from './OverviewView';
 export { ProviderQuotaUsageView } from './ProviderQuotaUsageView';
 export { ShortcutsView } from './ShortcutsView';
+export { TokensView } from './TokensView';

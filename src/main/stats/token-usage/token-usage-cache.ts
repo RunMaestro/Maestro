@@ -29,8 +29,11 @@ import type { SessionTokenBreakdown } from '../../../shared/tokenUsage';
 
 const LOG_CONTEXT = '[TokenUsageCache]';
 
-/** Bump to invalidate every persisted entry (e.g. when the breakdown shape changes). */
-export const TOKEN_USAGE_CACHE_VERSION = 1;
+/**
+ * Bump to invalidate every persisted entry (e.g. when the breakdown shape
+ * changes). v2 added `accountKey` to `SessionTokenBreakdown`.
+ */
+export const TOKEN_USAGE_CACHE_VERSION = 2;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {

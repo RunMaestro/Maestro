@@ -34,6 +34,7 @@ import {
 	Trophy,
 	CalendarCheck,
 	PenLine,
+	Coins,
 } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -41,7 +42,10 @@ import {
 	formatDurationHuman as formatDuration,
 	formatNumber,
 	formatCost,
+	formatTokensCompact,
 } from '../../../shared/formatters';
+import { aggregateUsage } from '../../../shared/usageStats';
+import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { Sparkline } from './Sparkline';
 
 type ByDayEntry = StatsAggregation['byDay'][number];
@@ -536,15 +540,16 @@ export const ContextUsageBar = memo(function ContextUsageBar({
 	);
 });
 
-// Placeholder per-1K-token rates for current-cycle cost estimation.
-// `currentCycleTokens` does not split input vs output, so we apply a blended
-// rate that approximates Claude pricing ($3/M input, $15/M output).
-// TODO: replace with provider-specific rates and split when the parser exposes
-// input/output token counts for the in-flight cycle.
-const CURRENT_CYCLE_INPUT_RATE_PER_1K = 0.003;
-const CURRENT_CYCLE_OUTPUT_RATE_PER_1K = 0.015;
-const CURRENT_CYCLE_BLENDED_RATE_PER_1K =
-	(CURRENT_CYCLE_INPUT_RATE_PER_1K + CURRENT_CYCLE_OUTPUT_RATE_PER_1K) / 2;
+/**
+ * Blended $/token estimate for a live cycle. `currentCycleTokens` carries no
+ * input/output split, so we average the model's per-million input and output
+ * rates. Model-aware via `resolveModelPricing` - Opus is priced as Opus, Haiku
+ * as Haiku - instead of the previous single hardcoded Claude-ish constant.
+ */
+function blendedCycleRatePerToken(model?: string | null): number {
+	const p = resolveModelPricing(model);
+	return (p.INPUT_PER_MILLION + p.OUTPUT_PER_MILLION) / 2 / TOKENS_PER_MILLION;
+}
 
 interface TokenCostBadgeProps {
 	sessions: Session[];
@@ -553,7 +558,7 @@ interface TokenCostBadgeProps {
 
 /**
  * Aggregates `currentCycleTokens` across busy sessions and renders the total
- * with a blended-rate cost estimate plus a per-session breakdown.
+ * with a model-aware blended-rate cost estimate plus a per-session breakdown.
  */
 export const TokenCostBadge = memo(function TokenCostBadge({
 	sessions,
@@ -562,16 +567,18 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 	const { totalTokens, estimatedCost, breakdown } = useMemo(() => {
 		const busy = sessions.filter((s) => s.state === 'busy');
 		let total = 0;
+		let cost = 0;
 		const items: Array<{ id: string; name: string; tokens: number }> = [];
 		for (const s of busy) {
 			const tokens = s.currentCycleTokens ?? 0;
 			if (tokens > 0) {
 				total += tokens;
+				// Price each session's cycle by its own model, then sum.
+				cost += tokens * blendedCycleRatePerToken(s.customModel);
 				items.push({ id: s.id, name: s.name, tokens });
 			}
 		}
 		items.sort((a, b) => b.tokens - a.tokens);
-		const cost = (total / 1000) * CURRENT_CYCLE_BLENDED_RATE_PER_1K;
 		return { totalTokens: total, estimatedCost: cost, breakdown: items };
 	}, [sessions]);
 
@@ -773,6 +780,15 @@ export const SummaryCards = memo(function SummaryCards({
 		return data.totalSessions;
 	}, [sessions, data.totalSessions]);
 
+	// Token & cost usage summed across the loaded agents' persisted usageStats.
+	const usageAgg = useMemo(
+		() =>
+			aggregateUsage(
+				(sessions ?? []).map((s) => ({ usageStats: s.usageStats, model: s.customModel }))
+			),
+		[sessions]
+	);
+
 	// Count open tabs across all sessions (AI + file preview)
 	const openTabCount = useMemo(() => {
 		if (!sessions) return 0;
@@ -892,6 +908,29 @@ export const SummaryCards = memo(function SummaryCards({
 			icon: <Zap className="w-4 h-4" />,
 			label: 'Queries/Session',
 			value: queriesPerSession,
+		},
+		{
+			icon: <Coins className="w-4 h-4" />,
+			label: 'Tokens',
+			value: usageAgg.totalTokens > 0 ? formatTokensCompact(usageAgg.totalTokens) : '—',
+			extra:
+				usageAgg.totalTokens > 0 ? (
+					<div
+						className="text-[10px] mt-1 uppercase tracking-wide"
+						style={{ color: theme.colors.textDim }}
+					>
+						{formatTokensCompact(usageAgg.inputTokens)} in /{' '}
+						{formatTokensCompact(usageAgg.outputTokens)} out
+					</div>
+				) : undefined,
+		},
+		{
+			icon: <DollarSign className="w-4 h-4" />,
+			label: usageAgg.costEstimated ? 'Est. Cost' : 'Cost',
+			value:
+				usageAgg.costUsd > 0
+					? `${usageAgg.costEstimated ? '~' : ''}${formatCost(usageAgg.costUsd)}`
+					: '—',
 		},
 		{
 			icon: <Clock className="w-4 h-4" />,

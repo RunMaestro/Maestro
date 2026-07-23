@@ -19,6 +19,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { cueService } from '../../services/cue';
+import { submitLeaderboardTimeDelta } from '../../services/leaderboard';
 
 // ============================================================================
 // Dependencies interface
@@ -122,6 +123,16 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
 			if (payload?.type === 'conductorTimeCredit') {
 				creditAchievementTime(payload.creditMs);
+				// Ship the same delta to the leaderboard. The server accumulates
+				// from deltaMs, so time credited only locally would drift below
+				// the server total forever. deltaRuns is 0 because a Cue run is
+				// not an Auto Run and must not inflate totalRuns.
+				//
+				// This lives here rather than in creditAchievementTime because
+				// the Auto Run timer above shares that helper, and Auto Run
+				// already submits its full elapsed time once on completion
+				// (useBatchHandlers) — submitting per tick too would double-count.
+				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs, source: 'cue' });
 			}
 		});
 		return unsubscribe;

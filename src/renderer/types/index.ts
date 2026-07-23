@@ -71,6 +71,7 @@ export type UsageDashboardViewMode =
 	| 'overview'
 	| 'agents'
 	| 'agent-overview'
+	| 'tokens'
 	| 'activity'
 	| 'autorun'
 	| 'anthropic-usage'

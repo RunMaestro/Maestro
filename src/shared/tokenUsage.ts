@@ -28,6 +28,9 @@ import type { TokenCounts } from './modelPricing';
  */
 export type TokenCoverage = 'full' | 'partial' | 'unsupported';
 
+/** Account key for agents with no multi-account concept (everything but Claude today). */
+export const DEFAULT_ACCOUNT_KEY = 'default';
+
 /**
  * Token + cost totals for a single model within a session (or rolled up across
  * many sessions in an aggregate). The four token fields are structurally
@@ -65,6 +68,13 @@ export interface SessionTokenBreakdown {
 	sessionId: string;
 	agentType: string;
 	projectPath: string;
+	/**
+	 * Which provider account produced this session. For Claude this is the
+	 * canonical `CLAUDE_CONFIG_DIR` path (users run several Max accounts from
+	 * separate `~/.claude*` homes, and each writes its own transcript tree).
+	 * Agents without a multi-account concept use {@link DEFAULT_ACCOUNT_KEY}.
+	 */
+	accountKey: string;
 	/** Latest activity timestamp (ms since epoch); drives time bucketing. 0 if unknown. */
 	timestampMs: number;
 	byModel: ModelTokenUsage[];
@@ -114,6 +124,11 @@ export interface TokenUsageAggregate {
 	byAgent: TokenUsageGroup[];
 	byModel: TokenUsageGroup[];
 	byProject: TokenUsageGroup[];
+	/**
+	 * Per-provider-account totals - for Claude, one entry per Max account
+	 * (`CLAUDE_CONFIG_DIR`). Single `default` entry for single-account agents.
+	 */
+	byAccount: TokenUsageGroup[];
 	timeline: TokenUsageTimeBucket[];
 	coverageByAgent: Record<string, TokenCoverage>;
 	/** When the aggregate was computed (ms since epoch). */

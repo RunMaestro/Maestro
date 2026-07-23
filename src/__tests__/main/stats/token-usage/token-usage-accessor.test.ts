@@ -59,6 +59,7 @@ function breakdown(overrides: Partial<SessionTokenBreakdown> = {}): SessionToken
 		sessionId: 'sess-1',
 		agentType: 'claude-code',
 		projectPath: '/proj/alpha',
+		accountKey: '/home/u/.claude',
 		timestampMs: Date.parse('2026-01-15T12:00:00Z'),
 		byModel,
 		inputTokens: 0,
@@ -244,5 +245,63 @@ describe('bucketStart', () => {
 		const start = new Date(bucketStart(ms, 'week'));
 		expect(start.getDay()).toBe(1); // Monday
 		expect(start.getDate()).toBe(9);
+	});
+});
+
+describe('aggregate - byAccount', () => {
+	it('splits totals across provider accounts instead of blending them', () => {
+		const all = [
+			breakdown({
+				sessionId: 's1',
+				accountKey: '/home/u/.claude',
+				byModel: [model({ inputTokens: 100, costUsd: 1 })],
+			}),
+			breakdown({
+				sessionId: 's2',
+				accountKey: '/home/u/.claude-work',
+				byModel: [model({ inputTokens: 300, costUsd: 3 })],
+			}),
+		];
+
+		const agg = aggregate(all, {});
+		expect(agg.byAccount).toHaveLength(2);
+		// Sorted by highest spend first.
+		expect(agg.byAccount[0].key).toBe('/home/u/.claude-work');
+		expect(agg.byAccount[0].costUsd).toBe(3);
+		expect(agg.byAccount[1].costUsd).toBe(1);
+		// Grand total still reconciles to the sum of the accounts.
+		expect(agg.totals.costUsd).toBe(4);
+	});
+
+	it('counts a session once per account even when it spans several models', () => {
+		const all = [
+			breakdown({
+				accountKey: '/home/u/.claude',
+				byModel: [
+					model({ model: 'claude-opus-4-8', inputTokens: 10, costUsd: 1 }),
+					model({ model: 'claude-haiku-4-5', inputTokens: 5, costUsd: 0.1 }),
+				],
+			}),
+		];
+
+		const agg = aggregate(all, {});
+		expect(agg.byAccount).toHaveLength(1);
+		expect(agg.byAccount[0].sessionCount).toBe(1);
+	});
+});
+
+describe('accountLabel', () => {
+	const { accountLabel } = _internal;
+
+	it('strips the .claude- prefix for a named account', () => {
+		expect(accountLabel('/home/u/.claude-gmail')).toBe('gmail');
+	});
+
+	it('names the plain ~/.claude dir as the default', () => {
+		expect(accountLabel('/home/u/.claude')).toBe('Default (~/.claude)');
+	});
+
+	it('labels agents with no multi-account concept as Default', () => {
+		expect(accountLabel('default')).toBe('Default');
 	});
 });

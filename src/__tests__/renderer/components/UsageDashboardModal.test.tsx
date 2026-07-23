@@ -53,6 +53,7 @@ vi.mock('lucide-react', () => {
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),
 		PenLine: createIcon('pen-line', '✏️'),
+		Coins: createIcon('coins', '🪙'),
 		// ChartErrorBoundary icons
 		AlertTriangle: createIcon('alert-triangle', '⚠️'),
 		ChevronDown: createIcon('chevron-down', '▼'),
@@ -269,12 +270,13 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(6);
+				expect(tabs).toHaveLength(7);
 				expect(tabs[0]).toHaveTextContent('Overview');
 				expect(tabs[1]).toHaveTextContent('Agent Overview');
 				expect(tabs[2]).toHaveTextContent('Agents');
-				expect(tabs[3]).toHaveTextContent('Activity');
-				expect(tabs[4]).toHaveTextContent('Auto Run');
+				expect(tabs[3]).toHaveTextContent('Tokens');
+				expect(tabs[4]).toHaveTextContent('Activity');
+				expect(tabs[5]).toHaveTextContent('Auto Run');
 			});
 		});
 
@@ -1622,7 +1624,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(6);
+				expect(tabs).toHaveLength(7);
 
 				// First tab (Overview) should be selected
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
@@ -1630,10 +1632,9 @@ describe('UsageDashboardModal', () => {
 				expect(tabs[0]).toHaveAttribute('id', 'tab-overview');
 
 				// Other tabs should not be selected
-				expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
-				expect(tabs[2]).toHaveAttribute('aria-selected', 'false');
-				expect(tabs[3]).toHaveAttribute('aria-selected', 'false');
-				expect(tabs[4]).toHaveAttribute('aria-selected', 'false');
+				for (const tab of tabs.slice(1)) {
+					expect(tab).toHaveAttribute('aria-selected', 'false');
+				}
 			});
 		});
 
@@ -1692,12 +1693,12 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Press ArrowLeft while on first tab - should wrap to last tab (Shortcuts, index 5)
+			// Press ArrowLeft while on first tab - should wrap to the last tab
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs[5]).toHaveAttribute('aria-selected', 'true'); // Shortcuts tab
+				expect(tabs[tabs.length - 1]).toHaveAttribute('aria-selected', 'true');
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
@@ -1711,11 +1712,12 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Navigate to last tab (Shortcuts, index 5)
+			// Navigate to the last tab by wrapping backwards off the first
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' }); // Wraps to last
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('tab')[5]).toHaveAttribute('aria-selected', 'true');
+				const tabs = screen.getAllByRole('tab');
+				expect(tabs[tabs.length - 1]).toHaveAttribute('aria-selected', 'true');
 			});
 
 			// Press ArrowRight - should wrap to first tab (Overview)
@@ -1724,7 +1726,7 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
-				expect(tabs[5]).toHaveAttribute('aria-selected', 'false');
+				expect(tabs[tabs.length - 1]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
 
@@ -1939,9 +1941,8 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Switch to Auto Run view - use the tab button specifically
-			const tabs = screen.getAllByRole('tab');
-			fireEvent.click(tabs[4]); // Auto Run is the 5th tab now (index 4)
+			// Switch to Auto Run view - select by name so adding tabs can't break this
+			fireEvent.click(screen.getByRole('tab', { name: /auto run/i }));
 
 			await waitFor(() => {
 				expect(screen.getByTestId('section-autorun-stats')).toBeInTheDocument();

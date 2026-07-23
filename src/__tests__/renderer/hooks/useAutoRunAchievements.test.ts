@@ -80,6 +80,14 @@ vi.mock('../../../renderer/services/cue', () => ({
 	},
 }));
 
+// Mock the leaderboard service - Cue credit must also ship a delta to the
+// server, which accumulates totals from deltaMs (no delta = permanent drift).
+const mockSubmitLeaderboardTimeDelta = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('../../../renderer/services/leaderboard', () => ({
+	submitLeaderboardTimeDelta: (args: any) => mockSubmitLeaderboardTimeDelta(args),
+}));
+
 // Mock conductorBadges - provide just enough badges for tests (inlined to avoid TDZ in hoisted vi.mock)
 vi.mock('../../../renderer/constants/conductorBadges', () => ({
 	CONDUCTOR_BADGES: [
@@ -833,6 +841,43 @@ describe('useAutoRunAchievements', () => {
 			expect(callArg.badge).toEqual(MOCK_CONDUCTOR_BADGES[0]);
 			expect(callArg.recordTimeMs).toBe(7000);
 			expect(callArg.isNewRecord).toBe(false);
+		});
+
+		it('submits the same delta to the leaderboard tagged as cue, deltaRuns left at 0', () => {
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			act(() => {
+				capturedCueActivityCallback?.({ type: 'conductorTimeCredit', creditMs: 180000 });
+			});
+
+			expect(mockSubmitLeaderboardTimeDelta).toHaveBeenCalledTimes(1);
+			expect(mockSubmitLeaderboardTimeDelta).toHaveBeenCalledWith({
+				deltaMs: 180000,
+				source: 'cue',
+			});
+		});
+
+		it('does not submit a leaderboard delta for unrelated Cue payloads', () => {
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: [] }));
+
+			act(() => {
+				capturedCueActivityCallback?.({ type: 'runFinished', status: 'completed' });
+			});
+
+			expect(mockSubmitLeaderboardTimeDelta).not.toHaveBeenCalled();
+		});
+
+		it('does not submit a leaderboard delta from Auto Run interval ticks (no double count)', () => {
+			// Auto Run submits its full elapsed time once on completion via
+			// useBatchHandlers, so the per-minute ticks must stay silent here.
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: ['session-1'] }));
+
+			act(() => {
+				vi.advanceTimersByTime(60000);
+			});
+
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalled();
+			expect(mockSubmitLeaderboardTimeDelta).not.toHaveBeenCalled();
 		});
 
 		it('unsubscribes from Cue activity updates on unmount', () => {

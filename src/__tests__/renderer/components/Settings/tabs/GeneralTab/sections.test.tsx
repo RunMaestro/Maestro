@@ -133,7 +133,7 @@ describe('GeneralTab section components', () => {
 		);
 
 		expect(screen.getByText('Send trigger')).toBeInTheDocument();
-		fireEvent.click(screen.getByRole('radio', { name: 'Always' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Always' }));
 		expect(setForcedParallelAlways).toHaveBeenCalledWith(true);
 
 		// In Always mode the modifier chip is ghosted (line-through) and the
@@ -154,7 +154,9 @@ describe('GeneralTab section components', () => {
 		);
 
 		expect(screen.getByText('Every message force-sends')).toBeInTheDocument();
-		expect(screen.getByRole('radio', { name: 'Always' })).toHaveAttribute('aria-checked', 'true');
+		expect(
+			screen.getByText('Every send force-sends past a busy agent. No modifier required.')
+		).toBeInTheDocument();
 	});
 
 	it('shows and changes history synopsis debounce only when history is enabled', () => {

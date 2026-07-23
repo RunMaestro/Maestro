@@ -6,6 +6,8 @@ import {
 	formatShortcutKeys,
 } from '../../../../../utils/shortcutFormatter';
 import { ForcedParallelWarningModal } from '../../../../ForcedParallelWarningModal';
+import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
 import type { ForcedParallelWarningState, GeneralTabSettings } from '../types';
 
 interface InputBehaviorSectionProps {
@@ -133,24 +135,12 @@ export function InputBehaviorSection({
 						>
 							{forcedParallelShortcut}
 						</span>
-						<button
-							onClick={forcedParallelWarning.handleToggle}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
-							style={{
-								backgroundColor: forcedParallelExecution
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={forcedParallelExecution}
-							aria-label="Forced Parallel Execution"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									forcedParallelExecution ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={forcedParallelExecution}
+							onChange={forcedParallelWarning.handleToggle}
+							theme={theme}
+							ariaLabel="Forced Parallel Execution"
+						/>
 					</div>
 				</div>
 				<div
@@ -180,44 +170,19 @@ export function InputBehaviorSection({
 
 				{forcedParallelExecution && (
 					<div className="mt-3">
-						<div className="text-[11px] font-bold opacity-60 uppercase mb-1.5">Send trigger</div>
-						<div
-							className="inline-flex rounded overflow-hidden"
-							style={{ border: `1px solid ${theme.colors.border}` }}
-							role="radiogroup"
-							aria-label="Forced parallel send trigger"
-						>
-							<button
-								onClick={() => setForcedParallelAlways(false)}
-								className="px-3 py-1.5 text-xs font-medium transition-colors"
-								style={{
-									backgroundColor: !forcedParallelAlways
-										? theme.colors.accent
-										: theme.colors.bgActivity,
-									color: !forcedParallelAlways ? theme.colors.bgMain : theme.colors.textMain,
-								}}
-								role="radio"
-								aria-checked={!forcedParallelAlways}
-							>
-								Modifier
-							</button>
-							<button
-								onClick={() => setForcedParallelAlways(true)}
-								className="px-3 py-1.5 text-xs font-medium transition-colors"
-								style={{
-									backgroundColor: forcedParallelAlways
-										? theme.colors.accent
-										: theme.colors.bgActivity,
-									color: forcedParallelAlways ? theme.colors.bgMain : theme.colors.textMain,
-									borderLeft: `1px solid ${theme.colors.border}`,
-								}}
-								role="radio"
-								aria-checked={forcedParallelAlways}
-							>
-								Always
-							</button>
+						<div className="font-medium mb-2" style={{ color: theme.colors.textMain }}>
+							Send trigger
 						</div>
-						<p className="text-xs opacity-50 mt-1.5">
+						<ToggleButtonGroup
+							options={[
+								{ value: 'modifier' as const, label: 'Modifier' },
+								{ value: 'always' as const, label: 'Always' },
+							]}
+							value={forcedParallelAlways ? 'always' : 'modifier'}
+							onChange={(value) => setForcedParallelAlways(value === 'always')}
+							theme={theme}
+						/>
+						<p className="text-xs opacity-50 mt-2">
 							{forcedParallelAlways
 								? 'Every send force-sends past a busy agent. No modifier required.'
 								: `Use ${forcedParallelShortcut} to force-send past a busy agent. A normal send queues as usual.`}
