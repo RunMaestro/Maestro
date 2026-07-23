@@ -2585,7 +2585,10 @@ describe('TerminalOutput', () => {
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Follow-scroll is armed by a MutationObserver microtask that schedules a
+				// rAF; the async variant drains microtasks between timer steps so the
+				// scroll deterministically fires on slow CI runners.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
@@ -2621,7 +2624,10 @@ describe('TerminalOutput', () => {
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Follow-scroll is armed by a MutationObserver microtask that schedules a
+				// rAF; the async variant drains microtasks between timer steps so the
+				// scroll deterministically fires on slow CI runners.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			// Terminal mode always auto-scrolls
@@ -2701,7 +2707,11 @@ describe('TerminalOutput', () => {
 			};
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Drain the MutationObserver microtask (it schedules the follow rAF) and
+				// advance that rAF in one deterministic step. The async variant flushes
+				// microtasks between timer steps, so a slow CI runner cannot advance
+				// timers before the observer arms the scroll (Windows shard flake).
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
