@@ -164,6 +164,8 @@ import {
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
 	registerCueHandlers,
+	registerProfileHandlers,
+	registerBoardHandlers,
 	registerCueBackupHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
@@ -204,6 +206,19 @@ import {
 	clearModeratorResponseTimeout,
 } from './group-chat/group-chat-router';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
+import { listBoards, saveBoard, setBoardSavedListener } from './board/board-storage';
+import { setProfilesSavedListener } from './profiles/profile-storage';
+import {
+	resolveCardOverrides,
+	resolveCardAssignment,
+	spawnBoardCard,
+	decomposeBoardCard,
+	cancelBoardCardRun,
+	type BoardSpawnContext,
+} from './board/board-spawn';
+import { selectPoolAgentIds } from '../shared/board/pool';
+import { autoDecomposeBoard } from './board/board-decompose';
+import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
@@ -588,6 +603,18 @@ const safeSend = createSafeSend(() => BrowserWindow.getAllWindows());
 // Hydrate capability snapshots from disk and wire IPC broadcaster so the
 // renderer status pills update live as detection / spawn-error events fire.
 capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeSend));
+
+// Board: push `board:changed` whenever board.yaml is persisted (by the
+// dispatcher tick, an IPC mutation, or auto-decompose) so the kanban reconciles
+// on the event instead of polling. Storage itself stays host-agnostic - the CLI
+// imports the same module and never sets a listener. Payload is the project
+// root only; the renderer refetches, so no board data crosses the bridge here.
+setBoardSavedListener((projectRoot) => safeSend('board:changed', { projectRoot }));
+
+// Agent Profiles: same deal for `.maestro/profiles.yaml`, so the Profiles modal
+// (and the Board's role picker behind it) reconcile after a CLI or second-window
+// write instead of showing a stale list until the user hits refresh.
+setProfilesSavedListener((projectRoot) => safeSend('profiles:changed', { projectRoot }));
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
@@ -1219,6 +1246,36 @@ app
 			usageRefreshScheduler.start();
 		}
 
+		// Board Phase 3: host context the board card spawner needs. Resolves a
+		// card's assignee profile to its base Left Bar agent and runs it through
+		// the same `executeCuePrompt` path Cue uses (SSH/custom config honored).
+		const boardSpawnContext: BoardSpawnContext = {
+			getStoredSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, any>>,
+			getAgentConfig: (toolType) => getAgentConfigForAgent(toolType),
+			resolveAgentPath: async (toolType) => {
+				if (!agentDetector) return undefined;
+				const detected = await agentDetector.getAgent(toolType);
+				return detected?.available && detected.path ? detected.path : undefined;
+			},
+			getSshStore: () => createSshRemoteStoreAdapter(store),
+			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
+			// Board Phase 6 worker pool: opt-in (`boardWorker: true`) agents whose
+			// working directory is inside the board's project dir (or a sub-folder),
+			// in Left Bar order. Only these float role-only cards.
+			getPoolAgentIds: (projectRoot) => {
+				const sessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
+				return selectPoolAgentIds(
+					projectRoot,
+					sessions.map((s) => ({
+						id: s.id,
+						dir: s.projectRoot || s.cwd || s.fullPath,
+						boardWorker: s.boardWorker === true,
+					}))
+				);
+			},
+			nowMs: () => Date.now(),
+		};
+
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
 			getSessions: () => {
@@ -1486,6 +1543,137 @@ app
 			// Surface Cue run lifecycle (`cue.runStarted` / `cue.runFinished`) to
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
+			// Board Phase 3: the task-DAG dispatcher rides this engine's tick. All
+			// board side effects are injected here so the engine core stays
+			// board-agnostic. The dispatch pass is gated on BOTH `maestroCue` and
+			// `board` (Board requires Cue) inside the engine's board pass.
+			board: {
+				getEncoreFeatures: () => {
+					const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+					return { maestroCue: ef.maestroCue === true, board: ef.board === true };
+				},
+				getProjectRoots: () => {
+					const sessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
+					const roots = new Set<string>();
+					for (const s of sessions) {
+						const root = s.projectRoot || s.cwd || s.fullPath;
+						if (typeof root === 'string' && root.length > 0) roots.add(root);
+					}
+					return [...roots];
+				},
+				listBoards: (projectRoot) => listBoards(projectRoot),
+				saveBoard: (projectRoot, board) => {
+					saveBoard(projectRoot, board);
+				},
+				resolveOverrides: (projectRoot, card) =>
+					resolveCardOverrides(projectRoot, card, boardSpawnContext),
+				// Board Phase 6 worker pool: resolve each card to a FREE opt-in worker
+				// in the project dir. Takes precedence over resolveOverrides.
+				assign: (projectRoot, card, busy) =>
+					resolveCardAssignment(projectRoot, card, busy, boardSpawnContext),
+				spawnCard: (projectRoot, request) =>
+					spawnBoardCard(projectRoot, request, boardSpawnContext),
+				// Stop button: kill the card's in-flight agent process. The run is
+				// addressed by the Cue run id `board-spawn.ts` minted for it, so the
+				// project root is not needed here.
+				cancelCardRun: (_projectRoot, cardId) => cancelBoardCardRun(cardId),
+				// Terminal card transitions surface as toasts through the SAME
+				// `remote:notifyToast` relay Cue's notify action uses. A blocked card
+				// needs a human, so its toast is sticky; a done card auto-dismisses.
+				notifyCard: (projectRoot, event) => {
+					const blocked = event.kind === 'blocked';
+					// Board Phase 5: the same terminal transition is republished on the
+					// plugin event bus so OTHER plugins can build on the Board. Metadata
+					// only - the toast below carries the run summary, the event never
+					// does (summaries can quote agent output).
+					const common = {
+						boardId: event.boardId,
+						cardId: event.cardId,
+						cardTitle: event.cardTitle,
+						projectPath: projectRoot,
+						...(event.attempt !== undefined ? { attempt: event.attempt } : {}),
+						...(event.workerAgentId ? { workerAgentId: event.workerAgentId } : {}),
+					};
+					const at = new Date().toISOString();
+					if (blocked) {
+						pluginEventBus?.emit({
+							topic: 'board.cardBlocked',
+							at,
+							payload: { ...common, ...(event.outcome ? { outcome: event.outcome } : {}) },
+						});
+					} else {
+						pluginEventBus?.emit({
+							topic: 'board.cardCompleted',
+							at,
+							payload: {
+								...common,
+								...(event.worktreeBranch ? { worktreeBranch: event.worktreeBranch } : {}),
+							},
+						});
+					}
+					// Phase 4: an isolated card's output lives on its own branch, which
+					// nothing merges automatically - name it so the user can find it.
+					const branchNote = event.worktreeBranch ? ` (branch ${event.worktreeBranch})` : '';
+					safeSend('remote:notifyToast', {
+						title: blocked ? `Card blocked: ${event.cardTitle}` : `Card done: ${event.cardTitle}`,
+						message:
+							(event.detail || (blocked ? 'No reason reported.' : 'Run completed.')) + branchNote,
+						color: blocked ? 'red' : 'green',
+						dismissible: blocked,
+						sourceAgent: 'Board',
+					});
+				},
+				// Board Phase 5: every card status transition goes out on the plugin
+				// event bus (metadata only - ids, statuses, attempt, worker). Null-safe;
+				// no-op when plugins are disabled.
+				onCardStatusChanged: (projectRoot, event) =>
+					pluginEventBus?.emit({
+						topic: 'board.cardStatusChanged',
+						at: new Date().toISOString(),
+						payload: {
+							boardId: event.boardId,
+							cardId: event.cardId,
+							cardTitle: event.cardTitle,
+							fromStatus: event.fromStatus,
+							toStatus: event.toStatus,
+							projectPath: projectRoot,
+							...(event.attempt !== undefined ? { attempt: event.attempt } : {}),
+							...(event.workerAgentId ? { workerAgentId: event.workerAgentId } : {}),
+						},
+					}),
+				// Board Phase 5: a finished auto-decompose pass, counts only.
+				onBoardDecomposed: (projectRoot, boardId, triageCardCount) =>
+					pluginEventBus?.emit({
+						topic: 'board.decomposed',
+						at: new Date().toISOString(),
+						payload: { boardId, triageCardCount, projectPath: projectRoot },
+					}),
+				// OPTIONAL auto-decompose (Board Phase 5), off by default. Only runs when
+				// a board sets `autoDecompose: true`; loads the editable prompt template
+				// and fans triage cards into child cards via the same spawn plumbing.
+				decompose: async (projectRoot, board) => {
+					const template = getPrompt(PROMPT_IDS.BOARD_DECOMPOSE);
+					// `board` here is the snapshot the tick loaded, and each LLM pass
+					// takes minutes, so the children are merged into a board re-read
+					// from disk and persisted per card (reload + save below) rather
+					// than by writing this stale snapshot back afterwards - which used
+					// to revert every status change the dispatcher made in between.
+					return await autoDecomposeBoard(board, {
+						promptTemplate: template,
+						spawn: (prompt, card) =>
+							decomposeBoardCard(projectRoot, card, prompt, boardSpawnContext),
+						reload: () => listBoards(projectRoot).find((b) => b.id === board.id) ?? null,
+						save: (merged) => {
+							saveBoard(projectRoot, merged);
+						},
+						onLog: (level, message) => {
+							if (level === 'error') logger.error(message, 'Board');
+							else if (level === 'warn') logger.warn(message, 'Board');
+							else logger.cue(message, 'Board');
+						},
+					});
+				},
+			},
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
@@ -3201,6 +3389,15 @@ function setupIpcHandlers() {
 
 	// Cue - event-driven automation engine
 	registerCueHandlers({
+		getCueEngine: () => cueEngine,
+	});
+
+	// Agent Profiles - named model/effort/role bundles layered on a base agent
+	registerProfileHandlers();
+
+	// Board - persistent task DAG stored in .maestro/board.yaml. The engine is
+	// needed for `board:cancelCard`, which routes through the live dispatcher.
+	registerBoardHandlers({
 		getCueEngine: () => cueEngine,
 	});
 

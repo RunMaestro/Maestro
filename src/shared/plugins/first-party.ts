@@ -39,6 +39,7 @@ export type FirstPartyEncoreFlag =
 	| 'coworking'
 	| 'opencodeServer'
 	| 'concerto'
+	| 'board'
 	| 'groupsPlus';
 
 /** A supervised background service a first-party plugin runs. */
@@ -556,6 +557,86 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 };
 
+/** Broker capabilities the Board dispatcher actually touches. The Board is a
+ * task-DAG dispatcher that rides the Cue engine tick (Board Phase 3): each tick
+ * it re-reads the Encore flags, loads/persists `.maestro/board.yaml`, resolves a
+ * card's assignee profile against its base agent, and spawns that assignee. The
+ * Board is the closest analogue to Cue, so this mirrors the Cue def (a
+ * dispatcher with a host-owned spawn path). Grepped from `src/main/board/*`
+ * (board-storage, board-dispatcher, board-spawn, board-worktree) and
+ * `src/main/profiles/profile-storage.ts` (assignee resolution). Kept true
+ * through Phase 5: toasts (Phase 2), serialized atomic writes (Phase 1), and
+ * per-card git worktrees (Phase 4) are all accounted for below. */
+export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: 'com.maestro.board',
+	name: 'Board',
+	description:
+		'Run a persistent task DAG: assign cards to agent profiles and drain them in dependency order on the Cue engine tick.',
+	firstParty: true,
+	category: 'automation',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason:
+				'Re-read the Board and Maestro Cue Encore flags each tick (Board requires Cue) before doing any dispatch work.',
+		},
+		{
+			capability: 'sessions:read',
+			reason:
+				"Resolve a card's assignee profile to its base Left Bar agent (identity, tool type, SSH/custom config) so the run spawns as the right agent.",
+		},
+		{
+			capability: 'notifications:toast',
+			reason:
+				'Announce terminal card transitions: a sticky toast when a card blocks and needs a human, an auto-dismissing one when a card completes (naming its worktree branch when the run was isolated).',
+		},
+		{
+			capability: 'fs:read',
+			scope: '.maestro/board.yaml',
+			reason: 'Load the task DAG (cards, statuses, dependencies) each tick.',
+		},
+		{
+			capability: 'fs:read',
+			scope: '.maestro/profiles.yaml',
+			reason: "Read the agent profiles a card's assignee references (Phase 1 storage).",
+		},
+		{
+			// Scoped to the directory, not the single file: every board write is
+			// atomic (write `board.yaml.tmp`, rename over `board.yaml`) and creates
+			// `.maestro/` when absent, so a file-exact scope would not cover it.
+			capability: 'fs:write',
+			scope: '.maestro/',
+			reason:
+				'Persist card status transitions (promote/claim/done/blocked/canceled) and per-attempt run history through a serialized, atomic temp-file-plus-rename write of board.yaml.',
+		},
+		// NOTE: `agents:dispatch` and `process:spawn` are deliberately ABSENT,
+		// mirroring Cue (see MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS) and
+		// Pianola. Both are FC2 allowlist scopes naming exact static targets; the
+		// Board dispatches each card to a dynamically-resolved profile/base-agent
+		// target that a static manifest scope cannot name. That authority stays
+		// HOST-OWNED (the supervised engine tick, gated by the Encore flag) until a
+		// runtime grant seam is designed - see `Plans/rfc-runtime-dispatch-grants.md`,
+		// which specifies that seam and the tier-2 Board plugin it would unblock.
+		//
+		// The same rationale covers Phase 4's per-card worktree isolation, which is
+		// why no `fs:write` scope names it: provisioning a card's checkout runs
+		// `git worktree add` into a `worktrees/` directory BESIDE the project root
+		// and then spawns the agent with that cwd. Both halves are host-owned spawn
+		// machinery (`src/main/board/board-worktree.ts`, driven from `board-spawn.ts`),
+		// not something a sandboxed plugin performs through the broker - a plugin
+		// able to write arbitrary sibling directories and run git is `process:spawn`
+		// by another name.
+	],
+	settingsNamespace: 'board',
+	encoreFlag: 'board',
+	// No supervised background service of its own: the Board runs NO timer or
+	// loop - it rides the existing Cue engine tick / background service (the same
+	// empty-services rationale as `concerto`). Disable = flag off + the dual-gate
+	// in the Cue tick's board pass short-circuits; nothing Board-owned keeps
+	// running.
+	backgroundServices: [],
+};
+
 /** Groups+ uses the host-owned group model and renderer; it only needs to
  * re-read its Encore setting before surfacing optional hierarchy and appearance UI. */
 export const GROUPS_PLUS_FIRST_PARTY_PLUGIN_ID = 'com.maestro.groups-plus';
@@ -596,6 +677,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	COWORKING_FIRST_PARTY_PLUGIN,
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	CONCERTO_FIRST_PARTY_PLUGIN,
+	BOARD_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 ];
 
@@ -616,5 +698,6 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	coworking: COWORKING_FIRST_PARTY_PLUGIN,
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
+	board: BOARD_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 };

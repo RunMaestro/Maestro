@@ -53,6 +53,8 @@ import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
+import { createProfilesApi } from './profiles';
+import { createBoardApi } from './board';
 import { createCueBackupApi } from './cueBackup';
 import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
@@ -234,6 +236,12 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue API (event-driven automation)
 	cue: createCueApi(),
 
+	// Agent Profiles API (named model/effort/role bundles layered on a base agent)
+	profiles: createProfilesApi(),
+
+	// Board API (persistent task DAG stored in .maestro/board.yaml)
+	board: createBoardApi(),
+
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
@@ -344,6 +352,10 @@ export {
 	createDirectorNotesApi,
 	// Cue
 	createCueApi,
+	// Agent Profiles
+	createProfilesApi,
+	// Board
+	createBoardApi,
 	// Cue Backup
 	createCueBackupApi,
 	// Pianola
@@ -594,6 +606,18 @@ export type {
 	CueEventType,
 	CueRunStatus,
 } from './cue';
+export type {
+	// From profiles
+	ProfilesApi,
+	AgentProfile,
+} from './profiles';
+export type {
+	// From board
+	BoardApi,
+	Board,
+	BoardCard,
+	CardStatus,
+} from './board';
 export type {
 	// From pianola
 	PianolaApi,

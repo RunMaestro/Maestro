@@ -25,6 +25,10 @@ export const PLUGIN_EVENT_TOPICS = [
 	'history.entryAdded', // a history entry was added (ids/classification only)
 	'agent.completed', // an agent reached a terminal state (metadata only, no output)
 	'tool.executed', // a tool call started or finished (name + timing only, no arguments or results)
+	'board.cardStatusChanged', // a board card moved between statuses (ids + statuses)
+	'board.cardCompleted', // a board card finished successfully (ids only, no summary)
+	'board.cardBlocked', // a board card needs a human (ids + run outcome, no reason text)
+	'board.decomposed', // an auto-decompose pass expanded triage cards (counts only)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -124,6 +128,57 @@ export interface PluginEventPayloads {
 		phase?: string;
 		timestamp: number;
 		durationMs?: number;
+	};
+	/**
+	 * Board card status transition (Board Phase 5). Every transition the board
+	 * dispatcher performs: promote, claim, retry, reclaim, cancel, terminal.
+	 *
+	 * `cardTitle` is the only human-authored string here. It is the card's
+	 * identity in the UI, so it ships - but note that titles on auto-decomposed
+	 * cards originate from a model, and no other generated text (prompt body,
+	 * run output, run summary, block reason) is ever carried on these topics.
+	 */
+	'board.cardStatusChanged': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		fromStatus: string;
+		toStatus: string;
+		/** 1-based attempt number of the card's latest run, when it has one. */
+		attempt?: number;
+		/** Pool worker bound to the latest run (worker pool), when pooled. */
+		workerAgentId?: string;
+		projectPath?: string;
+	};
+	'board.cardCompleted': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		attempt?: number;
+		workerAgentId?: string;
+		/** Branch of the isolated worktree the attempt ran in, when isolated. */
+		worktreeBranch?: string;
+		projectPath?: string;
+	};
+	'board.cardBlocked': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		attempt?: number;
+		workerAgentId?: string;
+		/**
+		 * Outcome enum recorded on the failed run (`error` / `blocked` / ...).
+		 * A CLASSIFICATION, never the free-form block reason, which can quote
+		 * agent output.
+		 */
+		outcome?: string;
+		projectPath?: string;
+	};
+	'board.decomposed': {
+		boardId: string;
+		/** How many triage cards the pass expanded into children. */
+		triageCardCount: number;
+		projectPath?: string;
 	};
 }
 

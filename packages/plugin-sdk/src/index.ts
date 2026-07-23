@@ -410,18 +410,22 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.14.0 for the
- * backward-compatible additive `tool.executed` event topic (metadata-only tool
- * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
- * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES
- * cap). 1.13.0 added the additive host-mediated `PluginUiSurface` registry and
- * trusted-chrome guard. 1.12.0 added the backward-compatible additive
- * `net:connect` capability plus its `net.connect` / `net.send` / `net.close`
- * host methods (hold an outbound persistent websocket to a host scope, e.g. a
- * Discord/Slack gateway; egress-classified). 1.11.0 added virtual `groupings`
- * contributions and the presentation-only `ui:grouping` publish/clear methods;
- * 1.10.0 added the backward-compatible, data-only `iconPacks` contribution;
- * 1.9.0 added host-rendered `hostViews`, their `ui:hostView` capability, and the
+ * The host API version this Maestro build implements. Bumped to 1.15.0 for the
+ * additive Board event topics `board.cardStatusChanged` / `board.cardCompleted`
+ * / `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
+ * the card title; never prompts, run output, summaries, or block reasons).
+ * 1.14.0 added the backward-compatible additive `tool.executed` event topic
+ * (metadata-only tool lifecycle: name + timing, never arguments or results)
+ * plus the `ui.panelPost` host-to-panel push method (own-panels-only,
+ * JSON-only, MAX_PANEL_POST_BYTES cap). 1.13.0 added the additive
+ * host-mediated `PluginUiSurface` registry and trusted-chrome guard. 1.12.0
+ * added the backward-compatible additive `net:connect` capability plus its
+ * `net.connect` / `net.send` / `net.close` host methods (hold an outbound
+ * persistent websocket to a host scope, e.g. a Discord/Slack gateway;
+ * egress-classified). 1.11.0 added virtual `groupings` contributions and the
+ * presentation-only `ui:grouping` publish/clear methods; 1.10.0 added the
+ * backward-compatible, data-only `iconPacks` contribution; 1.9.0 added
+ * host-rendered `hostViews`, their `ui:hostView` capability, and the
  * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods; 1.8.0 added
  * `background.list`; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
@@ -432,7 +436,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.14.0';
+export const HOST_API_VERSION = '1.15.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -1149,6 +1153,10 @@ export const PLUGIN_EVENT_TOPICS = [
 	'history.entryAdded', // a history entry was added (ids/classification only)
 	'agent.completed', // an agent reached a terminal state (metadata only, no output)
 	'tool.executed', // a tool call started or finished (name + timing only, no arguments or results)
+	'board.cardStatusChanged', // a board card moved between statuses (ids + statuses)
+	'board.cardCompleted', // a board card finished successfully (ids only, no summary)
+	'board.cardBlocked', // a board card needs a human (ids + run outcome, no reason text)
+	'board.decomposed', // an auto-decompose pass expanded triage cards (counts only)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -1245,6 +1253,56 @@ export interface PluginEventPayloads {
 		phase?: string;
 		timestamp: number;
 		durationMs?: number;
+	};
+	/**
+	 * Board card status transition. Every transition the board dispatcher
+	 * performs: promote, claim, retry, reclaim, cancel, terminal.
+	 *
+	 * `cardTitle` is the only human-authored string here. No other generated
+	 * text (prompt body, run output, run summary, block reason) is ever carried
+	 * on these topics.
+	 */
+	'board.cardStatusChanged': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		fromStatus: string;
+		toStatus: string;
+		/** 1-based attempt number of the card's latest run, when it has one. */
+		attempt?: number;
+		/** Pool worker bound to the latest run (worker pool), when pooled. */
+		workerAgentId?: string;
+		projectPath?: string;
+	};
+	'board.cardCompleted': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		attempt?: number;
+		workerAgentId?: string;
+		/** Branch of the isolated worktree the attempt ran in, when isolated. */
+		worktreeBranch?: string;
+		projectPath?: string;
+	};
+	'board.cardBlocked': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		attempt?: number;
+		workerAgentId?: string;
+		/**
+		 * Outcome enum recorded on the failed run (`error` / `blocked` / ...).
+		 * A CLASSIFICATION, never the free-form block reason, which can quote
+		 * agent output.
+		 */
+		outcome?: string;
+		projectPath?: string;
+	};
+	'board.decomposed': {
+		boardId: string;
+		/** How many triage cards the pass expanded into children. */
+		triageCardCount: number;
+		projectPath?: string;
 	};
 }
 

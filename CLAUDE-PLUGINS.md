@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.14.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.15.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -22,7 +22,7 @@ Pure, bundle-safe contracts (no Electron, no fs) in `src/shared/plugins/`:
 | `plugin-manifest.ts`                                                                                   | `PluginManifest`, `PluginTier`, `PLUGIN_ID_PATTERN`, `validatePluginManifest`, entry-traversal guard                                        |
 | `permissions.ts`                                                                                       | `PluginCapability`, `PLUGIN_CAPABILITIES`, risk/scope maps, `PermissionRequest`/`PermissionGrant`, `isPermitted` (the default-deny matcher) |
 | `contributions.ts`                                                                                     | every contribution interface, host-view block-size contract, `collectContributions`, `aggregateContributions` (built-in-wins merge)         |
-| `events.ts`                                                                                            | `PLUGIN_EVENT_TOPICS`, `PluginEventPayloads` (metadata only)                                                                                |
+| `events.ts`                                                                                            | `PLUGIN_EVENT_TOPICS`, `PluginEventPayloads` (metadata only; includes the four `board.*` topics)                                            |
 | `host-api.ts`                                                                                          | `HOST_API_VERSION`, `isHostApiCompatible` (semver gate)                                                                                     |
 | `rpc-protocol.ts`                                                                                      | `HOST_API` method->capability table, `HostRequest`/`HostResponse`/`HostControlMessage`, `extractTarget`                                     |
 | `signing.ts`                                                                                           | `SIGNATURE_FILENAME`, `SignatureStatus`, canonical signing payload                                                                          |
@@ -191,14 +191,16 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.14.0`; it added the `tool.executed` event topic and the
-`ui.panelPost` host-to-panel push method. Earlier: `1.13.0` added the
-host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
-added the `net:connect` capability and the `net.connect` / `net.send` /
-`net.close` methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added
-`iconPacks`; `1.9.0` added `hostViews`, `ui:hostView`, and the
-`ui.hostViewUpdate` / `ui.hostViewRemove` methods. Plugins declare the
-`maestro.minHostApi` matching the lowest version whose surface they use.
+The current host is `1.15.0`; it adds the four metadata-only Board event topics
+(`board.cardStatusChanged` / `board.cardCompleted` / `board.cardBlocked` /
+`board.decomposed`). Earlier: `1.14.0` added the `tool.executed` event topic and
+the `ui.panelPost` host-to-panel push method; `1.13.0` added the host-mediated
+`PluginUiSurface` registry and trusted-chrome guard; `1.12.0` added the
+`net:connect` capability and the `net.connect` / `net.send` / `net.close`
+methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added `iconPacks`;
+`1.9.0` added `hostViews`, `ui:hostView`, and the `ui.hostViewUpdate` /
+`ui.hostViewRemove` methods. Plugins declare the `maestro.minHostApi` matching
+the lowest version whose surface they use.
 
 ## Key invariants and gotchas (read before editing)
 

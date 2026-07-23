@@ -75,6 +75,16 @@ import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
+import type { Board, BoardCard } from '../../shared/board/types';
+import type { ProfileSpawnOverrides } from '../../shared/profiles/types';
+import {
+	BoardDispatcher,
+	type CardAssignment,
+	type CardNotification,
+	type CardStatusChange,
+	type CardSpawnRequest,
+	type CardSpawnResult,
+} from '../board/board-dispatcher';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -154,6 +164,81 @@ export interface CueEngineDeps {
 	 * lifecycle (`cue.runStarted` / `cue.runFinished`) to subscribed plugins;
 	 * carries ids/status only, never prompt text or output. */
 	emitPluginEvent?: (event: PluginEvent) => void;
+	/**
+	 * Board dispatcher wiring (Board Phase 3). Optional: when absent the engine
+	 * runs Cue exactly as before. When present, the engine drains each project's
+	 * `.maestro/board.yaml` task DAG on the SAME tick loop that drives Cue (no
+	 * second timer). All board side effects are injected here so the engine core
+	 * stays free of board-storage / profile / spawn internals.
+	 *
+	 * The board dispatch pass is gated on BOTH the `maestroCue` and `board`
+	 * Encore flags (Board requires Cue - see {@link CueEngineBoardDeps.getEncoreFeatures}).
+	 */
+	board?: CueEngineBoardDeps;
+}
+
+/** Injected side effects for the Board Phase 3 dispatch pass. */
+export interface CueEngineBoardDeps {
+	/**
+	 * Read the current Encore flags fresh each tick (the existing on-demand
+	 * idiom, no listener). The board pass runs only when BOTH `maestroCue` and
+	 * `board` are on, so toggling either at runtime takes effect immediately.
+	 */
+	getEncoreFeatures: () => { maestroCue?: boolean; board?: boolean };
+	/** Unique project roots to scan for a `.maestro/board.yaml`. */
+	getProjectRoots: () => string[];
+	/** Load all boards for a project root. */
+	listBoards: (projectRoot: string) => Board[];
+	/** Persist one mutated board back to its project's board.yaml. */
+	saveBoard: (projectRoot: string, board: Board) => void;
+	/**
+	 * Resolve a card's assignee profile into spawn overrides, or `null` when it
+	 * can't be resolved (missing profile / base agent). Uses Phase 1
+	 * `resolveProfileSpawnOverrides`.
+	 */
+	resolveOverrides: (projectRoot: string, card: BoardCard) => ProfileSpawnOverrides | null;
+	/**
+	 * Worker-pool assignment (Board Phase 6). When provided, cards resolve to a
+	 * FREE opt-in worker in the project pool instead of a single pinned agent.
+	 * Takes precedence over {@link resolveOverrides}. See {@link CardAssignment}.
+	 */
+	assign?: (
+		projectRoot: string,
+		card: BoardCard,
+		busyAgentIds: ReadonlySet<string>
+	) => CardAssignment;
+	/** Spawn a claimed card's assignee to completion via the existing spawn path. */
+	spawnCard: (projectRoot: string, request: CardSpawnRequest) => Promise<CardSpawnResult>;
+	/**
+	 * Kill the in-flight agent process for a card (user pressed stop). Returns
+	 * `true` when a live run was stopped. Optional: without it a cancel still
+	 * finalizes the card, it just cannot kill the process.
+	 */
+	cancelCardRun?: (projectRoot: string, cardId: string) => boolean;
+	/**
+	 * Announce a terminal card transition (`done` / `blocked`) to the user. The
+	 * host turns it into a toast; absent => silent (the CLI's headless path).
+	 */
+	notifyCard?: (projectRoot: string, event: CardNotification) => void;
+	/**
+	 * Announce EVERY card status transition (Board Phase 5). The host republishes
+	 * these on the plugin event bus as `board.cardStatusChanged`; absent => no
+	 * one is listening (the CLI's headless path).
+	 */
+	onCardStatusChanged?: (projectRoot: string, event: CardStatusChange) => void;
+	/**
+	 * Announce a completed auto-decompose pass (Board Phase 5) with the number of
+	 * triage cards it expanded. The host republishes it as `board.decomposed`.
+	 */
+	onBoardDecomposed?: (projectRoot: string, boardId: string, triageCardCount: number) => void;
+	/**
+	 * OPTIONAL auto-decompose (Board Phase 5), OFF by default. When wired AND the
+	 * board's own `autoDecompose` flag is `true`, run one decomposition pass for a
+	 * board (fan triage cards into child cards, capped per tick) and return how
+	 * many triage cards were expanded. Absent => the step is skipped and triage
+	 * cards wait for manual promotion.
+	 */
+	decompose?: (projectRoot: string, board: Board) => Promise<number>;
 }
 
 export class CueEngine {
@@ -176,6 +261,20 @@ export class CueEngine {
 	private metrics: CueMetricsCollector = createCueMetrics();
 	private queuePersistence: CueQueuePersistence;
 	private deps: CueEngineDeps;
+	/**
+	 * One {@link BoardDispatcher} per board, keyed by `${projectRoot}::${boardId}`.
+	 * Created lazily on first sighting so each board keeps its own in-flight set
+	 * across ticks (the stale-reclaim guard). Empty when board deps aren't wired.
+	 */
+	private boardDispatchers: Map<string, BoardDispatcher> = new Map();
+	/**
+	 * Board keys (`${projectRoot}::${boardId}`) with an auto-decompose pass in
+	 * flight. The decompose LLM call is async and fire-and-forget on the tick, so
+	 * this guard prevents a slow pass from being re-launched (and a triage card
+	 * double-expanded) by the next tick before it persists. Only used when the
+	 * optional `decompose` dep is wired.
+	 */
+	private boardDecomposeInFlight: Set<string> = new Set();
 	/**
 	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
 	 * does a read → mutate → write cycle that is not atomic on the filesystem;
@@ -513,7 +612,13 @@ export class CueEngine {
 			onLog: meteredOnLog,
 		});
 		this.heartbeat = createCueHeartbeat({
-			onTick: () => this.cleanupService.onTick(),
+			onTick: () => {
+				this.cleanupService.onTick();
+				// Board Phase 3: drain each project's task DAG on the SAME tick that
+				// drives Cue cleanup - no second timer. Gated on both Encore flags
+				// inside the pass; a throw here must never kill the heartbeat.
+				this.boardDispatchTick();
+			},
 			// Route heartbeat-failure notifications through the metered log
 			// channel so the engine's recordMetricFromPayload bumps the
 			// heartbeatFailures counter exactly once per failure run.
@@ -648,6 +753,9 @@ export class CueEngine {
 
 		this.runManager.reset();
 		this.fanInTracker.reset();
+		// Drop board dispatchers so a re-enable rebuilds them with fresh in-flight
+		// sets (any card left `running` is reclaimed as stale on the next tick).
+		this.boardDispatchers.clear();
 
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
@@ -1418,6 +1526,156 @@ export class CueEngine {
 			);
 			captureException(err, { operation: 'cue:hydrateActivityLogFromDb' });
 		}
+	}
+
+	/**
+	 * Board Phase 3 dispatch pass, invoked from the heartbeat tick.
+	 *
+	 * Gated on BOTH Encore flags: the Board is the first dependent Encore flag,
+	 * so "Board requires Cue" is expressed as a runtime dual-check read fresh
+	 * each tick (no new listener - matches the on-demand `encoreFeatures` read
+	 * idiom in index.ts). When either flag is off, the pass is a no-op.
+	 *
+	 * For each project root, each board gets its own {@link BoardDispatcher}
+	 * (kept in {@link boardDispatchers} so its in-flight set survives across
+	 * ticks) and one {@link BoardDispatcher.tick}. Everything the dispatcher
+	 * touches - load, save, profile resolution, spawn - is injected from
+	 * {@link CueEngineBoardDeps}, so the engine core stays board-agnostic.
+	 *
+	 * Never throws: a board or profile problem must not take down the Cue
+	 * heartbeat that shares this tick.
+	 */
+	private boardDispatchTick(): void {
+		const board = this.deps.board;
+		if (!board) return;
+		if (!this.enabled) return;
+
+		try {
+			// Dual-gate: Board requires Cue. Read both flags fresh each tick so a
+			// runtime toggle of either takes effect without an app restart.
+			const ef = board.getEncoreFeatures();
+			if (!ef.maestroCue || !ef.board) return;
+
+			const roots = new Set(board.getProjectRoots());
+			const seenKeys = new Set<string>();
+			for (const projectRoot of roots) {
+				let boards: Board[];
+				try {
+					boards = board.listBoards(projectRoot);
+				} catch (err) {
+					this.meteredOnLog(
+						'warn',
+						`[BOARD] Failed to load boards for "${projectRoot}": ${err instanceof Error ? err.message : String(err)}`
+					);
+					continue;
+				}
+				for (const b of boards) {
+					const key = `${projectRoot}::${b.id}`;
+					seenKeys.add(key);
+					// Optional auto-decompose (off by default; gated on the board's own
+					// flag). Fire-and-forget with an in-flight guard; expanded children
+					// are picked up by a subsequent tick's dispatch.
+					this.maybeAutoDecompose(key, projectRoot, b);
+					const dispatcher = this.getOrCreateBoardDispatcher(key, projectRoot, b.id);
+					dispatcher.tick();
+				}
+			}
+
+			// Drop dispatchers whose board vanished (deleted board.yaml / board) so
+			// the map doesn't grow unbounded across the engine's lifetime.
+			for (const key of [...this.boardDispatchers.keys()]) {
+				if (!seenKeys.has(key)) this.boardDispatchers.delete(key);
+			}
+		} catch (err) {
+			this.meteredOnLog(
+				'warn',
+				`[BOARD] Dispatch tick failed: ${err instanceof Error ? err.message : String(err)}`
+			);
+			captureException(err, { operation: 'board:dispatchTick' });
+		}
+	}
+
+	/**
+	 * Kick off one auto-decompose pass for a board when the optional `decompose`
+	 * dep is wired and the board opted in (`autoDecompose: true`). Guarded so a
+	 * single slow pass isn't relaunched by the next tick. Errors are logged and
+	 * never propagate to the tick loop.
+	 */
+	private maybeAutoDecompose(key: string, projectRoot: string, board: Board): void {
+		const decompose = this.deps.board?.decompose;
+		if (!decompose) return;
+		if (board.autoDecompose !== true) return;
+		if (this.boardDecomposeInFlight.has(key)) return;
+		this.boardDecomposeInFlight.add(key);
+		decompose(projectRoot, board)
+			.then((count) => {
+				if (count > 0) {
+					this.meteredOnLog('info', `[BOARD] auto-decomposed ${count} triage card(s)`);
+					this.deps.board?.onBoardDecomposed?.(projectRoot, board.id, count);
+				}
+			})
+			.catch((err) => {
+				this.meteredOnLog(
+					'warn',
+					`[BOARD] auto-decompose failed: ${err instanceof Error ? err.message : String(err)}`
+				);
+			})
+			.finally(() => {
+				this.boardDecomposeInFlight.delete(key);
+			});
+	}
+
+	/** Get (or lazily build) the dispatcher bound to one board at a project root. */
+	private getOrCreateBoardDispatcher(
+		key: string,
+		projectRoot: string,
+		boardId: string
+	): BoardDispatcher {
+		const existing = this.boardDispatchers.get(key);
+		if (existing) return existing;
+
+		const boardDeps = this.deps.board!;
+		const dispatcher = new BoardDispatcher({
+			loadBoard: () => boardDeps.listBoards(projectRoot).find((b) => b.id === boardId) ?? null,
+			saveBoard: (b: Board) => boardDeps.saveBoard(projectRoot, b),
+			resolveOverrides: (card: BoardCard): ProfileSpawnOverrides | null =>
+				boardDeps.resolveOverrides(projectRoot, card),
+			assign: boardDeps.assign
+				? (card: BoardCard, busy: ReadonlySet<string>): CardAssignment =>
+						boardDeps.assign!(projectRoot, card, busy)
+				: undefined,
+			spawn: (request: CardSpawnRequest): Promise<CardSpawnResult> =>
+				boardDeps.spawnCard(projectRoot, request),
+			cancelSpawn: boardDeps.cancelCardRun
+				? (cardId: string): boolean => boardDeps.cancelCardRun!(projectRoot, cardId)
+				: undefined,
+			notify: boardDeps.notifyCard
+				? (event: CardNotification): void => boardDeps.notifyCard!(projectRoot, event)
+				: undefined,
+			onStatusChanged: boardDeps.onCardStatusChanged
+				? (event: CardStatusChange): void => boardDeps.onCardStatusChanged!(projectRoot, event)
+				: undefined,
+			onLog: (level, message) => this.meteredOnLog(level, `[BOARD] ${message}`),
+		});
+		this.boardDispatchers.set(key, dispatcher);
+		return dispatcher;
+	}
+
+	/**
+	 * Cancel a running board card: kill its agent process and finalize the card as
+	 * `canceled`. Routed through the live {@link BoardDispatcher} for that board so
+	 * the in-flight bookkeeping (and the "ignore the killed run's result" tombstone)
+	 * stays in one place.
+	 *
+	 * Returns `false` when no dispatcher owns that board yet - the board has never
+	 * ticked in this process, so there is nothing running here to stop. The caller
+	 * (the `board:cancelCard` IPC handler) falls back to a storage-only finalize for
+	 * a card left `running` by a previous app run.
+	 */
+	cancelBoardCard(projectRoot: string, boardId: string, cardId: string): boolean {
+		const dispatcher = this.boardDispatchers.get(`${projectRoot}::${boardId}`);
+		if (!dispatcher) return false;
+		return dispatcher.cancelCard(cardId);
 	}
 }
 

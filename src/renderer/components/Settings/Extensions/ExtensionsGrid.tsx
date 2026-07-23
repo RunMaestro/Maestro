@@ -12,6 +12,7 @@ import {
 	Zap,
 	Clapperboard,
 	Bot,
+	KanbanSquare,
 	ShieldCheck,
 	ShieldAlert,
 	ShieldX,
@@ -33,6 +34,7 @@ const BUILTIN_ICONS: Record<string, LucideIcon> = {
 	maestroCue: Zap,
 	directorNotes: Clapperboard,
 	pianola: Bot,
+	board: KanbanSquare,
 };
 
 const TRUST_META: Record<

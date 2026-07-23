@@ -3922,6 +3922,75 @@ interface MaestroAPI {
 		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
+	// Agent Profiles API (named model/effort/role bundles layered on a base agent)
+	profiles: {
+		list: (projectRoot: string) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		upsert: (
+			projectRoot: string,
+			profile: import('../shared/profiles/types').AgentProfile
+		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		delete: (
+			projectRoot: string,
+			profileId: string
+		) => Promise<import('../shared/profiles/types').AgentProfile[]>;
+		/** Push after every profiles.yaml write. Returns an unsubscribe function. */
+		onProfilesChanged?: (callback: (payload: { projectRoot: string }) => void) => () => void;
+	};
+
+	// Board API (persistent task DAG stored in .maestro/board.yaml)
+	board: {
+		list: (projectRoot: string) => Promise<import('../shared/board/types').Board[]>;
+		get: (
+			projectRoot: string,
+			boardId: string
+		) => Promise<import('../shared/board/types').Board | null>;
+		create: (projectRoot: string, name: string) => Promise<import('../shared/board/types').Board>;
+		rename: (
+			projectRoot: string,
+			boardId: string,
+			name: string
+		) => Promise<import('../shared/board/types').Board>;
+		// Delete an entire board. Refuses without `force` when any card is not
+		// `done`. Resolves to the remaining boards.
+		delete: (
+			projectRoot: string,
+			boardId: string,
+			force?: boolean
+		) => Promise<import('../shared/board/types').Board[]>;
+		addCard: (
+			projectRoot: string,
+			boardId: string,
+			card: import('../shared/board/types').BoardCard
+		) => Promise<import('../shared/board/types').Board>;
+		updateCard: (
+			projectRoot: string,
+			boardId: string,
+			card: import('../shared/board/types').BoardCard
+		) => Promise<import('../shared/board/types').Board>;
+		setCardStatus: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string,
+			status: import('../shared/board/types').CardStatus
+		) => Promise<import('../shared/board/types').Board>;
+		deleteCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string
+		) => Promise<import('../shared/board/types').Board>;
+		// Cancel a running card: kills the agent process and returns the card to
+		// `todo` with a `canceled` run (excluded from the failure circuit breaker).
+		cancelCard: (
+			projectRoot: string,
+			boardId: string,
+			cardId: string
+		) => Promise<import('../shared/board/types').Board>;
+		// Push notification that board.yaml was persisted (dispatcher tick, IPC
+		// mutation, auto-decompose). Payload carries the project root only - the
+		// listener refetches. Returns an unsubscribe function.
+		onBoardChanged: (callback: (payload: { projectRoot: string }) => void) => () => void;
+	};
+
 	// Cue Backup API (snapshot + restore for cue.yaml + Cue prompts)
 	cueBackup: {
 		create: () => Promise<import('../shared/cue-backup-types').CueBackupSummary>;

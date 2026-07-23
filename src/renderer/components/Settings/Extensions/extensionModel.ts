@@ -79,6 +79,31 @@ export interface UnifiedExtension {
 	record?: PluginRecord;
 	// --- builtin-only ---
 	flag?: keyof EncoreFeatureFlags;
+	/** Another Encore flag that must be ON before this feature can be enabled
+	 * (see {@link BUILTIN_DEPENDENCIES}). Undefined for independent features. */
+	dependsOn?: keyof EncoreFeatureFlags;
+}
+
+/**
+ * First-party feature dependencies: a feature that cannot be enabled unless
+ * another Encore flag is on. Board is the first such dependent flag - it rides
+ * the Maestro Cue engine tick, so it requires `maestroCue`. The main-process
+ * dispatcher enforces the same dual-gate at runtime; this map is the
+ * renderer-side mirror that disables the tile's enable toggle until the
+ * dependency is satisfied. Keep it a single source of truth: new dependent
+ * features add one entry here.
+ */
+export const BUILTIN_DEPENDENCIES: Partial<
+	Record<keyof EncoreFeatureFlags, keyof EncoreFeatureFlags>
+> = {
+	board: 'maestroCue',
+};
+
+/** Whether a builtin's dependency (if any) is satisfied by the current flags.
+ * Plugins and features with no dependency are always considered met. */
+export function isDependencyMet(ext: UnifiedExtension, flags: EncoreFeatureFlags): boolean {
+	if (!ext.dependsOn) return true;
+	return flags[ext.dependsOn] === true;
 }
 
 /** The first-party Encore features the marketplace surfaces (NOT the `plugins`
@@ -95,6 +120,7 @@ export const BUILTIN_FEATURES: readonly BuiltinFeatureDef[] = FIRST_PARTY_PLUGIN
 			def.encoreFlag === 'coworking' ||
 			def.encoreFlag === 'opencodeServer' ||
 			def.encoreFlag === 'concerto' ||
+			def.encoreFlag === 'board' ||
 			def.encoreFlag === 'groupsPlus',
 		pluginBacking: def,
 	})
@@ -145,6 +171,7 @@ export function builtinExtension(
 		settingsNamespace: backing.settingsNamespace,
 		backgroundServiceId: backing.backgroundServices[0]?.id,
 		flag: def.flag,
+		dependsOn: BUILTIN_DEPENDENCIES[def.flag],
 	};
 }
 

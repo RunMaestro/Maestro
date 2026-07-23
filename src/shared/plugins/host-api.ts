@@ -21,18 +21,22 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.14.0 for the
- * backward-compatible additive `tool.executed` event topic (metadata-only tool
- * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
- * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES
- * cap). 1.13.0 added the additive host-mediated `PluginUiSurface` registry and
- * trusted-chrome guard. 1.12.0 added the backward-compatible additive
- * `net:connect` capability plus its `net.connect` / `net.send` / `net.close`
- * host methods (hold an outbound persistent websocket to a host scope, e.g. a
- * Discord/Slack gateway; egress-classified). 1.11.0 added virtual `groupings`
- * contributions and the presentation-only `ui:grouping` publish/clear methods;
- * 1.10.0 added the backward-compatible, data-only `iconPacks` contribution;
- * 1.9.0 added host-rendered `hostViews`, their `ui:hostView` capability, and the
+ * The host API version this Maestro build implements. Bumped to 1.15.0 for the
+ * additive Board event topics `board.cardStatusChanged` / `board.cardCompleted`
+ * / `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
+ * the card title; never prompts, run output, summaries, or block reasons).
+ * 1.14.0 added the backward-compatible additive `tool.executed` event topic
+ * (metadata-only tool lifecycle: name + timing, never arguments or results)
+ * plus the `ui.panelPost` host-to-panel push method (own-panels-only,
+ * JSON-only, MAX_PANEL_POST_BYTES cap). 1.13.0 added the additive
+ * host-mediated `PluginUiSurface` registry and trusted-chrome guard. 1.12.0
+ * added the backward-compatible additive `net:connect` capability plus its
+ * `net.connect` / `net.send` / `net.close` host methods (hold an outbound
+ * persistent websocket to a host scope, e.g. a Discord/Slack gateway;
+ * egress-classified). 1.11.0 added virtual `groupings` contributions and the
+ * presentation-only `ui:grouping` publish/clear methods; 1.10.0 added the
+ * backward-compatible, data-only `iconPacks` contribution; 1.9.0 added
+ * host-rendered `hostViews`, their `ui:hostView` capability, and the
  * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods; 1.8.0 added
  * `background.list`; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
@@ -43,7 +47,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.14.0';
+export const HOST_API_VERSION = '1.15.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

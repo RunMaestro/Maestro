@@ -6,7 +6,7 @@
  * and atomic-write logic lives in exactly one place.
  */
 
-import * as fs from 'fs';
+import { atomicWriteFileSync } from '../utils/atomic-json-store';
 
 /**
  * Extract the leading comment block from a raw YAML file - every line at the
@@ -34,21 +34,12 @@ export function extractLeadingCommentBlock(raw: string): string {
 /**
  * Write `content` to `filePath` atomically (synchronous): write to a sibling
  * `.tmp` file, then rename over the target. A crash mid-write leaves the
- * original file intact rather than a truncated, unparseable `cue.yaml`. On
- * failure the temp file is cleaned up on a best-effort basis and the error is
- * rethrown so the caller can surface it.
+ * original file intact rather than a truncated, unparseable `cue.yaml`.
+ *
+ * Thin alias over the shared {@link atomicWriteFileSync} so cue.yaml,
+ * board.yaml, and profiles.yaml all share one implementation. Kept as a named
+ * export because the Cue call sites read better with the domain name.
  */
 export function writeCueYamlAtomicSync(filePath: string, content: string): void {
-	const tmpPath = filePath + '.tmp';
-	try {
-		fs.writeFileSync(tmpPath, content, 'utf-8');
-		fs.renameSync(tmpPath, filePath);
-	} catch (err) {
-		try {
-			fs.unlinkSync(tmpPath);
-		} catch {
-			// ignore - original file is still intact
-		}
-		throw err;
-	}
+	atomicWriteFileSync(filePath, content);
 }

@@ -18,6 +18,9 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			showAgentName: true,
 			showSessionIdPill: true,
 			showSessionCostPill: true,
+			// BoardStatusIndicator reads encoreFeatures.board/.maestroCue; both off
+			// here keeps the pill hidden so these header tests stay board-agnostic.
+			encoreFeatures: {},
 		})
 	),
 }));
