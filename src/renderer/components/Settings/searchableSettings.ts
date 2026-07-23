@@ -280,6 +280,28 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-utility-agent',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Utility Agent',
+		description:
+			'Route auxiliary tasks (tab naming, context grooming) to a cheaper or faster agent with an optional model override',
+		keywords: [
+			'utility',
+			'auxiliary',
+			'agent',
+			'model',
+			'tab naming',
+			'context grooming',
+			'grooming',
+			'cheaper',
+			'faster',
+			'background',
+			'haiku',
+			'override',
+		],
+	},
+	{
 		id: 'general-spell-check',
 		tab: 'general',
 		tabLabel: 'General',

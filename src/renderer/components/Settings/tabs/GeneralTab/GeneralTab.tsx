@@ -20,6 +20,7 @@ import {
 	ThinkingModeSection,
 	ToolCallsSection,
 	UpdatesSection,
+	UtilityAgentSection,
 } from './components';
 import {
 	useForcedParallelWarningState,
@@ -132,6 +133,14 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setNewTerminalPlacement={settings.setNewTerminalPlacement}
 				openedFilePlacement={settings.openedFilePlacement}
 				setOpenedFilePlacement={settings.setOpenedFilePlacement}
+			/>
+			<UtilityAgentSection
+				theme={theme}
+				isOpen={isOpen}
+				utilityAgentId={settings.utilityAgentId}
+				setUtilityAgentId={settings.setUtilityAgentId}
+				utilityModelId={settings.utilityModelId}
+				setUtilityModelId={settings.setUtilityModelId}
 			/>
 			<SpellCheckSection
 				theme={theme}

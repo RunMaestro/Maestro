@@ -18,3 +18,4 @@ export { TabBehaviorSection } from './TabBehaviorSection';
 export { ThinkingModeSection } from './ThinkingModeSection';
 export { ToolCallsSection } from './ToolCallsSection';
 export { UpdatesSection } from './UpdatesSection';
+export { UtilityAgentSection } from './UtilityAgentSection';

@@ -91,6 +91,11 @@ export interface MaestroSettings {
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.
 	globalShowHotkey: string[];
+	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
+	// the task uses the session's own agent (fully backward compatible).
+	utilityAgentId: string | null;
+	// Optional model override for the utility agent. When null, the agent default model is used.
+	utilityModelId: string | null;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

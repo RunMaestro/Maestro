@@ -356,6 +356,12 @@ export interface UseSettingsReturn {
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 
+	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
+	utilityAgentId: string | null;
+	setUtilityAgentId: (value: string | null) => void;
+	utilityModelId: string | null;
+	setUtilityModelId: (value: string | null) => void;
+
 	// Where new tabs are inserted in the tab bar (per content type)
 	newTabPlacement: 'end' | 'after-current';
 	setNewTabPlacement: (value: 'end' | 'after-current') => void;

@@ -500,6 +500,19 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'editor',
 	},
+	utilityAgentId: {
+		description:
+			'Agent to use for auxiliary tasks (tab naming, context grooming). When null, uses the session agent.',
+		type: 'string',
+		default: null,
+		category: 'advanced',
+	},
+	utilityModelId: {
+		description: 'Model override for the utility agent. When null, uses the agent default model.',
+		type: 'string',
+		default: null,
+		category: 'advanced',
+	},
 	newTabPlacement: {
 		description:
 			'Where new AI tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',
