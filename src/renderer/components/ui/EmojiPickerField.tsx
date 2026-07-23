@@ -23,7 +23,7 @@
  * ```
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { X } from 'lucide-react';
 import data from '@emoji-mart/data';
 import Picker from '@emoji-mart/react';
@@ -35,6 +35,114 @@ import {
 	GROUP_LABEL_COLORS,
 	resolveGroupAppearance,
 } from './groupAppearanceOptions';
+
+export interface EmojiPickerOverlayProps {
+	/** Theme object for styling */
+	theme: Theme;
+	/** Called with the selected emoji's native glyph. The overlay closes after. */
+	onSelect: (emoji: string) => void;
+	/** Dismiss the overlay (backdrop click, close button, or Escape). */
+	onClose: () => void;
+	/** Optional ref to restore focus to after the overlay closes. */
+	restoreFocusRef?: React.RefObject<HTMLElement>;
+	/** Data-testid for testing */
+	'data-testid'?: string;
+}
+
+/**
+ * The full-screen emoji-mart picker overlay: backdrop blur, close button, Escape
+ * and backdrop-click dismissal, and focus restoration. Shared by both the labeled
+ * `EmojiPickerField` (group modals) and the tab-group chip's "Change icon" flow so
+ * every emoji selection surface uses the exact same picker.
+ */
+export function EmojiPickerOverlay({
+	theme,
+	onSelect,
+	onClose,
+	restoreFocusRef,
+	'data-testid': testId,
+}: EmojiPickerOverlayProps) {
+	const restoreFocus = useCallback(() => {
+		// Restore focus after a tick so the overlay has unmounted first.
+		setTimeout(() => {
+			restoreFocusRef?.current?.focus();
+		}, 0);
+	}, [restoreFocusRef]);
+
+	const handleClose = useCallback(() => {
+		onClose();
+		restoreFocus();
+	}, [onClose, restoreFocus]);
+
+	const handleEmojiSelect = useCallback(
+		(emojiData: { native: string }) => {
+			onSelect(emojiData.native);
+			onClose();
+			restoreFocus();
+		},
+		[onSelect, onClose, restoreFocus]
+	);
+
+	const handleOverlayKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				e.stopPropagation();
+				handleClose();
+			}
+		},
+		[handleClose]
+	);
+
+	return (
+		<div
+			className="fixed inset-0 modal-overlay flex items-center justify-center z-[60]"
+			onClick={handleClose}
+			onKeyDown={handleOverlayKeyDown}
+			tabIndex={0}
+			role="dialog"
+			aria-modal="true"
+			aria-label="Emoji picker"
+			data-testid={testId ? `${testId}-overlay` : undefined}
+		>
+			<div
+				className="rounded-lg border-2 shadow-2xl overflow-visible relative"
+				style={{
+					borderColor: theme.colors.accent,
+					backgroundColor: theme.colors.bgSidebar,
+				}}
+				onClick={(e) => e.stopPropagation()}
+			>
+				{/* Close button */}
+				<button
+					onClick={handleClose}
+					className="absolute -top-3 -right-3 z-10 p-2 rounded-full shadow-lg hover:scale-110 transition-transform"
+					style={{
+						backgroundColor: theme.colors.bgSidebar,
+						color: theme.colors.textMain,
+						border: `2px solid ${theme.colors.border}`,
+					}}
+					aria-label="Close emoji picker"
+					data-testid={testId ? `${testId}-close` : undefined}
+				>
+					<X className="w-4 h-4" />
+				</button>
+
+				{/* Emoji Picker */}
+				<Picker
+					data={data}
+					onEmojiSelect={handleEmojiSelect}
+					theme={theme.mode}
+					previewPosition="none"
+					searchPosition="sticky"
+					perLine={9}
+					set="native"
+					autoFocus
+				/>
+			</div>
+		</div>
+	);
+}
 
 export interface EmojiPickerFieldProps {
 	/** Theme object for styling */
@@ -87,16 +195,11 @@ export function EmojiPickerField({
 	'data-testid': testId,
 }: EmojiPickerFieldProps) {
 	const [isOpen, setIsOpen] = useState(false);
-	const overlayRef = useRef<HTMLDivElement>(null);
 
 	const handleClose = useCallback(() => {
 		setIsOpen(false);
 		onCloseProp?.();
-		// Restore focus after a brief delay to allow overlay to unmount
-		setTimeout(() => {
-			restoreFocusRef?.current?.focus();
-		}, 0);
-	}, [onCloseProp, restoreFocusRef]);
+	}, [onCloseProp]);
 
 	const handleToggle = useCallback(() => {
 		if (disabled) return;
@@ -108,34 +211,6 @@ export function EmojiPickerField({
 			onOpen?.();
 		}
 	}, [disabled, isOpen, handleClose, onOpen]);
-
-	const handleEmojiSelect = useCallback(
-		(emojiData: { native: string }) => {
-			onChange(emojiData.native);
-			setIsOpen(false);
-			onCloseProp?.();
-			// Restore focus after selection
-			setTimeout(() => {
-				restoreFocusRef?.current?.focus();
-			}, 0);
-		},
-		[onChange, onCloseProp, restoreFocusRef]
-	);
-
-	const handleOverlayKeyDown = useCallback(
-		(e: React.KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				e.stopPropagation();
-				handleClose();
-			}
-		},
-		[handleClose]
-	);
-
-	const handleBackdropClick = useCallback(() => {
-		handleClose();
-	}, [handleClose]);
 
 	return (
 		<div className="flex flex-col gap-2" data-testid={testId}>
@@ -171,53 +246,13 @@ export function EmojiPickerField({
 
 			{/* Emoji Picker Overlay */}
 			{isOpen && (
-				<div
-					ref={overlayRef}
-					className="fixed inset-0 modal-overlay flex items-center justify-center z-[60]"
-					onClick={handleBackdropClick}
-					onKeyDown={handleOverlayKeyDown}
-					tabIndex={0}
-					role="dialog"
-					aria-modal="true"
-					aria-label="Emoji picker"
-					data-testid={testId ? `${testId}-overlay` : undefined}
-				>
-					<div
-						className="rounded-lg border-2 shadow-2xl overflow-visible relative"
-						style={{
-							borderColor: theme.colors.accent,
-							backgroundColor: theme.colors.bgSidebar,
-						}}
-						onClick={(e) => e.stopPropagation()}
-					>
-						{/* Close button */}
-						<button
-							onClick={handleClose}
-							className="absolute -top-3 -right-3 z-10 p-2 rounded-full shadow-lg hover:scale-110 transition-transform"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								color: theme.colors.textMain,
-								border: `2px solid ${theme.colors.border}`,
-							}}
-							aria-label="Close emoji picker"
-							data-testid={testId ? `${testId}-close` : undefined}
-						>
-							<X className="w-4 h-4" />
-						</button>
-
-						{/* Emoji Picker */}
-						<Picker
-							data={data}
-							onEmojiSelect={handleEmojiSelect}
-							theme={theme.mode}
-							previewPosition="none"
-							searchPosition="sticky"
-							perLine={9}
-							set="native"
-							autoFocus
-						/>
-					</div>
-				</div>
+				<EmojiPickerOverlay
+					theme={theme}
+					onSelect={onChange}
+					onClose={handleClose}
+					restoreFocusRef={restoreFocusRef}
+					data-testid={testId}
+				/>
 			)}
 		</div>
 	);

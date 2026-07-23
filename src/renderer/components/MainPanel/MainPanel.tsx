@@ -427,6 +427,10 @@ export const MainPanel = React.memo(
 			[activeSession, renameGroupAction]
 		);
 
+		// Set a group chip's emoji from the shared emoji selector. Empty string clears
+		// it back to the default grid glyph. The tab-store action persists it.
+		const setGroupEmojiAction = useTabStore((s) => s.setGroupEmoji);
+
 		// Break a group apart into standalone tabs (the confirm dialog lives in the
 		// group chip). Promotes every pane back to the tab bar in left-to-right order,
 		// drops the group, and lands focus on the first promoted tab.
@@ -1232,6 +1236,7 @@ export const MainPanel = React.memo(
 									activeGroupId={activeSession.activeGroupId}
 									onGroupSelect={handleGroupSelect}
 									onGroupRename={handleGroupRename}
+									onGroupSetEmoji={setGroupEmojiAction}
 									onGroupBreakApart={handleGroupBreakApart}
 									// Accessibility
 									colorBlindMode={colorBlindMode}

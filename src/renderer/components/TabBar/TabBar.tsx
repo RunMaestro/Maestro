@@ -92,6 +92,7 @@ function TabBarInner({
 	queuedTabIds,
 	onGroupSelect,
 	onGroupRename,
+	onGroupSetEmoji,
 	onGroupBreakApart,
 	colorBlindMode,
 	sshRemote,
@@ -850,6 +851,7 @@ function TabBarInner({
 										theme={theme}
 										onSelect={(groupId) => onGroupSelect?.(groupId)}
 										onRename={onGroupRename}
+										onSetEmoji={onGroupSetEmoji}
 										onBreakApart={onGroupBreakApart}
 									/>
 								</React.Fragment>

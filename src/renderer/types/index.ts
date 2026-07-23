@@ -773,6 +773,13 @@ export type PaneRects = Map<string, PaneRect>;
 export interface TabGroup {
 	id: string;
 	name: string;
+	/**
+	 * Optional emoji shown on the group's chip in place of the default grid glyph.
+	 * Picked via the shared emoji selector (the same one agent-list groups use).
+	 * Undefined/empty falls back to the grid icon. Rides `Session.tabGroups` through
+	 * persistence, so it survives restarts.
+	 */
+	emoji?: string;
 	layout: PanelLayoutNode;
 	focusedPaneId: string | null;
 	createdAt: number;

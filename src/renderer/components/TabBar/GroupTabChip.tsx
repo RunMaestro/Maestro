@@ -1,10 +1,11 @@
 import React, { useCallback, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { LayoutGrid, Pencil, Ungroup } from 'lucide-react';
+import { LayoutGrid, Pencil, Smile, Ungroup } from 'lucide-react';
 import type { TabGroup, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { useModalStore } from '../../stores/modalStore';
+import { EmojiPickerOverlay } from '../ui';
 
 export interface GroupTabChipProps {
 	group: TabGroup;
@@ -14,6 +15,8 @@ export interface GroupTabChipProps {
 	onSelect: (groupId: string) => void;
 	/** Commit a new name for the group (raw input; upstream trims + auto-name fallback). */
 	onRename?: (groupId: string, name: string) => void;
+	/** Set the group's chip emoji (empty string clears it back to the grid glyph). */
+	onSetEmoji?: (groupId: string, emoji: string) => void;
 	/** Break the group apart into standalone tabs (gated by this chip's confirm dialog). */
 	onBreakApart?: (groupId: string) => void;
 }
@@ -36,6 +39,7 @@ export const GroupTabChip = memo(function GroupTabChip({
 	theme,
 	onSelect,
 	onRename,
+	onSetEmoji,
 	onBreakApart,
 }: GroupTabChipProps) {
 	const {
@@ -67,6 +71,24 @@ export const GroupTabChip = memo(function GroupTabChip({
 		setIsRenaming(true);
 		setOverlayOpen(false);
 	}, [onRename, group.name, setOverlayOpen]);
+
+	// Change-icon flow: opens the shared emoji selector (the same emoji-mart picker
+	// agent-list groups use). Selecting an emoji sets it on the group chip; the
+	// picker's own close button / Escape / backdrop dismiss without changing it.
+	const [isPickingEmoji, setIsPickingEmoji] = useState(false);
+
+	const startPickEmoji = useCallback(() => {
+		if (!onSetEmoji) return;
+		setOverlayOpen(false);
+		setIsPickingEmoji(true);
+	}, [onSetEmoji, setOverlayOpen]);
+
+	const handleEmojiSelect = useCallback(
+		(emoji: string) => {
+			onSetEmoji?.(group.id, emoji);
+		},
+		[onSetEmoji, group.id]
+	);
 
 	const commitRename = useCallback(() => {
 		if (!isRenaming) return;
@@ -139,7 +161,13 @@ export const GroupTabChip = memo(function GroupTabChip({
 				handleMouseLeave();
 			}}
 		>
-			<LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+			{group.emoji ? (
+				<span className="text-sm leading-none shrink-0" aria-hidden="true">
+					{group.emoji}
+				</span>
+			) : (
+				<LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+			)}
 			{isRenaming ? (
 				<input
 					ref={inputRef}
@@ -159,10 +187,10 @@ export const GroupTabChip = memo(function GroupTabChip({
 				<span className={isActive ? 'whitespace-nowrap' : 'truncate'}>{group.name}</span>
 			)}
 
-			{/* Hover overlay menu (Rename group / Break apart) */}
+			{/* Hover overlay menu (Rename group / Change icon / Break apart) */}
 			{overlayOpen &&
 				overlayPosition &&
-				(onRename || onBreakApart) &&
+				(onRename || onSetEmoji || onBreakApart) &&
 				createPortal(
 					<div
 						ref={setOverlayRef}
@@ -202,6 +230,19 @@ export const GroupTabChip = memo(function GroupTabChip({
 										Rename group
 									</button>
 								)}
+								{onSetEmoji && (
+									<button
+										onClick={(e) => {
+											e.stopPropagation();
+											startPickEmoji();
+										}}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Smile className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Change icon
+									</button>
+								)}
 								{onBreakApart && (
 									<button
 										onClick={handleBreakApartClick}
@@ -215,6 +256,20 @@ export const GroupTabChip = memo(function GroupTabChip({
 							</div>
 						</div>
 					</div>,
+					document.body
+				)}
+
+			{/* Change-icon emoji selector (shared with agent-list groups). Portaled to
+			    the body so its backdrop clicks don't bubble into the chip's activate
+			    handler. */}
+			{isPickingEmoji &&
+				onSetEmoji &&
+				createPortal(
+					<EmojiPickerOverlay
+						theme={theme}
+						onSelect={handleEmojiSelect}
+						onClose={() => setIsPickingEmoji(false)}
+					/>,
 					document.body
 				)}
 		</div>

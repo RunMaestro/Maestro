@@ -592,6 +592,19 @@ export function renameGroup(
 }
 
 /**
+ * Set the emoji shown on the group `groupId`'s chip. A blank/whitespace value
+ * clears it (the chip falls back to the default grid glyph). A no-op copy when the
+ * group isn't found. Pairs with `updateSessionWith` in the set-emoji handler.
+ */
+export function setGroupEmoji(session: Session, groupId: string, emoji: string): Session {
+	const trimmed = emoji.trim();
+	return updateGroupInSession(session, groupId, (g) => ({
+		...g,
+		emoji: trimmed.length > 0 ? trimmed : undefined,
+	}));
+}
+
+/**
  * Apply `updater` to the group `groupId` within a session and return a new
  * Session with just that group replaced. A no-op copy when the group isn't
  * found. Wraps the common `tabGroups.map(...)` shape so pane-focus / resize /

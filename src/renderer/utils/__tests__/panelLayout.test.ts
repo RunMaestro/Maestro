@@ -42,6 +42,7 @@ import {
 	splitPaneRectsByKind,
 	breakApartGroup,
 	renameGroup,
+	setGroupEmoji,
 	normalizeTabGroups,
 	resolveTabRefTitle,
 	type DropRect,
@@ -1062,6 +1063,30 @@ describe('renameGroup', () => {
 		const group = groupFrom(rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]));
 		const next = renameGroup(sessionWith(group), 'missing', 'x', 'Group: a');
 		expect(next.tabGroups[0].name).toBe('g');
+	});
+});
+
+describe('setGroupEmoji', () => {
+	function sessionWith(group: TabGroup): Session {
+		return { id: 'sess', tabGroups: [group], activeGroupId: group.id } as unknown as Session;
+	}
+
+	it('sets a trimmed emoji on the group', () => {
+		const group = groupFrom(rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]));
+		const next = setGroupEmoji(sessionWith(group), 'grp', '  🚀  ');
+		expect(next.tabGroups[0].emoji).toBe('🚀');
+	});
+
+	it('clears the emoji when given a blank value', () => {
+		const group = { ...groupFrom(rowSplit('root', [leaf('l1', aiRef('a'))])), emoji: '🚀' };
+		const next = setGroupEmoji(sessionWith(group), 'grp', '   ');
+		expect(next.tabGroups[0].emoji).toBeUndefined();
+	});
+
+	it('is a no-op copy when the group is unknown', () => {
+		const group = { ...groupFrom(rowSplit('root', [leaf('l1', aiRef('a'))])), emoji: '🚀' };
+		const next = setGroupEmoji(sessionWith(group), 'missing', '🎯');
+		expect(next.tabGroups[0].emoji).toBe('🚀');
 	});
 });
 

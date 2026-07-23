@@ -123,6 +123,11 @@ export interface TabBarProps {
 	 */
 	onGroupRename?: (groupId: string, name: string) => void;
 	/**
+	 * Set a tab group's chip emoji. An empty string clears it back to the default
+	 * grid glyph. Persisted upstream via the tab-store action.
+	 */
+	onGroupSetEmoji?: (groupId: string, emoji: string) => void;
+	/**
 	 * Break a tab group apart: split it back into individual standalone tabs. The
 	 * chip gates this behind a confirmation dialog before invoking the handler.
 	 */

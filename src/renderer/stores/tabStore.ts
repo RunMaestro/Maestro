@@ -58,7 +58,10 @@ import {
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
 import { useSessionStore, selectActiveSession, updateSessionWith } from './sessionStore';
-import { renameGroup as renameGroupHelper } from '../utils/panelLayout';
+import {
+	renameGroup as renameGroupHelper,
+	setGroupEmoji as setGroupEmojiHelper,
+} from '../utils/panelLayout';
 import { logger } from '../utils/logger';
 
 /**
@@ -198,6 +201,12 @@ export interface TabStoreActions {
 	 * leaves an unnamed chip. Persisted via updateSessionWith.
 	 */
 	renameGroup: (groupId: string, name: string, fallbackName: string) => void;
+
+	/**
+	 * Set the emoji shown on a tiled tab group's chip. An empty string clears it
+	 * back to the default grid glyph. Persisted via updateSessionWith.
+	 */
+	setGroupEmoji: (groupId: string, emoji: string) => void;
 
 	/**
 	 * Toggle read-only mode on an AI tab.
@@ -542,6 +551,12 @@ export const useTabStore = create<TabStore>()((set) => ({
 		const session = getActiveSession();
 		if (!session) return;
 		updateSessionWith(session.id, (s) => renameGroupHelper(s, groupId, name, fallbackName));
+	},
+
+	setGroupEmoji: (groupId, emoji) => {
+		const session = getActiveSession();
+		if (!session) return;
+		updateSessionWith(session.id, (s) => setGroupEmojiHelper(s, groupId, emoji));
 	},
 
 	toggleReadOnly: (tabId) => {
