@@ -533,6 +533,8 @@ maestro-cli tab unstar <tab-id>
 
 Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`).
 
+An agent running inside Maestro gets its **own** tab ID in its system prompt (the `Tab ID` line under Session Information, from the `{{TAB_ID}}` variable), so you can just tell it "close this tab" or "rename this tab to Docs" and it will act on the right one. Every other entry in `session list` is a different live conversation, so agents are instructed never to guess a tab ID from that list.
+
 ### Listing Resources
 
 ```bash

@@ -27,7 +27,7 @@ Run `<group> --help` for the exact subcommands and flags.
 - **cue** - list and trigger Cue subscriptions (event model + YAML schema live in `_maestro-cue`).
 - **open-file / open-browser / open-terminal / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately.
 - **notify toast|flash** - surface in-app notifications (see the judgment below).
-- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes.
+- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. For `tab close|rename|star`, your own tab is the `Tab ID` in your system prompt's Session Information - never guess one out of `session list`, since every other row there is a different live conversation.
 - **stats / stats-query** - read the Usage Dashboard's SQLite store directly (discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"`).
 - **director-notes / gist / prompts / status / doctor** - cross-agent history synopses, transcript export, prompt self-reference, diagnostics.
 
