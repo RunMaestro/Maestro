@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { PlaybookStatus } from '../../shared/types';
 
 /**
  * Playbook document configuration
@@ -129,6 +130,26 @@ export function createAutorunApi() {
 				loopNumber,
 				sshRemoteId
 			),
+
+		// Watch .maestro/STATUS.json for live playbook progress. Returns the
+		// current status (if the file already exists) so the panel can populate
+		// immediately; subsequent updates arrive via onStatusChanged.
+		watchStatus: (projectPath: string): Promise<{ status: PlaybookStatus | null }> =>
+			ipcRenderer.invoke('autorun:watchStatus', projectPath),
+
+		unwatchStatus: (projectPath: string): Promise<Record<string, never>> =>
+			ipcRenderer.invoke('autorun:unwatchStatus', projectPath),
+
+		onStatusChanged: (
+			handler: (data: { projectPath: string; status: PlaybookStatus | null }) => void
+		) => {
+			const wrappedHandler = (
+				_event: Electron.IpcRendererEvent,
+				data: { projectPath: string; status: PlaybookStatus | null }
+			) => handler(data);
+			ipcRenderer.on('autorun:statusChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('autorun:statusChanged', wrappedHandler);
+		},
 	};
 }
 

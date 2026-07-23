@@ -7,9 +7,10 @@ import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
-import { SshRemoteConfig } from '../../../shared/types';
+import { SshRemoteConfig, PlaybookStatus } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { createSafeSend } from '../../utils/safe-send';
+import { captureException } from '../../utils/sentry';
 import {
 	readDirRemote,
 	readFileRemote,
@@ -19,7 +20,7 @@ import {
 	deleteRemote,
 	statRemote,
 } from '../../utils/remote-fs';
-import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR, STATUS_PATH } from '../../../shared/maestro-paths';
 
 const LOG_CONTEXT = '[AutoRun]';
 
@@ -72,6 +73,13 @@ const clearPendingChangesForFolder = (folderPath: string) => {
 	clearTimeout(pending.timer);
 	autoRunWatchPending.delete(folderPath);
 };
+
+// Playbook STATUS.json watchers, keyed by project path. A running playbook can
+// write .maestro/STATUS.json to surface live progress; we watch the file and
+// push each parsed update to the renderer. Cleaned up on unwatch, and on quit.
+const statusWatchers = new Map<string, FSWatcher>();
+// Per-project debounce timer so a burst of writes coalesces into one read.
+const statusWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
 
 /**
  * Tree node interface for autorun directory scanning.
@@ -1465,6 +1473,119 @@ export function registerAutorunHandlers(
 		)
 	);
 
+	// Read and broadcast the current STATUS.json for a project. Malformed JSON is
+	// an expected, recoverable failure (a playbook may write mid-flush): we log,
+	// report to Sentry for visibility, and skip without crashing the watcher. A
+	// missing file is normal and stays silent.
+	const readAndBroadcastStatus = async (projectPath: string, statusFilePath: string) => {
+		let content: string;
+		try {
+			content = await fs.readFile(statusFilePath, 'utf-8');
+		} catch (err) {
+			// ENOENT: file was removed between the event and the read - nothing to send.
+			if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
+			return;
+		}
+
+		let status: PlaybookStatus;
+		try {
+			status = JSON.parse(content) as PlaybookStatus;
+		} catch (err) {
+			logger.warn(`${LOG_CONTEXT} Malformed STATUS.json in ${projectPath}: ${err}`, LOG_CONTEXT);
+			await captureException(err, { operation: 'watchStatus:parse', projectPath });
+			return;
+		}
+
+		safeSend('autorun:statusChanged', { projectPath, status });
+	};
+
+	// Watch for .maestro/STATUS.json changes in a project directory. This is a
+	// read-only watcher: it never creates the .maestro directory. chokidar watches
+	// the path even if it does not exist yet and fires once the playbook writes it.
+	ipcMain.handle(
+		'autorun:watchStatus',
+		createIpcHandler(handlerOpts('watchStatus'), async (projectPath: string) => {
+			// Replace any existing watcher for this path (idempotent re-arm).
+			const existing = statusWatchers.get(projectPath);
+			if (existing) {
+				await existing.close();
+				statusWatchers.delete(projectPath);
+			}
+
+			const statusFilePath = path.join(projectPath, STATUS_PATH);
+
+			// Read the current status once so the panel populates immediately.
+			let initialStatus: PlaybookStatus | null = null;
+			try {
+				const content = await fs.readFile(statusFilePath, 'utf-8');
+				initialStatus = JSON.parse(content) as PlaybookStatus;
+			} catch {
+				// Missing or malformed on first read: start blank, the watcher will catch up.
+			}
+
+			const watcher = chokidar.watch(statusFilePath, {
+				persistent: true,
+				ignoreInitial: true,
+			});
+
+			const scheduleRead = () => {
+				const pending = statusWatchDebounceTimers.get(projectPath);
+				if (pending) clearTimeout(pending);
+				statusWatchDebounceTimers.set(
+					projectPath,
+					setTimeout(() => {
+						statusWatchDebounceTimers.delete(projectPath);
+						// Let unexpected read errors bubble to Sentry; parse errors are handled inside.
+						void readAndBroadcastStatus(projectPath, statusFilePath);
+					}, 300)
+				);
+			};
+
+			watcher.on('add', scheduleRead);
+			watcher.on('change', scheduleRead);
+			watcher.on('unlink', () => {
+				// File deleted: clear the status in the renderer.
+				const pending = statusWatchDebounceTimers.get(projectPath);
+				if (pending) {
+					clearTimeout(pending);
+					statusWatchDebounceTimers.delete(projectPath);
+				}
+				safeSend('autorun:statusChanged', { projectPath, status: null });
+			});
+			watcher.on('error', (error) => {
+				logger.error(
+					`${LOG_CONTEXT} STATUS.json watcher error for ${projectPath}`,
+					LOG_CONTEXT,
+					error
+				);
+			});
+
+			statusWatchers.set(projectPath, watcher);
+			logger.info(`Started watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+
+			return { status: initialStatus };
+		})
+	);
+
+	// Stop watching STATUS.json for a project.
+	ipcMain.handle(
+		'autorun:unwatchStatus',
+		createIpcHandler(handlerOpts('unwatchStatus', false), async (projectPath: string) => {
+			const watcher = statusWatchers.get(projectPath);
+			if (watcher) {
+				await watcher.close();
+				statusWatchers.delete(projectPath);
+				const pending = statusWatchDebounceTimers.get(projectPath);
+				if (pending) {
+					clearTimeout(pending);
+					statusWatchDebounceTimers.delete(projectPath);
+				}
+				logger.info(`Stopped watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+			}
+			return {};
+		})
+	);
+
 	// Clean up all watchers on app quit
 	app.on('before-quit', () => {
 		for (const [folderPath, watcher] of autoRunWatchers) {
@@ -1472,6 +1593,16 @@ export function registerAutorunHandlers(
 			logger.info(`Cleaned up Auto Run watcher for: ${folderPath}`, LOG_CONTEXT);
 		}
 		autoRunWatchers.clear();
+
+		for (const [projectPath, watcher] of statusWatchers) {
+			watcher.close();
+			logger.info(`Cleaned up STATUS.json watcher for: ${projectPath}`, LOG_CONTEXT);
+		}
+		statusWatchers.clear();
+		for (const timer of statusWatchDebounceTimers.values()) {
+			clearTimeout(timer);
+		}
+		statusWatchDebounceTimers.clear();
 	});
 
 	logger.debug(`${LOG_CONTEXT} Auto Run IPC handlers registered`);

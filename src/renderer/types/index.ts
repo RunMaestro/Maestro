@@ -25,6 +25,7 @@ export type {
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
 	Playbook,
+	PlaybookStatus,
 	TaskSelectionMode,
 	ThinkingMode,
 	WorktreeRunTarget,
@@ -45,6 +46,7 @@ import type {
 	ToolType,
 	ThinkingMode,
 	TaskSelectionMode,
+	PlaybookStatus,
 } from '../../shared/types';
 
 // Re-export group chat types from shared location
@@ -454,6 +456,11 @@ export interface BatchRunState {
 	goalRationale?: string; // One-line rationale accompanying the latest progress report
 	goalIteration?: number; // 1-based iteration number the goal loop is on
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
+
+	// Live playbook status parsed from .maestro/STATUS.json (feature, phase,
+	// tests, summary). Populated by the STATUS.json watcher while the run is
+	// active; cleared when the file is deleted or the run completes.
+	playbookStatus?: PlaybookStatus;
 }
 
 // Badge unlock record for history tracking

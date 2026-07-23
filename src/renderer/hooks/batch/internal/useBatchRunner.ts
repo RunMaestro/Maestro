@@ -407,6 +407,31 @@ export function useBatchRunner({
 			// Prevent system sleep while Auto Run is active
 			window.maestro.power.addReason(`autorun:${sessionId}`);
 
+			// Watch .maestro/STATUS.json so playbook-reported progress (feature,
+			// phase, tests, summary) surfaces live in the Auto Run panel. Watching is
+			// optional: a failure here must never abort the run. Detached below next
+			// to power.removeReason (and on app quit as a backstop).
+			const statusProjectPath = effectiveCwd;
+			let statusCleanup: (() => void) | null = null;
+			try {
+				const { status: initialStatus } =
+					await window.maestro.autorun.watchStatus(statusProjectPath);
+				if (initialStatus) {
+					dispatch({ type: 'UPDATE_PLAYBOOK_STATUS', sessionId, status: initialStatus });
+				}
+				statusCleanup = window.maestro.autorun.onStatusChanged((data) => {
+					if (data.projectPath === statusProjectPath) {
+						dispatch({
+							type: 'UPDATE_PLAYBOOK_STATUS',
+							sessionId,
+							status: data.status ?? undefined,
+						});
+					}
+				});
+			} catch {
+				// STATUS.json watching is optional - don't fail the batch.
+			}
+
 			// Start stats tracking for this Auto Run session
 			let statsAutoRunId: string | null = null;
 			try {
@@ -1573,6 +1598,18 @@ export function useBatchRunner({
 
 			// Allow system to sleep now that Auto Run is complete
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
+
+			// Detach the STATUS.json watcher for this run. The main-process watcher
+			// is also torn down on app quit, and re-arming closes any prior watcher,
+			// so this is best-effort cleanup.
+			if (statusCleanup) {
+				statusCleanup();
+			}
+			try {
+				await window.maestro.autorun.unwatchStatus(statusProjectPath);
+			} catch {
+				// Ignore cleanup errors.
+			}
 			// Note: updateBatchStateAndBroadcast is accessed via ref to avoid stale closure in long-running async
 			// flushDebouncedUpdate is stable (empty deps in useSessionDebounce) so adding it doesn't cause re-renders
 		},
