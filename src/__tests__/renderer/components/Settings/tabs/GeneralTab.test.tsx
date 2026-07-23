@@ -951,7 +951,25 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 			fireEvent.click(screen.getByRole('switch', { name: 'Show tool calls in responses' }));
+			// Clicking the switch fires exactly once; the wrapper onClick must not
+			// also fire (ToggleSwitch stops propagation).
 			expect(mockSetShowToolCalls).toHaveBeenCalledWith(false);
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('toggles once when the row is activated by keyboard', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const section = screen
+				.getByText('Show tool calls in responses')
+				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
+			// Enter on the row toggles once; the target-guard in onKeyDown keeps a
+			// focused nested switch from also triggering the row handler.
+			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
 		});
 	});
 

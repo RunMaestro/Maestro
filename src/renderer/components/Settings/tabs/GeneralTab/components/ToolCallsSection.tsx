@@ -29,6 +29,10 @@ export function ToolCallsSection({
 					role="button"
 					tabIndex={0}
 					onKeyDown={(e) => {
+						// Only activate from the row itself. The nested ToggleSwitch handles
+						// its own keyboard events, so ignoring descendant keydowns keeps a
+						// focused switch from toggling twice (row handler + native click).
+						if (e.target !== e.currentTarget) return;
 						if (e.key === 'Enter' || e.key === ' ') {
 							e.preventDefault();
 							setShowToolCalls(!showToolCalls);
