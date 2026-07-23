@@ -37,7 +37,19 @@ ver_gt() {
 	[ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
 }
 
-mapfile -t NODES < <(find "$SEARCH_DIR" -name '*.node' -type f 2>/dev/null | sort)
+# List candidate modules, failing closed on any scan error: a partial scan that
+# silently drops a binary (e.g. a permission error on a subdir) must not let an
+# over-floor module slip through undetected.
+find_out="$(mktemp)"
+find_err="$(mktemp)"
+if ! find "$SEARCH_DIR" -name '*.node' -type f >"$find_out" 2>"$find_err" || [ -s "$find_err" ]; then
+	echo "✗ ERROR: scanning $SEARCH_DIR for .node files failed:" >&2
+	sed 's/^/    /' "$find_err" >&2
+	rm -f "$find_out" "$find_err"
+	exit 1
+fi
+mapfile -t NODES < <(sort "$find_out")
+rm -f "$find_out" "$find_err"
 if [ "${#NODES[@]}" -eq 0 ]; then
 	echo "✗ ERROR: no .node files found under $SEARCH_DIR" >&2
 	exit 1
@@ -58,9 +70,21 @@ for bin in "${NODES[@]}"; do
 			continue
 			;;
 	esac
-	# Highest GLIBC_x.y[.z] versioned symbol this binary requires. Empty for
-	# musl-linked or statically linked objects (no glibc symbol versioning).
-	max_req=$(readelf -V "$bin" 2>/dev/null \
+	# Read the ELF version info once, failing closed on a readelf error. A bare
+	# `readelf ... || true` would turn a parse failure into an empty result and
+	# skip the binary as "musl/static" - an x86-64 .node we cannot inspect must
+	# fail the guard instead of slipping through.
+	if ! readelf_out=$(readelf -V "$bin" 2>&1); then
+		echo "  ✗ ERROR: readelf failed on $rel (failing closed):" >&2
+		printf '%s\n' "$readelf_out" | sed 's/^/      /' >&2
+		FAIL=1
+		continue
+	fi
+	# Highest GLIBC_x.y[.z] version this binary requires, taken ONLY from the
+	# version-needs section (.gnu.version_r) so the symbol/def tables can't skew
+	# the result. Empty for musl-linked or statically linked objects.
+	max_req=$(printf '%s\n' "$readelf_out" \
+		| awk "/Version needs section/{needs=1; next} /section '/{needs=0} needs" \
 		| grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' \
 		| sed 's/^GLIBC_//' \
 		| sort -V \
