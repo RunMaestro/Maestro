@@ -102,7 +102,7 @@ export function AdditionalDirectoriesSection({
 	// New rows default to read-only: the safe grant, and the one users want most
 	// (reference material). Write is a deliberate second click.
 	const addDirectory = useCallback(() => {
-		onChange([...directories, { path: '', read: true, write: false }]);
+		onChange([...directories, { path: '', read: true, write: false, description: '' }]);
 	}, [directories, onChange]);
 
 	const browseAt = useCallback(
@@ -192,6 +192,15 @@ export function AdditionalDirectoriesSection({
 									</>
 								}
 							/>
+							<div className="mt-1">
+								<FormInput
+									theme={theme}
+									value={dir.description ?? ''}
+									onChange={(value) => updateAt(index, { description: value })}
+									placeholder="Optional: what this directory is for or how to use it"
+									heightClass="p-2"
+								/>
+							</div>
 							{inert && dir.path.trim() && (
 								<p className="mt-1 text-xs" style={{ color: theme.colors.warning }}>
 									No access selected - this directory will not be given to the agent.

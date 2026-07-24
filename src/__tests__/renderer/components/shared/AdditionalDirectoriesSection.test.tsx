@@ -39,7 +39,23 @@ describe('AdditionalDirectoriesSection', () => {
 
 		fireEvent.click(screen.getByText('Add Directory'));
 
-		expect(onChange).toHaveBeenCalledWith([{ path: '', read: true, write: false }]);
+		expect(onChange).toHaveBeenCalledWith([
+			{ path: '', read: true, write: false, description: '' },
+		]);
+	});
+
+	it('edits the optional per-directory description', () => {
+		const dirs: AdditionalDirectory[] = [{ path: '/a/docs', read: true, write: false }];
+		const onChange = renderSection(dirs);
+
+		fireEvent.change(
+			screen.getByPlaceholderText('Optional: what this directory is for or how to use it'),
+			{ target: { value: 'API reference material' } }
+		);
+
+		expect(onChange).toHaveBeenCalledWith([
+			{ path: '/a/docs', read: true, write: false, description: 'API reference material' },
+		]);
 	});
 
 	it('toggles read and write independently', () => {

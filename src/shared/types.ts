@@ -414,11 +414,16 @@ export interface BatchDocumentEntry {
  * `read` and `write` are independent - a directory can be read-only (reference
  * material), write-only (a drop box the agent should never read back), or both.
  * An entry with neither flag set is inert and is omitted from the prompt.
+ *
+ * `description` is an optional hint the Conductor can attach to explain what the
+ * directory is for or how the agent should use it. When present it is rendered
+ * into the {{ADDITIONAL_DIRECTORIES}} prompt block alongside the access rule.
  */
 export interface AdditionalDirectory {
 	path: string;
 	read: boolean;
 	write: boolean;
+	description?: string;
 }
 
 // Git worktree configuration for Auto Run

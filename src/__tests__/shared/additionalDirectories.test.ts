@@ -72,6 +72,23 @@ describe('normalizeAdditionalDirectories', () => {
 		const result = normalizeAdditionalDirectories([{ path: '/a/docs', read: false, write: false }]);
 		expect(result).toEqual([{ path: '/a/docs', read: false, write: false }]);
 	});
+
+	it('carries a trimmed description through', () => {
+		const result = normalizeAdditionalDirectories([
+			{ path: '/a/docs', read: true, write: false, description: '  API reference material  ' },
+		]);
+		expect(result).toEqual([
+			{ path: '/a/docs', read: true, write: false, description: 'API reference material' },
+		]);
+	});
+
+	it('omits the description field when it is blank', () => {
+		const result = normalizeAdditionalDirectories([
+			{ path: '/a/docs', read: true, write: false, description: '   ' },
+		]);
+		expect(result).toEqual([{ path: '/a/docs', read: true, write: false }]);
+		expect(result?.[0]).not.toHaveProperty('description');
+	});
 });
 
 describe('formatAdditionalDirectoriesForPrompt', () => {
@@ -109,6 +126,35 @@ describe('formatAdditionalDirectoriesForPrompt', () => {
 		]);
 		expect(block).toContain('/granted');
 		expect(block).not.toContain('/inert');
+	});
+
+	it('keeps the two-column table when no grant has a description', () => {
+		const block = formatAdditionalDirectoriesForPrompt([{ path: '/ro', read: true, write: false }]);
+		expect(block).toContain('| Directory | Access |');
+		expect(block).not.toContain('| Notes |');
+	});
+
+	it('adds a Notes column carrying each description when any grant has one', () => {
+		const block = formatAdditionalDirectoriesForPrompt([
+			{ path: '/specs', read: true, write: false, description: 'API reference material' },
+			{ path: '/drop', read: false, write: true },
+		]);
+		expect(block).toContain('| Directory | Access | Notes |');
+		expect(block).toContain('| `/specs` | Read only | API reference material |');
+		// A grant with no description still renders its (empty) cell.
+		expect(block).toContain('| `/drop` | Write only |  |');
+	});
+
+	it('escapes pipes and collapses newlines in a description so the table survives', () => {
+		const block = formatAdditionalDirectoriesForPrompt([
+			{
+				path: '/specs',
+				read: true,
+				write: false,
+				description: 'read a | b\nthen stop',
+			},
+		]);
+		expect(block).toContain('| `/specs` | Read only | read a \\| b then stop |');
 	});
 });
 

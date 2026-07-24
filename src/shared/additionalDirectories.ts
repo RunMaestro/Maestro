@@ -60,7 +60,15 @@ export function normalizeAdditionalDirectories(
 	for (const dir of dirs) {
 		const path = expandHome(dir.path.trim(), homeDir);
 		if (!path) continue;
-		byPath.set(path, { path, read: !!dir.read, write: !!dir.write });
+		const description = dir.description?.trim();
+		byPath.set(path, {
+			path,
+			read: !!dir.read,
+			write: !!dir.write,
+			// Keep the field absent (not an empty string) when unused so it doesn't
+			// persist on every agent.
+			...(description ? { description } : {}),
+		});
 	}
 
 	const normalized = [...byPath.values()];
@@ -111,6 +119,15 @@ function accessLabel(dir: AdditionalDirectory): string {
 }
 
 /**
+ * Make a freeform description safe to drop into a markdown table cell: collapse
+ * any newlines/runs of whitespace to single spaces and escape pipes so a stray
+ * `|` in the user's hint can't break the table.
+ */
+function sanitizeDescriptionCell(description: string): string {
+	return description.trim().replace(/\s+/g, ' ').replace(/\|/g, '\\|');
+}
+
+/**
  * Render the `{{ADDITIONAL_DIRECTORIES}}` block for the system prompt.
  *
  * Emits the section heading along with the table so the whole block collapses to
@@ -123,7 +140,21 @@ export function formatAdditionalDirectoriesForPrompt(
 	const granted = dirsWithAnyAccess(dirs);
 	if (granted.length === 0) return '';
 
-	const rows = granted.map((d) => `| \`${d.path.trim()}\` | ${accessLabel(d)} |`).join('\n');
+	// Only widen the table with a Notes column when at least one grant carries a
+	// description - otherwise the block stays the lean two-column table.
+	const hasNotes = granted.some((d) => d.description?.trim());
+
+	const rows = granted
+		.map((d) => {
+			const cells = [`\`${d.path.trim()}\``, accessLabel(d)];
+			if (hasNotes) cells.push(sanitizeDescriptionCell(d.description ?? ''));
+			return `| ${cells.join(' | ')} |`;
+		})
+		.join('\n');
+
+	const header = hasNotes
+		? '| Directory | Access | Notes |\n| --------- | ------ | ----- |'
+		: '| Directory | Access |\n| --------- | ------ |';
 
 	return `## Additional Directories
 
@@ -132,9 +163,8 @@ The Conductor has granted you access to these directories in addition to your wo
 - **Read + Write** - read from and write to this directory and its subdirectories.
 - **Read only** - read freely; never create, modify, move, or delete anything inside it.
 - **Write only** - create and modify files here; never read the existing contents back.
-
-| Directory | Access |
-| --------- | ------ |
+${hasNotes ? '\nThe Notes column is a hint from the Conductor on what a directory is for or how to use it; treat it as guidance, not as a change to the access rule.\n' : ''}
+${header}
 ${rows}
 
 These grants are additive. Every other directory outside your working directory remains read-only for reference and off-limits for writes. If a task needs access this list does not cover, say so instead of reaching outside it.`;
