@@ -170,7 +170,13 @@ describe('Tab Naming IPC Handlers', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -259,6 +265,84 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Login Form Implementation');
+		});
+
+		it('routes naming to the configured utility agent instead of the session agent', async () => {
+			// A cheaper/faster utility agent (codex) is configured; tab naming for a
+			// claude-code session must resolve to codex for detection AND the spawn.
+			const mockCodexAgent: AgentConfig = {
+				id: 'codex',
+				name: 'OpenAI Codex',
+				command: 'codex',
+				path: '/usr/local/bin/codex',
+				args: [],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCodexAgent);
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'utilityAgentId') return 'codex';
+				if (key === 'utilityModelId') return 'gpt-4o-mini';
+				return defaultValue ?? {};
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Detection and spawn must both use the utility agent, not claude-code.
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('codex');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'codex' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('uses the session agent when no utility agent is configured (backward compatible)', async () => {
+			// Default settings (utilityAgentId = null) must leave the session agent untouched.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('claude-code');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'claude-code' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
 		});
 
 		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
@@ -1365,9 +1449,11 @@ describe('Tab Naming IPC Handlers', () => {
 			// (CLAUDE_CODE_CONFIG_DIR / ANTHROPIC_API_KEY). Tab naming used to drop both,
 			// so a working chat could still fail naming with "Not logged in".
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
-			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) =>
-				key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: '/home/u/.claude' } : (fallback ?? {})
-			);
+			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key === 'shellEnvVars') return { CLAUDE_CONFIG_DIR: '/home/u/.claude' };
+				if (key === 'utilityAgentId' || key === 'utilityModelId') return fallback ?? null;
+				return fallback ?? {};
+			});
 			const finish = wireProcessEvents();
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -1536,7 +1622,13 @@ describe('tab naming diagnostic logging', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -1811,7 +1903,11 @@ describe('extractTabName utility', () => {
 			};
 
 			mockSettingsStore = {
-				get: vi.fn().mockReturnValue({}),
+				get: vi.fn((key: string, defaultValue?: unknown) =>
+					key === 'utilityAgentId' || key === 'utilityModelId'
+						? (defaultValue ?? null)
+						: (defaultValue ?? {})
+				),
 				set: vi.fn(),
 			};
 

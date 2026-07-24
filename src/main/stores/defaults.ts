@@ -90,6 +90,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// Utility agent for auxiliary tasks (tab naming, context grooming); null = use session agent
+	utilityAgentId: null,
+	utilityModelId: null,
 	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
 	coworkingBrowserInteraction: [],
 	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)

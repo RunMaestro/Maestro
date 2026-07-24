@@ -3423,6 +3423,7 @@ function setupIpcHandlers() {
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
+		settingsStore: store,
 	});
 
 	// Register Marketplace handlers for fetching and importing playbooks
