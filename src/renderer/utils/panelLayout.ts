@@ -1071,6 +1071,50 @@ function pruneLayoutToLiveTabs(
  * Wired into the session-restoration path so it runs once per session before it
  * lands in the store. A session with no groups round-trips untouched.
  */
+/**
+ * Field patch that makes `ref` the active standalone tab: sets that kind's active
+ * pointer, clears the competing pointers, and picks the matching inputMode. Mirrors
+ * the per-kind activation in navigateToUnifiedTabByIndex so an auto-dissolved
+ * group's lone survivor lands full-screen instead of stranding the panel on a stale
+ * pointer. Does NOT touch activeGroupId (callers clear it as part of the dissolve).
+ * A `group` ref (never a leaf) yields an empty patch.
+ */
+function standaloneFocusPatch(ref: UnifiedTabRef): Partial<Session> {
+	switch (ref.type) {
+		case 'ai':
+			return {
+				activeTabId: ref.id,
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			};
+		case 'file':
+			return {
+				activeFileTabId: ref.id,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			};
+		case 'browser':
+			return {
+				activeBrowserTabId: ref.id,
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			};
+		case 'terminal':
+			return {
+				activeTerminalTabId: ref.id,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'terminal',
+			};
+		default:
+			return {};
+	}
+}
+
 export function normalizeTabGroups(session: Session): Session {
 	const groups = session.tabGroups ?? [];
 	if (groups.length === 0) {
@@ -1087,6 +1131,10 @@ export function normalizeTabGroups(session: Session): Session {
 	const keptGroups: TabGroup[] = [];
 	const promoted: UnifiedTabRef[] = [];
 	const removedGroupIds = new Set<string>();
+	// When the ACTIVE group collapses to its last pane, the survivor this points at is
+	// promoted to the active standalone tab so it lands full-screen. Null otherwise
+	// (background group dissolve, or a 0-survivor teardown - leave the panel alone).
+	let activeSurvivorRef: UnifiedTabRef | null = null;
 	// Stays false while every group survives with all its leaves intact, so a fully
 	// valid session round-trips as the same reference (cheap no-op on the hot path).
 	let changed = false;
@@ -1101,11 +1149,20 @@ export function normalizeTabGroups(session: Session): Session {
 			changed = true;
 			removedGroupIds.add(group.id);
 			if (prunedLayout) {
-				for (const ref of collectLeafTabRefs(prunedLayout)) {
+				const survivors = collectLeafTabRefs(prunedLayout);
+				for (const ref of survivors) {
 					if (!alreadyOrdered.has(tabRefKey(ref))) {
 						alreadyOrdered.add(tabRefKey(ref));
 						promoted.push(ref);
 					}
+				}
+				// The active group dropping to a single pane: land that survivor as the
+				// active standalone tab. The dissolve clears activeGroupId, but the panel
+				// then falls back to whatever active pointer remains - and a non-AI pane's
+				// pointer is cleared on group entry and never re-synced while tiled, so
+				// without this the surviving tab wouldn't actually show.
+				if (session.activeGroupId === group.id && survivors.length === 1) {
+					activeSurvivorRef = survivors[0];
 				}
 			}
 			continue;
@@ -1187,5 +1244,6 @@ export function normalizeTabGroups(session: Session): Session {
 		tabGroups: keptGroups,
 		unifiedTabOrder: orderChanged ? reconciledOrder : session.unifiedTabOrder,
 		activeGroupId: nextActiveGroupId,
+		...(activeSurvivorRef ? standaloneFocusPatch(activeSurvivorRef) : {}),
 	};
 }

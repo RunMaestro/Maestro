@@ -1368,6 +1368,66 @@ describe('normalizeTabGroups', () => {
 		expect(next.activeGroupId).toBeNull();
 	});
 
+	it('lands the active group survivor as the active AI tab when it collapses to one pane', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('gone'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(sessionWith([group], { aiIds: ['a'], activeGroupId: 'grp' }));
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeGroupId).toBeNull();
+		expect(next.activeTabId).toBe('a');
+		expect(next.inputMode).toBe('ai');
+		expect(next.activeFileTabId).toBeNull();
+		expect(next.activeTerminalTabId).toBeNull();
+		expect(next.activeBrowserTabId).toBeNull();
+	});
+
+	it('lands a non-AI active group survivor full-screen (file -> activeFileTabId, ai mode)', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', fileRef('f')), leaf('l2', aiRef('gone'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(sessionWith([group], { fileIds: ['f'], activeGroupId: 'grp' }));
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeGroupId).toBeNull();
+		expect(next.activeFileTabId).toBe('f');
+		expect(next.inputMode).toBe('ai');
+	});
+
+	it('lands a terminal active group survivor full-screen in terminal mode', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', { type: 'terminal', id: 't' }), leaf('l2', aiRef('gone'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(sessionWith([group], { termIds: ['t'], activeGroupId: 'grp' }));
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeTerminalTabId).toBe('t');
+		expect(next.inputMode).toBe('terminal');
+	});
+
+	it('does NOT retarget the active tab when a background (non-active) group dissolves', () => {
+		// activeGroupId points at a surviving group; a different group collapses to one
+		// pane. Its survivor is promoted to the strip but must not hijack the panel.
+		const surviving = groupFrom(
+			rowSplit('keep', [leaf('k1', aiRef('x')), leaf('k2', aiRef('y'))]),
+			'k1'
+		);
+		const collapsing: TabGroup = {
+			id: 'bg',
+			name: 'bg',
+			layout: rowSplit('bgroot', [leaf('b1', aiRef('a')), leaf('b2', aiRef('gone'))]),
+			focusedPaneId: 'b1',
+			createdAt: 1,
+		};
+		const next = normalizeTabGroups(
+			sessionWith([surviving, collapsing], { aiIds: ['x', 'y', 'a'], activeGroupId: 'grp' })
+		);
+		expect(next.activeGroupId).toBe('grp');
+		// The background survivor was promoted to the strip but did not become active.
+		expect(next.activeTabId).toBeUndefined();
+	});
+
 	it('keeps activeGroupId when its group survives normalization', () => {
 		const group = groupFrom(
 			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b')), leaf('l3', aiRef('gone'))]),
