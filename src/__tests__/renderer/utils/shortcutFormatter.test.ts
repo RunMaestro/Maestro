@@ -16,6 +16,7 @@ import {
 	formatKey,
 	formatShortcutKeys,
 	formatMetaKey,
+	formatMetaKeyName,
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 	isMacOS,
@@ -177,6 +178,12 @@ describe('shortcutFormatter', () => {
 		describe('formatMetaKey()', () => {
 			it('returns ⌘ on macOS', () => {
 				expect(formatMetaKey()).toBe('⌘');
+			});
+		});
+
+		describe('formatMetaKeyName()', () => {
+			it('returns the spelled-out Command on macOS', () => {
+				expect(formatMetaKeyName()).toBe('Command');
 			});
 		});
 
@@ -352,6 +359,12 @@ describe('shortcutFormatter', () => {
 		describe('formatMetaKey()', () => {
 			it('returns Ctrl on Windows/Linux', () => {
 				expect(formatMetaKey()).toBe('Ctrl');
+			});
+		});
+
+		describe('formatMetaKeyName()', () => {
+			it('returns Ctrl on Windows/Linux', () => {
+				expect(formatMetaKeyName()).toBe('Ctrl');
 			});
 		});
 

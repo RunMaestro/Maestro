@@ -1,6 +1,6 @@
 import { ListFilter } from 'lucide-react';
 import type { Theme } from '../../../../../types';
-import { isMacOS } from '../../../../../../shared/platformDetection';
+import { formatMetaKeyName } from '../../../../../utils/shortcutFormatter';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from './SectionCard';
 import { ToggleSettingRow } from './ToggleSettingRow';
@@ -32,7 +32,10 @@ export function TabOptionsSection({
 	tabBarWheelScroll,
 	setTabBarWheelScroll,
 }: TabOptionsSectionProps) {
-	const shortcutPrefix = isMacOS() ? 'Command' : 'Ctrl';
+	// Spelled-out modifier for shortcut hints: 'Command' on macOS, 'Ctrl' elsewhere.
+	// formatMetaKeyName reads the preload platform bridge, which is the only source
+	// that survives the renderer's `process` shim (process.platform is 'browser').
+	const shortcutPrefix = formatMetaKeyName();
 
 	return (
 		<div data-setting-id="display-tab-filtering">

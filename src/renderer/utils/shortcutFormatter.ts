@@ -105,6 +105,15 @@ export function formatMetaKey(): string {
 }
 
 /**
+ * Spelled-out name of the platform meta/command key, for prose in settings
+ * copy, help text, and tooltips. Returns 'Command' on macOS, 'Ctrl' on
+ * Windows/Linux. Use `formatMetaKey()` when the compact symbol reads better.
+ */
+export function formatMetaKeyName(): string {
+	return isMac() ? 'Command' : 'Ctrl';
+}
+
+/**
  * Format the enter-to-send display text.
  * Used by input areas that toggle between Enter and Cmd+Enter to send.
  *

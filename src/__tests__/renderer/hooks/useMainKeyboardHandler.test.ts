@@ -2910,6 +2910,11 @@ describe('useMainKeyboardHandler', () => {
 
 	describe('terminal search shortcut routing', () => {
 		it('should open terminal search on Ctrl+F in terminal mode when event is not from xterm', () => {
+			// Ctrl+F search is the Windows/Linux binding. On macOS the shortcut is
+			// Cmd+F and a bare Ctrl+F is forwarded to xterm as a readline control
+			// sequence, so this path only applies off-Mac. setup.ts defaults the
+			// bridge platform to 'darwin'; override it for this case.
+			(window as any).maestro = { ...(window as any).maestro, platform: 'linux' };
 			const { result } = renderHook(() => useMainKeyboardHandler());
 			const mockOpenTerminalSearch = vi.fn();
 

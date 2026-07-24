@@ -21,6 +21,9 @@ export type {
 export { ToggleSwitch } from './ToggleSwitch';
 export type { ToggleSwitchProps } from './ToggleSwitch';
 
+export { CollapsedCommandsNotice } from './CollapsedCommandsNotice';
+export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';
+
 export { RadioGroup } from './RadioGroup';
 export type { RadioGroupProps, RadioOption } from './RadioGroup';
 

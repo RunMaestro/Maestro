@@ -701,6 +701,50 @@ Key features:
 - Error state changes border color to `theme.colors.error`
 - Auto-generated `id` for label association (accessibility)
 
+### `<ToggleSwitch>` (`src/renderer/components/ui/ToggleSwitch.tsx`)
+
+The themed pill toggle. Use it instead of hand-rolling the
+`relative w-10 h-5 rounded-full` + `translate-x-5` button - that markup was
+copy-pasted across the bundled command panels and drifted (some copies lost
+`title`, some lost `aria-checked`):
+
+```tsx
+<ToggleSwitch
+	checked={enabled}
+	onChange={onEnabledChange}
+	theme={theme}
+	ariaLabel="Show Spec Kit commands in slash command autocomplete"
+	title={enabled ? 'Hide from slash command autocomplete' : 'Show in slash command autocomplete'}
+/>
+```
+
+Renders `role="switch"` with `aria-checked`, so tests select it with
+`getByRole('switch', { name: ... })`. For a full labeled settings row with icon,
+section label, and description, use `<SettingCheckbox>` below instead.
+
+### `<CollapsedCommandsNotice>` (`src/renderer/components/ui/CollapsedCommandsNotice.tsx`)
+
+Placeholder shown in place of a disabled command section's list (Spec Kit,
+OpenSpec, BMAD). Turning a section off collapses its commands out of view, but
+they stay reachable for editing behind "Show anyway":
+
+```tsx
+{
+	!enabled && commands.length > 0 && (
+		<CollapsedCommandsNotice
+			theme={theme}
+			count={commands.length}
+			expanded={revealWhileDisabled}
+			onToggle={() => setRevealWhileDisabled((prev) => !prev)}
+			sectionName="Spec Kit"
+		/>
+	);
+}
+```
+
+Panels pair it with a `revealWhileDisabled` state that resets in a
+`useEffect` on `enabled`, so re-disabling a section always re-collapses the list.
+
 ### `<ErrorBoundary>` (`src/renderer/components/ErrorBoundary.tsx`)
 
 React error boundary that catches render errors, reports to Sentry, and shows a recovery UI:

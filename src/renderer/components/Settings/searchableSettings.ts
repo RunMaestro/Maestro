@@ -12,6 +12,15 @@
  * that test for any new visible string you want guaranteed-findable.
  */
 
+import { formatMetaKeyName } from '../../utils/shortcutFormatter';
+
+/**
+ * Platform modifier name used inside descriptions ('Command' on macOS, 'Ctrl'
+ * elsewhere). Resolved once at module load - the platform cannot change at
+ * runtime. Keywords deliberately list both spellings so search hits either way.
+ */
+const META_KEY_NAME = formatMetaKeyName();
+
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
 	id: string;
@@ -423,8 +432,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Default Browser',
-		description:
-			'Choose whether links open in the Maestro built-in browser tab or the system browser. Ctrl+click (or right-click context menu) inverts the behavior. Set the default URL for new browser tabs.',
+		description: `Choose whether links open in the Maestro built-in browser tab or the system browser. ${META_KEY_NAME}+click (or right-click context menu) inverts the behavior. Set the default URL for new browser tabs.`,
 		keywords: [
 			'browser',
 			'links',
@@ -436,6 +444,9 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'ctrl',
 			'ctrl+click',
 			'ctrl-click',
+			'cmd',
+			'cmd+click',
+			'command+click',
 			'right click',
 			'context menu',
 			'home',
@@ -852,8 +863,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Tab Options',
-		description:
-			'Show starred and file preview tabs when filtering by unread; Command+0 vs Command+9 last-tab shortcut; browser tab domain pill; scroll tabs with the mouse wheel',
+		description: `Show starred and file preview tabs when filtering by unread; ${META_KEY_NAME}+0 vs ${META_KEY_NAME}+9 last-tab shortcut; browser tab domain pill; scroll tabs with the mouse wheel`,
 		keywords: [
 			'tab',
 			'filter',

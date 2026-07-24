@@ -10,6 +10,8 @@ export interface ToggleSwitchProps {
 	theme: Theme;
 	/** Optional aria-label for accessibility */
 	ariaLabel?: string;
+	/** Optional native tooltip text */
+	title?: string;
 	/** Whether the toggle is disabled */
 	disabled?: boolean;
 }
@@ -23,6 +25,7 @@ export function ToggleSwitch({
 	onChange,
 	theme,
 	ariaLabel,
+	title,
 	disabled = false,
 }: ToggleSwitchProps): React.ReactElement {
 	return (
@@ -41,6 +44,7 @@ export function ToggleSwitch({
 			role="switch"
 			aria-checked={checked}
 			aria-label={ariaLabel}
+			title={title}
 			disabled={disabled}
 		>
 			<span
