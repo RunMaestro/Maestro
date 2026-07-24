@@ -935,6 +935,74 @@ Example timeline:
   rc:   0.16.0 → 0.16.1 → 0.16.2 → 0.16.3 (merge) → 0.18.0 (new rc cycle)
 ```
 
+### Branch Guards
+
+Two automated guards keep the in-soak `rc` line from reaching `main` outside of a
+planned release. They exist because on 2026-07-04 the routine `main` -> `rc` sync
+made `rc` a descendant of `main`, which silently made `main` **fast-forwardable**
+to `rc`. The next push moved `main` onto the `rc` line and shipped nothing, but
+left `main` carrying every in-soak feature for 19 days before anyone noticed.
+
+- `.husky/pre-push` blocks the push locally, before the test suite runs.
+- `.github/workflows/guard-main-not-rc.yml` is the backstop that `--no-verify`,
+  another machine, or a web-UI merge cannot skip.
+
+Each guard applies two checks to anything landing on `main`:
+
+| Check                                             | Bypassable?                     | Catches                                                            |
+| ------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------ |
+| 1. `package.json` must not be an `-RC` version    | **No, never**                   | An accidental fast-forward, which drags `rc`'s `-RC` version along |
+| 2. Must not add 10+ commits that `rc` already has | Yes, for the declared promotion | `rc` history being absorbed into `main`                            |
+
+Check 1 is what separates an accident from a release: an accidental sync carries
+`0.EVEN.x-RC`, while a real promotion has already been bumped to its GA version.
+
+**Merging `main` into `rc` is unaffected.** Only the `rc` -> `main` direction is
+guarded, so the usual "mirror safe fixes into rc" flow needs no special handling.
+
+### Cutting the Release Over (rc -> main)
+
+Run this when `rc` has soaked long enough to become the next stable release. The
+version bump comes **before** the merge, because guard check 1 is not bypassable.
+
+1. Branch off `rc` and bump to the GA version there:
+
+   ```bash
+   git checkout rc && git pull
+   git checkout -b release/0.ODD.0
+   # set package.json version to the next ODD minor, e.g. 0.18.5-RC -> 0.19.0
+   git commit -am "chore(version): set version to 0.19.0"
+   ```
+
+2. Open a PR from `release/0.ODD.0` into `main`. Put the marker
+   `[release-promotion]` in the merge commit message so guard check 2 lets the
+   `rc` history through. Without it CI fails with "rc reached main".
+
+3. If you push the promotion from your machine rather than merging in the web UI,
+   set the matching local override:
+
+   ```bash
+   MAESTRO_ALLOW_RC_TO_MAIN=1 git push origin main
+   ```
+
+4. Tag the GA release off `main`. Releases are tag-triggered, so nothing ships
+   until this step:
+
+   ```bash
+   git tag v0.19.0 && git push origin v0.19.0
+   ```
+
+5. Start the next RC cycle by bumping `rc` to the next EVEN minor:
+
+   ```bash
+   git checkout rc
+   # set package.json version to e.g. 0.20.0-RC
+   git commit -am "chore(version): set version to 0.20.0-RC"
+   ```
+
+From here the cycle repeats: aggressive work lands on `rc`, safe fixes land on
+`main` and get mirrored into `rc` via the normal `main` -> `rc` merge.
+
 ### PR Target Branch
 
 - **Bug fixes and small improvements**: Target `main` (cherry-pick to `rc` if relevant).

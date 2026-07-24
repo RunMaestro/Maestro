@@ -1,12 +1,91 @@
 #!/bin/sh
 
+# Git feeds ref updates on stdin as: <local ref> <local sha> <remote ref> <remote sha>
+# Two separate checks below need that list, and stdin can only be consumed once,
+# so buffer it to a temp file first and read each check from there.
+refs_file=$(mktemp)
+trap 'rm -f "$refs_file"' EXIT
+cat >"$refs_file"
+
+z40=0000000000000000000000000000000000000000
+
+# ---- Guard: never let the rc line reach main ----
+# On 2026-07-04 the routine `git merge origin/main` into rc (normal hygiene, done
+# ~45 times) made rc a DESCENDANT of main. That silently made main
+# fast-forwardable to rc, and the next push moved main onto the rc line, dragging
+# in every in-soak feature (web desktop, multi-window, tiling). GitHub's "block
+# force pushes" setting does NOT catch this: a fast-forward is not a history
+# rewrite, so the remote accepts it.
+#
+# Detect it by content, not by shape. Testing "is rc's tip an ancestor" is NOT
+# enough: rc keeps moving, so once rc gains commits the poisoned main lacks, that
+# test goes false and misses the very case it was written for. Instead count how
+# many of the commits this push ADDS to main are already contained in rc. For the
+# real incident that number was 675; for a legitimate curated main push it is 0.
+# Runs before validate:push so it fails in milliseconds rather than after the
+# full test suite.
+#
+# For the intentional release promotion, re-run with:
+#   MAESTRO_ALLOW_RC_TO_MAIN=1 git push ...
+rc_ref=$(git rev-parse --verify --quiet refs/remotes/origin/rc)
+if [ -n "$rc_ref" ]; then
+	while read -r local_ref local_sha remote_ref remote_sha; do
+		[ "$remote_ref" = "refs/heads/main" ] || continue
+		case "$local_sha" in "$z40" | "") continue ;; esac
+
+		# Check 1: main must never carry an -RC version. NOT bypassable, not even
+		# by MAESTRO_ALLOW_RC_TO_MAIN. This is what separates an accident from an
+		# intentional release: an accidental fast-forward drags rc's package.json
+		# along and lands main on 0.18.x-RC, while the documented promotion bumps
+		# to the GA version on the promotion branch before merging.
+		pushed_version=$(git show "$local_sha:package.json" 2>/dev/null | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+		case "$pushed_version" in
+			*-RC* | *-rc*)
+				echo "[pre-push] BLOCKED: main must never carry a release-candidate version."
+				echo "[pre-push]   package.json in the pushed commit reads $pushed_version."
+				echo "[pre-push]   If this is the release promotion, bump the version to its GA"
+				echo "[pre-push]   value on the promotion branch before merging into main."
+				exit 1
+				;;
+		esac
+
+		# Check 2: main must not absorb the rc line. Bypassable for the planned
+		# promotion via MAESTRO_ALLOW_RC_TO_MAIN=1, since check 1 still holds.
+		[ "${MAESTRO_ALLOW_RC_TO_MAIN:-0}" = "1" ] && continue
+		# Commits this push adds to main, and how many of them rc already has.
+		# NOTE: use explicit "^rev" exclusions, never repeated "--not". A second
+		# --not toggles the sense back to positive, so "--not A --not B" INCLUDES
+		# B and silently inflates the count past the total, making the guard
+		# compute a negative difference and never fire.
+		case "$remote_sha" in
+			"$z40" | "")
+				added=$(git rev-list --count "$local_sha" 2>/dev/null)
+				added_not_rc=$(git rev-list --count "$local_sha" "^$rc_ref" 2>/dev/null)
+				;;
+			*)
+				added=$(git rev-list --count "$local_sha" "^$remote_sha" 2>/dev/null)
+				added_not_rc=$(git rev-list --count "$local_sha" "^$remote_sha" "^$rc_ref" 2>/dev/null)
+				;;
+		esac
+		[ -n "$added" ] && [ -n "$added_not_rc" ] || continue
+		from_rc=$((added - added_not_rc))
+		if [ "$from_rc" -ge 10 ]; then
+			echo "[pre-push] BLOCKED: this push would put the rc line onto main."
+			echo "[pre-push]   $from_rc of the $added commits it adds to main already exist on rc."
+			echo "[pre-push]   main is the stable release line; rc carries in-soak features."
+			echo "[pre-push]   Merging main INTO rc stays fine, it is only this direction that is blocked."
+			echo "[pre-push]   If this is an intentional release promotion, re-run with:"
+			echo "[pre-push]     MAESTRO_ALLOW_RC_TO_MAIN=1 git push ..."
+			exit 1
+		fi
+	done <"$refs_file"
+fi
+
 # Run repo-wide validation before allowing a push.
 # This mirrors the main CI gate: prompts, repo-wide Prettier, type checks, ESLint, and tests.
 #
 # Skip validation when the push only DELETES refs (no new commits to validate).
-# Git feeds ref updates on stdin as: <local ref> <local sha> <remote ref> <remote sha>
 # For a deletion the local sha is all zeros, so there is nothing to lint or test.
-z40=0000000000000000000000000000000000000000
 only_deletes=1
 saw_ref=0
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -16,7 +95,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 		"$z40" | "") : ;; # deletion, nothing to validate
 		*) only_deletes=0 ;;
 	esac
-done
+done <"$refs_file"
 
 if [ "$saw_ref" -eq 1 ] && [ "$only_deletes" -eq 1 ]; then
 	echo "[pre-push] Delete-only push detected; skipping validate:push."

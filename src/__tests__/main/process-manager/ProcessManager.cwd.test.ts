@@ -13,11 +13,22 @@ vi.mock('node-pty', () => ({
 	spawn: mockPtySpawn,
 }));
 
-vi.mock('child_process', () => ({
-	spawn: mockChildSpawn,
-	execFile: vi.fn(),
-	execFileSync: vi.fn(),
-}));
+vi.mock('child_process', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('child_process')>();
+	const overrides = {
+		spawn: mockChildSpawn,
+		execFile: vi.fn(),
+		execFileSync: vi.fn(),
+	};
+	// Mirror the overrides onto `default` too: some modules in the ProcessManager
+	// import graph import child_process via its default export, and vitest throws
+	// if the mock omits it.
+	return {
+		...actual,
+		...overrides,
+		default: { ...actual, ...overrides },
+	};
+});
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
