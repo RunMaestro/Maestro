@@ -17,5 +17,4 @@ export { SpellCheckSection } from './SpellCheckSection';
 export { StorageLocationSection } from './StorageLocationSection';
 export { TabBehaviorSection } from './TabBehaviorSection';
 export { ThinkingModeSection } from './ThinkingModeSection';
-export { ToolCallsSection } from './ToolCallsSection';
 export { UpdatesSection } from './UpdatesSection';

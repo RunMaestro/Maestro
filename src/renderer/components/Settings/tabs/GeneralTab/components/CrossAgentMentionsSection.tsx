@@ -28,19 +28,8 @@ export function CrossAgentMentionsSection({
 				className="p-3 rounded border"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<div className="flex items-center justify-between mb-2">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						Consult Permission
-					</div>
-					<ToggleButtonGroup
-						options={[
-							{ value: 'readonly' as const, label: 'Read-Only' },
-							{ value: 'readwrite' as const, label: 'Read/Write' },
-						]}
-						value={crossAgentMentionsWritable ? 'readwrite' : 'readonly'}
-						onChange={(value) => setCrossAgentMentionsWritable(value === 'readwrite')}
-						theme={theme}
-					/>
+				<div className="text-sm font-medium mb-2" style={{ color: theme.colors.textMain }}>
+					Consult Permission
 				</div>
 				<p className="text-xs opacity-50">
 					{crossAgentMentionsWritable
@@ -60,6 +49,18 @@ export function CrossAgentMentionsSection({
 						</span>
 					</div>
 				)}
+
+				<div className="mt-3">
+					<ToggleButtonGroup
+						options={[
+							{ value: 'readonly' as const, label: 'Read-Only' },
+							{ value: 'readwrite' as const, label: 'Read/Write' },
+						]}
+						value={crossAgentMentionsWritable ? 'readwrite' : 'readonly'}
+						onChange={(value) => setCrossAgentMentionsWritable(value === 'readwrite')}
+						theme={theme}
+					/>
+				</div>
 			</div>
 		</div>
 	);

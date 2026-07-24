@@ -19,7 +19,6 @@ import {
 	StorageLocationSection,
 	TabBehaviorSection,
 	ThinkingModeSection,
-	ToolCallsSection,
 	UpdatesSection,
 } from './components';
 import {
@@ -120,9 +119,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				defaultShowThinking={settings.defaultShowThinking}
 				setDefaultShowThinking={settings.setDefaultShowThinking}
-			/>
-			<ToolCallsSection
-				theme={theme}
 				showToolCalls={settings.showToolCalls}
 				setShowToolCalls={settings.setShowToolCalls}
 			/>

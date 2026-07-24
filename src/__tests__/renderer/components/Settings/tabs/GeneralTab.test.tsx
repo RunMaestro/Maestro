@@ -936,16 +936,22 @@ describe('GeneralTab', () => {
 	});
 
 	describe('Tool Calls', () => {
-		it('renders the tool calls toggle', async () => {
+		it('renders the tool calls toggle under the thinking-mode section', async () => {
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 			expect(screen.getByText('Show tool calls in responses')).toBeInTheDocument();
+			// The tool-calls control is now grouped inside the Default Thinking Mode
+			// section rather than its own heading.
+			const toolCalls = screen
+				.getByText('Show tool calls in responses')
+				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
+			expect(toolCalls.closest('[data-setting-id="general-thinking-mode"]')).not.toBeNull();
 		});
 
-		it('calls setShowToolCalls when toggled', async () => {
-			mockUseSettingsOverrides = { showToolCalls: true };
+		it('calls setShowToolCalls when toggled (thinking on)', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -957,8 +963,8 @@ describe('GeneralTab', () => {
 			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
 		});
 
-		it('toggles once when the row is activated by keyboard', async () => {
-			mockUseSettingsOverrides = { showToolCalls: true };
+		it('toggles once when the row is activated by keyboard (thinking on)', async () => {
+			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -970,6 +976,25 @@ describe('GeneralTab', () => {
 			// focused nested switch from also triggering the row handler.
 			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
 			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('ghosts out the tool-calls toggle when thinking is off', async () => {
+			// Default mock has defaultShowThinking: 'off'. Tool cells follow the
+			// thinking setting, so the switch is disabled and neither the switch nor
+			// the row can toggle it.
+			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'off' };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const toggle = screen.getByRole('switch', { name: 'Show tool calls in responses' });
+			expect(toggle).toBeDisabled();
+			fireEvent.click(toggle);
+			const section = screen
+				.getByText('Show tool calls in responses')
+				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
+			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
+			expect(mockSetShowToolCalls).not.toHaveBeenCalled();
 		});
 	});
 
