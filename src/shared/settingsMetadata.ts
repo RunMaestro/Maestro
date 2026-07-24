@@ -398,6 +398,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	crossAgentMentionsWritable: {
+		description:
+			'When true, agents consulted via @-mention may modify files. When false (default), consults run read-only.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	defaultSaveToHistory: {
 		description: 'Whether completed tasks are saved to history by default.',
 		type: 'boolean',

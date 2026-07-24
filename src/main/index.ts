@@ -3194,6 +3194,7 @@ function setupIpcHandlers() {
 		getAgentDetector: () => agentDetector,
 		sessionsStore,
 		agentConfigsStore,
+		settingsStore: store,
 		sshStore: createSshRemoteStoreAdapter(store),
 		getCustomEnvVars: getCustomEnvVarsForAgent,
 		safeSend,

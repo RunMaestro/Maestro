@@ -759,7 +759,7 @@ export function AgentConfigPanel({
 						))}
 					{/* User-defined env vars */}
 					{Object.entries(customEnvVars).map(([key, value]) => (
-						<div key={`env-var-${getEnvVarId(key)}`} className="flex gap-2">
+						<div key={`env-var-${getEnvVarId(key)}`} className="flex gap-2 items-center">
 							<input
 								type="text"
 								value={getKeyDisplayValue(key)}

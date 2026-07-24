@@ -56,7 +56,7 @@ A leading `@file` reference (`@src/app.ts what does this do?`) is a question for
 </Note>
 
 <Note>
-  A consulted agent is told your **working directory** and may **read** files there to answer with real context. It will not write or modify files during a consultation: if changes are needed it describes them in its reply so you can apply them yourself.
+  A consulted agent is told your **working directory** and may **read** files there to answer with real context. By default a consultation is **read-only**: the agent will not write or modify files, and if changes are needed it describes them in its reply so you can apply them yourself. If you want mentioned agents to apply changes directly, switch **Consult Permission** to **Read/Write** under **Settings > General > Cross-Agent Mentions**. Leave it on Read-Only (the default and safest choice) unless you trust the mentioned agent to edit its workspace unattended.
 </Note>
 
 ## Controlling How Much Context You Share

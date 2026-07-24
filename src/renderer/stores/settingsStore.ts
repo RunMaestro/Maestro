@@ -336,6 +336,8 @@ export interface SettingsStoreState {
 	forcedParallelAcknowledged: boolean;
 	/** When forced parallel is on, treat EVERY send as a force-send (no modifier needed). */
 	forcedParallelAlways: boolean;
+	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
+	crossAgentMentionsWritable: boolean;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -500,6 +502,7 @@ export interface SettingsStoreActions {
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setForcedParallelAlways: (value: boolean) => void;
+	setCrossAgentMentionsWritable: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -779,6 +782,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
 		forcedParallelAlways: false,
+		crossAgentMentionsWritable: false,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -1026,6 +1030,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setForcedParallelAlways: (value) => {
 			set({ forcedParallelAlways: value });
 			window.maestro.settings.set('forcedParallelAlways', value);
+		},
+
+		setCrossAgentMentionsWritable: (value) => {
+			set({ crossAgentMentionsWritable: value });
+			window.maestro.settings.set('crossAgentMentionsWritable', value);
 		},
 
 		setDefaultSaveToHistory: (value) => {
@@ -2420,6 +2429,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.forcedParallelAcknowledged = allSettings['forcedParallelAcknowledged'] as boolean;
 		if (allSettings['forcedParallelAlways'] !== undefined)
 			patch.forcedParallelAlways = allSettings['forcedParallelAlways'] as boolean;
+
+		if (allSettings['crossAgentMentionsWritable'] !== undefined)
+			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
 
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
