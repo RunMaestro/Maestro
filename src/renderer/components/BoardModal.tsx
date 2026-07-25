@@ -22,7 +22,8 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../hooks/utils/useFocusAfterRender';
 import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../stores/sessionStore';
+import { aiTabFocusFields } from '../utils/tabHelpers';
 import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { generateUUID } from '../../shared/uuid';
@@ -142,6 +143,20 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const agentName = useCallback(
 		(id: string) => projectAgents.find((a) => a.id === id)?.name ?? id,
 		[projectAgents]
+	);
+
+	// Jump from a card's worker chip to the worker agent's AI tab. Store-direct
+	// (per CLAUDE.md canonical helpers) rather than threading the toast handler
+	// down a new prop chain. Close the modal afterwards so it does not sit on top
+	// of the agent it just jumped to (same reasoning as the Document Graph close
+	// in useSessionSwitchCallbacks).
+	const handleJumpToAgent = useCallback(
+		(agentId: string) => {
+			useSessionStore.getState().setActiveSessionId(agentId);
+			updateSessionWith(agentId, (s) => ({ ...s, ...aiTabFocusFields() }));
+			onClose();
+		},
+		[onClose]
 	);
 
 	const [boards, setBoards] = useState<Board[]>([]);
@@ -985,6 +1000,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 														board={board}
 														profileName={profileName}
 														agentName={agentName}
+														projectAgents={projectAgents}
+														onJumpToAgent={handleJumpToAgent}
 														dragging={dragCardId === card.id}
 														registerTile={registerTile}
 														onDragStart={() => setDragCardId(card.id)}
@@ -1103,6 +1120,10 @@ interface BoardCardTileProps {
 	board: Board;
 	profileName: (id: string) => string;
 	agentName: (id: string) => string;
+	/** Project agents, used to check whether a run's worker still exists. */
+	projectAgents: { id: string; name: string; isWorker: boolean }[];
+	/** Jump to the worker agent that ran this card (worker chip click). */
+	onJumpToAgent: (agentId: string) => void;
 	dragging: boolean;
 	/** Publishes the tile element so the grid can move focus onto it. */
 	registerTile: (cardId: string, el: HTMLDivElement | null) => void;
@@ -1127,6 +1148,8 @@ function BoardCardTile({
 	board,
 	profileName,
 	agentName,
+	projectAgents,
+	onJumpToAgent,
 	dragging,
 	registerTile,
 	onDragStart,
@@ -1237,7 +1260,13 @@ function BoardCardTile({
 	// Phase 6: a running card says how long it has been going, which attempt this
 	// is, and which pooled worker claimed it.
 	const isRunning = card.status === 'running';
-	const workerText = latestRun?.workerAgentId ? agentName(latestRun.workerAgentId) : null;
+	const workerAgentId = latestRun?.workerAgentId ?? null;
+	const workerText = workerAgentId ? agentName(workerAgentId) : null;
+	// The worker chip is a jump affordance only while the worker agent still
+	// exists; a deleted agent renders a non-interactive span instead.
+	const workerAgentExists = workerAgentId
+		? projectAgents.some((a) => a.id === workerAgentId)
+		: false;
 	// Assignee label: role (profile) and/or a 📌 pinned agent; "pool" when the
 	// card floats to any free worker.
 	const roleText = card.assigneeProfileId ? profileName(card.assigneeProfileId) : null;
@@ -1340,15 +1369,34 @@ function BoardCardTile({
 						<RunElapsed startedAt={latestRun.startedAt} style={{ color: theme.colors.warning }} />
 					</span>
 				)}
-				{isRunning && workerText && (
-					<span
-						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full"
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						title={`Running on worker "${workerText}"`}
-					>
-						⚙ {workerText}
-					</span>
-				)}
+				{workerText &&
+					workerAgentId &&
+					(workerAgentExists ? (
+						<button
+							onClick={(e) => {
+								// Don't also trigger the tile's editor-opening onClick.
+								e.stopPropagation();
+								onJumpToAgent(workerAgentId);
+							}}
+							className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+							title={
+								isRunning
+									? `Running on worker "${workerText}" - click to open`
+									: `Open worker "${workerText}"`
+							}
+						>
+							⚙ {workerText}
+						</button>
+					) : (
+						<span
+							className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+							title="This worker agent has been deleted"
+						>
+							⚙ {workerText}
+						</span>
+					))}
 				{card.parents.length > 0 && (
 					<span
 						className="text-[10px] rounded px-1.5 py-0.5"
