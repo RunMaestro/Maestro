@@ -783,7 +783,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							/>
 						)}
 						<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
-							task DAG · dispatched on the Cue tick
+							card DAG · dispatched on the Cue tick
 						</span>
 					</div>
 					<div className="flex items-center gap-1 shrink-0">
@@ -1519,7 +1519,7 @@ function CardEditor({
 				<textarea
 					value={draft.body}
 					onChange={(e) => setDraft((p) => (p ? { ...p, body: e.target.value } : p))}
-					placeholder="Task instructions handed to the assignee agent."
+					placeholder="Instructions handed to the assignee agent."
 					rows={4}
 					className="w-full rounded-md px-2 py-1.5 text-sm outline-none resize-y"
 					style={inputStyle}
