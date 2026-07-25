@@ -22,6 +22,10 @@ import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { checkCustomPath } from '../../../../main/agents/path-prober';
 import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+} from '../../../../main/agents/omp-model-catalog';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -217,6 +221,16 @@ vi.mock('../../../../shared/platformDetection', () => ({
 
 vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
 	getChildProcesses: vi.fn().mockResolvedValue([]),
+}));
+
+// Mock the omp model catalog so the spawn handler's catalog prime can be
+// asserted at the module boundary without launching a real `omp` subprocess.
+// computeOmpCatalogKey returns a stable sentinel so the prime's third arg is
+// deterministic; primeOmpModelCatalog resolves immediately so the bounded
+// Promise.race in the handler proceeds without waiting on the real cap.
+vi.mock('../../../../main/agents/omp-model-catalog', () => ({
+	primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+	computeOmpCatalogKey: vi.fn(() => 'omp-catalog-key'),
 }));
 
 // Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
@@ -501,6 +515,55 @@ describe('process IPC handlers', () => {
 			});
 
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		it('primes the omp model catalog with an expanded env whose PATH lists the binary dir first', async () => {
+			// The bun-based `omp` binary lives next to a co-located `bun` runtime;
+			// in a packaged Electron app the shell PATH is not inherited, so the
+			// prime must run with an expanded env (buildExpandedEnv) and prepend the
+			// binary's own dir. Assert the env handed to primeOmpModelCatalog reflects
+			// both: binary dir first, then the expanded standard entries.
+			const binaryPath = '/opt/tester/.bun/bin/omp';
+			const binDir = path.dirname(binaryPath);
+
+			const mockAgent = {
+				id: 'omp',
+				requiresPty: false,
+				path: binaryPath,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 4242, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-omp',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+			});
+
+			expect(primeOmpModelCatalog).toHaveBeenCalledTimes(1);
+			const [passedBinaryPath, passedEnv, passedKey] =
+				vi.mocked(primeOmpModelCatalog).mock.calls[0];
+			expect(passedBinaryPath).toBe(binaryPath);
+			expect(passedKey).toBe('omp-catalog-key');
+			expect(computeOmpCatalogKey).toHaveBeenCalledWith(binaryPath, undefined);
+
+			// The prime env's PATH must lead with the binary dir (so the co-located
+			// bun runtime resolves first), followed by the expanded standard entries.
+			expect(typeof passedEnv?.PATH).toBe('string');
+			const pathEntries = (passedEnv!.PATH as string).split(path.delimiter);
+			expect(pathEntries[0]).toBe(binDir);
+			// Expansion added entries beyond just the prepended binary dir, and the
+			// process's own PATH survived the expansion (proving it is the expanded
+			// env, not a bare { PATH: binDir }).
+			expect(pathEntries.length).toBeGreaterThan(1);
+			const currentPathEntries = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+			if (currentPathEntries.length > 0) {
+				expect(pathEntries).toEqual(expect.arrayContaining([currentPathEntries[0]]));
+			}
 		});
 
 		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {
