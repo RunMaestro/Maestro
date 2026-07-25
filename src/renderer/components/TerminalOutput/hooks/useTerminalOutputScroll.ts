@@ -9,6 +9,7 @@ const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
 interface UseTerminalOutputScrollOptions {
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
 	initialScrollTop?: number;
+	initialIsAtBottom?: boolean;
 	sessionId: string;
 	activeTabId: string | undefined;
 	filteredLogsLength: number;
