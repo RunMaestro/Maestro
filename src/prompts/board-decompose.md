@@ -29,7 +29,7 @@ Respond with ONLY a fenced code block tagged `json` containing an array of child
 		"dependsOn": []
 	},
 	{
-		"title": "Second task that needs the first",
+		"title": "Second card that needs the first",
 		"body": "Instructions.",
 		"dependsOn": [0]
 	}
