@@ -5,10 +5,11 @@
  * a dependency cycle with an inline error (never calling the persist IPC).
  */
 
-import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BoardModal } from '../../../renderer/components/BoardModal';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { Board, BoardCard } from '../../../shared/board/types';
@@ -58,6 +59,14 @@ let boardApi: {
 	onBoardChanged: ReturnType<typeof vi.fn>;
 };
 
+/** Profiles IPC stub, reassigned per test alongside `boardApi`. */
+let profilesApi: {
+	list: ReturnType<typeof vi.fn>;
+	upsert: ReturnType<typeof vi.fn>;
+	delete: ReturnType<typeof vi.fn>;
+	onProfilesChanged: ReturnType<typeof vi.fn>;
+};
+
 /** Captured `board:changed` subscribers, so a test can fire the push the main
  * process would send after a board.yaml write. */
 let boardChangedListeners: Array<(payload: { projectRoot: string }) => void>;
@@ -88,8 +97,7 @@ function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 	};
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	(window.maestro as any).board = boardApi;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	(window.maestro as any).profiles = {
+	profilesApi = {
 		list: vi
 			.fn()
 			.mockResolvedValue(profiles ?? [{ id: 'p1', name: 'Reviewer', baseAgentId: 'a1' }]),
@@ -97,6 +105,8 @@ function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 		delete: vi.fn(),
 		onProfilesChanged: vi.fn(() => vi.fn()),
 	};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	(window.maestro as any).profiles = profilesApi;
 }
 
 beforeEach(() => {
@@ -565,15 +575,165 @@ describe('BoardModal multi-board management (Phase 6)', () => {
 		await waitFor(() => expect(boardApi.delete).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', true));
 	});
 
-	it('turns the "no profiles" hint into a button that opens the Profiles modal', async () => {
+	it('still exposes the "Manage roles" escape hatch into the Profiles modal', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		// The advanced link lives on the card editor now, not the board header.
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+
+		fireEvent.click(screen.getByRole('button', { name: /Manage roles/i }));
+		expect(setProfilesModalOpen).toHaveBeenCalledWith(true);
+	});
+});
+
+describe('BoardModal profile gate removal (G2)', () => {
+	it('offers "New card" with zero profiles and drops the old "create a profile first" gate', async () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
-		const hint = await screen.findByRole('button', { name: /Create an Agent Profile first/i });
-		expect(screen.queryByRole('button', { name: /New card/i })).toBeNull();
+		expect(await screen.findByRole('button', { name: /New card/i })).toBeInTheDocument();
+		// The stale gate button is gone: card creation no longer requires a profile.
+		expect(screen.queryByRole('button', { name: /Create an Agent Profile first/i })).toBeNull();
+	});
 
-		fireEvent.click(hint);
-		expect(setProfilesModalOpen).toHaveBeenCalledWith(true);
+	it('saves a pin-only card (assigneeAgentId, no assigneeProfileId) when no profiles exist', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Pin only' },
+		});
+		fireEvent.change(screen.getByLabelText(/Pin to agent/i), { target: { value: 's1' } });
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+
+		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		const card = boardApi.addCard.mock.calls[0][2];
+		expect(card.assigneeAgentId).toBe('s1');
+		// Blank role fields are omitted on save, so a pin-only card carries no role.
+		expect(card).not.toHaveProperty('assigneeProfileId');
+	});
+
+	it('keeps Save disabled for a card with neither a role nor a pinned agent', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'No assignee' },
+		});
+		// canSaveDraft still requires a role OR a pin, so the assignee model holds
+		// even though the up-front gate is gone.
+		expect(screen.getByRole('button', { name: /Create card/i })).toBeDisabled();
+		expect(boardApi.addCard).not.toHaveBeenCalled();
+	});
+});
+
+describe('BoardModal inline role quick-create (G2)', () => {
+	async function openMiniForm(): Promise<HTMLInputElement> {
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+		fireEvent.click(screen.getByRole('button', { name: /New role/i }));
+		return screen.getByPlaceholderText('Role name, e.g. Reviewer') as HTMLInputElement;
+	}
+
+	it('creates a role inline, defaulting its base agent to the active agent, and selects it', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+		// Echo the upserted profile back as the full list, the way the main process
+		// returns it after writing profiles.yaml.
+		profilesApi.upsert.mockImplementation(async (_root: string, p: unknown) => [p]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const nameInput = await openMiniForm();
+		fireEvent.change(nameInput, { target: { value: 'Reviewer' } });
+		fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
+
+		await waitFor(() => expect(profilesApi.upsert).toHaveBeenCalledTimes(1));
+		const [proj, profile] = profilesApi.upsert.mock.calls[0];
+		expect(proj).toBe(PROJECT_ROOT);
+		// Base agent defaults to the active Left Bar agent (s1).
+		expect(profile).toMatchObject({ name: 'Reviewer', baseAgentId: 's1' });
+		expect(profile.id).toEqual(expect.any(String));
+
+		// The mini-form closed and the Role select now carries and has selected the
+		// freshly-created profile.
+		await waitFor(() =>
+			expect(screen.queryByPlaceholderText('Role name, e.g. Reviewer')).not.toBeInTheDocument()
+		);
+		const option = screen.getByRole('option', { name: 'Reviewer' });
+		expect(option.closest('select')).toHaveValue(profile.id);
+	});
+
+	it('omits baseAgentId when the pool role ("None") is chosen', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+		profilesApi.upsert.mockImplementation(async (_root: string, p: unknown) => [p]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const nameInput = await openMiniForm();
+		fireEvent.change(nameInput, { target: { value: 'Floater' } });
+		// The base-agent select is the only combobox inside the mini-form; reset it
+		// from the active-agent default back to the pool option.
+		const baseSelect = within(nameInput.parentElement as HTMLElement).getByRole('combobox');
+		fireEvent.change(baseSelect, { target: { value: '' } });
+		fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
+
+		await waitFor(() => expect(profilesApi.upsert).toHaveBeenCalledTimes(1));
+		const profile = profilesApi.upsert.mock.calls[0][1];
+		expect(profile).toMatchObject({ name: 'Floater' });
+		// A pool role floats to any free worker, so it stores no base agent.
+		expect(profile).not.toHaveProperty('baseAgentId');
+	});
+
+	it('surfaces a red toast and keeps the mini-form open when the upsert rejects', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+		profilesApi.upsert.mockRejectedValue(new Error('disk full'));
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const nameInput = await openMiniForm();
+		const miniForm = nameInput.parentElement as HTMLElement;
+		fireEvent.change(nameInput, { target: { value: 'Doomed' } });
+		fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
+
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }))
+		);
+		// The mini-form stays open so the typed name is not lost.
+		expect(screen.getByPlaceholderText('Role name, e.g. Reviewer')).toHaveValue('Doomed');
+
+		// The draft's role is untouched: cancelling back to the picker shows no role.
+		fireEvent.click(within(miniForm).getByRole('button', { name: /^Cancel$/i }));
+		const roleOption = screen.getByRole('option', { name: /No role \(free worker pool\)/i });
+		expect(roleOption.closest('select')).toHaveValue('');
+	});
+});
+
+describe('BoardModal profile refresh during edit (G1 interplay)', () => {
+	it('reflects a refreshed profile list in the Role picker while the draft survives', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }], [{ id: 'p1', name: 'Reviewer' }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Survives refresh' },
+		});
+
+		// A sibling surface adds a profile. The Board refreshes profiles on the same
+		// load() the board:changed push drives, so mirror the board:changed-during-edit
+		// test: the refreshed list lands in the Role picker without disturbing the draft.
+		profilesApi.list.mockResolvedValue([
+			{ id: 'p1', name: 'Reviewer' },
+			{ id: 'p2', name: 'Implementer' },
+		]);
+		emitBoardChanged();
+		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(2));
+
+		// The dropdown now offers the freshly-added role...
+		expect(await screen.findByRole('option', { name: 'Implementer' })).toBeInTheDocument();
+		// ...and the in-progress title edit is untouched.
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Survives refresh');
 	});
 });
