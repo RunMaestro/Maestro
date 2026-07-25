@@ -252,12 +252,28 @@ jobs:
           MAESTRO_PLUGIN_SIGNING_KEY: ${{ secrets.MAESTRO_PLUGIN_SIGNING_KEY }}
         shell: bash
         run: |
+          set -euo pipefail
           KEYFILE="$RUNNER_TEMP/maestro-publisher.pem"
           printf '%s' "$MAESTRO_PLUGIN_SIGNING_KEY" > "$KEYFILE"
           for dir in examples/plugins/*/; do
             node dist/cli/maestro-cli.js plugin sign "$dir" --key "$KEYFILE" --json
           done
           rm -f "$KEYFILE"
+
+          # Anchor/secret drift guard: the freshly written signature must resolve
+          # "trusted" against the baked MAESTRO_PUBLISHER_KEYS anchor. If the CI
+          # secret was rotated without re-baking publisher-keys.ts (or vice
+          # versa), the produced signature would be seed-skipped at runtime and
+          # ship a permanently non-runnable plugin. Fail the release here instead.
+          ANCHOR=$(node -e "console.log(require('./dist/shared/plugins/publisher-keys.js').MAESTRO_PUBLISHER_KEYS.join(','))")
+          if [ -z "$ANCHOR" ]; then
+            echo "::error::MAESTRO_PUBLISHER_KEYS is empty in publisher-keys.ts; bake the publisher public key before shipping a signed plugin." >&2
+            exit 1
+          fi
+          if ! node dist/cli/maestro-cli.js plugin validate examples/plugins/agent-flow --trusted-key "$ANCHOR" --json | grep -q '"status":"trusted"'; then
+            echo "::error::agent-flow signature does not resolve 'trusted' against the baked MAESTRO_PUBLISHER_KEYS anchor. The CI signing key (MAESTRO_PLUGIN_SIGNING_KEY) and the baked public key have drifted." >&2
+            exit 1
+          fi
 
       # List release directory before packaging for debugging
       - name: Create release directory
