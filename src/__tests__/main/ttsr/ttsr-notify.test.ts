@@ -69,14 +69,39 @@ describe('buildTtsrToast', () => {
 
 		expect(toast.title).toBe('TTSR interrupted Codex');
 		expect(toast.message).toContain('Rules no-console-log, no-any fired');
-		expect(toast.message).toContain('Resuming');
 	});
 
-	it('says the turn restarts on the degraded fresh path', () => {
+	it('describes only the detection, with no baked-in outcome prose', () => {
+		// The resume/restart outcome is a client-specific line the display layer
+		// (Toast.tsx) appends from the `ttsr` marker, so it must not appear in the
+		// broadcast message. Otherwise a web client reads a desktop-only promise.
+		const resume = buildTtsrToast(payload({ mode: 'resume' }));
+		expect(resume.message).toBe('Rule no-console-log fired; the turn was interrupted.');
+		expect(resume.message).not.toContain('Resuming');
+		expect(resume.message).not.toContain('Restarting');
+		expect(resume.message).not.toContain('corrective guidance');
+
+		const fresh = buildTtsrToast(
+			payload({ mode: 'fresh', providerSessionId: undefined })
+		);
+		expect(fresh.message).toBe('Rule no-console-log fired; the turn was interrupted.');
+		expect(fresh.message).not.toContain('Restarting');
+	});
+
+	it('carries the structured ttsr marker for the resume path', () => {
+		const toast = buildTtsrToast(payload({ mode: 'resume' }));
+		expect(toast.ttsr).toEqual({ mode: 'resume' });
+		// The plain message stays a sensible fallback for clients that ignore
+		// the marker.
+		expect(toast.message).toBeTruthy();
+		expect(typeof toast.message).toBe('string');
+	});
+
+	it('carries mode: fresh on the degraded restart path', () => {
 		const toast = buildTtsrToast(
 			payload({ agentId: 'grok', mode: 'fresh', providerSessionId: undefined })
 		);
-		expect(toast.message).toContain('Restarting the turn');
+		expect(toast.ttsr).toEqual({ mode: 'fresh' });
 	});
 });
 
