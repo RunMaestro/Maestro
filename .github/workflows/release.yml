@@ -237,6 +237,28 @@ jobs:
         env:
           VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
 
+      # Sign every bundled plugin with the publisher key so the baked
+      # MAESTRO_PUBLISHER_KEYS anchor resolves them "trusted" at seed time and
+      # their main.js is allowed to run. Must land after "Build application"
+      # (which produces dist/cli/maestro-cli.js) and before any electron-builder
+      # packaging step, since extraResources copies examples/plugins/* - including
+      # the freshly written signature.json - into the packaged resources.
+      # Runs on every matrix leg; signing is deterministic given the same files
+      # and key, so per-leg signing is safe. Looping over examples/plugins/*/
+      # signs future bundled plugins for free (only agent-flow is shipped via
+      # extraResources, so signing the sibling example dirs is harmless).
+      - name: Sign bundled plugins
+        env:
+          MAESTRO_PLUGIN_SIGNING_KEY: ${{ secrets.MAESTRO_PLUGIN_SIGNING_KEY }}
+        shell: bash
+        run: |
+          KEYFILE="$RUNNER_TEMP/maestro-publisher.pem"
+          printf '%s' "$MAESTRO_PLUGIN_SIGNING_KEY" > "$KEYFILE"
+          for dir in examples/plugins/*/; do
+            node dist/cli/maestro-cli.js plugin sign "$dir" --key "$KEYFILE" --json
+          done
+          rm -f "$KEYFILE"
+
       # List release directory before packaging for debugging
       - name: Create release directory
         run: mkdir -p release
