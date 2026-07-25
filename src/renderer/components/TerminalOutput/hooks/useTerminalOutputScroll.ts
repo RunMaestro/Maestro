@@ -20,6 +20,7 @@ interface UseTerminalOutputScrollOptions {
 export function useTerminalOutputScroll({
 	scrollContainerRef,
 	initialScrollTop,
+	initialIsAtBottom,
 	sessionId,
 	activeTabId,
 	filteredLogsLength,
@@ -218,6 +219,14 @@ export function useTerminalOutputScroll({
 	useEffect(() => {
 		if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
 			hasRestoredScrollRef.current = true;
+			// Only restore a saved absolute offset when the user had deliberately
+			// scrolled up when they left (initialIsAtBottom === false). When they
+			// were following the bottom (true) - or on a legacy tab that never
+			// persisted the flag (undefined) - skip the restore and let the
+			// mount-time bottom jump + MutationObserver snap to and follow the live
+			// bottom. hasRestoredScrollRef is already latched above so a later prop
+			// change cannot re-trigger this. (J1)
+			if (initialIsAtBottom !== false) return;
 			requestAnimationFrame(() => {
 				if (scrollContainerRef.current) {
 					const { scrollHeight, clientHeight } = scrollContainerRef.current;
@@ -234,7 +243,7 @@ export function useTerminalOutputScroll({
 				}
 			});
 		}
-	}, [initialScrollTop, scrollContainerRef]);
+	}, [initialScrollTop, initialIsAtBottom, scrollContainerRef]);
 
 	useEffect(() => {
 		hasRestoredScrollRef.current = false;
