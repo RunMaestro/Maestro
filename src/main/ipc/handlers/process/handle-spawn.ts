@@ -778,11 +778,14 @@ export async function handleProcessSpawn(
 		// correctly on a warm/fast catalog, and proceed (letting the prime finish
 		// in the background for later turns) when it is slow or fails.
 		const OMP_PRIME_SPAWN_CAP_MS = 2000;
-		const prime = primeOmpModelCatalog(
-			localSpawnBinaryPath,
-			{ ...process.env, ...customEnvVarsToPass },
-			ompModelCatalogKey
-		);
+		// Prime with the platform-expanded env (mirroring the Windows agent path
+		// above) so the bun-based `omp` binary resolves in a packaged app: packaged
+		// Electron apps do not inherit the shell PATH, so a raw `process.env` lacks
+		// user-local bin dirs like `~/.bun/bin`. Prepend the binary's own dir so a
+		// co-located runtime is found first, matching the agent spawn's extraPathDirs.
+		const primeEnv = buildExpandedEnv(customEnvVarsToPass);
+		primeEnv.PATH = `${localAgentBinDir}${path.delimiter}${primeEnv.PATH ?? ''}`;
+		const prime = primeOmpModelCatalog(localSpawnBinaryPath, primeEnv, ompModelCatalogKey);
 		await Promise.race([
 			prime,
 			new Promise<void>((resolve) => setTimeout(resolve, OMP_PRIME_SPAWN_CAP_MS)),
