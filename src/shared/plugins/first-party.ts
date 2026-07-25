@@ -571,7 +571,7 @@ export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	id: 'com.maestro.board',
 	name: 'Board',
 	description:
-		'Run a persistent task DAG: assign cards to agent profiles and drain them in dependency order on the Cue engine tick.',
+		'Run a persistent card DAG: assign cards to agent profiles and drain them in dependency order on the Cue engine tick.',
 	firstParty: true,
 	category: 'automation',
 	permissions: [
@@ -593,7 +593,7 @@ export const BOARD_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		{
 			capability: 'fs:read',
 			scope: '.maestro/board.yaml',
-			reason: 'Load the task DAG (cards, statuses, dependencies) each tick.',
+			reason: 'Load the card DAG (statuses, dependencies) each tick.',
 		},
 		{
 			capability: 'fs:read',
