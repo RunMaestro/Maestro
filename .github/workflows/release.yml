@@ -247,6 +247,8 @@ jobs:
       # and key, so per-leg signing is safe. Looping over examples/plugins/*/
       # signs future bundled plugins for free (only agent-flow is shipped via
       # extraResources, so signing the sibling example dirs is harmless).
+      # Gate: release.yml runs only on maintainer-pushed tags (see the workflow
+      # header), so untrusted PR code never reaches this key.
       - name: Sign bundled plugins
         env:
           MAESTRO_PLUGIN_SIGNING_KEY: ${{ secrets.MAESTRO_PLUGIN_SIGNING_KEY }}
@@ -254,11 +256,11 @@ jobs:
         run: |
           set -euo pipefail
           KEYFILE="$RUNNER_TEMP/maestro-publisher.pem"
+          trap 'rm -f "$KEYFILE"' EXIT
           printf '%s' "$MAESTRO_PLUGIN_SIGNING_KEY" > "$KEYFILE"
           for dir in examples/plugins/*/; do
             node dist/cli/maestro-cli.js plugin sign "$dir" --key "$KEYFILE" --json
           done
-          rm -f "$KEYFILE"
 
           # Anchor/secret drift guard: the freshly written signature must resolve
           # "trusted" against the baked MAESTRO_PUBLISHER_KEYS anchor. If the CI
