@@ -6,6 +6,7 @@
 	"maestro": { "minHostApi": "1.14.0" },
 	"description": "Live per-session execution-graph visualization built from host tool + agent lifecycle events.",
 	"category": "insights",
+	"beta": true,
 	"entry": "main.js",
 	"permissions": [
 		{
