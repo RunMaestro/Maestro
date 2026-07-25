@@ -23,7 +23,6 @@ import { useFocusAfterRender } from '../hooks/utils/useFocusAfterRender';
 import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
-import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
@@ -832,7 +831,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								New board
 							</button>
 						)}
-						{board && !draft && profiles.length > 0 && (
+						{board && !draft && (
 							<button
 								onClick={openNewCard}
 								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
@@ -840,18 +839,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								title="Add a card"
 							>
 								<Plus className="w-4 h-4" /> New card
-							</button>
-						)}
-						{/* No profiles yet: the hint is the action. Opens the Profiles modal
-						    (which layers above this one) instead of dead-ending the user. */}
-						{board && !draft && profiles.length === 0 && !loading && (
-							<button
-								onClick={() => getModalActions().setProfilesModalOpen(true)}
-								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
-								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-								title="Cards need a role to run. Opens Agent Profiles."
-							>
-								<Plus className="w-4 h-4" /> Create an Agent Profile first
 							</button>
 						)}
 						<button
