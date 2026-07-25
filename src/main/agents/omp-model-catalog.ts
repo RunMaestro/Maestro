@@ -162,8 +162,9 @@ export function primeOmpModelCatalog(
 		try {
 			const result = await execFileNoThrow(command, ['models', '--json'], undefined, env);
 			if (result.exitCode !== 0) {
-				logger.debug('omp models --json failed while priming catalog', LOG_CONTEXT, {
+				logger.warn('omp models --json failed while priming catalog', LOG_CONTEXT, {
 					exitCode: result.exitCode,
+					stderr: result.stderr?.trim(),
 				});
 				return;
 			}
@@ -172,7 +173,7 @@ export function primeOmpModelCatalog(
 				setOmpModelCatalog(parsed.models, catalogKey);
 			}
 		} catch (error) {
-			logger.debug('Failed to prime omp model catalog', LOG_CONTEXT, { error: String(error) });
+			logger.warn('Failed to prime omp model catalog', LOG_CONTEXT, { error: String(error) });
 		} finally {
 			primingPromises.delete(catalogKey);
 		}
