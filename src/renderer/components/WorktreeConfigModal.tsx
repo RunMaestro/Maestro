@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, GitBranch, FolderOpen, Plus, AlertTriangle, Server } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
-import type { Theme, Session, GhCliStatus } from '../types';
+import type { Theme, Session, GhCliStatus, SessionWorktreeConfig } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getParentDir } from '../../shared/formatters';
@@ -14,7 +14,7 @@ interface WorktreeConfigModalProps {
 	theme: Theme;
 	session: Session;
 	// Callbacks
-	onSaveConfig: (config: { basePath: string; watchEnabled: boolean }) => void;
+	onSaveConfig: (config: SessionWorktreeConfig) => void;
 	onCreateWorktree: (branchName: string, basePath: string) => void;
 	onDisableConfig: () => void;
 }
@@ -58,6 +58,7 @@ export function WorktreeConfigModal({
 		session.worktreeConfig?.basePath || getParentDir(session.cwd)
 	);
 	const [watchEnabled, setWatchEnabled] = useState(session.worktreeConfig?.watchEnabled ?? true);
+	const [setupScript, setSetupScript] = useState(session.worktreeConfig?.setupScript ?? '');
 	const [newBranchName, setNewBranchName] = useState('');
 	const [isCreating, setIsCreating] = useState(false);
 	const [isValidating, setIsValidating] = useState(false);
@@ -94,6 +95,7 @@ export function WorktreeConfigModal({
 			checkGhCli();
 			setBasePath(session.worktreeConfig?.basePath || getParentDir(session.cwd));
 			setWatchEnabled(session.worktreeConfig?.watchEnabled ?? true);
+			setSetupScript(session.worktreeConfig?.setupScript ?? '');
 			setNewBranchName('');
 			setError(null);
 		}
@@ -136,7 +138,7 @@ export function WorktreeConfigModal({
 				);
 				return;
 			}
-			onSaveConfig({ basePath: basePath.trim(), watchEnabled });
+			onSaveConfig({ basePath: basePath.trim(), watchEnabled, setupScript: setupScript.trim() });
 			onClose();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to validate directory');
@@ -160,7 +162,7 @@ export function WorktreeConfigModal({
 
 		try {
 			// Save config first to ensure it's persisted
-			onSaveConfig({ basePath: basePath.trim(), watchEnabled });
+			onSaveConfig({ basePath: basePath.trim(), watchEnabled, setupScript: setupScript.trim() });
 			// Then create the worktree, passing the basePath
 			await onCreateWorktree(newBranchName.trim(), basePath.trim());
 			setNewBranchName('');
@@ -174,6 +176,7 @@ export function WorktreeConfigModal({
 	const handleDisable = () => {
 		setBasePath('');
 		setWatchEnabled(true);
+		setSetupScript('');
 		setNewBranchName('');
 		setError(null);
 		onDisableConfig();
@@ -326,6 +329,36 @@ export function WorktreeConfigModal({
 								}`}
 							/>
 						</button>
+					</div>
+
+					{/* Setup Script */}
+					<div>
+						<label
+							htmlFor="worktree-setup-script"
+							className="text-xs font-bold uppercase mb-1.5 block"
+							style={{ color: theme.colors.textDim }}
+						>
+							Setup Script
+						</label>
+						<textarea
+							id="worktree-setup-script"
+							value={setupScript}
+							onChange={(e) => setSetupScript(e.target.value)}
+							rows={3}
+							spellCheck={false}
+							placeholder={'cp "$MAESTRO_MAIN_REPO_PATH/.env.local" . && ./setup.sh'}
+							className="w-full px-3 py-2 rounded border bg-transparent outline-none text-xs font-mono resize-y"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						/>
+						<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+							Runs in each newly created worktree{isRemoteSession ? ' on the remote host' : ''}.
+							Available variables: <code>$MAESTRO_WORKTREE_PATH</code>,{' '}
+							<code>$MAESTRO_WORKTREE_BRANCH</code>, <code>$MAESTRO_MAIN_REPO_PATH</code>,{' '}
+							<code>$MAESTRO_BASE_BRANCH</code>. Leave blank to disable.
+						</p>
 					</div>
 
 					{/* Divider */}

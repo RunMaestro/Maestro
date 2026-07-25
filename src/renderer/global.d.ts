@@ -162,7 +162,12 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
-import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
+import type {
+	GitWorktreeSetupResult,
+	GitWorktreeCheckoutResult,
+	GitWorktreeRunSetupResult,
+	WorktreeSetupScriptContext,
+} from '../main/preload/git';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -842,6 +847,11 @@ interface MaestroAPI {
 			sshRemoteId?: string,
 			baseBranch?: string
 		) => Promise<GitWorktreeSetupResult>;
+		worktreeRunSetup: (
+			script: string,
+			context: WorktreeSetupScriptContext,
+			sshRemoteId?: string
+		) => Promise<GitWorktreeRunSetupResult>;
 		worktreeCheckout: (
 			worktreePath: string,
 			branchName: string,

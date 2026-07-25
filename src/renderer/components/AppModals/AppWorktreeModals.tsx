@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { Theme, Session } from '../../types';
+import type { Theme, Session, SessionWorktreeConfig } from '../../types';
 import type { PRDetails } from '../CreatePRModal';
 
 // Worktree Modal Components
@@ -18,7 +18,7 @@ export interface AppWorktreeModalsProps {
 	// WorktreeConfigModal
 	worktreeConfigModalOpen: boolean;
 	onCloseWorktreeConfigModal: () => void;
-	onSaveWorktreeConfig: (config: { basePath: string; watchEnabled: boolean }) => void;
+	onSaveWorktreeConfig: (config: SessionWorktreeConfig) => void;
 	onCreateWorktreeFromConfig: (branchName: string, basePath: string) => void;
 	onDisableWorktreeConfig: () => void;
 

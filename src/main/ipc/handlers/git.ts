@@ -34,7 +34,9 @@ import {
 	getRepoRootRemote,
 } from '../../utils/remote-git';
 import { readDirRemote } from '../../utils/remote-fs';
+import { runWorktreeSetupScript } from '../../utils/worktree-setup-script';
 import { captureException } from '../../utils/sentry';
+import type { SshRemoteConfig } from '../../../shared/types';
 
 const LOG_CONTEXT = '[Git]';
 
@@ -785,6 +787,36 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					requestedBranch: branchName,
 					branchMismatch: false,
 				};
+			}
+		)
+	);
+
+	// Run the agent's configured post-create setup script inside a new worktree.
+	// Callers invoke this right after `worktreeSetup` reports a freshly created
+	// worktree; a blank script is a no-op (ran: false).
+	// Supports SSH remote execution via optional sshRemoteId parameter.
+	ipcMain.handle(
+		'git:worktreeRunSetup',
+		withIpcErrorLogging(
+			handlerOpts('worktreeRunSetup'),
+			async (
+				script: string,
+				context: {
+					worktreePath: string;
+					branchName: string;
+					mainRepoPath: string;
+					baseBranch?: string;
+				},
+				sshRemoteId?: string
+			) => {
+				let sshConfig: SshRemoteConfig | undefined;
+				if (sshRemoteId) {
+					sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+				}
+				return runWorktreeSetupScript(script, context, sshConfig);
 			}
 		)
 	);
