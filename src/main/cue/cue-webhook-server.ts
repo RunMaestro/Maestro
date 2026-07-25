@@ -41,6 +41,10 @@ const MAX_BODY_BYTES = 1024 * 1024;
  *  so the full megabyte is not worth keeping once filters have run. */
 const MAX_STORED_RAW_BODY = 64 * 1024;
 
+/** Bind hosts that keep the listener on the local machine. Anything else gets
+ *  a warning at startup, since it exposes an agent trigger to the network. */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
 /** Headers that carry authentication material and must never reach a payload. */
 const REDACTED_HEADERS = new Set([
 	'authorization',
@@ -139,11 +143,17 @@ function secureEquals(a: string, b: string): boolean {
  * the raw body, accepting both the bare hex digest and the `sha256=<hex>`
  * prefix GitHub and GitLab send. Otherwise the secret must be presented
  * directly via `X-Maestro-Cue-Secret` or `Authorization: Bearer`.
+ *
+ * The HMAC is taken over the received *bytes*, not a decoded string. Senders
+ * sign the wire bytes, and round-tripping a non-UTF-8 body through
+ * `toString('utf8')` substitutes U+FFFD for invalid sequences - re-encoding
+ * that would produce a different digest and reject a legitimately signed
+ * delivery.
  */
 function authenticates(
 	reg: CueWebhookRegistration,
 	headers: http.IncomingHttpHeaders,
-	rawBody: string
+	rawBody: Buffer
 ): boolean {
 	if (reg.signatureHeader) {
 		const presented = headers[reg.signatureHeader.toLowerCase()];
@@ -211,33 +221,42 @@ function respond(res: http.ServerResponse, status: number, body: Record<string, 
 	res.end(payload);
 }
 
+/**
+ * Outcome of reading a request body. A size overrun and a broken connection
+ * are distinct failures - collapsing them would answer a dropped connection
+ * with "413 Payload too large" and send the operator hunting a size limit that
+ * was never hit.
+ */
+type ReadBodyResult =
+	| { kind: 'ok'; body: Buffer }
+	| { kind: 'too-large' }
+	| { kind: 'stream-error' };
+
 /** Read the request body, aborting once it exceeds {@link MAX_BODY_BYTES}. */
-function readBody(req: http.IncomingMessage): Promise<string | null> {
+function readBody(req: http.IncomingMessage): Promise<ReadBodyResult> {
 	return new Promise((resolve) => {
 		const chunks: Buffer[] = [];
 		let size = 0;
-		let aborted = false;
+		let settled = false;
+
+		const settle = (result: ReadBodyResult): void => {
+			if (settled) return;
+			settled = true;
+			resolve(result);
+		};
 
 		req.on('data', (chunk: Buffer) => {
-			if (aborted) return;
+			if (settled) return;
 			size += chunk.length;
 			if (size > MAX_BODY_BYTES) {
-				aborted = true;
-				resolve(null);
+				settle({ kind: 'too-large' });
 				req.destroy();
 				return;
 			}
 			chunks.push(chunk);
 		});
-		req.on('end', () => {
-			if (!aborted) resolve(Buffer.concat(chunks).toString('utf8'));
-		});
-		req.on('error', () => {
-			if (!aborted) {
-				aborted = true;
-				resolve(null);
-			}
-		});
+		req.on('end', () => settle({ kind: 'ok', body: Buffer.concat(chunks) }));
+		req.on('error', () => settle({ kind: 'stream-error' }));
 	});
 }
 
@@ -261,7 +280,17 @@ export async function handleCueWebhookRequest(
 		respond(res, 404, { error: 'Unknown webhook path' });
 		return;
 	}
-	const path = normalizeWebhookPath(decodeURIComponent(match[1]));
+	// A malformed percent-escape (`/cue/%`) makes decodeURIComponent throw. That
+	// is a bad request, not a server fault - treat it as an unknown path rather
+	// than letting it surface as a 500 and a Sentry report.
+	let decoded: string;
+	try {
+		decoded = decodeURIComponent(match[1]);
+	} catch {
+		respond(res, 404, { error: 'Unknown webhook path' });
+		return;
+	}
+	const path = normalizeWebhookPath(decoded);
 
 	const targets = [...registrations].filter((reg) => reg.path === path);
 	if (targets.length === 0) {
@@ -269,11 +298,16 @@ export async function handleCueWebhookRequest(
 		return;
 	}
 
-	const rawBody = await readBody(req);
-	if (rawBody === null) {
+	const read = await readBody(req);
+	if (read.kind === 'too-large') {
 		respond(res, 413, { error: 'Payload too large' });
 		return;
 	}
+	if (read.kind === 'stream-error') {
+		respond(res, 400, { error: 'Could not read request body' });
+		return;
+	}
+	const rawBody = read.body;
 
 	const authenticated = targets.filter((reg) => authenticates(reg, req.headers, rawBody));
 	if (authenticated.length === 0) {
@@ -286,11 +320,16 @@ export async function handleCueWebhookRequest(
 		return;
 	}
 
+	// Decode to text only now that the signature has been checked against the
+	// original bytes. Truncation is applied on the byte buffer so a body that
+	// straddles the cap can't be cut mid-codepoint.
+	const decodedBody = rawBody.toString('utf8');
+
 	// Parse once and share the result: JSON.parse on a megabyte per matching
 	// subscription is wasted work, and every consumer wants the same object.
 	let parsed: unknown = null;
 	try {
-		parsed = rawBody.length > 0 ? JSON.parse(rawBody) : null;
+		parsed = decodedBody.length > 0 ? JSON.parse(decodedBody) : null;
 	} catch {
 		// Non-JSON bodies (form posts, plain text) are legitimate - the raw body
 		// still reaches the prompt via {{CUE_WEBHOOK_BODY}}.
@@ -301,7 +340,9 @@ export async function handleCueWebhookRequest(
 	const deliveryId = resolveDeliveryId(req.headers);
 	const receivedAt = new Date().toISOString();
 	const truncatedRaw =
-		rawBody.length > MAX_STORED_RAW_BODY ? rawBody.slice(0, MAX_STORED_RAW_BODY) : rawBody;
+		rawBody.length > MAX_STORED_RAW_BODY
+			? rawBody.subarray(0, MAX_STORED_RAW_BODY).toString('utf8')
+			: decodedBody;
 
 	for (const reg of authenticated) {
 		reg.onDelivery({
@@ -349,6 +390,15 @@ function ensureServerStarted(onLog: (level: MainLogLevel, message: string) => vo
 		const address = instance.address();
 		boundPort = address && typeof address === 'object' ? address.port : port;
 		onLog('cue', `[CUE] webhook listener started on http://${host}:${boundPort}/cue/`);
+		// Binding past loopback puts an agent trigger on the network. It's a
+		// supported choice, but a silent one is a footgun - say so once, at the
+		// moment it takes effect.
+		if (!LOOPBACK_HOSTS.has(host)) {
+			onLog(
+				'warn',
+				`[CUE] webhook listener is bound to ${host}, not loopback - any host that can reach this port may trigger agents (secrets still required). Prefer 127.0.0.1 behind a tunnel or reverse proxy.`
+			);
+		}
 	});
 
 	server = instance;

@@ -350,6 +350,60 @@ describe('cue-webhook-server', () => {
 		expect(res.status).toBe(405);
 	});
 
+	it('verifies an HMAC over the received bytes, not a re-encoded string', async () => {
+		// A body with a byte sequence that is not valid UTF-8. Decoding it to a
+		// string and re-encoding would substitute U+FFFD and change the digest,
+		// so this only passes if the HMAC is taken over the original buffer.
+		const rawBytes = Buffer.from([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xff, 0xfe, 0x22, 0x7d]);
+		const digest = crypto.createHmac('sha256', 's3cret').update(rawBytes).digest('hex');
+		const { deliveries } = register({ signatureHeader: 'X-Hub-Signature-256' });
+		const res = makeResponse();
+
+		const req = new EventEmitter() as unknown as http.IncomingMessage & { destroy: () => void };
+		req.method = 'POST';
+		req.url = '/cue/my-hook';
+		req.headers = { 'x-hub-signature-256': `sha256=${digest}` };
+		req.destroy = () => {};
+		queueMicrotask(() => {
+			req.emit('data', rawBytes);
+			req.emit('end');
+		});
+
+		await handleCueWebhookRequest(req, res as unknown as http.ServerResponse);
+
+		expect(res.status).toBe(202);
+		expect(deliveries).toHaveLength(1);
+	});
+
+	it('404s a malformed percent-escape instead of throwing', async () => {
+		register();
+		const res = makeResponse();
+
+		await handleCueWebhookRequest(
+			makeRequest({ url: '/cue/%', body: '{}' }),
+			res as unknown as http.ServerResponse
+		);
+
+		expect(res.status).toBe(404);
+	});
+
+	it('answers a broken connection with 400, not 413', async () => {
+		const { deliveries } = register();
+		const res = makeResponse();
+
+		const req = new EventEmitter() as unknown as http.IncomingMessage & { destroy: () => void };
+		req.method = 'POST';
+		req.url = '/cue/my-hook';
+		req.headers = { 'x-maestro-cue-secret': 's3cret' };
+		req.destroy = () => {};
+		queueMicrotask(() => req.emit('error', new Error('socket hang up')));
+
+		await handleCueWebhookRequest(req, res as unknown as http.ServerResponse);
+
+		expect(res.status).toBe(400);
+		expect(deliveries).toHaveLength(0);
+	});
+
 	it('rejects a body larger than the 1 MiB cap before authenticating', async () => {
 		const { deliveries } = register();
 		const res = makeResponse();
