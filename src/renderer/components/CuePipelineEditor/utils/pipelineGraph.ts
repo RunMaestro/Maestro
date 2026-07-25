@@ -60,6 +60,8 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 			return 'agent done';
 		case 'cli.trigger':
 			return 'cli';
+		case 'webhook.received':
+			return `/cue/${config.webhook_path ?? ''}`;
 		default:
 			return '';
 	}

@@ -206,6 +206,7 @@ const TRIGGER_TYPE_LABELS: Record<string, string> = {
 	'github.issue': 'GitHub Issue',
 	'task.pending': 'Task Pending',
 	'cli.trigger': 'CLI Trigger',
+	'webhook.received': 'Webhook',
 };
 
 function triggerTypeGroupKey(eventType: string): { key: string; label: string } {

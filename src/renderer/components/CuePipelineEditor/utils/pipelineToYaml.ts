@@ -192,6 +192,26 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 		case 'task.pending':
 			sub.watch = triggerData.config.watch ?? '**/*.md';
 			break;
+		case 'webhook.received': {
+			// `secret` and `secret_env` are mutually exclusive in the schema, so
+			// emit the literal only when the trigger has no env var - that's the
+			// hand-written-YAML case we're preserving rather than encouraging.
+			const webhook: CueSubscription['webhook'] = {};
+			if (triggerData.config.webhook_path) webhook.path = triggerData.config.webhook_path;
+			if (triggerData.config.webhook_secret_env) {
+				webhook.secret_env = triggerData.config.webhook_secret_env;
+			} else if (triggerData.config.webhook_secret) {
+				webhook.secret = triggerData.config.webhook_secret;
+			}
+			if (triggerData.config.webhook_signature_header) {
+				webhook.signature_header = triggerData.config.webhook_signature_header;
+			}
+			sub.webhook = webhook;
+			if (triggerData.config.filter) {
+				sub.filter = triggerData.config.filter;
+			}
+			break;
+		}
 		case 'agent.completed':
 			// source_session comes from node config, not edges
 			break;
@@ -869,6 +889,7 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.poll_minutes != null) record.poll_minutes = sub.poll_minutes;
 			if (sub.retrigger_on_comments === true) record.retrigger_on_comments = true;
 			if (sub.max_notifications != null) record.max_notifications = sub.max_notifications;
+			if (sub.webhook != null) record.webhook = sub.webhook;
 			if (sub.source_session != null) record.source_session = sub.source_session;
 			if (sub.source_session_ids != null) record.source_session_ids = sub.source_session_ids;
 			if (sub.source_sub != null) record.source_sub = sub.source_sub;

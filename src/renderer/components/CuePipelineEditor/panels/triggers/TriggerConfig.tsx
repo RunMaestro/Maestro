@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
+import { normalizeWebhookPath } from '../../../../../shared/cue';
 import { useDebouncedCallback } from '../../../../hooks/utils';
 import { registerPendingEdit } from '../../../../hooks/cue/pendingEditsRegistry';
 import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
@@ -368,6 +369,65 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 					</div>
 				</div>
 			);
+		case 'webhook.received': {
+			// The path defaults to a slug of the subscription name, so show the
+			// resolved URL rather than an empty placeholder - otherwise the user
+			// has no way to know where to point the sending service.
+			const resolvedPath = normalizeWebhookPath(
+				localConfig.webhook_path || data.customLabel || data.label || ''
+			);
+			return (
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
+					<label style={themedLabelStyle}>
+						URL path
+						<input
+							type="text"
+							value={localConfig.webhook_path ?? ''}
+							onChange={(e) => updateConfig('webhook_path', e.target.value)}
+							placeholder={resolvedPath || 'my-webhook'}
+							style={themedInputStyle}
+						/>
+					</label>
+					<div style={{ color: theme.colors.textDim, fontSize: 12 }}>
+						POST to <code>/cue/{resolvedPath || 'my-webhook'}</code> on Maestro's local webhook port
+						(default 17997, loopback only). Expose it to an external service with a tunnel or
+						reverse proxy.
+					</div>
+					<label style={themedLabelStyle}>
+						Secret environment variable
+						<input
+							type="text"
+							value={localConfig.webhook_secret_env ?? ''}
+							onChange={(e) => updateConfig('webhook_secret_env', e.target.value)}
+							placeholder="MY_WEBHOOK_SECRET"
+							style={themedInputStyle}
+						/>
+					</label>
+					{localConfig.webhook_secret && !localConfig.webhook_secret_env && (
+						<div style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
+							This trigger uses a literal secret written directly in cue.yaml. Set an environment
+							variable above to move it out of the committed file.
+						</div>
+					)}
+					<label style={themedLabelStyle}>
+						Signature header (optional)
+						<input
+							type="text"
+							value={localConfig.webhook_signature_header ?? ''}
+							onChange={(e) => updateConfig('webhook_signature_header', e.target.value)}
+							placeholder="X-Hub-Signature-256"
+							style={themedInputStyle}
+						/>
+					</label>
+					<div style={{ color: theme.colors.textDim, fontSize: 12 }}>
+						Set this for senders that sign the body (GitHub, GitLab). Leave blank and the sender
+						must present the secret via <code>X-Maestro-Cue-Secret</code> or{' '}
+						<code>Authorization: Bearer</code>.
+					</div>
+				</div>
+			);
+		}
 		default:
 			return null;
 	}

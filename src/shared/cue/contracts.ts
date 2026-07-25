@@ -29,7 +29,8 @@ export type CueEventType =
 	| 'github.pull_request'
 	| 'github.issue'
 	| 'task.pending'
-	| 'cli.trigger';
+	| 'cli.trigger'
+	| 'webhook.received';
 
 /** All valid event type values */
 export const CUE_EVENT_TYPES: CueEventType[] = [
@@ -43,7 +44,56 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'github.issue',
 	'task.pending',
 	'cli.trigger',
+	'webhook.received',
 ];
+
+/**
+ * Per-subscription config for `webhook.received` triggers.
+ *
+ * Maestro runs one local HTTP listener (loopback-only by default) shared by
+ * every `webhook.received` subscription across every agent. Each subscription
+ * claims a path segment under `/cue/` and authenticates deliveries with its
+ * own shared secret, so two projects can never read each other's payloads.
+ *
+ * Delivery URL: `http://127.0.0.1:<port>/cue/<path>`. Port and bind host come
+ * from `MAESTRO_CUE_WEBHOOK_PORT` / `MAESTRO_CUE_WEBHOOK_HOST`; to accept
+ * deliveries from the public internet, point a tunnel (ngrok, cloudflared) or
+ * a reverse proxy at the loopback port rather than binding it to 0.0.0.0.
+ */
+export interface CueWebhookConfig {
+	/** URL path segment under `/cue/`. Defaults to a slug of the subscription
+	 *  name when omitted. Multiple subscriptions may share a path - every
+	 *  matching subscription that authenticates receives the delivery. */
+	path?: string;
+	/** Literal shared secret. Discouraged: `cue.yaml` is normally committed.
+	 *  Prefer {@link secret_env}. Exactly one of the two is required. */
+	secret?: string;
+	/** Name of an environment variable holding the shared secret. Read from
+	 *  the Maestro process environment at delivery time, so rotating the
+	 *  secret does not require a config edit. */
+	secret_env?: string;
+	/** When set, deliveries authenticate by HMAC-SHA256 over the raw request
+	 *  body instead of by presenting the secret directly. The header value may
+	 *  be bare hex or `sha256=<hex>` (GitHub / GitLab style). */
+	signature_header?: string;
+}
+
+/**
+ * Normalize a user-supplied webhook path (or a subscription name used as the
+ * fallback) into a URL segment: lowercase, non-alphanumerics collapsed to
+ * single hyphens, trimmed. Returns an empty string when nothing usable
+ * survives, which the config validator reports as an error.
+ *
+ * Lives in the shared contract rather than the listener so the validator can
+ * check a config without pulling the HTTP server into its import graph.
+ */
+export function normalizeWebhookPath(raw: string): string {
+	return raw
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+}
 
 /** Valid GitHub state filters for polling triggers */
 export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
@@ -206,6 +256,9 @@ export interface CueSubscription {
 	 *  freezes its tracked revision so raising the cap later resumes from
 	 *  the right point instead of replaying stale activity. */
 	max_notifications?: number;
+	/** Listener config for `webhook.received` events. Required for that event
+	 *  type; ignored for all others. See {@link CueWebhookConfig}. */
+	webhook?: CueWebhookConfig;
 	agent_id?: string;
 	label?: string;
 	fan_in_timeout_minutes?: number;

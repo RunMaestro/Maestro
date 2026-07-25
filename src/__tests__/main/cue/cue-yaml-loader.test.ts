@@ -1759,6 +1759,141 @@ subscriptions:
 		});
 	});
 
+	describe('validateCueConfig for webhook.received events', () => {
+		it('accepts a webhook subscription with secret_env', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: 'gh-pr', secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('accepts a literal secret with a signature header', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { secret: 'shhh', signature_header: 'X-Hub-Signature-256' },
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it('requires a webhook block', () => {
+			const result = validateCueConfig({
+				subscriptions: [{ name: 'pr-review', event: 'webhook.received', prompt: 'Review' }],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"webhook" is required')])
+			);
+		});
+
+		it('rejects a webhook with no secret at all', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: 'gh-pr' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('webhook.secret_env')])
+			);
+		});
+
+		it('rejects secret and secret_env together', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { secret: 'shhh', secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('mutually exclusive')])
+			);
+		});
+
+		it('rejects a path that slugs to nothing', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: '///', secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('webhook.path')])
+			);
+		});
+
+		it('rejects a non-string webhook field', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: 42, secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('must be a string')])
+			);
+		});
+	});
+
+	describe('loadCueConfig with webhook.received', () => {
+		it('parses the webhook block from YAML', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: pr-review
+    event: webhook.received
+    prompt: Review the PR
+    webhook:
+      path: gh-pr
+      secret_env: GH_WEBHOOK_SECRET
+      signature_header: X-Hub-Signature-256
+    filter:
+      body.action: opened
+`);
+			const config = loadCueConfig('/project');
+			expect(config?.subscriptions[0].webhook).toEqual({
+				path: 'gh-pr',
+				secret: undefined,
+				secret_env: 'GH_WEBHOOK_SECRET',
+				signature_header: 'X-Hub-Signature-256',
+			});
+			expect(config?.subscriptions[0].filter).toEqual({ 'body.action': 'opened' });
+		});
+	});
+
 	describe('loadCueConfig with task.pending', () => {
 		it('parses watch and poll_minutes from YAML', () => {
 			mockExistsSync.mockReturnValue(true);

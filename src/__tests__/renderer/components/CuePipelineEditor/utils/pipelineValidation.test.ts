@@ -78,8 +78,8 @@ function pipeline(
 
 describe('pipelineValidation', () => {
 	describe('DEFAULT_TRIGGER_LABELS', () => {
-		it('covers all 10 CueEventType values', () => {
-			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(10);
+		it('covers all 11 CueEventType values', () => {
+			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(11);
 			expect(DEFAULT_TRIGGER_LABELS['app.startup']).toBe('Startup');
 			expect(DEFAULT_TRIGGER_LABELS['time.heartbeat']).toBe('Heartbeat');
 			expect(DEFAULT_TRIGGER_LABELS['time.scheduled']).toBe('Scheduled');
@@ -90,6 +90,7 @@ describe('pipelineValidation', () => {
 			expect(DEFAULT_TRIGGER_LABELS['github.issue']).toBe('Issue');
 			expect(DEFAULT_TRIGGER_LABELS['task.pending']).toBe('Pending Task');
 			expect(DEFAULT_TRIGGER_LABELS['cli.trigger']).toBe('CLI Trigger');
+			expect(DEFAULT_TRIGGER_LABELS['webhook.received']).toBe('Webhook');
 		});
 	});
 

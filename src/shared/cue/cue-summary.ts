@@ -29,6 +29,7 @@ export const CUE_EVENT_LABELS: Record<CueEventType, string> = {
 	'github.issue': 'GitHub Issue',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
+	'webhook.received': 'Webhook',
 };
 
 /**
