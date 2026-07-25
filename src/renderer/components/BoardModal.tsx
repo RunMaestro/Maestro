@@ -1426,6 +1426,17 @@ function BoardCardTile({
 					</span>
 				)}
 			</div>
+			{/* Non-running cards surface the last run's handoff summary as a 2-line
+			    preview on the tile face - the run's durable payoff, no longer buried
+			    in the "Full run details" disclosure below. */}
+			{!isRunning && latestSummary && (
+				<div
+					className="mt-1.5 text-[10px] leading-snug line-clamp-2 select-text"
+					style={{ color: theme.colors.textDim }}
+				>
+					{latestSummary}
+				</div>
+			)}
 			{showRunDetails && latestRun && (
 				<details
 					className="mt-1.5 select-text"
@@ -1437,7 +1448,7 @@ function BoardCardTile({
 						className="text-[10px] cursor-pointer list-none opacity-70 hover:opacity-100"
 						style={{ color: theme.colors.textDim }}
 					>
-						{isRunning ? 'Run details' : 'Last run summary'}
+						{isRunning ? 'Run details' : 'Full run details'}
 					</summary>
 					{/* Board runs are headless `executeCuePrompt` spawns with no visible
 					    tab, so this is the live view: status, elapsed, worker, branch. */}
