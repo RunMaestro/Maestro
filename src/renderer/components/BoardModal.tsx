@@ -905,6 +905,14 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							autoFocusMove={focusMovePicker}
 							profileName={profileName}
 							projectAgents={projectAgents}
+							projectRoot={projectRoot}
+							onProfilesUpdated={(updatedList, newProfileId) => {
+								// Sync the Board's own profiles state from the upsert return value
+								// (the profiles:changed push covers every other surface) and select
+								// the freshly created role on the open draft.
+								setProfiles(updatedList);
+								setDraft((p) => (p ? { ...p, assigneeProfileId: newProfileId } : p));
+							}}
 						/>
 					)}
 
@@ -1436,6 +1444,13 @@ interface CardEditorProps {
 	autoFocusMove: boolean;
 	profileName: (id: string) => string;
 	projectAgents: { id: string; name: string; isWorker: boolean }[];
+	/** Project root, forwarded to `window.maestro.profiles.upsert` for inline role create. */
+	projectRoot: string;
+	/**
+	 * Called after an inline "+ New role" upsert. `updatedList` is the full list
+	 * returned by the upsert; `newProfileId` is the profile to select on the draft.
+	 */
+	onProfilesUpdated: (updatedList: AgentProfile[], newProfileId: string) => void;
 }
 
 /** Inline create/edit form for a card. Replaces the board view while open, the
@@ -1458,6 +1473,8 @@ function CardEditor({
 	autoFocusMove,
 	profileName,
 	projectAgents,
+	projectRoot,
+	onProfilesUpdated,
 }: CardEditorProps) {
 	// Candidate parents are every other card (a card cannot depend on itself).
 	const candidateParents = board.cards.filter((c) => c.id !== draft.id);
