@@ -11,10 +11,7 @@ import {
 	normalizeRelPath,
 	isTrustedKey,
 } from '../../../shared/plugins/signing';
-import {
-	MAESTRO_PUBLISHER_KEYS,
-	resolveTrustedKeys,
-} from '../../../shared/plugins/publisher-keys';
+import { MAESTRO_PUBLISHER_KEYS, resolveTrustedKeys } from '../../../shared/plugins/publisher-keys';
 
 describe('rpc-protocol', () => {
 	it('maps every host method to a capability', () => {
