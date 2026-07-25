@@ -402,6 +402,77 @@ describe('useFileContextMenu', () => {
 		expect(openNewFolderModal).toHaveBeenCalledWith('docs', '/project/docs');
 	});
 
+	it('handleNewAgentHere opens the newInstance modal seeded with the folder path', () => {
+		const openModal = vi.fn();
+		vi.mocked(modalStore.useModalStore.getState).mockReturnValueOnce({ openModal } as any);
+
+		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, folderNode, 'docs', 0);
+		});
+		act(() => {
+			result.current.handleNewAgentHere();
+		});
+		expect(openModal).toHaveBeenCalledWith('newInstance', {
+			duplicatingSessionId: null,
+			presetWorkingDir: '/project/docs',
+		});
+		expect(result.current.contextMenu).toBeNull();
+	});
+
+	it('handleNewAgentHere joins nested folder paths with the base separator', () => {
+		const openModal = vi.fn();
+		vi.mocked(modalStore.useModalStore.getState).mockReturnValueOnce({ openModal } as any);
+
+		const winSession = { ...session, fullPath: 'C:\\Users\\Test' };
+		const { result } = renderHook(() =>
+			useFileContextMenu({ ...defaultArgs, session: winSession })
+		);
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, folderNode, 'src/renderer', 0);
+		});
+		act(() => {
+			result.current.handleNewAgentHere();
+		});
+		expect(openModal).toHaveBeenCalledWith('newInstance', {
+			duplicatingSessionId: null,
+			presetWorkingDir: 'C:\\Users\\Test\\src\\renderer',
+		});
+	});
+
+	it('handleNewAgentHere is a no-op for file rows', () => {
+		const openModal = vi.fn();
+		vi.mocked(modalStore.useModalStore.getState).mockReturnValue({ openModal } as any);
+
+		const { result } = renderHook(() => useFileContextMenu(defaultArgs));
+		const e = {
+			clientX: 10,
+			clientY: 10,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as React.MouseEvent;
+		act(() => {
+			result.current.openContextMenu(e, fileNode, 'App.tsx', 0);
+		});
+		act(() => {
+			result.current.handleNewAgentHere();
+		});
+		expect(openModal).not.toHaveBeenCalled();
+		expect(result.current.contextMenu).toBeNull();
+	});
+
 	it('handleOpenInMaestroBrowser encodes the file:// URL', () => {
 		const onOpenBrowserTabAt = vi.fn();
 		const { result } = renderHook(() => useFileContextMenu({ ...defaultArgs, onOpenBrowserTabAt }));

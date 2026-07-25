@@ -88,6 +88,8 @@ export interface NewInstanceModalData {
 	duplicatingSessionId: string | null;
 	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set - duplicates inherit the source's group). */
 	presetGroupId?: string | null;
+	/** When set, seeds the working directory (and a default name from its basename). Ignored if duplicatingSessionId is set - duplicates inherit the source's cwd. */
+	presetWorkingDir?: string | null;
 }
 
 /** Edit agent modal data */
@@ -1065,6 +1067,7 @@ export function useModalActions() {
 		newInstanceModalOpen,
 		duplicatingSessionId: newInstanceData?.duplicatingSessionId ?? null,
 		newInstancePresetGroupId: newInstanceData?.presetGroupId ?? null,
+		newInstancePresetWorkingDir: newInstanceData?.presetWorkingDir ?? null,
 
 		// Edit Agent Modal
 		editAgentModalOpen,
