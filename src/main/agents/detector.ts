@@ -26,7 +26,7 @@ import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { capabilitySnapshots } from './capability-snapshot';
-import { setOmpModelCatalog, computeOmpCatalogKey } from './omp-model-catalog';
+import { setOmpModelCatalog, computeOmpCatalogKey, primeOmpModelCatalog } from './omp-model-catalog';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -222,6 +222,20 @@ export class AgentDetector {
 				} else if (existing?.status !== 'not_installed') {
 					capabilitySnapshots.markNotInstalled(agentDef.id);
 				}
+			}
+
+			// Warm the default-identity omp context-window catalog the moment omp
+			// is detected, so a user's first prompt already has the real per-turn
+			// window resolved instead of losing a cold-start race against the
+			// spawn-time prime cap. Non-blocking: the catalog's own TTL/dedupe
+			// guards against repeated primes, and custom-path/env sessions still
+			// prime their own identity at spawn time.
+			if (agentDef.id === 'omp' && detection.exists && detection.path) {
+				primeOmpModelCatalog(
+					detection.path,
+					getExpandedEnv(),
+					computeOmpCatalogKey(detection.path, undefined)
+				);
 			}
 		}
 
