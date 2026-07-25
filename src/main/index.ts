@@ -1619,6 +1619,21 @@ app
 						color: blocked ? 'red' : 'green',
 						dismissible: blocked,
 						sourceAgent: 'Board',
+						// Pooled runs persist the worker's Left Bar agent id, so make the
+						// toast body jump straight to that agent (mirrors the Cue precedent
+						// in cue-notify-bridge.ts). `sessionId` also drives the legacy
+						// fallback and metadata resolution in useRemoteIntegration.ts.
+						// Legacy profile-based runs have no `workerAgentId` and keep the
+						// non-clickable toast.
+						...(event.workerAgentId
+							? {
+									sessionId: event.workerAgentId,
+									clickAction: {
+										kind: 'jump-session' as const,
+										sessionId: event.workerAgentId,
+									},
+								}
+							: {}),
 					});
 				},
 				// Board Phase 5: every card status transition goes out on the plugin
