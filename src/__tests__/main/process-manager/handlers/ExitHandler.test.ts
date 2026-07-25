@@ -289,6 +289,35 @@ describe('ExitHandler', () => {
 		});
 	});
 
+	// Regression (issue #1044): handleExit can park mid-flight (Copilot's on-disk
+	// shutdown reconciliation), long enough for the session to be re-spawned under
+	// the same key. Emitting then would settle the successor's turn with the dead
+	// process's exit code, and the trailing delete would orphan a live process.
+	describe('session re-spawned while exit is being handled', () => {
+		it('suppresses the exit event and leaves the successor tracked', async () => {
+			const successor = createMockProcess({ pid: 4321 });
+			const proc = createMockProcess({
+				outputParser: createMockOutputParser({
+					// Stands in for any await inside handleExit: the map entry is swapped
+					// out from under us while the handler is still running.
+					detectErrorFromExit: vi.fn(() => {
+						processes.set('test-session', successor);
+						return null;
+					}),
+				}),
+			});
+			processes.set('test-session', proc);
+
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.get('test-session')).toBe(successor);
+		});
+	});
+
 	describe('streamedText fallback', () => {
 		it('should emit streamedText when no result was emitted in stream-json mode', async () => {
 			const proc = createMockProcess({

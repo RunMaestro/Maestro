@@ -264,4 +264,70 @@ describe('PtySpawner', () => {
 			expect(processes.get('ssh-session')?.isTerminal).toBe(true);
 		});
 	});
+
+	// Regression (issue #1044): ProcessManager.spawn() kills whatever holds a
+	// sessionId before registering the replacement under the same key. A late
+	// exit from the killed PTY must not be reported as the successor dying, and
+	// must not delete the successor's tracking entry.
+	describe('late events from a superseded generation', () => {
+		function spawnTwoGenerations() {
+			const ctx = createTestContext();
+			const config = createBaseConfig({ sessionId: 'reused-session', shell: 'zsh' });
+
+			ctx.spawner.spawn(config);
+			const firstOnData = mockPtyProcess.onData.mock.calls[0][0] as (data: string) => void;
+			const firstOnExit = mockPtyProcess.onExit.mock.calls[0][0] as (e: {
+				exitCode: number;
+				signal?: number;
+			}) => void;
+
+			// The predecessor is killed (map entry dropped) and the successor takes
+			// over the same key.
+			ctx.processes.delete(config.sessionId);
+			ctx.spawner.spawn(config);
+
+			return {
+				...ctx,
+				config,
+				firstOnData,
+				firstOnExit,
+				second: ctx.processes.get('reused-session'),
+			};
+		}
+
+		it('ignores a late exit from the superseded PTY', () => {
+			const { emitter, processes, firstOnExit, second } = spawnTwoGenerations();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			firstOnExit({ exitCode: 143, signal: 15 });
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.get('reused-session')).toBe(second);
+		});
+
+		it('ignores late data from the superseded PTY', () => {
+			const { bufferManager, firstOnData } = spawnTwoGenerations();
+
+			firstOnData('stale terminal output');
+
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('still reports exit for the current generation', () => {
+			const { emitter, processes, spawner } = createTestContext();
+			spawner.spawn(createBaseConfig({ sessionId: 'live-session', shell: 'zsh' }));
+			const onPtyExit = mockPtyProcess.onExit.mock.calls.at(-1)![0] as (e: {
+				exitCode: number;
+				signal?: number;
+			}) => void;
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			onPtyExit({ exitCode: 0, signal: undefined });
+
+			expect(onExit).toHaveBeenCalledWith('live-session', 0, undefined);
+			expect(processes.has('live-session')).toBe(false);
+		});
+	});
 });
