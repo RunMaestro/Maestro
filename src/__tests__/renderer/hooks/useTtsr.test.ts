@@ -427,9 +427,37 @@ describe('useTtsr subscription wiring', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			// Display state is per-renderer, so it is still recorded here.
 			expect(useTtsrStore.getState().lastTriggered['session-1-ai-tab-1']).toBeDefined();
+
+			const tab = currentTab();
+			// The transcript must not stop mid-sentence: a boundary notice is
+			// appended telling the web user where the correction actually runs...
+			expect(tab.logs).toHaveLength(1);
+			expect(tab.logs[0].source).toBe('system');
+			expect(tab.logs[0].text).toContain('no-console-log');
+			expect(tab.logs[0].text).toContain('run by the desktop app');
+			// ...but the tab is NOT flipped to busy - the mirrored process:* events
+			// from the desktop-spawned turn are what drive the visible streaming.
+			expect(tab.state).toBe('idle');
+			expect(tab.thinkingStartTime).toBeUndefined();
 		} finally {
 			mockIsWebDesktop = false;
 		}
+	});
+
+	it('uses the desktop interruption notice text on a non-web client', async () => {
+		seedSession();
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		listeners.triggered?.(makePayload());
+
+		await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+		const tab = currentTab();
+		// Desktop path spawns and flips the tab busy, and its notice says this
+		// client is resuming the conversation - not that the desktop app will.
+		expect(tab.state).toBe('busy');
+		expect(tab.logs[0].text).toContain('Reinjecting corrective guidance');
+		expect(tab.logs[0].text).not.toContain('run by the desktop app');
 	});
 
 	it('respawns in the window that DOES own the agent', async () => {
