@@ -340,7 +340,7 @@ export function buildFeatureCommands({
 		commands.push({
 			id: 'board',
 			label: 'Board',
-			subtext: 'Task DAG kanban dispatched on the Cue tick',
+			subtext: 'Card DAG kanban dispatched on the Cue tick',
 			action: () => {
 				onOpenBoard();
 				setQuickActionOpen(false);
