@@ -17,7 +17,15 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ToastContainer } from '../../../renderer/components/Toast';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 import { mockTheme } from '../../helpers/mockTheme';
+
+// TTSR toasts resolve their outcome line from the client type at display time.
+// Mock isWebDesktop so we can drive both the desktop and web-desktop branches.
+vi.mock('../../../renderer/utils/runtimeContext', async (importActual) => {
+	const actual = await importActual<typeof import('../../../renderer/utils/runtimeContext')>();
+	return { ...actual, isWebDesktop: vi.fn(() => false) };
+});
 
 const createMockToast = (overrides = {}): Toast => ({
 	id: 'toast-1',
@@ -447,6 +455,66 @@ describe('Toast', () => {
 			const { unmount } = render(<ToastContainer theme={mockTheme} />);
 			expect(screen.getByText(/Completed in 1s/)).toBeInTheDocument();
 			unmount();
+		});
+	});
+
+	describe('TTSR outcome line (display-time)', () => {
+		const DESKTOP_RESUME = 'Resuming with corrective guidance.';
+		const DESKTOP_FRESH = 'Restarting the turn with corrective guidance.';
+		const WEB_LINE = 'Correction runs in the desktop app.';
+
+		beforeEach(() => {
+			// Default to the desktop (Electron) branch; web tests opt in explicitly.
+			vi.mocked(isWebDesktop).mockReturnValue(false);
+		});
+
+		it('desktop client appends the resume outcome line for a resume-mode marker', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(false);
+			setStoreToasts([createMockToast({ ttsr: { mode: 'resume' } })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.getByText(DESKTOP_RESUME)).toBeInTheDocument();
+			expect(screen.queryByText(WEB_LINE)).not.toBeInTheDocument();
+		});
+
+		it('desktop client appends the restart outcome line for a fresh-mode marker', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(false);
+			setStoreToasts([createMockToast({ ttsr: { mode: 'fresh' } })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.getByText(DESKTOP_FRESH)).toBeInTheDocument();
+			expect(screen.queryByText(WEB_LINE)).not.toBeInTheDocument();
+		});
+
+		it('web-desktop client appends the desktop-app outcome line (resume marker)', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			setStoreToasts([createMockToast({ ttsr: { mode: 'resume' } })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.getByText(WEB_LINE)).toBeInTheDocument();
+			expect(screen.queryByText(DESKTOP_RESUME)).not.toBeInTheDocument();
+		});
+
+		it('web-desktop line is mode-independent (fresh marker renders the same web line)', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(true);
+			setStoreToasts([createMockToast({ ttsr: { mode: 'fresh' } })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.getByText(WEB_LINE)).toBeInTheDocument();
+			expect(screen.queryByText(DESKTOP_FRESH)).not.toBeInTheDocument();
+		});
+
+		it('renders unchanged when the ttsr marker is absent (no outcome line, plain message shown)', () => {
+			vi.mocked(isWebDesktop).mockReturnValue(false);
+			setStoreToasts([createMockToast({ message: 'This is a test message' })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			// The plain message is still shown...
+			expect(screen.getByText('This is a test message')).toBeInTheDocument();
+			// ...and none of the TTSR outcome lines are appended.
+			expect(screen.queryByText(DESKTOP_RESUME)).not.toBeInTheDocument();
+			expect(screen.queryByText(DESKTOP_FRESH)).not.toBeInTheDocument();
+			expect(screen.queryByText(WEB_LINE)).not.toBeInTheDocument();
 		});
 	});
 });
