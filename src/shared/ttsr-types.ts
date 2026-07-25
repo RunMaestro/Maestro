@@ -292,6 +292,20 @@ export interface TtsrTriggeredPayload {
 	ttsrCorrelationId?: string;
 }
 
+/**
+ * Structured marker carried on a TTSR interrupt toast.
+ *
+ * The broadcast toast describes only the *detection* (which rule fired, that the
+ * turn was interrupted). The client-specific outcome line is resolved at display
+ * time from `mode`, so one payload can read correctly on both the desktop
+ * renderer (which spawns the corrective turn) and web-desktop clients (which do
+ * not). `resume` re-attaches to the aborted conversation; `fresh` is the
+ * degraded path that restarts the turn from the original goal.
+ */
+export interface TtsrToastMarker {
+	mode: 'resume' | 'fresh';
+}
+
 // ── Gate A: per-agent capability matrix ──────────────────────────────────────
 
 /**

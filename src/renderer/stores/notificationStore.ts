@@ -13,6 +13,7 @@
  */
 
 import { create } from 'zustand';
+import type { TtsrToastMarker } from '../../shared/ttsr-types';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
 
@@ -108,6 +109,12 @@ export interface Toast {
 	// `onClick` wins (it can do anything; `clickAction` is the limited subset
 	// that survives serialization).
 	clickAction?: ToastClickAction;
+	// Structured TTSR interrupt marker. Present only on toasts raised by a
+	// turn-triggered self-repair abort. The display layer (Toast.tsx) reads it to
+	// append a client-specific outcome line resolved at display time; the plain
+	// `message` stays a sensible fallback for clients that ignore this field.
+	// Additive - non-TTSR toasts leave it unset and render unchanged.
+	ttsr?: TtsrToastMarker;
 }
 
 export function resolveToastColor(opts: { color?: ToastColor; type?: ToastType }): ToastColor {

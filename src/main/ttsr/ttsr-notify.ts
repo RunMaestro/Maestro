@@ -15,7 +15,7 @@
  */
 
 import { getAgentDisplayName } from '../../shared/agentMetadata';
-import type { TtsrTriggeredPayload } from '../../shared/ttsr-types';
+import type { TtsrToastMarker, TtsrTriggeredPayload } from '../../shared/ttsr-types';
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { logger } from '../utils/logger';
 
@@ -32,6 +32,12 @@ export interface TtsrToastParams {
 	sessionId: string;
 	tabId?: string;
 	clickAction: { kind: 'jump-session'; sessionId: string; tabId?: string };
+	/**
+	 * Structured detection marker. The display layer (Toast.tsx) reads `mode` to
+	 * append the client-specific outcome line; the plain `message` above stays a
+	 * sensible fallback for clients that ignore this field.
+	 */
+	ttsr: TtsrToastMarker;
 }
 
 /**
@@ -46,21 +52,23 @@ export function buildTtsrToast(payload: TtsrTriggeredPayload): TtsrToastParams {
 	const agentSessionId = resolveOwningMaestroSessionId(payload.sessionId);
 	const names = payload.rules.map((rule) => rule.name).join(', ');
 	const plural = payload.rules.length === 1 ? 'Rule' : 'Rules';
-	// `fresh` is the degraded path (Gate A): the turn restarts from the goal
-	// instead of resuming, which is a visible difference worth naming.
-	const outcome =
-		payload.mode === 'resume'
-			? 'Resuming with corrective guidance.'
-			: 'Restarting the turn with corrective guidance.';
 
+	// The broadcast payload states only the detection. Whether the corrective
+	// turn resumes, restarts, or runs on the desktop app is a client-specific
+	// outcome the display layer (Toast.tsx) appends from the `ttsr` marker, so
+	// one payload reads correctly on both the desktop renderer and web clients.
+	// The plain `message` stays a sensible fallback for clients that ignore the
+	// marker. `fresh` is the degraded path (Gate A): the turn restarts from the
+	// goal instead of resuming.
 	return {
 		title: `TTSR interrupted ${getAgentDisplayName(payload.agentId)}`,
-		message: `${plural} ${names || '(unnamed)'} fired. ${outcome}`,
+		message: `${plural} ${names || '(unnamed)'} fired; the turn was interrupted.`,
 		color: 'orange',
 		dismissible: true,
 		sessionId: agentSessionId,
 		tabId: payload.tabId,
 		clickAction: { kind: 'jump-session', sessionId: agentSessionId, tabId: payload.tabId },
+		ttsr: { mode: payload.mode },
 	};
 }
 
