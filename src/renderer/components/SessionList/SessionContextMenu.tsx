@@ -8,6 +8,7 @@ import {
 	FolderPlus,
 	Folder,
 	GitBranch,
+	GitMerge,
 	GitPullRequest,
 	Trash2,
 	Edit3,
@@ -42,6 +43,8 @@ interface SessionContextMenuProps {
 	onCreatePR?: () => void;
 	onQuickCreateWorktree?: () => void;
 	onConfigureWorktrees?: () => void;
+	onMergeWorktree?: () => void;
+	onRebaseWorktree?: () => void;
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
 	/** Hide persisted-group mutation controls in a virtual grouping mode. */
@@ -141,6 +144,8 @@ export function SessionContextMenu({
 	onCreatePR,
 	onQuickCreateWorktree,
 	onConfigureWorktrees,
+	onMergeWorktree,
+	onRebaseWorktree,
 	onDeleteWorktree,
 	onCreateGroup,
 	showGroupActions = true,
@@ -211,7 +216,9 @@ export function SessionContextMenu({
 		((onQuickCreateWorktree && session.worktreeConfig) || onConfigureWorktrees);
 
 	const showWorktreeChildSection =
-		session.parentSessionId && session.worktreeBranch && (onCreatePR || onDeleteWorktree);
+		session.parentSessionId &&
+		session.worktreeBranch &&
+		(onCreatePR || onMergeWorktree || onRebaseWorktree || onDeleteWorktree);
 
 	return (
 		<div
@@ -619,6 +626,34 @@ export function SessionContextMenu({
 						>
 							<GitPullRequest className="w-3.5 h-3.5" />
 							Create Pull Request
+						</button>
+					)}
+					{onMergeWorktree && (
+						<button
+							type="button"
+							onClick={() => {
+								onMergeWorktree();
+								onDismiss();
+							}}
+							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+							style={{ color: theme.colors.accent }}
+						>
+							<GitMerge className="w-3.5 h-3.5" />
+							Merge Branch Into...
+						</button>
+					)}
+					{onRebaseWorktree && (
+						<button
+							type="button"
+							onClick={() => {
+								onRebaseWorktree();
+								onDismiss();
+							}}
+							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+							style={{ color: theme.colors.accent }}
+						>
+							<GitBranch className="w-3.5 h-3.5" />
+							Rebase Branch Onto...
 						</button>
 					)}
 					{onDeleteWorktree && (

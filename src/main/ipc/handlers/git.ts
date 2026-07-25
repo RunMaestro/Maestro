@@ -4,6 +4,7 @@ import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
 import { execFileNoThrow, execFileBufferNoThrow } from '../../utils/execFile';
 import { execGit } from '../../utils/remote-git';
+import type { SshRemoteConfig } from '../../../shared/types';
 import { logger } from '../../utils/logger';
 import { getSshRemoteById } from '../../stores';
 import { createSafeSend } from '../../utils/safe-send';
@@ -110,6 +111,57 @@ async function findLocalWorktreeForBranch(
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * SSH-aware variant of {@link findLocalWorktreeForBranch}.
+ *
+ * Merge has to run in the directory where the target branch is checked out -
+ * git refuses to check a branch out twice, so we can't just switch inside the
+ * worktree. This locates that directory. The on-disk staleness check only
+ * applies locally; over SSH we trust the porcelain listing since we have no
+ * cheap way to stat the remote path.
+ */
+async function findWorktreeForBranch(
+	cwd: string,
+	branchName: string,
+	sshRemote: SshRemoteConfig | null | undefined,
+	remoteCwd: string | undefined
+): Promise<string | null> {
+	if (!sshRemote) return findLocalWorktreeForBranch(cwd, branchName);
+	const result = await execGit(['worktree', 'list', '--porcelain'], cwd, sshRemote, remoteCwd);
+	if (result.exitCode !== 0) return null;
+	return parseWorktreePathForBranch(result.stdout, branchName);
+}
+
+/**
+ * Reject refs that git would parse as an option.
+ *
+ * Branch names reaching these handlers come from `git branch` output via the
+ * renderer, so this is belt-and-braces: execGit uses execFile (no shell), but a
+ * leading dash would still be read as a flag rather than a ref.
+ */
+function isSafeRefName(ref: string): boolean {
+	return ref.length > 0 && !ref.startsWith('-');
+}
+
+/** List paths left conflicted by an in-progress merge/rebase. */
+async function listConflictedPaths(
+	cwd: string,
+	sshRemote: SshRemoteConfig | null | undefined,
+	remoteCwd: string | undefined
+): Promise<string[]> {
+	const result = await execGit(
+		['diff', '--name-only', '--diff-filter=U'],
+		cwd,
+		sshRemote,
+		remoteCwd
+	);
+	if (result.exitCode !== 0) return [];
+	return result.stdout
+		.split('\n')
+		.map((line) => line.trim())
+		.filter(Boolean);
 }
 
 /**
@@ -275,6 +327,170 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				);
 				const commitHash = hashResult.exitCode === 0 ? hashResult.stdout.trim() : undefined;
 				return { success: true, committed: true, commitHash };
+			}
+		)
+	);
+
+	// Merge a worktree's branch into another branch (typically main).
+	//
+	// The merge runs in whichever worktree currently has `targetBranch` checked
+	// out, because git will not check the same branch out twice - we cannot just
+	// switch branches inside the source worktree. Conflicts abort the merge
+	// rather than leaving the user's main checkout in a half-merged state from a
+	// single button press; the conflicting paths come back so the UI can tell
+	// them what to resolve by hand.
+	ipcMain.handle(
+		'git:mergeBranch',
+		withIpcErrorLogging(
+			handlerOpts('mergeBranch'),
+			async (
+				cwd: string,
+				sourceBranch: string,
+				targetBranch: string,
+				sshRemoteId?: string,
+				remoteCwd?: string
+			) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				// Fail loudly rather than merging in the wrong (local) repo.
+				if (sshRemoteId && !sshRemote) {
+					return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
+				}
+				if (!isSafeRefName(sourceBranch) || !isSafeRefName(targetBranch)) {
+					return { success: false, error: 'Invalid branch name' };
+				}
+				if (sourceBranch === targetBranch) {
+					return { success: false, error: 'Source and target branches are the same' };
+				}
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+
+				const targetCwd = await findWorktreeForBranch(
+					cwd,
+					targetBranch,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				if (!targetCwd) {
+					return {
+						success: false,
+						error: `"${targetBranch}" is not checked out in any worktree. Check it out in your main repo first, then merge.`,
+					};
+				}
+				// When merging over SSH the target worktree lives on the remote too,
+				// so the remote cwd has to follow it - not stay on the source path.
+				const targetRemoteCwd = sshRemote ? targetCwd : undefined;
+
+				const statusResult = await execGit(
+					['status', '--porcelain'],
+					targetCwd,
+					sshRemote,
+					targetRemoteCwd
+				);
+				if (statusResult.exitCode !== 0) {
+					return {
+						success: false,
+						error: statusResult.stderr?.trim() || `Could not read git status in ${targetCwd}`,
+					};
+				}
+				if (statusResult.stdout.trim() !== '') {
+					return {
+						success: false,
+						error: `"${targetBranch}" has uncommitted changes in ${targetCwd}. Commit or stash them before merging.`,
+					};
+				}
+
+				const mergeResult = await execGit(
+					['merge', sourceBranch],
+					targetCwd,
+					sshRemote,
+					targetRemoteCwd
+				);
+				if (mergeResult.exitCode !== 0) {
+					const conflicts = await listConflictedPaths(targetCwd, sshRemote, targetRemoteCwd);
+					if (conflicts.length > 0) {
+						// Roll back so the target checkout is left exactly as we found it.
+						await execGit(['merge', '--abort'], targetCwd, sshRemote, targetRemoteCwd);
+						return { success: false, mergedIn: targetCwd, conflicts };
+					}
+					return {
+						success: false,
+						mergedIn: targetCwd,
+						error: mergeResult.stderr?.trim() || mergeResult.stdout?.trim() || 'git merge failed',
+					};
+				}
+
+				return {
+					success: true,
+					mergedIn: targetCwd,
+					alreadyUpToDate: /already up to date/i.test(mergeResult.stdout),
+				};
+			}
+		)
+	);
+
+	// Rebase the branch checked out in `cwd` onto another branch, pulling new
+	// upstream commits into a worktree. Unlike merge this runs in place - the
+	// base branch only needs to exist as a ref, not be checked out. Conflicts
+	// abort so the worktree never ends up stuck mid-rebase from a button press.
+	ipcMain.handle(
+		'git:rebaseBranch',
+		withIpcErrorLogging(
+			handlerOpts('rebaseBranch'),
+			async (cwd: string, ontoBranch: string, sshRemoteId?: string, remoteCwd?: string) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				if (sshRemoteId && !sshRemote) {
+					return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
+				}
+				if (!isSafeRefName(ontoBranch)) {
+					return { success: false, error: 'Invalid branch name' };
+				}
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+
+				const statusResult = await execGit(
+					['status', '--porcelain'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				if (statusResult.exitCode !== 0) {
+					return {
+						success: false,
+						error: statusResult.stderr?.trim() || 'Could not read git status',
+					};
+				}
+				if (statusResult.stdout.trim() !== '') {
+					return {
+						success: false,
+						error: 'This worktree has uncommitted changes. Commit or stash them before rebasing.',
+					};
+				}
+
+				const rebaseResult = await execGit(
+					['rebase', ontoBranch],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				if (rebaseResult.exitCode !== 0) {
+					const conflicts = await listConflictedPaths(cwd, sshRemote, effectiveRemoteCwd);
+					// --abort is a no-op-with-error when no rebase is in progress (e.g.
+					// the ref simply did not resolve), so it is safe to always attempt.
+					await execGit(['rebase', '--abort'], cwd, sshRemote, effectiveRemoteCwd);
+					if (conflicts.length > 0) {
+						return { success: false, conflicts };
+					}
+					return {
+						success: false,
+						error:
+							rebaseResult.stderr?.trim() || rebaseResult.stdout?.trim() || 'git rebase failed',
+					};
+				}
+
+				return {
+					success: true,
+					alreadyUpToDate: /is up to date|current branch .* is up to date/i.test(
+						rebaseResult.stdout
+					),
+				};
 			}
 		)
 	);

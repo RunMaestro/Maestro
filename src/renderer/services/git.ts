@@ -97,6 +97,58 @@ export const gitService = {
 	},
 
 	/**
+	 * Merge a worktree branch into another branch. The merge runs wherever
+	 * `targetBranch` is checked out; conflicts abort it and come back in
+	 * `conflicts` rather than leaving that checkout half-merged.
+	 * @param cwd Worktree path (used to locate the repo)
+	 * @param sourceBranch Branch to merge from
+	 * @param targetBranch Branch to merge into
+	 * @param sshRemoteId Optional SSH remote ID for remote execution
+	 */
+	async mergeBranch(
+		cwd: string,
+		sourceBranch: string,
+		targetBranch: string,
+		sshRemoteId?: string
+	): Promise<{
+		success: boolean;
+		mergedIn?: string;
+		conflicts?: string[];
+		alreadyUpToDate?: boolean;
+		error?: string;
+	}> {
+		return createIpcMethod({
+			call: () => window.maestro.git.mergeBranch(cwd, sourceBranch, targetBranch, sshRemoteId),
+			errorContext: 'Git mergeBranch',
+			defaultValue: { success: false, error: 'git merge failed' },
+		});
+	},
+
+	/**
+	 * Rebase the branch checked out in `cwd` onto `ontoBranch`, pulling new
+	 * upstream commits into a worktree. Conflicts abort the rebase.
+	 * @param cwd Worktree path
+	 * @param ontoBranch Branch to rebase onto
+	 * @param sshRemoteId Optional SSH remote ID for remote execution
+	 */
+	async rebaseBranch(
+		cwd: string,
+		ontoBranch: string,
+		sshRemoteId?: string
+	): Promise<{
+		success: boolean;
+		conflicts?: string[];
+		alreadyUpToDate?: boolean;
+		error?: string;
+	}> {
+		return createIpcMethod({
+			call: () => window.maestro.git.rebaseBranch(cwd, ontoBranch, sshRemoteId),
+			errorContext: 'Git rebaseBranch',
+			defaultValue: { success: false, error: 'git rebase failed' },
+		});
+	},
+
+	/**
 	 * Get git status (porcelain format) and current branch
 	 * @param cwd Working directory path
 	 * @param sshRemoteId Optional SSH remote ID for remote execution

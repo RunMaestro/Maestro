@@ -188,6 +188,12 @@ export interface WorktreeModalData {
 	session: Session;
 }
 
+/** Worktree merge/rebase modal data - one modal serves both operations */
+export interface WorktreeMergeModalData {
+	session: Session;
+	mode: 'merge' | 'rebase';
+}
+
 /** Group chat modal data (delete/rename/edit) */
 export interface GroupChatModalData {
 	groupChatId: string;
@@ -264,6 +270,7 @@ export type ModalId =
 	| 'createWorktree'
 	| 'createPR'
 	| 'deleteWorktree'
+	| 'worktreeMerge'
 	// Group Chat
 	| 'newGroupChat'
 	| 'deleteGroupChat'
@@ -331,6 +338,7 @@ export interface ModalDataMap {
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
 	deleteWorktree: WorktreeModalData;
+	worktreeMerge: WorktreeMergeModalData;
 	deleteGroupChat: GroupChatModalData;
 	renameGroupChat: GroupChatModalData;
 	editGroupChat: GroupChatModalData;
@@ -878,6 +886,9 @@ export function getModalActions() {
 			open ? openModal('deleteWorktree') : closeModal('deleteWorktree'),
 		setDeleteWorktreeSession: (session: Session | null) =>
 			session ? openModal('deleteWorktree', { session }) : closeModal('deleteWorktree'),
+		openWorktreeMergeModal: (session: Session, mode: 'merge' | 'rebase') =>
+			openModal('worktreeMerge', { session, mode }),
+		closeWorktreeMergeModal: () => closeModal('worktreeMerge'),
 
 		// Tab Switcher Modal
 		setTabSwitcherOpen: (open: boolean) =>
@@ -1027,6 +1038,8 @@ export function useModalActions() {
 	const createPRData = useModalStore(selectModalData('createPR'));
 	const deleteWorktreeModalOpen = useModalStore(selectModalOpen('deleteWorktree'));
 	const deleteWorktreeData = useModalStore(selectModalData('deleteWorktree'));
+	const worktreeMergeModalOpen = useModalStore(selectModalOpen('worktreeMerge'));
+	const worktreeMergeData = useModalStore(selectModalData('worktreeMerge'));
 	const tabSwitcherOpen = useModalStore(selectModalOpen('tabSwitcher'));
 	const fuzzyFileSearchOpen = useModalStore(selectModalOpen('fuzzyFileSearch'));
 	const promptComposerOpen = useModalStore(selectModalOpen('promptComposer'));
@@ -1195,6 +1208,9 @@ export function useModalActions() {
 		createPRSession: createPRData?.session ?? null,
 		deleteWorktreeModalOpen,
 		deleteWorktreeSession: deleteWorktreeData?.session ?? null,
+		worktreeMergeModalOpen,
+		worktreeMergeSession: worktreeMergeData?.session ?? null,
+		worktreeMergeMode: worktreeMergeData?.mode ?? 'merge',
 
 		// Tab Switcher Modal
 		tabSwitcherOpen,

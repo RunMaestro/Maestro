@@ -170,6 +170,49 @@ export function createGitApi() {
 		}> => ipcRenderer.invoke('git:commitAll', cwd, message, sshRemoteId, remoteCwd),
 
 		/**
+		 * Merge `sourceBranch` into `targetBranch`. Runs in whichever worktree has
+		 * `targetBranch` checked out. On conflict the merge is aborted and the
+		 * conflicting paths come back in `conflicts`.
+		 */
+		mergeBranch: (
+			cwd: string,
+			sourceBranch: string,
+			targetBranch: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{
+			success: boolean;
+			mergedIn?: string;
+			conflicts?: string[];
+			alreadyUpToDate?: boolean;
+			error?: string;
+		}> =>
+			ipcRenderer.invoke(
+				'git:mergeBranch',
+				cwd,
+				sourceBranch,
+				targetBranch,
+				sshRemoteId,
+				remoteCwd
+			),
+
+		/**
+		 * Rebase the branch checked out in `cwd` onto `ontoBranch`. On conflict
+		 * the rebase is aborted and the conflicting paths come back.
+		 */
+		rebaseBranch: (
+			cwd: string,
+			ontoBranch: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{
+			success: boolean;
+			conflicts?: string[];
+			alreadyUpToDate?: boolean;
+			error?: string;
+		}> => ipcRenderer.invoke('git:rebaseBranch', cwd, ontoBranch, sshRemoteId, remoteCwd),
+
+		/**
 		 * Get git diff numstat
 		 */
 		numstat: (

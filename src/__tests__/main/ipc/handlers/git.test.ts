@@ -197,6 +197,8 @@ describe('Git IPC handlers', () => {
 				'git:isRepo',
 				'git:init',
 				'git:commitAll',
+				'git:mergeBranch',
+				'git:rebaseBranch',
 				'git:numstat',
 				'git:branch',
 				'git:remote',
@@ -228,6 +230,198 @@ describe('Git IPC handlers', () => {
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
 			}
+		});
+	});
+
+	describe('git:mergeBranch', () => {
+		const WORKTREE_LIST = [
+			'worktree /repo',
+			'HEAD abc123',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo-wt/feature',
+			'HEAD def456',
+			'branch refs/heads/feature',
+		].join('\n');
+
+		/**
+		 * Drive execFileNoThrow off the git subcommand so each test only has to
+		 * describe the calls it cares about; everything else succeeds silently.
+		 */
+		const mockGit = (overrides: Record<string, { stdout?: string; exitCode?: number }>) => {
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
+				const key = (args as string[]).join(' ');
+				const match = Object.keys(overrides).find((k) => key.startsWith(k));
+				const o = match ? overrides[match] : {};
+				return {
+					stdout: o.stdout ?? '',
+					stderr: '',
+					exitCode: o.exitCode ?? 0,
+				};
+			});
+		};
+
+		it('merges in the worktree that has the target branch checked out', async () => {
+			mockGit({
+				'worktree list': { stdout: WORKTREE_LIST },
+				'status --porcelain': { stdout: '' },
+				merge: { stdout: 'Fast-forward\n' },
+			});
+
+			const handler = handlers.get('git:mergeBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'feature', 'main');
+
+			expect(result).toEqual({
+				success: true,
+				mergedIn: '/repo',
+				alreadyUpToDate: false,
+			});
+			// The merge itself must run in /repo, where `main` lives - not in the
+			// source worktree, where git refuses to check `main` out again.
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('git', ['merge', 'feature'], '/repo');
+		});
+
+		it('reports alreadyUpToDate when there is nothing to merge', async () => {
+			mockGit({
+				'worktree list': { stdout: WORKTREE_LIST },
+				'status --porcelain': { stdout: '' },
+				merge: { stdout: 'Already up to date.\n' },
+			});
+
+			const handler = handlers.get('git:mergeBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'feature', 'main');
+
+			expect(result.success).toBe(true);
+			expect(result.alreadyUpToDate).toBe(true);
+		});
+
+		it('refuses to merge into a checkout with uncommitted changes', async () => {
+			mockGit({
+				'worktree list': { stdout: WORKTREE_LIST },
+				'status --porcelain': { stdout: ' M src/index.ts\n' },
+			});
+
+			const handler = handlers.get('git:mergeBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'feature', 'main');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('uncommitted changes');
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalledWith(
+				'git',
+				['merge', 'feature'],
+				expect.anything()
+			);
+		});
+
+		it('aborts the merge and returns conflicting paths', async () => {
+			mockGit({
+				'worktree list': { stdout: WORKTREE_LIST },
+				'status --porcelain': { stdout: '' },
+				merge: { exitCode: 1 },
+				'diff --name-only': { stdout: 'src/a.ts\nsrc/b.ts\n' },
+			});
+
+			const handler = handlers.get('git:mergeBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'feature', 'main');
+
+			expect(result).toEqual({
+				success: false,
+				mergedIn: '/repo',
+				conflicts: ['src/a.ts', 'src/b.ts'],
+			});
+			// A half-merged main checkout from one button press would be hostile.
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith('git', ['merge', '--abort'], '/repo');
+		});
+
+		it('errors when the target branch is not checked out anywhere', async () => {
+			mockGit({ 'worktree list': { stdout: WORKTREE_LIST } });
+
+			const handler = handlers.get('git:mergeBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'feature', 'release');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not checked out in any worktree');
+		});
+
+		it('rejects branch names that git would read as options', async () => {
+			const handler = handlers.get('git:mergeBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'feature', '--hard');
+
+			expect(result).toEqual({ success: false, error: 'Invalid branch name' });
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('rejects merging a branch into itself', async () => {
+			const handler = handlers.get('git:mergeBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'feature', 'feature');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('same');
+		});
+	});
+
+	describe('git:rebaseBranch', () => {
+		it('rebases the worktree onto the given branch', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:rebaseBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'main');
+
+			expect(result.success).toBe(true);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['rebase', 'main'],
+				'/repo-wt/feature'
+			);
+		});
+
+		it('refuses to rebase a dirty worktree', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: ' M src/index.ts\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:rebaseBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'main');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('uncommitted changes');
+		});
+
+		it('aborts the rebase and returns conflicting paths', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
+				const key = (args as string[]).join(' ');
+				if (key.startsWith('rebase ')) {
+					return { stdout: '', stderr: 'CONFLICT', exitCode: 1 };
+				}
+				if (key.startsWith('diff --name-only')) {
+					return { stdout: 'src/a.ts\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:rebaseBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', 'main');
+
+			expect(result).toEqual({ success: false, conflicts: ['src/a.ts'] });
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['rebase', '--abort'],
+				'/repo-wt/feature'
+			);
+		});
+
+		it('rejects branch names that git would read as options', async () => {
+			const handler = handlers.get('git:rebaseBranch');
+			const result = await handler!({} as any, '/repo-wt/feature', '-i');
+
+			expect(result).toEqual({ success: false, error: 'Invalid branch name' });
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 

@@ -1244,6 +1244,9 @@ function MaestroConsoleInner() {
 		handleQuickCreateWorktree,
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
+		handleMergeWorktreeSession,
+		handleRebaseWorktreeSession,
+		handleCloseWorktreeMergeModal,
 		handleToggleWorktreeExpanded,
 		handleCloseWorktreeConfigModal,
 		handleSaveWorktreeConfig,
@@ -2877,6 +2880,8 @@ function MaestroConsoleInner() {
 		handleQuickCreateWorktree,
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
+		handleMergeWorktreeSession,
+		handleRebaseWorktreeSession,
 		handleToggleWorktreeExpanded,
 		handleConfigureCue,
 		maestroCueEnabled: encoreFeatures.maestroCue,
@@ -3237,6 +3242,8 @@ function MaestroConsoleInner() {
 						onCloseDeleteWorktreeModal={handleCloseDeleteWorktreeModal}
 						onConfirmDeleteWorktree={handleConfirmDeleteWorktree}
 						onConfirmAndDeleteWorktreeOnDisk={handleConfirmAndDeleteWorktreeOnDisk}
+						onCloseWorktreeMergeModal={handleCloseWorktreeMergeModal}
+						onWorktreeMergeCompleted={refreshWorktreeState}
 						// AppUtilityModals props
 						quickActionInitialMode={quickActionInitialMode}
 						setQuickActionOpen={setQuickActionOpen}

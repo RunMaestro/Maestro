@@ -1079,6 +1079,30 @@ interface MaestroAPI {
 			sshRemoteId?: string,
 			remoteCwd?: string
 		) => Promise<{ success: boolean; committed: boolean; commitHash?: string; error?: string }>;
+		mergeBranch: (
+			cwd: string,
+			sourceBranch: string,
+			targetBranch: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			success: boolean;
+			mergedIn?: string;
+			conflicts?: string[];
+			alreadyUpToDate?: boolean;
+			error?: string;
+		}>;
+		rebaseBranch: (
+			cwd: string,
+			ontoBranch: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			success: boolean;
+			conflicts?: string[];
+			alreadyUpToDate?: boolean;
+			error?: string;
+		}>;
 		numstat: (
 			cwd: string,
 			sshRemoteId?: string,

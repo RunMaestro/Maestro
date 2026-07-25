@@ -4,7 +4,7 @@ import type { MainPanelHandle } from '../MainPanel/types';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
-import { useModalStore } from '../../stores/modalStore';
+import { useModalStore, type WorktreeMergeModalData } from '../../stores/modalStore';
 import type {
 	Theme,
 	Session,
@@ -184,6 +184,8 @@ export interface AppModalsProps {
 	onCloseDeleteWorktreeModal: () => void;
 	onConfirmDeleteWorktree: () => void;
 	onConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
+	onCloseWorktreeMergeModal: () => void;
+	onWorktreeMergeCompleted?: () => void;
 
 	// --- AppUtilityModals props ---
 	quickActionInitialMode: 'main' | 'move-to-group' | 'agents';
@@ -506,6 +508,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		createWorktreeModalOpen,
 		createPRModalOpen,
 		deleteWorktreeModalOpen,
+		worktreeMergeModalOpen,
+		worktreeMergeSession,
+		worktreeMergeMode,
 		quickActionOpen,
 		tabSwitcherOpen,
 		fuzzyFileSearchOpen,
@@ -581,6 +586,13 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			createWorktreeModalOpen: s.modals.get('createWorktree')?.open ?? false,
 			createPRModalOpen: s.modals.get('createPR')?.open ?? false,
 			deleteWorktreeModalOpen: s.modals.get('deleteWorktree')?.open ?? false,
+			worktreeMergeModalOpen: s.modals.get('worktreeMerge')?.open ?? false,
+			worktreeMergeSession:
+				(s.modals.get('worktreeMerge')?.data as WorktreeMergeModalData | undefined)?.session ??
+				null,
+			worktreeMergeMode:
+				(s.modals.get('worktreeMerge')?.data as WorktreeMergeModalData | undefined)?.mode ??
+				'merge',
 			quickActionOpen: s.modals.get('quickAction')?.open ?? false,
 			tabSwitcherOpen: s.modals.get('tabSwitcher')?.open ?? false,
 			fuzzyFileSearchOpen: s.modals.get('fuzzyFileSearch')?.open ?? false,
@@ -682,6 +694,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseDeleteWorktreeModal,
 		onConfirmDeleteWorktree,
 		onConfirmAndDeleteWorktreeOnDisk,
+		onCloseWorktreeMergeModal,
+		onWorktreeMergeCompleted,
 		// Utility modals
 		quickActionInitialMode,
 		setQuickActionOpen,
@@ -1036,6 +1050,11 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseDeleteWorktreeModal={onCloseDeleteWorktreeModal}
 				onConfirmDeleteWorktree={onConfirmDeleteWorktree}
 				onConfirmAndDeleteWorktreeOnDisk={onConfirmAndDeleteWorktreeOnDisk}
+				worktreeMergeModalOpen={worktreeMergeModalOpen}
+				worktreeMergeSession={worktreeMergeSession}
+				worktreeMergeMode={worktreeMergeMode}
+				onCloseWorktreeMergeModal={onCloseWorktreeMergeModal}
+				onWorktreeMergeCompleted={onWorktreeMergeCompleted}
 			/>
 
 			{/* Utility/Workflow Modals */}

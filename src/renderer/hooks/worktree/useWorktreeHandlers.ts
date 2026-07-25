@@ -52,6 +52,9 @@ export interface WorktreeHandlersReturn {
 	handleQuickCreateWorktree: (session: Session) => void;
 	handleOpenWorktreeConfigSession: (session: Session) => void;
 	handleDeleteWorktreeSession: (session: Session) => void;
+	handleMergeWorktreeSession: (session: Session) => void;
+	handleRebaseWorktreeSession: (session: Session) => void;
+	handleCloseWorktreeMergeModal: () => void;
 	handleToggleWorktreeExpanded: (sessionId: string) => void;
 	handleCloseWorktreeConfigModal: () => void;
 	handleSaveWorktreeConfig: (config: { basePath: string; watchEnabled: boolean }) => Promise<void>;
@@ -193,6 +196,18 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 	const handleDeleteWorktreeSession = useCallback((session: Session) => {
 		getModalActions().setDeleteWorktreeSession(session);
+	}, []);
+
+	const handleMergeWorktreeSession = useCallback((session: Session) => {
+		getModalActions().openWorktreeMergeModal(session, 'merge');
+	}, []);
+
+	const handleRebaseWorktreeSession = useCallback((session: Session) => {
+		getModalActions().openWorktreeMergeModal(session, 'rebase');
+	}, []);
+
+	const handleCloseWorktreeMergeModal = useCallback(() => {
+		getModalActions().closeWorktreeMergeModal();
 	}, []);
 
 	const handleToggleWorktreeExpanded = useCallback((sessionId: string) => {
@@ -1234,6 +1249,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		handleQuickCreateWorktree,
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
+		handleMergeWorktreeSession,
+		handleRebaseWorktreeSession,
+		handleCloseWorktreeMergeModal,
 		handleToggleWorktreeExpanded,
 		handleCloseWorktreeConfigModal,
 		handleSaveWorktreeConfig,
