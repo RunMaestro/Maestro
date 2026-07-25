@@ -47,6 +47,17 @@ function interruptionNotice(payload: TtsrTriggeredPayload): string {
 }
 
 /**
+ * Web-desktop transcript notice. Same boundary marker as
+ * {@link interruptionNotice}, but the corrective turn is spawned by the desktop
+ * renderer, not here - so the tail tells the web user where the output comes
+ * from instead of claiming this client is resuming anything.
+ */
+function webInterruptionNotice(payload: TtsrTriggeredPayload): string {
+	const names = payload.rules.map((rule) => rule.name).join(', ');
+	return `TTSR interrupted this turn - rule${payload.rules.length === 1 ? '' : 's'}: ${names}. The corrective turn is run by the desktop app; its output will appear here.`;
+}
+
+/**
  * Hand the session back to the user after a corrective turn that never started.
  *
  * The aborted turn's exit was SUPPRESSED by the abort-pending flag (see
@@ -176,7 +187,22 @@ export function useTtsr(enabled: boolean): void {
 			// Display state is per-renderer, so every window records the payload;
 			// only the owning desktop window actually respawns the turn.
 			useTtsrStore.getState().noteTriggered(payload);
-			if (isWebDesktop()) return;
+			if (isWebDesktop()) {
+				// Web-desktop clients never spawn the corrective turn (see the
+				// MULTI-WINDOW INVARIANT below); the desktop primary window does.
+				// But the transcript must not stop mid-sentence with no boundary,
+				// so append a notice explaining where the correction runs. Do NOT
+				// flip the tab to busy: the mirrored process:* events from the
+				// desktop-spawned turn already drive the visible streaming here.
+				const target = resolveTtsrTarget(useSessionStore.getState().sessions, payload);
+				if (target) {
+					updateAiTab(target.session.id, target.tab.id, (current) => ({
+						...current,
+						logs: [...current.logs, systemLog(webInterruptionNotice(payload))],
+					}));
+				}
+				return;
+			}
 			if (!ownedGate.current?.(payload.sessionId)) return;
 			void runTtsrCorrectiveTurn(payload);
 		});
