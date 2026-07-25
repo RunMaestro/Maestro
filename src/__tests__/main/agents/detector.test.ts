@@ -31,6 +31,21 @@ vi.mock('../../../main/agents/opencode-config', async () => {
 	};
 });
 
+// Spy on the omp catalog prime at the module boundary so the detector's
+// detection-time warm-up is observable without firing the real `omp models
+// --json` fetch. Keep every other export real (setOmpModelCatalog and
+// computeOmpCatalogKey are used by the discoverModels path and by the
+// default-identity key assertion below).
+vi.mock('../../../main/agents/omp-model-catalog', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/agents/omp-model-catalog')>(
+		'../../../main/agents/omp-model-catalog'
+	);
+	return {
+		...actual,
+		primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+	};
+});
+
 // Make readFileSync mockable for ESM - vi.spyOn on ESM namespace fails
 // Also mock fs.promises.access to prevent real filesystem probing
 const { _readFileSync, _fsAccess } = vi.hoisted(() => ({
@@ -71,6 +86,8 @@ vi.mock('fs', async () => {
 // Get mocked modules
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../main/agents/omp-model-catalog';
+import { getExpandedEnv } from '../../../main/agents/path-prober';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -379,6 +396,40 @@ describe('agent-detector', () => {
 			expect(agents.find((a) => a.id === 'hermes')?.available).toBe(true);
 			expect(agents.find((a) => a.id === 'codex')?.available).toBe(false);
 			expect(agents.find((a) => a.id === 'pi')?.available).toBe(false);
+		});
+
+		it('warms the default-identity omp catalog when omp detection succeeds', async () => {
+			// When omp is detected, the detector fires a non-blocking prime of the
+			// default-identity context-window catalog so a user's first prompt
+			// already has the real per-turn window (killing the cold-start race
+			// against the spawn-time prime cap). It must run with the expanded env
+			// (getExpandedEnv) and the default-identity key (no env overrides).
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			await detector.detectAgents();
+
+			expect(primeOmpModelCatalog).toHaveBeenCalledTimes(1);
+			const [command, env, key] = vi.mocked(primeOmpModelCatalog).mock.calls[0];
+			// Primed against the resolved omp binary...
+			expect(command).toBe('/usr/bin/omp');
+			// ...under the default identity (env overrides undefined)...
+			expect(key).toBe(computeOmpCatalogKey('/usr/bin/omp', undefined));
+			// ...with the expanded env, not a raw process.env.
+			expect(env?.PATH).toBe(getExpandedEnv().PATH);
+		});
+
+		it('does not warm the omp catalog when omp is not installed', async () => {
+			// Default mock: no binaries found. omp detection fails, so no prime fires.
+			mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: 'not found', exitCode: 1 });
+
+			await detector.detectAgents();
+
+			expect(primeOmpModelCatalog).not.toHaveBeenCalled();
 		});
 
 		it('should detect Hermes using the shared CLI metadata', async () => {
