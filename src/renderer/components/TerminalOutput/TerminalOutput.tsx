@@ -55,6 +55,7 @@ export const TerminalOutput = memo(
 			onScrollPositionChange,
 			onAtBottomChange,
 			initialScrollTop,
+			initialIsAtBottom,
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
@@ -192,6 +193,7 @@ export const TerminalOutput = memo(
 		} = useTerminalOutputScroll({
 			scrollContainerRef,
 			initialScrollTop,
+			initialIsAtBottom,
 			sessionId: session.id,
 			activeTabId,
 			filteredLogsLength: filteredLogs.length,
