@@ -85,6 +85,12 @@ export interface PluginManifest {
 	homepage?: string;
 	/** Coarse marketplace category for grouping/filtering. Defaults to 'other'. */
 	category?: PluginCategory;
+	/**
+	 * Marketplace-presentation flag. When true, the extension's tile and details
+	 * pane surface a warning-colored BETA pill. Presentation-only and additive;
+	 * requires no minHostApi bump.
+	 */
+	beta?: boolean;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/**
