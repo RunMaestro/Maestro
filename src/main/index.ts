@@ -216,6 +216,7 @@ import {
 } from './board/board-spawn';
 import { selectPoolAgentIds } from '../shared/board/pool';
 import { autoDecomposeBoard } from './board/board-decompose';
+import { buildBoardCardToastPayload } from './board/board-toast';
 import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
@@ -1609,32 +1610,10 @@ app
 							},
 						});
 					}
-					// Phase 4: an isolated card's output lives on its own branch, which
-					// nothing merges automatically - name it so the user can find it.
-					const branchNote = event.worktreeBranch ? ` (branch ${event.worktreeBranch})` : '';
-					safeSend('remote:notifyToast', {
-						title: blocked ? `Card blocked: ${event.cardTitle}` : `Card done: ${event.cardTitle}`,
-						message:
-							(event.detail || (blocked ? 'No reason reported.' : 'Run completed.')) + branchNote,
-						color: blocked ? 'red' : 'green',
-						dismissible: blocked,
-						sourceAgent: 'Board',
-						// Pooled runs persist the worker's Left Bar agent id, so make the
-						// toast body jump straight to that agent (mirrors the Cue precedent
-						// in cue-notify-bridge.ts). `sessionId` also drives the legacy
-						// fallback and metadata resolution in useRemoteIntegration.ts.
-						// Legacy profile-based runs have no `workerAgentId` and keep the
-						// non-clickable toast.
-						...(event.workerAgentId
-							? {
-									sessionId: event.workerAgentId,
-									clickAction: {
-										kind: 'jump-session' as const,
-										sessionId: event.workerAgentId,
-									},
-								}
-							: {}),
-					});
+					// The done/blocked toast (including its pooled click-to-jump onto the
+					// worker agent) is built by the pure `buildBoardCardToastPayload` helper
+					// so the exact payload can be unit-tested without importing this module.
+					safeSend('remote:notifyToast', buildBoardCardToastPayload(event));
 				},
 				// Board Phase 5: every card status transition goes out on the plugin
 				// event bus (metadata only - ids, statuses, attempt, worker). Null-safe;
