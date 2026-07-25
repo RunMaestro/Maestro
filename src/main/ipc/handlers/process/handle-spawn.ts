@@ -777,7 +777,7 @@ export async function handleProcessSpawn(
 		// Bounded await: block the spawn only briefly so the first turn resolves
 		// correctly on a warm/fast catalog, and proceed (letting the prime finish
 		// in the background for later turns) when it is slow or fails.
-		const OMP_PRIME_SPAWN_CAP_MS = 2000;
+		const OMP_PRIME_SPAWN_CAP_MS = 3500;
 		// Prime with the platform-expanded env (mirroring the Windows agent path
 		// above) so the bun-based `omp` binary resolves in a packaged app: packaged
 		// Electron apps do not inherit the shell PATH, so a raw `process.env` lacks
