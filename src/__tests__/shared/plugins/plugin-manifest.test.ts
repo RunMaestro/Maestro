@@ -93,6 +93,25 @@ describe('validatePluginManifest', () => {
 		expect(badCategory.errors.some((e) => e.includes('category'))).toBe(true);
 	});
 
+	it('keeps beta only when true, omits it when false or absent, and rejects a non-boolean', () => {
+		const withBeta = validatePluginManifest(validManifest({ beta: true }));
+		expect(withBeta.errors).toEqual([]);
+		expect(withBeta.manifest?.beta).toBe(true);
+
+		const betaFalse = validatePluginManifest(validManifest({ beta: false }));
+		expect(betaFalse.errors).toEqual([]);
+		expect(betaFalse.manifest).not.toBeNull();
+		expect('beta' in (betaFalse.manifest as Record<string, unknown>)).toBe(false);
+
+		const withoutBeta = validatePluginManifest(validManifest());
+		expect(withoutBeta.manifest).not.toBeNull();
+		expect('beta' in (withoutBeta.manifest as Record<string, unknown>)).toBe(false);
+
+		const badBeta = validatePluginManifest(validManifest({ beta: 'yes' }));
+		expect(badBeta.manifest).toBeNull();
+		expect(badBeta.errors).toContain('beta, when present, must be a boolean');
+	});
+
 	it('does not treat host incompatibility as a validation error', () => {
 		const { manifest, errors } = validatePluginManifest(
 			validManifest({ maestro: { minHostApi: '2.0.0' } })
