@@ -23,6 +23,7 @@ import { useFocusAfterRender } from '../hooks/utils/useFocusAfterRender';
 import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
+import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
@@ -1589,14 +1590,26 @@ function CardEditor({
 							Role (profile)
 						</span>
 						{!showNewRole && (
-							<button
-								type="button"
-								onClick={openNewRole}
-								className="flex items-center gap-0.5 text-xs opacity-70 hover:opacity-100"
-								style={{ color: theme.colors.accent }}
-							>
-								<Plus className="w-3 h-3" /> New role
-							</button>
+							<div className="flex items-center gap-2">
+								{/* Advanced editing (model / effort / role prompt) stays in the
+								    ProfilesModal; the inline mini-form is name + base agent only. */}
+								<button
+									type="button"
+									onClick={() => getModalActions().setProfilesModalOpen(true)}
+									className="text-xs opacity-60 hover:opacity-100 underline"
+									style={{ color: theme.colors.textDim }}
+								>
+									Manage roles
+								</button>
+								<button
+									type="button"
+									onClick={openNewRole}
+									className="flex items-center gap-0.5 text-xs opacity-70 hover:opacity-100"
+									style={{ color: theme.colors.accent }}
+								>
+									<Plus className="w-3 h-3" /> New role
+								</button>
+							</div>
 						)}
 					</div>
 					{showNewRole ? (
@@ -1676,6 +1689,13 @@ function CardEditor({
 								</option>
 							))}
 						</select>
+					)}
+					{!showNewRole && profiles.length === 0 && (
+						// First-run helper: both valid paths (inline role, or pin to an
+						// existing agent) satisfy the assignee model, so spell them out.
+						<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+							No roles yet: create one inline, or pin the card to an agent.
+						</span>
 					)}
 				</div>
 				<label className="block space-y-1 flex-1 min-w-[180px]">
