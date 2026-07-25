@@ -22,6 +22,7 @@ import type { FileNode } from '../../types/fileTree';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { aiTabFocusFields, reopenClosedAiTabById, revealAiTab } from '../../utils/tabHelpers';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
@@ -154,6 +155,18 @@ export function useSessionSwitchCallbacks(
 	// Navigate from toast notification to a session/tab
 	const handleToastSessionClick = useCallback(
 		(sessionId: string, tabId?: string) => {
+			// Guard stale jumps: this shared path also serves Cue and CLI toasts, so a
+			// deleted agent id (e.g. a Board worker agent removed after its run) would
+			// otherwise silently activate a nonexistent session and blank the view. Fail
+			// loudly instead. Explicit "not found" beats a silent blank switch.
+			if (useSessionStore.getState().sessions.every((s) => s.id !== sessionId)) {
+				notifyToast({
+					color: 'orange',
+					title: 'Agent not found',
+					message: 'The agent this notification points to no longer exists.',
+				});
+				return;
+			}
 			// Close the Document Graph if it's open. It's a full-screen modal
 			// overlay (fixed inset-0, z-9999), so without this the graph stays
 			// on top of the agent we just jumped to and swallows clicks meant
