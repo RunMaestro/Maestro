@@ -88,21 +88,21 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 
 `PluginManifest` (`src/shared/plugins/plugin-manifest.ts`):
 
-| Field         | Type                     | Required  | Notes                                                           |
-| ------------- | ------------------------ | --------- | --------------------------------------------------------------- |
-| `id`          | string                   | yes       | `^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`, 3-100 chars                |
-| `name`        | string                   | yes       | display name                                                    |
-| `version`     | string                   | yes       | semver (distinct from `minHostApi`)                             |
-| `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                           |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.9.0`)                      |
-| `description` | string                   | no        |                                                                 |
-| `author`      | string                   | no        |                                                                 |
-| `license`     | string                   | no        |                                                                 |
-| `homepage`    | string                   | no        |                                                                 |
+| Field         | Type                     | Required  | Notes                                                                                                                                                                                                              |
+| ------------- | ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`          | string                   | yes       | `^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`, 3-100 chars                                                                                                                                                                   |
+| `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
+| `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
+| `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.9.0`)                                                                                                                                                                         |
+| `description` | string                   | no        |                                                                                                                                                                                                                    |
+| `author`      | string                   | no        |                                                                                                                                                                                                                    |
+| `license`     | string                   | no        |                                                                                                                                                                                                                    |
+| `homepage`    | string                   | no        |                                                                                                                                                                                                                    |
 | `beta`        | boolean                  | no        | presentation-only marketplace flag; surfaces a warning-colored BETA pill on the tile and details pane. Additive and backward-compatible; no `minHostApi` bump. Omitted from the normalized manifest unless `true`. |
-| `contributes` | object                   | no        | declarative contributions (see catalog)                         |
-| `entry`       | string                   | tier >= 1 | relative path to the sandboxed code entry; FORBIDDEN for tier 0 |
-| `permissions` | `PermissionRequest[]`    | no        | only meaningful for tier >= 1                                   |
+| `contributes` | object                   | no        | declarative contributions (see catalog)                                                                                                                                                                            |
+| `entry`       | string                   | tier >= 1 | relative path to the sandboxed code entry; FORBIDDEN for tier 0                                                                                                                                                    |
+| `permissions` | `PermissionRequest[]`    | no        | only meaningful for tier >= 1                                                                                                                                                                                      |
 
 `minHostApi` is checked same-major and `host >= min`. A v2-targeted plugin will not load on a v1 host and vice versa.
 
