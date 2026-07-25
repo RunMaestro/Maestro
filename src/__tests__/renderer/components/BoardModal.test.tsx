@@ -64,13 +64,34 @@ let boardChangedListeners: Array<(payload: { projectRoot: string }) => void>;
 /** Unsubscribe spy returned by the mocked subscription. */
 let unsubscribeBoardChanged: ReturnType<typeof vi.fn>;
 
+/** Captured `profiles:changed` subscribers, so a test can fire the push the main
+ * process would send after a profiles.yaml write from a desktop window. */
+let profilesChangedListeners: Array<(payload: { projectRoot: string }) => void>;
+/** Unsubscribe spy returned by the mocked profiles subscription. */
+let unsubscribeProfilesChanged: ReturnType<typeof vi.fn>;
+
+/** The mocked window.maestro.profiles namespace, reassigned per test so a test
+ * can change what `profiles.list` resolves to between pushes. */
+let profilesApi: {
+	list: ReturnType<typeof vi.fn>;
+	upsert: ReturnType<typeof vi.fn>;
+	delete: ReturnType<typeof vi.fn>;
+	onProfilesChanged: ReturnType<typeof vi.fn>;
+};
+
 function emitBoardChanged(projectRoot = PROJECT_ROOT): void {
 	for (const listener of boardChangedListeners) listener({ projectRoot });
+}
+
+function emitProfilesChanged(projectRoot = PROJECT_ROOT): void {
+	for (const listener of profilesChangedListeners) listener({ projectRoot });
 }
 
 function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 	boardChangedListeners = [];
 	unsubscribeBoardChanged = vi.fn();
+	profilesChangedListeners = [];
+	unsubscribeProfilesChanged = vi.fn();
 	boardApi = {
 		list: vi.fn().mockResolvedValue(initialBoards),
 		create: vi.fn(),
@@ -88,15 +109,19 @@ function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 	};
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	(window.maestro as any).board = boardApi;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	(window.maestro as any).profiles = {
+	profilesApi = {
 		list: vi
 			.fn()
 			.mockResolvedValue(profiles ?? [{ id: 'p1', name: 'Reviewer', baseAgentId: 'a1' }]),
 		upsert: vi.fn(),
 		delete: vi.fn(),
-		onProfilesChanged: vi.fn(() => vi.fn()),
+		onProfilesChanged: vi.fn((cb: (payload: { projectRoot: string }) => void) => {
+			profilesChangedListeners.push(cb);
+			return unsubscribeProfilesChanged;
+		}),
 	};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	(window.maestro as any).profiles = profilesApi;
 }
 
 beforeEach(() => {
@@ -279,6 +304,35 @@ describe('BoardModal live updates', () => {
 
 		// The draft is separate state, so the in-progress edit survives the refresh.
 		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Edited in flight');
+	});
+
+	it('clears the "create a profile first" gate on a profiles:changed push (G1)', async () => {
+		const board: Board = { id: 'b1', name: 'My Board', cards: [] };
+		// Start with zero profiles so the card-create gate is shown.
+		installApis([board], []);
+
+		const { unmount } = render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => expect(profilesApi.list).toHaveBeenCalledTimes(1));
+		expect(profilesApi.onProfilesChanged).toHaveBeenCalled();
+
+		// With no profiles, the gate replaces the "New card" button.
+		expect(await screen.findByText(/Create an Agent Profile first/i)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /New card/i })).toBeNull();
+
+		// A profile is created in the layered Profiles modal: the push fires and
+		// the (now non-empty) refetch clears the gate without a manual refresh.
+		profilesApi.list.mockResolvedValue([{ id: 'p1', name: 'Reviewer', baseAgentId: 'a1' }]);
+		emitProfilesChanged();
+		await waitFor(() => expect(profilesApi.list).toHaveBeenCalledTimes(2));
+		expect(await screen.findByRole('button', { name: /New card/i })).toBeInTheDocument();
+		expect(screen.queryByText(/Create an Agent Profile first/i)).toBeNull();
+
+		// A push for another project root is ignored (no extra fetch).
+		emitProfilesChanged('/some/other/project');
+		expect(profilesApi.list).toHaveBeenCalledTimes(2);
+
+		unmount();
+		expect(unsubscribeProfilesChanged).toHaveBeenCalled();
 	});
 });
 

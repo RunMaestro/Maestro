@@ -8,6 +8,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateUUID } from '../../../shared/uuid';
+import { truncatePath } from '../../../shared/formatters';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 
@@ -80,10 +81,11 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 	}, [load]);
 
 	// Live updates: the main process pushes `profiles:changed` after every
-	// `.maestro/profiles.yaml` write (this window, another window, or maestro-cli),
-	// so the list stops going stale the moment it is opened. Mirrors the Board's
-	// `board:changed` subscription; the manual refresh button stays as the escape
-	// hatch when someone edits the YAML by hand.
+	// desktop-window `.maestro/profiles.yaml` write - from this window or another
+	// window - so the list stops going stale the moment it is opened. Mirrors the
+	// Board's `board:changed` subscription. CLI (`maestro-cli`) writes run in a
+	// separate process with no listener registered and hand edits to the YAML are
+	// not watched, so both require the manual refresh button as the escape hatch.
 	useEffect(() => {
 		if (!projectRoot) return;
 		return window.maestro.profiles.onProfilesChanged?.((payload) => {
@@ -199,6 +201,18 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
 							model / effort / role bundles
 						</span>
+						{/* Profiles are scoped per project root, so surface which root this
+						    modal is bound to - a differently-rooted agent has its own list,
+						    so a profile only appears to "disappear" (G1). */}
+						{projectRoot && (
+							<span
+								className="text-xs truncate min-w-0"
+								style={{ color: theme.colors.textDim }}
+								title={projectRoot}
+							>
+								{truncatePath(projectRoot)}
+							</span>
+						)}
 					</div>
 					<div className="flex items-center gap-1">
 						<button

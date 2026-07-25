@@ -26,7 +26,7 @@ import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { generateUUID } from '../../shared/uuid';
-import { formatElapsedTime } from '../../shared/formatters';
+import { formatElapsedTime, truncatePath } from '../../shared/formatters';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { triggerHaptic, HAPTIC_PATTERNS, isCoarsePointer } from '../utils/touch';
@@ -257,6 +257,18 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	useEffect(() => {
 		if (!projectRoot) return;
 		return window.maestro.board.onBoardChanged?.((payload) => {
+			if (payload?.projectRoot !== projectRoot) return;
+			void load(false);
+		});
+	}, [projectRoot, load]);
+
+	// Live updates: profile creation happens in the Profiles modal, which the
+	// card-create gate opens ON TOP of this modal, so the profile list must
+	// refresh here too or the gate never clears (G1). Reusing load(false) keeps
+	// one code path and preserves board-selection reconciliation.
+	useEffect(() => {
+		if (!projectRoot) return;
+		return window.maestro.profiles.onProfilesChanged?.((payload) => {
 			if (payload?.projectRoot !== projectRoot) return;
 			void load(false);
 		});
@@ -785,6 +797,18 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 							task DAG · dispatched on the Cue tick
 						</span>
+						{/* Boards and profiles are scoped per project root, so surface which
+						    root this modal is bound to - a differently-rooted agent has its
+						    own list, so a profile only appears to "disappear" (G1). */}
+						{projectRoot && (
+							<span
+								className="text-xs truncate min-w-0"
+								style={{ color: theme.colors.textDim }}
+								title={projectRoot}
+							>
+								{truncatePath(projectRoot)}
+							</span>
+						)}
 					</div>
 					<div className="flex items-center gap-1 shrink-0">
 						{board &&

@@ -28,11 +28,13 @@ export function createProfilesApi() {
 		delete: (projectRoot: string, profileId: string): Promise<AgentProfile[]> =>
 			ipcRenderer.invoke('profiles:delete', { projectRoot, profileId }),
 
-		// Subscribe to profile persistence pushes. Fires whenever
-		// `.maestro/profiles.yaml` is written for any project (IPC mutation, CLI,
-		// another window); the payload carries only the project root, so the
-		// listener refetches. Mirrors `board.onBoardChanged`. Returns an
-		// unsubscribe function.
+		// Subscribe to profile persistence pushes. Fires whenever a desktop window
+		// writes `.maestro/profiles.yaml` (this window or another window via an IPC
+		// mutation); the payload carries only the project root, so the listener
+		// refetches. CLI (`maestro-cli`) writes run in a separate process with no
+		// listener registered and hand edits are not watched, so neither emits this
+		// push - both require a manual refresh. Mirrors `board.onBoardChanged`.
+		// Returns an unsubscribe function.
 		onProfilesChanged: (callback: (payload: { projectRoot: string }) => void): (() => void) => {
 			const handler = (_e: unknown, payload: { projectRoot: string }) => callback(payload);
 			ipcRenderer.on('profiles:changed', handler);
