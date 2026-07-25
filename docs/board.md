@@ -1,10 +1,10 @@
 ---
 title: Board
-description: A persistent task board (a DAG of cards) that dispatches work to Agent Profiles automatically, gated on dependencies and a work-in-progress cap.
+description: A persistent board (a DAG of cards) that dispatches work to Agent Profiles automatically, gated on dependencies and a work-in-progress cap.
 icon: kanban
 ---
 
-The **Board** turns a project into a persistent, git-trackable task graph. Each **card** is a unit of work assigned to an **Agent Profile**, and a card only becomes eligible to run once every card it depends on is `done`. On the Maestro Cue heartbeat, a dispatcher drains the graph: it promotes eligible cards, spawns their assignees, and moves them to `done` or `blocked` based on how the run ended.
+The **Board** turns a project into a persistent, git-trackable graph of cards. Each **card** is a unit of work assigned to an **Agent Profile**, and a card only becomes eligible to run once every card it depends on is `done`. On the Maestro Cue heartbeat, a dispatcher drains the graph: it promotes eligible cards, spawns their assignees, and moves them to `done` or `blocked` based on how the run ended.
 
 The Board is an Encore Feature and depends on **Maestro Cue** (the Board rides Cue's engine tick, so Cue must be enabled too). The manual Board is fully useful on its own; auto-decompose is a separate, off-by-default layer.
 
