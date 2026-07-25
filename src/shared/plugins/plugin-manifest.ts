@@ -159,6 +159,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		license,
 		homepage,
 		category,
+		beta,
 		contributes,
 		entry,
 		permissions,
@@ -226,6 +227,9 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 			normalizedCategory = category;
 		}
 	}
+	if (beta !== undefined && typeof beta !== 'boolean') {
+		errors.push('beta, when present, must be a boolean');
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -275,6 +279,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(license) ? { license: (license as string).trim() } : {}),
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
+		...(beta === true ? { beta: true } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
