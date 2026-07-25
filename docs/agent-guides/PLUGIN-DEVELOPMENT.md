@@ -99,6 +99,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `author`      | string                   | no        |                                                                 |
 | `license`     | string                   | no        |                                                                 |
 | `homepage`    | string                   | no        |                                                                 |
+| `beta`        | boolean                  | no        | presentation-only marketplace flag; surfaces a warning-colored BETA pill on the tile and details pane. Additive and backward-compatible; no `minHostApi` bump. Omitted from the normalized manifest unless `true`. |
 | `contributes` | object                   | no        | declarative contributions (see catalog)                         |
 | `entry`       | string                   | tier >= 1 | relative path to the sandboxed code entry; FORBIDDEN for tier 0 |
 | `permissions` | `PermissionRequest[]`    | no        | only meaningful for tier >= 1                                   |
