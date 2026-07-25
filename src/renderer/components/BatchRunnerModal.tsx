@@ -17,6 +17,7 @@ import {
 	PlayCircle,
 	HelpCircle,
 	Target,
+	CalendarClock,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type {
@@ -38,6 +39,12 @@ import { DocumentsPanel } from './DocumentsPanel';
 import { GoalConfigPanel } from './GoalConfigPanel';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { WorktreeRunSection } from './WorktreeRunSection';
+import {
+	ScheduleRunSection,
+	parseDateTimeLocalValue,
+	toDateTimeLocalValue,
+	type RunStartMode,
+} from './ScheduleRunSection';
 import { AutoRunnerHelpModal } from './AutoRun/AutoRunnerHelpModal';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
 import { useDebouncedCallback } from '../hooks/utils/useThrottle';
@@ -151,6 +158,19 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// Worktree run target state
 	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
 	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
+
+	// One-shot schedule state. Defaults to 'now' so the modal behaves exactly as
+	// before unless the user opts in. The picker seeds to an hour out - close
+	// enough to edit, far enough to be valid on first paint.
+	const [startMode, setStartMode] = useState<RunStartMode>('now');
+	const [scheduledAtLocal, setScheduledAtLocal] = useState(() =>
+		toDateTimeLocalValue(new Date(Date.now() + 60 * 60 * 1000))
+	);
+	const isScheduling = startMode === 'scheduled';
+	const scheduledFor = isScheduling ? parseDateTimeLocalValue(scheduledAtLocal) : null;
+	// Blocks Go while the picker is empty/malformed or points at the past.
+	const isScheduleInvalid = isScheduling && (scheduledFor === null || scheduledFor <= Date.now());
+
 	const activeSession = useSessionStore(selectSessionById(sessionId));
 	const sessions = useSessionStore((state) => state.sessions);
 	// When the current session is a worktree child, worktree config lives on its parent.
@@ -619,10 +639,12 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const blocksLaunchWhileBusy = isAgentBusy && worktreeTarget === null;
 
 	// Whether the Go button should be disabled, branching on the active mode.
+	// The two "agent is occupied right now" gates don't apply when scheduling:
+	// the run starts later, and the dispatcher re-checks both at fire time.
 	const isGoDisabled =
 		isPreparingWorktree ||
-		blocksLaunchWhileBusy ||
-		isBatchRunningForSession ||
+		isScheduleInvalid ||
+		(!isScheduling && (blocksLaunchWhileBusy || isBatchRunningForSession)) ||
 		(goalMode
 			? isGoalEmpty
 			: hasNoTasks ||
@@ -702,15 +724,24 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(worktreeTarget && { worktreeTarget }),
 					};
 
+		// One-shot schedule. `isScheduleInvalid` already gates Go, so a non-null
+		// `scheduledFor` here is guaranteed to be in the future.
+		if (isScheduling && scheduledFor !== null) {
+			config.scheduledFor = scheduledFor;
+		}
+
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
 		window.maestro.logger.log('info', 'Go button clicked', 'BatchRunnerModal', {
 			documentsCount: validDocuments.length,
 			autoRunMode,
+			scheduledFor: config.scheduledFor,
 		});
 
-		// Worktree creation/opening requires async work - show loading state
+		// Worktree creation/opening requires async work - show loading state. Skipped
+		// when scheduling: the worktree is created at fire time, not now.
 		const needsWorktreePrep =
-			worktreeTarget?.mode === 'create-new' || worktreeTarget?.mode === 'existing-closed';
+			!isScheduling &&
+			(worktreeTarget?.mode === 'create-new' || worktreeTarget?.mode === 'existing-closed');
 
 		if (needsWorktreePrep) {
 			setIsPreparingWorktree(true);
@@ -1087,6 +1118,16 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						/>
 					)}
 
+					{/* Start now vs. one-shot schedule. Applies to both Spec- and
+					    Goal-Driven runs, so it sits outside the goalMode branch. */}
+					<ScheduleRunSection
+						theme={theme}
+						startMode={startMode}
+						onStartModeChange={setStartMode}
+						scheduledAtLocal={scheduledAtLocal}
+						onScheduledAtLocalChange={setScheduledAtLocal}
+					/>
+
 					{/* Spec-Driven config: Fresh-context selector + Agent Prompt. Hidden in
 					    goal mode, where the agent prompt is built internally by the goal
 					    runner and "Fresh context per" has no meaning without documents. */}
@@ -1371,29 +1412,39 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							title={
 								isPreparingWorktree
 									? 'Preparing worktree...'
-									: isBatchRunningForSession
-										? 'An Auto Run is already active for this agent - stop it before launching another'
-										: blocksLaunchWhileBusy
-											? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
-											: goalMode
-												? isGoalEmpty
-													? 'Enter a goal to launch a Goal-Driven run'
-													: 'Start goal-driven auto-run'
-												: isPromptEmpty
-													? 'Agent prompt cannot be empty'
-													: !hasValidPrompt
-														? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-														: documents.length === 0
-															? 'No documents selected'
-															: documents.length === missingDocCount
-																? 'All selected documents are missing'
-																: hasNoTasks
-																	? 'No unchecked tasks in documents'
-																	: 'Start auto-run'
+									: isScheduleInvalid
+										? 'Pick a start date and time in the future'
+										: !isScheduling && isBatchRunningForSession
+											? 'An Auto Run is already active for this agent - stop it before launching another'
+											: !isScheduling && blocksLaunchWhileBusy
+												? 'Agent is thinking - finish or interrupt the current task before launching auto-run'
+												: goalMode
+													? isGoalEmpty
+														? 'Enter a goal to launch a Goal-Driven run'
+														: 'Start goal-driven auto-run'
+													: isPromptEmpty
+														? 'Agent prompt cannot be empty'
+														: !hasValidPrompt
+															? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+															: documents.length === 0
+																? 'No documents selected'
+																: documents.length === missingDocCount
+																	? 'All selected documents are missing'
+																	: hasNoTasks
+																		? 'No unchecked tasks in documents'
+																		: isScheduling
+																			? 'Schedule this auto-run to start later'
+																			: 'Start auto-run'
 							}
 						>
-							{isPreparingWorktree ? <Spinner size={16} /> : <Play className="w-4 h-4" />}
-							{isPreparingWorktree ? 'Preparing Worktree...' : 'Go'}
+							{isPreparingWorktree ? (
+								<Spinner size={16} />
+							) : isScheduling ? (
+								<CalendarClock className="w-4 h-4" />
+							) : (
+								<Play className="w-4 h-4" />
+							)}
+							{isPreparingWorktree ? 'Preparing Worktree...' : isScheduling ? 'Schedule' : 'Go'}
 						</button>
 					</div>
 				</div>

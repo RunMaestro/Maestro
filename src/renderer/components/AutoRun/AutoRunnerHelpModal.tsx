@@ -21,6 +21,7 @@ import {
 	Layers,
 	Target,
 	Brain,
+	CalendarClock,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -755,6 +756,34 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							without read-only restrictions, create a worktree session from the git branch menu in
 							the session list. Worktree sessions operate in isolated directories, allowing Auto Run
 							and manual work to happen simultaneously.
+						</p>
+					</div>
+				</section>
+
+				{/* Scheduling */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<CalendarClock className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Scheduling a Run</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							The <strong style={{ color: theme.colors.textMain }}>Start</strong> control in the
+							Auto Run window chooses between{' '}
+							<strong style={{ color: theme.colors.textMain }}>Now</strong> (the default) and{' '}
+							<strong style={{ color: theme.colors.textMain }}>At a set time</strong>. Pick a future
+							date and time and the run is parked until then, firing once. Handy for kicking work
+							off the moment a token limit resets.
+						</p>
+						<p>
+							A pending schedule shows as a banner at the top of the Auto Run panel, with an X to
+							cancel it. Scheduling while the agent is busy is fine - the run waits for it to go
+							idle.
+						</p>
+						<p>
+							Maestro has to be running when the time comes. If it was closed, the run still starts
+							when you reopen the app within 6 hours of the scheduled time; past that it's skipped
+							and you get a notification.
 						</p>
 					</div>
 				</section>

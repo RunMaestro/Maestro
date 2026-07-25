@@ -2,9 +2,11 @@ import { useCallback } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { getScheduledAutoRunActions } from '../../stores/scheduledAutoRunStore';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
+import { formatFutureTime } from '../../../shared/formatters';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -45,8 +47,13 @@ export interface UseAutoRunHandlersDeps {
 export interface UseAutoRunHandlersReturn {
 	/** Handle folder selection from Auto Run setup modal */
 	handleAutoRunFolderSelected: (folderPath: string) => Promise<void>;
-	/** Start a batch run with the given configuration */
-	handleStartBatchRun: (config: BatchRunConfig) => Promise<void>;
+	/**
+	 * Start a batch run with the given configuration. Defaults to the active
+	 * agent; pass `options.session` to target a specific one (scheduled runs).
+	 * When `config.scheduledFor` is in the future the run is parked rather than
+	 * launched - see scheduledAutoRunStore.
+	 */
+	handleStartBatchRun: (config: BatchRunConfig, options?: { session?: Session }) => Promise<void>;
 	/** Get the number of unchecked tasks in a document */
 	getDocumentTaskCount: (filename: string) => Promise<number>;
 	/** Handle content changes in the Auto Run editor */
@@ -191,10 +198,13 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 		]
 	);
 
-	// Handler to start batch run from modal with multi-document support
+	// Handler to start batch run from modal with multi-document support.
+	// `options.session` overrides the active-agent default - used by the scheduled
+	// dispatcher, which fires runs for agents the user may have navigated away from.
 	const handleStartBatchRun = useCallback(
-		async (config: BatchRunConfig) => {
-			const activeSession = selectActiveSession(useSessionStore.getState());
+		async (config: BatchRunConfig, options?: { session?: Session }) => {
+			const activeSession =
+				options?.session ?? selectActiveSession(useSessionStore.getState()) ?? null;
 			window.maestro.logger.log('info', 'handleStartBatchRun called', 'AutoRunHandlers', {
 				hasActiveSession: !!activeSession,
 				sessionId: activeSession?.id,
@@ -203,6 +213,7 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 				worktreePath: config.worktree?.path,
 				worktreeBranch: config.worktree?.branchName,
 				worktreeTargetMode: config.worktreeTarget?.mode,
+				scheduledFor: config.scheduledFor,
 			});
 			if (!activeSession || !activeSession.autoRunFolderPath) {
 				window.maestro.logger.log(
@@ -210,6 +221,28 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 					'handleStartBatchRun early return - missing session or folder',
 					'AutoRunHandlers'
 				);
+				return;
+			}
+
+			// One-shot schedule: park the config instead of launching. The dispatcher
+			// (useScheduledAutoRunDispatcher) fires it once the timestamp passes. A
+			// timestamp already in the past falls through and starts immediately.
+			if (typeof config.scheduledFor === 'number' && config.scheduledFor > Date.now()) {
+				const { scheduledFor } = config;
+				getScheduledAutoRunActions().schedule({
+					sessionId: activeSession.id,
+					folderPath: activeSession.autoRunFolderPath,
+					config,
+					scheduledFor,
+					createdAt: Date.now(),
+				});
+				setBatchRunnerModalOpen(false);
+				notifyToast({
+					color: 'theme',
+					title: 'Auto Run Scheduled',
+					message: `${activeSession.name} will start this Auto Run ${formatFutureTime(scheduledFor)}.`,
+					sessionId: activeSession.id,
+				});
 				return;
 			}
 
@@ -303,8 +336,11 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 				isWorktreeTarget: targetSessionId !== activeSession.id,
 			});
 			setBatchRunnerModalOpen(false);
+			// `scheduledFor` has served its purpose by now (either it was in the past
+			// or the dispatcher already stripped it) - don't hand it to the runner.
+			const { scheduledFor: _scheduledFor, ...runConfig } = config;
 			// Documents stay with the parent session's autoRunFolderPath; execution targets the worktree agent
-			startBatchRun(targetSessionId, config, activeSession.autoRunFolderPath);
+			startBatchRun(targetSessionId, runConfig, activeSession.autoRunFolderPath);
 		},
 		[startBatchRun, setBatchRunnerModalOpen]
 	);
