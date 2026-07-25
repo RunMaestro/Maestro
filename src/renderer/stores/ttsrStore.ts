@@ -3,9 +3,8 @@
  *
  * Gate B of the TTSR plan: main owns every authoritative bit of TTSR state
  * (matching, repeat policy, injected-rule records). Nothing here is a source of
- * truth - it is a cache of the last push events so the UI can render an
- * interruption marker and so exit handling can tell a TTSR abort apart from a
- * failed turn.
+ * truth - it is a cache of the last push events so exit handling can tell a TTSR
+ * abort apart from a failed turn.
  */
 
 import { create } from 'zustand';
@@ -32,7 +31,7 @@ interface TtsrAbortPendingEntry {
 interface TtsrStore {
 	/** Turns currently being aborted by TTSR, keyed by process session id. */
 	abortPending: Record<string, TtsrAbortPendingEntry>;
-	/** Last corrective turn per process session id, for the UI marker. */
+	/** Last corrective turn per process session id. Recorded but not yet surfaced by any component. */
 	lastTriggered: Record<string, TtsrTriggeredPayload>;
 	noteAbortPending: (payload: TtsrAbortPendingPayload) => void;
 	noteTriggered: (payload: TtsrTriggeredPayload) => void;
