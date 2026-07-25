@@ -142,6 +142,50 @@ describe('error-patterns', () => {
 				}
 			});
 		});
+
+		describe('session_not_found patterns', () => {
+			// Issue #307: Gemini rejects a malformed stored transcript with a bare
+			// 400 INVALID_ARGUMENT, and every later prompt on that session fails
+			// identically. Classifying it as session_not_found is what surfaces the
+			// "Start New Session" recovery action instead of a futile retry.
+			it('should match the Gemini "Request contains an invalid argument" 400', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'Request contains an invalid argument.'
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+				expect(result?.recoverable).toBe(true);
+			});
+
+			it('should match the INVALID_ARGUMENT status from a provider response body', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'{ "error": { "code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT" } }'
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+
+			it('should still match "session not found"', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'session not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+
+			it('should NOT match normal text mentioning arguments', () => {
+				const falsePositives = [
+					'passing an invalid argument name would fail',
+					'the function takes three arguments',
+					'validate arguments before use',
+				];
+
+				for (const text of falsePositives) {
+					const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, text);
+					expect(result).toBeNull();
+				}
+			});
+		});
 	});
 
 	describe('CODEX_ERROR_PATTERNS', () => {
