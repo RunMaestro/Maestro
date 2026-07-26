@@ -97,6 +97,11 @@ export function isGitHubRateLimitError(err: unknown): boolean {
 /**
  * Detect connectivity failures from the GitHub CLI. These are operational
  * conditions (offline/VPN/DNS/GitHub unreachable), not app crashes.
+ *
+ * A 5xx from api.github.com counts: `HTTP 504: 504 Gateway Timeout` and friends
+ * mean GitHub itself is degraded, which is the same "can't reach the API right
+ * now" condition as a dropped socket. The poller retries on its own schedule, so
+ * paging Sentry on every tick of a GitHub outage is pure noise (MAESTRO-KE).
  */
 export function isGitHubConnectivityError(err: unknown): boolean {
 	const msg = (
@@ -119,7 +124,8 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 		haystack.includes('econnreset') ||
 		haystack.includes('etimedout') ||
 		haystack.includes('network is unreachable') ||
-		haystack.includes('could not resolve host: api.github.com')
+		haystack.includes('could not resolve host: api.github.com') ||
+		/\bhttp\s+5\d{2}\b/.test(haystack)
 	);
 }
 

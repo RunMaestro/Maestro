@@ -969,6 +969,28 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 
+		it('does not report GitHub-side 5xx responses to Sentry (MAESTRO-KE)', async () => {
+			const config = makeConfig();
+			// `gh` surfaces a degraded GitHub as an HTTP 5xx on stderr. The poller
+			// retries on its own schedule, so paging Sentry once per tick for the
+			// duration of a GitHub outage is pure noise.
+			setupExecFileReject(
+				'pr list',
+				'HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)'
+			);
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
 		it('reports non-rate-limit/non-connectivity errors to Sentry with cue:github:doPoll tag', async () => {
 			const config = makeConfig();
 			setupExecFileReject('pr list', 'gh auth login required');
