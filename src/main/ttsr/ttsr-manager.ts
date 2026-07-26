@@ -253,7 +253,11 @@ export class TtsrManager {
 		// text in the scan window (breaking overlap math and repeat counts), so
 		// skip the prose path. The tool-snapshot path below still runs, because
 		// tool inputs arrive only on the complete assistant event, not the deltas.
-		if ((event.type === 'text' || event.type === 'result') && event.text && !event.textAlreadyStreamed) {
+		if (
+			(event.type === 'text' || event.type === 'result') &&
+			event.text &&
+			!event.textAlreadyStreamed
+		) {
 			const source: TtsrMatchSource = event.isReasoning ? 'thinking' : 'text';
 			const scanText = this.appendToBuffer(sessionId, source, event.text);
 			matches.push(...this.evaluate(sessionId, rules, scanText, { agentId: ctx.agentId, source }));

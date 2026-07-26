@@ -201,7 +201,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// flag themselves behind an `if (!args.includes(...))` guard, so it is not doubled.
 		args: ['--print', '--verbose', '--output-format', 'stream-json', '--include-partial-messages'],
 		apiCommand: 'claude',
-		apiModeArgs: ['--print', '--verbose', '--output-format', 'stream-json', '--include-partial-messages'],
+		apiModeArgs: [
+			'--print',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--include-partial-messages',
+		],
 		interactiveCommand: 'maestro-p',
 		// maestro-p forwards these to the underlying claude TUI invocation.
 		interactiveModeArgs: [],
