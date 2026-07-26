@@ -983,8 +983,33 @@ describe('cue-github-poller', () => {
 			const cleanup = createCueGitHubPoller(config);
 			await vi.advanceTimersByTimeAsync(2100);
 
+			// Prove the injected failure actually ran: a zero-Sentry assertion also
+			// passes if polling bailed out before `pr list` (e.g. repo resolution).
+			expect(
+				mockExecFile.mock.calls.some((c) => (c[1] as string[]).join(' ').includes('pr list'))
+			).toBe(true);
 			const sentryCalls = mockCaptureException.mock.calls.filter(
 				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
+		it('does not report a GitHub-side 5xx during repo auto-detection (MAESTRO-KE)', async () => {
+			// Repo auto-detection runs before the poll, so a `gh repo view` failure
+			// short-circuits doPoll entirely and has to suppress on its own.
+			const config = makeConfig({ repo: undefined });
+			mockExecFile.mockImplementation((_c, args, _o, cb) => {
+				if ((args as string[]).includes('--version')) return cb(null, '2.0.0', '');
+				return cb(new Error('HTTP 503: 503 Service Unavailable (https://api.github.com)'), '', '');
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:resolveRepo'
 			);
 			expect(sentryCalls).toHaveLength(0);
 

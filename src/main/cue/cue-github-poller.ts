@@ -271,7 +271,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				throw err;
 			}
 			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" — skipping poll`);
-			void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
+			// GitHub being unreachable or degraded is the same expected operational
+			// condition the doPoll catch below suppresses. Repo auto-detection runs
+			// first, so without this a `gh repo view` 5xx during an outage would
+			// still page Sentry once per tick for every auto-detect trigger
+			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
+			if (!isGitHubConnectivityError(err)) {
+				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
+			}
 			return null;
 		}
 	}

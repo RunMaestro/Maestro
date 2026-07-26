@@ -62,8 +62,9 @@ const LOG_CONTEXT = '[AgentSessions]';
  * unreadable (restrictive umask, a `~/.claude` tree owned by another user),
  * deleted between the directory listing and the read, or briefly locked on
  * Windows. These are environmental, never a Maestro bug, so we keep the local
- * warn but skip Sentry to avoid telemetry noise (MAESTRO-W9). Mirrors the
- * EXPECTED_FS_ERROR_CODES carve-out in shared-history-manager.ts.
+ * warn but skip Sentry to avoid telemetry noise (MAESTRO-W9). Same shape as the
+ * `RangeError` carve-out in the loops below: classify the expected boundary,
+ * log it locally, and let everything else report.
  */
 const EXPECTED_SESSION_READ_ERROR_CODES = new Set([
 	'EACCES',
