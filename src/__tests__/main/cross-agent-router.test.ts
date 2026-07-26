@@ -122,6 +122,23 @@ describe('buildCrossAgentPrompt', () => {
 		const prompt = buildCrossAgentPrompt(request({ sourceCwd: undefined }));
 		expect(prompt).not.toContain('permission to READ');
 	});
+
+	it('tells the target how to lift the read-only restriction when read-only', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
+		);
+		expect(prompt).toContain('Settings > General > Cross-Agent Mentions');
+	});
+
+	it('grants write access and drops the prohibition when writable is opted into', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' }),
+			true
+		);
+		expect(prompt).toContain('permission to READ and MODIFY');
+		expect(prompt).not.toContain('Do NOT modify or create files');
+		expect(prompt).not.toContain('Settings > General > Cross-Agent Mentions');
+	});
 });
 
 const IDLE_MS = 10 * 60 * 1000;
@@ -139,7 +156,12 @@ const targetSession = (): CrossAgentTargetSession => ({
 	cwd: '/proj',
 });
 
-function harness(overrides: { getTargetSession?: () => CrossAgentTargetSession | null } = {}) {
+function harness(
+	overrides: {
+		getTargetSession?: () => CrossAgentTargetSession | null;
+		writable?: boolean;
+	} = {}
+) {
 	const processManager = new FakeProcessManager();
 	const chunks: CrossAgentResponseChunk[] = [];
 	const dispatch = () =>
@@ -157,6 +179,7 @@ function harness(overrides: { getTargetSession?: () => CrossAgentTargetSession |
 			} as never,
 			sshStore: null,
 			getTargetSession: overrides.getTargetSession ?? targetSession,
+			writable: overrides.writable,
 			onChunk: (c) => chunks.push(c),
 		});
 	// The router keys its listeners on `cross-agent-<requestId>`; request() uses 'r1'.
@@ -184,6 +207,14 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		// actually enforces it.
 		expect(config.readOnlyMode).toBe(true);
 		expect(config.maxWaitSeconds).toBe(IDLE_MS / 1000);
+	});
+
+	it('spawns the consult read/write when the user opted into writable mentions', async () => {
+		const { dispatch } = harness({ writable: true });
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.readOnlyMode).toBe(false);
 	});
 
 	it('does not kill a target that keeps streaming past the idle budget', async () => {

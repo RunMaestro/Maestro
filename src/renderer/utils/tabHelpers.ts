@@ -837,7 +837,6 @@ export interface CreateTabOptions {
 	usageStats?: UsageStats; // Token usage stats
 	saveToHistory?: boolean; // Whether to save synopsis to history after completions
 	showThinking?: ThinkingMode; // Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent)
-	showTools?: boolean; // Tool-badge display, independent of showThinking. Defaults to true for new tabs.
 	/** When false, append the tab without making it active (background create).
 	 *  The current active tab/file/browser/terminal/group and inputMode are all
 	 *  preserved so the user's visible view never changes. Default true. */
@@ -889,7 +888,6 @@ export function createTab(
 		usageStats,
 		saveToHistory = true,
 		showThinking = 'off',
-		showTools = true,
 		activate = true,
 	} = options;
 
@@ -907,7 +905,6 @@ export function createTab(
 		state: 'idle',
 		saveToHistory,
 		showThinking,
-		showTools,
 	};
 
 	// Update the session with the new tab added. When `activate` is true (the
@@ -2018,6 +2015,37 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 		// group's layout stops taking over the panel. A no-op when no group is active.
 		activeGroupId: null,
 	};
+}
+
+/**
+ * Land a session on one of its AI tabs - the shared "jump to this conversation"
+ * transform behind every navigation affordance (notification toast, deep link,
+ * the thinking status pill).
+ *
+ * Handles the three cases a jump can hit, in order:
+ *   1. The tab is still open - reveal it first (a hidden cross-agent consult tab
+ *      is reachable ONLY by a deliberate jump, so focusing a tab the strip won't
+ *      render would strand the user), then activate it through setActiveTab so a
+ *      tab living inside a tiled group focuses its pane instead of being orphaned.
+ *   2. The tab was closed - restore it from the closed-tab history so the jump
+ *      lands on that conversation rather than whatever tab happens to be active.
+ *   3. No tabId (or it aged out of history) - just force the AI view.
+ *
+ * @param session - The session to update
+ * @param tabId - The AI tab to land on. Omit to force the AI view only.
+ */
+export function focusAiTabInSession(session: Session, tabId?: string): Session {
+	if (tabId && session.aiTabs?.some((t) => t.id === tabId)) {
+		const revealed = revealAiTab(session, tabId);
+		return setActiveTab(revealed, tabId)?.session ?? { ...revealed, ...aiTabFocusFields(tabId) };
+	}
+	if (tabId) {
+		const reopened = reopenClosedAiTabById(session, tabId);
+		if (reopened) {
+			return { ...reopened.session, ...aiTabFocusFields(reopened.tabId) };
+		}
+	}
+	return { ...session, ...aiTabFocusFields() };
 }
 
 /**

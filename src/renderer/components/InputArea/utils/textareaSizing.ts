@@ -1,5 +1,4 @@
-export const EXTERNAL_TEXTAREA_MAX_HEIGHT = 112;
-export const KEYSTROKE_TEXTAREA_MAX_HEIGHT = 176;
+export const TEXTAREA_MAX_HEIGHT = 176;
 
 export function resizeTextareaToContent(textarea: HTMLTextAreaElement, maxHeight: number): void {
 	// Setting height to 'auto' momentarily removes the overflow and collapses the
@@ -24,14 +23,4 @@ export function scrollTextareaToCaretEnd(textarea: HTMLTextAreaElement): void {
 	if (textarea.selectionEnd >= textarea.value.length) {
 		textarea.scrollTop = textarea.scrollHeight;
 	}
-}
-
-export function shouldScrollTextareaToEnd(
-	selectionEnd: number,
-	previousValueLength: number,
-	nextValueLength: number
-): boolean {
-	const caretWasAtEnd = selectionEnd >= previousValueLength;
-	const bulkInsert = nextValueLength - previousValueLength > 1;
-	return caretWasAtEnd || bulkInsert;
 }

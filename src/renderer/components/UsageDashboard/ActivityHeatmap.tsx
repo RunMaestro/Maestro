@@ -28,6 +28,8 @@ import {
 	TIME_BLOCK_LABELS,
 	type MetricMode,
 } from './activityHeatmapUtils';
+import { MetricModeToggle, metricModeNoun } from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
 
 interface HourData {
 	date: Date;
@@ -36,6 +38,7 @@ interface HourData {
 	hourKey: string; // yyyy-MM-dd-HH
 	count: number;
 	duration: number;
+	tokens: number;
 	intensity: number; // 0-4 scale for color intensity
 }
 
@@ -53,6 +56,7 @@ interface DayCell {
 	dayOfWeek: number; // 0 = Sunday, 6 = Saturday
 	count: number;
 	duration: number;
+	tokens: number;
 	intensity: number;
 	isPlaceholder?: boolean; // For empty cells before start date
 }
@@ -76,6 +80,7 @@ interface TimeBlockCell {
 	blockLabel: string; // e.g., "12a-4a", "4a-8a"
 	count: number;
 	duration: number;
+	tokens: number;
 	intensity: number;
 	isPlaceholder?: boolean;
 }
@@ -103,19 +108,25 @@ interface ActivityHeatmapProps {
  */
 function build4HourBlockGrid(
 	numDays: number,
-	dayDataMap: Map<string, { count: number; duration: number }>,
+	dayDataMap: Map<string, { count: number; duration: number; tokens: number }>,
 	metricMode: MetricMode
-): { dayColumns: DayColumnWithBlocks[]; maxCount: number; maxDuration: number } {
+): {
+	dayColumns: DayColumnWithBlocks[];
+	maxCount: number;
+	maxDuration: number;
+	maxTokens: number;
+} {
 	const today = new Date();
 	const columns: DayColumnWithBlocks[] = [];
 	let maxCount = 0;
 	let maxDuration = 0;
+	let maxTokens = 0;
 
 	// Generate days from (numDays-1) days ago to today
 	for (let dayOffset = numDays - 1; dayOffset >= 0; dayOffset--) {
 		const date = subDays(today, dayOffset);
 		const dateString = format(date, 'yyyy-MM-dd');
-		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0 };
+		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0, tokens: 0 };
 
 		// Create 6 time blocks per day
 		const blocks: TimeBlockCell[] = TIME_BLOCK_LABELS.map((label, blockIndex) => {
@@ -130,9 +141,11 @@ function build4HourBlockGrid(
 			const totalWeight = 9;
 			const count = Math.round((dayStats.count * weight) / totalWeight);
 			const duration = Math.round((dayStats.duration * weight) / totalWeight);
+			const tokens = Math.round((dayStats.tokens * weight) / totalWeight);
 
 			maxCount = Math.max(maxCount, count);
 			maxDuration = Math.max(maxDuration, duration);
+			maxTokens = Math.max(maxTokens, tokens);
 
 			return {
 				date,
@@ -141,6 +154,7 @@ function build4HourBlockGrid(
 				blockLabel: label,
 				count,
 				duration,
+				tokens,
 				intensity: 0, // Calculated later
 			};
 		});
@@ -154,15 +168,20 @@ function build4HourBlockGrid(
 	}
 
 	// Calculate intensities
-	const maxVal = metricMode === 'count' ? Math.max(maxCount, 1) : Math.max(maxDuration, 1);
+	const maxVal =
+		metricMode === 'count'
+			? Math.max(maxCount, 1)
+			: metricMode === 'tokens'
+				? Math.max(maxTokens, 1)
+				: Math.max(maxDuration, 1);
 	columns.forEach((col) => {
 		col.blocks.forEach((block) => {
-			const value = metricMode === 'count' ? block.count : block.duration;
+			const value = block[metricMode];
 			block.intensity = calculateIntensity(value, maxVal);
 		});
 	});
 
-	return { dayColumns: columns, maxCount, maxDuration };
+	return { dayColumns: columns, maxCount, maxDuration, maxTokens };
 }
 
 /**
@@ -171,7 +190,7 @@ function build4HourBlockGrid(
  */
 function buildGitHubGrid(
 	numDays: number,
-	dayDataMap: Map<string, { count: number; duration: number }>,
+	dayDataMap: Map<string, { count: number; duration: number; tokens: number }>,
 	metricMode: MetricMode
 ): { weeks: WeekColumn[]; monthLabels: MonthLabel[]; maxCount: number; maxDuration: number } {
 	const today = new Date();
@@ -184,6 +203,7 @@ function buildGitHubGrid(
 	const monthLabels: MonthLabel[] = [];
 	let maxCount = 0;
 	let maxDuration = 0;
+	let maxTokens = 0;
 
 	let currentDate = gridStart;
 	let currentWeek: DayCell[] = [];
@@ -216,11 +236,12 @@ function buildGitHubGrid(
 			lastMonth = monthStr;
 		}
 
-		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0 };
+		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0, tokens: 0 };
 
 		if (!isBeforeStart && !isAfterEnd) {
 			maxCount = Math.max(maxCount, dayStats.count);
 			maxDuration = Math.max(maxDuration, dayStats.duration);
+			maxTokens = Math.max(maxTokens, dayStats.tokens);
 		}
 
 		currentWeek.push({
@@ -229,6 +250,7 @@ function buildGitHubGrid(
 			dayOfWeek,
 			count: isBeforeStart || isAfterEnd ? 0 : dayStats.count,
 			duration: isBeforeStart || isAfterEnd ? 0 : dayStats.duration,
+			tokens: isBeforeStart || isAfterEnd ? 0 : dayStats.tokens,
 			intensity: 0, // Calculated later
 			isPlaceholder: isBeforeStart || isAfterEnd,
 		});
@@ -262,6 +284,7 @@ function buildGitHubGrid(
 				dayOfWeek: getDay(nextDate),
 				count: 0,
 				duration: 0,
+				tokens: 0,
 				intensity: 0,
 				isPlaceholder: true,
 			});
@@ -283,7 +306,7 @@ function buildGitHubGrid(
 	weeks.forEach((week) => {
 		week.days.forEach((day) => {
 			if (!day.isPlaceholder) {
-				const value = metricMode === 'count' ? day.count : day.duration;
+				const value = day[metricMode];
 				day.intensity = calculateIntensity(value, maxVal);
 			}
 		});
@@ -299,6 +322,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 	colorBlindMode = false,
 }: ActivityHeatmapProps) {
 	const [metricMode, setMetricMode] = useState<MetricMode>('count');
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 	const [hoveredCell, setHoveredCell] = useState<HourData | DayCell | TimeBlockCell | null>(null);
 	const [cellRect, setCellRect] = useState<DOMRect | null>(null);
 
@@ -307,12 +331,16 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 
 	// Convert byDay data to a lookup map
 	const dayDataMap = useMemo(() => {
-		const map = new Map<string, { count: number; duration: number }>();
+		const map = new Map<string, { count: number; duration: number; tokens: number }>();
 		for (const day of data.byDay) {
-			map.set(day.date, { count: day.count, duration: day.duration });
+			map.set(day.date, {
+				count: day.count,
+				duration: day.duration,
+				tokens: tokenSeries?.byDay?.[day.date] ?? 0,
+			});
 		}
 		return map;
-	}, [data.byDay]);
+	}, [data.byDay, tokenSeries]);
 
 	// GitHub-style grid data for year/all views
 	const gitHubGrid = useMemo(() => {
@@ -370,25 +398,29 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 		// Track max values for intensity calculation
 		let maxCount = 0;
 		let maxDuration = 0;
+		let maxTokens = 0;
 
 		// Generate days from (numDays-1) days ago to today
 		for (let dayOffset = numDays - 1; dayOffset >= 0; dayOffset--) {
 			const date = subDays(today, dayOffset);
 			const dateString = format(date, 'yyyy-MM-dd');
-			const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0 };
+			const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0, tokens: 0 };
 
 			const hourData: HourData[] = hours.map((hour) => {
 				// Distribute evenly across hours (simplified - real data would have hourly breakdown)
 				let count = Math.floor(dayStats.count / 24);
 				let duration = Math.floor(dayStats.duration / 24);
+				let tokens = Math.floor(dayStats.tokens / 24);
 				// Distribute remainder to typical work hours (9-17)
 				if (hour >= 9 && hour <= 17) {
 					count += Math.floor((dayStats.count % 24) / 9);
 					duration += Math.floor((dayStats.duration % 24) / 9);
+					tokens += Math.floor((dayStats.tokens % 24) / 9);
 				}
 
 				maxCount = Math.max(maxCount, count);
 				maxDuration = Math.max(maxDuration, duration);
+				maxTokens = Math.max(maxTokens, tokens);
 
 				return {
 					date,
@@ -397,6 +429,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 					hourKey: `${dateString}-${hour.toString().padStart(2, '0')}`,
 					count,
 					duration,
+					tokens,
 					intensity: 0,
 				};
 			});
@@ -465,50 +498,20 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 			className="p-4 rounded-lg"
 			style={{ backgroundColor: theme.colors.bgMain }}
 			role="figure"
-			aria-label={`Activity heatmap showing ${metricMode === 'count' ? 'query activity' : 'duration'} over ${getDaysForRange(timeRange)} days.`}
+			aria-label={`Activity heatmap showing ${metricModeNoun(metricMode)} over ${getDaysForRange(timeRange)} days.`}
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
 				<h3 className="text-sm font-medium card-enter" style={{ color: theme.colors.textMain }}>
 					Activity Heatmap
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'count' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'count' ? theme.colors.accent : theme.colors.textDim,
-							}}
-							aria-pressed={metricMode === 'count'}
-							aria-label="Show query count"
-						>
-							Count
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'duration' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.accent : theme.colors.textDim,
-								borderLeft: `1px solid ${theme.colors.border}`,
-							}}
-							aria-pressed={metricMode === 'duration'}
-							aria-label="Show total duration"
-						>
-							Duration
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					variant="subtle"
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			{/* GitHub-style heatmap for year/all views. Week columns stretch to

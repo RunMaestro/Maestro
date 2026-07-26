@@ -168,7 +168,6 @@ export interface MainPanelProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
-	onToggleTabShowTools?: () => void;
 	onToggleTabEnterToSend?: () => void;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
@@ -188,6 +187,7 @@ export interface MainPanelProps {
 	activeBrowserTab?: BrowserTab | null;
 	onFileTabSelect?: (tabId: string) => void;
 	onFileTabClose?: (tabId: string) => void;
+	onFileTabRename?: (tabId: string) => void;
 	onNewFileTab?: () => void;
 	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	onBrowserTabSelect?: (tabId: string) => void;

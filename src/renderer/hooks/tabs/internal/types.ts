@@ -56,7 +56,6 @@ export interface AITabHandlersReturn {
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
-	handleToggleTabShowTools: () => void;
 	handleToggleTabEnterToSend: () => void;
 }
 

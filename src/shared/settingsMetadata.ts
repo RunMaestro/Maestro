@@ -103,6 +103,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'Roboto Mono, Menlo, "Courier New", monospace',
 		category: 'appearance',
 	},
+	terminalFontFamily: {
+		description:
+			'Font family for the command terminal, independent of the UI font. Accepts any CSS font-family string. When empty, the terminal inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
 	customFonts: {
 		description: 'List of user-installed custom font names available in the font picker.',
 		type: 'array',
@@ -249,19 +256,20 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, previewTier, editToggle, copyContent, publishGist, documentGraph, openInBrowser, openInDefault, copyPath.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, copyPath.',
 		type: 'object',
 		default: {
 			save: true,
 			wordWrap: true,
 			remoteImages: true,
 			htmlRender: true,
+			openInBrowser: true,
 			previewTier: true,
 			editToggle: true,
+			editImage: true,
 			copyContent: true,
 			publishGist: true,
 			documentGraph: true,
-			openInBrowser: true,
 			openInDefault: true,
 			copyPath: true,
 		},
@@ -391,6 +399,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	crossAgentMentionsWritable: {
+		description:
+			'When true, agents consulted via @-mention may modify files. When false (default), consults run read-only.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	defaultSaveToHistory: {
 		description: 'Whether completed tasks are saved to history by default.',
 		type: 'boolean',
@@ -408,6 +423,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Show model thinking/reasoning in responses. Values: off, on, sticky.',
 		type: 'string',
 		default: 'off',
+		category: 'editor',
+	},
+	showToolCalls: {
+		description:
+			'Show tool-call activity (tool badges and their input/output) in AI responses. When false, tool calls are hidden from the transcript.',
+		type: 'boolean',
+		default: true,
 		category: 'editor',
 	},
 	leftSidebarWidth: {
@@ -535,7 +557,8 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 
 	// --- LLM / Provider ---
 	llmProvider: {
-		description: 'LLM provider for built-in AI features. E.g., openrouter, anthropic, openai.',
+		description:
+			'LLM provider for built-in AI features. E.g., openrouter, requesty, anthropic, ollama.',
 		type: 'string',
 		default: 'openrouter',
 		category: 'advanced',

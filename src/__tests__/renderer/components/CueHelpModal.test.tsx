@@ -14,6 +14,7 @@ import { mockTheme } from '../../helpers/mockTheme';
 // Mock formatShortcutKeys to return predictable output
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: (keys: string[]) => keys.join('+'),
+	formatMetaKey: () => 'Ctrl',
 	isMacOS: () => false,
 }));
 

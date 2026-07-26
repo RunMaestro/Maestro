@@ -34,16 +34,31 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Platform Detection
 
-### Main Process (`src/shared/platformDetection.ts` - usable in both processes)
+### Both Processes (`src/shared/platformDetection.ts`)
 
-| Function            | Signature       | Purpose                                                                |
-| ------------------- | --------------- | ---------------------------------------------------------------------- |
-| `isWindows()`       | `() => boolean` | Returns `process.platform === 'win32'`. Reads at call time (mockable). |
-| `isMacOS()`         | `() => boolean` | Returns `process.platform === 'darwin'`.                               |
-| `isLinux()`         | `() => boolean` | Returns `process.platform === 'linux'`.                                |
-| `getWhichCommand()` | `() => string`  | Returns `'where'` on Windows, `'which'` on Unix.                       |
+| Function            | Signature       | Purpose                                                       |
+| ------------------- | --------------- | ------------------------------------------------------------- |
+| `isWindows()`       | `() => boolean` | Platform is `win32`. Resolved at call time (mockable).        |
+| `isMacOS()`         | `() => boolean` | Platform is `darwin`.                                         |
+| `isLinux()`         | `() => boolean` | Platform is `linux`. Also the fallback when nothing resolves. |
+| `getWhichCommand()` | `() => string`  | Returns `'where'` on Windows, `'which'` on Unix.              |
+
+Resolution order: `globalThis.process.platform` first, then the preload bridge at
+`globalThis.maestro.platform`, then `'linux'`. The bare `process` identifier is
+never touched (that throws a `ReferenceError` in the renderer sandbox).
+
+**The `'browser'` sentinel.** The renderer loads a `process` polyfill
+(`src/renderer/public/process-shim.js`) so vendor libs reading `process.env` /
+`process.platform` don't throw. It reports `platform: 'browser'`, which is NOT a
+real platform - `platformDetection.ts` explicitly rejects that value and falls
+through to the preload bridge. Treating it as real is how every macOS renderer
+started looking non-Mac and Settings rendered "Ctrl+0" on a Mac. Do not add a
+new `process.platform` read in renderer code.
 
 ### Renderer Process (`src/renderer/utils/platformUtils.ts`)
+
+Prefer these in renderer-only code - they read the preload bridge directly and
+never see the shim.
 
 | Function                   | Signature                      | Purpose                                                        |
 | -------------------------- | ------------------------------ | -------------------------------------------------------------- |
@@ -52,6 +67,10 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 | `isLinuxPlatform()`        | `() => boolean`                | Uses `window.maestro.platform`.                                |
 | `getRevealLabel(platform)` | `(platform: string) => string` | Platform-appropriate "Reveal in Finder/Explorer/File Manager". |
 | `getOpenInLabel(platform)` | `(platform: string) => string` | Platform-appropriate "Open in Finder/Explorer/File Manager".   |
+
+For user-visible modifier keys, don't branch on the platform yourself - use the
+[Shortcut Formatter](#shortcut-formatter-srcrendererutilsshortcutformatterts)
+helpers below.
 
 ### WSL Detection (`src/main/utils/wslDetector.ts` - Main only)
 
@@ -417,8 +436,15 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------ |
 | `formatKey(key)`                       | `(string) => string`            | Platform-aware key symbol (Mac: `"Meta"` -> `"command"`, Win: `"Meta"` -> `"Ctrl"`). |
 | `formatShortcutKeys(keys, separator?)` | `(string[], string?) => string` | Format key array: Mac `"command shift K"`, Win `"Ctrl+Shift+K"`.                     |
-| `formatMetaKey()`                      | `() => string`                  | `"command"` on Mac, `"Ctrl"` on Win/Linux.                                           |
+| `formatMetaKey()`                      | `() => string`                  | Symbol form: `"command"` on Mac, `"Ctrl"` on Win/Linux.                              |
+| `formatMetaKeyName()`                  | `() => string`                  | Prose form: `"Command"` on Mac, `"Ctrl"` on Win/Linux. For sentences and tooltips.   |
 | `formatEnterToSend(enterToSend)`       | `(boolean) => string`           | `"Enter"` or `"command + Enter"` / `"Ctrl + Enter"`.                                 |
+
+**Never hard-code a modifier key in UI copy.** Literal `⌘`, `Cmd+`, or `Ctrl+`
+in a tooltip, setting description, or help table renders the wrong key on the
+other platform. Pass `''` as the separator when you want the tight macOS form
+(`formatShortcutKeys(['Meta', 'f'], '')` -> `⌘F`); pass `'+'` (the default) for
+the spelled-out platforms.
 
 ### Context Usage (`src/renderer/utils/contextUsage.ts`)
 

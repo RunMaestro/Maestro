@@ -73,24 +73,8 @@ describe('useAgentToolExecutionListener', () => {
 		expect(tabAfter.logs[0].metadata?.toolState?.output).toBe('ok');
 	});
 
-	it('skips when tab.showThinking is off', () => {
+	it('records tool events even when showThinking is off (hidden at render)', () => {
 		const tab = createMockAITab({ id: 'tab-1', showThinking: 'off' });
-		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
-		useSessionStore.setState({ sessions: [session] } as any);
-
-		renderHook(() => useAgentToolExecutionListener());
-		handler!('sess-1-ai-tab-1', {
-			toolName: 'Read',
-			state: { status: 'running' },
-			timestamp: 1,
-			toolCallId: 'c1',
-		});
-
-		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
-	});
-
-	it('records tool logs when showTools is true even if showThinking is off', () => {
-		const tab = createMockAITab({ id: 'tab-1', showThinking: 'off', showTools: true });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
 		useSessionStore.setState({ sessions: [session] } as any);
 
@@ -105,24 +89,8 @@ describe('useAgentToolExecutionListener', () => {
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(1);
 	});
 
-	it('skips when showTools is false even if showThinking is on', () => {
-		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on', showTools: false });
-		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
-		useSessionStore.setState({ sessions: [session] } as any);
-
-		renderHook(() => useAgentToolExecutionListener());
-		handler!('sess-1-ai-tab-1', {
-			toolName: 'Read',
-			state: { status: 'running' },
-			timestamp: 1,
-			toolCallId: 'c1',
-		});
-
-		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
-	});
-
-	it('falls back to showThinking when showTools is absent', () => {
-		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
+	it('records tool events when showThinking is not set', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
 		useSessionStore.setState({ sessions: [session] } as any);
 

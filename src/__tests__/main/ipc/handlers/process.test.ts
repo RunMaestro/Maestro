@@ -22,6 +22,10 @@ import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { checkCustomPath } from '../../../../main/agents/path-prober';
 import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+} from '../../../../main/agents/omp-model-catalog';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -218,6 +222,24 @@ vi.mock('../../../../shared/platformDetection', () => ({
 vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
 	getChildProcesses: vi.fn().mockResolvedValue([]),
 }));
+
+// Mock the omp model catalog so the spawn handler's catalog prime can be
+// asserted at the module boundary without launching a real `omp` subprocess.
+// computeOmpCatalogKey returns a stable sentinel so the prime's third arg is
+// deterministic; primeOmpModelCatalog resolves immediately so the bounded
+// Promise.race in the handler proceeds without waiting on the real cap. The
+// real buildOmpPrimeEnv is retained (it's a pure env builder) so the test can
+// assert the actual PATH the handler hands to the prime.
+vi.mock('../../../../main/agents/omp-model-catalog', async () => {
+	const actual = await vi.importActual<typeof import('../../../../main/agents/omp-model-catalog')>(
+		'../../../../main/agents/omp-model-catalog'
+	);
+	return {
+		...actual,
+		primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+		computeOmpCatalogKey: vi.fn(() => 'omp-catalog-key'),
+	};
+});
 
 // Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
 // without touching the real filesystem. Other tests in this file don't use
@@ -501,6 +523,55 @@ describe('process IPC handlers', () => {
 			});
 
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		it('primes the omp model catalog with an expanded env whose PATH lists the binary dir first', async () => {
+			// The bun-based `omp` binary lives next to a co-located `bun` runtime;
+			// in a packaged Electron app the shell PATH is not inherited, so the
+			// prime must run with an expanded env (buildExpandedEnv) and prepend the
+			// binary's own dir. Assert the env handed to primeOmpModelCatalog reflects
+			// both: binary dir first, then the expanded standard entries.
+			const binaryPath = '/opt/tester/.bun/bin/omp';
+			const binDir = path.dirname(binaryPath);
+
+			const mockAgent = {
+				id: 'omp',
+				requiresPty: false,
+				path: binaryPath,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 4242, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-omp',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+			});
+
+			expect(primeOmpModelCatalog).toHaveBeenCalledTimes(1);
+			const [passedBinaryPath, passedEnv, passedKey] =
+				vi.mocked(primeOmpModelCatalog).mock.calls[0];
+			expect(passedBinaryPath).toBe(binaryPath);
+			expect(passedKey).toBe('omp-catalog-key');
+			expect(computeOmpCatalogKey).toHaveBeenCalledWith(binaryPath, undefined);
+
+			// The prime env's PATH must lead with the binary dir (so the co-located
+			// bun runtime resolves first), followed by the expanded standard entries.
+			expect(typeof passedEnv?.PATH).toBe('string');
+			const pathEntries = (passedEnv!.PATH as string).split(path.delimiter);
+			expect(pathEntries[0]).toBe(binDir);
+			// Expansion added entries beyond just the prepended binary dir, and the
+			// process's own PATH survived the expansion (proving it is the expanded
+			// env, not a bare { PATH: binDir }).
+			expect(pathEntries.length).toBeGreaterThan(1);
+			const currentPathEntries = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+			if (currentPathEntries.length > 0) {
+				expect(pathEntries).toEqual(expect.arrayContaining([currentPathEntries[0]]));
+			}
 		});
 
 		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {
@@ -3556,6 +3627,124 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.prompt).toContain('COPILOT_PREAMBLE_TEXT');
 			expect(spawnCall.prompt).toContain('You are Maestro system prompt content');
 			expect(spawnCall.prompt).toContain('Do work.');
+		});
+	});
+
+	describe('prompt delivery (argv vs stdin)', () => {
+		// Windows hands the prompt to the child over stdin instead of argv to stay
+		// under the ~32K CreateProcess limit. The decision belongs to the HOST and
+		// the agent's CLI - never to the caller, which may be a web-desktop browser
+		// running on a different OS than the machine that spawns the agent.
+
+		const setHostWindows = async (value: boolean) => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			vi.mocked(isWindows).mockReturnValue(value);
+		};
+
+		afterEach(async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			vi.mocked(isWindows).mockReset();
+			vi.mocked(isWindows).mockImplementation(() => process.platform === 'win32');
+		});
+
+		const stdinCapableAgent = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			path: '/usr/local/bin/claude',
+			capabilities: { supportsStreamJsonInput: true, supportsPromptViaStdin: true },
+		};
+
+		// omp takes the prompt as a positional argument only. Handing it stdin makes
+		// it run with no prompt at all: it prints its session line and exits 0.
+		const positionalOnlyAgent = {
+			id: 'omp',
+			name: 'Oh My Pi',
+			path: '/home/user/.bun/bin/omp',
+			capabilities: { supportsStreamJsonInput: false, supportsPromptViaStdin: false },
+		};
+
+		const spawnWith = async (config: Record<string, unknown>) => {
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				cwd: '/home/user/project',
+				args: [],
+				prompt: 'Hello world',
+				...config,
+			});
+			return mockProcessManager.spawn.mock.calls[0][0];
+		};
+
+		it('ignores a caller asking for stdin delivery on a non-Windows host', async () => {
+			// The web-desktop regression: a browser on Windows drove a Linux host and
+			// asked for stdin delivery, so omp spawned with no prompt at all.
+			await setHostWindows(false);
+			mockAgentDetector.getAgent.mockResolvedValue(positionalOnlyAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'omp',
+				command: 'omp',
+				sendPromptViaStdinRaw: true,
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+			expect(spawnCall.prompt).toContain('Hello world');
+		});
+
+		it('keeps the prompt in argv on Windows for agents that never read stdin', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(positionalOnlyAgent);
+
+			const spawnCall = await spawnWith({ toolType: 'omp', command: 'omp' });
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+		});
+
+		it('enables raw stdin delivery on a Windows host even when the caller did not ask', async () => {
+			// Mirror case: a macOS browser driving a Windows host must still get the
+			// argv-length workaround.
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				sendPromptViaStdinRaw: false,
+			});
+
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+		});
+
+		it('uses stream-json stdin on Windows when images accompany the prompt', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				images: ['/tmp/shot.png'],
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(true);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+		});
+
+		it('leaves stdin delivery off for SSH sessions (the SSH script owns stdin)', async () => {
+			await setHostWindows(true);
+			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+
+			const spawnCall = await spawnWith({
+				toolType: 'claude-code',
+				command: 'claude',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			});
+
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
 		});
 	});
 });

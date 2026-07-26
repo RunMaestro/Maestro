@@ -39,6 +39,7 @@ import {
 	addParticipant,
 	setActiveParticipantSession,
 	clearActiveParticipantSession,
+	wasParticipantRecentlyRemoved,
 } from './group-chat-agent';
 import { AgentDetector } from '../agents';
 import { powerManager } from '../power-manager';
@@ -1105,6 +1106,16 @@ export async function routeModeratorResponse(
 			);
 
 			if (matchingSession) {
+				// Respect an explicit user removal: a moderator turn that was in
+				// flight when the user removed this participant (or any later turn)
+				// must not silently re-add them via an @mention (issue #1100). The
+				// guard clears once the user re-adds the participant.
+				if (wasParticipantRecentlyRemoved(groupChatId, matchingSession.name)) {
+					logger.debug(
+						`[GroupChatRouter] Skipping auto-add of @${matchingSession.name}: recently removed by user`
+					);
+					continue;
+				}
 				try {
 					// Use the original session name as the participant name
 					const participantName = matchingSession.name;

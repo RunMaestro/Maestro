@@ -5,7 +5,6 @@ import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
 import type { Session } from '../../../types';
-import { toolLogsRecorded } from '../../agent/internal/helpers/thinkingLogs';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
@@ -350,43 +349,16 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		updateAiTab(session.id, currentActiveTab.id, (tab) => {
 			const newMode = cycleThinkingMode(tab.showThinking);
 			if (newMode === 'off') {
-				// Tool visibility is controlled independently via `showTools`; only
-				// strip tool logs here when the tab does not explicitly want them
-				// shown. Thinking logs always go when thinking is turned off.
-				const keepTools = tab.showTools === true;
+				// Only thinking logs are storage-gated. Tool logs are always recorded
+				// and hidden purely at render (see the global tool-call visibility
+				// setting + TerminalOutput), so turning thinking off must never drop them.
 				return {
 					...tab,
 					showThinking: 'off',
-					logs: tab.logs.filter(
-						(l) => l.source !== 'thinking' && (keepTools || l.source !== 'tool')
-					),
+					logs: tab.logs.filter((l) => l.source !== 'thinking'),
 				};
 			}
 			return { ...tab, showThinking: newMode };
-		});
-	}, []);
-
-	const handleToggleTabShowTools = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-		const currentActiveTab = getActiveTab(session);
-		if (!currentActiveTab) return;
-
-		updateAiTab(session.id, currentActiveTab.id, (tab) => {
-			// Flip the effective value: when showTools is absent it inherits the
-			// tab's thinking on/off state, so the first click toggles that.
-			const effective = toolLogsRecorded(tab.showTools, tab.showThinking);
-			const next = !effective;
-			if (!next) {
-				// Turning tools off drops the recorded tool logs, mirroring how
-				// turning thinking off clears thinking/tool logs.
-				return {
-					...tab,
-					showTools: false,
-					logs: tab.logs.filter((l) => l.source !== 'tool'),
-				};
-			}
-			return { ...tab, showTools: true };
 		});
 	}, []);
 
@@ -417,7 +389,6 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
-		handleToggleTabShowTools,
 		handleToggleTabEnterToSend,
 	};
 }

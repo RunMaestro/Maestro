@@ -203,6 +203,30 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		);
 	});
 
+	it('validatePluginManifest agrees with the source on the optional beta flag', () => {
+		const base = {
+			id: 'com.example.transcript-reader',
+			name: 'Transcript Reader',
+			version: '0.1.0',
+			tier: 1,
+			maestro: { minHostApi: HOST_API_VERSION },
+			entry: 'dist/entry.js',
+			permissions: [{ capability: 'transcripts:read', reason: 'Summarize the active session.' }],
+		};
+
+		const betaTrue = { ...base, beta: true };
+		expect(validatePluginManifest(betaTrue)).toEqual(srcValidatePluginManifest(betaTrue));
+		expect(validatePluginManifest(betaTrue).manifest?.beta).toBe(true);
+
+		const betaFalse = { ...base, beta: false };
+		expect(validatePluginManifest(betaFalse)).toEqual(srcValidatePluginManifest(betaFalse));
+		expect(validatePluginManifest(betaFalse).manifest?.beta).toBeUndefined();
+
+		const betaInvalid = { ...base, beta: 'yes' };
+		expect(validatePluginManifest(betaInvalid)).toEqual(srcValidatePluginManifest(betaInvalid));
+		expect(validatePluginManifest(betaInvalid).manifest).toBeNull();
+	});
+
 	it('validatePluginManifest agrees with the source on allowlist-scoped act verbs (Phase-4 promotion)', () => {
 		const base = {
 			id: 'com.example.act-plugin',

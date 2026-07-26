@@ -16,6 +16,7 @@ import { Search, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
 import { searchSettings, type SearchableSetting } from './searchableSettings';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 export interface SettingsSearchProps {
 	theme: Theme;
@@ -171,10 +172,7 @@ export function SettingsSearchInput({
 							className="text-[10px] px-1.5 py-0.5 rounded font-mono opacity-40"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
-							{typeof navigator !== 'undefined' && navigator.platform?.includes('Mac')
-								? '⌘'
-								: 'Ctrl+'}
-							F
+							{formatShortcutKeys(['Meta', 'f'])}
 						</kbd>
 					</span>
 				)}

@@ -8,6 +8,7 @@ import {
 import {
 	buildExtensions,
 	builtinExtension,
+	pluginExtension,
 	BUILTIN_FEATURES,
 	BUILTIN_DEPENDENCIES,
 	isDependencyMet,
@@ -192,5 +193,29 @@ describe('feature dependencies (Board requires Maestro Cue)', () => {
 		const cueDef = BUILTIN_FEATURES.find((d) => d.flag === 'maestroCue')!;
 		const cueTile = builtinExtension(cueDef, flags());
 		expect(isDependencyMet(cueTile, flags())).toBe(true);
+	});
+});
+
+describe('extensionModel plugin beta projection', () => {
+	it('projects a manifest beta: true onto the tile as beta === true', () => {
+		const record = pluginRecord('com.example.beta');
+		record.manifest = { ...record.manifest!, beta: true };
+		expect(pluginExtension(record).beta).toBe(true);
+	});
+
+	it('projects a manifest without beta as beta === undefined', () => {
+		const ext = pluginExtension(pluginRecord('com.example.stable'));
+		expect(ext.beta).toBeUndefined();
+	});
+
+	it('leaves built-in beta-list projection unchanged', () => {
+		const cueDef = BUILTIN_FEATURES.find((def) => def.flag === 'maestroCue');
+		expect(cueDef).toBeDefined();
+		// maestroCue is on the builtin beta list, so its tile stays beta: true.
+		expect(builtinExtension(cueDef!, flags()).beta).toBe(true);
+		const usageDef = BUILTIN_FEATURES.find((def) => def.flag === 'usageStats');
+		expect(usageDef).toBeDefined();
+		// usageStats is not on the beta list, so its tile stays non-beta.
+		expect(builtinExtension(usageDef!, flags()).beta).toBe(false);
 	});
 });

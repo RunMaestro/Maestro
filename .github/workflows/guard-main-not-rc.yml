@@ -1,0 +1,105 @@
+name: Guard - main must not carry rc
+
+# Backstop for the .husky/pre-push guard of the same name.
+#
+# On 2026-07-04 the routine `git merge origin/main` into rc made rc a DESCENDANT
+# of main, which silently made main fast-forwardable to rc. The next push moved
+# main onto the rc line, dragging every in-soak feature (web desktop,
+# multi-window, tiling) into the stable branch. It went unnoticed for 19 days.
+#
+# GitHub's "block force pushes" setting does NOT catch this: a fast-forward is
+# not a history rewrite, so the remote accepts it. The local pre-push hook is the
+# primary guard, but it can be skipped with --no-verify or bypassed by pushing
+# from another machine or the web UI. This workflow is the backstop that cannot
+# be skipped.
+#
+# Merging main INTO rc stays fine. Only rc reaching main is blocked.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: main must not contain the rc line
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch rc
+        run: git fetch --no-tags origin '+refs/heads/rc:refs/remotes/origin/rc'
+
+      - name: Assert main does not carry rc commits
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          HEAD_SHA=$(git rev-parse HEAD)
+          RC=$(git rev-parse refs/remotes/origin/rc)
+          Z40=0000000000000000000000000000000000000000
+
+          # ---- Check 1: main must never carry an -RC version. NOT bypassable. ----
+          # This is the check that separates an accident from an intentional
+          # release. An accidental fast-forward drags rc's package.json along, so
+          # main lands on something like 0.18.5-RC and is blocked here. The
+          # documented promotion bumps the version to GA on the promotion branch
+          # BEFORE merging, so it passes. Deliberately runs first.
+          VERSION=$(node -p "require('./package.json').version")
+          echo "package.json version : ${VERSION}"
+          case "${VERSION}" in
+            *-RC* | *-rc*)
+              echo "::error title=RC version on main::package.json on main reads ${VERSION}. The stable branch must never carry a release-candidate version. If this is a release promotion, bump the version to its GA value on the promotion branch before merging."
+              exit 1
+              ;;
+          esac
+
+          # ---- Check 2: main must not absorb the rc line ----
+          # Count the commits this push added to main, and how many of them rc
+          # already has. For the real incident that was 675 of 676; for a healthy
+          # curated main push it is 0.
+          #
+          # Use explicit "^rev" exclusions, never repeated "--not": a second
+          # --not toggles the sense back to positive, which inflates the count
+          # past the total and makes the check silently pass.
+          if [ -z "${BEFORE:-}" ] || [ "${BEFORE}" = "${Z40}" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            # New branch, forced rewrite, or a before-sha no longer in the graph.
+            # Fall back to comparing against the whole of rc.
+            ADDED=$(git rev-list --count "${HEAD_SHA}")
+            ADDED_NOT_RC=$(git rev-list --count "${HEAD_SHA}" "^${RC}")
+          else
+            ADDED=$(git rev-list --count "${HEAD_SHA}" "^${BEFORE}")
+            ADDED_NOT_RC=$(git rev-list --count "${HEAD_SHA}" "^${BEFORE}" "^${RC}")
+          fi
+
+          FROM_RC=$((ADDED - ADDED_NOT_RC))
+          echo "main HEAD : ${HEAD_SHA}"
+          echo "rc tip    : ${RC}"
+          echo "commits added to main : ${ADDED}"
+          echo "...already on rc      : ${FROM_RC}"
+
+          if [ "${FROM_RC}" -ge 10 ]; then
+            # The planned release promotion legitimately brings all of rc onto
+            # main. Declare it in the merge commit subject/body with the marker
+            # below. Read from git, never from the webhook payload, so there is
+            # no injection path. Check 1 above still applies and is what keeps
+            # this from rubber-stamping an accident.
+            SUBJECT=$(git log -1 --format=%B "${HEAD_SHA}")
+            case "${SUBJECT}" in
+              *"[release-promotion]"*)
+                echo "OK: ${FROM_RC} rc commits landed on main under a declared [release-promotion], and the version is GA (${VERSION})."
+                exit 0
+                ;;
+            esac
+            echo "::error title=rc reached main::${FROM_RC} of the ${ADDED} commits added to main already exist on rc. main is the stable release line; rc carries in-soak features. If this is the planned release promotion, put [release-promotion] in the merge commit message and bump the version to GA. Otherwise reset main off the rc line."
+            exit 1
+          fi
+
+          echo "OK: main is clear of the rc line."

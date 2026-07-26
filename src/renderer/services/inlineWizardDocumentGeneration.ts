@@ -16,7 +16,6 @@ import type {
 } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
-import { getStdinFlags } from '../utils/spawnHelpers';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
 import { extractGrokTextFromJsonl, getGrokTextDelta } from '../utils/grokWizard';
 
@@ -1146,13 +1145,6 @@ export async function generateInlineDocuments(
 				// For remote sessions, we use the agent type name since the agent is installed on the remote host
 				const commandToUse = agent?.path || agent?.command || agentType;
 
-				const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
-					getStdinFlags({
-						isSshSession: !!config.sessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Document generation never sends images
-					});
-
 				window.maestro.process
 					.spawn({
 						sessionId,
@@ -1161,8 +1153,6 @@ export async function generateInlineDocuments(
 						command: commandToUse,
 						args: argsForSpawn,
 						prompt,
-						sendPromptViaStdin: sendViaStdin,
-						sendPromptViaStdinRaw: sendViaStdinRaw,
 						// Pass SSH config for remote execution
 						sessionSshRemoteConfig: config.sessionSshRemoteConfig,
 						// Pass session-level overrides

@@ -285,6 +285,17 @@ describe('agent-capabilities', () => {
 			}
 		});
 
+		it('marks omp as unable to read the prompt from stdin', () => {
+			// omp takes the prompt positionally: piping it to stdin makes the run
+			// exit 0 with no output, which is why prompt delivery is capability-gated.
+			expect(hasCapability('omp', 'supportsPromptViaStdin')).toBe(false);
+			expect(hasCapability('claude-code', 'supportsPromptViaStdin')).toBe(true);
+			expect(hasCapability('codex', 'supportsPromptViaStdin')).toBe(true);
+			expect(hasCapability('opencode', 'supportsPromptViaStdin')).toBe(true);
+			// Unknown agents fall back to argv delivery (loud failure over silent).
+			expect(hasCapability('unknown-agent', 'supportsPromptViaStdin')).toBe(false);
+		});
+
 		it('should return correct values for new capability flags', () => {
 			// supportsWizard
 			expect(hasCapability('claude-code', 'supportsWizard')).toBe(true);
@@ -333,6 +344,7 @@ describe('agent-capabilities', () => {
 				'supportsBatchMode',
 				'supportsStreaming',
 				'supportsStreamJsonInput',
+				'supportsPromptViaStdin',
 				'supportsResultMessages',
 				'supportsModelSelection',
 				'requiresPromptToStart',

@@ -69,6 +69,7 @@ function TabBarInner({
 	activeFileTabId,
 	onFileTabSelect,
 	onFileTabClose,
+	onFileTabRename,
 	activeBrowserTabId,
 	onBrowserTabSelect,
 	onBrowserTabClose,
@@ -91,6 +92,7 @@ function TabBarInner({
 	queuedTabIds,
 	onGroupSelect,
 	onGroupRename,
+	onGroupSetEmoji,
 	onGroupBreakApart,
 	colorBlindMode,
 	sshRemote,
@@ -739,6 +741,7 @@ function TabBarInner({
 										isDragging={draggingTabId === fileTab.id}
 										isDragOver={dragOverTabId === fileTab.id}
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
+										onRename={onFileTabRename}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -848,6 +851,7 @@ function TabBarInner({
 										theme={theme}
 										onSelect={(groupId) => onGroupSelect?.(groupId)}
 										onRename={onGroupRename}
+										onSetEmoji={onGroupSetEmoji}
 										onBreakApart={onGroupBreakApart}
 									/>
 								</React.Fragment>

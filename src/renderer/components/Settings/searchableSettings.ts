@@ -12,6 +12,15 @@
  * that test for any new visible string you want guaranteed-findable.
  */
 
+import { formatMetaKeyName } from '../../utils/shortcutFormatter';
+
+/**
+ * Platform modifier name used inside descriptions ('Command' on macOS, 'Ctrl'
+ * elsewhere). Resolved once at module load - the platform cannot change at
+ * runtime. Keywords deliberately list both spellings so search hits either way.
+ */
+const META_KEY_NAME = formatMetaKeyName();
+
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
 	id: string;
@@ -145,6 +154,33 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'mode',
 			'ai interaction mode',
 			'cmd+enter',
+			'always force send',
+			'send trigger',
+			'modifier',
+		],
+	},
+	{
+		id: 'general-cross-agent-mentions',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Cross-Agent Mentions',
+		description:
+			'Control whether agents consulted via @-mention run read-only (default) or may write to files',
+		keywords: [
+			'cross-agent',
+			'cross agent',
+			'mention',
+			'@mention',
+			'@-mention',
+			'consult',
+			'read-only',
+			'readonly',
+			'read only',
+			'write',
+			'read-write',
+			'writable',
+			'permission',
+			'agent to agent',
 		],
 	},
 	{
@@ -227,6 +263,26 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'on',
 			'response',
 			'final',
+		],
+	},
+	{
+		id: 'general-tool-calls',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Tool Calls',
+		description:
+			'Show or hide tool-call activity (tool badges and their input/output) in AI responses.',
+		keywords: [
+			'tool',
+			'tools',
+			'tool call',
+			'tool calls',
+			'tool activity',
+			'badge',
+			'wrench',
+			'hide',
+			'show',
+			'function call',
 		],
 	},
 	{
@@ -376,8 +432,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Default Browser',
-		description:
-			'Choose whether links open in the Maestro built-in browser tab or the system browser. Ctrl+click (or right-click context menu) inverts the behavior. Set the default URL for new browser tabs.',
+		description: `Choose whether links open in the Maestro built-in browser tab or the system browser. ${META_KEY_NAME}+click (or right-click context menu) inverts the behavior. Set the default URL for new browser tabs.`,
 		keywords: [
 			'browser',
 			'links',
@@ -389,6 +444,9 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 			'ctrl',
 			'ctrl+click',
 			'ctrl-click',
+			'cmd',
+			'cmd+click',
+			'command+click',
 			'right click',
 			'context menu',
 			'home',
@@ -486,6 +544,24 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		label: 'Font Family',
 		description: 'Choose the font for the interface',
 		keywords: ['font', 'typeface', 'family', 'monospace', 'custom font'],
+	},
+	{
+		id: 'display-terminal-font-family',
+		tab: 'display',
+		tabLabel: 'Display',
+		label: 'Terminal Font',
+		description: 'Choose a font for the command terminal, independent of the UI font',
+		keywords: [
+			'font',
+			'typeface',
+			'terminal',
+			'command terminal',
+			'shell',
+			'nerd font',
+			'monospace',
+			'zsh',
+			'prompt',
+		],
 	},
 	{
 		id: 'display-font-size',
@@ -787,8 +863,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Tab Options',
-		description:
-			'Show starred and file preview tabs when filtering by unread; Command+0 vs Command+9 last-tab shortcut; browser tab domain pill; scroll tabs with the mouse wheel',
+		description: `Show starred and file preview tabs when filtering by unread; ${META_KEY_NAME}+0 vs ${META_KEY_NAME}+9 last-tab shortcut; browser tab domain pill; scroll tabs with the mouse wheel`,
 		keywords: [
 			'tab',
 			'filter',

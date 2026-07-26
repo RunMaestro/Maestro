@@ -98,9 +98,9 @@ export function getPermissionModeTooltip(
 ): string {
 	switch (mode) {
 		case 'full':
-			return 'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation.';
+			return 'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation. Ask-back questions (AskUserQuestion) are not surfaced in this mode.';
 		case 'standard':
-			return 'Standard: Agent uses default permission model. File edits and commands may be silently denied if not pre-approved.';
+			return 'Standard: Agent uses default permission model. Tool approvals and ask-back questions (AskUserQuestion) appear as in-app prompts. File edits and commands may be silently denied if not pre-approved.';
 		case 'readonly':
 			return agentId
 				? getReadOnlyModeTooltip(agentId)

@@ -585,6 +585,12 @@ export interface PluginManifest {
 	homepage?: string;
 	/** Coarse marketplace category for grouping/filtering. Defaults to 'other'. */
 	category?: PluginCategory;
+	/**
+	 * Marketplace-presentation flag. When true, the extension's tile and details
+	 * pane surface a warning-colored BETA pill. Presentation-only and additive;
+	 * requires no minHostApi bump.
+	 */
+	beta?: boolean;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/** Relative path to the sandboxed code entrypoint. Required tier >= 1; forbidden tier 0. */
@@ -625,6 +631,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		license,
 		homepage,
 		category,
+		beta,
 		contributes,
 		entry,
 		permissions,
@@ -692,6 +699,9 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 			normalizedCategory = category;
 		}
 	}
+	if (beta !== undefined && typeof beta !== 'boolean') {
+		errors.push('beta, when present, must be a boolean');
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -741,6 +751,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(license) ? { license: (license as string).trim() } : {}),
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
+		...(beta === true ? { beta: true } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),

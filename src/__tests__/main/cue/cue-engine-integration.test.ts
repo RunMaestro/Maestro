@@ -246,9 +246,11 @@ describe('Phase 15B - CueEngine integration', () => {
 			engine.stop();
 		});
 
-		it('does not credit a sub-minute agent run', async () => {
+		it('emits no credit for a single sub-minute run (the remainder is carried)', async () => {
 			configsByProject.set('/projects/test', heartbeatConfig());
-			// Default helper duration is 100ms → floors to 0 → no credit.
+			// Default helper duration is 100ms - under the one-minute emission
+			// granularity, so nothing is emitted yet. The 100ms is not lost: it
+			// stays in the engine's remainder for the next run to build on.
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
@@ -259,11 +261,49 @@ describe('Phase 15B - CueEngine integration', () => {
 			engine.stop();
 		});
 
-		it('does not credit a non-completed (failed) run', async () => {
+		it('accumulates sub-minute remainders across runs instead of flooring them away', async () => {
+			configsByProject.set('/projects/test', heartbeatConfig());
+			// Two 40s runs. Flooring each independently would credit 0 twice;
+			// carrying the remainder credits one whole minute on the second.
+			const deps = createMockDeps({
+				onCueRun: vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
+					vi.advanceTimersByTime(40000);
+					return {
+						runId: 'run-1',
+						sessionId: 'session-1',
+						sessionName: 'Test Session',
+						subscriptionName: request.subscriptionName,
+						event: request.event,
+						status: 'completed' as const,
+						stdout: 'output',
+						stderr: '',
+						exitCode: 0,
+						durationMs: 40000,
+						startedAt: new Date().toISOString(),
+						endedAt: new Date().toISOString(),
+					};
+				}),
+			});
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([]);
+
+			// Second heartbeat fires on the 5-minute interval.
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([60000]);
+
+			engine.stop();
+		});
+
+		it('credits a failed run - the unattended time was still consumed', async () => {
 			configsByProject.set('/projects/test', heartbeatConfig());
 			const deps = createMockDeps({
 				onCueRun: vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
-					// Over a minute of wall-clock, but failed → status gate blocks credit.
+					// Two minutes of unattended wall-clock that happened to end in
+					// failure. The machine was still working, so it credits.
 					vi.advanceTimersByTime(120000);
 					return {
 						runId: 'run-1',
@@ -285,7 +325,7 @@ describe('Phase 15B - CueEngine integration', () => {
 			engine.start();
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(creditsFromOnLog(deps.onLog)).toEqual([]);
+			expect(creditsFromOnLog(deps.onLog)).toEqual([120000]);
 
 			engine.stop();
 		});

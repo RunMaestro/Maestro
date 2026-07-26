@@ -1248,6 +1248,71 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].executionQueue.length).toBe(1);
 		});
 
+		// "Always" force-send mode: resolveForceParallel() treats every send as
+		// force-parallel, so callers no longer need to pass { forceParallel: true }.
+		describe('always mode', () => {
+			afterEach(() => {
+				useSettingsStore.setState({ forcedParallelAlways: false } as any);
+			});
+
+			it('sends immediately without an explicit forceParallel option', async () => {
+				useSettingsStore.setState({
+					forcedParallelExecution: true,
+					forcedParallelAlways: true,
+				} as any);
+
+				// Session busy (another tab running), but the active tab is idle.
+				const busySession = createMockSession({
+					state: 'busy',
+					aiTabs: [
+						createMockTab({ id: 'tab-1', state: 'idle' }),
+						createMockTab({ id: 'tab-2', state: 'busy' }),
+					],
+					activeTabId: 'tab-1',
+				});
+				const deps = createDeps({
+					activeSession: busySession,
+					sessionsRef: { current: [busySession] },
+					inputValue: 'always forced message',
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(window.maestro.process.spawn).toHaveBeenCalled();
+			});
+
+			it('does not force-send when the master forcedParallelExecution gate is off', async () => {
+				useSettingsStore.setState({
+					forcedParallelExecution: false,
+					forcedParallelAlways: true,
+				} as any);
+
+				const busySession = createMockSession({
+					state: 'busy',
+					aiTabs: [
+						createMockTab({ id: 'tab-1', state: 'idle' }),
+						createMockTab({ id: 'tab-2', state: 'busy' }),
+					],
+					activeTabId: 'tab-1',
+				});
+				const deps = createDeps({
+					activeSession: busySession,
+					sessionsRef: { current: [busySession] },
+					inputValue: 'should not force send',
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			});
+		});
+
 		it('queues normally when forceParallel is absent and session is busy', async () => {
 			useSettingsStore.setState({ forcedParallelExecution: true } as any);
 

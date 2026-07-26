@@ -55,6 +55,7 @@ export const TerminalOutput = memo(
 			onScrollPositionChange,
 			onAtBottomChange,
 			initialScrollTop,
+			initialIsAtBottom,
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
@@ -125,7 +126,24 @@ export const TerminalOutput = memo(
 
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
-		const collapsedLogs = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
+		// Collapse FIRST so tool logs still act as response boundaries
+		// (collapseAiResponseLogs treats source:'tool' as a boundary between
+		// assistant segments); only THEN hide them. Tool visibility is a pure render
+		// concern: tool events are always recorded (useAgentToolExecutionListener),
+		// so hiding here keeps toggling from mutating log storage (the flicker bug)
+		// and preserves running->completed correlation.
+		const collapsedAll = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
+		const showToolCalls = useSettingsStore((s) => s.showToolCalls);
+		// Tool cells are part of the agent's "behind the scenes" activity, so they
+		// follow the per-tab Thinking toggle in addition to the global showToolCalls
+		// setting: with Thinking off the transcript stays clean (prompts + responses
+		// only). Hide when either the setting is off OR the tab has Thinking off.
+		const thinkingOn = (activeTab?.showThinking ?? 'off') !== 'off';
+		const toolsVisible = showToolCalls && thinkingOn;
+		const collapsedLogs = useMemo(
+			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
+			[collapsedAll, toolsVisible]
+		);
 		// Nest subagent tool badges (claude-code Task) under the tool entry that
 		// spawned them; orphans and non-claude agents pass through untouched.
 		const { logs: filteredLogs, childrenByParentId } = useMemo(
@@ -175,6 +193,7 @@ export const TerminalOutput = memo(
 		} = useTerminalOutputScroll({
 			scrollContainerRef,
 			initialScrollTop,
+			initialIsAtBottom,
 			sessionId: session.id,
 			activeTabId,
 			filteredLogsLength: filteredLogs.length,

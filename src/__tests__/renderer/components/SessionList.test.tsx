@@ -851,7 +851,7 @@ describe('SessionList', () => {
 			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
 
 			const pianolaRow = screen.getByText('Maestro Pianola');
-			const emptyState = screen.getByText('No unread or working agents');
+			const emptyState = screen.getByText('No unread, working, or errored agents');
 			// Pianola (a plain block) must come before the flex-1 empty state in DOM
 			// order; otherwise the empty state grows and shoves Pianola to the bottom.
 			expect(

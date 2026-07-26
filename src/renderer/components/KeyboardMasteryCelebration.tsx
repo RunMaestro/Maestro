@@ -16,6 +16,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
 import { isMacOSPlatform } from '../utils/platformUtils';
+import { formatShortcutKeys } from '../utils/shortcutFormatter';
 
 interface KeyboardMasteryCelebrationProps {
 	theme: Theme;
@@ -45,21 +46,6 @@ const CONFETTI_Z_INDEX = 99998;
 /**
  * KeyboardMasteryCelebration - Modal celebrating the user reaching a new mastery level
  */
-/**
- * Format shortcut keys for display (e.g., ['Meta', '/'] -> '⌘/')
- */
-function formatShortcutKeys(keys: string[], isMac: boolean): string {
-	return keys
-		.map((key) => {
-			if (key === 'Meta') return isMac ? '⌘' : 'Ctrl';
-			if (key === 'Alt') return isMac ? '⌥' : 'Alt';
-			if (key === 'Shift') return '⇧';
-			if (key === 'Control') return isMac ? '⌃' : 'Ctrl';
-			return key;
-		})
-		.join('');
-}
-
 export function KeyboardMasteryCelebration({
 	theme,
 	level,
@@ -82,12 +68,13 @@ export function KeyboardMasteryCelebration({
 	const levelInfo = KEYBOARD_MASTERY_LEVELS[level] || KEYBOARD_MASTERY_LEVELS[0];
 	const isMaestro = level === 4;
 
-	// Get help shortcut for display
+	// Get help shortcut for display. macOS symbols read fine unseparated (⌘/);
+	// the spelled-out Windows/Linux names need the '+' joiner (Ctrl+/).
 	const isMac = isMacOSPlatform();
 	const helpShortcut = useMemo(() => {
 		const activeShortcuts = shortcuts || DEFAULT_SHORTCUTS;
 		const helpKeys = activeShortcuts.help?.keys || ['Meta', '/'];
-		return formatShortcutKeys(helpKeys, isMac);
+		return formatShortcutKeys(helpKeys, isMac ? '' : '+');
 	}, [shortcuts, isMac]);
 
 	// Fire confetti burst - returns timeout ID for cleanup

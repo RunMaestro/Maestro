@@ -38,6 +38,7 @@ import {
 	aiTabFocusFields,
 	computeQueuedTabIds,
 	computeUnreadGroupIds,
+	focusAiTabInSession,
 } from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
@@ -299,6 +300,7 @@ export const MainPanel = React.memo(
 			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
+			onFileTabRename,
 			onNewFileTab,
 			onNewBrowserTab,
 			onBrowserTabSelect,
@@ -424,6 +426,10 @@ export const MainPanel = React.memo(
 			},
 			[activeSession, renameGroupAction]
 		);
+
+		// Set a group chip's emoji from the shared emoji selector. Empty string clears
+		// it back to the default grid glyph. The tab-store action persists it.
+		const setGroupEmojiAction = useTabStore((s) => s.setGroupEmoji);
 
 		// Break a group apart into standalone tabs (the confirm dialog lives in the
 		// group chip). Promotes every pane back to the tab bar in left-to-right order,
@@ -883,16 +889,17 @@ export const MainPanel = React.memo(
 			}
 		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
-		// Memoized session click handler for InputArea's ThinkingStatusPill
-		// Avoids creating new function reference on every render
+		// Memoized session click handler for InputArea's ThinkingStatusPill.
+		// Targets the clicked session by ID rather than routing through onTabSelect
+		// (which resolves whichever agent is active at event time) - the pill lists
+		// thinking tabs across ALL agents, so a cross-agent jump must not depend on
+		// the active-session switch having landed first.
 		const handleSessionClick = useCallback(
 			(sessionId: string, tabId?: string) => {
 				setActiveSessionId(sessionId);
-				if (tabId && onTabSelect) {
-					onTabSelect(tabId);
-				}
+				updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 			},
-			[setActiveSessionId, onTabSelect]
+			[setActiveSessionId]
 		);
 
 		// File preview handlers (memos + callbacks)
@@ -1115,6 +1122,7 @@ export const MainPanel = React.memo(
 									activeBrowserTabId={pianolaView === 'dashboard' ? null : activeBrowserTabId}
 									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
 									onNewFileTab={pianolaTabHandlers.onNewFileTab}
 									onNewBrowserTab={pianolaTabHandlers.onNewBrowserTab}
 									onBrowserTabSelect={pianolaTabHandlers.onBrowserTabSelect}
@@ -1196,6 +1204,7 @@ export const MainPanel = React.memo(
 									activeBrowserTabId={activeBrowserTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
 									onNewFileTab={onNewFileTab}
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}
@@ -1227,6 +1236,7 @@ export const MainPanel = React.memo(
 									activeGroupId={activeSession.activeGroupId}
 									onGroupSelect={handleGroupSelect}
 									onGroupRename={handleGroupRename}
+									onGroupSetEmoji={setGroupEmojiAction}
 									onGroupBreakApart={handleGroupBreakApart}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
@@ -1404,7 +1414,6 @@ export const MainPanel = React.memo(
 									onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
 									onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
 									onToggleTabShowThinking={props.onToggleTabShowThinking}
-									onToggleTabShowTools={props.onToggleTabShowTools}
 									onToggleTabEnterToSend={props.onToggleTabEnterToSend}
 									onWizardComplete={props.onWizardComplete}
 									onWizardCompleteAndStartAutoRun={props.onWizardCompleteAndStartAutoRun}

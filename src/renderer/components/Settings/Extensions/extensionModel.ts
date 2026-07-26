@@ -188,6 +188,7 @@ export function pluginExtension(record: PluginRecord): UnifiedExtension {
 		state: record.enabled ? 'enabled' : 'installed',
 		tier: m?.tier,
 		trust: record.signature?.status,
+		beta: m?.beta,
 		version: m?.version,
 		author: m?.author,
 		loadStatus: record.loadStatus,

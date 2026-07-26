@@ -14,6 +14,8 @@ import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { buildNameMap } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
+import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
 
 interface ProviderTrendsChartProps {
 	data: StatsAggregation;
@@ -79,12 +81,14 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 	colorBlindMode = false,
 	sessions,
 }: ProviderTrendsChartProps) {
-	const [metricMode, setMetricMode] = useState<'count' | 'duration'>('count');
+	const [metricMode, setMetricMode] = useState<ChartMetricMode>('count');
 	const [hoveredDay, setHoveredDay] = useState<number | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 
 	const { providers, providerNames, providerColors, dates, perDayValues } = useMemo(() => {
 		const byAgentByDay = data.byAgentByDay || {};
+		const tokensByAgentByDay = tokenSeries?.byAgentByDay ?? {};
 		const providerKeys = Object.keys(byAgentByDay);
 
 		const totals: Record<string, number> = {};
@@ -107,11 +111,18 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 		}
 		const sortedDates = Array.from(dateSet).sort();
 
-		const lookup: Record<string, Record<string, { count: number; duration: number }>> = {};
+		const lookup: Record<
+			string,
+			Record<string, { count: number; duration: number; tokens: number }>
+		> = {};
 		for (const p of sorted) {
 			for (const d of byAgentByDay[p]) {
 				if (!lookup[d.date]) lookup[d.date] = {};
-				lookup[d.date][p] = { count: d.count, duration: d.duration };
+				lookup[d.date][p] = {
+					count: d.count,
+					duration: d.duration,
+					tokens: tokensByAgentByDay[p]?.[d.date] ?? 0,
+				};
 			}
 		}
 
@@ -122,7 +133,7 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 			dates: sortedDates,
 			perDayValues: lookup,
 		};
-	}, [data.byAgentByDay, sessions, theme, colorBlindMode]);
+	}, [data.byAgentByDay, tokenSeries, sessions, theme, colorBlindMode]);
 
 	const chartWidth = 600;
 	const chartHeight = 220;
@@ -138,12 +149,13 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 			if (total > max) max = total;
 		}
 		if (max === 0) return { yMax: 1, yTicks: [0] };
-		const padded = metricMode === 'count' ? Math.ceil(max * 1.1) : max * 1.1;
+		// Counts and tokens are whole units; only duration keeps fractional ticks.
+		const padded = metricMode === 'duration' ? max * 1.1 : Math.ceil(max * 1.1);
 		const tickCount = 5;
 		const ticks = Array.from({ length: tickCount }, (_, i) => (padded / (tickCount - 1)) * i);
 		return {
 			yMax: padded,
-			yTicks: metricMode === 'count' ? ticks.map((t) => Math.round(t)) : ticks,
+			yTicks: metricMode === 'duration' ? ticks : ticks.map((t) => Math.round(t)),
 		};
 	}, [dates, perDayValues, providers, metricMode]);
 
@@ -186,36 +198,13 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 				>
 					Provider Trends Over Time
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor: metricMode === 'count' ? theme.colors.accent : 'transparent',
-								color: metricMode === 'count' ? theme.colors.bgMain : theme.colors.textDim,
-							}}
-						>
-							Queries
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor: metricMode === 'duration' ? theme.colors.accent : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.bgMain : theme.colors.textDim,
-							}}
-						>
-							Time
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					labels={{ count: 'Queries', duration: 'Time' }}
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			<div className="relative">
@@ -253,7 +242,11 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 									fontSize={10}
 									fill={theme.colors.textDim}
 								>
-									{metricMode === 'count' ? t : formatYAxisDuration(t)}
+									{metricMode === 'count'
+										? t
+										: metricMode === 'tokens'
+											? formatMetricValue('tokens', t)
+											: formatYAxisDuration(t)}
 								</text>
 							</g>
 						))}
@@ -353,7 +346,9 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 												<span style={{ color: theme.colors.textMain }}>
 													{metricMode === 'count'
 														? `${formatNumber(v)} ${v === 1 ? 'query' : 'queries'}`
-														: formatDuration(v)}
+														: metricMode === 'tokens'
+															? `${formatMetricValue('tokens', v)} tokens`
+															: formatDuration(v)}
 												</span>
 											</div>
 										);
