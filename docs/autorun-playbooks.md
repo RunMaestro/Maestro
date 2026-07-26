@@ -173,16 +173,18 @@ The runner will:
 
 ## Thought Stream
 
-While a run is active, you can watch the agent's live reasoning without changing any settings. In the **Auto Run** card, click **View Thoughts** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking as it works.
+While a run is active, you can watch the agent's live reasoning **and every tool call it makes** without changing any settings. In the **Auto Run** card, click **View Activity** (the brain icon) to open the **Thought Stream** - a floating, searchable panel that streams the agent's thinking and actions as they happen.
 
-It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning stream directly, so it shows thoughts even when an AI tab's "show thinking" display is turned off.
+It works the same for **Spec-Driven** and **Goal-Driven** runs, because both flow through the same agent. The panel captures the raw reasoning and tool-call streams directly, so it shows both even when an AI tab's "show thinking" display is turned off.
 
-- **Newest on top** - the live thought sits at the top and grows; scroll down to read the history of the run.
+- **Tool calls in plain language** - each file read, shell command, search, and edit appears as one short line ("Read src/App.tsx", "Ran npm test", "Edited themes.ts") rather than raw JSON. A spinner marks a call still in flight; a check or a warning marks how it ended. This is the fastest way to catch an agent looping or grinding on an unproductive task and interrupt it before it burns more tokens.
+- **One chronological feed** - tool calls are interleaved with the reasoning that led to them, so you can read the decision and the action together.
+- **Newest on top** - the live entry sits at the top and grows; scroll down to read the history of the run.
 - **Timestamped blocks** - a continuous burst of thinking is grouped into one block with a time stamp; a pause (or a switch between parallel tabs) starts a new block.
 - **Formatted** - thoughts render as formatted markdown (headings, lists, bold, inline code, code fences), so structured reasoning stays readable.
-- **Search** - filter the captured thoughts with the search box; matches are highlighted.
+- **Search** - filter the captured thoughts and tool calls with the search box; matches are highlighted. Tool calls match on both the plain-language line and the raw tool name.
 
-The button doubles as the live indicator: while capturing it pulses and reads **Capturing**.
+The button doubles as the live indicator: while capturing it pulses and reads **Capturing**. The header counts what has been captured so far ("42 thoughts · 17 actions").
 
 **Open, minimize, close:**
 

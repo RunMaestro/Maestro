@@ -1,27 +1,32 @@
 /**
- * ThoughtStreamPanel - floating, persistent introspection of an Auto Run's
- * live thinking/reasoning stream.
+ * ThoughtStreamPanel - floating, persistent introspection of an agent's live
+ * activity: its thinking/reasoning stream interleaved with every tool call it
+ * makes (file reads, shell commands, edits), each tool call reduced to one short
+ * plain-language line.
  *
  * Mounted once, app-wide (next to CenterFlash in App.tsx). It reads
  * `thoughtStreamStore` and renders nothing until a session's panel is opened
- * via the brain button on the Auto Run card.
+ * via the brain button on the Auto Run card or the footer status pill.
  *
  * Three states:
  * - Hidden:    no session focused.
  * - Minimized: a slim status pill (bottom-right). Capture KEEPS running.
- * - Open:      the full panel - searchable, auto-tailing thought log.
+ * - Open:      the full panel - searchable, auto-tailing activity feed.
  *
  * Closing (the X) stops capture and clears the buffer; minimizing does not.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Search, Minus, X } from 'lucide-react';
+import { Brain, Search, Minus, X, CheckCircle2, AlertCircle } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useThoughtStreamStore,
 	groupThoughtsIntoBlocks,
+	buildActivityFeed,
 	type ThoughtEntry,
 	type ThoughtBlock,
+	type ToolActivityEntry,
+	type ActivityFeedItem,
 } from '../stores/thoughtStreamStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -30,6 +35,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Markdown } from './Markdown';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { Spinner } from './ui/Spinner';
 
 interface ThoughtStreamPanelProps {
 	theme: Theme;
@@ -42,6 +48,82 @@ function formatThoughtTime(ts: number): string {
 		minute: '2-digit',
 		second: '2-digit',
 	});
+}
+
+/** The plain-language line for a tool call, used for both display and search. */
+function activityLine(activity: ToolActivityEntry): string {
+	return activity.target ? `${activity.verb} ${activity.target}` : activity.verb;
+}
+
+/**
+ * One tool call as a single line: status glyph, verb, target. Deliberately
+ * terser than the in-chat tool cell (no input dump, no output preview) - this
+ * feed exists so a user can scan a long run for a stall or a loop, and full
+ * detail is a click away in the transcript.
+ */
+function ToolActivityRow({
+	activity,
+	theme,
+	query,
+}: {
+	activity: ToolActivityEntry;
+	theme: Theme;
+	query: string;
+}) {
+	const statusColor =
+		activity.status === 'failed'
+			? theme.colors.error
+			: activity.status === 'completed'
+				? theme.colors.success
+				: theme.colors.warning;
+
+	// Highlight inline rather than routing the line through <Markdown>: a shell
+	// command or a glob pattern is not markdown and would be mangled by it.
+	// Matching is scoped to `target` so the offsets are indices into `target`.
+	const matchIndex = query ? activity.target.toLowerCase().indexOf(query.toLowerCase()) : -1;
+
+	return (
+		<div
+			className="flex items-start gap-2 text-[12px] leading-snug"
+			title={`${activity.toolName} · ${activity.status}`}
+		>
+			<span className="shrink-0 mt-[3px]">
+				{activity.status === 'running' ? (
+					<Spinner size={11} color={statusColor} />
+				) : activity.status === 'failed' ? (
+					<AlertCircle className="w-3 h-3" style={{ color: statusColor }} />
+				) : (
+					<CheckCircle2 className="w-3 h-3" style={{ color: statusColor }} />
+				)}
+			</span>
+			<span className="min-w-0 break-words" style={{ color: theme.colors.textMain }}>
+				<span style={{ color: statusColor }}>{activity.verb}</span>
+				{activity.target && (
+					<>
+						{' '}
+						<span className="font-mono" style={{ color: theme.colors.textDim }}>
+							{matchIndex >= 0 ? (
+								<>
+									{activity.target.slice(0, matchIndex)}
+									<mark
+										style={{
+											backgroundColor: `${theme.colors.accent}55`,
+											color: theme.colors.textMain,
+										}}
+									>
+										{activity.target.slice(matchIndex, matchIndex + query.length)}
+									</mark>
+									{activity.target.slice(matchIndex + query.length)}
+								</>
+							) : (
+								activity.target
+							)}
+						</span>
+					</>
+				)}
+			</span>
+		</div>
+	);
 }
 
 export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
@@ -73,12 +155,20 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	const stickToTopRef = useRef(true);
 
 	const entries: ThoughtEntry[] = useMemo(() => buffer?.entries ?? [], [buffer]);
+	const activities: ToolActivityEntry[] = useMemo(() => buffer?.activities ?? [], [buffer]);
 	const trimmed = buffer?.trimmed ?? false;
 
 	// Group the granular per-flush entries into timestamped blocks, then show
 	// newest-first (the live block sits at the top and grows; older blocks scroll
 	// down into history).
 	const blocks: ThoughtBlock[] = useMemo(() => groupThoughtsIntoBlocks(entries), [entries]);
+
+	// Reasoning and tool calls share one chronological feed - a tool call that
+	// happened mid-paragraph belongs between the two halves of that paragraph.
+	const feed: ActivityFeedItem[] = useMemo(
+		() => buildActivityFeed(blocks, activities),
+		[blocks, activities]
+	);
 
 	const searching = query.trim().length > 0;
 
@@ -89,12 +179,21 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		[theme]
 	);
 
-	const visibleBlocks = useMemo(() => {
+	const visibleItems = useMemo(() => {
 		const q = query.trim().toLowerCase();
-		const matched = q ? blocks.filter((b) => b.text.toLowerCase().includes(q)) : blocks;
+		const matched = q
+			? feed.filter((item) =>
+					item.kind === 'thought'
+						? item.block.text.toLowerCase().includes(q)
+						: // Match the rendered line and the raw tool name, so both
+							// "read src/App" and "Read" find the same row.
+							activityLine(item.activity).toLowerCase().includes(q) ||
+							item.activity.toolName.toLowerCase().includes(q)
+				)
+			: feed;
 		// Reverse a copy for newest-on-top display without mutating the memoized list.
 		return [...matched].reverse();
-	}, [blocks, query]);
+	}, [feed, query]);
 
 	// Escape minimizes (keeps capture) rather than closing - the least
 	// destructive default. Only registered while the full panel is open.
@@ -105,18 +204,19 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		focusTrap: 'none',
 	});
 
-	// Auto-tail: when pinned to the top and not searching, follow new thoughts
-	// (newest block is at the top).
+	// Auto-tail: when pinned to the top and not searching, follow new activity
+	// (newest item is at the top).
 	useEffect(() => {
 		if (minimized || searching) return;
 		if (!stickToTopRef.current) return;
 		const el = scrollRef.current;
 		if (el) el.scrollTop = 0;
-	}, [visibleBlocks, minimized, searching]);
+	}, [visibleItems, minimized, searching]);
 
 	if (!panelSessionId) return null;
 
 	const totalCount = entries.length;
+	const actionCount = activities.length;
 	const label = sessionName || `${panelSessionId.slice(0, 8)}`;
 
 	// When minimized, render nothing - capture keeps running in the store/listener
@@ -172,7 +272,8 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						style={{ color: theme.colors.textDim }}
 						title={label}
 					>
-						{label} · {totalCount} thought{totalCount === 1 ? '' : 's'}
+						{label} · {totalCount} thought{totalCount === 1 ? '' : 's'} · {actionCount} action
+						{actionCount === 1 ? '' : 's'}
 						{trimmed ? ' (trimmed)' : ''}
 						{!isCapturing ? ' · stopped' : ''}
 					</span>
@@ -204,7 +305,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						type="text"
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
-						placeholder="Search thoughts..."
+						placeholder="Search thoughts and actions..."
 						className="flex-1 bg-transparent border-none outline-none text-xs"
 						style={{ color: theme.colors.textMain }}
 					/>
@@ -231,39 +332,47 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 				style={{ color: theme.colors.textMain }}
 			>
 				<style>{proseStyles}</style>
-				{visibleBlocks.length === 0 ? (
+				{visibleItems.length === 0 ? (
 					<p className="text-xs italic mt-2" style={{ color: theme.colors.textDim }}>
 						{searching
-							? 'No thoughts match your search.'
+							? 'Nothing matches your search.'
 							: isCapturing
-								? 'Waiting for the agent to start thinking...'
-								: 'No thoughts captured.'}
+								? 'Waiting for the agent to start working...'
+								: 'No activity captured.'}
 					</p>
 				) : (
 					<div className="flex flex-col gap-3">
-						{visibleBlocks.map((block) => (
-							<div key={block.id}>
+						{visibleItems.map((item) => (
+							<div key={item.id}>
 								<div
 									className="text-[10px] font-mono mb-1 select-none"
 									style={{ color: theme.colors.textDim }}
-									title={new Date(block.startTimestamp).toLocaleString()}
+									title={new Date(item.timestamp).toLocaleString()}
 								>
-									{formatThoughtTime(block.startTimestamp)}
+									{formatThoughtTime(item.timestamp)}
 								</div>
-								<div
-									className="prose max-w-none break-words"
-									style={{ fontSize: '12px', color: theme.colors.textMain }}
-								>
-									<Markdown
-										preset="document"
-										content={block.text}
+								{item.kind === 'tool' ? (
+									<ToolActivityRow
+										activity={item.activity}
 										theme={theme}
-										frontmatter={false}
-										searchHighlight={
-											searching ? { query: query.trim(), currentMatchIndex: -1 } : undefined
-										}
+										query={searching ? query.trim() : ''}
 									/>
-								</div>
+								) : (
+									<div
+										className="prose max-w-none break-words"
+										style={{ fontSize: '12px', color: theme.colors.textMain }}
+									>
+										<Markdown
+											preset="document"
+											content={item.block.text}
+											theme={theme}
+											frontmatter={false}
+											searchHighlight={
+												searching ? { query: query.trim(), currentMatchIndex: -1 } : undefined
+											}
+										/>
+									</div>
+								)}
 							</div>
 						))}
 					</div>
@@ -275,7 +384,7 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 					className="px-3 py-1.5 border-t text-[10px] shrink-0"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
-					{visibleBlocks.length} of {blocks.length} block{blocks.length === 1 ? '' : 's'} match
+					{visibleItems.length} of {feed.length} entr{feed.length === 1 ? 'y' : 'ies'} match
 				</div>
 			)}
 		</div>

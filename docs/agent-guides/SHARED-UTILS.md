@@ -244,6 +244,20 @@ UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - d
 
 ---
 
+## Tool Call Labels (`src/renderer/utils/toolActivityLabel.ts` - Renderer)
+
+| Function / Constant                     | Signature                               | Purpose                                                                                                                                                                                                                        |
+| --------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `describeToolActivity(toolName, input)` | `(string, unknown) => { verb; target }` | Reduce ANY provider's tool call to ONE short plain-English line (`Read src/App.tsx`, `Ran npm test`). Normalizes Claude Code / OpenCode / Codex / Copilot / MCP names; unknown tools fall back to `Used <name>`. Never throws. |
+
+Do NOT confuse this with `summarizeToolInput()` in
+`src/renderer/components/TerminalOutput/utils/toolSummaries.ts`. That one builds
+the VERBOSE in-chat tool cell (every input key as `key=value`, untruncated
+command text, separate output preview). Use `describeToolActivity` for scannable
+feeds and status text; use `summarizeToolInput` for the full transcript cell.
+
+---
+
 ## History Utilities (`src/shared/history.ts` - Both)
 
 | Function / Constant                  | Signature                                            | Purpose                                                      |

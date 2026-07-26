@@ -24,6 +24,7 @@ import { useAgentUsageListener } from './internal/useAgentUsageListener';
 import { useAgentSessionIdListener } from './internal/useAgentSessionIdListener';
 import { useAgentThinkingListener } from './internal/useAgentThinkingListener';
 import { useThoughtStreamCaptureListener } from './internal/useThoughtStreamCaptureListener';
+import { useThoughtStreamToolListener } from './internal/useThoughtStreamToolListener';
 import { useAgentSshRemoteListener } from './internal/useAgentSshRemoteListener';
 import { useAgentClaudeModeResolvedListener } from './internal/useAgentClaudeModeResolvedListener';
 import { useAgentToolExecutionListener } from './internal/useAgentToolExecutionListener';
@@ -95,6 +96,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	});
 	useAgentThinkingListener();
 	useThoughtStreamCaptureListener();
+	useThoughtStreamToolListener();
 	useAgentSshRemoteListener();
 	useAgentClaudeModeResolvedListener();
 	useAgentToolExecutionListener();

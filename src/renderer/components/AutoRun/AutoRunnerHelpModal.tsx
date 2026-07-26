@@ -534,13 +534,22 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							While a run is active, click{' '}
-							<strong style={{ color: theme.colors.textMain }}>View Thoughts</strong> (the brain
-							icon) in the Auto Run card to watch the agent's live reasoning in a floating,
-							searchable panel. It works the same for Spec-Driven and Goal-Driven runs, and captures
-							the reasoning stream directly - so it shows thoughts even when an AI tab's "show
-							thinking" display is off.
+							<strong style={{ color: theme.colors.textMain }}>View Activity</strong> (the brain
+							icon) in the Auto Run card to watch the agent's live reasoning and every tool call it
+							makes, in a floating, searchable panel. It works the same for Spec-Driven and
+							Goal-Driven runs, and captures both streams directly - so it shows thoughts and tool
+							calls even when an AI tab's "show thinking" display is off.
 						</p>
 						<ul className="list-disc pl-5 space-y-1">
+							<li>
+								<strong style={{ color: theme.colors.textMain }}>
+									Tool calls in plain language
+								</strong>{' '}
+								- every file read, shell command, and edit appears as one short line ("Read
+								src/App.tsx", "Ran npm test"), with a spinner while it runs and a check or a warning
+								when it finishes. Scan it to catch an agent looping or stuck before it burns more
+								tokens.
+							</li>
 							<li>
 								<strong style={{ color: theme.colors.textMain }}>Newest on top</strong> - the live
 								thought sits at the top and grows; scroll down for the run's history.
@@ -552,7 +561,7 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							</li>
 							<li>
 								<strong style={{ color: theme.colors.textMain }}>Search</strong> - filter captured
-								thoughts; matches are highlighted.
+								thoughts and tool calls (by line or by raw tool name); matches are highlighted.
 							</li>
 						</ul>
 						<p>

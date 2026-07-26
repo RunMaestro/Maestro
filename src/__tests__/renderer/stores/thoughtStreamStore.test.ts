@@ -13,13 +13,33 @@ import {
 	useThoughtStreamStore,
 	selectIsCapturing,
 	groupThoughtsIntoBlocks,
+	buildActivityFeed,
 	THOUGHT_BLOCK_GAP_MS,
 	MAX_THOUGHTS_PER_SESSION,
+	MAX_ACTIVITIES_PER_SESSION,
 	type ThoughtEntry,
+	type ToolActivityEntry,
+	type ToolActivityStatus,
 } from '../../../renderer/stores/thoughtStreamStore';
 
 const SID = 'session-1';
 const TAB = 'tab-a';
+
+/** Shorthand for an appendToolActivity payload. */
+function tool(
+	toolName: string,
+	status: ToolActivityStatus,
+	opts: { toolCallId?: string; timestamp?: number; verb?: string; target?: string } = {}
+) {
+	return {
+		toolName,
+		verb: opts.verb ?? toolName,
+		target: opts.target ?? '',
+		status,
+		toolCallId: opts.toolCallId,
+		timestamp: opts.timestamp ?? 1000,
+	};
+}
 
 /** Build a ThoughtEntry with explicit timestamp/tab for block-grouping tests. */
 function entry(id: string, timestamp: number, text: string, tabId = TAB): ThoughtEntry {
@@ -52,7 +72,7 @@ describe('thoughtStreamStore', () => {
 		expect(s.panelSessionId).toBe(SID);
 		expect(s.minimized).toBe(false);
 		expect(s.capturing[SID]).toBe(true);
-		expect(s.buffers[SID]).toEqual({ entries: [], trimmed: false });
+		expect(s.buffers[SID]).toEqual({ entries: [], activities: [], trimmed: false });
 	});
 
 	it('appendThought records into the buffer while capturing', () => {
@@ -134,7 +154,7 @@ describe('thoughtStreamStore', () => {
 		// background-capture a second session
 		useThoughtStreamStore.setState((prev) => ({
 			capturing: { ...prev.capturing, 'session-2': true },
-			buffers: { ...prev.buffers, 'session-2': { entries: [], trimmed: false } },
+			buffers: { ...prev.buffers, 'session-2': { entries: [], activities: [], trimmed: false } },
 		}));
 		store.appendThought('session-2', 'tab-b', 'b');
 		store.stopCapture(SID);
@@ -240,6 +260,138 @@ describe('thoughtStreamStore', () => {
 		});
 	});
 
+	// Tool calls arrive as two or more events (running, then completed/failed).
+	// The feed must show ONE line per call, keeping its original position.
+	describe('appendToolActivity', () => {
+		it('records a running tool call with its plain-language label', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendToolActivity(
+				SID,
+				TAB,
+				tool('Read', 'running', { toolCallId: 'c1', verb: 'Read', target: 'src/App.tsx' })
+			);
+			const [activity] = useThoughtStreamStore.getState().buffers[SID].activities;
+			expect(activity.verb).toBe('Read');
+			expect(activity.target).toBe('src/App.tsx');
+			expect(activity.status).toBe('running');
+			expect(activity.tabId).toBe(TAB);
+		});
+
+		it('is a no-op when the session is not capturing', () => {
+			useThoughtStreamStore.getState().appendToolActivity(SID, TAB, tool('Read', 'running'));
+			expect(useThoughtStreamStore.getState().buffers[SID]).toBeUndefined();
+		});
+
+		it('ignores an event with no tool name', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendToolActivity(SID, TAB, tool('', 'running'));
+			expect(useThoughtStreamStore.getState().buffers[SID].activities).toHaveLength(0);
+		});
+
+		it('merges completion into the running entry by toolCallId', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendToolActivity(
+				SID,
+				TAB,
+				tool('Bash', 'running', {
+					toolCallId: 'c1',
+					timestamp: 1000,
+					verb: 'Ran',
+					target: 'npm test',
+				})
+			);
+			store.appendToolActivity(
+				SID,
+				TAB,
+				tool('Bash', 'completed', { toolCallId: 'c1', timestamp: 9999, verb: 'Ran' })
+			);
+			const { activities } = useThoughtStreamStore.getState().buffers[SID];
+			expect(activities).toHaveLength(1);
+			expect(activities[0].status).toBe('completed');
+			// The label from the `running` event (which carried the input) survives,
+			// and the entry keeps its start time so it does not jump in the feed.
+			expect(activities[0].target).toBe('npm test');
+			expect(activities[0].timestamp).toBe(1000);
+		});
+
+		it('attributes a completion with no toolCallId to the newest matching running call', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendToolActivity(SID, TAB, tool('shell', 'running', { timestamp: 1, target: 'ls' }));
+			store.appendToolActivity(SID, TAB, tool('shell', 'running', { timestamp: 2, target: 'pwd' }));
+			store.appendToolActivity(SID, TAB, tool('shell', 'failed', { timestamp: 3 }));
+
+			const { activities } = useThoughtStreamStore.getState().buffers[SID];
+			expect(activities).toHaveLength(2);
+			expect(activities[0].status).toBe('running'); // `ls` still open
+			expect(activities[1].status).toBe('failed'); // newest `pwd` finalized
+			expect(activities[1].target).toBe('pwd');
+		});
+
+		it('does not merge a completion across tabs', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendToolActivity(SID, 'tab-a', tool('shell', 'running', { timestamp: 1 }));
+			store.appendToolActivity(SID, 'tab-b', tool('shell', 'completed', { timestamp: 2 }));
+			const { activities } = useThoughtStreamStore.getState().buffers[SID];
+			expect(activities).toHaveLength(2);
+			expect(activities[0].status).toBe('running');
+		});
+
+		it('treats a running event with no toolCallId as a new entry', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendToolActivity(SID, TAB, tool('shell', 'running', { timestamp: 1 }));
+			store.appendToolActivity(SID, TAB, tool('shell', 'running', { timestamp: 2 }));
+			expect(useThoughtStreamStore.getState().buffers[SID].activities).toHaveLength(2);
+		});
+
+		it('caps activities at MAX_ACTIVITIES_PER_SESSION and sets trimmed', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			for (let i = 0; i < MAX_ACTIVITIES_PER_SESSION + 3; i++) {
+				store.appendToolActivity(SID, TAB, tool('Read', 'running', { toolCallId: `c${i}` }));
+			}
+			const buf = useThoughtStreamStore.getState().buffers[SID];
+			expect(buf.activities).toHaveLength(MAX_ACTIVITIES_PER_SESSION);
+			expect(buf.trimmed).toBe(true);
+			expect(buf.activities[0].toolCallId).toBe('c3');
+		});
+
+		it('keeps thoughts and activities in separate lists on the same buffer', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendThought(SID, TAB, 'reasoning');
+			store.appendToolActivity(SID, TAB, tool('Read', 'running', { toolCallId: 'c1' }));
+			const buf = useThoughtStreamStore.getState().buffers[SID];
+			expect(buf.entries).toHaveLength(1);
+			expect(buf.activities).toHaveLength(1);
+		});
+
+		it('clearBuffer empties activities too', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel(SID);
+			store.appendToolActivity(SID, TAB, tool('Read', 'running', { toolCallId: 'c1' }));
+			store.clearBuffer(SID);
+			expect(useThoughtStreamStore.getState().buffers[SID].activities).toHaveLength(0);
+			expect(useThoughtStreamStore.getState().capturing[SID]).toBe(true);
+		});
+
+		it('routes activities from parallel runs into their own buffers', () => {
+			const store = useThoughtStreamStore.getState();
+			store.openPanel('run-a');
+			store.openPanel('run-b');
+			store.appendToolActivity('run-a', 'tab-a', tool('Read', 'running', { toolCallId: 'a1' }));
+			store.appendToolActivity('run-b', 'tab-b', tool('Bash', 'running', { toolCallId: 'b1' }));
+			const { buffers } = useThoughtStreamStore.getState();
+			expect(buffers['run-a'].activities.map((a) => a.toolName)).toEqual(['Read']);
+			expect(buffers['run-b'].activities.map((a) => a.toolName)).toEqual(['Bash']);
+		});
+	});
+
 	it('selectIsCapturing reflects capture state', () => {
 		const store = useThoughtStreamStore.getState();
 		expect(selectIsCapturing(SID)(useThoughtStreamStore.getState())).toBe(false);
@@ -305,5 +457,47 @@ describe('groupThoughtsIntoBlocks', () => {
 			50 // tighter than the 100ms spacing -> two blocks
 		);
 		expect(blocks).toHaveLength(2);
+	});
+});
+
+describe('buildActivityFeed', () => {
+	/** Build a ToolActivityEntry at an explicit timestamp. */
+	function activity(id: string, timestamp: number, verb = 'Read'): ToolActivityEntry {
+		return { id, timestamp, tabId: TAB, toolName: verb, verb, target: '', status: 'completed' };
+	}
+
+	it('returns an empty feed with no input', () => {
+		expect(buildActivityFeed([], [])).toEqual([]);
+	});
+
+	it('interleaves tool calls between the thought blocks they sit between', () => {
+		const blocks = groupThoughtsIntoBlocks([
+			entry('t1', 1000, 'deciding to read'),
+			// A gap past the threshold splits this into a second block, which is
+			// exactly what happens around a real tool call.
+			entry('t2', 1000 + THOUGHT_BLOCK_GAP_MS + 1000, 'now I know'),
+		]);
+		const feed = buildActivityFeed(blocks, [activity('a1', 2500)]);
+		expect(feed.map((i) => i.kind)).toEqual(['thought', 'tool', 'thought']);
+		expect(feed.map((i) => i.timestamp)).toEqual([1000, 2500, 1000 + THOUGHT_BLOCK_GAP_MS + 1000]);
+	});
+
+	it('orders a tool call after a thought block that started at the same instant', () => {
+		const blocks = groupThoughtsIntoBlocks([entry('t1', 500, 'thinking')]);
+		const feed = buildActivityFeed(blocks, [activity('a1', 500)]);
+		expect(feed.map((i) => i.kind)).toEqual(['thought', 'tool']);
+	});
+
+	it('preserves the relative order of same-timestamp tool calls', () => {
+		const feed = buildActivityFeed([], [activity('a1', 100), activity('a2', 100)]);
+		expect(feed.map((i) => i.id)).toEqual(['a1', 'a2']);
+	});
+
+	it('carries the discriminated payload through for rendering', () => {
+		const blocks = groupThoughtsIntoBlocks([entry('t1', 10, 'hello')]);
+		const feed = buildActivityFeed(blocks, [activity('a1', 20, 'Ran')]);
+		const [first, second] = feed;
+		expect(first.kind === 'thought' && first.block.text).toBe('hello');
+		expect(second.kind === 'tool' && second.activity.verb).toBe('Ran');
 	});
 });

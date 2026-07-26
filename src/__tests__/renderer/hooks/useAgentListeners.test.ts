@@ -120,6 +120,12 @@ const mockProcess = {
 		onSshRemoteHandler = handler;
 		return mockUnsubscribeSshRemote;
 	}),
+	// Two hooks subscribe to this channel and LAST REGISTRATION WINS this capture
+	// variable. `useAgentListeners` calls `useThoughtStreamToolListener` before
+	// `useAgentToolExecutionListener`, so the handler captured here is the in-chat
+	// one that the `onToolExecution` describe block below asserts on. If that call
+	// order is ever swapped, these tests will start driving the Thought Stream
+	// listener instead and fail - capture per-listener handlers at that point.
 	onToolExecution: vi.fn((handler: ListenerCallback) => {
 		onToolExecutionHandler = handler;
 		return mockUnsubscribeToolExecution;
@@ -252,11 +258,15 @@ describe('getErrorTitleForType', () => {
 
 describe('useAgentListeners', () => {
 	describe('listener registration', () => {
-		// onThinkingChunk has TWO subscribers: useAgentThinkingListener (records to
-		// tab logs, gated by showThinking) and useThoughtStreamCaptureListener (feeds
-		// the Thought Stream panel, independent of showThinking). So 11 channels but
-		// 12 subscriptions, with thinking-chunk subscribed twice.
-		it('registers all IPC listeners on mount (thinking-chunk subscribed twice)', () => {
+		// Two channels have TWO subscribers each, for the same reason:
+		// - onThinkingChunk: useAgentThinkingListener (records to tab logs, gated by
+		//   showThinking) + useThoughtStreamCaptureListener (feeds the Thought Stream
+		//   panel, independent of showThinking).
+		// - onToolExecution: useAgentToolExecutionListener (in-chat tool cells, also
+		//   gated by showThinking) + useThoughtStreamToolListener (the panel's live
+		//   tool-call feed, independent of showThinking).
+		// So 11 channels but 13 subscriptions.
+		it('registers all IPC listeners on mount (thinking-chunk and tool-execution subscribed twice)', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));
 
@@ -270,10 +280,10 @@ describe('useAgentListeners', () => {
 			expect(mockProcess.onAgentError).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onThinkingChunk).toHaveBeenCalledTimes(2);
 			expect(mockProcess.onSshRemote).toHaveBeenCalledTimes(1);
-			expect(mockProcess.onToolExecution).toHaveBeenCalledTimes(1);
+			expect(mockProcess.onToolExecution).toHaveBeenCalledTimes(2);
 		});
 
-		it('unsubscribes all listeners on unmount (thinking-chunk twice)', () => {
+		it('unsubscribes all listeners on unmount (thinking-chunk and tool-execution twice)', () => {
 			const deps = createMockDeps();
 			const { unmount } = renderHook(() => useAgentListeners(deps));
 
@@ -289,7 +299,7 @@ describe('useAgentListeners', () => {
 			expect(mockUnsubscribeAgentError).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeThinkingChunk).toHaveBeenCalledTimes(2);
 			expect(mockUnsubscribeSshRemote).toHaveBeenCalledTimes(1);
-			expect(mockUnsubscribeToolExecution).toHaveBeenCalledTimes(1);
+			expect(mockUnsubscribeToolExecution).toHaveBeenCalledTimes(2);
 		});
 
 		it('does not register listeners twice on re-render', () => {

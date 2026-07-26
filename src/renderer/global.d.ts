@@ -363,7 +363,13 @@ interface MaestroAPI {
 		onToolExecution: (
 			callback: (
 				sessionId: string,
-				toolEvent: { toolName: string; state?: unknown; timestamp: number }
+				toolEvent: {
+					toolName: string;
+					state?: unknown;
+					timestamp: number;
+					/** Provider correlation id; absent on agents that don't emit one (Codex). */
+					toolCallId?: string;
+				}
 			) => void
 		) => () => void;
 		onSshRemote: (
