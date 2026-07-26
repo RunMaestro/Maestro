@@ -367,6 +367,15 @@ const UNSUPPORTED: TtsrAgentCapability = {
  * inferred from `src/main/agents/capabilities.ts` - the parser is what
  * actually determines which streams TTSR can observe.
  *
+ * For claude-code, `liveProse: true` is honest at token granularity: the CLI is
+ * spawned with `--include-partial-messages` (see `src/main/agents/definitions.ts`)
+ * and the parser emits per-token `text` deltas from `stream_event`
+ * content_block_delta objects, so prose partials reach `handleParsedEvent`
+ * mid-turn instead of only as one complete assistant message at end of turn.
+ * That makes prose-only turns preventable (real mid-turn abort), not just
+ * corrective. The closing complete assistant event is stamped
+ * `textAlreadyStreamed` so downstream consumers do not double-count the prose.
+ *
  * Agents absent from the plan's scope table (gemini-cli, qwen3-coder, hermes,
  * pi, omp) are marked unsupported rather than guessed at; they gain support
  * when their parser surface is verified the same way.
