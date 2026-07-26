@@ -543,7 +543,14 @@ export class StdoutHandler {
 		}
 
 		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
-		if (event.type === 'text' && event.isPartial && event.text) {
+		//
+		// Double-count guard: a complete claude-code `assistant` event stamped
+		// textAlreadyStreamed:true had its prose delivered token-by-token via
+		// stream_event text_delta partials that already fed both the streamedText
+		// append and the thinking-chunk emit below. Skip the whole block for that
+		// event so the same text is not ingested twice. The raw text_delta partials
+		// carry no such flag, so they still flow through normally.
+		if (event.type === 'text' && event.isPartial && event.text && !event.textAlreadyStreamed) {
 			// Thinking panel routing:
 			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
 			//   and flush once at exit).
