@@ -145,6 +145,100 @@ describe('TtsrManager prose matching', () => {
 	});
 });
 
+// With --include-partial-messages claude-code streams prose as token-level
+// `text` deltas, then sends a complete `assistant` event stamped
+// textAlreadyStreamed:true. The manager must scan the deltas (so a rule can fire
+// mid-message and abort while text is still streaming) and skip the flagged
+// closing event, or the same prose lands in the scan window twice.
+describe('TtsrManager streamed-prose double-count guard', () => {
+	it('fires a mid-message rule on the streamed delta, not the closing assistant event', () => {
+		const { manager, matched } = setup([makeRule({ condition: ['alpha\\s+beta'] })]);
+		const agent = ctx('claude-code');
+
+		// Pattern is not complete after the first delta...
+		expect(manager.observe('s1', { type: 'text', text: 'alpha ', isPartial: true }, agent)).toEqual(
+			[]
+		);
+		// ...but completes on the second, so the abort lands while text still streams.
+		expect(
+			manager.observe('s1', { type: 'text', text: 'beta gamma', isPartial: true }, agent)
+		).toHaveLength(1);
+
+		// The complete assistant event repeats the whole prose but is flagged, so
+		// the prose path is skipped: no second buffering, no second match.
+		expect(
+			manager.observe(
+				's1',
+				{ type: 'text', text: 'alpha beta gamma', isPartial: true, textAlreadyStreamed: true },
+				agent
+			)
+		).toEqual([]);
+
+		// The rule fired exactly once across the whole turn.
+		expect(matched).toHaveLength(1);
+		expect(matched[0].source).toBe('text');
+	});
+
+	it('does not re-buffer prose already delivered as deltas', () => {
+		// This detector rule can only match if the streamed prose is buffered a
+		// second time: "gamma" immediately followed by "alpha" appears only in the
+		// concatenation of two copies of "alpha beta gamma".
+		const { manager } = setup([makeRule({ condition: ['gamma\\s*alpha'] })]);
+		const agent = ctx('claude-code');
+
+		expect(
+			manager.observe('s1', { type: 'text', text: 'alpha beta gamma', isPartial: true }, agent)
+		).toEqual([]);
+
+		// Flagged closing event: guard skips the prose path, so the buffer stays a
+		// single copy and the detector does not fire.
+		expect(
+			manager.observe(
+				's1',
+				{ type: 'text', text: 'alpha beta gamma', isPartial: true, textAlreadyStreamed: true },
+				agent
+			)
+		).toEqual([]);
+
+		// An UNflagged event, by contrast, does append and reveals the seam - proof
+		// the delta text was buffered exactly once above (buffer becomes
+		// "...gamma" + "alpha ...", so "gammaalpha" now matches).
+		expect(
+			manager.observe('s1', { type: 'text', text: 'alpha beta', isPartial: true }, agent)
+		).toHaveLength(1);
+	});
+
+	it('still evaluates tool snapshots on a flagged assistant event', () => {
+		// The double-count guard only skips the prose path. Tool inputs arrive only
+		// on the complete assistant event (never on the deltas), so they must still
+		// be scanned even when textAlreadyStreamed is set.
+		const toolRule = makeRule({
+			name: 'no-console-in-src',
+			scope: ['tool:write'],
+			globs: ['src/**/*.ts'],
+		});
+		const { manager } = setup([toolRule]);
+
+		const matches = manager.observe(
+			's1',
+			{
+				type: 'text',
+				text: 'here is the file',
+				isPartial: true,
+				textAlreadyStreamed: true,
+				toolUseBlocks: [
+					{ name: 'Write', input: { file_path: '/repo/src/a.ts', content: 'console.log(1)\n' } },
+				],
+			},
+			ctx('claude-code')
+		);
+
+		expect(matches).toHaveLength(1);
+		expect(matches[0].source).toBe('tool:write');
+		expect(matches[0].filePath).toBe('/repo/src/a.ts');
+	});
+});
+
 describe('TtsrManager gating', () => {
 	it('is a complete no-op when TTSR is disabled', () => {
 		const { manager, matched, getRules } = setup([makeRule()], { enabled: false });

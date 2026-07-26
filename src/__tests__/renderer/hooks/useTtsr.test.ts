@@ -224,9 +224,17 @@ describe('runTtsrCorrectiveTurn', () => {
 		const tab = currentTab();
 		expect(tab.state).toBe('busy');
 		expect(tab.thinkingStartTime).toBeGreaterThan(0);
-		expect(tab.logs).toHaveLength(1);
+		// Two entries: the gray system line narrating the abort, then the badged
+		// `source: 'user'` entry marking the actual <system-interrupt> injection.
+		expect(tab.logs).toHaveLength(2);
 		expect(tab.logs[0].source).toBe('system');
 		expect(tab.logs[0].text).toContain('no-console-log');
+		expect(tab.logs[0].ttsr).toBeUndefined();
+
+		const injection = tab.logs[1];
+		expect(injection.source).toBe('user');
+		expect(injection.text).toBe(makePayload().injectionPrompt);
+		expect(injection.ttsr).toEqual({ rules: ['no-console-log'], mode: 'resume' });
 	});
 
 	it('tells the user the degraded path restarted the turn', async () => {
