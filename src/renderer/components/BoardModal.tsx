@@ -871,7 +871,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								New board
 							</button>
 						)}
-						{board && !draft && profiles.length > 0 && (
+						{board && !draft && (
 							<button
 								onClick={openNewCard}
 								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
@@ -879,18 +879,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 								title="Add a card"
 							>
 								<Plus className="w-4 h-4" /> New card
-							</button>
-						)}
-						{/* No profiles yet: the hint is the action. Opens the Profiles modal
-						    (which layers above this one) instead of dead-ending the user. */}
-						{board && !draft && profiles.length === 0 && !loading && (
-							<button
-								onClick={() => getModalActions().setProfilesModalOpen(true)}
-								className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-opacity"
-								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-								title="Cards need a role to run. Opens Agent Profiles."
-							>
-								<Plus className="w-4 h-4" /> Create an Agent Profile first
 							</button>
 						)}
 						<button
@@ -957,6 +945,15 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							autoFocusMove={focusMovePicker}
 							profileName={profileName}
 							projectAgents={projectAgents}
+							projectRoot={projectRoot}
+							activeAgentId={activeSession?.id ?? ''}
+							onProfilesUpdated={(updatedList, newProfileId) => {
+								// Sync the Board's own profiles state from the upsert return value
+								// (the profiles:changed push covers every other surface) and select
+								// the freshly created role on the open draft.
+								setProfiles(updatedList);
+								setDraft((p) => (p ? { ...p, assigneeProfileId: newProfileId } : p));
+							}}
 						/>
 					)}
 
@@ -1532,6 +1529,15 @@ interface CardEditorProps {
 	autoFocusMove: boolean;
 	profileName: (id: string) => string;
 	projectAgents: { id: string; name: string; isWorker: boolean }[];
+	/** Project root, forwarded to `window.maestro.profiles.upsert` for inline role create. */
+	projectRoot: string;
+	/** Active Left Bar agent id; seeds the inline "+ New role" base-agent default. */
+	activeAgentId: string;
+	/**
+	 * Called after an inline "+ New role" upsert. `updatedList` is the full list
+	 * returned by the upsert; `newProfileId` is the profile to select on the draft.
+	 */
+	onProfilesUpdated: (updatedList: AgentProfile[], newProfileId: string) => void;
 }
 
 /** Inline create/edit form for a card. Replaces the board view while open, the
@@ -1554,6 +1560,9 @@ function CardEditor({
 	autoFocusMove,
 	profileName,
 	projectAgents,
+	projectRoot,
+	activeAgentId,
+	onProfilesUpdated,
 }: CardEditorProps) {
 	// Candidate parents are every other card (a card cannot depend on itself).
 	const candidateParents = board.cards.filter((c) => c.id !== draft.id);
@@ -1566,6 +1575,52 @@ function CardEditor({
 	useEffect(() => {
 		moveFocusDone.current = true;
 	}, []);
+
+	// Inline "+ New role" quick-create. Kept LOCAL to the editor so the mini-form's
+	// name/base-agent scratch state and its async saving flag never touch the card
+	// `draft` (and so never trip the dirty-check). Only a successful create mutates
+	// the draft, via `onProfilesUpdated` selecting the new role.
+	const [showNewRole, setShowNewRole] = useState(false);
+	const [newRoleName, setNewRoleName] = useState('');
+	const [newRoleBaseAgent, setNewRoleBaseAgent] = useState('');
+	const [creatingRole, setCreatingRole] = useState(false);
+	const newRoleNameRef = useRef<HTMLInputElement>(null);
+	useFocusAfterRender(newRoleNameRef, showNewRole);
+
+	const openNewRole = useCallback(() => {
+		// Default the base agent to the active agent (mirrors ProfilesModal's one-shot
+		// default), but only when it is a real pin candidate for this project.
+		setNewRoleBaseAgent(projectAgents.some((a) => a.id === activeAgentId) ? activeAgentId : '');
+		setNewRoleName('');
+		setShowNewRole(true);
+	}, [projectAgents, activeAgentId]);
+
+	const handleCreateRole = useCallback(async () => {
+		const name = newRoleName.trim();
+		if (!name || creatingRole) return;
+		const profile: AgentProfile = {
+			id: generateUUID(),
+			name,
+			// Omit baseAgentId entirely for a pool role ("None") so it floats to any
+			// free opt-in worker at spawn time.
+			...(newRoleBaseAgent ? { baseAgentId: newRoleBaseAgent } : {}),
+		};
+		setCreatingRole(true);
+		try {
+			const updated = await window.maestro.profiles.upsert(projectRoot, profile);
+			onProfilesUpdated(updated, profile.id);
+			setShowNewRole(false);
+			setNewRoleName('');
+		} catch (err) {
+			// Keep the mini-form open and leave the draft's assigneeProfileId untouched
+			// so the user can retry without losing their typed name.
+			logger.error(`Failed to create role inline: ${String(err)}`);
+			captureException(err, { tags: { operation: 'profiles:upsert' } });
+			notifyToast({ color: 'red', title: 'Roles', message: 'Failed to create role.' });
+		} finally {
+			setCreatingRole(false);
+		}
+	}, [newRoleName, newRoleBaseAgent, creatingRole, projectRoot, onProfilesUpdated]);
 
 	return (
 		<div className="flex-1 overflow-y-auto p-5 space-y-4 select-text">
@@ -1610,26 +1665,120 @@ function CardEditor({
 			</label>
 
 			<div className="flex gap-3 flex-wrap">
-				<label className="block space-y-1 flex-1 min-w-[180px]">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Role (profile)
-					</span>
-					<select
-						value={draft.assigneeProfileId}
-						onChange={(e) => setDraft((p) => (p ? { ...p, assigneeProfileId: e.target.value } : p))}
-						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
-						style={inputStyle}
-					>
-						{/* Empty = no role: the card floats to the free worker pool (or runs
-						    on the pinned agent below with its own settings). */}
-						<option value="">No role (free worker pool)</option>
-						{profiles.map((p) => (
-							<option key={p.id} value={p.id}>
-								{p.name}
-							</option>
-						))}
-					</select>
-				</label>
+				<div className="block space-y-1 flex-1 min-w-[180px]">
+					<div className="flex items-center justify-between gap-2">
+						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+							Role (profile)
+						</span>
+						{!showNewRole && (
+							<div className="flex items-center gap-2">
+								{/* Advanced editing (model / effort / role prompt) stays in the
+								    ProfilesModal; the inline mini-form is name + base agent only. */}
+								<button
+									type="button"
+									onClick={() => getModalActions().setProfilesModalOpen(true)}
+									className="text-xs opacity-60 hover:opacity-100 underline"
+									style={{ color: theme.colors.textDim }}
+								>
+									Manage roles
+								</button>
+								<button
+									type="button"
+									onClick={openNewRole}
+									className="flex items-center gap-0.5 text-xs opacity-70 hover:opacity-100"
+									style={{ color: theme.colors.accent }}
+								>
+									<Plus className="w-3 h-3" /> New role
+								</button>
+							</div>
+						)}
+					</div>
+					{showNewRole ? (
+						// Inline quick-create: name + base agent only. Advanced fields
+						// (model / effort / role prompt) live in the ProfilesModal.
+						<div
+							className="space-y-1.5 rounded-md p-2"
+							style={{ border: `1px solid ${theme.colors.border}` }}
+						>
+							<input
+								ref={newRoleNameRef}
+								value={newRoleName}
+								onChange={(e) => setNewRoleName(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter') {
+										e.preventDefault();
+										void handleCreateRole();
+									} else if (e.key === 'Escape') {
+										e.preventDefault();
+										setShowNewRole(false);
+									}
+								}}
+								placeholder="Role name, e.g. Reviewer"
+								className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+								style={inputStyle}
+							/>
+							<select
+								value={newRoleBaseAgent}
+								onChange={(e) => setNewRoleBaseAgent(e.target.value)}
+								className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+								style={inputStyle}
+							>
+								{/* Empty = a pool role that floats to any free opt-in worker. */}
+								<option value="">None (pool role - any free worker)</option>
+								{projectAgents.map((a) => (
+									<option key={a.id} value={a.id}>
+										{a.name}
+									</option>
+								))}
+							</select>
+							<div className="flex items-center gap-2">
+								<button
+									type="button"
+									onClick={() => void handleCreateRole()}
+									disabled={!newRoleName.trim() || creatingRole}
+									className="rounded-md px-2 py-1 text-xs font-medium transition-opacity disabled:opacity-40"
+									style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+								>
+									{creatingRole ? 'Creating...' : 'Create'}
+								</button>
+								<button
+									type="button"
+									onClick={() => setShowNewRole(false)}
+									disabled={creatingRole}
+									className="rounded-md px-2 py-1 text-xs opacity-70 hover:opacity-100 disabled:opacity-40"
+									style={{ color: theme.colors.textMain }}
+								>
+									Cancel
+								</button>
+							</div>
+						</div>
+					) : (
+						<select
+							value={draft.assigneeProfileId}
+							onChange={(e) =>
+								setDraft((p) => (p ? { ...p, assigneeProfileId: e.target.value } : p))
+							}
+							className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+							style={inputStyle}
+						>
+							{/* Empty = no role: the card floats to the free worker pool (or runs
+							    on the pinned agent below with its own settings). */}
+							<option value="">No role (free worker pool)</option>
+							{profiles.map((p) => (
+								<option key={p.id} value={p.id}>
+									{p.name}
+								</option>
+							))}
+						</select>
+					)}
+					{!showNewRole && profiles.length === 0 && (
+						// First-run helper: both valid paths (inline role, or pin to an
+						// existing agent) satisfy the assignee model, so spell them out.
+						<span className="block text-xs" style={{ color: theme.colors.textDim }}>
+							No roles yet: create one inline, or pin the card to an agent.
+						</span>
+					)}
+				</div>
 				<label className="block space-y-1 flex-1 min-w-[180px]">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						Pin to agent (optional)
