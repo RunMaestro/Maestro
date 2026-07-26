@@ -14,7 +14,7 @@
  * out to all WS clients as bridge.event. Clients filter via their own ipcRenderer.on.
  */
 
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { logger } from '../../utils/logger';
 import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
@@ -33,6 +33,7 @@ interface IpcMainInternal {
 }
 
 interface BridgeFakeEvent {
+	readonly sender: Electron.WebContents | undefined;
 	senderFrame: null;
 	frameId: number;
 	processId: number;
@@ -40,6 +41,25 @@ interface BridgeFakeEvent {
 }
 
 const FAKE_EVENT: BridgeFakeEvent = {
+	/**
+	 * A web client has no `webContents` of its own, but handlers that need to
+	 * know which window called them resolve it via
+	 * `BrowserWindow.fromWebContents(event.sender)` (see `resolveCallingWindow`
+	 * in `ipc/handlers/windows.ts`). Leaving `sender` undefined made Electron
+	 * throw "Cannot read properties of undefined (reading
+	 * 'getOwnerBrowserWindow')" on `windows:getState`, which web-desktop treats
+	 * as fatal — the remote page hung on the splash screen forever.
+	 *
+	 * A web client mirrors the desktop UI, so it resolves to the oldest live
+	 * window — `getAllWindows()` is creation-ordered, making that the main
+	 * window. Must be a getter, not a value: this module is evaluated before any
+	 * BrowserWindow exists, and the resolved window changes over the app's life.
+	 * Still `undefined` when no window is open (headless/tray), so callers keep
+	 * their existing "unknown caller" path rather than crashing.
+	 */
+	get sender(): Electron.WebContents | undefined {
+		return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())?.webContents;
+	},
 	senderFrame: null,
 	frameId: -1,
 	processId: -1,
