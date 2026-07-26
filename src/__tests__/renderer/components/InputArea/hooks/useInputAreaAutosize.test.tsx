@@ -52,7 +52,7 @@ describe('useInputAreaAutosize', () => {
 		});
 	});
 
-	it('leaves the scroll position untouched when the caret is mid-text', async () => {
+	it('leaves the scroll position untouched when the caret is before the end of the value', async () => {
 		const { getByLabelText } = render(
 			<Harness value="hello world" selectionEnd={2} initialScrollTop={42} />
 		);
@@ -60,7 +60,12 @@ describe('useInputAreaAutosize', () => {
 		await waitFor(() => {
 			expect((getByLabelText('input') as HTMLTextAreaElement).style.height).toBe('176px');
 		});
-		// Deferred @-mention placement parks the caret mid-text; the view must not jump.
+		// Exercises scrollTextareaToCaretEnd's contract directly: with selectionEnd
+		// before value.length it is a no-op, so the prior scroll position survives the
+		// resize. NOTE: this harness pins selectionEnd via Object.defineProperty. The
+		// real deferred @-mention / template flows place their caret in a later rAF, so
+		// they do NOT reach the helper in this mid-text state during the commit-phase
+		// effect (see PR #1294 discussion) - this only documents the helper itself.
 		expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(42);
 	});
 

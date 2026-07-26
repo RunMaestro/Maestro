@@ -37,10 +37,17 @@ export function useInputAreaAutosize({
 			// the flag is false.
 			if (!keystrokeResizeScheduledRef?.current) {
 				resizeTextareaToContent(el, TEXTAREA_MAX_HEIGHT);
-				// Pin the caret exactly like the keystroke path: snap to the bottom only
-				// when the caret sits at the end of the new value (draft restores, slash/
-				// template insertions, voice appends), and leave mid-text carets (deferred
-				// @-mention placement) untouched so the view never yanks to the bottom.
+				// Pin the caret exactly like the keystroke path: scrollTextareaToCaretEnd
+				// snaps to the bottom only when the caret sits at the end of the new value
+				// (draft restores, slash/template insertions, voice appends) and is a no-op
+				// otherwise. Caveat: the deferred caret setters (@-mention accept in
+				// AtMentionPopover, template variable insertion in useTemplateAutocomplete)
+				// place their caret in a requestAnimationFrame that runs AFTER this
+				// commit-phase effect, so at this point selectionEnd already sits at the end
+				// of the freshly assigned value - this effect cannot honor those mid-text
+				// placements from here. Honoring them end to end would require those setters
+				// to re-scroll after they move the caret; this effect only guarantees the
+				// end-of-value case.
 				scrollTextareaToCaretEnd(el);
 			}
 		}
