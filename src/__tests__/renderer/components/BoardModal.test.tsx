@@ -11,7 +11,7 @@ import { BoardModal } from '../../../renderer/components/BoardModal';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
-import type { Board, BoardCard } from '../../../shared/board/types';
+import type { Board, BoardCard, CardRun } from '../../../shared/board/types';
 
 // The layer stack is exercised elsewhere; here it is a no-op so the modal can
 // render without a LayerStackProvider.
@@ -565,6 +565,80 @@ describe('BoardModal running-card visibility (Phase 6)', () => {
 		expect(screen.getAllByText(/Test Session/).length).toBeGreaterThan(0);
 		// The run details disclosure is available WHILE running, not only after.
 		expect(screen.getByText('Run details')).toBeInTheDocument();
+	});
+});
+
+describe('BoardModal worker chip + summary discoverability (I1)', () => {
+	function doneCard(runOverrides: Partial<CardRun> = {}): BoardCard {
+		return makeCard({
+			id: 'cardA',
+			title: 'Card A',
+			status: 'done',
+			runs: [
+				{
+					attempt: 1,
+					startedAt: '2026-07-21T00:00:00.000Z',
+					endedAt: '2026-07-21T00:10:00.000Z',
+					outcome: 'done',
+					...runOverrides,
+				},
+			],
+		});
+	}
+
+	it('renders the worker chip as a button that jumps to the agent and closes the modal', async () => {
+		// The worker agent still exists in this project, so the chip is a live jump
+		// affordance even though the card is done (not running).
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 's1', projectRoot: PROJECT_ROOT }),
+				createMockSession({ id: 'w1', name: 'Worker One', projectRoot: PROJECT_ROOT }),
+			],
+			activeSessionId: 's1',
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
+		const card = doneCard({ workerAgentId: 'w1' });
+		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
+
+		const onClose = vi.fn();
+		render(<BoardModal theme={mockTheme} onClose={onClose} />);
+
+		const chip = await screen.findByRole('button', { name: /Worker One/ });
+		fireEvent.click(chip);
+
+		// Store-direct jump landed on the worker, and the modal closed on top of it.
+		expect(useSessionStore.getState().activeSessionId).toBe('w1');
+		expect(onClose).toHaveBeenCalledTimes(1);
+		// The chip's stopPropagation kept the tile's editor from opening.
+		expect(screen.queryByPlaceholderText('e.g. Design the schema')).not.toBeInTheDocument();
+	});
+
+	it('renders a non-interactive chip when the worker agent has been deleted', async () => {
+		// Only the active session exists; the run's worker id resolves to nothing.
+		const card = doneCard({ workerAgentId: 'ghost' });
+		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		// The deleted worker still shows its (fallback) id, but as a plain span with
+		// a "deleted" title, never a clickable button.
+		const deleted = await screen.findByTitle('This worker agent has been deleted');
+		expect(deleted.tagName).toBe('SPAN');
+		expect(screen.queryByRole('button', { name: /ghost/ })).toBeNull();
+	});
+
+	it('shows the run summary as a clamped preview on the tile face', async () => {
+		const SUMMARY = 'Refactored the auth flow and added regression coverage.';
+		const card = doneCard({ summary: SUMMARY });
+		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		// The summary now appears on the tile face (line-clamp-2 preview) in addition
+		// to the collapsed "Full run details" disclosure.
+		const matches = await screen.findAllByText(SUMMARY);
+		const preview = matches.find((el) => el.className.includes('line-clamp-2'));
+		expect(preview).toBeTruthy();
 	});
 });
 
