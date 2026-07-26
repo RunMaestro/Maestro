@@ -1507,9 +1507,7 @@ function CardEditor({
 	const openNewRole = useCallback(() => {
 		// Default the base agent to the active agent (mirrors ProfilesModal's one-shot
 		// default), but only when it is a real pin candidate for this project.
-		setNewRoleBaseAgent(
-			projectAgents.some((a) => a.id === activeAgentId) ? activeAgentId : ''
-		);
+		setNewRoleBaseAgent(projectAgents.some((a) => a.id === activeAgentId) ? activeAgentId : '');
 		setNewRoleName('');
 		setShowNewRole(true);
 	}, [projectAgents, activeAgentId]);
