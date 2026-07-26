@@ -1,11 +1,23 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+import * as path from 'path';
+
+// Mock the omp subprocess at the module boundary so priming behavior (success,
+// failure, and unusable-payload negative caching) is observable without running
+// a real `omp models --json`.
+vi.mock('../../../main/utils/execFile', () => ({
+	execFileNoThrow: vi.fn(),
+}));
+
 import {
 	setOmpModelCatalog,
 	getOmpModelContextWindow,
 	computeOmpCatalogKey,
+	buildOmpPrimeEnv,
+	primeOmpModelCatalog,
 	__resetOmpModelCatalogForTests,
 	type OmpCatalogEntry,
 } from '../../../main/agents/omp-model-catalog';
+import { execFileNoThrow } from '../../../main/utils/execFile';
 
 // Mirrors the shape `omp models --json` returns for a couple of models.
 const SAMPLE: OmpCatalogEntry[] = [
@@ -106,5 +118,60 @@ describe('omp-model-catalog', () => {
 		setOmpModelCatalog(SAMPLE, KEY);
 		expect(getOmpModelContextWindow('gone-model', KEY)).toBeNull();
 		expect(getOmpModelContextWindow('claude-opus-4-8', KEY)).toBe(1_000_000);
+	});
+
+	describe('buildOmpPrimeEnv', () => {
+		it('drops empty PATH components when prepending the binary dir', () => {
+			// A PATH with a trailing/interior delimiter yields empty components after
+			// split; on POSIX an empty entry means "search the CWD", so the prime
+			// probe must never carry one.
+			const env = buildOmpPrimeEnv('/opt/tester/.bun/bin/omp', {
+				PATH: ['/usr/local/bin', '', '/usr/bin', ''].join(path.delimiter),
+			});
+			const entries = (env.PATH ?? '').split(path.delimiter);
+			expect(entries).not.toContain('');
+			// The binary's own dir leads so a co-located runtime resolves first.
+			expect(entries[0]).toBe(path.dirname('/opt/tester/.bun/bin/omp'));
+			expect(entries).toContain('/usr/local/bin');
+			expect(entries).toContain('/usr/bin');
+		});
+	});
+
+	describe('primeOmpModelCatalog negative caching', () => {
+		beforeEach(() => {
+			vi.mocked(execFileNoThrow).mockReset();
+		});
+
+		it('negative-caches a valid JSON payload without a models array', async () => {
+			const key = computeOmpCatalogKey('/opt/x/omp', undefined);
+			// Command runs and exits 0, but the payload has no `models` array - it is
+			// unusable, so it must be treated like a failure for the TTL.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: '{"notModels":[]}',
+				stderr: '',
+				exitCode: 0,
+			});
+			await primeOmpModelCatalog('/opt/x/omp', {}, key);
+			// A second prime within the TTL is short-circuited by the failure cache
+			// rather than re-running the same bad command.
+			await primeOmpModelCatalog('/opt/x/omp', {}, key);
+			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
+			// Nothing was cataloged for that identity.
+			expect(getOmpModelContextWindow('claude-opus-4-8', key)).toBeNull();
+		});
+
+		it('re-primes and caches once a valid models array arrives', async () => {
+			const key = computeOmpCatalogKey('/opt/y/omp', undefined);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: JSON.stringify({ models: SAMPLE }),
+				stderr: '',
+				exitCode: 0,
+			});
+			await primeOmpModelCatalog('/opt/y/omp', {}, key);
+			expect(getOmpModelContextWindow('claude-opus-4-8', key)).toBe(1_000_000);
+			// Cached: a second call within the TTL doesn't re-run the command.
+			await primeOmpModelCatalog('/opt/y/omp', {}, key);
+			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
+		});
 	});
 });

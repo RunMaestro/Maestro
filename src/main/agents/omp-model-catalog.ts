@@ -83,7 +83,12 @@ export function buildOmpPrimeEnv(
 	const env = buildExpandedEnv(customEnvVars);
 	const binDir = path.isAbsolute(binaryPath) ? path.dirname(binaryPath) : undefined;
 	if (binDir) {
-		env.PATH = [binDir, env.PATH].filter(Boolean).join(path.delimiter);
+		// Drop empty PATH components before prepending: an entry like
+		// `/usr/local/bin:` (or a leading/trailing delimiter) leaves an empty
+		// string after split, and POSIX reads an empty PATH entry as the current
+		// directory - a CWD-search hazard for the spawned `omp models` probe.
+		const pathEntries = (env.PATH ?? '').split(path.delimiter).filter(Boolean);
+		env.PATH = [binDir, ...pathEntries].join(path.delimiter);
 	}
 	return env;
 }
@@ -210,6 +215,16 @@ export function primeOmpModelCatalog(
 			if (Array.isArray(parsed.models)) {
 				setOmpModelCatalog(parsed.models, catalogKey);
 				primeFailures.delete(catalogKey);
+			} else {
+				// Valid JSON but no `models` array: the command ran yet returned an
+				// unusable payload. Negative-cache it like an outright failure so the
+				// TTL applies and every later detect/spawn doesn't re-run the same bad
+				// command within the window.
+				primeFailures.set(catalogKey, Date.now());
+				logger.warn(
+					'omp models --json returned no models array while priming catalog',
+					LOG_CONTEXT
+				);
 			}
 		} catch (error) {
 			primeFailures.set(catalogKey, Date.now());
