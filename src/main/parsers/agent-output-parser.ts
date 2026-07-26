@@ -131,6 +131,17 @@ export interface ParsedEvent {
 	isReasoning?: boolean;
 
 	/**
+	 * Was this event's prose already delivered token-by-token via streaming deltas?
+	 * Set on a complete 'assistant' text event whose text was already emitted as
+	 * partial 'text' events from stream_event deltas (claude-code with
+	 * --include-partial-messages). Downstream consumers (streamedText append,
+	 * thinking-chunk emit, TTSR prose buffer) use this to skip re-ingesting the
+	 * same text, avoiding double-counting. The 'text' field stays populated so
+	 * display consumers still get the full message.
+	 */
+	textAlreadyStreamed?: boolean;
+
+	/**
 	 * Tool use blocks extracted from the message (for agents with mixed content)
 	 * When a message contains both text and tool_use, text goes in 'text' field
 	 * and tool_use blocks are here. Process-manager emits tool-execution for each.
