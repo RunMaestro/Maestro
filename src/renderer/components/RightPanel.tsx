@@ -841,8 +841,9 @@ export const RightPanel = memo(
 										{currentSessionBatchState.maxLoops ?? '∞'}
 									</span>
 								)}
-								{/* Thought Stream - peer into the agent's live reasoning. Opens a
-								    persistent, searchable panel; works for goal and task runs. */}
+								{/* Thought Stream - peer into the agent's live reasoning AND every
+								    tool call it makes. Opens a persistent, searchable panel; works
+								    for goal and task runs. */}
 								{sessionId && (
 									<button
 										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
@@ -853,12 +854,12 @@ export const RightPanel = memo(
 										onClick={() => openThoughtStream(sessionId)}
 										title={
 											isCapturingThoughts
-												? 'Capturing thoughts - click to expand'
-												: "Peer into the agent's thought stream"
+												? 'Capturing thoughts and tool calls - click to expand'
+												: "Peer into the agent's live thinking and tool calls"
 										}
 									>
 										<Brain className={`w-3 h-3 ${isCapturingThoughts ? 'animate-pulse' : ''}`} />
-										{isCapturingThoughts ? 'Capturing' : 'View Thoughts'}
+										{isCapturingThoughts ? 'Capturing' : 'View Activity'}
 									</button>
 								)}
 								{/* View history link - shown on all tabs except history */}
