@@ -26,7 +26,11 @@ import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { capabilitySnapshots } from './capability-snapshot';
-import { setOmpModelCatalog, computeOmpCatalogKey, primeOmpModelCatalog } from './omp-model-catalog';
+import {
+	setOmpModelCatalog,
+	computeOmpCatalogKey,
+	primeOmpModelCatalog,
+} from './omp-model-catalog';
 
 const LOG_CONTEXT = 'AgentDetector';
 
