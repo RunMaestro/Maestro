@@ -12,6 +12,10 @@ import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
 // Mock the logger
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -1470,6 +1474,60 @@ describe('Tab Naming IPC Handlers', () => {
 
 			finish();
 			await resultPromise;
+		});
+	});
+
+	describe('spawn failures (MAESTRO-X4)', () => {
+		// child_process.spawn throws synchronously for an unusable binary. The
+		// call sits in the naming Promise's executor, and the enclosing
+		// try/catch returns that promise rather than awaiting it, so the throw
+		// escaped as a hard IPC rejection for a purely cosmetic feature.
+		async function spawnThrowing(error: unknown) {
+			const { captureException } = await import('../../../../main/utils/sentry');
+			(captureException as Mock).mockClear();
+			mockProcessManager.spawn.mockImplementation(() => {
+				throw error;
+			});
+
+			const result = await invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			return { result, captureException: captureException as Mock };
+		}
+
+		function errnoError(message: string, code: string): NodeJS.ErrnoException {
+			const err = new Error(message) as NodeJS.ErrnoException;
+			err.code = code;
+			return err;
+		}
+
+		it('resolves to null instead of rejecting when spawn throws EFTYPE', async () => {
+			const { result } = await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(result).toBeNull();
+		});
+
+		it('does not page Sentry for an unusable agent binary', async () => {
+			for (const code of ['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']) {
+				const { result, captureException } = await spawnThrowing(errnoError(`spawn ${code}`, code));
+				expect(result).toBeNull();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		});
+
+		it('still reports an unexpected spawn error to Sentry', async () => {
+			const { result, captureException } = await spawnThrowing(
+				new TypeError('spawnCommand is not a string')
+			);
+			expect(result).toBeNull();
+			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+
+		it('removes its process listeners when the spawn fails', async () => {
+			await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
 		});
 	});
 });
