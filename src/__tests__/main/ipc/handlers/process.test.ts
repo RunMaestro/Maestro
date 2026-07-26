@@ -227,11 +227,19 @@ vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
 // asserted at the module boundary without launching a real `omp` subprocess.
 // computeOmpCatalogKey returns a stable sentinel so the prime's third arg is
 // deterministic; primeOmpModelCatalog resolves immediately so the bounded
-// Promise.race in the handler proceeds without waiting on the real cap.
-vi.mock('../../../../main/agents/omp-model-catalog', () => ({
-	primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
-	computeOmpCatalogKey: vi.fn(() => 'omp-catalog-key'),
-}));
+// Promise.race in the handler proceeds without waiting on the real cap. The
+// real buildOmpPrimeEnv is retained (it's a pure env builder) so the test can
+// assert the actual PATH the handler hands to the prime.
+vi.mock('../../../../main/agents/omp-model-catalog', async () => {
+	const actual = await vi.importActual<typeof import('../../../../main/agents/omp-model-catalog')>(
+		'../../../../main/agents/omp-model-catalog'
+	);
+	return {
+		...actual,
+		primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+		computeOmpCatalogKey: vi.fn(() => 'omp-catalog-key'),
+	};
+});
 
 // Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
 // without touching the real filesystem. Other tests in this file don't use

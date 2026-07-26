@@ -30,6 +30,7 @@ import {
 	setOmpModelCatalog,
 	computeOmpCatalogKey,
 	primeOmpModelCatalog,
+	buildOmpPrimeEnv,
 } from './omp-model-catalog';
 
 const LOG_CONTEXT = 'AgentDetector';
@@ -235,9 +236,14 @@ export class AgentDetector {
 			// guards against repeated primes, and custom-path/env sessions still
 			// prime their own identity at spawn time.
 			if (agentDef.id === 'omp' && detection.exists && detection.path) {
+				// Prime with the same env-construction the spawn path uses
+				// (expanded PATH + the binary's own dir first) so a bun-based
+				// `omp` at ~/.bun/bin resolves its co-located runtime here too.
+				// getExpandedEnv() alone omits ~/.bun/bin, so the eager warm-up
+				// would lose the very cold-start race it exists to win.
 				primeOmpModelCatalog(
 					detection.path,
-					getExpandedEnv(),
+					buildOmpPrimeEnv(detection.path),
 					computeOmpCatalogKey(detection.path, undefined)
 				);
 			}

@@ -42,7 +42,11 @@ import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-sp
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
-import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../agents/omp-model-catalog';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+	buildOmpPrimeEnv,
+} from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -781,10 +785,10 @@ export async function handleProcessSpawn(
 		// Prime with the platform-expanded env (mirroring the Windows agent path
 		// above) so the bun-based `omp` binary resolves in a packaged app: packaged
 		// Electron apps do not inherit the shell PATH, so a raw `process.env` lacks
-		// user-local bin dirs like `~/.bun/bin`. Prepend the binary's own dir so a
-		// co-located runtime is found first, matching the agent spawn's extraPathDirs.
-		const primeEnv = buildExpandedEnv(customEnvVarsToPass);
-		primeEnv.PATH = `${localAgentBinDir}${path.delimiter}${primeEnv.PATH ?? ''}`;
+		// user-local bin dirs like `~/.bun/bin`. buildOmpPrimeEnv also prepends the
+		// binary's own dir so a co-located runtime is found first, and the detector's
+		// warm-up shares it so both prime sites build an identical env.
+		const primeEnv = buildOmpPrimeEnv(localSpawnBinaryPath, customEnvVarsToPass);
 		const prime = primeOmpModelCatalog(localSpawnBinaryPath, primeEnv, ompModelCatalogKey);
 		await Promise.race([
 			prime,

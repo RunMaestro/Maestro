@@ -87,7 +87,6 @@ vi.mock('fs', async () => {
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
 import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../main/agents/omp-model-catalog';
-import { getExpandedEnv } from '../../../main/agents/path-prober';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -403,7 +402,8 @@ describe('agent-detector', () => {
 			// default-identity context-window catalog so a user's first prompt
 			// already has the real per-turn window (killing the cold-start race
 			// against the spawn-time prime cap). It must run with the expanded env
-			// (getExpandedEnv) and the default-identity key (no env overrides).
+			// and the binary's own dir first on PATH (so a bun-based omp resolves
+			// its co-located runtime), under the default-identity key.
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				if (args[0] === 'omp') {
 					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
@@ -419,8 +419,11 @@ describe('agent-detector', () => {
 			expect(command).toBe('/usr/bin/omp');
 			// ...under the default identity (env overrides undefined)...
 			expect(key).toBe(computeOmpCatalogKey('/usr/bin/omp', undefined));
-			// ...with the expanded env, not a raw process.env.
-			expect(env?.PATH).toBe(getExpandedEnv().PATH);
+			// ...with the binary's own dir first on PATH (co-located runtime),
+			// not a raw process.env.
+			const pathEntries = (env?.PATH ?? '').split(path.delimiter);
+			expect(pathEntries[0]).toBe(path.dirname('/usr/bin/omp'));
+			expect(pathEntries.length).toBeGreaterThan(1);
 		});
 
 		it('does not warm the omp catalog when omp is not installed', async () => {
