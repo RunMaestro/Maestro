@@ -13,6 +13,7 @@ import {
 	Share2,
 	Hammer,
 	GitFork,
+	ShieldAlert,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
 import {
@@ -587,7 +588,26 @@ export const LogItem = memo(
 						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
-						(hasNoMatches ? (
+						(log.ttsr ? (
+							// TTSR injection boundary: the body is the `<system-interrupt>`
+							// block, which is machinery the user rarely needs to read. Keep it
+							// collapsed by default behind a native <details> disclosure (the
+							// badge in the footer already names the rule[s] that fired).
+							<details className="text-sm">
+								<summary
+									className="cursor-pointer select-none text-xs"
+									style={{ color: theme.colors.textDim }}
+								>
+									Show interrupt details
+								</summary>
+								<div
+									className="mt-2 whitespace-pre-wrap break-words font-mono text-xs"
+									style={{ color: theme.colors.textMain }}
+								>
+									{log.text}
+								</div>
+							</details>
+						) : hasNoMatches ? (
 							<div
 								className="flex items-center justify-center py-8 text-sm"
 								style={{ color: theme.colors.textDim }}
@@ -1017,6 +1037,22 @@ export const LogItem = memo(
 								/>
 							</span>
 						)}
+						{/* TTSR corrective-boundary badge: this user message is the
+						    `<system-interrupt>` reinjection that followed a mid-turn abort.
+						    Names the rule(s) that fired and how the turn was continued. */}
+						{isUserMessage && isAIMode && log.ttsr && (
+							<span
+								title={`TTSR interrupted the previous turn (rule${log.ttsr.rules.length === 1 ? '' : 's'}: ${log.ttsr.rules.join(', ')}); ${log.ttsr.mode === 'resume' ? 'resumed the conversation' : 'restarted the turn'}`}
+								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+								style={{
+									backgroundColor: theme.colors.warning + '20',
+									color: theme.colors.warning,
+								}}
+							>
+								<ShieldAlert className="w-3 h-3" />
+								TTSR: {log.ttsr.rules.join(', ')}
+							</span>
+						)}
 						{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
 						{isUserMessage && isAIMode && log.delivered && (
 							<span title="Message delivered" className="flex items-center">
@@ -1040,6 +1076,7 @@ export const LogItem = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.ttsr === nextProps.log.ttsr &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&

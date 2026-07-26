@@ -36,6 +36,25 @@ function systemLog(text: string): LogEntry {
 	return { id: generateId(), timestamp: Date.now(), source: 'system', text };
 }
 
+/**
+ * The badged user entry that marks the `<system-interrupt>` injection in the
+ * transcript. Carries the rendered injection prompt as its text (collapsed by
+ * default in LogItem) and a `ttsr` marker so the boundary is visible - both in
+ * the live tab and, via normal log persistence, in History.
+ */
+function ttsrInjectionLog(payload: TtsrTriggeredPayload): LogEntry {
+	return {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'user',
+		text: payload.injectionPrompt,
+		ttsr: {
+			rules: payload.rules.map((rule) => rule.name),
+			mode: payload.mode,
+		},
+	};
+}
+
 /** One line in the transcript so the interruption is visible, not silent. */
 function interruptionNotice(payload: TtsrTriggeredPayload): string {
 	const names = payload.rules.map((rule) => rule.name).join(', ');
@@ -138,10 +157,13 @@ export async function runTtsrCorrectiveTurn(payload: TtsrTriggeredPayload): Prom
 
 		// Busy before the spawn: the aborted turn's exit was suppressed, so the tab
 		// still reads busy from the user's side, and the transcript line has to say
-		// why the turn stopped before the corrective one starts.
+		// why the turn stopped before the corrective one starts. The gray system line
+		// narrates the abort; the badged `source: 'user'` entry marks the actual
+		// `<system-interrupt>` injection so it shows the TTSR boundary in the
+		// transcript and rides normal log persistence into History.
 		updateAiTab(session.id, tab.id, (current) => ({
 			...current,
-			logs: [...current.logs, systemLog(interruptionNotice(payload))],
+			logs: [...current.logs, systemLog(interruptionNotice(payload)), ttsrInjectionLog(payload)],
 			state: 'busy',
 			thinkingStartTime: Date.now(),
 			agentError: undefined,

@@ -234,6 +234,12 @@ export interface LogEntry {
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
+	// For the corrective turn TTSR respawns after a mid-turn abort: marks this
+	// user entry as the TTSR injection boundary. `rules` are the rule name(s) that
+	// fired (rendered as a badge); `mode` is how the turn was continued (`resume`
+	// re-attached to the aborted conversation, `fresh` restarted it). The entry's
+	// `text` holds the `<system-interrupt>` block, collapsed by default in LogItem.
+	ttsr?: { rules: string[]; mode: 'resume' | 'fresh' };
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
