@@ -11,13 +11,20 @@ describe('MAESTRO_PUBLISHER_KEYS', () => {
 		for (const key of MAESTRO_PUBLISHER_KEYS) {
 			expect(typeof key).toBe('string');
 			expect(key.trim().length).toBeGreaterThan(0);
-			expect(() =>
-				createPublicKey({
-					key: Buffer.from(key, 'base64'),
-					format: 'der',
-					type: 'spki',
-				})
-			).not.toThrow();
+			// Node decodes base64 leniently (padding/whitespace/url-safe), so a
+			// baked string that is not canonical could still load. Round-trip the
+			// DER bytes back to base64 and require an exact match to reject any
+			// non-canonical anchor.
+			const der = Buffer.from(key, 'base64');
+			expect(der.toString('base64')).toBe(key);
+			const publicKey = createPublicKey({
+				key: der,
+				format: 'der',
+				type: 'spki',
+			});
+			// The plugin signing scheme is ed25519 (SIGNATURE_ALGORITHM), so the
+			// anchor must be an ed25519 public key, not merely any valid SPKI key.
+			expect(publicKey.asymmetricKeyType).toBe('ed25519');
 		}
 	});
 });

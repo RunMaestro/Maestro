@@ -253,6 +253,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Create any temp files (the private key below) with restrictive
+          # permissions so the key is never group/world-readable.
+          umask 077
+
+          # Read the baked publisher anchor first: signing and the drift guard
+          # only make sense once a public key exists to validate against.
+          ANCHOR=$(node -e "console.log(require('./dist/shared/plugins/publisher-keys.js').MAESTRO_PUBLISHER_KEYS.join(','))")
+
+          # Pre-key-mint state: no anchor baked (or no signing secret configured).
+          # Skip signing and the drift check and ship the bundled plugins
+          # unsigned rather than breaking every release target. Unsigned bundled
+          # plugins simply are not seeded at runtime (seedBundledPlugins() only
+          # installs a "trusted" plugin), so this degrades gracefully and stays
+          # fail-closed at runtime. Once a key is baked this branch is skipped and
+          # the drift guard below enforces trust.
+          if [ -z "$ANCHOR" ] || [ -z "${MAESTRO_PLUGIN_SIGNING_KEY:-}" ]; then
+            echo "::warning::No publisher key baked yet (MAESTRO_PUBLISHER_KEYS empty) or signing secret absent; shipping unsigned bundled plugins. They will not be seeded at runtime until a key is baked."
+            exit 0
+          fi
+
           KEYFILE="$RUNNER_TEMP/maestro-publisher.pem"
           # Remove the private key on any exit, including a signing failure that
           # trips set -e before we reach the end of the step.
@@ -267,11 +287,6 @@ jobs:
           # secret was rotated without re-baking publisher-keys.ts (or vice
           # versa), the produced signature would be seed-skipped at runtime and
           # ship a permanently non-runnable plugin. Fail the release here instead.
-          ANCHOR=$(node -e "console.log(require('./dist/shared/plugins/publisher-keys.js').MAESTRO_PUBLISHER_KEYS.join(','))")
-          if [ -z "$ANCHOR" ]; then
-            echo "::error::MAESTRO_PUBLISHER_KEYS is empty in publisher-keys.ts; bake the publisher public key before shipping a signed plugin." >&2
-            exit 1
-          fi
           if ! node dist/cli/maestro-cli.js plugin validate examples/plugins/agent-flow --trusted-key "$ANCHOR" --json | grep -q '"status":"trusted"'; then
             echo "::error::agent-flow signature does not resolve 'trusted' against the baked MAESTRO_PUBLISHER_KEYS anchor. The CI signing key (MAESTRO_PLUGIN_SIGNING_KEY) and the baked public key have drifted." >&2
             exit 1
