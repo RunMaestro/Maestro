@@ -187,7 +187,7 @@ The AI input box includes three toggle buttons that control session behavior:
 
 **Per-tab persistence:** Each toggle state is saved per tab. If you enable Thinking on one tab, it stays enabled for that tab even when you switch away and back.
 
-**Permission mode and ask-back questions:** Claude Code agents also offer a permission mode you cycle by clicking the permission pill in the input toolbar (Full Access -> Standard -> Read-Only). In Standard mode, tool calls that need approval and any `AskUserQuestion` ask-backs appear as in-app prompts you answer inline. In Full Access mode there are no prompts at all: permission checks are bypassed, and an `AskUserQuestion` call cannot be answered, so the turn stalls until you send a new message or stop the agent. Avoid instructing agents to ask questions through tools unless the tab is in Standard mode. See [provider notes](./provider-notes) for the full explanation.
+**Permission mode and ask-back questions:** Claude Code agents also offer a permission mode you cycle by clicking the permission pill in the input toolbar (Full Access -> Standard -> Read-Only). In Standard mode, tool calls that need approval and any `AskUserQuestion` ask-backs appear as in-app prompts you answer inline. In Full Access mode there are no prompts at all: permission checks are bypassed, and an `AskUserQuestion` call cannot be answered, so the turn stalls until you stop the agent. Sending a follow-up message won't unstick it: the message only queues behind the stalled turn, which never completes to dispatch it. Avoid instructing agents to ask questions through tools unless the tab is in Standard mode. See [provider notes](./provider-notes) for the full explanation.
 
 ### Configuring Defaults
 
