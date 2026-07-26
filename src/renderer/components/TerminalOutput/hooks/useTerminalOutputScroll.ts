@@ -216,6 +216,16 @@ export function useTerminalOutputScroll({
 		return () => observer.disconnect();
 	}, [autoScrollPaused, scrollContainerRef, jumpToBottom]);
 
+	// Declared BEFORE the restore effect on purpose. React runs effects in
+	// declaration order, so on mount and every tab switch this clears the latch
+	// first and the restore effect below then latches it for good. Reversing the
+	// order would leave the ref unlatched after commit, letting a later prop
+	// change (e.g. a synchronous isAtBottom flip while initialScrollTop is still
+	// the debounced-stale offset) re-fire the restore and yank the user. (J1)
+	useEffect(() => {
+		hasRestoredScrollRef.current = false;
+	}, [sessionId, activeTabId]);
+
 	useEffect(() => {
 		if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
 			hasRestoredScrollRef.current = true;
@@ -224,8 +234,9 @@ export function useTerminalOutputScroll({
 			// were following the bottom (true) - or on a legacy tab that never
 			// persisted the flag (undefined) - skip the restore and let the
 			// mount-time bottom jump + MutationObserver snap to and follow the live
-			// bottom. hasRestoredScrollRef is already latched above so a later prop
-			// change cannot re-trigger this. (J1)
+			// bottom. hasRestoredScrollRef is latched above and the reset effect
+			// runs earlier in declaration order, so a later prop change cannot
+			// re-trigger this. (J1)
 			if (initialIsAtBottom !== false) return;
 			requestAnimationFrame(() => {
 				if (scrollContainerRef.current) {
@@ -244,10 +255,6 @@ export function useTerminalOutputScroll({
 			});
 		}
 	}, [initialScrollTop, initialIsAtBottom, scrollContainerRef]);
-
-	useEffect(() => {
-		hasRestoredScrollRef.current = false;
-	}, [sessionId, activeTabId]);
 
 	useEffect(() => {
 		return () => {

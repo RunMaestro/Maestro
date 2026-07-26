@@ -234,4 +234,39 @@ describe('useTerminalOutputScroll mount-time restore gate (J1)', () => {
 		expect(result.current.hasNewMessages).toBe(false);
 		expect(result.current.newMessageCount).toBe(0);
 	});
+
+	it('Case 5: an isAtBottom flip with a stale saved offset must not re-fire the restore', () => {
+		// Mounts following the bottom with a stale saved offset (8000 vs the live
+		// 9000 bottom). onAtBottomChange writes isAtBottom synchronously while
+		// onScrollPositionChange is debounced, so a user scroll-up flips
+		// initialIsAtBottom to false while initialScrollTop is still the old 8000.
+		// The restore effect's latch must survive the commit (reset effect declared
+		// first) so this flip cannot re-run the restore and yank the user back. (J1)
+		const ref = { current: makeRestoreContainer(9000) };
+
+		const { rerender } = renderHook(
+			({ atBottom }) =>
+				useTerminalOutputScroll({
+					scrollContainerRef: ref,
+					initialScrollTop: 8000,
+					initialIsAtBottom: atBottom,
+					sessionId: 's1',
+					activeTabId: 't1',
+					filteredLogsLength: 3,
+				}),
+			{ initialProps: { atBottom: true } }
+		);
+
+		flushRaf();
+		// The fix works on mount: snapped to the live bottom, not the stale 8000.
+		expect(ref.current.scrollTop).toBe(9000);
+
+		// User scrolls up; isAtBottom persists immediately, scrollTop is still debounced.
+		ref.current.scrollTop = 2000;
+		rerender({ atBottom: false });
+		flushRaf();
+
+		// Must stay where the user scrolled, NOT be yanked back to the stale 8000.
+		expect(ref.current.scrollTop).toBe(2000);
+	});
 });
