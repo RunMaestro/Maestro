@@ -204,20 +204,18 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 			return;
 		}
 
-		if (result.success) {
-			if (options.saveAs) {
-				console.log(
-					`Playbook '${options.saveAs}' saved${result.playbookId ? ` (ID: ${result.playbookId})` : ''}`
-				);
-			} else if (options.launch) {
-				console.log(
-					`Auto-run launched with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
-				);
-			} else {
-				console.log(
-					`Auto-run configured with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
-				);
-			}
+		if (options.saveAs) {
+			console.log(
+				`Playbook '${options.saveAs}' saved${result.playbookId ? ` (ID: ${result.playbookId})` : ''}`
+			);
+		} else if (options.launch) {
+			console.log(
+				`Auto-run launched with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
+			);
+		} else {
+			console.log(
+				`Auto-run configured with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
+			);
 		}
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
