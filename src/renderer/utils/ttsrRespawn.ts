@@ -16,7 +16,6 @@ import type { TtsrTriggeredPayload } from '../../shared/ttsr-types';
 import type { AITab, ProcessConfig, Session } from '../types';
 import { filterYoloArgs } from './agentArgs';
 import { parseSessionId } from './sessionIdParser';
-import { getStdinFlags } from './spawnHelpers';
 
 /** The slice of a resolved agent definition a corrective spawn needs. */
 export interface TtsrRespawnAgent {
@@ -92,12 +91,6 @@ export function buildTtsrRespawnConfig(input: {
 		tab.permissionMode === 'readonly';
 	const baseArgs = agent.args ?? [];
 
-	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-		isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
-		supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-		hasImages: false,
-	});
-
 	return {
 		sessionId: payload.sessionId,
 		toolType: session.toolType,
@@ -120,7 +113,5 @@ export function buildTtsrRespawnConfig(input: {
 		sessionCustomEffort: tab.customEffort ?? session.customEffort,
 		sessionCustomContextWindow: session.customContextWindow,
 		sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-		sendPromptViaStdin,
-		sendPromptViaStdinRaw,
 	};
 }

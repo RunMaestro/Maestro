@@ -111,5 +111,35 @@ describe('platformDetection', () => {
 				g.maestro = savedMaestro;
 			}
 		});
+
+		// Regression: the renderer loads process-shim.js, which defines
+		// `process.platform = 'browser'`. Reading that before the preload bridge
+		// made every macOS renderer look non-Mac, so shortcut hints in Settings
+		// rendered "Ctrl+0" instead of "Command+0".
+		it('prefers the preload bridge over the renderer process shim', () => {
+			Object.defineProperty(process, 'platform', { value: 'browser', configurable: true });
+			const savedMaestro = g.maestro;
+			try {
+				g.maestro = { platform: 'darwin' };
+				expect(isMacOS()).toBe(true);
+				expect(isWindows()).toBe(false);
+				expect(isLinux()).toBe(false);
+			} finally {
+				g.maestro = savedMaestro;
+			}
+		});
+
+		it('never treats the shim sentinel "browser" as a real platform', () => {
+			Object.defineProperty(process, 'platform', { value: 'browser', configurable: true });
+			const savedMaestro = g.maestro;
+			try {
+				g.maestro = undefined;
+				expect(isLinux()).toBe(true);
+				expect(isMacOS()).toBe(false);
+				expect(isWindows()).toBe(false);
+			} finally {
+				g.maestro = savedMaestro;
+			}
+		});
 	});
 });

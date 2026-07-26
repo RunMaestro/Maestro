@@ -196,12 +196,12 @@ export function useQuickActionsHandlers(
 						aiTabs: s.aiTabs.map((tab) => {
 							if (tab.id !== s.activeTabId) return tab;
 							const newMode = cycleThinkingMode(tab.showThinking);
-							// When turning OFF, clear any thinking/tool logs
+							// When turning OFF, clear thinking logs; tool logs are render-gated.
 							if (newMode === 'off') {
 								return {
 									...tab,
 									showThinking: 'off',
-									logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+									logs: tab.logs.filter((l) => l.source !== 'thinking'),
 								};
 							}
 							return { ...tab, showThinking: newMode };

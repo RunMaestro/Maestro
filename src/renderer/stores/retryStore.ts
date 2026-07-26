@@ -434,6 +434,29 @@ export function sessionHasActiveOutage(sessionId: string): boolean {
 	return false;
 }
 
+/**
+ * Collect the agent ids that currently have at least one active outage. Shared
+ * by the reactive signature and the non-reactive event-time getter so the two
+ * never diverge.
+ */
+function collectActiveOutageSessionIds(outages: Record<string, OutageRecord>): Set<string> {
+	const ids = new Set<string>();
+	for (const id in outages) {
+		const o = outages[id];
+		if (o.status === 'active') ids.add(o.sessionId);
+	}
+	return ids;
+}
+
+/**
+ * Non-reactive: all agent ids with at least one active outage. For event-time
+ * reads (e.g. keyboard cycling) that need the set outside React; the reactive
+ * `useActiveOutageSessionSignature` covers render-time subscribers.
+ */
+export function getActiveOutageSessionIds(): Set<string> {
+	return collectActiveOutageSessionIds(useRetryStore.getState().outages);
+}
+
 /** Reactive: whether a specific agent currently has an active outage (Left Bar light). */
 export function useSessionHasActiveOutage(sessionId: string): boolean {
 	return useRetryStore((s) => {
@@ -462,14 +485,9 @@ export function useTabHasActiveOutage(sessionId: string, tabId: string): boolean
  * Bar filter memo only recomputes when the set of stuck agents actually changes.
  */
 export function useActiveOutageSessionSignature(): string {
-	return useRetryStore((s) => {
-		const ids = new Set<string>();
-		for (const id in s.outages) {
-			const o = s.outages[id];
-			if (o.status === 'active') ids.add(o.sessionId);
-		}
-		return Array.from(ids).sort().join(',');
-	});
+	return useRetryStore((s) =>
+		Array.from(collectActiveOutageSessionIds(s.outages)).sort().join(',')
+	);
 }
 
 /**

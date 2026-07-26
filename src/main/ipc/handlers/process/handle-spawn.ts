@@ -43,7 +43,11 @@ import { applyTtsrReminders, type TtsrReminderPeek } from './apply-ttsr-reminder
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
-import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../agents/omp-model-catalog';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+	buildOmpPrimeEnv,
+} from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -206,6 +210,32 @@ export async function handleProcessSpawn(
 			LOG_CONTEXT
 		);
 	}
+
+	// ========================================================================
+	// Prompt delivery: argv vs stdin. Decided HERE, never by the caller.
+	//
+	// Windows spawns hand the prompt to the child over stdin instead of argv to
+	// stay under the ~32K CreateProcess command-line limit. That is a property of
+	// the machine that runs the CLI and of the CLI itself, so the renderer must
+	// not decide it: a web-desktop client is a browser that can sit on a
+	// completely different OS than the host (`window.maestro.platform` there is
+	// derived from the browser's user agent), so a Windows browser driving a Linux
+	// host used to request stdin delivery. Agents that only accept a positional
+	// prompt then started with no prompt at all - omp emitted its session line and
+	// exited 0, which left the tab holding an agent session id omp never persisted,
+	// so every later turn failed to resume it too.
+	// ========================================================================
+	// An agent that has not declared the capability keeps its prompt in argv: an
+	// over-long command line fails loudly at spawn, while stdin delivery to a CLI
+	// that ignores stdin fails silently and poisons the tab's session id.
+	const hostDeliversPromptViaStdin =
+		isWindows() && !isSshEnabled && (agent?.capabilities?.supportsPromptViaStdin ?? false);
+	const promptHasImages = !!config.images?.length;
+	const supportsStreamJsonInput = agent?.capabilities?.supportsStreamJsonInput ?? false;
+	const sendPromptViaStdin =
+		hostDeliversPromptViaStdin && supportsStreamJsonInput && promptHasImages;
+	const sendPromptViaStdinRaw =
+		hostDeliversPromptViaStdin && (!supportsStreamJsonInput || !promptHasImages);
 
 	// Derive effective read-only state, honoring the legacy boolean flag only
 	// when permissionMode wasn't explicitly set (back-compat for older configs).
@@ -769,12 +799,15 @@ export async function handleProcessSpawn(
 		// Bounded await: block the spawn only briefly so the first turn resolves
 		// correctly on a warm/fast catalog, and proceed (letting the prime finish
 		// in the background for later turns) when it is slow or fails.
-		const OMP_PRIME_SPAWN_CAP_MS = 2000;
-		const prime = primeOmpModelCatalog(
-			localSpawnBinaryPath,
-			{ ...process.env, ...customEnvVarsToPass },
-			ompModelCatalogKey
-		);
+		const OMP_PRIME_SPAWN_CAP_MS = 3500;
+		// Prime with the platform-expanded env (mirroring the Windows agent path
+		// above) so the bun-based `omp` binary resolves in a packaged app: packaged
+		// Electron apps do not inherit the shell PATH, so a raw `process.env` lacks
+		// user-local bin dirs like `~/.bun/bin`. buildOmpPrimeEnv also prepends the
+		// binary's own dir so a co-located runtime is found first, and the detector's
+		// warm-up shares it so both prime sites build an identical env.
+		const primeEnv = buildOmpPrimeEnv(localSpawnBinaryPath, customEnvVarsToPass);
+		const prime = primeOmpModelCatalog(localSpawnBinaryPath, primeEnv, ompModelCatalogKey);
 		await Promise.race([
 			prime,
 			new Promise<void>((resolve) => setTimeout(resolve, OMP_PRIME_SPAWN_CAP_MS)),
@@ -794,6 +827,9 @@ export async function handleProcessSpawn(
 		// For SSH, prompt is included in the stdin script, not passed separately
 		// For local execution, pass prompt (with system prompt embedded for non-append-system-prompt agents)
 		prompt: sshRemoteUsed ? undefined : effectivePrompt,
+		// Host-authoritative (see above): overrides whatever the caller sent.
+		sendPromptViaStdin,
+		sendPromptViaStdinRaw,
 		shell: shellToUse,
 		runInShell: useShell,
 		shellArgs: shellArgsStr, // Shell-specific CLI args (for terminal sessions)

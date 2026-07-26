@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	resizeTextareaToContent,
 	scrollTextareaToCaretEnd,
-	shouldScrollTextareaToEnd,
 } from '../../../../../renderer/components/InputArea/utils/textareaSizing';
 
 describe('InputArea textareaSizing utils', () => {
@@ -59,17 +58,5 @@ describe('InputArea textareaSizing utils', () => {
 		resizeTextareaToContent(textarea, 176);
 
 		expect(textarea.scrollTop).toBe(120);
-	});
-
-	it('scrolls when caret was at previous end', () => {
-		expect(shouldScrollTextareaToEnd(5, 5, 6)).toBe(true);
-	});
-
-	it('scrolls for bulk inserts even when caret was mid-text', () => {
-		expect(shouldScrollTextareaToEnd(2, 5, 9)).toBe(true);
-	});
-
-	it('does not scroll normal mid-text typing', () => {
-		expect(shouldScrollTextareaToEnd(2, 5, 6)).toBe(false);
 	});
 });

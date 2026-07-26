@@ -13,6 +13,20 @@
 
 import { create } from 'zustand';
 
+/** One selectable option within an AskUserQuestion question. */
+export interface QuestionOptionUI {
+	label: string;
+	description?: string;
+}
+
+/** A single parsed AskUserQuestion question (mirrors the main-process shape). */
+export interface ParsedQuestionUI {
+	question: string;
+	header?: string;
+	options: QuestionOptionUI[];
+	multiSelect: boolean;
+}
+
 export interface PermissionRequestUI {
 	requestId: string;
 	sessionId: string;
@@ -20,6 +34,10 @@ export interface PermissionRequestUI {
 	toolName: string;
 	input: Record<string, unknown>;
 	createdAt: number;
+	/** 'question' for AskUserQuestion; absent for ordinary allow/deny requests. */
+	kind?: 'question';
+	/** Parsed questions; present only when `kind === 'question'`. */
+	questions?: ParsedQuestionUI[];
 }
 
 export type PermissionDecision =

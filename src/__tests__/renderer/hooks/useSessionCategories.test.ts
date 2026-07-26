@@ -293,6 +293,35 @@ describe('useSessionCategories', () => {
 			expect(names).toContain('Busy Agent');
 		});
 
+		it('includes agents in an error state even without unread tabs when showUnreadAgentsOnly is true', () => {
+			const s1 = makeSession({
+				name: 'Errored Agent',
+				state: 'error',
+			});
+			const s2 = makeSession({ name: 'Idle No Unread' });
+			resetStore([s1, s2]);
+
+			const { result } = renderHook(() => useSessionCategories('', [s1, s2], true));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(1);
+			expect(result.current.sortedFilteredSessions[0].name).toBe('Errored Agent');
+		});
+
+		it('keeps parent visible when a worktree child is in an error state', () => {
+			const parent = makeSession({ name: 'Parent' });
+			const child = makeSession({
+				name: 'Worktree Child',
+				parentSessionId: parent.id,
+				state: 'error',
+			});
+			resetStore([parent, child]);
+
+			const { result } = renderHook(() => useSessionCategories('', [parent, child], true));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(1);
+			expect(result.current.sortedFilteredSessions[0].name).toBe('Parent');
+		});
+
 		it('includes auto-running agents (AUTO badge) even when idle without unread tabs', () => {
 			const s1 = makeSession({
 				name: 'Has Unread',

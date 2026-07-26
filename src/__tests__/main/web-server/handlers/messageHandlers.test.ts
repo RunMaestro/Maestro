@@ -120,6 +120,19 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		openBrowserTab: vi.fn().mockResolvedValue(true),
 		openTerminalTab: vi.fn().mockResolvedValue(true),
 		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
+		enqueueCommand: vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'tab-mock-123',
+			queued: true,
+			queuePosition: 1,
+			queueLength: 1,
+			itemId: 'item-1',
+		}),
+		listQueue: vi.fn().mockResolvedValue({
+			success: true,
+			queues: [{ sessionId: 'session-1', name: 'Session 1', state: 'busy', items: [] }],
+		}),
+		removeQueueItem: vi.fn().mockResolvedValue({ success: true, removed: true }),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -1394,6 +1407,172 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Enqueue Command (dispatch --queue)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Do it',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Do it',
+					'ai',
+					'tab-1',
+					undefined,
+					true
+				);
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('enqueue_command_result');
+				expect(response.success).toBe(true);
+				expect(response.queued).toBe(true);
+				expect(response.queuePosition).toBe(1);
+				expect(response.itemId).toBe('item-1');
+				expect(response.tabId).toBe('tab-mock-123');
+			});
+		});
+
+		it('rejects an enqueue with neither command nor images without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				inputMode: 'ai',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('enqueue_command_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or command');
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+		});
+
+		it('rejects when the session does not exist', () => {
+			vi.mocked(callbacks.getSessionDetail).mockReturnValue(null);
+
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'ghost',
+				command: 'hi',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('enqueue_command_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Session not found');
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+		});
+
+		it('replies with an error result when the callback rejects', async () => {
+			vi.mocked(callbacks.enqueueCommand).mockRejectedValue(new Error('boom'));
+
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'hi',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('enqueue_command_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('List Queue (queue list)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards an optional sessionId to the callback and replies with the queues', async () => {
+			handler.handleMessage(client, {
+				type: 'list_queue',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.listQueue).toHaveBeenCalledWith('session-1');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.success).toBe(true);
+				expect(Array.isArray(response.queues)).toBe(true);
+			});
+		});
+
+		it('passes undefined when no sessionId is provided (all agents)', async () => {
+			handler.handleMessage(client, { type: 'list_queue' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.listQueue).toHaveBeenCalledWith(undefined);
+			});
+		});
+
+		it('replies with an error result when the callback rejects', async () => {
+			vi.mocked(callbacks.listQueue).mockRejectedValue(new Error('boom'));
+
+			handler.handleMessage(client, { type: 'list_queue' });
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Remove Queue Item (queue remove)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId + itemId to the callback and replies removed:true', async () => {
+			handler.handleMessage(client, {
+				type: 'remove_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.removeQueueItem).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('remove_queue_item_result');
+				expect(response.success).toBe(true);
+				expect(response.removed).toBe(true);
+			});
+		});
+
+		it('rejects missing sessionId or itemId without calling the callback', () => {
+			handler.handleMessage(client, { type: 'remove_queue_item', sessionId: 'session-1' });
+
+			const response = lastSend();
+			expect(response.type).toBe('remove_queue_item_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or itemId');
+			expect(callbacks.removeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Refresh File Tree (Web → Desktop)', () => {
 		it('should forward refresh file tree to desktop', async () => {
 			handler.handleMessage(client, {
@@ -1808,7 +1987,7 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Movement ID validation', () => {
-		it.each(['add', 'update', 'move', 'remove'] as const)(
+		it.each(['begin', 'add', 'update', 'move', 'remove', 'progress'] as const)(
 			'rejects surrounding whitespace for movement %s',
 			(op) => {
 				callbacks.movementView = vi.fn().mockResolvedValue(true);
@@ -1819,6 +1998,8 @@ describe('WebSocketMessageHandler', () => {
 					body: op === 'add' ? '{}' : undefined,
 					x: op === 'move' ? 10 : undefined,
 					y: op === 'move' ? 20 : undefined,
+					title: op === 'progress' ? 'Item 1' : undefined,
+					phase: op === 'progress' ? 'composing' : undefined,
 				});
 
 				expect(callbacks.movementView).not.toHaveBeenCalled();
@@ -1865,7 +2046,125 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Movement progress validation', () => {
+		it('forwards a valid Concerto phase without HTML content', async () => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ movementView: callbacks.movementView });
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'progress',
+				id: 'checkout',
+				title: 'Checkout flow',
+				phase: 'reviewing',
+				step: 2,
+				steps: 3,
+				notes: [
+					{ value: 'eighth' },
+					{ value: 'eighth', dotted: true },
+					{ value: 'quarter', triad: true },
+				],
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.movementView).toHaveBeenCalledWith({
+					op: 'progress',
+					id: 'checkout',
+					title: 'Checkout flow',
+					phase: 'reviewing',
+					step: 2,
+					steps: 3,
+					notes: [
+						{ value: 'eighth' },
+						{ value: 'eighth', dotted: true },
+						{ value: 'quarter', triad: true },
+					],
+					viewType: undefined,
+					x: undefined,
+					y: undefined,
+					width: undefined,
+					height: undefined,
+					body: undefined,
+				});
+			});
+		});
+
+		it.each([
+			{ phase: 'sketching', title: 'Checkout flow' },
+			{ phase: 'composing', title: '   ' },
+			{ phase: 'refining', title: 'Checkout flow', step: 0, steps: 4 },
+			{ phase: 'refining', title: 'Checkout flow', step: 5, steps: 4 },
+			{ phase: 'refining', title: 'Checkout flow', step: 1, steps: 9 },
+			{
+				phase: 'refining',
+				title: 'Checkout flow',
+				step: 1,
+				steps: 2,
+				notes: [{ value: 'eighth' }, { value: 'eighth', tie: true }],
+			},
+		])('rejects invalid progress metadata: $phase / $title', (progress) => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'progress',
+				id: 'checkout',
+				...progress,
+			});
+
+			expect(callbacks.movementView).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({ type: 'movement_result', success: false });
+		});
+	});
+
 	describe('Movement HTML validation', () => {
+		it('forwards a host-rendered begin shell without HTML content', async () => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.setCallbacks({ movementView: callbacks.movementView });
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'begin',
+				id: 'mockup',
+				title: 'Checkout mockup',
+				x: 24,
+				y: 32,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.movementView).toHaveBeenCalledWith({
+					op: 'begin',
+					id: 'mockup',
+					title: 'Checkout mockup',
+					viewType: 'html',
+					x: 24,
+					y: 32,
+					width: undefined,
+					height: undefined,
+					body: undefined,
+					phase: undefined,
+					step: undefined,
+					steps: undefined,
+					notes: undefined,
+				});
+			});
+		});
+
+		it('requires a title for a begin shell', () => {
+			callbacks.movementView = vi.fn().mockResolvedValue(true);
+			handler.handleMessage(client, {
+				type: 'movement',
+				op: 'begin',
+				id: 'mockup',
+			});
+
+			expect(callbacks.movementView).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]);
+			expect(response).toMatchObject({
+				type: 'movement_result',
+				success: false,
+				error: 'Movement begin requires a non-empty title',
+			});
+		});
+
 		it.each(['add', 'update'] as const)(
 			'requires HTML content for a movement %s that explicitly selects html',
 			(op) => {

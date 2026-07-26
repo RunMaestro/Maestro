@@ -1,5 +1,6 @@
 import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
+import { formatMetaKey } from '../../../utils/shortcutFormatter';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -207,8 +208,8 @@ export function buildTabCommands({
 			id: 'toggleEnterToSend',
 			label: 'Toggle Enter to Send',
 			subtext: effective
-				? 'Currently: Enter sends · click to switch this tab to Cmd+Enter'
-				: 'Currently: Cmd+Enter sends · click to switch this tab to Enter',
+				? `Currently: Enter sends · click to switch this tab to ${formatMetaKey()}+Enter`
+				: `Currently: ${formatMetaKey()}+Enter sends · click to switch this tab to Enter`,
 			action: () => {
 				onToggleTabEnterToSend();
 				setQuickActionOpen(false);

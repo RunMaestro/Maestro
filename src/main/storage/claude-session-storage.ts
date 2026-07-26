@@ -295,10 +295,15 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * Get the Claude projects directory path (local)
+	 * Get the Claude projects directory path (local).
+	 *
+	 * `configDir` selects which Anthropic account's transcripts to read: users
+	 * commonly run several accounts by pointing `CLAUDE_CONFIG_DIR` at separate
+	 * homes (`~/.claude`, `~/.claude-gmail`, ...), and each writes its own
+	 * `projects/` tree. Omit it for the default `~/.claude` account.
 	 */
-	private getProjectsDir(): string {
-		return path.join(os.homedir(), '.claude', 'projects');
+	private getProjectsDir(configDir?: string): string {
+		return path.join(configDir ?? path.join(os.homedir(), '.claude'), 'projects');
 	}
 
 	/**
@@ -310,11 +315,12 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * Get the encoded project directory path (local)
+	 * Get the encoded project directory path (local). `configDir` scopes the read
+	 * to one Anthropic account's transcript tree (see {@link getProjectsDir}).
 	 */
-	private getEncodedProjectDir(projectPath: string): string {
+	private getEncodedProjectDir(projectPath: string, configDir?: string): string {
 		const encodedPath = encodeClaudeProjectPath(projectPath);
-		return path.join(this.getProjectsDir(), encodedPath);
+		return path.join(this.getProjectsDir(configDir), encodedPath);
 	}
 
 	/**
@@ -353,16 +359,24 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		};
 	}
 
+	/**
+	 * @param configDir - Optional `CLAUDE_CONFIG_DIR` selecting which Anthropic
+	 *   account's transcripts to list. Omitted (the default) reads `~/.claude`,
+	 *   preserving existing behavior for every caller that doesn't multi-account.
+	 *   The Cost & Tokens accessor passes each discovered account dir so tokens
+	 *   from every account are counted, not just the default one.
+	 */
 	async listSessions(
 		projectPath: string,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		configDir?: string
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
 			return this.listSessionsRemote(projectPath, sshConfig);
 		}
 
-		const projectDir = this.getEncodedProjectDir(projectPath);
+		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
 
 		// Check if the directory exists
 		try {

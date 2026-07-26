@@ -1,17 +1,25 @@
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session, SessionState, ThinkingMode } from '../../types';
+import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields, createTab, closeTab } from '../../utils/tabHelpers';
+import { aiTabFocusFields, createTab, closeTab, getActiveTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { generateId } from '../../utils/ids';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { applyCadenzaPayload, useCadenzaStore } from '../../stores/cadenzaStore';
-import { applyMovementPayload, getMovementSnapshot } from '../../stores/movementStore';
+import {
+	applyMovementPayload,
+	getMovementSnapshot,
+	useMovementStore,
+} from '../../stores/movementStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
+import { buildThinkingItems } from '../../utils/thinkingItems';
+import type { ConcertoCreationPhase, ConcertoProgressNote } from '../../../shared/movement-types';
 import {
 	getConcertoDesignerFrameSnapshot,
 	interactWithConcertoDesignerFrame,
@@ -46,6 +54,80 @@ export interface UseRemoteIntegrationDeps {
  */
 export interface UseRemoteIntegrationReturn {
 	// No return values - all functionality is via side effects
+}
+
+const MOVEMENT_INSPECTION_PAINT_FALLBACK_MS = 250;
+
+/**
+ * Attribute a Concerto bridge event only when one AI tab is unambiguously busy.
+ * The bridge does not yet carry its originating session, so guessing in a
+ * concurrent run could put another agent's design status on the focused pill.
+ */
+function recordConcertoCreationActivity(
+	movementId: string,
+	phase: ConcertoCreationPhase,
+	revision?: number,
+	reportedTitle?: string,
+	step?: number,
+	steps?: number,
+	notes?: ConcertoProgressNote[]
+): void {
+	const thinkingItems = buildThinkingItems(useSessionStore.getState().sessions);
+	if (thinkingItems.length !== 1) return;
+
+	const [{ session, tab }] = thinkingItems;
+	const thinkingStartTime = tab?.thinkingStartTime ?? session.thinkingStartTime;
+	if (thinkingStartTime === undefined) return;
+
+	const movement = useMovementStore
+		.getState()
+		.items.find((candidate) => candidate.id === movementId);
+	// A progress event may arrive before the subagent has mounted its HTML. Other
+	// Movement events must resolve to an authored HTML mockup so native/plugin
+	// panels never create a Concerto pipeline track.
+	if (!reportedTitle && (!movement || movement.viewType !== 'html')) return;
+
+	useConcertoCreationActivityStore.getState().upsertTrack({
+		sessionId: session.id,
+		tabId: tab?.id ?? null,
+		thinkingStartTime,
+		movementId,
+		title: reportedTitle?.trim() || movement?.title?.trim() || movementId,
+		phase,
+		step,
+		steps,
+		notes,
+		width: movement ? Math.round(movement.width) : undefined,
+		height:
+			movement?.measuredHeight !== undefined
+				? Math.round(movement.measuredHeight)
+				: movement?.height !== undefined
+					? Math.round(movement.height)
+					: undefined,
+		revision,
+	});
+}
+
+/**
+ * Wait until Chromium has had a full rendering opportunity after a synchronous
+ * surface update. The second animation frame runs after the first frame's paint.
+ * A bounded fallback keeps inspection responsive when background throttling
+ * suppresses animation frames.
+ */
+function waitForMovementInspectionPaint(): Promise<void> {
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			window.clearTimeout(fallbackTimeout);
+			resolve();
+		};
+		const fallbackTimeout = window.setTimeout(finish, MOVEMENT_INSPECTION_PAINT_FALLBACK_MS);
+		window.requestAnimationFrame(() => {
+			window.requestAnimationFrame(finish);
+		});
+	});
 }
 
 /**
@@ -547,6 +629,198 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "enqueue command" from the CLI (`dispatch --queue`). The
+		// renderer owns the authoritative execution queue, so the queue-vs-dispatch
+		// decision lives here: a busy target joins `session.executionQueue` (FIFO);
+		// an idle target dispatches immediately through the same maestro:remoteCommand
+		// path as a plain dispatch. The ack carries the queue outcome so the CLI can
+		// report position. Enqueued items are byte-identical to UI-queued items, so
+		// they render in the ExecutionQueueBrowser/Indicator, are editable/reorderable/
+		// removable, and the closed-tab resolver (resolveQueuedItemTarget) applies at
+		// drain time.
+		const unsubscribeEnqueueCommand = window.maestro.process.onRemoteEnqueueCommand(
+			(
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				_inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => {
+				const reply = (result: {
+					success: boolean;
+					tabId?: string;
+					queued?: boolean;
+					queuePosition?: number;
+					queueLength?: number;
+					itemId?: string;
+					error?: string;
+				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
+
+				try {
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					if (!session) {
+						reply({ success: false, error: 'Session not found' });
+						return;
+					}
+
+					// Resolve the target tab. An explicit --tab that no longer exists is
+					// an error - never silently reroute to the active tab, which would
+					// mislead callers chaining the returned tabId. No --tab -> active tab.
+					const requestedTab = tabId ? session.aiTabs?.find((t) => t.id === tabId) : undefined;
+					if (tabId && !requestedTab) {
+						reply({ success: false, error: `Tab not found: ${tabId}` });
+						return;
+					}
+					const targetTab = requestedTab ?? getActiveTab(session);
+					if (!targetTab) {
+						reply({ success: false, error: 'Session has no AI tabs' });
+						return;
+					}
+					const resolvedTabId = targetTab.id;
+
+					// Idle target: no line to wait in, dispatch now through the shared
+					// remote-command path (identical to a plain `dispatch`). Respect the
+					// dispatch --focus opt-in via `background`.
+					if (session.state !== 'busy') {
+						if (!background) {
+							setActiveSessionId(sessionId);
+						}
+						window.dispatchEvent(
+							new CustomEvent('maestro:remoteCommand', {
+								detail: { sessionId, command, inputMode: 'ai', tabId: resolvedTabId, images },
+							})
+						);
+						reply({ success: true, tabId: resolvedTabId, queued: false });
+						return;
+					}
+
+					// Busy target: get in line. Append a message item to the authoritative
+					// execution queue (FIFO by insertion/timestamp), matching the shape the
+					// UI creates in useInputProcessing so it is a first-class queue citizen.
+					const isReadOnly =
+						targetTab.readOnlyMode === true || targetTab.permissionMode === 'readonly';
+					const queuedItem: QueuedItem = {
+						id: generateId(),
+						timestamp: Date.now(),
+						tabId: resolvedTabId,
+						type: 'message',
+						text: command,
+						...(images && images.length > 0 ? { images: [...images] } : {}),
+						tabName:
+							targetTab.name ||
+							(targetTab.agentSessionId
+								? targetTab.agentSessionId.split('-')[0].toUpperCase()
+								: 'New'),
+						readOnlyMode: isReadOnly,
+					};
+
+					// Position is deterministic from the snapshot we already read: the item
+					// is appended to the tail, so it lands at length+1 (1-based). Computing
+					// it here (not inside the state updater) keeps the returned position
+					// independent of when the store applies the update.
+					const queueLength = (session.executionQueue?.length ?? 0) + 1;
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === sessionId ? { ...s, executionQueue: [...s.executionQueue, queuedItem] } : s
+						)
+					);
+
+					reply({
+						success: true,
+						tabId: resolvedTabId,
+						queued: true,
+						// 1-based position from the front; the item sits at the tail.
+						queuePosition: queueLength,
+						queueLength,
+						itemId: queuedItem.id,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteEnqueueCommand failed:', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "list queue" from the CLI (`queue list`). Read-only snapshot
+		// of the authoritative executionQueue(s) so scripts can inspect what is
+		// pending. Reads the store directly (useSessionStore.getState) so the snapshot
+		// is always current, per the store's outside-React contract.
+		const unsubscribeListQueue = window.maestro.process.onRemoteListQueue(
+			(sessionId: string | undefined, responseChannel: string) => {
+				try {
+					const sessions = useSessionStore.getState().sessions;
+					const relevant = sessionId
+						? sessions.filter((s) => s.id === sessionId)
+						: sessions.filter((s) => (s.executionQueue?.length ?? 0) > 0);
+					const queues = relevant.map((s) => ({
+						sessionId: s.id,
+						name: s.name,
+						state: s.state,
+						items: (s.executionQueue ?? []).map((item) => ({
+							id: item.id,
+							timestamp: item.timestamp,
+							tabId: item.tabId,
+							type: item.type,
+							...(item.text !== undefined ? { text: item.text } : {}),
+							...(item.command !== undefined ? { command: item.command } : {}),
+							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
+							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
+							...(item.paused !== undefined ? { paused: item.paused } : {}),
+						})),
+					}));
+					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
+						success: true,
+						queues,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteListQueue failed:', undefined, error);
+					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
+						success: false,
+						queues: [],
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "remove queue item" from the CLI (`queue remove`). Drops the
+		// item by id from the authoritative queue, exactly like the UI trash action.
+		const unsubscribeRemoveQueueItem = window.maestro.process.onRemoteRemoveQueueItem(
+			(sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					// Determine the outcome from the current store snapshot, then mutate.
+					// Keeps the returned `removed` independent of update timing.
+					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					const removed = !!session?.executionQueue?.some((i) => i.id === itemId);
+					if (removed) {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, executionQueue: s.executionQueue.filter((i) => i.id !== itemId) }
+									: s
+							)
+						);
+					}
+					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
+						success: true,
+						removed,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteRemoveQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
+						success: false,
+						removed: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
@@ -557,6 +831,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
+			unsubscribeEnqueueCommand();
+			unsubscribeListQueue();
+			unsubscribeRemoveQueueItem();
 		};
 	}, [
 		sessionsRef,
@@ -693,7 +970,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
-	// Handle remote movement operations (add/update/move/remove/clear) from CLI/web.
+	// Handle remote movement operations and Concerto progress reports from CLI/web.
 	useEffect(() => {
 		// Guard: on a dev hot-restart the renderer can mount before the rebuilt
 		// preload exposes newer bridge methods. Degrade gracefully instead of
@@ -704,11 +981,47 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			const reply = (applied: boolean) => {
 				if (responseChannel) proc.sendMovementAppliedResponse?.(responseChannel, applied);
 			};
+			if (params.op === 'progress') {
+				if (!params.id || !params.phase || !params.title) {
+					reply(false);
+					return;
+				}
+				recordConcertoCreationActivity(
+					params.id,
+					params.phase,
+					params.revision,
+					params.title,
+					params.step,
+					params.steps,
+					params.notes
+				);
+				reply(true);
+				return;
+			}
 			try {
 				flushSync(() => applyMovementPayload(params));
 			} catch {
 				reply(false);
 				return;
+			}
+			if (params.op === 'clear') {
+				useConcertoCreationActivityStore.getState().clear();
+			} else if (params.op === 'remove' && params.id) {
+				useConcertoCreationActivityStore.getState().clearMovement(params.id);
+			} else if (params.id) {
+				let phase: ConcertoCreationPhase = 'refining';
+				if (params.op === 'begin' || params.op === 'add') phase = 'composing';
+				else if (
+					useMovementStore.getState().items.find((movement) => movement.id === params.id)?.preparing
+				) {
+					phase = 'composing';
+				} else if (
+					params.op === 'move' ||
+					(params.body === undefined && params.title === undefined && params.viewType === undefined)
+				) {
+					phase = 'arranging';
+				}
+				recordConcertoCreationActivity(params.id, phase, params.revision);
 			}
 			if (params.id && params.revision !== undefined) {
 				void getConcertoDesignerFrameSnapshot('movement', params.id, 3500, params.revision)
@@ -741,7 +1054,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInspection !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInspection(
 			(id, expectedRevision, responseChannel) => {
-				void getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision)
+				// Inspection is read-only for the iframe, but the requested panel must be
+				// visible above overlapping peers for Chromium's compositor crop to show it.
+				flushSync(() => useMovementStore.getState().surfaceItem(id));
+				recordConcertoCreationActivity(id, 'reviewing', expectedRevision);
+				void waitForMovementInspectionPaint()
+					.then(() => getConcertoDesignerFrameSnapshot('movement', id, undefined, expectedRevision))
 					.then((snapshot) =>
 						proc.sendMovementDesignerInspectionResponse?.(responseChannel, snapshot)
 					)
@@ -758,6 +1076,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		if (typeof proc?.onRequestMovementDesignerInteraction !== 'function') return;
 		const unsubscribe = proc.onRequestMovementDesignerInteraction(
 			(id, action, expectedRevision, responseChannel) => {
+				recordConcertoCreationActivity(id, 'testing', expectedRevision);
 				void interactWithConcertoDesignerFrame('movement', id, action, undefined, expectedRevision)
 					.then((result) => proc.sendMovementDesignerInteractionResponse?.(responseChannel, result))
 					.catch((error) =>

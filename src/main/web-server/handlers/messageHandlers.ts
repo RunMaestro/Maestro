@@ -137,8 +137,14 @@ import {
 	type CadenzaColor,
 } from '../../../shared/cadenza-types';
 import {
+	CONCERTO_CREATION_PHASES,
+	CONCERTO_PROGRESS_MAX_STEPS,
+	CONCERTO_PROGRESS_NOTE_VALUES,
 	MOVEMENT_OPS,
 	MOVEMENT_VIEW_TYPES,
+	type ConcertoCreationPhase,
+	type ConcertoProgressNote,
+	type ConcertoProgressNoteValue,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
@@ -239,6 +245,31 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean
 	) => Promise<{ success: boolean; tabId?: string }>;
+	enqueueCommand: (
+		sessionId: string,
+		command: string,
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string,
+		images?: string[],
+		background?: boolean
+	) => Promise<{
+		success: boolean;
+		tabId?: string;
+		queued?: boolean;
+		queuePosition?: number;
+		queueLength?: number;
+		itemId?: string;
+		error?: string;
+	}>;
+	listQueue: (sessionId?: string) => Promise<{
+		success: boolean;
+		queues: unknown[];
+		error?: string;
+	}>;
+	removeQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -560,6 +591,18 @@ export class WebSocketMessageHandler {
 
 			case 'new_ai_tab_with_prompt':
 				this.handleNewAITabWithPrompt(client, message);
+				break;
+
+			case 'enqueue_command':
+				this.handleEnqueueCommand(client, message);
+				break;
+
+			case 'list_queue':
+				this.handleListQueue(client, message);
+				break;
+
+			case 'remove_queue_item':
+				this.handleRemoveQueueItem(client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -2206,6 +2249,173 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				sendErrorResult(`Failed to create AI tab with prompt: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle enqueue_command message - hand a CLI prompt to the renderer's
+	 * authoritative execution queue. When the target session is busy the prompt
+	 * is appended to `session.executionQueue` (FIFO); when idle it is dispatched
+	 * immediately through the same path as a plain send. Used by
+	 * `maestro-cli dispatch --queue`. Unlike `send_command`, this never rejects a
+	 * busy target: waiting in line is the whole point of the mode.
+	 */
+	private handleEnqueueCommand(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const command = typeof message.command === 'string' ? message.command : '';
+		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
+		const requestedTabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+		const background = message.background === true;
+		const images = Array.isArray(message.images)
+			? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
+			: undefined;
+
+		logger.info(
+			`[Web] Received enqueue_command: session=${sessionId}, tab=${requestedTabId ?? 'active'}, commandLen=${command.length}, images=${images?.length ?? 0}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'enqueue_command_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		const hasImages = !!images && images.length > 0;
+		if (!sessionId || (!command && !hasImages)) {
+			sendErrorResult('Missing sessionId or command');
+			return;
+		}
+
+		if (!this.callbacks.getSessionDetail?.(sessionId)) {
+			sendErrorResult('Session not found');
+			return;
+		}
+
+		if (!this.callbacks.enqueueCommand) {
+			sendErrorResult('Enqueue not configured');
+			return;
+		}
+
+		this.callbacks
+			.enqueueCommand(sessionId, command ?? '', clientInputMode, requestedTabId, images, background)
+			.then((result) => {
+				this.send(client, {
+					type: 'enqueue_command_result',
+					success: result.success,
+					sessionId,
+					...(result.tabId ? { tabId: result.tabId } : {}),
+					...(result.queued !== undefined ? { queued: result.queued } : {}),
+					...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
+					...(result.queueLength !== undefined ? { queueLength: result.queueLength } : {}),
+					...(result.itemId ? { itemId: result.itemId } : {}),
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'enqueue_command', sessionId },
+				});
+				sendErrorResult(`Failed to enqueue command: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle list_queue message - return a snapshot of the renderer's execution
+	 * queue(s). Used by `maestro-cli queue list`. When sessionId is omitted, every
+	 * session with queued items is returned.
+	 */
+	private handleListQueue(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+		if (!this.callbacks.listQueue) {
+			this.send(client, {
+				type: 'list_queue_result',
+				success: false,
+				queues: [],
+				error: 'List queue not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		this.callbacks
+			.listQueue(sessionId)
+			.then((result) => {
+				this.send(client, {
+					type: 'list_queue_result',
+					success: result.success,
+					queues: result.queues,
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'list_queue', sessionId },
+				});
+				this.send(client, {
+					type: 'list_queue_result',
+					success: false,
+					queues: [],
+					error: `Failed to list queue: ${error.message}`,
+					requestId: message.requestId,
+				});
+			});
+	}
+
+	/**
+	 * Handle remove_queue_item message - drop a queued item by id from the
+	 * renderer's execution queue. Used by `maestro-cli queue remove`.
+	 */
+	private handleRemoveQueueItem(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+		if (!sessionId || !itemId) {
+			this.send(client, {
+				type: 'remove_queue_item_result',
+				success: false,
+				removed: false,
+				error: 'Missing sessionId or itemId',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		if (!this.callbacks.removeQueueItem) {
+			this.send(client, {
+				type: 'remove_queue_item_result',
+				success: false,
+				removed: false,
+				error: 'Remove queue item not configured',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		this.callbacks
+			.removeQueueItem(sessionId, itemId)
+			.then((result) => {
+				this.send(client, {
+					type: 'remove_queue_item_result',
+					success: result.success,
+					removed: result.removed,
+					...(result.error ? { error: result.error } : {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'web-server', handler: 'remove_queue_item', sessionId, itemId },
+				});
+				this.send(client, {
+					type: 'remove_queue_item_result',
+					success: false,
+					removed: false,
+					error: `Failed to remove queue item: ${error.message}`,
+					requestId: message.requestId,
+				});
 			});
 	}
 
@@ -4552,7 +4762,7 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Handle movement - add/update/move/remove/clear an item on the agent-driven
+	 * Handle movement - begin/add/update/move/remove/clear an item on the agent-driven
 	 * movement. Validates op + id, then hands a typed payload to the renderer via
 	 * the movementView callback (the `remote:movement` channel).
 	 */
@@ -4595,6 +4805,89 @@ export class WebSocketMessageHandler {
 			sendResult(false, `Movement ${op} requires HTML content when viewType is 'html'`);
 			return;
 		}
+		const title = typeof message.title === 'string' ? message.title.trim() : '';
+		if (op === 'begin') {
+			if (!title) {
+				sendResult(false, 'Movement begin requires a non-empty title');
+				return;
+			}
+			if (body !== undefined) {
+				sendResult(false, 'Movement begin uses a host-rendered shell and does not accept content');
+				return;
+			}
+			viewType = 'html';
+		}
+		let phase: ConcertoCreationPhase | undefined;
+		let step: number | undefined;
+		let steps: number | undefined;
+		let notes: ConcertoProgressNote[] | undefined;
+		if (op === 'progress') {
+			const rawPhase = typeof message.phase === 'string' ? message.phase : '';
+			if (!CONCERTO_CREATION_PHASES.includes(rawPhase as ConcertoCreationPhase)) {
+				sendResult(
+					false,
+					`Invalid or missing phase. Must be one of: ${CONCERTO_CREATION_PHASES.join(', ')}`
+				);
+				return;
+			}
+			if (!title) {
+				sendResult(false, 'Movement progress requires a non-empty title');
+				return;
+			}
+			phase = rawPhase as ConcertoCreationPhase;
+			if (message.notes !== undefined) {
+				if (!Array.isArray(message.notes) || message.notes.length === 0) {
+					sendResult(false, 'Invalid notes: expected a non-empty array');
+					return;
+				}
+				notes = [];
+				for (const [index, rawNote] of message.notes.entries()) {
+					if (!rawNote || typeof rawNote !== 'object') {
+						sendResult(false, `Invalid note ${index + 1}: expected an object`);
+						return;
+					}
+					const note = rawNote as Record<string, unknown>;
+					if (!CONCERTO_PROGRESS_NOTE_VALUES.includes(note.value as ConcertoProgressNoteValue)) {
+						sendResult(false, `Invalid note ${index + 1}: unsupported value`);
+						return;
+					}
+					const invalidModifier = (['dotted', 'triad', 'tie'] as const).find(
+						(modifier) => note[modifier] !== undefined && typeof note[modifier] !== 'boolean'
+					);
+					if (invalidModifier) {
+						sendResult(false, `Invalid note ${index + 1}: ${invalidModifier} must be boolean`);
+						return;
+					}
+					notes.push({
+						value: note.value as ConcertoProgressNoteValue,
+						...(note.dotted === true && { dotted: true }),
+						...(note.triad === true && { triad: true }),
+						...(note.tie === true && { tie: true }),
+					});
+				}
+				if (notes.at(-1)?.tie) {
+					sendResult(false, 'Invalid notes: the final note cannot tie forward');
+					return;
+				}
+			}
+			steps = message.steps === undefined ? (notes?.length ?? 1) : Number(message.steps);
+			step = message.step === undefined ? 1 : Number(message.step);
+			if (!Number.isInteger(steps) || steps < 1 || steps > CONCERTO_PROGRESS_MAX_STEPS) {
+				sendResult(
+					false,
+					`Invalid steps: must be an integer from 1 through ${CONCERTO_PROGRESS_MAX_STEPS}`
+				);
+				return;
+			}
+			if (!Number.isInteger(step) || step < 1 || step > steps) {
+				sendResult(false, `Invalid step: must be an integer from 1 through steps (${steps})`);
+				return;
+			}
+			if (notes && notes.length !== steps) {
+				sendResult(false, `Invalid notes: expected exactly ${steps} entries`);
+				return;
+			}
+		}
 
 		// Finite-only: JSON can smuggle Infinity (1e400) or NaN through `typeof
 		// v === 'number'`, which would become invalid CSS geometry downstream.
@@ -4615,8 +4908,12 @@ export class WebSocketMessageHandler {
 			y: num(message.y),
 			width: num(message.width),
 			height: num(message.height),
-			title: typeof message.title === 'string' ? message.title : undefined,
+			title: title || undefined,
 			body,
+			phase,
+			step,
+			steps,
+			notes,
 		};
 
 		if (!this.callbacks.movementView) {

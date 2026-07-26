@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { Session, Group, FocusArea } from '../../types';
 import type { SidebarExtraSelection } from '../../stores/uiStore';
 import type { StarredItem } from '../session/useStarredItems';
 import { orderGroupChatsForDisplay } from '../../utils/groupChatOrdering';
+import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 
 /**
  * Minimal group-chat shape the sidebar navigation needs. Mirrors the fields
@@ -21,67 +22,42 @@ export interface NavGroupChat {
  *
  * Note: editingSessionId/editingGroupId are checked in useMainKeyboardHandler.ts
  * before any navigation handlers are called, so they are not needed here.
+ *
+ * Left Bar sort/nav/starred fields are optional: when omitted, handlers read
+ * {@link useSidebarNavStore} via refs (no App subscription to those slices).
  */
 export interface UseKeyboardNavigationDeps {
-	/** All sessions sorted in visual display order */
-	sortedSessions: Session[];
-	/** Sessions in visual navigation order (bookmarks first, then groups, then ungrouped) */
-	navSessions: Session[];
-	/** Number of items in the bookmarks section of navSessions */
-	bookmarkNavSize: number;
-	/** Current selected sidebar index (into navSessions; -1 when an extra section is selected) */
+	/** @deprecated Prefer sidebarNavStore; optional for App. */
+	sortedSessions?: Session[];
+	/** @deprecated Prefer sidebarNavStore; optional for App. */
+	navSessions?: Session[];
+	/** @deprecated Prefer sidebarNavStore; optional for App. */
+	bookmarkNavSize?: number;
 	selectedSidebarIndex: number;
-	/** Setter for selected sidebar index */
 	setSelectedSidebarIndex: React.Dispatch<React.SetStateAction<number>>;
-	/**
-	 * Keyboard cursor when it lands on a Starred / Group Chat row (the two Left
-	 * Bar sections that are not plain agents). null when the cursor is on a plain
-	 * agent row, in which case selectedSidebarIndex is authoritative.
-	 */
 	sidebarExtraSelection: SidebarExtraSelection | null;
-	/** Setter for the extra-section cursor */
 	setSidebarExtraSelection: (selection: SidebarExtraSelection | null) => void;
-	/** Active session ID */
 	activeSessionId: string | null;
-	/** Setter for active session ID */
 	setActiveSessionId: (id: string) => void;
-	/** Current focus area */
 	activeFocus: FocusArea;
-	/** Setter for focus area */
 	setActiveFocus: React.Dispatch<React.SetStateAction<FocusArea>>;
-	/** Session groups */
 	groups: Group[];
-	/** Setter for groups (for collapse/expand) */
 	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
-	/** Whether bookmarks section is collapsed */
 	bookmarksCollapsed: boolean;
-	/** Setter for bookmarks collapsed state */
 	setBookmarksCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-	/** Input ref for focus management */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
-	/** Terminal output ref for escape handling */
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>;
-
-	// --- Starred Sessions + Group Chats sections (top and bottom of the Left Bar) ---
-	/** Starred rows in rendered (display-name) order. */
-	starredItems: StarredItem[];
-	/** Activate a starred row (focus its tab, or resume a closed session). */
-	activateStarredItem: (item: StarredItem) => void | Promise<void>;
-	/** Whether the Starred Sessions section is collapsed. */
+	/** @deprecated Prefer sidebarNavStore; optional for App. */
+	starredItems?: StarredItem[];
+	/** @deprecated Prefer sidebarNavStore; optional for App. */
+	activateStarredItem?: (item: StarredItem) => void | Promise<void>;
 	starredSectionCollapsed: boolean;
-	/** Setter for the Starred Sessions collapsed state. */
 	setStarredSectionCollapsed: (collapsed: boolean) => void;
-	/** Group chats (unsorted; this hook applies the same sort GroupChatList uses). */
 	groupChats: NavGroupChat[];
-	/** Open/activate a group chat. */
 	handleOpenGroupChat: (id: string) => void;
-	/** Whether the Group Chats section is expanded. */
 	groupChatsExpanded: boolean;
-	/** Setter for the Group Chats expanded state. */
 	setGroupChatsExpanded: (expanded: boolean) => void;
-	/** Whether group chats sort alphabetically (vs most-recent) - matches the toggle. */
 	groupChatSortAlphabetical: boolean;
-	/** Unread-agents filter: hides the starred + group-chat sections when active. */
 	showUnreadAgentsOnly: boolean;
 }
 
@@ -144,9 +120,9 @@ export function useKeyboardNavigation(
 	deps: UseKeyboardNavigationDeps
 ): UseKeyboardNavigationReturn {
 	const {
-		sortedSessions,
-		navSessions,
-		bookmarkNavSize,
+		sortedSessions: sortedSessionsProp,
+		navSessions: navSessionsProp,
+		bookmarkNavSize: bookmarkNavSizeProp,
 		selectedSidebarIndex,
 		setSelectedSidebarIndex,
 		sidebarExtraSelection,
@@ -161,8 +137,8 @@ export function useKeyboardNavigation(
 		setBookmarksCollapsed,
 		inputRef,
 		terminalOutputRef,
-		starredItems,
-		activateStarredItem,
+		starredItems: starredItemsProp,
+		activateStarredItem: activateStarredItemProp,
 		starredSectionCollapsed,
 		setStarredSectionCollapsed,
 		groupChats,
@@ -172,6 +148,13 @@ export function useKeyboardNavigation(
 		groupChatSortAlphabetical,
 		showUnreadAgentsOnly,
 	} = deps;
+
+	const navSnap = useSidebarNavStore.getState();
+	const sortedSessions = sortedSessionsProp ?? navSnap.sortedSessions;
+	const navSessions = navSessionsProp ?? navSnap.navSessions;
+	const bookmarkNavSize = bookmarkNavSizeProp ?? navSnap.bookmarkNavSize;
+	const starredItems = starredItemsProp ?? navSnap.starredItems;
+	const activateStarredItem = activateStarredItemProp ?? navSnap.activateStarredItem;
 
 	// Use refs for values that change frequently to avoid stale closures
 	const sortedSessionsRef = useRef(sortedSessions);
@@ -201,6 +184,9 @@ export function useKeyboardNavigation(
 	const starredItemsRef = useRef(starredItems);
 	starredItemsRef.current = starredItems;
 
+	const activateStarredItemRef = useRef(activateStarredItem);
+	activateStarredItemRef.current = activateStarredItem;
+
 	const starredSectionCollapsedRef = useRef(starredSectionCollapsed);
 	starredSectionCollapsedRef.current = starredSectionCollapsed;
 
@@ -215,6 +201,49 @@ export function useKeyboardNavigation(
 
 	const showUnreadAgentsOnlyRef = useRef(showUnreadAgentsOnly);
 	showUnreadAgentsOnlyRef.current = showUnreadAgentsOnly;
+
+	// When App omits nav/starred props, keep refs fresh without re-rendering App.
+	// useLayoutEffect: run after SidebarNavSync's layout publish, sync refs before paint.
+	useLayoutEffect(() => {
+		if (
+			sortedSessionsProp !== undefined &&
+			navSessionsProp !== undefined &&
+			bookmarkNavSizeProp !== undefined &&
+			starredItemsProp !== undefined &&
+			activateStarredItemProp !== undefined
+		) {
+			return;
+		}
+
+		const syncFromStore = (state: ReturnType<typeof useSidebarNavStore.getState>) => {
+			if (sortedSessionsProp === undefined) {
+				sortedSessionsRef.current = state.sortedSessions;
+			}
+			if (navSessionsProp === undefined) {
+				navSessionsRef.current = state.navSessions;
+			}
+			if (bookmarkNavSizeProp === undefined) {
+				bookmarkNavSizeRef.current = state.bookmarkNavSize;
+			}
+			if (starredItemsProp === undefined) {
+				starredItemsRef.current = state.starredItems;
+			}
+			if (activateStarredItemProp === undefined) {
+				activateStarredItemRef.current = state.activateStarredItem;
+			}
+		};
+
+		// Subscribe alone misses the projection SidebarNavSync already published
+		// in layout (subscribe only fires on later writes). Sync once immediately.
+		syncFromStore(useSidebarNavStore.getState());
+		return useSidebarNavStore.subscribe(syncFromStore);
+	}, [
+		sortedSessionsProp,
+		navSessionsProp,
+		bookmarkNavSizeProp,
+		starredItemsProp,
+		activateStarredItemProp,
+	]);
 
 	/**
 	 * Build the full top-to-bottom Left Bar order. Starred rows and group chats
@@ -572,7 +601,7 @@ export function useKeyboardNavigation(
 			if (extra) {
 				if (extra.kind === 'starred') {
 					const item = starredItemsRef.current.find((s) => s.key === extra.key);
-					if (item) void activateStarredItem(item);
+					if (item) void activateStarredItemRef.current(item);
 				} else {
 					handleOpenGroupChat(extra.id);
 				}
@@ -586,7 +615,7 @@ export function useKeyboardNavigation(
 			}
 			return true;
 		},
-		[setActiveSessionId, activateStarredItem, handleOpenGroupChat]
+		[setActiveSessionId, handleOpenGroupChat]
 	);
 
 	/**

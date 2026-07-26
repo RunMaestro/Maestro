@@ -1,7 +1,15 @@
 /**
  * Renderer-side platform detection helpers.
- * Uses `window.maestro.platform` (set via Electron preload bridge)
- * instead of navigator.userAgent / navigator.platform which are unreliable.
+ *
+ * Reads `window.maestro.platform` (set via the Electron preload bridge), which
+ * is the only authoritative source in the renderer:
+ *   - navigator.userAgent / navigator.platform are unreliable and deprecated.
+ *   - `process.platform` is the string 'browser', hard-coded by the renderer's
+ *     polyfill (`src/renderer/public/process-shim.js`).
+ *
+ * Renderer code should prefer these helpers. `src/shared/platformDetection.ts`
+ * covers code that also runs in the main process; it reads `process.platform`
+ * first (rejecting the 'browser' sentinel) and falls back to this same bridge.
  */
 
 function getPlatform(): string {

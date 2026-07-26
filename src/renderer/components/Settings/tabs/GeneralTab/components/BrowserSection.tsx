@@ -4,6 +4,7 @@ import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
 import { DEFAULT_BROWSER_HOME_URL } from '../utils';
+import { formatMetaKeyName } from '../../../../../utils/shortcutFormatter';
 
 type BrowserKeepAliveMode = 'off' | 'recent' | 'all';
 
@@ -40,7 +41,7 @@ export function BrowserSection({
 				icon={ExternalLink}
 				sectionLabel="Default Browser"
 				title="Use system browser for links"
-				description="Controls the default browser for clicking links. Use Ctrl+Click on URLs to get a context menu and choose the specific browser."
+				description={`Controls the default browser for clicking links. Use ${formatMetaKeyName()}+Click on URLs to get a context menu and choose the specific browser.`}
 				checked={useSystemBrowser}
 				onChange={setUseSystemBrowser}
 				theme={theme}

@@ -34,7 +34,12 @@ import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingB
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
-import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	computeQueuedTabIds,
+	computeUnreadGroupIds,
+	focusAiTabInSession,
+} from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
@@ -295,6 +300,7 @@ export const MainPanel = React.memo(
 			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
+			onFileTabRename,
 			onNewFileTab,
 			onNewBrowserTab,
 			onBrowserTabSelect,
@@ -420,6 +426,10 @@ export const MainPanel = React.memo(
 			},
 			[activeSession, renameGroupAction]
 		);
+
+		// Set a group chip's emoji from the shared emoji selector. Empty string clears
+		// it back to the default grid glyph. The tab-store action persists it.
+		const setGroupEmojiAction = useTabStore((s) => s.setGroupEmoji);
 
 		// Break a group apart into standalone tabs (the confirm dialog lives in the
 		// group chip). Promotes every pane back to the tab bar in left-to-right order,
@@ -859,6 +869,16 @@ export const MainPanel = React.memo(
 			[showUnreadOnly, activeSession]
 		);
 
+		// Ids of AI tabs with queued execution items, so the TabBar keeps them visible under
+		// the unread filter (pending queued work needs attention). Undefined outside the filter.
+		// Depend on the executionQueue array (not the full session) so streaming/token updates
+		// that leave the queue untouched preserve the Set identity and TabBar's memoization.
+		const executionQueue = activeSession?.executionQueue;
+		const queuedTabIds = useMemo(
+			() => (showUnreadOnly && executionQueue ? computeQueuedTabIds(executionQueue) : undefined),
+			[showUnreadOnly, executionQueue]
+		);
+
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
@@ -869,16 +889,17 @@ export const MainPanel = React.memo(
 			}
 		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
-		// Memoized session click handler for InputArea's ThinkingStatusPill
-		// Avoids creating new function reference on every render
+		// Memoized session click handler for InputArea's ThinkingStatusPill.
+		// Targets the clicked session by ID rather than routing through onTabSelect
+		// (which resolves whichever agent is active at event time) - the pill lists
+		// thinking tabs across ALL agents, so a cross-agent jump must not depend on
+		// the active-session switch having landed first.
 		const handleSessionClick = useCallback(
 			(sessionId: string, tabId?: string) => {
 				setActiveSessionId(sessionId);
-				if (tabId && onTabSelect) {
-					onTabSelect(tabId);
-				}
+				updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 			},
-			[setActiveSessionId, onTabSelect]
+			[setActiveSessionId]
 		);
 
 		// File preview handlers (memos + callbacks)
@@ -1022,7 +1043,7 @@ export const MainPanel = React.memo(
 			return (
 				<ErrorBoundary>
 					<div
-						className="flex-1 flex flex-col relative isolate"
+						className="flex-1 h-full min-h-0 max-h-full flex flex-col relative isolate overflow-hidden"
 						style={{
 							minWidth: '400px',
 							backgroundColor: theme.colors.bgMain,
@@ -1088,6 +1109,7 @@ export const MainPanel = React.memo(
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
@@ -1100,6 +1122,7 @@ export const MainPanel = React.memo(
 									activeBrowserTabId={pianolaView === 'dashboard' ? null : activeBrowserTabId}
 									onFileTabSelect={pianolaTabHandlers.onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
 									onNewFileTab={pianolaTabHandlers.onNewFileTab}
 									onNewBrowserTab={pianolaTabHandlers.onNewBrowserTab}
 									onBrowserTabSelect={pianolaTabHandlers.onBrowserTabSelect}
@@ -1167,6 +1190,7 @@ export const MainPanel = React.memo(
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
@@ -1180,6 +1204,7 @@ export const MainPanel = React.memo(
 									activeBrowserTabId={activeBrowserTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onFileTabRename={onFileTabRename}
 									onNewFileTab={onNewFileTab}
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}
@@ -1211,6 +1236,7 @@ export const MainPanel = React.memo(
 									activeGroupId={activeSession.activeGroupId}
 									onGroupSelect={handleGroupSelect}
 									onGroupRename={handleGroupRename}
+									onGroupSetEmoji={setGroupEmojiAction}
 									onGroupBreakApart={handleGroupBreakApart}
 									// Accessibility
 									colorBlindMode={colorBlindMode}

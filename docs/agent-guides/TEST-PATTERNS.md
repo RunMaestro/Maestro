@@ -145,9 +145,16 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 	formatKey: vi.fn((key) => SHORTCUT_KEY_MAP[key] || key.toUpperCase()),
 	formatShortcutKeys: vi.fn((keys, sep = '+') => keys.map(formatKey).join(sep)),
 	formatMetaKey: vi.fn(() => 'Ctrl'),
+	formatMetaKeyName: vi.fn(() => 'Ctrl'),
 	isMacOS: vi.fn(() => false),
 }));
 ```
+
+A `vi.mock` factory **replaces the whole module**, so any export the component
+imports but the factory omits comes back `undefined` and the render dies with
+`X is not a function`. When you add an export to `shortcutFormatter.ts`, add it
+to `src/__tests__/setup.ts` and to every per-file override that re-mocks the
+module.
 
 ### 3. Browser APIs
 

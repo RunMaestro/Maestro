@@ -1,11 +1,28 @@
-import type { MouseEvent } from 'react';
+import type { MouseEvent, PointerEvent } from 'react';
 import type { ModalResizeDirection } from '../../hooks/ui/useResizableModal';
 
-interface ResizeHandlesProps {
-	onResizeStart: (direction: ModalResizeDirection, event: MouseEvent) => void;
+interface ResizeHandlesCommonProps {
 	disabled?: boolean;
 	accentColor?: string;
+	/** Keep hit targets inside a clipping container instead of straddling its border. */
+	contained?: boolean;
+	testIdPrefix?: string;
 }
+
+type ResizeHandlesProps = ResizeHandlesCommonProps &
+	(
+		| {
+				onResizeStart: (direction: ModalResizeDirection, event: MouseEvent) => void;
+				onPointerResizeStart?: never;
+		  }
+		| {
+				onResizeStart?: never;
+				onPointerResizeStart: (
+					direction: ModalResizeDirection,
+					event: PointerEvent<HTMLDivElement>
+				) => void;
+		  }
+	);
 
 const HANDLE_STYLES: Record<ModalResizeDirection, string> = {
 	n: 'top-0 left-4 right-4 h-2 -translate-y-1 cursor-ns-resize',
@@ -16,6 +33,17 @@ const HANDLE_STYLES: Record<ModalResizeDirection, string> = {
 	sw: 'bottom-0 left-0 h-4 w-4 -translate-x-1 translate-y-1 cursor-nesw-resize',
 	w: 'top-4 bottom-4 left-0 w-2 -translate-x-1 cursor-ew-resize',
 	nw: 'top-0 left-0 h-4 w-4 -translate-x-1 -translate-y-1 cursor-nwse-resize',
+};
+
+const CONTAINED_HANDLE_STYLES: Record<ModalResizeDirection, string> = {
+	n: 'top-0 left-3 right-3 h-2 cursor-ns-resize',
+	ne: 'top-0 right-0 h-3 w-3 cursor-nesw-resize',
+	e: 'top-3 bottom-3 right-0 w-2 cursor-ew-resize',
+	se: 'bottom-0 right-0 h-3 w-3 cursor-nwse-resize',
+	s: 'bottom-0 left-3 right-3 h-2 cursor-ns-resize',
+	sw: 'bottom-0 left-0 h-3 w-3 cursor-nesw-resize',
+	w: 'top-3 bottom-3 left-0 w-2 cursor-ew-resize',
+	nw: 'top-0 left-0 h-3 w-3 cursor-nwse-resize',
 };
 
 const DIRECTIONS: ModalResizeDirection[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
@@ -35,10 +63,14 @@ function resolveHandleBackground(accentColor?: string): string {
 
 export function ResizeHandles({
 	onResizeStart,
+	onPointerResizeStart,
 	disabled = false,
 	accentColor,
+	contained = false,
+	testIdPrefix = 'modal-resize-handle',
 }: ResizeHandlesProps) {
 	if (disabled) return null;
+	const handleStyles = contained ? CONTAINED_HANDLE_STYLES : HANDLE_STYLES;
 
 	return (
 		<>
@@ -46,11 +78,19 @@ export function ResizeHandles({
 				<div
 					key={direction}
 					aria-hidden="true"
-					data-modal-resize-handle={direction}
-					data-testid={`modal-resize-handle-${direction}`}
-					className={`absolute z-20 border-0 bg-transparent p-0 opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 ${HANDLE_STYLES[direction]}`}
+					data-resize-handle={direction}
+					data-modal-resize-handle={testIdPrefix === 'modal-resize-handle' ? direction : undefined}
+					data-testid={`${testIdPrefix}-${direction}`}
+					className={`absolute z-20 border-0 bg-transparent p-0 opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 ${handleStyles[direction]}`}
 					style={{ backgroundColor: resolveHandleBackground(accentColor) }}
-					onMouseDown={(event) => onResizeStart(direction, event)}
+					onMouseDown={
+						onPointerResizeStart || !onResizeStart
+							? undefined
+							: (event) => onResizeStart(direction, event)
+					}
+					onPointerDown={
+						onPointerResizeStart ? (event) => onPointerResizeStart(direction, event) : undefined
+					}
 				/>
 			))}
 		</>

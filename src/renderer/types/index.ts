@@ -81,6 +81,7 @@ export type UsageDashboardViewMode =
 	| 'overview'
 	| 'agents'
 	| 'agent-overview'
+	| 'tokens'
 	| 'activity'
 	| 'autorun'
 	| 'anthropic-usage'
@@ -96,7 +97,7 @@ export type SettingsTab =
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
-export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
+export type LLMProvider = 'openrouter' | 'requesty' | 'anthropic' | 'ollama';
 
 // Inline wizard types for per-session/per-tab wizard state
 export type WizardMode = 'new' | 'iterate' | null;
@@ -249,6 +250,13 @@ export interface LogEntry {
 			input?: unknown;
 			output?: unknown;
 		};
+		/**
+		 * For tool entries produced inside a subagent: the `toolCallId` of the
+		 * parent tool call that spawned it (claude-code's Task tool). The
+		 * transcript nests these badges under the matching parent entry; entries
+		 * whose parent is not in the log render flat. Only claude-code sets it.
+		 */
+		parentToolUseId?: string;
 		hiddenProgress?: {
 			kind: 'thinking' | 'tool';
 			toolName?: string;
@@ -619,6 +627,9 @@ export interface FilePreviewTab {
 	id: string; // Unique tab ID (UUID)
 	path: string; // Full file path
 	name: string; // Filename without extension (displayed as tab name)
+	// User-assigned tab name. When set, it locks the displayed label and overrides
+	// both the filename and the ambiguity-disambiguated label until the user clears it.
+	customName?: string;
 	extension: string; // File extension with dot (e.g., '.md', '.ts') - shown as badge
 	content: string; // File content (stored directly for simplicity - file previews are typically small)
 	scrollTop: number; // Saved scroll position
@@ -778,6 +789,13 @@ export type PaneRects = Map<string, PaneRect>;
 export interface TabGroup {
 	id: string;
 	name: string;
+	/**
+	 * Optional emoji shown on the group's chip in place of the default grid glyph.
+	 * Picked via the shared emoji selector (the same one agent-list groups use).
+	 * Undefined/empty falls back to the grid icon. Rides `Session.tabGroups` through
+	 * persistence, so it survives restarts.
+	 */
+	emoji?: string;
 	layout: PanelLayoutNode;
 	focusedPaneId: string | null;
 	createdAt: number;
@@ -1124,9 +1142,9 @@ export interface ProcessConfig {
 	};
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
-	// Windows command line length workaround
-	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
-	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
+	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
+	// neither of which a renderer (possibly a browser on another OS) can know.
 	// Set only on a TTSR corrective respawn: the id from `ttsr:triggered`, echoed
 	// back so main recognises its own corrective turn by correlation rather than
 	// by inspecting the prompt.

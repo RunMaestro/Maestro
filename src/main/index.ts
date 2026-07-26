@@ -48,6 +48,8 @@ import type { DecisionPair } from '../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../shared/pianola/types';
 import { spawn, execFile, type ChildProcess } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
+import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
+import { seedBundledPlugins } from './plugins/bundled-plugins';
 import { SpawnBinaryRegistry } from './plugins/spawn-binary-registry';
 import { transcriptReadEgressConflict } from '../shared/plugins/capability-policy';
 import { evaluateScheduledDispatch } from '../shared/plugins/plugin-dispatch-gate';
@@ -79,6 +81,7 @@ import {
 	isPluginCapability,
 	isHighRiskActCapability,
 	describeUnattendedConsent,
+	isValidAllowlistMember,
 } from '../shared/plugins/permissions';
 import {
 	createAuthorizationStore,
@@ -1629,7 +1632,12 @@ app
 		pluginAuthStore = authStore;
 		const trustedKeysFor = (): string[] => {
 			const keys = store.get('pluginTrustedKeys', []) as unknown;
-			return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
+			const userKeys = Array.isArray(keys)
+				? keys.filter((k): k is string => typeof k === 'string')
+				: [];
+			// Merge the built-in publisher anchor so a signed, bundled first-party
+			// plugin is trusted without the user adding a key (publisher-keys.ts).
+			return resolveTrustedKeys(userKeys);
 		};
 		// The live grant source every enforcement seam now reads (sealed, identity-
 		// bound, anti-rollback) instead of the forgeable on-disk store.
@@ -1677,6 +1685,12 @@ app
 		}
 		setFirstPartyBridges(firstPartyBridges);
 
+		// Issue #1250 visibility: throttle the "dispatch blocked" toast per plugin
+		// so a message loop hitting an out-of-date allowlist can't spam the user.
+		// The audit log (in onDecision) still records every denial.
+		const DISPATCH_DENY_TOAST_THROTTLE_MS = 60_000;
+		const dispatchDenyToastAt = new Map<string, number>();
+
 		const pluginBroker = new PermissionBroker({
 			getGrants: (pluginId) => grantsOf(pluginId),
 			// Structurally exclude the entire Maestro userData/config tree (grants,
@@ -1686,12 +1700,35 @@ app
 			// real path so no plugin fs scope can ever reach it.
 			protectedPaths: () => [app.getPath('userData')],
 			onDecision: (pluginId, method, decision) => {
-				if (!decision.allowed) {
-					logger.warn(
-						`[Plugins] denied ${method} for "${pluginId}": ${decision.reason ?? ''}`,
-						'[Plugins]'
-					);
+				if (decision.allowed) return;
+				logger.warn(
+					`[Plugins] denied ${method} for "${pluginId}": ${decision.reason ?? ''}`,
+					'[Plugins]'
+				);
+				// A denied agents.dispatch means an out-of-date allowlist: the plugin
+				// swallows the RPC error and nothing surfaces to the operator (the
+				// #1250 bug - 7 of 9 bound agents silently dead). Raise a throttled
+				// toast pointing at the host-managed fix.
+				if (method !== 'agents.dispatch') return;
+				// Only a stale ALLOW LIST is actionable in Settings. If the plugin holds
+				// no agents:dispatch grant at all (never consented, revoked, or invalid),
+				// the editor is hidden and an "add the agent" toast would point at a fix
+				// the user cannot perform - that denial is a consent problem, logged above.
+				if (!grantsOf(pluginId).some((g) => g.capability === 'agents:dispatch')) return;
+				const now = Date.now();
+				if (now - (dispatchDenyToastAt.get(pluginId) ?? 0) < DISPATCH_DENY_TOAST_THROTTLE_MS) {
+					return;
 				}
+				dispatchDenyToastAt.set(pluginId, now);
+				if (!mainWindow || !isWebContentsAvailable(mainWindow)) return;
+				const name =
+					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.manifest?.name ??
+					pluginId;
+				mainWindow.webContents.send('remote:notifyToast', {
+					title: 'Plugin dispatch blocked',
+					message: `"${name}" tried to dispatch to an agent that is not in its allow list. Add the agent in Settings -> Plugins.`,
+					color: 'orange' as const,
+				});
 			},
 		});
 
@@ -2357,6 +2394,17 @@ app
 					if (operation === 'remove') return pluginHostViews.remove(pluginId, localId);
 					return blocks === undefined ? false : pluginHostViews.update(pluginId, localId, blocks);
 				},
+				// ui.panelPost: resolve the caller's LOCAL panel id against its own
+				// declarations (a foreign or already-namespaced id never matches), then
+				// broadcast the validated, size-capped JSON to every renderer. The
+				// renderer hands it to the matching panel webview; nothing evaluates it.
+				getPanel: (pluginId, localId) =>
+					pluginManager
+						?.getContributions()
+						.panels.find((p) => p.pluginId === pluginId && p.localId === localId) ?? null,
+				panelPost: (pluginId, panelId, data) => {
+					safeSend('plugins:panel-data', { pluginId, panelId, data });
+				},
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
 						id?: string;
@@ -2462,10 +2510,7 @@ app
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return ef.plugins === true;
 			},
-			trustedKeys: () => {
-				const keys = store.get('pluginTrustedKeys', []) as unknown;
-				return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : [];
-			},
+			trustedKeys: trustedKeysFor,
 			sandbox: sandboxHost,
 			// Gate capability-scoped contributions by the SAME live grant source the
 			// broker uses: the sealed authorization ledger.
@@ -2652,6 +2697,61 @@ app
 			return { ok: false, reason: 'cancelled' as const };
 		});
 
+		// Host-managed dispatch allowlist (issue #1250). The USER, a DIFFERENT
+		// principal from the plugin, edits which agents an already-consented
+		// agents:dispatch grant may target. The host re-mints the grant's SCOPE
+		// into the sealed ledger through the same authoritative path as
+		// consent/revoke; the plugin is never involved and can never reach this.
+		// Only the trusted main renderer may ask (like request-consent). The
+		// capability, the unattended flag, and the plugin identity are untouched -
+		// this only widens/narrows the scope of a capability the user already
+		// granted, so a new agent needs no plugin re-pack or re-sign.
+		ipcMain.handle(
+			'plugins:set-agent-allowlist',
+			async (event, pluginId: unknown, agentIds: unknown) => {
+				if (event.sender !== mainWindow?.webContents) {
+					throw new Error('UntrustedAllowlistRequester');
+				}
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				if (ef.plugins !== true) throw new Error('PluginsDisabled');
+				if (typeof pluginId !== 'string' || !PLUGIN_ID_PATTERN.test(pluginId)) {
+					throw new Error('InvalidPluginId');
+				}
+				if (!Array.isArray(agentIds)) throw new Error('InvalidAgentIds');
+				// The manifest must actually declare agents:dispatch - the host manages
+				// the SCOPE of a declared capability, never one the plugin never asked for.
+				const requested = pluginManager?.getRequestedPermissions(pluginId) ?? [];
+				if (!requested.some((r) => r.capability === 'agents:dispatch')) {
+					throw new Error('DispatchNotRequested');
+				}
+				// Intersect the submitted ids with the live session set (only a real
+				// agent is dispatchable) and drop any token that could corrupt the
+				// comma-joined scope. Deduped, order-stable.
+				const sessions = sessionsStore.get('sessions', []) as Array<{ id?: string }>;
+				const existing = new Set(
+					sessions.map((s) => s?.id).filter((id): id is string => typeof id === 'string')
+				);
+				const seen = new Set<string>();
+				const members: string[] = [];
+				for (const raw of agentIds) {
+					if (!isValidAllowlistMember(raw) || !existing.has(raw) || seen.has(raw)) continue;
+					seen.add(raw);
+					members.push(raw);
+				}
+				// Fails when the plugin holds no agents:dispatch grant yet (not
+				// consented) - the user must approve the capability at the consent
+				// window before its scope can be edited here.
+				if (!authStore.setAllowlistScope(pluginId, 'agents:dispatch', members)) {
+					throw new Error('DispatchNotGranted');
+				}
+				logger.info(
+					`[Plugins] agents:dispatch allowlist for "${pluginId}" set to ${members.length} agent(s): ${members.join(', ') || '(none)'}`,
+					'[PluginAudit]'
+				);
+				return { requested, granted: authStore.readGrants(pluginId) };
+			}
+		);
+
 		// Supervised plugin scheduler: fires plugins' declarative cue triggers
 		// (interval / daily-time) on a poll loop. Self-gates on the plugins flag.
 		// notify -> toast. Dispatch is risk-gated (evaluateScheduledDispatch): a
@@ -2826,6 +2926,13 @@ app
 		// so this is safe to call unconditionally.
 		if (pluginManager) {
 			try {
+				// Copy trusted bundled first-party plugins into the plugins dir before
+				// discovery. Trust-gated + idempotent, so it is safe to run every boot.
+				seedBundledPlugins({
+					trustedKeys: trustedKeysFor,
+					onLog: (message) => logger.info(message, 'Startup'),
+					onError: (error) => void captureException(error),
+				});
 				pluginManager.refresh();
 				pluginManager.startWatching();
 			} catch (err) {
@@ -3149,6 +3256,7 @@ function setupIpcHandlers() {
 		getAgentDetector: () => agentDetector,
 		sessionsStore,
 		agentConfigsStore,
+		settingsStore: store,
 		sshStore: createSshRemoteStoreAdapter(store),
 		getCustomEnvVars: getCustomEnvVarsForAgent,
 		safeSend,
@@ -3337,9 +3445,17 @@ function setupIpcHandlers() {
 					),
 			});
 		} catch (err) {
-			void captureException(err instanceof Error ? err : new Error(String(err)), {
-				operation: 'startup:coworkingBridge',
-			});
+			// EADDRINUSE means another Maestro process already owns the bridge
+			// socket/pipe for this userData slug. Bridge startup is deliberately
+			// non-fatal (the feature degrades to "not available" until the next
+			// launch), so a second instance losing the race is an expected
+			// outcome rather than a defect worth reporting (MAESTRO-WH).
+			const code = (err as NodeJS.ErrnoException | null)?.code;
+			if (code !== 'EADDRINUSE') {
+				void captureException(err instanceof Error ? err : new Error(String(err)), {
+					operation: 'startup:coworkingBridge',
+				});
+			}
 			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
 		}
 	})();

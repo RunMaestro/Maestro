@@ -23,7 +23,7 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
 import { logger } from '../../utils/logger';
 
@@ -435,16 +435,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					activeTabId: targetTab?.id,
 				});
 
-				// Determine whether to send the prompt via stdin on Windows to avoid
-				// exceeding the command line length limit. Remote commands may include
-				// substituted slash command prompts that can be very large.
-				const isSshSession = Boolean(session.sessionSshRemoteConfig?.enabled);
 				const remoteImages = images && images.length > 0 ? images : undefined;
-				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-					isSshSession,
-					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages: !!remoteImages,
-				});
 
 				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
@@ -532,10 +523,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-					// Windows stdin handling - slash command prompts after template
-					// substitution can exceed shell command line limits
-					sendPromptViaStdin,
-					sendPromptViaStdinRaw,
 				});
 
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);

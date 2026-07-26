@@ -37,7 +37,7 @@ import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErrorRecovery';
 import { gitService } from '../../../renderer/services/git';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
+import { createMockAITab as createBaseMockAITab, createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
@@ -1275,6 +1275,56 @@ describe('useModalHandlers', () => {
 			});
 
 			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
+		});
+
+		it('handleQuickActionsRenameTab targets the active file tab, pre-filling its custom name', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', name: 'notes', customName: 'My Notes' });
+			const session = createMockSession({
+				id: 'session-1',
+				// File tabs keep inputMode 'ai' but set activeFileTabId; the handler
+				// must target the visible file tab, not the hidden AI tab.
+				inputMode: 'ai',
+				activeTabId: 'tab-1',
+				activeFileTabId: 'file-1',
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				filePreviewTabs: [fileTab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleQuickActionsRenameTab();
+			});
+
+			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
+			const renameData = useModalStore.getState().getData('renameTab');
+			expect(renameData?.tabId).toBe('file-1');
+			expect(renameData?.initialName).toBe('My Notes');
+		});
+
+		it('handleQuickActionsRenameTab pre-fills empty when the file tab has no custom name', () => {
+			const fileTab = createMockFileTab({ id: 'file-1', name: 'notes', customName: undefined });
+			const session = createMockSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				activeFileTabId: 'file-1',
+				filePreviewTabs: [fileTab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleQuickActionsRenameTab();
+			});
+
+			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
+			const renameData = useModalStore.getState().getData('renameTab');
+			expect(renameData?.tabId).toBe('file-1');
+			expect(renameData?.initialName).toBe('');
 		});
 
 		it('handleQuickActionsOpenTabSwitcher opens tab switcher when session has aiTabs', () => {

@@ -27,9 +27,11 @@ import {
 	COLORBLIND_AGENT_PALETTE,
 } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
 
 // Metric display mode
-type MetricMode = 'count' | 'duration';
+type MetricMode = ChartMetricMode;
 
 type SourceKey = 'interactive' | 'auto' | 'cue';
 
@@ -45,6 +47,8 @@ interface SourceData {
 export interface CueSourceTotals {
 	occurrences: number;
 	totalDurationMs: number;
+	/** Input + output tokens across Cue runs, for the chart's Tokens mode. */
+	tokens: number;
 }
 
 interface SourceDistributionChartProps {
@@ -160,6 +164,7 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 	cueTotals = null,
 }: SourceDistributionChartProps) {
 	const [metricMode, setMetricMode] = useState<MetricMode>('count');
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 	const [hoveredSource, setHoveredSource] = useState<SourceKey | null>(null);
 
 	// Calculate source data based on mode
@@ -176,9 +181,19 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 		const autoDuration = queryCount > 0 ? (autoCount / queryCount) * data.totalDuration : 0;
 		const cueDuration = cueTotals?.totalDurationMs ?? 0;
 
-		const interactiveValue = metricMode === 'count' ? userCount : interactiveDuration;
-		const autoValue = metricMode === 'count' ? autoCount : autoDuration;
-		const cueValue = metricMode === 'count' ? cueCount : cueDuration;
+		// Token totals come from the transcript-derived series (user/auto by how the
+		// session was started) and, for Cue, from Cue's own stats - mirroring how
+		// the count and duration slices above are already sourced independently.
+		const interactiveTokens = tokenSeries?.bySource?.user ?? 0;
+		const autoTokens = tokenSeries?.bySource?.auto ?? 0;
+		const cueTokens = cueTotals?.tokens ?? 0;
+
+		const pick = (count: number, duration: number, tokens: number) =>
+			metricMode === 'count' ? count : metricMode === 'tokens' ? tokens : duration;
+
+		const interactiveValue = pick(userCount, interactiveDuration, interactiveTokens);
+		const autoValue = pick(autoCount, autoDuration, autoTokens);
+		const cueValue = pick(cueCount, cueDuration, cueTokens);
 
 		const total = interactiveValue + autoValue + cueValue;
 		const pct = (v: number) => (total > 0 ? (v / total) * 100 : 0);
@@ -223,7 +238,7 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 		// usage (matches the original two-way behavior). The all-zero empty
 		// state is handled separately via `hasData`.
 		return candidates.filter((s) => s.value > 0);
-	}, [data, metricMode, theme, colorBlindMode, cueTotals]);
+	}, [data, metricMode, theme, colorBlindMode, cueTotals, tokenSeries]);
 
 	// Cue participates in the breakdown only when it has activity in range.
 	const hasCueSlice = useMemo(() => sourceData.some((s) => s.source === 'cue'), [sourceData]);
@@ -282,43 +297,13 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 				>
 					{title}
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'count' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'count' ? theme.colors.accent : theme.colors.textDim,
-							}}
-							aria-pressed={metricMode === 'count'}
-							aria-label="Show query count"
-						>
-							Count
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'duration' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.accent : theme.colors.textDim,
-								borderLeft: `1px solid ${theme.colors.border}`,
-							}}
-							aria-pressed={metricMode === 'duration'}
-							aria-label="Show total duration"
-						>
-							Duration
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					variant="subtle"
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			{/* Chart container */}
@@ -370,7 +355,7 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 								style={{ pointerEvents: 'none' }}
 							>
 								<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-									{metricMode === 'count' ? formatNumber(total) : formatDuration(total)}
+									{formatMetricValue(metricMode, total)}
 								</span>
 								<span className="text-xs" style={{ color: theme.colors.textDim }}>
 									{metricMode === 'count' ? 'total' : 'time'}
@@ -409,7 +394,9 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 											{source.percentage.toFixed(1)}% •{' '}
 											{metricMode === 'count'
 												? formatNumber(source.value)
-												: formatDuration(source.value)}
+												: metricMode === 'tokens'
+													? formatMetricValue('tokens', source.value)
+													: formatDuration(source.value)}
 										</span>
 									</div>
 								</div>

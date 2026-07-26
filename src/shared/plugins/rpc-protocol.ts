@@ -54,6 +54,7 @@ export const HOST_API = {
 	'ui.runCommand': { capability: 'ui:command' },
 	'ui.hostViewUpdate': { capability: 'ui:hostView' },
 	'ui.hostViewRemove': { capability: 'ui:hostView' },
+	'ui.panelPost': { capability: 'ui:panel' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },

@@ -74,6 +74,22 @@ import type { ShortcutUsageDay, MultiWindowUsage } from '../../shared/stats-type
 import { captureException } from '../utils/sentry';
 
 /**
+ * Errno codes that mean a WAL/SHM sidecar could not be removed for an
+ * environmental reason rather than a Maestro defect: the file is still held
+ * open by another process (EBUSY - the usual Windows result when a second
+ * instance or a worktree build has the database open), we lack permission to
+ * unlink it (EPERM/EACCES/EROFS), or it vanished between the existsSync check
+ * and the unlink (ENOENT). Removal is best-effort, so none of these deserve a
+ * Sentry report (MAESTRO-TX).
+ */
+const EXPECTED_SIDECAR_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'EROFS', 'ENOENT']);
+
+function isExpectedSidecarError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && EXPECTED_SIDECAR_ERROR_CODES.has(code);
+}
+
+/**
  * StatsDB manages the SQLite database for usage statistics.
  */
 export class StatsDB {
@@ -660,7 +676,15 @@ export class StatsDB {
 				logger.debug(`Removed stale SHM file: ${shmPath}`, LOG_CONTEXT);
 			}
 		} catch (error) {
-			void captureException(error);
+			// Best-effort cleanup: the sidecars are only removed to avoid a false
+			// corruption verdict, and SQLite recovers from a live WAL on its own.
+			// The listed codes all mean "another process still holds these files"
+			// or "we may not touch them" - environmental, never a Maestro bug.
+			// EBUSY in particular is the normal Windows result when a second
+			// instance (or a worktree build) has the database open (MAESTRO-TX).
+			if (!isExpectedSidecarError(error)) {
+				void captureException(error);
+			}
 			logger.warn(`Failed to remove stale WAL/SHM files for ${dbFilePath}: ${error}`, LOG_CONTEXT);
 		}
 	}

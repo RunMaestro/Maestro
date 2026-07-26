@@ -9,6 +9,7 @@ import { useModalStore } from '../../stores/modalStore';
 import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
+import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 
 // Font size keyboard shortcut constants
@@ -179,7 +180,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// On Windows/Linux, Ctrl doubles as the modifier for Maestro shortcuts (Ctrl+F, Ctrl+W, etc.)
 			// so we only bypass for macOS to avoid breaking cross-platform app shortcuts.
 			// Exception: Ctrl+Shift+` always creates a new terminal tab regardless of mode/platform.
-			const isMac = navigator.platform.toUpperCase().includes('MAC');
+			const isMac = isMacOSPlatform();
 			if (
 				isMac &&
 				activeSession?.inputMode === 'terminal' &&
@@ -1080,6 +1081,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 							ctx.setRenameTabModalOpen(true);
 							trackShortcut('renameTab');
 						}
+					} else if (activeSession.activeFileTabId) {
+						// File tabs keep inputMode 'ai' but outrank the AI tab in render
+						// precedence, so rename the visible file tab, not the hidden AI tab.
+						const activeFileTabId = activeSession.activeFileTabId;
+						const fileTab = activeSession.filePreviewTabs?.find(
+							(t: { id: string }) => t.id === activeFileTabId
+						);
+						if (fileTab) {
+							ctx.setRenameTabId(fileTab.id);
+							ctx.setRenameTabInitialName(fileTab.customName ?? '');
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
 					} else if (activeSession.activeBrowserTabId) {
 						const browserTab = activeSession.browserTabs?.find(
 							(t: { id: string }) => t.id === activeSession.activeBrowserTabId
@@ -1172,9 +1186,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 											return {
 												...tab,
 												showThinking: 'off',
-												logs: tab.logs.filter(
-													(l) => l.source !== 'thinking' && l.source !== 'tool'
-												),
+												logs: tab.logs.filter((l) => l.source !== 'thinking'),
 											};
 										}
 										return { ...tab, showThinking: newMode };

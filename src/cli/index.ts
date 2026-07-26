@@ -11,6 +11,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -63,11 +64,13 @@ import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
+	movementBegin,
 	movementAdd,
 	movementUpdate,
 	movementMove,
 	movementRemove,
 	movementClear,
+	movementProgress,
 	movementState,
 	movementInspect,
 	movementInteract,
@@ -354,7 +357,34 @@ program
 		'--focus',
 		'Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)'
 	)
+	.option(
+		'--queue',
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab or --force. Returns the queue position.'
+	)
+	.option('--wait', 'Alias for --queue')
 	.action(dispatch);
+
+// Queue commands - inspect and manage the desktop execution queue populated by
+// `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
+// cleanup/debugging. The queue lives authoritatively in the desktop renderer.
+const queue = program
+	.command('queue')
+	.description('Inspect and manage the desktop execution queue (from dispatch --queue)');
+
+queue
+	.command('list')
+	.description('List queued execution items as JSON (all agents, or one with --agent)')
+	.option(
+		'-a, --agent <id>',
+		'Only list items for this agent (default: every agent with queued items)'
+	)
+	.action(queueList);
+
+queue
+	.command('remove <item-id>')
+	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueRemove);
 
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
@@ -1365,6 +1395,17 @@ const movement = program
 	);
 
 movement
+	.command('begin <id>')
+	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.requiredOption('--title <text>', 'Concerto title shown in its frame')
+	.option('--x <px>', 'X position (px from the Concerto stage left)')
+	.option('--y <px>', 'Y position (px from the Concerto stage top)')
+	.option('--width <px>', 'Shell width in px (default: 880)')
+	.option('--height <px>', 'Shell height in px (default: 560)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementBegin);
+
+movement
 	.command('add <id>')
 	.description('Add (or replace by id) a native data view or interactive HTML mockup')
 	.option('--type <type>', 'view | html (default: view)')
@@ -1416,6 +1457,20 @@ movement
 	.description('Remove all movement items')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementClear);
+
+movement
+	.command('progress <id>')
+	.description("Report one Concerto track's current design phase and subdivision")
+	.requiredOption('--title <text>', 'Concerto title shown in the pipeline')
+	.requiredOption('--phase <phase>', 'composing | refining | arranging | reviewing | testing')
+	.option('--step <n>', 'Active one-based substep (default: 1)')
+	.option('--steps <n>', 'Planned substeps in this phase, 1 through 8 (default: 1)')
+	.option(
+		'--notes <pattern>',
+		'Comma-separated quarter/eighth/sixteenth notes with optional +dotted, +triad, or +tie'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementProgress);
 
 movement
 	.command('state')

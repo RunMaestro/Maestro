@@ -13,6 +13,8 @@
 import { memo, useMemo, useState } from 'react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
+// Token/cost for an agent lives in the Agent Detail modal (double-click a card),
+// not on the card itself - four stats made the tile too crowded to scan.
 import { formatAgeShort } from '../../../shared/formatters';
 import { Sparkline } from './Sparkline';
 import {

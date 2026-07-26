@@ -22,7 +22,7 @@ import type { FileNode } from '../../types/fileTree';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
-import { aiTabFocusFields, reopenClosedAiTabById, revealAiTab } from '../../utils/tabHelpers';
+import { aiTabFocusFields, focusAiTabInSession } from '../../utils/tabHelpers';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
 
@@ -169,27 +169,9 @@ export function useSessionSwitchCallbacks(
 			// activeBrowserTabId/activeTerminalTabId, activeTabId changes but the session keeps
 			// rendering its previous non-AI view (the bug: clicking a toast while a browser tab
 			// is active silently leaves the user on the browser tab).
-			updateSession(sessionId, (s) => {
-				// Fast path: the toast's tab is still open - just focus it. Reveal it
-				// first: a hidden cross-agent consult tab is reachable ONLY by this
-				// deliberate jump, and focusing a tab the strip won't render would leave
-				// the user on a conversation with no chip to return to.
-				if (tabId && s.aiTabs?.some((t) => t.id === tabId)) {
-					return { ...revealAiTab(s, tabId), ...aiTabFocusFields(tabId) };
-				}
-				// The toast fired from a tab the user has since closed. Reopen it from
-				// the closed-tab history so the click restores that conversation rather
-				// than silently landing on whatever tab happens to be active.
-				if (tabId) {
-					const reopened = reopenClosedAiTabById(s, tabId);
-					if (reopened) {
-						return { ...reopened.session, ...aiTabFocusFields(reopened.tabId) };
-					}
-				}
-				// No specific tab, or it aged out of history - just force the AI view
-				// without changing which AI tab is active.
-				return { ...s, ...aiTabFocusFields() };
-			});
+			// Shared with the thinking status pill: reveals a hidden tab, reopens a
+			// closed one, and focuses the right pane when the tab lives in a tiled group.
+			updateSession(sessionId, (s) => focusAiTabInSession(s, tabId));
 		},
 		[setActiveSessionId]
 	);

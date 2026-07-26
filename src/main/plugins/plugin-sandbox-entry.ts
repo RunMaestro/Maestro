@@ -294,6 +294,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 					update: function (id, blocks) { return hostCall('ui.hostViewUpdate', { id: id, blocks: blocks }); },
 					remove: function (id) { return hostCall('ui.hostViewRemove', { id: id }); }
 				}),
+				panelPost: function (panelId, data) { return hostCall('ui.panelPost', { panelId: panelId, data: data }); },
 				grouping: Object.freeze({
 					publish: function (params) { return hostCall('ui.groupingPublish', params); },
 					clear: function (id) { return hostCall('ui.groupingClear', { id: id }); }

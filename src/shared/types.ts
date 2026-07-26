@@ -99,6 +99,17 @@ export interface AgentCapabilities {
 	/** Agent supports --input-format stream-json for image input via stdin */
 	supportsStreamJsonInput: boolean;
 
+	/**
+	 * Agent's CLI reads the prompt from stdin when it is not passed as an
+	 * argument. Windows spawns deliver the prompt over stdin instead of argv to
+	 * stay under the ~32K CreateProcess command-line limit, which only works for
+	 * CLIs that actually read stdin. An agent that accepts the prompt solely as a
+	 * positional argument (Oh My Pi) would otherwise start with no prompt at all,
+	 * emit its session line, and exit 0 without ever calling the model.
+	 * False keeps the prompt in argv on every platform.
+	 */
+	supportsPromptViaStdin: boolean;
+
 	/** Agent emits streaming thinking/reasoning content that can be displayed */
 	supportsThinkingDisplay: boolean;
 
@@ -170,6 +181,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsResultMessages: false,
 	supportsModelSelection: false,
 	supportsStreamJsonInput: false,
+	supportsPromptViaStdin: false,
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
@@ -402,11 +414,16 @@ export interface BatchDocumentEntry {
  * `read` and `write` are independent - a directory can be read-only (reference
  * material), write-only (a drop box the agent should never read back), or both.
  * An entry with neither flag set is inert and is omitted from the prompt.
+ *
+ * `description` is an optional hint the Conductor can attach to explain what the
+ * directory is for or how the agent should use it. When present it is rendered
+ * into the {{ADDITIONAL_DIRECTORIES}} prompt block alongside the access rule.
  */
 export interface AdditionalDirectory {
 	path: string;
 	read: boolean;
 	write: boolean;
+	description?: string;
 }
 
 // Git worktree configuration for Auto Run

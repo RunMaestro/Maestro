@@ -21,14 +21,12 @@ import type {
 	AggregatedContributions,
 	ManifestValidationResult,
 	PluginCategory,
-	PluginContributions,
 	PluginEventPayloads,
 	PluginManifest,
 	PluginUiMountAttempt,
 	PluginUiMountValidation,
 	PluginUiSurface,
 	ProtectedUiSurface,
-	UiItemContribution,
 	UiSurface,
 } from '../index';
 import type {
@@ -37,12 +35,10 @@ import type {
 	HostViewBlocks as SrcHostViewBlocks,
 	PluginContributions as SrcPluginContributions,
 	AggregatedContributions as SrcAggregatedContributions,
-	PluginContributions as SrcPluginContributions,
 	PluginUiMountAttempt as SrcPluginUiMountAttempt,
 	PluginUiMountValidation as SrcPluginUiMountValidation,
 	PluginUiSurface as SrcPluginUiSurface,
 	ProtectedUiSurface as SrcProtectedUiSurface,
-	UiItemContribution as SrcUiItemContribution,
 	UiSurface as SrcUiSurface,
 } from '../../../../src/shared/plugins/contributions';
 import type { PluginEventPayloads as SrcPluginEventPayloads } from '../../../../src/shared/plugins/events';

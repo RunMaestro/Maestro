@@ -57,6 +57,17 @@ export const PANEL_CSP_CONTENT =
  */
 export const PANEL_BRIDGE_CHANNEL = 'maestro:invokeCommand';
 
+/**
+ * The one channel the host pushes data INTO a panel guest on (`ui.panelPost`).
+ * The embedder renderer calls `webview.send(PANEL_DATA_CHANNEL, data)`; the
+ * guest preload relays exactly that one channel into the page as
+ * `window.postMessage({ type: 'maestro:panelData', data }, '*')`, which panel
+ * HTML reads with a plain `message` listener. Data-only and one-way: there is
+ * no reply channel, the payload is structured-cloned (never evaluated), and it
+ * is size-capped in the main process (MAX_PANEL_POST_BYTES).
+ */
+export const PANEL_DATA_CHANNEL = 'maestro:panelData';
+
 /** Session partition for a plugin's panels: `plugin:<pluginId>`. */
 export function pluginPanelPartition(pluginId: string): string {
 	return `${PLUGIN_PANEL_PARTITION_PREFIX}${pluginId}`;

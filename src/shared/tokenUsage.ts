@@ -28,6 +28,9 @@ import type { TokenCounts } from './modelPricing';
  */
 export type TokenCoverage = 'full' | 'partial' | 'unsupported';
 
+/** Account key for agents with no multi-account concept (everything but Claude today). */
+export const DEFAULT_ACCOUNT_KEY = 'default';
+
 /**
  * Token + cost totals for a single model within a session (or rolled up across
  * many sessions in an aggregate). The four token fields are structurally
@@ -65,8 +68,21 @@ export interface SessionTokenBreakdown {
 	sessionId: string;
 	agentType: string;
 	projectPath: string;
+	/**
+	 * Which provider account produced this session. For Claude this is the
+	 * canonical `CLAUDE_CONFIG_DIR` path (users run several Max accounts from
+	 * separate `~/.claude*` homes, and each writes its own transcript tree).
+	 * Agents without a multi-account concept use {@link DEFAULT_ACCOUNT_KEY}.
+	 */
+	accountKey: string;
 	/** Latest activity timestamp (ms since epoch); drives time bucketing. 0 if unknown. */
 	timestampMs: number;
+	/**
+	 * How the session was started, when the storage records it. Feeds the Source
+	 * Distribution chart's token mode; sessions with no recorded origin are left
+	 * out of that split rather than guessed at.
+	 */
+	origin?: 'user' | 'auto';
 	byModel: ModelTokenUsage[];
 	inputTokens: number;
 	outputTokens: number;
@@ -114,10 +130,50 @@ export interface TokenUsageAggregate {
 	byAgent: TokenUsageGroup[];
 	byModel: TokenUsageGroup[];
 	byProject: TokenUsageGroup[];
+	/**
+	 * Per-provider-account totals - for Claude, one entry per Max account
+	 * (`CLAUDE_CONFIG_DIR`). Single `default` entry for single-account agents.
+	 */
+	byAccount: TokenUsageGroup[];
 	timeline: TokenUsageTimeBucket[];
+	/**
+	 * Token counts bucketed to match `StatsAggregation`'s shapes, so the existing
+	 * dashboard charts can add a Tokens metric mode.
+	 */
+	series: TokenSeries;
 	coverageByAgent: Record<string, TokenCoverage>;
 	/** When the aggregate was computed (ms since epoch). */
 	generatedAtMs: number;
+}
+
+/**
+ * Token counts bucketed the same ways `StatsAggregation` buckets queries and
+ * duration, so the dashboard charts can offer a "Tokens" metric mode alongside
+ * their existing Queries/Time (or Count/Duration) toggles without each chart
+ * re-deriving its own grouping.
+ *
+ * Fidelity note: a session's tokens are attributed to its LAST-ACTIVITY
+ * timestamp, because that is the one timestamp the per-session transcript parse
+ * yields. Sessions that span several days therefore land wholly on their final
+ * day/hour. Most sessions are short, so day-level series are close to exact;
+ * `byHour` is the coarsest of these and should be read as "when sessions
+ * finished", not "when every token was spent".
+ */
+export interface TokenSeries {
+	/** Total tokens keyed by local `YYYY-MM-DD`. */
+	byDay: Record<string, number>;
+	/** Total tokens keyed by local hour-of-day (`'0'`-`'23'`). */
+	byHour: Record<string, number>;
+	/** Tokens per agent type, then per local `YYYY-MM-DD`. */
+	byAgentByDay: Record<string, Record<string, number>>;
+	/**
+	 * Tokens per PROVIDER session id, then per local `YYYY-MM-DD`. The renderer
+	 * joins these onto Maestro agents via each agent's tab `agentSessionId`s,
+	 * since only the renderer knows that mapping.
+	 */
+	bySessionByDay: Record<string, Record<string, number>>;
+	/** Tokens split by how the session was started (sessions with no origin are excluded). */
+	bySource: { user: number; auto: number };
 }
 
 /** Bucket granularity for the timeline series. */

@@ -77,6 +77,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
+	formatMetaKey: vi.fn(() => 'Ctrl'),
 	isMacOS: vi.fn(() => false),
 }));
 

@@ -120,6 +120,51 @@ describe('cue-config-repository', () => {
 			expect(readCueConfigFile(PROJECT_ROOT)).toBeNull();
 			expect(mockReadFileSync).not.toHaveBeenCalled();
 		});
+
+		// MAESTRO-X9: readFileSync surfaces EINTR instead of restarting the
+		// syscall, which aborted CueEngine.start('system-boot') and left Cue
+		// disabled for the whole session.
+		it('retries when the read is interrupted by a signal (EINTR)', () => {
+			mockExistsSync.mockImplementation((p: string) => p === CANONICAL);
+			const eintr = Object.assign(new Error('EINTR: interrupted system call, read'), {
+				code: 'EINTR',
+			});
+			mockReadFileSync.mockImplementationOnce(() => {
+				throw eintr;
+			});
+			mockReadFileSync.mockReturnValue('subscriptions: []\n');
+
+			const result = readCueConfigFile(PROJECT_ROOT);
+
+			expect(result).toEqual({ filePath: CANONICAL, raw: 'subscriptions: []\n' });
+			expect(mockReadFileSync).toHaveBeenCalledTimes(2);
+		});
+
+		it('gives up after the retry bound when EINTR persists', () => {
+			mockExistsSync.mockImplementation((p: string) => p === CANONICAL);
+			const eintr = Object.assign(new Error('EINTR: interrupted system call, read'), {
+				code: 'EINTR',
+			});
+			mockReadFileSync.mockImplementation(() => {
+				throw eintr;
+			});
+
+			expect(() => readCueConfigFile(PROJECT_ROOT)).toThrow(/EINTR/);
+			expect(mockReadFileSync).toHaveBeenCalledTimes(3);
+		});
+
+		it('does not retry non-EINTR read errors', () => {
+			mockExistsSync.mockImplementation((p: string) => p === CANONICAL);
+			const eacces = Object.assign(new Error('EACCES: permission denied, read'), {
+				code: 'EACCES',
+			});
+			mockReadFileSync.mockImplementation(() => {
+				throw eacces;
+			});
+
+			expect(() => readCueConfigFile(PROJECT_ROOT)).toThrow(/EACCES/);
+			expect(mockReadFileSync).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('writeCueConfigFile', () => {

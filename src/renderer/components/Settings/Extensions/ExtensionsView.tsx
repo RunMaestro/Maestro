@@ -179,7 +179,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 							}}
 						>
 							<span
-								className="relative w-8 h-4 rounded-full transition-colors"
+								className="relative w-8 h-4 rounded-full transition-colors flex-shrink-0"
 								style={{
 									backgroundColor: onlyInstalled ? theme.colors.accent : theme.colors.border,
 								}}
