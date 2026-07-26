@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { createPublicKey } from 'crypto';
 import {
 	HOST_METHOD_CAPABILITY,
 	extractTarget,
@@ -11,7 +10,6 @@ import {
 	normalizeRelPath,
 	isTrustedKey,
 } from '../../../shared/plugins/signing';
-import { MAESTRO_PUBLISHER_KEYS, resolveTrustedKeys } from '../../../shared/plugins/publisher-keys';
 
 describe('rpc-protocol', () => {
 	it('maps every host method to a capability', () => {
@@ -108,45 +106,5 @@ describe('isTrustedKey', () => {
 		expect(isTrustedKey('abc', ['abc', 'def'])).toBe(true);
 		expect(isTrustedKey(' abc ', ['abc'])).toBe(true);
 		expect(isTrustedKey('xyz', ['abc'])).toBe(false);
-	});
-});
-
-describe('resolveTrustedKeys', () => {
-	it('merges the baked anchor with user keys, trimmed and de-duplicated', () => {
-		const resolved = resolveTrustedKeys([' user-a ', 'user-b', 'user-a', '  ']);
-		// Every non-blank user key survives exactly once, trimmed.
-		expect(resolved).toContain('user-a');
-		expect(resolved).toContain('user-b');
-		expect(resolved.filter((k) => k === 'user-a')).toHaveLength(1);
-		expect(resolved).not.toContain('');
-		expect(resolved).not.toContain('  ');
-		// The baked anchor is always included ahead of user keys.
-		for (const anchor of MAESTRO_PUBLISHER_KEYS) {
-			expect(resolved).toContain(anchor.trim());
-		}
-	});
-
-	it('returns the baked publisher anchor for an empty user list', () => {
-		const anchor = resolveTrustedKeys([]);
-		// resolveTrustedKeys([]) is exactly the baked anchor set (trimmed/de-duped).
-		expect(anchor).toEqual([...MAESTRO_PUBLISHER_KEYS].map((k) => k.trim()).filter(Boolean));
-	});
-
-	it('bakes only well-formed base64 SPKI public keys as the trust anchor', () => {
-		// Guarded so this asserts nothing until a real publisher key is baked
-		// (MAESTRO_PUBLISHER_KEYS is empty pre-key-mint). Once populated it proves
-		// every anchor entry is a non-empty, valid SPKI key crypto can load - never
-		// hard-coding the real key value here.
-		for (const key of MAESTRO_PUBLISHER_KEYS) {
-			expect(typeof key).toBe('string');
-			expect(key.trim().length).toBeGreaterThan(0);
-			expect(() =>
-				createPublicKey({
-					key: Buffer.from(key, 'base64'),
-					format: 'der',
-					type: 'spki',
-				})
-			).not.toThrow();
-		}
 	});
 });

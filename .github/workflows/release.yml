@@ -254,11 +254,13 @@ jobs:
         run: |
           set -euo pipefail
           KEYFILE="$RUNNER_TEMP/maestro-publisher.pem"
+          # Remove the private key on any exit, including a signing failure that
+          # trips set -e before we reach the end of the step.
+          trap 'rm -f "$KEYFILE"' EXIT
           printf '%s' "$MAESTRO_PLUGIN_SIGNING_KEY" > "$KEYFILE"
           for dir in examples/plugins/*/; do
             node dist/cli/maestro-cli.js plugin sign "$dir" --key "$KEYFILE" --json
           done
-          rm -f "$KEYFILE"
 
           # Anchor/secret drift guard: the freshly written signature must resolve
           # "trusted" against the baked MAESTRO_PUBLISHER_KEYS anchor. If the CI
