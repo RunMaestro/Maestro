@@ -128,6 +128,8 @@ interface SessionListProps {
 	onOpenCreatePR?: (session: Session) => void;
 	onQuickCreateWorktree?: (session: Session) => void;
 	onOpenWorktreeConfig?: (session: Session) => void;
+	onMergeWorktree?: (session: Session) => void;
+	onRebaseWorktree?: (session: Session) => void;
 	onDeleteWorktree?: (session: Session) => void;
 
 	// Wizard props
@@ -434,6 +436,8 @@ function SessionListInner(props: SessionListProps) {
 		onOpenCreatePR,
 		onQuickCreateWorktree,
 		onOpenWorktreeConfig,
+		onMergeWorktree,
+		onRebaseWorktree,
 		onDeleteWorktree,
 		onConfigureCue,
 		showSessionJumpNumbers = false,
@@ -2173,6 +2177,16 @@ function SessionListInner(props: SessionListProps) {
 					onConfigureWorktrees={
 						onOpenWorktreeConfig && !contextMenuSession.parentSessionId
 							? () => onOpenWorktreeConfig(contextMenuSession)
+							: undefined
+					}
+					onMergeWorktree={
+						onMergeWorktree && contextMenuSession.parentSessionId
+							? () => onMergeWorktree(contextMenuSession)
+							: undefined
+					}
+					onRebaseWorktree={
+						onRebaseWorktree && contextMenuSession.parentSessionId
+							? () => onRebaseWorktree(contextMenuSession)
 							: undefined
 					}
 					onDeleteWorktree={

@@ -49,6 +49,8 @@ export interface UseSessionListPropsDeps {
 	handleQuickCreateWorktree: (session: Session) => void;
 	handleOpenWorktreeConfigSession: (session: Session) => void;
 	handleDeleteWorktreeSession: (session: Session) => void;
+	handleMergeWorktreeSession: (session: Session) => void;
+	handleRebaseWorktreeSession: (session: Session) => void;
 	handleToggleWorktreeExpanded: (sessionId: string) => void;
 	handleConfigureCue: (session: Session) => void;
 	/** Whether the Maestro Cue Encore Feature is enabled. Gates the "Configure Maestro Cue" context-menu action. */
@@ -107,6 +109,8 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			onOpenCreatePR: deps.handleOpenCreatePRSession,
 			onQuickCreateWorktree: deps.handleQuickCreateWorktree,
 			onOpenWorktreeConfig: deps.handleOpenWorktreeConfigSession,
+			onMergeWorktree: deps.handleMergeWorktreeSession,
+			onRebaseWorktree: deps.handleRebaseWorktreeSession,
 			onDeleteWorktree: deps.handleDeleteWorktreeSession,
 			onConfigureCue: deps.maestroCueEnabled ? deps.handleConfigureCue : undefined,
 			openWizard: deps.openWizardModal,
@@ -150,6 +154,8 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.handleQuickCreateWorktree,
 			deps.handleOpenWorktreeConfigSession,
 			deps.handleDeleteWorktreeSession,
+			deps.handleMergeWorktreeSession,
+			deps.handleRebaseWorktreeSession,
 			deps.handleConfigureCue,
 			deps.maestroCueEnabled,
 			deps.handleToggleWorktreeExpanded,

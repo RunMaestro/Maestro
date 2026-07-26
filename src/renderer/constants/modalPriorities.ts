@@ -104,6 +104,9 @@ export const MODAL_PRIORITIES = {
 	/** Create worktree modal (quick create from context menu) */
 	CREATE_WORKTREE: 753,
 
+	/** Merge / rebase a worktree branch (from worktree context menu) */
+	WORKTREE_MERGE: 754,
+
 	/** Worktree configuration modal */
 	WORKTREE_CONFIG: 752,
 

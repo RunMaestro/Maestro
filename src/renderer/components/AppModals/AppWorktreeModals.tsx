@@ -7,6 +7,7 @@ import { WorktreeConfigModal } from '../WorktreeConfigModal';
 import { CreateWorktreeModal } from '../CreateWorktreeModal';
 import { CreatePRModal } from '../CreatePRModal';
 import { DeleteWorktreeModal } from '../DeleteWorktreeModal';
+import { WorktreeMergeModal, type WorktreeMergeMode } from '../WorktreeMergeModal';
 
 /**
  * Props for the AppWorktreeModals component
@@ -40,6 +41,14 @@ export interface AppWorktreeModalsProps {
 	onCloseDeleteWorktreeModal: () => void;
 	onConfirmDeleteWorktree: () => void;
 	onConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
+
+	// WorktreeMergeModal (merge / rebase a worktree branch)
+	worktreeMergeModalOpen: boolean;
+	worktreeMergeSession: Session | null;
+	worktreeMergeMode: WorktreeMergeMode;
+	onCloseWorktreeMergeModal: () => void;
+	/** Refresh git state after a merge or rebase lands. */
+	onWorktreeMergeCompleted?: () => void;
 }
 
 /**
@@ -50,6 +59,7 @@ export interface AppWorktreeModalsProps {
  * - CreateWorktreeModal: Quick create worktree from context menu
  * - CreatePRModal: Create a pull request from a worktree branch
  * - DeleteWorktreeModal: Remove a worktree session (optionally delete on disk)
+ * - WorktreeMergeModal: Merge a worktree branch into another, or rebase it
  */
 export const AppWorktreeModals = memo(function AppWorktreeModals({
 	theme,
@@ -76,6 +86,12 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 	onCloseDeleteWorktreeModal,
 	onConfirmDeleteWorktree,
 	onConfirmAndDeleteWorktreeOnDisk,
+	// WorktreeMergeModal
+	worktreeMergeModalOpen,
+	worktreeMergeSession,
+	worktreeMergeMode,
+	onCloseWorktreeMergeModal,
+	onWorktreeMergeCompleted,
 }: AppWorktreeModalsProps) {
 	// Determine session for PR modal - uses createPRSession if set, otherwise activeSession
 	const prSession = createPRSession || activeSession;
@@ -127,6 +143,18 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 					onClose={onCloseDeleteWorktreeModal}
 					onConfirm={onConfirmDeleteWorktree}
 					onConfirmAndDelete={onConfirmAndDeleteWorktreeOnDisk}
+				/>
+			)}
+
+			{/* --- MERGE / REBASE WORKTREE MODAL --- */}
+			{worktreeMergeModalOpen && worktreeMergeSession && (
+				<WorktreeMergeModal
+					isOpen={worktreeMergeModalOpen}
+					mode={worktreeMergeMode}
+					onClose={onCloseWorktreeMergeModal}
+					theme={theme}
+					session={worktreeMergeSession}
+					onCompleted={onWorktreeMergeCompleted}
 				/>
 			)}
 		</>
