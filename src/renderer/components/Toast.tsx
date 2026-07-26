@@ -280,10 +280,7 @@ const ToastItem = memo(function ToastItem({
 
 					{/* TTSR outcome line - client-specific, resolved at display time */}
 					{ttsrOutcome && (
-						<div
-							className="text-xs mt-1 leading-relaxed"
-							style={{ color: theme.colors.textDim }}
-						>
+						<div className="text-xs mt-1 leading-relaxed" style={{ color: theme.colors.textDim }}>
 							{ttsrOutcome}
 						</div>
 					)}

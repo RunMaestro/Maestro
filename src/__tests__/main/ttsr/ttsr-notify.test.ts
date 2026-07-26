@@ -81,9 +81,7 @@ describe('buildTtsrToast', () => {
 		expect(resume.message).not.toContain('Restarting');
 		expect(resume.message).not.toContain('corrective guidance');
 
-		const fresh = buildTtsrToast(
-			payload({ mode: 'fresh', providerSessionId: undefined })
-		);
+		const fresh = buildTtsrToast(payload({ mode: 'fresh', providerSessionId: undefined }));
 		expect(fresh.message).toBe('Rule no-console-log fired; the turn was interrupted.');
 		expect(fresh.message).not.toContain('Restarting');
 	});
