@@ -42,20 +42,23 @@ interface BridgeFakeEvent {
 
 const FAKE_EVENT: BridgeFakeEvent = {
 	/**
-	 * A web client has no `webContents` of its own, but handlers that need to
-	 * know which window called them resolve it via
+	 * A web client has no `webContents` of its own. Handlers that need to know
+	 * which window called them go through
 	 * `BrowserWindow.fromWebContents(event.sender)` (see `resolveCallingWindow`
-	 * in `ipc/handlers/windows.ts`). Leaving `sender` undefined made Electron
-	 * throw "Cannot read properties of undefined (reading
-	 * 'getOwnerBrowserWindow')" on `windows:getState`, which web-desktop treats
-	 * as fatal — the remote page hung on the splash screen forever.
+	 * in `ipc/handlers/windows.ts`), so with no `sender` every window-scoped
+	 * handler resolves to "unknown caller" and quietly degrades: `windows:getState`
+	 * returns null, and claiming an agent or setting panel state becomes a no-op.
 	 *
-	 * A web client mirrors the desktop UI, so it resolves to the oldest live
-	 * window — `getAllWindows()` is creation-ordered, making that the main
-	 * window. Must be a getter, not a value: this module is evaluated before any
+	 * Resolving to a live window instead lets a web client act as the mirror of
+	 * the desktop that it is, so those features work remotely. Electron does not
+	 * document a stable ordering for `getAllWindows()`, so this deliberately
+	 * picks *a* live window rather than claiming to pick the main one; with a
+	 * single window open, the common case, they are the same window.
+	 *
+	 * Must be a getter, not a value: this module is evaluated before any
 	 * BrowserWindow exists, and the resolved window changes over the app's life.
 	 * Still `undefined` when no window is open (headless/tray), so callers keep
-	 * their existing "unknown caller" path rather than crashing.
+	 * their existing "unknown caller" path.
 	 */
 	get sender(): Electron.WebContents | undefined {
 		return BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())?.webContents;

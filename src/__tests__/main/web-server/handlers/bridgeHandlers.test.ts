@@ -167,11 +167,11 @@ describe('handleBridgeInvoke', () => {
 		expect(callArgs.slice(1)).toEqual(['session-123', 'echo hello']);
 	});
 
-	// Regression: FAKE_EVENT used to omit `sender` entirely. Handlers that
+	// Regression: FAKE_EVENT used to omit `sender` entirely, so handlers that
 	// resolve the calling window via BrowserWindow.fromWebContents(event.sender)
-	// — windows:getState is the one web-desktop calls during boot — then made
-	// Electron throw "Cannot read properties of undefined (reading
-	// 'getOwnerBrowserWindow')", and the remote page hung on the splash forever.
+	// saw no caller. windows:getState, which web-desktop calls during boot, is
+	// the one that matters: it returned null for every web client, leaving the
+	// remote page without the window state it mirrors.
 	it('passes a live window webContents as event.sender', async () => {
 		const webContents = { id: 7 };
 		windows.push({ isDestroyed: () => false, webContents });
