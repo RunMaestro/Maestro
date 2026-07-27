@@ -15,6 +15,9 @@ import type { WindowManagerDependencies } from '../../../main/app-lifecycle/wind
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
+// The factory registers several `closed` listeners; collect them all so a test
+// can fire the full close sequence rather than guessing which one is last.
+let windowClosedHandlers: Array<() => void> = [];
 const webContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 const guestWebContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 
@@ -74,13 +77,16 @@ const mockWindowInstance = {
 	loadFile: vi.fn(),
 	maximize: vi.fn(),
 	setFullScreen: vi.fn(),
+	setMinimumSize: vi.fn(),
 	isMaximized: vi.fn().mockReturnValue(false),
 	isFullScreen: vi.fn().mockReturnValue(false),
 	isMinimized: vi.fn().mockReturnValue(false),
+	isDestroyed: vi.fn().mockReturnValue(false),
 	getBounds: vi.fn().mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 }),
 	webContents: mockWebContents,
 	on: vi.fn((event: string, handler: () => void) => {
 		if (event === 'close') windowCloseHandler = handler;
+		if (event === 'closed') windowClosedHandlers.push(handler);
 	}),
 };
 
@@ -93,9 +99,11 @@ class MockBrowserWindow {
 	loadFile = mockWindowInstance.loadFile;
 	maximize = mockWindowInstance.maximize;
 	setFullScreen = mockWindowInstance.setFullScreen;
+	setMinimumSize = mockWindowInstance.setMinimumSize;
 	isMaximized = mockWindowInstance.isMaximized;
 	isFullScreen = mockWindowInstance.isFullScreen;
 	isMinimized = mockWindowInstance.isMinimized;
+	isDestroyed = mockWindowInstance.isDestroyed;
 	getBounds = mockWindowInstance.getBounds;
 	webContents = mockWindowInstance.webContents;
 	on = mockWindowInstance.on;
@@ -115,8 +123,12 @@ const mockHandle = vi.fn();
 type MockWorkAreaRect = { x: number; y: number; width: number; height: number };
 const { mockScreen } = vi.hoisted(() => {
 	const DEFAULT_DISPLAY = { workArea: { x: 0, y: 0, width: 1920, height: 1080 } };
-	const state: { displays: Array<{ workArea: MockWorkAreaRect }> } = {
+	const state: {
+		displays: Array<{ workArea: MockWorkAreaRect }>;
+		metricsListeners: Array<() => void>;
+	} = {
 		displays: [DEFAULT_DISPLAY],
+		metricsListeners: [],
 	};
 	const intersectionArea = (a: MockWorkAreaRect, b: MockWorkAreaRect): number => {
 		const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
@@ -128,6 +140,7 @@ const { mockScreen } = vi.hoisted(() => {
 			state,
 			reset: () => {
 				state.displays = [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }];
+				state.metricsListeners = [];
 			},
 			getAllDisplays: () => state.displays,
 			getPrimaryDisplay: () => state.displays[0],
@@ -142,6 +155,17 @@ const { mockScreen } = vi.hoisted(() => {
 					}
 				}
 				return best;
+			},
+			on: (event: string, handler: () => void) => {
+				if (event === 'display-metrics-changed') state.metricsListeners.push(handler);
+			},
+			removeListener: (event: string, handler: () => void) => {
+				if (event !== 'display-metrics-changed') return;
+				state.metricsListeners = state.metricsListeners.filter((h) => h !== handler);
+			},
+			// Fire all registered display-metrics-changed listeners (test helper).
+			emitDisplayMetricsChanged: () => {
+				for (const h of [...state.metricsListeners]) h();
 			},
 		},
 	};
@@ -159,6 +183,9 @@ vi.mock('electron', () => ({
 		getAllDisplays: () => mockScreen.getAllDisplays(),
 		getPrimaryDisplay: () => mockScreen.getPrimaryDisplay(),
 		getDisplayMatching: (rect: MockWorkAreaRect) => mockScreen.getDisplayMatching(rect),
+		on: (event: string, handler: () => void) => mockScreen.on(event, handler),
+		removeListener: (event: string, handler: () => void) =>
+			mockScreen.removeListener(event, handler),
 	},
 	session: {
 		fromPartition: (partition: string) => mockFromPartition(partition),
@@ -242,9 +269,12 @@ describe('app-lifecycle/window-manager', () => {
 		mockWindowInstance.isMaximized.mockReturnValue(false);
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
 		mockWindowInstance.isMinimized.mockReturnValue(false);
+		mockWindowInstance.isDestroyed.mockReturnValue(false);
+		mockWindowInstance.setMinimumSize.mockClear();
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 		mockWebContents.getType.mockReturnValue('window');
 		mockGuestWebContents.getType.mockReturnValue('webview');
+		windowClosedHandlers = [];
 	});
 
 	afterEach(() => {
@@ -404,6 +434,93 @@ describe('app-lifecycle/window-manager', () => {
 			// Centered on the primary 1920x1080 work area for a 1000x600 window.
 			expect(lastBrowserWindowOptions?.x).toBe(460);
 			expect(lastBrowserWindowOptions?.y).toBe(240);
+		});
+
+		const makeManager = async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			return createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+		};
+
+		describe('window size constraints', () => {
+			it('keeps the design minimum on a display large enough to hold it', async () => {
+				// Default display is 1920x1080; the 1000x600 design minimum fits.
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+
+				expect(lastBrowserWindowOptions?.minWidth).toBe(1000);
+				expect(lastBrowserWindowOptions?.minHeight).toBe(600);
+				// Saved 1400x900 fits, so it is used unchanged.
+				expect(lastBrowserWindowOptions?.width).toBe(1400);
+				expect(lastBrowserWindowOptions?.height).toBe(900);
+			});
+
+			it('relaxes the minimum height to the work area on a small scaled display', async () => {
+				// A 1366x768 screen at 125% scale reports a ~1093x593 DIP work area
+				// (panel subtracted). The 600 design-min height exceeds 593, which is
+				// what makes native maximize no-op. It must be clamped to 593.
+				mockScreen.state.displays = [{ workArea: { x: 0, y: 0, width: 1093, height: 593 } }];
+
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+
+				expect(lastBrowserWindowOptions?.minHeight).toBe(593);
+				// Width design-min (1000) still fits inside 1093, so it is unchanged.
+				expect(lastBrowserWindowOptions?.minWidth).toBe(1000);
+				// The saved 1400x900 size is clamped to the work area so the window
+				// does not spawn larger than the screen.
+				expect(lastBrowserWindowOptions?.width).toBe(1093);
+				expect(lastBrowserWindowOptions?.height).toBe(593);
+			});
+
+			it('relaxes both minimums on a display smaller than the design minimum', async () => {
+				mockScreen.state.displays = [{ workArea: { x: 0, y: 0, width: 900, height: 500 } }];
+
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+
+				expect(lastBrowserWindowOptions?.minWidth).toBe(900);
+				expect(lastBrowserWindowOptions?.minHeight).toBe(500);
+			});
+
+			it('re-clamps the minimum size when the display metrics change', async () => {
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+				mockWindowInstance.setMinimumSize.mockClear();
+
+				// Simulate the user rescaling their display so the work area shrinks
+				// below the design minimum while the app is running.
+				mockScreen.state.displays = [{ workArea: { x: 0, y: 0, width: 1093, height: 593 } }];
+				// getBounds reports the window on that display.
+				mockWindowInstance.getBounds.mockReturnValue({ x: 0, y: 0, width: 1093, height: 593 });
+				mockScreen.emitDisplayMetricsChanged();
+
+				expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledWith(1000, 593);
+			});
+
+			it('stops re-clamping after the window is closed', async () => {
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+				expect(windowClosedHandlers.length).toBeGreaterThan(0);
+
+				// The window is gone; its metrics listener must be removed so it does
+				// not fire against a destroyed window.
+				for (const handler of windowClosedHandlers) handler();
+				mockWindowInstance.setMinimumSize.mockClear();
+				mockScreen.state.displays = [{ workArea: { x: 0, y: 0, width: 800, height: 500 } }];
+				mockScreen.emitDisplayMetricsChanged();
+
+				expect(mockWindowInstance.setMinimumSize).not.toHaveBeenCalled();
+			});
 		});
 
 		it('does not persist bounds while the window is minimized', async () => {
