@@ -85,6 +85,10 @@ export type {
 	AutoRunTreeNode,
 } from './useAutoRunHandlers';
 
+// One-shot scheduled Auto Runs (start at a specific date/time)
+export { useScheduledAutoRunDispatcher } from './useScheduledAutoRunDispatcher';
+export type { UseScheduledAutoRunDispatcherDeps } from './useScheduledAutoRunDispatcher';
+
 // Auto Run image handling
 export { useAutoRunImageHandling, imageCache } from './useAutoRunImageHandling';
 export type {

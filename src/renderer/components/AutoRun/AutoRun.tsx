@@ -45,6 +45,7 @@ import { AutoRunLightbox } from './AutoRunLightbox';
 import { AutoRunSearchBar } from './AutoRunSearchBar';
 import { AutoRunToolbar } from './AutoRunToolbar';
 import { AutoRunErrorBanner } from './AutoRunErrorBanner';
+import { AutoRunScheduledBanner } from './AutoRunScheduledBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
@@ -603,6 +604,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					onFileSelect={handleFileSelect}
 				/>
 			)}
+
+			{/* Pending one-shot schedule - renders itself null when there isn't one */}
+			{folderPath && <AutoRunScheduledBanner theme={theme} sessionId={sessionId} />}
 
 			{/* Document Selector */}
 			{folderPath && (

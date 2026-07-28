@@ -385,6 +385,11 @@ export interface BatchRunConfig {
 	// over the document/task-driven spec mode. When set, the run pursues a free-text
 	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
 	goalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
+	// One-shot schedule. When set to a future epoch-ms timestamp, the run is parked
+	// in scheduledAutoRunStore instead of launching, and the dispatcher
+	// (useScheduledAutoRunDispatcher) fires it once the timestamp passes. Stripped
+	// from the config before the run actually starts.
+	scheduledFor?: number;
 }
 
 // Import BatchProcessingState for state machine integration

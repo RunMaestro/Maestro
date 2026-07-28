@@ -82,6 +82,7 @@ import {
 	useAppHandlers,
 	// Auto Run
 	useAutoRunHandlers,
+	useScheduledAutoRunDispatcher,
 	// Tab handlers
 	useTabHandlers,
 	useTerminalTabHandlers,
@@ -1980,6 +1981,9 @@ function MaestroConsoleInner() {
 		autoRunDocumentList,
 		startBatchRun,
 	});
+
+	// Fires Auto Runs the user parked for a future date/time (issue #716).
+	useScheduledAutoRunDispatcher({ onLaunch: handleStartBatchRun });
 
 	// Wire up refs for useWizardHandlers (circular dep resolution)
 	handleAutoRunRefreshRef.current = handleAutoRunRefresh;
