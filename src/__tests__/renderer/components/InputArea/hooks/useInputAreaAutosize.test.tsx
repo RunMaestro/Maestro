@@ -52,21 +52,34 @@ describe('useInputAreaAutosize', () => {
 		});
 	});
 
-	it('leaves the scroll position untouched when the caret is before the end of the value', async () => {
+	it('leaves the scroll position untouched when the caret is on an earlier line', async () => {
 		const { getByLabelText } = render(
-			<Harness value="hello world" selectionEnd={2} initialScrollTop={42} />
+			<Harness value={'hello\nworld'} selectionEnd={2} initialScrollTop={42} />
 		);
 
 		await waitFor(() => {
 			expect((getByLabelText('input') as HTMLTextAreaElement).style.height).toBe('176px');
 		});
-		// Exercises scrollTextareaToCaretEnd's contract directly: with selectionEnd
-		// before value.length it is a no-op, so the prior scroll position survives the
-		// resize. NOTE: this harness pins selectionEnd via Object.defineProperty. The
+		// Exercises scrollTextareaToCaretEnd's contract directly: with selectionEnd on a
+		// line before the final one it is a no-op, so the prior scroll position survives
+		// the resize. NOTE: this harness pins selectionEnd via Object.defineProperty. The
 		// real deferred @-mention / template flows place their caret in a later rAF, so
 		// they do NOT reach the helper in this mid-text state during the commit-phase
 		// effect (see PR #1294 discussion) - this only documents the helper itself.
 		expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(42);
+	});
+
+	it('scrolls when the caret is mid-way through the final line', async () => {
+		// Widened gate: a caret anywhere in the last logical line still snaps that row
+		// into view, so a programmatic insertion that lands before trailing characters
+		// no longer leaves the caret row clipped.
+		const { getByLabelText } = render(
+			<Harness value={'hello\nworld'} selectionEnd={8} initialScrollTop={42} />
+		);
+
+		await waitFor(() => {
+			expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(200);
+		});
 	});
 
 	it('scrolls a restored shorter draft with the caret at the end', async () => {

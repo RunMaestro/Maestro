@@ -118,7 +118,34 @@ describe('useInputAreaTextChange', () => {
 		expect(textarea.scrollTop).toBe(640);
 	});
 
-	it('leaves the scroll position alone when editing mid-text', () => {
+	it('scrolls past the cap when the caret sits before trailing text on the final line', () => {
+		const handlers = createHandlers();
+		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
+			callback(0);
+			return 1;
+		});
+		vi.stubGlobal('requestAnimationFrame', runAnimationFrame);
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		// Content well past TEXTAREA_MAX_HEIGHT, caret in the middle of the last row
+		// (what an inserted mention or trailing whitespace leaves behind). That row is
+		// the one being typed on, so it has to end up visible.
+		const value = `${'line\n'.repeat(80)}trailing`;
+		const caret = value.length - 4;
+		textarea.scrollTop = 0;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: caret, configurable: true });
+
+		fireEvent.change(textarea, {
+			target: { value, selectionStart: caret },
+		});
+
+		expect(runAnimationFrame).toHaveBeenCalledTimes(1);
+		expect(textarea.style.height).toBe('176px');
+		expect(textarea.scrollTop).toBe(640);
+	});
+
+	it('leaves the scroll position alone when editing an earlier line', () => {
 		const handlers = createHandlers();
 		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
 			callback(0);
@@ -130,8 +157,9 @@ describe('useInputAreaTextChange', () => {
 		const value = `${'line\n'.repeat(80)}end`;
 		textarea.scrollTop = 42;
 		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
-		// Caret parked mid-text: scrollTextareaToCaretEnd keys off selectionEnd, so
-		// the keystroke resize must preserve the scroll rather than jump to bottom.
+		// Caret parked on the FIRST line: scrollTextareaToCaretEnd only snaps when the
+		// caret is in the final logical line, so the keystroke resize must preserve the
+		// scroll rather than jump the viewport to the bottom.
 		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
 
 		fireEvent.change(textarea, {

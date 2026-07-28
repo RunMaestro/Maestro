@@ -38,12 +38,60 @@ describe('InputArea textareaSizing utils', () => {
 		expect(textarea.scrollTop).toBe(240);
 	});
 
-	it('leaves textarea scroll position untouched when the caret is mid-text', () => {
+	it('scrolls to the bottom when the caret is mid-way through the final line', () => {
 		const textarea = document.createElement('textarea');
+		// Caret sits before the trailing characters of the last line, which is what an
+		// inserted mention or trailing whitespace leaves behind. That row still has to
+		// stay visible, so the gate keys off the final logical line, not value.length.
+		textarea.value = 'first\nsecond\nlast line';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', {
+			value: textarea.value.indexOf('last line') + 4,
+			configurable: true,
+		});
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(240);
+	});
+
+	it('scrolls to the bottom when the caret is mid-text in a single-line value', () => {
+		const textarea = document.createElement('textarea');
+		// No newline at all: the whole value IS the final line, so any caret qualifies.
 		textarea.value = 'hello';
 		textarea.scrollTop = 12;
 		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
 		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(240);
+	});
+
+	it('leaves textarea scroll position untouched when the caret is on an earlier line', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'first\nsecond\nlast line';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(12);
+	});
+
+	it('leaves scroll untouched with the caret exactly on the last newline', () => {
+		const textarea = document.createElement('textarea');
+		// selectionEnd === lastIndexOf('\n') means the caret ends the second-to-last
+		// line, so it belongs to an earlier row and must not jump the viewport.
+		textarea.value = 'first\nsecond';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', {
+			value: textarea.value.lastIndexOf('\n'),
+			configurable: true,
+		});
 
 		scrollTextareaToCaretEnd(textarea);
 
