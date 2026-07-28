@@ -832,6 +832,209 @@ describe('BoardModal inline role quick-create (G2)', () => {
 	});
 });
 
+describe('BoardModal review column (F2)', () => {
+	/** Open the editor on a card via its tile and land on the "Move to" picker. */
+	async function openMovePicker(title: string, status: string): Promise<HTMLElement> {
+		const tile = await screen.findByRole('button', {
+			name: new RegExp(`^${title}, ${status}$`, 'i'),
+		});
+		tile.focus();
+		fireEvent.keyDown(tile, { key: 'm' });
+		return screen.findByLabelText('Move to');
+	}
+
+	it('renders a Review column between Running and Blocked, holding the review card', async () => {
+		const reviewing = makeCard({
+			id: 'cardA',
+			title: 'Card A',
+			status: 'review',
+			runs: [
+				{
+					attempt: 1,
+					startedAt: '2026-07-21T00:00:00.000Z',
+					endedAt: '2026-07-21T00:10:00.000Z',
+					outcome: 'review',
+					summary: 'Schema change needs a human to eyeball the migration.',
+				},
+			],
+		});
+		installApis([{ id: 'b1', name: 'My Board', cards: [reviewing] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		// The column exists as its own labelled group and the card sits inside it,
+		// not in Blocked (a review is a deliberate conclusion, not a failure).
+		const column = await screen.findByRole('group', { name: /^Review, 1 card$/i });
+		expect(within(column).getByText('Card A')).toBeInTheDocument();
+		expect(screen.getByRole('group', { name: /^Blocked, 0 cards$/i })).toBeInTheDocument();
+
+		// Column order follows CARD_STATUSES: Running, Review, Blocked.
+		const labels = screen
+			.getAllByRole('group')
+			.map((el) => el.getAttribute('aria-label') ?? '')
+			.filter((label) => /, \d+ cards?$/.test(label));
+		const order = labels.map((label) => label.split(',')[0]);
+		expect(order.slice(order.indexOf('Running'), order.indexOf('Running') + 3)).toEqual([
+			'Running',
+			'Review',
+			'Blocked',
+		]);
+
+		// The reason the agent left behind is visible on the tile face.
+		expect(
+			screen.getAllByText('Schema change needs a human to eyeball the migration.').length
+		).toBeGreaterThan(0);
+	});
+
+	it('accepts the manual review -> done approval move', async () => {
+		const reviewing = makeCard({ id: 'cardA', title: 'Card A', status: 'review' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [reviewing] };
+		installApis([board]);
+		boardApi.setCardStatus.mockResolvedValue({
+			...board,
+			cards: [{ ...reviewing, status: 'done' as const }],
+		});
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const moveSelect = await openMovePicker('Card A', 'Review');
+		fireEvent.change(moveSelect, { target: { value: 'done' } });
+
+		// Approving is the ONLY path out of Review, so it must persist unguarded.
+		await waitFor(() =>
+			expect(boardApi.setCardStatus).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA', 'done')
+		);
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('still refuses manual moves into Ready and Running from Review', async () => {
+		const reviewing = makeCard({ id: 'cardA', title: 'Card A', status: 'review' });
+		installApis([{ id: 'b1', name: 'My Board', cards: [reviewing] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const moveSelect = await openMovePicker('Card A', 'Review');
+		for (const derived of ['ready', 'running']) {
+			fireEvent.change(moveSelect, { target: { value: derived } });
+			await waitFor(() =>
+				expect(notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'orange', message: expect.stringContaining('To Do') })
+				)
+			);
+			// The dispatcher owns both columns, so nothing is persisted.
+			expect(boardApi.setCardStatus).not.toHaveBeenCalled();
+			vi.mocked(notifyToast).mockClear();
+		}
+	});
+});
+
+describe('BoardModal PR-on-done controls (F3)', () => {
+	async function openNewCard(title: string): Promise<void> {
+		const newCardBtn = await screen.findByRole('button', { name: /New card/i });
+		await waitFor(() => expect(newCardBtn).not.toBeDisabled());
+		fireEvent.click(newCardBtn);
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: title },
+		});
+	}
+
+	it('offers the PR controls only once worktree isolation is on', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await openNewCard('Shared tree work');
+
+		// A PR needs a branch of its own, so the toggle is hidden for shared-tree cards.
+		expect(screen.queryByLabelText(/Open PR when done/i)).toBeNull();
+
+		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
+		expect(screen.getByLabelText(/Open PR when done/i)).toBeInTheDocument();
+		// The target-branch field only appears behind the toggle itself.
+		expect(screen.queryByPlaceholderText('repo default branch')).toBeNull();
+
+		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
+		expect(screen.getByPlaceholderText('repo default branch')).toBeInTheDocument();
+	});
+
+	it('persists prOnDone with an explicit target branch', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await openNewCard('Isolated work');
+		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
+		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
+		fireEvent.change(screen.getByPlaceholderText('repo default branch'), {
+			target: { value: '  develop  ' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+
+		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		// Trimmed, so a stray space never reaches `gh pr create --base`.
+		expect(boardApi.addCard.mock.calls[0][2].prOnDone).toEqual({ targetBranch: 'develop' });
+	});
+
+	it('persists an empty prOnDone when no target branch is typed', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await openNewCard('Isolated work');
+		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
+		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+
+		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		// `{}` is the armed "resolve the repo default branch at PR time" case.
+		expect(boardApi.addCard.mock.calls[0][2].prOnDone).toEqual({});
+	});
+
+	it('omits prOnDone when either toggle is turned back off', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await openNewCard('Isolated work');
+		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
+		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
+		fireEvent.change(screen.getByPlaceholderText('repo default branch'), {
+			target: { value: 'develop' },
+		});
+
+		// Dropping isolation disarms the PR even though the inner toggle stayed on.
+		fireEvent.click(screen.getByLabelText(/Run in isolated worktree/i));
+		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
+
+		await waitFor(() => expect(boardApi.addCard).toHaveBeenCalledTimes(1));
+		const card = boardApi.addCard.mock.calls[0][2];
+		expect(card).not.toHaveProperty('prOnDone');
+		expect(card.worktree).toBeUndefined();
+	});
+
+	it('seeds the controls from a saved card and clears prOnDone when the toggle is unchecked', async () => {
+		const card = makeCard({
+			id: 'cardA',
+			title: 'Card A',
+			worktree: { path: '/test/worktrees/board/b1/cardA', branch: 'board/b1/cardA' },
+			prOnDone: { targetBranch: 'develop' },
+		});
+		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Card A'));
+
+		// The editor reflects what was persisted.
+		expect(await screen.findByLabelText(/Open PR when done/i)).toBeChecked();
+		expect(screen.getByPlaceholderText('repo default branch')).toHaveValue('develop');
+
+		fireEvent.click(screen.getByLabelText(/Open PR when done/i));
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+
+		await waitFor(() => expect(boardApi.updateCard).toHaveBeenCalledTimes(1));
+		const saved = boardApi.updateCard.mock.calls[0][2];
+		expect(saved).not.toHaveProperty('prOnDone');
+		// Isolation itself is untouched: only the PR opt-in was dropped.
+		expect(saved.worktree).toMatchObject({ branch: 'board/b1/cardA' });
+	});
+});
+
 describe('BoardModal profile refresh during edit (G1 interplay)', () => {
 	it('reflects a refreshed profile list in the Role picker while the draft survives', async () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], [{ id: 'p1', name: 'Reviewer' }]);
