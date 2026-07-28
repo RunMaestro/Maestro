@@ -178,6 +178,66 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		getModalActions().setWorktreeConfigModalOpen(true);
 	}, []);
 
+	// Per-run model / effort override. Empty string means "Use agent default",
+	// which is the state the modal always opens in: the override is scoped to a
+	// single run and is deliberately NOT persisted anywhere (no session field,
+	// no setting). A persisted per-run model would be indistinguishable from
+	// changing the agent's own model, which Session settings already does.
+	const [runModel, setRunModel] = useState('');
+	const [runEffort, setRunEffort] = useState('');
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
+
+	// Fetch the model and effort options for the agent behind this run. Uses a
+	// stale flag so a slow response (e.g. `opencode models` shelling out) for a
+	// previously selected agent can't overwrite the current agent's list. Same
+	// pattern as MainPanel's model pill.
+	useEffect(() => {
+		const agentId = activeSession?.toolType;
+		if (!agentId) {
+			setAvailableModels([]);
+			setAvailableEfforts([]);
+			return;
+		}
+		let stale = false;
+		window.maestro.agents
+			.getModels(agentId)
+			.then((models) => {
+				if (!stale) setAvailableModels(models);
+			})
+			.catch(() => {
+				if (!stale) setAvailableModels([]);
+			});
+		// Agents expose reasoning effort under either `effort` (Claude Code) or
+		// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both and
+		// use whichever the agent defines.
+		Promise.all([
+			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
+			window.maestro.agents
+				.getConfigOptions(agentId, 'reasoningEffort')
+				.catch(() => [] as string[]),
+		])
+			.then(([effortOpts, reasoningOpts]) => {
+				if (stale) return;
+				setAvailableEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
+			})
+			.catch(() => {
+				if (!stale) setAvailableEfforts([]);
+			});
+		return () => {
+			stale = true;
+		};
+	}, [activeSession?.toolType]);
+
+	// Drop a picked value that the newly fetched option list no longer offers,
+	// so switching agents can't leave a stale model in the launched config.
+	useEffect(() => {
+		if (runModel && !availableModels.includes(runModel)) setRunModel('');
+	}, [availableModels, runModel]);
+	useEffect(() => {
+		if (runEffort && !availableEfforts.includes(runEffort)) setRunEffort('');
+	}, [availableEfforts, runEffort]);
+
 	// Document list state. Opens empty unless the inline wizard's "Start Auto
 	// Run" pre-seeded it with freshly generated docs via `presetDocuments`.
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
@@ -692,6 +752,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						maxLoops: null,
 						goalConfig: { goal: goal.trim(), exitCriteria: exitCriteria.trim(), maxIterations },
 						...(worktreeTarget && { worktreeTarget }),
+						...(runModel && { model: runModel }),
+						...(runEffort && { effort: runEffort }),
 					}
 				: {
 						documents: validDocuments,
@@ -700,6 +762,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						maxLoops: loopEnabled ? maxLoops : null,
 						taskSelectionMode,
 						...(worktreeTarget && { worktreeTarget }),
+						...(runModel && { model: runModel }),
+						...(runEffort && { effort: runEffort }),
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
@@ -1085,6 +1149,67 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							onWorktreeTargetChange={setWorktreeTarget}
 							onOpenWorktreeConfig={handleOpenWorktreeConfig}
 						/>
+					)}
+
+					{/* Per-run model / effort override. Applies to every agent spawn this
+					    run makes (both modes, and worktree-dispatched runs), and dies with
+					    the run - the agent's own configured model is left alone. Each
+					    picker is hidden when its provider exposes no options. */}
+					{(availableModels.length > 0 || availableEfforts.length > 0) && (
+						<div className="flex flex-col gap-2">
+							<div
+								className="text-[10px] font-bold uppercase"
+								style={{ color: theme.colors.textDim }}
+							>
+								Model for this run
+							</div>
+							<div className="flex items-center gap-2">
+								{availableModels.length > 0 && (
+									<select
+										value={runModel}
+										onChange={(e) => setRunModel(e.target.value)}
+										aria-label="Model for this run"
+										className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										<option value="">Use agent default</option>
+										{availableModels.map((m) => (
+											<option key={m} value={m}>
+												{m}
+											</option>
+										))}
+									</select>
+								)}
+								{availableEfforts.length > 0 && (
+									<select
+										value={runEffort}
+										onChange={(e) => setRunEffort(e.target.value)}
+										aria-label="Reasoning effort for this run"
+										className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										<option value="">Default effort</option>
+										{availableEfforts.map((e) => (
+											<option key={e} value={e}>
+												{e}
+											</option>
+										))}
+									</select>
+								)}
+							</div>
+							<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								Overrides the agent&apos;s configured model for this run only. The agent&apos;s own
+								settings and its interactive tabs are unchanged.
+							</p>
+						</div>
 					)}
 
 					{/* Spec-Driven config: Fresh-context selector + Agent Prompt. Hidden in
