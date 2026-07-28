@@ -26,6 +26,35 @@ import { logger } from '../../utils/logger';
 export const DEFAULT_BATCH_FLUSH_INTERVAL = 200;
 
 /**
+ * Merge the context-window half of a usage delta into the existing stats.
+ *
+ * `buildUsageStats` in the main process ALWAYS emits a context window, falling
+ * back to `FALLBACK_CONTEXT_WINDOW` (200k) when it could not resolve the real
+ * one (e.g. an omp model catalog that has not primed yet). Taking that value at
+ * face value downgrades a gauge that already showed an authoritative 1M back to
+ * 200k for the rest of the turn. So an unresolved delta never overwrites an
+ * already-resolved window; a resolved delta always wins, which keeps genuine
+ * model switches (they arrive resolved) propagating normally.
+ */
+export function mergeContextWindow(
+	delta: Pick<UsageStats, 'contextWindow' | 'contextWindowResolved'>,
+	existing: Pick<UsageStats, 'contextWindow' | 'contextWindowResolved'> | undefined
+): { contextWindow: number; contextWindowResolved?: boolean } {
+	if (existing?.contextWindowResolved && !delta.contextWindowResolved) {
+		return {
+			contextWindow: existing.contextWindow,
+			contextWindowResolved: true,
+		};
+	}
+	return {
+		contextWindow: delta.contextWindow || existing?.contextWindow || 0,
+		contextWindowResolved: delta.contextWindow
+			? delta.contextWindowResolved
+			: existing?.contextWindowResolved,
+	};
+}
+
+/**
  * Accumulated log data for efficient string concatenation
  */
 interface LogAccumulator {
@@ -370,8 +399,7 @@ export function useBatchedSessionUpdates(
 								totalCostUsd: (existing?.totalCostUsd || 0) + sessionUsageDelta.totalCostUsd,
 								reasoningTokens:
 									(existing?.reasoningTokens || 0) + (sessionUsageDelta.reasoningTokens || 0),
-								contextWindow: sessionUsageDelta.contextWindow,
-								contextWindowResolved: sessionUsageDelta.contextWindowResolved,
+								...mergeContextWindow(sessionUsageDelta, existing),
 							},
 						};
 					}
@@ -413,10 +441,7 @@ export function useBatchedSessionUpdates(
 										cacheCreationInputTokens: isOutputOnlyDelta
 											? (existing?.cacheCreationInputTokens ?? 0)
 											: tabUsageDelta.cacheCreationInputTokens,
-										contextWindow: tabUsageDelta.contextWindow || existing?.contextWindow || 0,
-										contextWindowResolved: tabUsageDelta.contextWindow
-											? tabUsageDelta.contextWindowResolved
-											: existing?.contextWindowResolved,
+										...mergeContextWindow(tabUsageDelta, existing),
 										outputTokens: tabUsageDelta.outputTokens, // Current (not accumulated)
 										totalCostUsd: (existing?.totalCostUsd || 0) + tabUsageDelta.totalCostUsd,
 										reasoningTokens: tabUsageDelta.reasoningTokens,
