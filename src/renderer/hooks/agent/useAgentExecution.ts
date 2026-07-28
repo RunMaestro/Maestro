@@ -37,6 +37,28 @@ export interface AgentSpawnResult {
 	errorKind?: AgentSpawnErrorKind;
 }
 
+/**
+ * Per-spawn options for `spawnAgentForSession`.
+ *
+ * The model/effort overrides are run-scoped: an Auto Run can use a different
+ * model than the agent's configured default without writing anything back to
+ * the session. They win over `session.customModel` / `session.customEffort`
+ * because the Auto Run spawn path has no active tab to consult.
+ */
+export interface SpawnAgentOptions {
+	isAutoRun?: boolean;
+	/** Overrides session.customModel for this spawn only */
+	modelOverride?: string;
+	/** Overrides session.customEffort for this spawn only */
+	effortOverride?: string;
+}
+
+/**
+ * The subset of spawn options the batch/goal runners forward from a
+ * `BatchRunConfig`. `isAutoRun` is supplied by the wiring layer, not the runner.
+ */
+export type SpawnAgentRunOverrides = Pick<SpawnAgentOptions, 'modelOverride' | 'effortOverride'>;
+
 export type AgentSpawnErrorKind =
 	| 'watchdog-stalled'
 	| 'watchdog-timeout'
@@ -75,9 +97,7 @@ export interface UseAgentExecutionReturn {
 		sessionId: string,
 		prompt: string,
 		cwdOverride?: string,
-		options?: {
-			isAutoRun?: boolean;
-		}
+		options?: SpawnAgentOptions
 	) => Promise<AgentSpawnResult>;
 	/** Spawn an agent with a prompt for the active session */
 	spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
@@ -199,15 +219,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * @param sessionId - The session ID to spawn the agent for
 	 * @param prompt - The prompt to send to the agent
 	 * @param cwdOverride - Optional override for working directory (e.g., for worktree mode)
+	 * @param options - Per-spawn options, including the run-scoped model/effort overrides
 	 */
 	const spawnAgentForSession = useCallback(
 		async (
 			sessionId: string,
 			prompt: string,
 			cwdOverride?: string,
-			options?: {
-				isAutoRun?: boolean;
-			}
+			options?: SpawnAgentOptions
 		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -607,13 +626,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomArgs: session.customArgs,
 							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
-							sessionCustomModel: session.customModel,
+							// A per-run override (Auto Run model picker, CLI --model) wins over the
+							// session's configured model. There is no active tab in this path, so
+							// the override sits directly above session.customModel and never
+							// touches the session itself - it dies when the run ends.
+							sessionCustomModel: options?.modelOverride ?? session.customModel,
 							// Auto Run is session-level (no active tab), so the session's effort
 							// is the source. Interactive spawns pass this too; omitting it here
 							// dropped the user's configured reasoning effort in Auto Run, which for
 							// Codex meant no reasoning summary was streamed (Thought Stream stayed
 							// stuck on "Waiting for the agent to start thinking...") - see #1147.
-							sessionCustomEffort: session.customEffort,
+							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
