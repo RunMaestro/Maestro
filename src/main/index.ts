@@ -1959,12 +1959,26 @@ app
 			inputMode: 'ai',
 			activeGroupId: null,
 		});
+		// Plugin focus verbs write sessionsStore directly, so they never reach the
+		// sessions:setActiveSessionId IPC handler where session.activated is emitted
+		// for event subscribers. Emit here so plugins observing focus changes see
+		// plugin-driven jumps, not only user-driven Left Bar navigation.
+		const emitPluginSessionActivated = (sessionId: string): void => {
+			if (!sessionId) return;
+			pluginEventBus?.emit({
+				topic: 'session.activated',
+				at: new Date().toISOString(),
+				payload: { sessionId },
+			});
+		};
 		const pluginTabsFocus = async (tabId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
 			let focused = false;
+			let focusedSessionId: string | undefined;
 			const next = sessions.map((session) => {
 				if ((Array.isArray(session.aiTabs) ? session.aiTabs : []).some((t) => t?.id === tabId)) {
 					focused = true;
+					focusedSessionId = session.id as string;
 					sessionsStore.set('activeSessionId', session.id as string);
 					return { ...session, ...pluginAiFocusFields(tabId) };
 				}
@@ -1974,6 +1988,7 @@ app
 					)
 				) {
 					focused = true;
+					focusedSessionId = session.id as string;
 					sessionsStore.set('activeSessionId', session.id as string);
 					return {
 						...session,
@@ -1985,7 +2000,10 @@ app
 				}
 				return session;
 			});
-			if (focused) setPluginSessionsRaw(next);
+			if (focused) {
+				setPluginSessionsRaw(next);
+				if (focusedSessionId) emitPluginSessionActivated(focusedSessionId);
+			}
 			return focused;
 		};
 		/**
@@ -2012,6 +2030,7 @@ app
 			setPluginSessionsRaw(
 				sessions.map((s) => (s.id === sessionId ? { ...s, ...pluginAiFocusFields(target) } : s))
 			);
+			emitPluginSessionActivated(sessionId);
 			return true;
 		};
 		const pluginTabsClose = async (tabId: string): Promise<boolean> => {

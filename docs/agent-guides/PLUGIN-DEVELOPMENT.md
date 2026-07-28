@@ -290,7 +290,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 `{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
 
-`size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`; an unknown value reports a manifest error and falls back to `default` rather than dropping the panel). `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
+`size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`; an unknown value reports a manifest error and falls back to `default` rather than dropping the panel). `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control-style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
 
 ```json
 { "id": "vet-panel", "title": "Vet Panel", "entry": "panel.html", "placement": "right" }
