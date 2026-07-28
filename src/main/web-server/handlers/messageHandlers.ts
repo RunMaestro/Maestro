@@ -1805,6 +1805,23 @@ export class WebSocketMessageHandler {
 			this.sendError(client, 'saveAsPlaybook must be a non-empty string');
 			return;
 		}
+		// Per-run model/effort override. Optional, but when present it must be a
+		// non-empty string: an empty value would pin the run to a nonexistent model
+		// instead of falling back to the agent default.
+		if (
+			message.model !== undefined &&
+			(typeof message.model !== 'string' || message.model.trim() === '')
+		) {
+			this.sendError(client, 'model must be a non-empty string');
+			return;
+		}
+		if (
+			message.effort !== undefined &&
+			(typeof message.effort !== 'string' || message.effort.trim() === '')
+		) {
+			this.sendError(client, 'effort must be a non-empty string');
+			return;
+		}
 
 		// Validate optional worktree config - desktop app uses this to create a
 		// git worktree, checkout the branch, and optionally open a PR on completion.
@@ -1865,6 +1882,8 @@ export class WebSocketMessageHandler {
 			maxLoops: message.maxLoops !== undefined ? Number(message.maxLoops) : undefined,
 			saveAsPlaybook: message.saveAsPlaybook as string | undefined,
 			launch: message.launch as boolean | undefined,
+			model: message.model as string | undefined,
+			effort: message.effort as string | undefined,
 			worktree,
 		};
 

@@ -560,6 +560,13 @@ export type ConfigureAutoRunCallback = (
 		maxLoops?: number;
 		saveAsPlaybook?: string;
 		launch?: boolean;
+		/**
+		 * Per-run model/effort override (CLI `--model` / `--effort`). Wins over the
+		 * session's configured model for this run's spawns only; never written back
+		 * to the session. Absent means "use the agent default".
+		 */
+		model?: string;
+		effort?: string;
 		worktree?: {
 			enabled: boolean;
 			path: string;
