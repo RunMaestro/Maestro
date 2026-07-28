@@ -14,6 +14,7 @@ import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { DataBufferManager } from './handlers/DataBufferManager';
+import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
@@ -544,6 +545,18 @@ export class ProcessManager extends EventEmitter {
 	 */
 	get(sessionId: string): ManagedProcess | undefined {
 		return this.processes.get(sessionId);
+	}
+
+	/**
+	 * Re-emit a corrected `usage` event for a local omp process whose model
+	 * context window could not be resolved when its first usage arrived, because
+	 * the catalog prime was still running. Called by the spawn handler when a
+	 * prime that exceeded the spawn cap finally lands.
+	 *
+	 * @returns true when a corrected event was emitted.
+	 */
+	pushResolvedOmpContextWindow(sessionId: string, catalogKey: string): boolean {
+		return pushResolvedOmpContextWindow(this.processes, this, sessionId, catalogKey);
 	}
 
 	/**

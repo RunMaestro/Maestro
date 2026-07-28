@@ -772,6 +772,10 @@ export async function handleProcessSpawn(
 	// catalog is never served to another (see computeOmpCatalogKey). SSH remotes
 	// are skipped (their catalog may differ) and fall back to the configured window.
 	let ompModelCatalogKey: string | undefined;
+	// Set only when the prime outran the spawn cap: the spawn continues without a
+	// catalog, so the first turn emits the fallback window and we push a corrected
+	// one once this settles (see below, after the process exists).
+	let ompLatePrime: Promise<void> | undefined;
 	if (config.toolType === 'omp' && !sshRemoteUsed) {
 		// The prime needs an ABSOLUTE binary path (buildOmpPrimeEnv prepends its
 		// dirname, and the catalog key must identify one binary). A bare or
@@ -841,6 +845,7 @@ export async function handleProcessSpawn(
 					elapsedMs: Date.now() - primeStartedAt,
 					capMs: OMP_PRIME_SPAWN_CAP_MS,
 				});
+				ompLatePrime = prime;
 			}
 		}
 	}
@@ -885,6 +890,22 @@ export async function handleProcessSpawn(
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 	});
+
+	// The prime outran the spawn cap, so the process started without a usable
+	// catalog and its first usage event carries the 200k fallback. Close the loop:
+	// when the prime lands, re-emit that turn's usage with the real window instead
+	// of leaving the gauge wrong until the next turn. Attached AFTER spawn so the
+	// managed process exists; the push itself no-ops if it already exited.
+	if (ompLatePrime && ompModelCatalogKey) {
+		const latePrimeCatalogKey = ompModelCatalogKey;
+		void ompLatePrime
+			.then(() => {
+				processManager.pushResolvedOmpContextWindow(config.sessionId, latePrimeCatalogKey);
+			})
+			.catch(() => {
+				// primeOmpModelCatalog already warn-logs its own failures.
+			});
+	}
 
 	logger.info(`Process spawned successfully`, LOG_CONTEXT, {
 		sessionId: config.sessionId,
