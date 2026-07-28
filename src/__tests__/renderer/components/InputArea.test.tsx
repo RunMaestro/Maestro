@@ -257,6 +257,40 @@ describe('InputArea', () => {
 			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
 
+		it('keeps long wrapped text and an agent mention on the native textarea glyph run', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'maestro-omp' });
+			const longDraft = [
+				'Olhasó',
+				'',
+				'oakoekfapoekfpaokef',
+				'apokfpaoefpokaepofkapokfopkaopkefoakepfokapoekfpoakeopfkaopk',
+				'kAPOKFPAKEOPFKAPOKFOKA',
+				'',
+				'@maestro-omp ',
+				'amoma',
+				'oakkkkkkkefae',
+			].join('\n');
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+
+			const { container } = render(
+				<InputArea {...createDefaultProps({ session, inputValue: longDraft })} />
+			);
+			const textarea = screen.getByRole('textbox');
+			const overlay = container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
+			const mentionDecoration = Array.from(overlay.querySelectorAll('span')).find(
+				(element) => element.textContent === '@maestro-omp'
+			);
+
+			expect(textarea).toHaveValue(longDraft);
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+			expect((textarea as HTMLTextAreaElement).style.wordBreak).toBe('break-word');
+			expect(overlay.textContent).toBe(longDraft);
+			expect(overlay.style.color).toBe('transparent');
+			expect(overlay.style.wordBreak).toBe('break-word');
+			expect((mentionDecoration as HTMLElement).style.color).toBe('transparent');
+		});
+
 		it('shows native text and hides the mention overlay during selection changes', () => {
 			const props = createDefaultProps({ inputValue: 'check @src/index.ts now' });
 			const { container } = render(<InputArea {...props} />);
