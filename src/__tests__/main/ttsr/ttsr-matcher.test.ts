@@ -120,6 +120,42 @@ describe('matchesGlobs', () => {
 		const file = process.platform === 'win32' ? 'C:\\other\\a.ts' : '/other/a.ts';
 		expect(matchesGlobs(['src/**/*.ts'], file, cwd)).toBe(false);
 	});
+
+	// A leading `**` consumes any number of leading segments, so handing a still
+	// absolute candidate to a project-relative pattern would silently widen every
+	// such rule to the whole filesystem: `**\/*.ts` would fire on `/tmp/x.ts`.
+	// Only a pattern that is itself absolute may match an unrelativized path.
+	it('does not let a project-relative glob match an out-of-project absolute path', () => {
+		const cwd = process.platform === 'win32' ? 'C:\\repo' : '/repo';
+		const outside = process.platform === 'win32' ? 'C:\\tmp\\x.ts' : '/tmp/x.ts';
+		expect(matchesGlobs(['**/*.ts', '**/*.tsx'], outside, cwd)).toBe(false);
+		expect(matchesGlobs(['src/**/*.ts'], outside, cwd)).toBe(false);
+	});
+
+	it('does not let a project-relative glob match an absolute path when cwd is unknown', () => {
+		// No `cwd` means nothing can be relativized, so the same widening applies.
+		expect(matchesGlobs(['**/*.ts'], '/repo/src/a.ts')).toBe(false);
+		expect(matchesGlobs(['**/*.ts'], 'C:\\repo\\src\\a.ts')).toBe(false);
+	});
+
+	it('matches an in-project absolute path against a bare recursive glob', () => {
+		const cwd = process.platform === 'win32' ? 'C:\\repo' : '/repo';
+		const file = process.platform === 'win32' ? 'C:\\repo\\src\\a.ts' : '/repo/src/a.ts';
+		expect(matchesGlobs(['**/*.ts', '**/*.tsx'], file, cwd)).toBe(true);
+		expect(
+			matchesGlobs(['**/*.ts'], `${cwd}${process.platform === 'win32' ? '\\' : '/'}a.md`, cwd)
+		).toBe(false);
+	});
+
+	it('still honours an explicitly absolute glob', () => {
+		// A user who writes an absolute pattern means it, in or out of the project.
+		expect(matchesGlobs(['/tmp/**/*.ts'], '/tmp/x.ts')).toBe(true);
+		expect(matchesGlobs(['/tmp/**/*.ts'], '/tmp/x.ts', '/repo')).toBe(true);
+		expect(matchesGlobs(['/tmp/**/*.ts'], '/var/x.ts', '/repo')).toBe(false);
+		// Mixed list: the relative patterns are ignored for the absolute candidate,
+		// but the absolute one still decides.
+		expect(matchesGlobs(['src/**/*.ts', '/tmp/**/*.ts'], '/tmp/x.ts', '/repo')).toBe(true);
+	});
 });
 
 describe('ruleAppliesToContext', () => {

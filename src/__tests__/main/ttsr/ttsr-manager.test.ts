@@ -365,6 +365,38 @@ describe('TtsrManager tool-source matching', () => {
 		expect(manager.takeInterrupts('s1')).toEqual([]);
 		expect(manager.takeDeferred('s1')).toHaveLength(1);
 	});
+
+	// The finding behind L1 reported a deferred `<system-reminder>` for a write
+	// the rule's globs should have excluded, i.e. a "scope leak" through the
+	// deferred path. The glob gate runs in `ruleAppliesToContext` BEFORE any
+	// bucketing, so a gated-out write can never reach the deferred queue - this
+	// pins that ordering so a future refactor cannot invert it.
+	it('never queues a deferred reminder for a write the globs excluded', () => {
+		const { manager, matched } = setup([makeRule({ ...toolRule, interruptMode: 'prose-only' })]);
+		const excluded: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{ name: 'Write', input: { file_path: '/repo/docs/a.md', content: 'console.log(1)' } },
+			],
+		};
+
+		expect(manager.observe('s1', excluded, ctx('claude-code'))).toEqual([]);
+		expect(matched).toEqual([]);
+		expect(manager.takeDeferred('s1')).toEqual([]);
+		expect(manager.takeInterrupts('s1')).toEqual([]);
+
+		// An out-of-project absolute path is gated the same way: a `src/**` rule
+		// must not reach across the filesystem into the deferred bucket either.
+		const outside: ParsedEvent = {
+			type: 'tool_use',
+			toolUseBlocks: [
+				{ name: 'Write', input: { file_path: '/tmp/src/a.ts', content: 'console.log(1)' } },
+			],
+		};
+
+		expect(manager.observe('s1', outside, ctx('claude-code'))).toEqual([]);
+		expect(manager.takeDeferred('s1')).toEqual([]);
+	});
 });
 
 describe('TtsrManager shell command matching', () => {

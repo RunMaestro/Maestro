@@ -39,6 +39,7 @@ import {
 	DEFAULT_TTSR_PROJECT_SETTINGS,
 	TTSR_AGENT_CAPABILITIES,
 	type LoadedTtsrRule,
+	type TtsrMatchedPayload,
 	type TtsrTriggeredPayload,
 } from '../../../shared/ttsr-types';
 
@@ -103,6 +104,8 @@ const BASH_RULE = rule({
 
 interface TurnResult {
 	triggered: TtsrTriggeredPayload[];
+	/** Every `ttsr:matched` observation, for asserting source and file path. */
+	matched: TtsrMatchedPayload[];
 	/** `interrupt` for contextMode keep, `kill` for discard, null when nothing fired. */
 	signal: 'interrupt' | 'kill' | null;
 	/** Index of the raw line the abort was signalled on, or -1. */
@@ -126,6 +129,7 @@ async function runTurn(
 	options: { enabled?: boolean } = {}
 ): Promise<TurnResult> {
 	const triggered: TtsrTriggeredPayload[] = [];
+	const matched: TtsrMatchedPayload[] = [];
 	let signal: TurnResult['signal'] = null;
 	let readRules = false;
 
@@ -156,6 +160,7 @@ async function runTurn(
 			},
 		},
 		onTriggered: (payload) => triggered.push(payload),
+		onMatched: (payload) => matched.push(payload),
 	});
 	runtime.attach(source as unknown as TtsrProcessEventSource);
 	source.emit('spawn', {
@@ -185,7 +190,7 @@ async function runTurn(
 	await runtime.flushInterrupts();
 	runtime.dispose();
 
-	return { triggered, signal, abortedAt, lineCount: lines.length, readRules };
+	return { triggered, matched, signal, abortedAt, lineCount: lines.length, readRules };
 }
 
 // ── per-agent fixtures (real provider stdout shapes) ─────────────────────────
@@ -552,5 +557,131 @@ describe('TTSR Gate A acceptance matrix', () => {
 				});
 			}
 		}
+	});
+});
+
+// ── high-fidelity claude-code tool-scope regression (finding L1) ─────────────
+
+/**
+ * The fixtures above hand the parser a bare complete assistant message with
+ * `globs: []`. The field report behind finding L1 said a `tool:edit`/`tool:write`
+ * rule with real `globs` never interrupted a live claude-code Write, so this
+ * block reproduces the LIVE conditions all at once: `--include-partial-messages`
+ * stream_event framing around the tool_use block (including the
+ * `input_json_delta` frames the parser drops by design), an ABSOLUTE
+ * `file_path` under the registered project root, and a globbed rule with
+ * `interruptMode: 'always'`.
+ *
+ * It also pins the glob gate in both directions: an in-project absolute path
+ * relativizes and matches, an out-of-project one does not (a leading `**` would
+ * otherwise consume `/tmp/` and widen the rule to the whole filesystem).
+ */
+describe('TTSR claude-code tool scope under live stream framing', () => {
+	const PROBE_CONTENT = 'export type P = { payload: any };';
+
+	const TOOL_RULE = rule({
+		name: 'no-typescript-any',
+		condition: [':\\s*any\\b'],
+		scope: ['tool:edit', 'tool:write'],
+		globs: ['**/*.ts', '**/*.tsx'],
+		interruptMode: 'always',
+		content: 'Do not use the `any` type.',
+		path: '.maestro/rules/no-typescript-any.md',
+	});
+
+	/** One turn's raw stdout, framed the way `--include-partial-messages` frames it. */
+	function writeTurn(filePath: string): unknown[] {
+		const streamEvent = (event: Record<string, unknown>) => ({
+			type: 'stream_event',
+			session_id: 'claude-prov-1',
+			event,
+		});
+		return [
+			{ type: 'system', subtype: 'init', session_id: 'claude-prov-1' },
+			streamEvent({ type: 'message_start', message: { role: 'assistant', content: [] } }),
+			streamEvent({
+				type: 'content_block_delta',
+				index: 0,
+				delta: { type: 'text_delta', text: 'Writing the probe file now.' },
+			}),
+			streamEvent({
+				type: 'content_block_start',
+				index: 1,
+				content_block: { type: 'tool_use', id: 'toolu_1', name: 'Write', input: {} },
+			}),
+			// Tool inputs never stream token by token: the parser drops these on
+			// purpose, so the whole payload only lands on the complete message below.
+			streamEvent({
+				type: 'content_block_delta',
+				index: 1,
+				delta: { type: 'input_json_delta', partial_json: '{"file_path":"' },
+			}),
+			streamEvent({
+				type: 'content_block_delta',
+				index: 1,
+				delta: { type: 'input_json_delta', partial_json: `${filePath}","content":"..."}` },
+			}),
+			streamEvent({ type: 'content_block_stop', index: 1 }),
+			{
+				type: 'assistant',
+				session_id: 'claude-prov-1',
+				message: {
+					role: 'assistant',
+					content: [
+						{
+							type: 'tool_use',
+							id: 'toolu_1',
+							name: 'Write',
+							input: { file_path: filePath, content: PROBE_CONTENT },
+						},
+					],
+				},
+			},
+			{ type: 'result', result: 'All done.', session_id: 'claude-prov-1' },
+		];
+	}
+
+	it('interrupts mid-turn on an in-project absolute Write path', async () => {
+		const lines = writeTurn(`${ROOT}/src/probe.ts`);
+		const turn = await runTurn('claude-code', new ClaudeOutputParser(), lines, [TOOL_RULE]);
+
+		expect(turn.signal).toBe('interrupt');
+		// Mid-turn, not on the closing `result` line: the abort lands on the
+		// assistant message carrying the tool_use, before the turn ends.
+		expect(turn.abortedAt).toBe(lines.length - 2);
+		expect(turn.matched).toHaveLength(1);
+		expect(turn.matched[0].source).toBe('tool:write');
+		expect(turn.matched[0].filePath).toBe(`${ROOT}/src/probe.ts`);
+		expect(turn.matched[0].willInterrupt).toBe(true);
+		expect(turn.triggered).toHaveLength(1);
+		expect(turn.triggered[0].rules.map((ref) => ref.name)).toEqual(['no-typescript-any']);
+	});
+
+	it('does not fire for a Write outside the project root', async () => {
+		const turn = await runTurn(
+			'claude-code',
+			new ClaudeOutputParser(),
+			writeTurn('/tmp/probe.ts'),
+			[TOOL_RULE]
+		);
+
+		// `**/*.ts` is a project-relative pattern, so an escaping absolute path must
+		// not satisfy it, or a rule scoped to the project fires machine-wide.
+		expect(turn.signal).toBeNull();
+		expect(turn.matched).toEqual([]);
+		expect(turn.triggered).toEqual([]);
+	});
+
+	it('does not fire for an in-project Write the globs exclude', async () => {
+		const turn = await runTurn(
+			'claude-code',
+			new ClaudeOutputParser(),
+			writeTurn(`${ROOT}/docs/probe.md`),
+			[TOOL_RULE]
+		);
+
+		expect(turn.signal).toBeNull();
+		expect(turn.matched).toEqual([]);
+		expect(turn.triggered).toEqual([]);
 	});
 });
