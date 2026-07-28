@@ -118,7 +118,7 @@ describe('useInputAreaTextChange', () => {
 		expect(textarea.scrollTop).toBe(640);
 	});
 
-	it('scrolls past the cap when the caret sits before trailing text on the final line', () => {
+	it('preserves the restored scroll when the caret sits before trailing text on the final line', () => {
 		const handlers = createHandlers();
 		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
 			callback(0);
@@ -127,12 +127,15 @@ describe('useInputAreaTextChange', () => {
 		vi.stubGlobal('requestAnimationFrame', runAnimationFrame);
 		render(<Harness handlers={handlers} />);
 		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
-		// Content well past TEXTAREA_MAX_HEIGHT, caret in the middle of the last row
-		// (what an inserted mention or trailing whitespace leaves behind). That row is
-		// the one being typed on, so it has to end up visible.
+		// Content well past TEXTAREA_MAX_HEIGHT, caret in the middle of the final logical
+		// line (what an inserted mention or trailing whitespace leaves behind). That line
+		// can soft-wrap across several visual rows, so the caret is not guaranteed to be
+		// on the bottom row; snapping to scrollHeight would scroll it out of view. The
+		// gate keys off the true end of the value, so this mid-line caret is a no-op and
+		// the scroll resizeTextareaToContent restored survives.
 		const value = `${'line\n'.repeat(80)}trailing`;
 		const caret = value.length - 4;
-		textarea.scrollTop = 0;
+		textarea.scrollTop = 96;
 		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
 		Object.defineProperty(textarea, 'selectionEnd', { value: caret, configurable: true });
 
@@ -142,7 +145,7 @@ describe('useInputAreaTextChange', () => {
 
 		expect(runAnimationFrame).toHaveBeenCalledTimes(1);
 		expect(textarea.style.height).toBe('176px');
-		expect(textarea.scrollTop).toBe(640);
+		expect(textarea.scrollTop).toBe(96);
 	});
 
 	it('leaves the scroll position alone when editing an earlier line', () => {
@@ -158,8 +161,8 @@ describe('useInputAreaTextChange', () => {
 		textarea.scrollTop = 42;
 		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
 		// Caret parked on the FIRST line: scrollTextareaToCaretEnd only snaps when the
-		// caret is in the final logical line, so the keystroke resize must preserve the
-		// scroll rather than jump the viewport to the bottom.
+		// caret is at the very end of the value, so the keystroke resize must preserve
+		// the scroll rather than jump the viewport to the bottom.
 		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
 
 		fireEvent.change(textarea, {

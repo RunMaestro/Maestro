@@ -38,11 +38,13 @@ describe('InputArea textareaSizing utils', () => {
 		expect(textarea.scrollTop).toBe(240);
 	});
 
-	it('scrolls to the bottom when the caret is mid-way through the final line', () => {
+	it('leaves scroll untouched when the caret is mid-way through the final logical line', () => {
 		const textarea = document.createElement('textarea');
-		// Caret sits before the trailing characters of the last line, which is what an
-		// inserted mention or trailing whitespace leaves behind. That row still has to
-		// stay visible, so the gate keys off the final logical line, not value.length.
+		// Regression for the soft-wrap edge case: a long final logical line can wrap
+		// across several visual rows past the height cap. A caret before the trailing
+		// characters (e.g. an inserted mention) belongs to an earlier visual row, so
+		// snapping to scrollHeight would scroll it out of view. The gate keys off the
+		// true end of the value, not the final logical line, precisely to avoid that.
 		textarea.value = 'first\nsecond\nlast line';
 		textarea.scrollTop = 12;
 		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
@@ -53,12 +55,14 @@ describe('InputArea textareaSizing utils', () => {
 
 		scrollTextareaToCaretEnd(textarea);
 
-		expect(textarea.scrollTop).toBe(240);
+		expect(textarea.scrollTop).toBe(12);
 	});
 
-	it('scrolls to the bottom when the caret is mid-text in a single-line value', () => {
+	it('leaves scroll untouched when the caret is mid-text in a single-line value', () => {
 		const textarea = document.createElement('textarea');
-		// No newline at all: the whole value IS the final line, so any caret qualifies.
+		// A single logical line can still soft-wrap beyond the cap, so a mid-text caret
+		// is not guaranteed to be on the bottom visual row. Only a caret at value.length
+		// qualifies for the bottom snap.
 		textarea.value = 'hello';
 		textarea.scrollTop = 12;
 		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
@@ -66,7 +70,7 @@ describe('InputArea textareaSizing utils', () => {
 
 		scrollTextareaToCaretEnd(textarea);
 
-		expect(textarea.scrollTop).toBe(240);
+		expect(textarea.scrollTop).toBe(12);
 	});
 
 	it('leaves textarea scroll position untouched when the caret is on an earlier line', () => {

@@ -69,17 +69,19 @@ describe('useInputAreaAutosize', () => {
 		expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(42);
 	});
 
-	it('scrolls when the caret is mid-way through the final line', async () => {
-		// Widened gate: a caret anywhere in the last logical line still snaps that row
-		// into view, so a programmatic insertion that lands before trailing characters
-		// no longer leaves the caret row clipped.
+	it('leaves the scroll untouched when the caret is mid-way through the final line', async () => {
+		// A final logical line can soft-wrap past the height cap, so a caret before its
+		// trailing characters is not guaranteed to be on the bottom visual row. Snapping
+		// to scrollHeight would scroll that row out of view, so the gate keys off the
+		// true end of the value and this mid-line caret is a no-op.
 		const { getByLabelText } = render(
 			<Harness value={'hello\nworld'} selectionEnd={8} initialScrollTop={42} />
 		);
 
 		await waitFor(() => {
-			expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(200);
+			expect((getByLabelText('input') as HTMLTextAreaElement).style.height).toBe('176px');
 		});
+		expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(42);
 	});
 
 	it('scrolls a restored shorter draft with the caret at the end', async () => {
