@@ -100,8 +100,11 @@ export type CardAssignment =
  * surface it, the dispatcher only says what happened.
  */
 export interface CardNotification {
-	/** `done` = the card completed; `blocked` = it needs a human. */
-	kind: 'done' | 'blocked';
+	/**
+	 * `done` = the card completed; `review` = it finished but a human must approve
+	 * it before it counts; `blocked` = it is stuck and needs a human.
+	 */
+	kind: 'done' | 'review' | 'blocked';
 	/** Board the card belongs to (hosts route plugin events by board). */
 	boardId: string;
 	cardId: string;
@@ -379,18 +382,19 @@ export function reclaimStaleRunning(
 
 /**
  * Count trailing (most-recent-first) runs that the card is accountable for
- * failing. A `done` run resets the count. `reclaimed` and `canceled` runs are
- * skipped entirely rather than counted or treated as a reset: nobody ran the
- * work to a conclusion (the host restarted, or a user hit stop), so those
- * attempts say nothing about whether the card can succeed - but they also must
- * not paper over genuine failures on either side of them.
+ * failing. A `done` or `review` run resets the count - both reached a deliberate
+ * conclusion, so neither is evidence the card cannot succeed. `reclaimed` and
+ * `canceled` runs are skipped entirely rather than counted or treated as a
+ * reset: nobody ran the work to a conclusion (the host restarted, or a user hit
+ * stop), so those attempts say nothing about whether the card can succeed - but
+ * they also must not paper over genuine failures on either side of them.
  */
 function trailingFailureCount(card: BoardCard): number {
 	const runs = card.runs ?? [];
 	let count = 0;
 	for (let i = runs.length - 1; i >= 0; i--) {
 		if (runs[i].outcome === 'reclaimed' || runs[i].outcome === 'canceled') continue;
-		if (runs[i].outcome === 'done') break;
+		if (runs[i].outcome === 'done' || runs[i].outcome === 'review') break;
 		count++;
 	}
 	return count;
@@ -425,6 +429,7 @@ export function applyCardCancel(board: Board, cardId: string, nowIso: string): b
  * Apply a completed run's result to a card: finalize the open run, then set the
  * card's terminal status. Marker precedence, then exit-status fallback:
  *   - block marker            -> `blocked`
+ *   - review marker           -> `review`
  *   - complete marker         -> `done`
  *   - no marker, exit 0       -> `done`
  *   - no marker, non-zero/err -> failed run; retry (`ready`) until the circuit
@@ -456,6 +461,12 @@ export function applyCardResult(
 		status = 'blocked';
 		outcome = 'blocked';
 		summary = markers.blockReason;
+	} else if (markers.review) {
+		// Finished, but a human must approve it. Authoritative like a block marker
+		// (never retried), yet not a failure - the breaker treats it as a reset.
+		status = 'review';
+		outcome = 'review';
+		summary = markers.reviewReason;
 	} else if (markers.complete || cleanExit) {
 		status = 'done';
 		outcome = 'done';
@@ -744,6 +755,9 @@ export class BoardDispatcher {
 	 * Resolve a completed (or failed) card run: reload the board fresh, apply the
 	 * result, and persist. Reloading avoids clobbering concurrent card mutations
 	 * that landed between the claim and this completion.
+	 *
+	 * `review` is terminal like `done` / `blocked` for notification purposes: the
+	 * card is waiting on a person, so the user has to hear about it.
 	 */
 	private finalize(cardId: string, result: CardSpawnResult): void {
 		this.inFlight.delete(cardId);
@@ -760,7 +774,7 @@ export class BoardDispatcher {
 		if (status === null) return;
 		this.saveAndAnnounce(board, before);
 		this.log('info', `card "${cardId}" -> ${status}`);
-		if (status === 'done' || status === 'blocked') {
+		if (status === 'done' || status === 'review' || status === 'blocked') {
 			// The run summary the marker/exit path just recorded is the useful half of
 			// the message: what got done, or why the card is stuck.
 			const card = board.cards.find((c) => c.id === cardId);

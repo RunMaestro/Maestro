@@ -1602,7 +1602,11 @@ app
 							at,
 							payload: { ...common, ...(event.outcome ? { outcome: event.outcome } : {}) },
 						});
-					} else {
+					} else if (event.kind === 'done') {
+						// Deliberately no plugin event for `review`: a card awaiting human
+						// approval is neither completed nor blocked, and there is no
+						// `board.cardNeedsReview` topic yet, so emitting either existing topic
+						// would lie to plugins. That transition stays toast-only for now.
 						pluginEventBus?.emit({
 							topic: 'board.cardCompleted',
 							at,
@@ -1612,7 +1616,7 @@ app
 							},
 						});
 					}
-					// The done/blocked toast (including its pooled click-to-jump onto the
+					// The done/review/blocked toast (including its pooled click-to-jump onto the
 					// worker agent) is built by the pure `buildBoardCardToastPayload` helper
 					// so the exact payload can be unit-tested without importing this module.
 					safeSend('remote:notifyToast', buildBoardCardToastPayload(event));

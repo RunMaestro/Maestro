@@ -17,7 +17,7 @@ import type { CardNotification } from './board-dispatcher';
 /**
  * Shape accepted by the renderer's `onRemoteNotifyToast` bridge. Only the fields
  * the Board emits are modeled here; `color` is one of the 5 canonical Toast
- * colors (Board uses `green` for done, `red` for blocked).
+ * colors (Board uses `green` for done, `yellow` for review, `red` for blocked).
  */
 export interface BoardCardToastPayload {
 	title: string;
@@ -30,22 +30,31 @@ export interface BoardCardToastPayload {
 }
 
 /**
- * Build the toast for a done/blocked card. A blocked card needs a human, so its
- * toast is sticky (`dismissible`); a done card auto-dismisses. When the run was
- * pooled the payload also carries `sessionId` + a `jump-session` `clickAction`
- * onto the worker agent (`sessionId` additionally drives the legacy fallback and
- * metadata resolution in `useRemoteIntegration.ts`).
+ * Build the toast for a done/review/blocked card. Both `blocked` and `review`
+ * need a human, so their toasts are sticky (`dismissible`); a done card
+ * auto-dismisses. Review is yellow rather than red: the card did not fail, it is
+ * waiting for approval. When the run was pooled the payload also carries
+ * `sessionId` + a `jump-session` `clickAction` onto the worker agent
+ * (`sessionId` additionally drives the legacy fallback and metadata resolution
+ * in `useRemoteIntegration.ts`).
  */
 export function buildBoardCardToastPayload(event: CardNotification): BoardCardToastPayload {
 	const blocked = event.kind === 'blocked';
+	const review = event.kind === 'review';
 	// Phase 4: an isolated card's output lives on its own branch, which nothing
 	// merges automatically - name it so the user can find it.
 	const branchNote = event.worktreeBranch ? ` (branch ${event.worktreeBranch})` : '';
+	const heading = blocked ? 'Card blocked' : review ? 'Card needs review' : 'Card done';
+	const fallback = blocked
+		? 'No reason reported.'
+		: review
+			? 'Waiting for human approval.'
+			: 'Run completed.';
 	return {
-		title: blocked ? `Card blocked: ${event.cardTitle}` : `Card done: ${event.cardTitle}`,
-		message: (event.detail || (blocked ? 'No reason reported.' : 'Run completed.')) + branchNote,
-		color: blocked ? 'red' : 'green',
-		dismissible: blocked,
+		title: `${heading}: ${event.cardTitle}`,
+		message: (event.detail || fallback) + branchNote,
+		color: blocked ? 'red' : review ? 'yellow' : 'green',
+		dismissible: blocked || review,
 		sourceAgent: 'Board',
 		...(event.workerAgentId
 			? {
