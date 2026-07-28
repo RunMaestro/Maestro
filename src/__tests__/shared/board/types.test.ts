@@ -3,7 +3,8 @@
  * @description Tests for the Board card validator, focused on card priority:
  * `normal` is the default and is never serialized, `high`/`low` round-trip, a
  * junk value degrades to the default rather than rejecting the card, and the
- * dispatch rank is ordered high > normal > low.
+ * dispatch rank is ordered high > normal > low. Also locks the status/outcome
+ * enums (including the `review` state) and the per-card PR-on-done opt-in.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -13,6 +14,7 @@ import {
 	validateBoardCard,
 	CARD_PRIORITIES,
 	CARD_RUN_OUTCOMES,
+	CARD_STATUSES,
 	type BoardCard,
 } from '../../../shared/board/types';
 
@@ -118,5 +120,118 @@ describe('validateCardRun worktree fields (Phase 4)', () => {
 		expect(card?.runs?.[0].attempt).toBe(1);
 		expect(card?.runs?.[0].worktreePath).toBeUndefined();
 		expect(card?.runs?.[0].worktreeBranch).toBeUndefined();
+	});
+});
+
+describe('status and outcome enums', () => {
+	it('lists every card status, with review parked between running and blocked', () => {
+		// Column order in BoardModal follows this list, so the position matters:
+		// Review sits after Running and before Blocked.
+		expect(CARD_STATUSES).toEqual([
+			'triage',
+			'todo',
+			'ready',
+			'running',
+			'review',
+			'blocked',
+			'done',
+		]);
+	});
+
+	it('lists every run outcome, including review', () => {
+		// A run that hands off to a human records `review`, not `done` - the audit
+		// trail must not claim the card finished on its own.
+		expect(CARD_RUN_OUTCOMES).toEqual([
+			'done',
+			'review',
+			'blocked',
+			'error',
+			'reclaimed',
+			'canceled',
+		]);
+	});
+
+	it('accepts a card persisted in the review status', () => {
+		const card = validateBoardCard(raw({ status: 'review' }));
+		expect(card?.status).toBe('review');
+	});
+
+	it('round-trips a review card and its review run through YAML', () => {
+		const card = validateBoardCard(
+			raw({
+				status: 'review',
+				runs: [{ attempt: 1, startedAt: NOW, outcome: 'review', summary: 'needs a human eye' }],
+			})
+		)!;
+		const reloaded = validateBoardCard(yaml.load(yaml.dump(card)));
+		expect(reloaded?.status).toBe('review');
+		expect(reloaded?.runs?.[0]).toMatchObject({ outcome: 'review', summary: 'needs a human eye' });
+	});
+});
+
+describe('validateBoardCard prOnDone (per-card PR opt-in)', () => {
+	it('stays absent when the card never opted in, so existing files are untouched', () => {
+		const card = validateBoardCard(raw())!;
+		expect('prOnDone' in card).toBe(false);
+		expect(yaml.dump(card)).not.toContain('prOnDone');
+	});
+
+	it('round-trips an explicit target branch', () => {
+		const card = validateBoardCard(raw({ prOnDone: { targetBranch: 'develop' } }))!;
+		const reloaded = validateBoardCard(yaml.load(yaml.dump(card)));
+		expect(reloaded?.prOnDone).toEqual({ targetBranch: 'develop' });
+	});
+
+	it('keeps an empty object, which means "resolve the repo default branch at PR time"', () => {
+		const card = validateBoardCard(raw({ prOnDone: {} }))!;
+		expect(card.prOnDone).toEqual({});
+		expect(validateBoardCard(yaml.load(yaml.dump(card)))?.prOnDone).toEqual({});
+	});
+
+	it('drops a blank or non-string target branch but keeps the opt-in on', () => {
+		expect(validateBoardCard(raw({ prOnDone: { targetBranch: '   ' } }))?.prOnDone).toEqual({});
+		expect(validateBoardCard(raw({ prOnDone: { targetBranch: 42 } }))?.prOnDone).toEqual({});
+	});
+
+	it('disarms the opt-in for a non-object value rather than silently arming a PR', () => {
+		for (const bogus of [true, 'yes', 42, ['develop'], null]) {
+			const card = validateBoardCard(raw({ prOnDone: bogus }));
+			expect(card?.id).toBe('c1');
+			expect(card?.prOnDone).toBeUndefined();
+		}
+	});
+});
+
+describe('validateCardRun prUrl', () => {
+	it('round-trips the PR url stamped on a completed run', () => {
+		const card = validateBoardCard(
+			raw({
+				runs: [
+					{
+						attempt: 1,
+						startedAt: NOW,
+						outcome: 'done',
+						worktreeBranch: 'board/1a2b3c4d/5e6f7a8b',
+						prUrl: 'https://github.com/acme/repo/pull/42',
+					},
+				],
+			})
+		)!;
+		const reloaded = validateBoardCard(yaml.load(yaml.dump(card)));
+		expect(reloaded?.runs?.[0].prUrl).toBe('https://github.com/acme/repo/pull/42');
+	});
+
+	it('drops a blank or non-string prUrl instead of rejecting the run', () => {
+		const card = validateBoardCard(
+			raw({
+				runs: [
+					{ attempt: 1, startedAt: NOW, prUrl: '   ' },
+					{ attempt: 2, startedAt: NOW, prUrl: 42 },
+				],
+			})
+		);
+		expect(card?.runs?.map((r) => r.attempt)).toEqual([1, 2]);
+		expect(card?.runs?.[0].prUrl).toBeUndefined();
+		expect(card?.runs?.[1].prUrl).toBeUndefined();
 	});
 });

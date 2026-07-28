@@ -61,10 +61,31 @@ describe('getEligibleCards', () => {
 		expect(getEligibleCards(b)).toEqual([]);
 	});
 
-	it('only considers todo cards, not ready/running/blocked/done/triage', () => {
-		const statuses: CardStatus[] = ['ready', 'running', 'blocked', 'done', 'triage'];
+	it('only considers todo cards, not ready/running/review/blocked/done/triage', () => {
+		const statuses: CardStatus[] = ['ready', 'running', 'review', 'blocked', 'done', 'triage'];
 		const b = board(statuses.map((s, i) => card({ id: `x${i}`, status: s })));
 		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('does not unblock children when a parent is only in review', () => {
+		// A review parent finished its run but is waiting on a human, so its
+		// children must stay gated until someone approves it into `done`. This is
+		// the whole point of a status distinct from `done`.
+		const b = board([
+			card({ id: 'a', status: 'review' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getEligibleCards(b)).toEqual([]);
+		expect(getBlockers(b.cards[1], b)).toEqual(['a']);
+	});
+
+	it('unblocks the child once the human approves the review parent into done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['c']);
+		expect(getBlockers(b.cards[1], b)).toEqual([]);
 	});
 
 	it('treats a missing parent id as a blocker (not eligible)', () => {
@@ -214,13 +235,16 @@ describe('countActiveCards', () => {
 		expect(counts).toEqual({ running: 2, ready: 1 });
 	});
 
-	it('ignores todo, done, blocked, and canceled cards', () => {
+	it('ignores todo, done, review, blocked, and triage cards', () => {
+		// `review` is a resting state waiting on a person, not in-flight work, so
+		// it must not hold a slot against the board's concurrency cap.
 		const counts = countActiveCards([
 			board([
 				card({ id: 'a', status: 'todo' }),
 				card({ id: 'b', status: 'done' }),
 				card({ id: 'c', status: 'blocked' }),
 				card({ id: 'd', status: 'triage' }),
+				card({ id: 'e', status: 'review' }),
 			]),
 		]);
 		expect(counts).toEqual({ running: 0, ready: 0 });

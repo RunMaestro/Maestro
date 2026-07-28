@@ -1,20 +1,22 @@
 /**
  * @file cardMarkers.test.ts
  * @description Tests for the Board card completion marker parser. Covers the
- * three cases the dispatcher relies on (complete, block, none) plus the
+ * four cases the dispatcher relies on (complete, review, block, none) plus the
  * summary/reason capture and last-match-wins behavior, mirroring the
  * goal-marker parser's test approach.
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseCardMarkers } from '../../../shared/board/cardMarkers';
+import { parseCardMarkers, CARD_HANDOFF_REMINDER } from '../../../shared/board/cardMarkers';
 
 describe('parseCardMarkers', () => {
-	it('returns neither flag when no marker is present', () => {
+	it('returns no flags when no marker is present', () => {
 		const markers = parseCardMarkers('did some work, nothing structured here');
 		expect(markers.complete).toBe(false);
+		expect(markers.review).toBe(false);
 		expect(markers.blocked).toBe(false);
 		expect(markers.summary).toBeUndefined();
+		expect(markers.reviewReason).toBeUndefined();
 		expect(markers.blockReason).toBeUndefined();
 	});
 
@@ -68,5 +70,72 @@ describe('parseCardMarkers', () => {
 		expect(markers.complete).toBe(true);
 		expect(markers.blocked).toBe(true);
 		expect(markers.blockReason).toBe('regressed');
+	});
+
+	it('detects a review marker with a reason', () => {
+		const markers = parseCardMarkers(
+			'schema migration written\n<!-- maestro:card-review: destructive migration, needs a human to sign off -->'
+		);
+		expect(markers.review).toBe(true);
+		expect(markers.reviewReason).toBe('destructive migration, needs a human to sign off');
+		expect(markers.complete).toBe(false);
+		expect(markers.blocked).toBe(false);
+	});
+
+	it('detects a bare review marker with no reason', () => {
+		const markers = parseCardMarkers('<!-- maestro:card-review -->');
+		expect(markers.review).toBe(true);
+		expect(markers.reviewReason).toBeUndefined();
+	});
+
+	it('is tolerant of extra whitespace around a review reason', () => {
+		const markers = parseCardMarkers('<!--   maestro:card-review :   needs eyes   -->');
+		expect(markers.review).toBe(true);
+		expect(markers.reviewReason).toBe('needs eyes');
+	});
+
+	it('takes the last review marker when several are present', () => {
+		const markers = parseCardMarkers(
+			'<!-- maestro:card-review: first -->\n<!-- maestro:card-review: final -->'
+		);
+		expect(markers.review).toBe(true);
+		expect(markers.reviewReason).toBe('final');
+	});
+
+	it('reports review alongside complete and block without deciding precedence', () => {
+		// block > review > complete is resolved in the dispatcher, not here.
+		const markers = parseCardMarkers(
+			[
+				'<!-- maestro:card-complete | shipped it -->',
+				'<!-- maestro:card-review: verify the migration -->',
+				'<!-- maestro:card-block: actually stuck -->',
+			].join('\n')
+		);
+		expect(markers.complete).toBe(true);
+		expect(markers.summary).toBe('shipped it');
+		expect(markers.review).toBe(true);
+		expect(markers.reviewReason).toBe('verify the migration');
+		expect(markers.blocked).toBe(true);
+		expect(markers.blockReason).toBe('actually stuck');
+	});
+
+	it('does not mistake a review marker for a complete or block marker', () => {
+		const markers = parseCardMarkers('<!-- maestro:card-review: careful -->');
+		expect(markers.complete).toBe(false);
+		expect(markers.summary).toBeUndefined();
+		expect(markers.blocked).toBe(false);
+		expect(markers.blockReason).toBeUndefined();
+	});
+});
+
+describe('CARD_HANDOFF_REMINDER', () => {
+	it('teaches all three markers so a worker can route human-judgment work', () => {
+		expect(CARD_HANDOFF_REMINDER).toContain('maestro:card-complete');
+		expect(CARD_HANDOFF_REMINDER).toContain('maestro:card-review');
+		expect(CARD_HANDOFF_REMINDER).toContain('maestro:card-block');
+	});
+
+	it('tells the worker that review parks the card until a person approves it', () => {
+		expect(CARD_HANDOFF_REMINDER).toContain('Review column');
 	});
 });
