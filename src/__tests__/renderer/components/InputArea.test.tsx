@@ -213,7 +213,7 @@ const createDefaultProps = (
 describe('InputArea', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		useSessionStore.setState({ sessions: [] });
+		useSessionStore.setState({ sessions: [], groups: [] });
 	});
 
 	afterEach(() => {
@@ -229,11 +229,54 @@ describe('InputArea', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
-		it('marks the AI mention overlay for mobile typography synchronization', () => {
-			const props = createDefaultProps();
+		it('uses native textarea text when the AI draft has no recognized mention', () => {
+			const props = createDefaultProps({ inputValue: 'plain text with unknown @todo token' });
 			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
 
-			expect(container.querySelector('.maestro-input-text-overlay')).toBeInTheDocument();
+			expect(container.querySelector('.maestro-input-text-overlay')).not.toBeInTheDocument();
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('renders decoration only for a recognized mention while keeping native text', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'reviewer' });
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+			const props = createDefaultProps({ session, inputValue: 'ask @reviewer to check' });
+			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
+
+			const overlay = container.querySelector('.maestro-input-text-overlay');
+			const mentionDecoration = Array.from(overlay?.querySelectorAll('span') ?? []).find(
+				(element) => element.textContent === '@reviewer'
+			);
+
+			expect(overlay).toBeInTheDocument();
+			expect((overlay as HTMLElement).style.color).toBe('transparent');
+			expect((mentionDecoration as HTMLElement).style.color).toBe('transparent');
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('shows native text and hides the mention overlay during selection changes', () => {
+			const props = createDefaultProps({ inputValue: 'check @src/index.ts now' });
+			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			const overlay = container.querySelector('.maestro-input-text-overlay');
+
+			expect(overlay).toBeInTheDocument();
+
+			textarea.focus();
+			textarea.setSelectionRange(0, 5);
+			fireEvent(document, new Event('selectionchange'));
+
+			expect(overlay).toHaveStyle({ visibility: 'hidden' });
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+
+			textarea.setSelectionRange(5, 5);
+			fireEvent(document, new Event('selectionchange'));
+
+			expect(overlay).toHaveStyle({ visibility: 'visible' });
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
 
 		it('renders the notification settings button', () => {
