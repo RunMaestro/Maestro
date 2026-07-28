@@ -24,11 +24,17 @@
  *               hand-write it (see {@link getEligibleCards}).
  * - `running` - a dispatcher has spawned an agent for this card and it is in
  *               flight.
+ * - `review`  - the run reached a deliberate conclusion but needs a HUMAN to
+ *               approve or verify it before it counts. Not a failure: nothing
+ *               went wrong, the work simply requires human judgment. Like
+ *               `blocked` it does NOT unblock children (only `done` does), and
+ *               it is never auto-retried. A person approves by moving the card
+ *               `review` -> `done`, which is the only approval path.
  * - `blocked` - a run finished without completing (agent reported a blocker) or
  *               a parent regressed; needs attention before it can retry.
  * - `done`    - completed successfully; unblocks children that depend on it.
  */
-export type CardStatus = 'triage' | 'todo' | 'ready' | 'running' | 'blocked' | 'done';
+export type CardStatus = 'triage' | 'todo' | 'ready' | 'running' | 'review' | 'blocked' | 'done';
 
 /**
  * Reference to the git worktree a card's run happens in. Minimal by design:
@@ -54,12 +60,18 @@ export interface WorktreeRef {
  * `canceled` is the same idea for a USER-initiated stop: the person hit the stop
  * button, so the attempt says nothing about whether the card can succeed. It is
  * likewise excluded from the breaker, and the card returns to `todo`.
+ *
+ * `review` records that the attempt finished deliberately but handed the card to
+ * a human for approval or verification (see the `review` {@link CardStatus}). It
+ * is not a failure, so it resets the trailing-failure count the way `done` does,
+ * and the run is never auto-retried.
  */
-export type CardRunOutcome = 'done' | 'blocked' | 'error' | 'reclaimed' | 'canceled';
+export type CardRunOutcome = 'done' | 'review' | 'blocked' | 'error' | 'reclaimed' | 'canceled';
 
 /** Every outcome a persisted run may carry (the runtime mirror of {@link CardRunOutcome}). */
 export const CARD_RUN_OUTCOMES: readonly CardRunOutcome[] = [
 	'done',
+	'review',
 	'blocked',
 	'error',
 	'reclaimed',
@@ -205,6 +217,7 @@ export const CARD_STATUSES: readonly CardStatus[] = [
 	'todo',
 	'ready',
 	'running',
+	'review',
 	'blocked',
 	'done',
 ];

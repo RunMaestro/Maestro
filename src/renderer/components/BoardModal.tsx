@@ -74,6 +74,7 @@ const STATUS_META: Record<CardStatus, { label: string; colorKey: keyof Theme['co
 	todo: { label: 'To Do', colorKey: 'textMain' },
 	ready: { label: 'Ready', colorKey: 'success' },
 	running: { label: 'Running', colorKey: 'warning' },
+	review: { label: 'Review', colorKey: 'warning' },
 	blocked: { label: 'Blocked', colorKey: 'error' },
 	done: { label: 'Done', colorKey: 'success' },
 };
