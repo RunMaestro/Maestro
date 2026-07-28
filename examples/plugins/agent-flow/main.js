@@ -10,6 +10,11 @@
 // lane), and push coalesced snapshots to the `flow` panel via
 // `maestro.ui.panelPost`. Everything observed here is metadata only - tool
 // names, timing, and lifecycle phase - never arguments, results, or output.
+//
+// The overlay path: the `overlay` command (bound to a keybinding in plugin.json)
+// summons or dismisses the full-window panel, `session.activated` tracks which
+// agent the user is looking at so the panel can highlight it, and the panel
+// posts a `jump` message back to move Maestro to a clicked node's session.
 
 'use strict';
 
@@ -29,6 +34,7 @@ var TOPICS = [
 	'session.created',
 	'session.updated',
 	'session.removed',
+	'session.activated',
 ];
 
 // Most recent nodes retained per lane before oldest are dropped.
@@ -47,6 +53,11 @@ var SNAPSHOT_MAX_BYTES = 60000;
 var lanes = new Map();
 var lastEventAt = 0;
 var snapshotTimer = 0;
+// Session id of the agent the user is currently looking at, from the
+// metadata-only `session.activated` event. Sent along in every snapshot so the
+// overlay can highlight that node; the "focus current agent only" filter itself
+// is Phase 2.
+var focusedSessionId = '';
 /** @type {MaestroSdk | null} */
 var sdk = null;
 
@@ -342,11 +353,35 @@ var HANDLERS = {
 	'session.removed': function (payload) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
 		lanes.delete(payload.sessionId);
+		// The highlighted node is gone; drop the highlight rather than pointing at
+		// a lane that no longer exists.
+		if (focusedSessionId === payload.sessionId) focusedSessionId = '';
+	},
+	// Ids only - no title, no path, nothing derived from session content. The host
+	// already debounces rapid focus changes, so this is just a field assignment;
+	// the lane may not exist yet (the user can focus an agent that has produced no
+	// events), which is fine: the panel simply has nothing to highlight until it
+	// does.
+	'session.activated': function (payload) {
+		if (!payload || typeof payload.sessionId !== 'string') return;
+		focusedSessionId = payload.sessionId;
 	},
 };
 
 function num(v) {
 	return typeof v === 'number' && isFinite(v) ? v : 0;
+}
+
+// Run a brokered host call, ignoring both a synchronous throw and a rejected
+// promise. Every host call here is fire-and-forget UI navigation: a denial
+// (capability not granted) or a torn-down bridge must not take the plugin down.
+function swallow(call) {
+	try {
+		var p = call();
+		if (p && typeof p.then === 'function') p.then(undefined, function () {});
+	} catch {
+		/* denial or bridge gone */
+	}
 }
 
 function onEvent(topic, payload, meta) {
@@ -442,7 +477,13 @@ function buildSnapshot(cap) {
 	var ordered = sortedLanes();
 	var out = new Array(ordered.length);
 	for (var i = 0; i < ordered.length; i++) out[i] = laneSnapshot(ordered[i], cap);
-	return { v: 1, at: lastEventAt, lanes: out, summary: buildSummary(ordered) };
+	return {
+		v: 1,
+		at: lastEventAt,
+		lanes: out,
+		summary: buildSummary(ordered),
+		focusedSessionId: focusedSessionId,
+	};
 }
 
 function pushSnapshot() {
@@ -535,6 +576,28 @@ function activate(maestro) {
 		/* subscription denial is tolerated; handlers simply never fire */
 	}
 
+	// The contributed "overlay" command is what the Alt+Shift+F keybinding fires
+	// (and what the command palette entry runs): it summons or dismisses the
+	// full-window overlay. Toggling lives here rather than in the host so "press
+	// again to dismiss" stays the plugin's own semantics.
+	maestro.commands.register('overlay', function () {
+		swallow(function () {
+			return maestro.ui.togglePanel('flow');
+		});
+	});
+
+	// Posted back by the panel when the user clicks a node or a finished tool
+	// card: { sessionId, tabId? }. Not a contributed command - it is meaningless
+	// without args, so it stays out of the command palette. sessionId is validated
+	// here so a malformed panel message is a no-op instead of a host rejection.
+	maestro.commands.register('jump', function (args) {
+		if (!args || typeof args.sessionId !== 'string' || !args.sessionId) return;
+		var tabId = typeof args.tabId === 'string' && args.tabId ? args.tabId : undefined;
+		swallow(function () {
+			return maestro.sessions.focus(args.sessionId, tabId);
+		});
+	});
+
 	// The contributed "clear" command resets the whole graph.
 	maestro.commands.register('clear', function () {
 		resetModel();
@@ -558,6 +621,7 @@ function deactivate() {
 		snapshotTimer = 0;
 	}
 	resetModel();
+	focusedSessionId = '';
 	sdk = null;
 }
 
