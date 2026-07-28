@@ -10,6 +10,7 @@ import {
 } from '../../../utils/mentionChipResolve';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { buildKnownMentionNameSet } from '../../../hooks/input/useAgentMentionCompletion';
+import { TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
 interface InputTextareaProps {
 	session: Session;
@@ -31,7 +32,10 @@ interface InputTextareaProps {
  * exactly, or the mention highlights drift away from the caret. Pulled into one
  * constant so the two layers can never disagree (font size / line height /
  * family / letter spacing). Padding is kept in sync separately: the textarea
- * uses `pt-3 pl-3 pr-3` classes; the overlay mirrors them as `0.75rem` below.
+ * uses `pt-3 pl-3 pr-3 pb-1` classes; the overlay mirrors them as
+ * `0.75rem 0.75rem 0.25rem 0.75rem` below. The 12px top + 4px bottom padding is
+ * deliberate: it leaves exactly 160px of text inside the 176px cap, i.e. 8 whole
+ * 20px rows, so bottom-snapping can never leave a partially sliced row.
  */
 const SHARED_TYPOGRAPHY: React.CSSProperties = {
 	fontSize: '0.875rem',
@@ -180,7 +184,9 @@ export const InputTextarea = memo(function InputTextarea({
 						...SHARED_TYPOGRAPHY,
 						zIndex: 0,
 						whiteSpace: 'pre-wrap',
-						padding: '0.75rem 0.75rem 0 0.75rem',
+						// Must stay identical to the textarea's `pt-3 pr-3 pb-1 pl-3`, or the
+						// chip overlay drifts off the caret (see SHARED_TYPOGRAPHY).
+						padding: '0.75rem 0.75rem 0.25rem 0.75rem',
 						color: theme.colors.textMain,
 					}}
 				>
@@ -208,12 +214,14 @@ export const InputTextarea = memo(function InputTextarea({
 			)}
 			<textarea
 				ref={inputRef}
-				className={`relative flex-1 bg-transparent text-sm outline-none ${isTerminalMode ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 resize-none min-h-[3.5rem] scrollbar-thin`}
+				className={`relative flex-1 bg-transparent text-sm outline-none ${isTerminalMode ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 pb-1 resize-none min-h-[3.5rem] scrollbar-thin`}
 				style={{
 					...SHARED_TYPOGRAPHY,
 					color: overlayEnabled ? 'transparent' : theme.colors.textMain,
 					caretColor: theme.colors.textMain,
-					maxHeight: '11rem',
+					// Single source of truth with the resize logic: the CSS cap and
+					// resizeTextareaToContent's clamp can never disagree.
+					maxHeight: `${TEXTAREA_MAX_HEIGHT}px`,
 					// Sit above the decorative overlay so the caret + native selection win.
 					zIndex: overlayEnabled ? 1 : undefined,
 				}}
