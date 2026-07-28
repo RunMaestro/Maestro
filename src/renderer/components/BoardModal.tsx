@@ -104,6 +104,10 @@ interface CardDraft {
 	worktreeEnabled: boolean;
 	worktreePath: string;
 	worktreeBranch: string;
+	/** "Open PR when done" (F3). Only meaningful with worktree isolation on; the
+	 * branch is the empty-means-repo-default target for `gh pr create`. */
+	prOnDoneEnabled: boolean;
+	prTargetBranch: string;
 	status: CardStatus;
 	createdAt?: string;
 }
@@ -375,6 +379,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			worktreeEnabled: false,
 			worktreePath: '',
 			worktreeBranch: '',
+			prOnDoneEnabled: false,
+			prTargetBranch: '',
 			status: 'todo',
 		};
 		draftBaselineRef.current = fresh;
@@ -395,6 +401,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			worktreeEnabled: !!card.worktree,
 			worktreePath: card.worktree?.path ?? '',
 			worktreeBranch: card.worktree?.branch ?? '',
+			prOnDoneEnabled: !!card.prOnDone,
+			prTargetBranch: card.prOnDone?.targetBranch ?? '',
 			status: card.status,
 			createdAt: card.createdAt,
 		};
@@ -518,6 +526,17 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 							path: draft.worktreePath.trim() || autoWorktree.path,
 							branch: draft.worktreeBranch.trim() || autoWorktree.branch,
 						},
+					}
+				: {}),
+			// F3: absent = feature off, so the field is only written when the toggle
+			// is on AND the card is worktree-isolated (a PR needs a branch to open
+			// from). A blank target branch stays absent, which means "resolve the
+			// repo default branch at PR time".
+			...(draft.worktreeEnabled && draft.prOnDoneEnabled
+				? {
+						prOnDone: draft.prTargetBranch.trim()
+							? { targetBranch: draft.prTargetBranch.trim() }
+							: {},
 					}
 				: {}),
 		};
@@ -1897,6 +1916,45 @@ function CardEditor({
 								style={inputStyle}
 							/>
 						</label>
+					</div>
+				)}
+				{/* F3: open a PR when the card lands in Done. Only offered for isolated
+				    cards - a PR needs a branch of its own to open from. The branch is
+				    still never auto-merged; the PR is where a human reviews it. */}
+				{draft.worktreeEnabled && (
+					<div className="space-y-2">
+						<label className="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={draft.prOnDoneEnabled}
+								onChange={(e) =>
+									setDraft((p) => (p ? { ...p, prOnDoneEnabled: e.target.checked } : p))
+								}
+								className="cursor-pointer"
+							/>
+							<span className="text-xs" style={{ color: theme.colors.textMain }}>
+								Open PR when done
+							</span>
+							<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+								(the branch is still not merged - a pull request is opened for review)
+							</span>
+						</label>
+						{draft.prOnDoneEnabled && (
+							<label className="block space-y-1 w-64">
+								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+									PR target branch (optional)
+								</span>
+								<input
+									value={draft.prTargetBranch}
+									onChange={(e) =>
+										setDraft((p) => (p ? { ...p, prTargetBranch: e.target.value } : p))
+									}
+									placeholder="repo default branch"
+									className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
+									style={inputStyle}
+								/>
+							</label>
+						)}
 					</div>
 				)}
 			</div>
