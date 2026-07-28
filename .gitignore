@@ -63,3 +63,6 @@ yarn-error.log*
 # Claude Code local settings
 .claude/settings.local.json
 .cue-migration-backup-*/
+
+# Bundled-plugin signing artifact (release-time build output; dev signs locally)
+examples/plugins/*/signature.json
