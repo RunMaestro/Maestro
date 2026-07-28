@@ -152,6 +152,9 @@ export interface HostHandlerDeps {
 		patch: Record<string, unknown>
 	) => Promise<PluginSessionMetadata | null>;
 	sessionsDelete?: (sessionId: string) => Promise<boolean>;
+	/** Move the user's focus to an existing session, landing on its AI tab.
+	 * Resolves false when the session (or the named AI tab) no longer exists. */
+	sessionsFocus?: (sessionId: string, tabId?: string) => Promise<boolean>;
 
 	/** Tab metadata and mutators. When omitted the handlers fail closed. */
 	tabsList?: (sessionId?: string) => PluginTabMetadata[];
@@ -866,6 +869,21 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				if (!deleted) throw new Error(`stale sessionId: ${p.sessionId}`);
 				return { ok: true };
 			});
+		},
+
+		'sessions.focus': async (pluginId, params) => {
+			const p = asObject(params);
+			if (typeof p.sessionId !== 'string') throw new Error('sessionId is required');
+			if (p.tabId !== undefined && typeof p.tabId !== 'string')
+				throw new Error('tabId must be a string');
+			// Closed schema: focus is navigation, so nothing else may ride along.
+			assertClosedSchema('sessions.focus', p, { sessionId: true, tabId: true });
+			assertBrokerAllowed(deps, pluginId, 'sessions.focus', p);
+			requireSession(p.sessionId);
+			if (!deps.sessionsFocus) throw new Error('sessions.focus is unavailable');
+			const ok = await deps.sessionsFocus(p.sessionId, p.tabId);
+			if (!ok) throw new Error(`unknown focus target: ${p.sessionId}`);
+			return { ok: true };
 		},
 
 		'history.list': async (pluginId, params) => {

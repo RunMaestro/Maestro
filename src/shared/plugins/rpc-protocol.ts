@@ -41,6 +41,7 @@ export const HOST_API = {
 	'sessions.create': { capability: 'sessions:create' },
 	'sessions.update': { capability: 'sessions:write' },
 	'sessions.delete': { capability: 'sessions:write' },
+	'sessions.focus': { capability: 'sessions:focus' },
 	'history.list': { capability: 'history:read' },
 	'history.get': { capability: 'history:read' },
 	'transcripts.read': { capability: 'transcripts:read' },

@@ -1944,6 +1944,21 @@ app
 				...(typeof session.cwd === 'string' ? { projectPath: session.cwd } : {}),
 			};
 		};
+		/**
+		 * Main-side mirror of the renderer's `aiTabFocusFields()`
+		 * (`src/renderer/utils/tabHelpers.ts`): land a session on an AI tab by
+		 * clearing every non-AI view that would otherwise outrank it in the render
+		 * precedence. Shared by `tabs.focus` and `sessions.focus` so the two plugin
+		 * verbs can never drift into different notions of "focused".
+		 */
+		const pluginAiFocusFields = (tabId?: string): Record<string, unknown> => ({
+			...(tabId ? { activeTabId: tabId } : {}),
+			activeFileTabId: null,
+			activeBrowserTabId: null,
+			activeTerminalTabId: null,
+			inputMode: 'ai',
+			activeGroupId: null,
+		});
 		const pluginTabsFocus = async (tabId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
 			let focused = false;
@@ -1951,14 +1966,7 @@ app
 				if ((Array.isArray(session.aiTabs) ? session.aiTabs : []).some((t) => t?.id === tabId)) {
 					focused = true;
 					sessionsStore.set('activeSessionId', session.id as string);
-					return {
-						...session,
-						activeTabId: tabId,
-						activeFileTabId: null,
-						activeBrowserTabId: null,
-						activeTerminalTabId: null,
-						inputMode: 'ai',
-					};
+					return { ...session, ...pluginAiFocusFields(tabId) };
 				}
 				if (
 					(Array.isArray(session.terminalTabs) ? session.terminalTabs : []).some(
@@ -1979,6 +1987,32 @@ app
 			});
 			if (focused) setPluginSessionsRaw(next);
 			return focused;
+		};
+		/**
+		 * Jump the user to an existing session (the `sessions.focus` verb). Without
+		 * a tabId it keeps whichever AI tab the session already had active, falling
+		 * back to its first AI tab; with one, that tab must belong to the session or
+		 * the call is rejected rather than silently landing somewhere else.
+		 */
+		const pluginSessionsFocus = async (sessionId: string, tabId?: string): Promise<boolean> => {
+			const sessions = pluginSessionsRaw();
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) return false;
+			const aiTabs = (Array.isArray(session.aiTabs) ? session.aiTabs : []) as Array<
+				Record<string, unknown> | undefined
+			>;
+			const hasAiTab = (id: unknown) =>
+				typeof id === 'string' && aiTabs.some((t) => t?.id === id) ? id : undefined;
+			if (tabId !== undefined && !hasAiTab(tabId)) return false;
+			const target =
+				tabId ??
+				hasAiTab(session.activeTabId) ??
+				(typeof aiTabs[0]?.id === 'string' ? (aiTabs[0].id as string) : undefined);
+			sessionsStore.set('activeSessionId', sessionId);
+			setPluginSessionsRaw(
+				sessions.map((s) => (s.id === sessionId ? { ...s, ...pluginAiFocusFields(target) } : s))
+			);
+			return true;
 		};
 		const pluginTabsClose = async (tabId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
@@ -2269,6 +2303,7 @@ app
 				sessionsCreate: pluginSessionsCreate,
 				sessionsUpdate: pluginSessionsUpdate,
 				sessionsDelete: pluginSessionsDelete,
+				sessionsFocus: pluginSessionsFocus,
 				tabsList: pluginTabsList,
 				tabsCreate: pluginTabsCreate,
 				tabsFocus: pluginTabsFocus,

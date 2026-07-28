@@ -976,6 +976,57 @@ describe('brokered non-act host API breadth', () => {
 		await expect(disabled['sessions.create']!('p', {})).rejects.toThrow(/unavailable/);
 	});
 
+	it('focuses an existing session under sessions:focus and rejects stale or over-wide calls', async () => {
+		const focused: Array<{ sessionId: string; tabId?: string }> = [];
+		let grants: PermissionGrant[] = [grant('sessions:focus')];
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => grants),
+				sessionsGet: (id) => (id === 's1' ? { id: 's1', title: 'One' } : null),
+				sessionsFocus: async (sessionId, tabId) => {
+					if (tabId && tabId !== 't1') return false;
+					focused.push({ sessionId, tabId });
+					return true;
+				},
+			})
+		);
+
+		await expect(h['sessions.focus']!('p', { sessionId: 's1' })).resolves.toEqual({ ok: true });
+		await expect(h['sessions.focus']!('p', { sessionId: 's1', tabId: 't1' })).resolves.toEqual({
+			ok: true,
+		});
+		expect(focused).toEqual([{ sessionId: 's1' }, { sessionId: 's1', tabId: 't1' }]);
+
+		// Unknown session is rejected before the effect runs.
+		await expect(h['sessions.focus']!('p', { sessionId: 'nope' })).rejects.toThrow(
+			/unknown sessionId/
+		);
+		// A tab that is not the session's own resolves false main-side.
+		await expect(h['sessions.focus']!('p', { sessionId: 's1', tabId: 'other' })).rejects.toThrow(
+			/unknown focus target/
+		);
+		// Closed schema: focus is navigation, nothing else rides along.
+		await expect(
+			h['sessions.focus']!('p', { sessionId: 's1', patch: { title: 'x' } })
+		).rejects.toThrow();
+		expect(focused).toHaveLength(2);
+
+		grants = [];
+		await expect(h['sessions.focus']!('p', { sessionId: 's1' })).rejects.toThrow(
+			/permission denied/
+		);
+
+		const disabled = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('sessions:focus')]),
+				sessionsGet: () => ({ id: 's1', title: 'One' }),
+			})
+		);
+		await expect(disabled['sessions.focus']!('p', { sessionId: 's1' })).rejects.toThrow(
+			/unavailable/
+		);
+	});
+
 	it('manages tabs through injected tab deps and denies stale tab ids cleanly', async () => {
 		const tabs = new Map([
 			['t1', { id: 't1', sessionId: 's1', type: 'ai' as const, title: 'One' }],
