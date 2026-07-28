@@ -13,7 +13,6 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { resolveGhPath, getCachedGhStatus, setCachedGhStatus } from '../../utils/cliDetection';
-import { getShellPath } from '../../runtime/getShellPath';
 import { captureMessage } from '../../utils/sentry';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
 import {
@@ -25,6 +24,7 @@ import {
 	getImageMimeType,
 } from '../../../shared/gitUtils';
 import { setupWorktreeLocal } from '../../utils/git-worktree';
+import { createPullRequest, resolveDefaultBranch } from '../../utils/pr-creator';
 import {
 	worktreeInfoRemote,
 	worktreeSetupRemote,
@@ -883,61 +883,22 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				body: string,
 				ghPath?: string
 			) => {
-				// Resolve gh CLI path (uses cached detection or custom path)
-				const ghCommand = await resolveGhPath(ghPath);
-				logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);
-
-				// Build env with the user's full shell PATH so git hooks
-				// (e.g. Husky pre-push running npm) can find Node/npm binaries
-				let shellEnv: NodeJS.ProcessEnv | undefined;
-				try {
-					const shellPath = await getShellPath();
-					if (shellPath) {
-						shellEnv = { ...process.env, PATH: shellPath };
-					}
-				} catch (error) {
-					captureMessage(
-						`git:createPR falling back to default PATH: ${error instanceof Error ? error.message : String(error)}`,
-						'warning'
-					);
-				}
-
-				// First, push the current branch to origin
-				const pushResult = await execFileNoThrow(
-					'git',
-					['push', '-u', 'origin', 'HEAD'],
+				// The shared helper owns the push + `gh pr create` chain; the base
+				// branch stays a required argument here (the renderer resolves it).
+				const result = await createPullRequest({
 					worktreePath,
-					shellEnv
-				);
-				if (pushResult.exitCode !== 0) {
-					return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
-				}
-
-				// Create the PR using gh CLI
-				const prResult = await execFileNoThrow(
-					ghCommand,
-					['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
-					worktreePath,
-					shellEnv
-				);
-
-				if (prResult.exitCode !== 0) {
-					// Check if gh CLI is not installed
-					if (
-						prResult.stderr.includes('command not found') ||
-						prResult.stderr.includes('not recognized')
-					) {
-						return {
-							success: false,
-							error: 'GitHub CLI (gh) is not installed. Please install it to create PRs.',
-						};
-					}
-					return { success: false, error: prResult.stderr || 'Failed to create PR' };
-				}
-
-				// The PR URL is typically in stdout
-				const prUrl = prResult.stdout.trim();
-				return { success: true, prUrl };
+					targetBranch: baseBranch,
+					title,
+					body,
+					ghPath,
+					log: (msg) => logger.debug(msg, LOG_CONTEXT),
+					warn: (msg) => captureMessage(msg, 'warning'),
+				});
+				// Reply shape is unchanged for renderer callers: the helper's
+				// resolved `targetBranch` is redundant here (it is `baseBranch`).
+				return result.success
+					? { success: true, prUrl: result.prUrl }
+					: { success: false, error: result.error };
 			}
 		)
 	);
@@ -998,28 +959,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	ipcMain.handle(
 		'git:getDefaultBranch',
 		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string) => {
-			// First try to get the default branch from remote
-			const remoteResult = await execFileNoThrow('git', ['remote', 'show', 'origin'], cwd);
-			if (remoteResult.exitCode === 0) {
-				// Parse "HEAD branch: main" from the output
-				const match = remoteResult.stdout.match(/HEAD branch:\s*(\S+)/);
-				if (match) {
-					return { branch: match[1] };
-				}
+			// Shared with pr-creator.ts, which needs the same resolution when a
+			// caller opens a PR without an explicit base branch.
+			const branch = await resolveDefaultBranch(cwd);
+			if (!branch) {
+				throw new Error('Could not determine default branch');
 			}
-
-			// Fallback: check if main or master exists locally
-			const mainResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'main'], cwd);
-			if (mainResult.exitCode === 0) {
-				return { branch: 'main' };
-			}
-
-			const masterResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'master'], cwd);
-			if (masterResult.exitCode === 0) {
-				return { branch: 'master' };
-			}
-
-			throw new Error('Could not determine default branch');
+			return { branch };
 		})
 	);
 
