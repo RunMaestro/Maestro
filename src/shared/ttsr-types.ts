@@ -376,6 +376,17 @@ const UNSUPPORTED: TtsrAgentCapability = {
  * corrective. The closing complete assistant event is stamped
  * `textAlreadyStreamed` so downstream consumers do not double-count the prose.
  *
+ * claude-code `toolEvents: true` and `ast: 'full'` are honest but coarser than
+ * `liveProse`: they are assistant-message-boundary grained, not token grained.
+ * Tool inputs never stream token-by-token because the parser intentionally
+ * drops `input_json_delta` stream events (see `transformStreamEvent` in
+ * `src/main/parsers/claude-output-parser.ts`); the full `{ file_path, content }`
+ * payload only reaches TTSR on the complete assistant message that closes the
+ * block. That is still PRE-execution - the matching `tool_result` arrives later
+ * on a separate user message - so mid-turn `tool:write` / `tool:edit`
+ * interrupts and full ast-grep matching over the written content are real, they
+ * just fire once per tool call rather than as the arguments are typed.
+ *
  * Agents absent from the plan's scope table (gemini-cli, qwen3-coder, hermes,
  * pi, omp) are marked unsupported rather than guessed at; they gain support
  * when their parser surface is verified the same way.
