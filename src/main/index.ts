@@ -219,6 +219,7 @@ import {
 import { selectPoolAgentIds } from '../shared/board/pool';
 import { autoDecomposeBoard } from './board/board-decompose';
 import { buildBoardCardToastPayload } from './board/board-toast';
+import { startCardPr } from './board/board-pr';
 import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
@@ -1621,6 +1622,14 @@ app
 					// so the exact payload can be unit-tested without importing this module.
 					safeSend('remote:notifyToast', buildBoardCardToastPayload(event));
 				},
+				// Board F3: a `done` card that opted into `prOnDone` gets its worktree
+				// branch pushed and a pull request opened. Fire-and-forget (the dispatch
+				// pass must never wait on git/gh); the result surfaces as its own toast.
+				createCardPr: (projectRoot, boardId, cardId) =>
+					startCardPr(projectRoot, boardId, cardId, {
+						notify: (payload) => safeSend('remote:notifyToast', payload),
+						onLog: (_level, message) => logger.cue(message, 'Board'),
+					}),
 				// Board Phase 5: every card status transition goes out on the plugin
 				// event bus (metadata only - ids, statuses, attempt, worker). Null-safe;
 				// no-op when plugins are disabled.
@@ -3398,6 +3407,10 @@ function setupIpcHandlers() {
 	// needed for `board:cancelCard`, which routes through the live dispatcher.
 	registerBoardHandlers({
 		getCueEngine: () => cueEngine,
+		// Board F3: a manual move into Done opens the card's PR out of band, so the
+		// handler needs the same toast relay and log sink the dispatcher path uses.
+		notifyToast: (payload) => safeSend('remote:notifyToast', payload),
+		onLog: (_level, message) => logger.cue(message, 'Board'),
 	});
 
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)

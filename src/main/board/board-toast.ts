@@ -13,6 +13,7 @@
  */
 
 import type { CardNotification } from './board-dispatcher';
+import type { CardPrRequest, CardPrResult } from './board-pr';
 
 /**
  * Shape accepted by the renderer's `onRemoteNotifyToast` bridge. Only the fields
@@ -26,7 +27,7 @@ export interface BoardCardToastPayload {
 	dismissible: boolean;
 	sourceAgent: string;
 	sessionId?: string;
-	clickAction?: { kind: 'jump-session'; sessionId: string };
+	clickAction?: { kind: 'jump-session'; sessionId: string } | { kind: 'open-url'; url: string };
 }
 
 /**
@@ -65,5 +66,36 @@ export function buildBoardCardToastPayload(event: CardNotification): BoardCardTo
 					},
 				}
 			: {}),
+	};
+}
+
+/**
+ * Build the toast for a card's "open PR when done" attempt (Board F3).
+ *
+ * Success is a green auto-dismissing toast whose body is the PR url, clickable
+ * through to GitHub. Failure is red and sticky: the card is still `done` (a PR
+ * failure never changes its status), so the toast is the only thing telling the
+ * user the pull request they asked for is missing and must be opened by hand.
+ */
+export function buildCardPrToastPayload(
+	request: CardPrRequest,
+	result: CardPrResult
+): BoardCardToastPayload {
+	if (result.success && result.prUrl) {
+		return {
+			title: `PR opened: ${request.cardTitle}`,
+			message: result.prUrl,
+			color: 'green',
+			dismissible: false,
+			sourceAgent: 'Board',
+			clickAction: { kind: 'open-url', url: result.prUrl },
+		};
+	}
+	return {
+		title: `PR failed: ${request.cardTitle}`,
+		message: `${result.error || 'Could not open the pull request.'} (branch ${request.worktreeBranch})`,
+		color: 'red',
+		dismissible: true,
+		sourceAgent: 'Board',
 	};
 }

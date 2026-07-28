@@ -221,6 +221,12 @@ export interface CueEngineBoardDeps {
 	 */
 	notifyCard?: (projectRoot: string, event: CardNotification) => void;
 	/**
+	 * Open the pull request for a card that just landed in `done` with the
+	 * `prOnDone` opt-in (Board F3). Fire-and-forget: the host runs the git/gh work
+	 * off the tick. Absent => cards never open PRs (the CLI's headless path).
+	 */
+	createCardPr?: (projectRoot: string, boardId: string, cardId: string) => void;
+	/**
 	 * Announce EVERY card status transition (Board Phase 5). The host republishes
 	 * these on the plugin event bus as `board.cardStatusChanged`; absent => no
 	 * one is listening (the CLI's headless path).
@@ -1692,6 +1698,9 @@ export class CueEngine {
 				: undefined,
 			notify: boardDeps.notifyCard
 				? (event: CardNotification): void => boardDeps.notifyCard!(projectRoot, event)
+				: undefined,
+			createCardPr: boardDeps.createCardPr
+				? (cardId: string): void => boardDeps.createCardPr!(projectRoot, boardId, cardId)
 				: undefined,
 			onStatusChanged: boardDeps.onCardStatusChanged
 				? (event: CardStatusChange): void => boardDeps.onCardStatusChanged!(projectRoot, event)

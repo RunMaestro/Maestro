@@ -26,6 +26,8 @@ import {
 	enqueueBoardWrite,
 } from '../../board/board-storage';
 import { applyCardCancel } from '../../board/board-dispatcher';
+import { startCardPr } from '../../board/board-pr';
+import type { BoardCardToastPayload } from '../../board/board-toast';
 import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
 import type { CueEngine } from '../../cue/cue-engine';
 
@@ -40,6 +42,14 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 export interface BoardHandlerDependencies {
 	/** The live Cue engine (Board rides its tick), or `null` before it is built. */
 	getCueEngine: () => CueEngine | null;
+	/**
+	 * Relay a Board toast to the renderer (`remote:notifyToast`). Used by the F3
+	 * PR-on-done path, which runs after the IPC reply has already gone out.
+	 * Optional: without it the PR is still opened, just silently.
+	 */
+	notifyToast?: (payload: BoardCardToastPayload) => void;
+	/** Structured log sink for the same out-of-band PR path. */
+	onLog?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
 /**
@@ -160,9 +170,20 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 				cardId: string;
 				status: CardStatus;
 			}): Promise<Board> => {
-				return enqueueBoardWrite(options.projectRoot, () =>
+				const board = await enqueueBoardWrite(options.projectRoot, () =>
 					updateCardStatus(options.projectRoot, options.boardId, options.cardId, options.status)
 				);
+				// Board F3: approving a `review` card (or any manual move into Done) is
+				// the OTHER transition into `done`, so it opens the card's pull request
+				// too. Fire-and-forget: the opt-in gate and every failure path live in
+				// `startCardPr`, and the IPC reply must not wait on git/gh.
+				if (options.status === 'done') {
+					startCardPr(options.projectRoot, options.boardId, options.cardId, {
+						notify: deps.notifyToast,
+						onLog: deps.onLog,
+					});
+				}
+				return board;
 			}
 		)
 	);

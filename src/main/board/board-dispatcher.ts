@@ -182,6 +182,16 @@ export interface BoardDispatcherDeps {
 	 */
 	notify?: (event: CardNotification) => void;
 	/**
+	 * Open the pull request for a card that just landed in `done` and asked for
+	 * one (Board F3, `BoardCard.prOnDone`). Called ONLY after the board is saved,
+	 * and never awaited: opening a PR shells out to git and gh, which takes
+	 * seconds, and the dispatch pass must not wait on it. The implementation
+	 * (`maybeCreateCardPr` in `board-pr.ts`) re-checks the opt-in against a fresh
+	 * board, stamps the url onto the run, and toasts - a failure never changes the
+	 * card's status. Optional: the CLI's headless tick wires nothing.
+	 */
+	createCardPr?: (cardId: string) => void;
+	/**
 	 * Announce every card status transition (Phase 5), after the board is saved.
 	 * Optional: the desktop host forwards these to the plugin event bus, the CLI
 	 * wires nothing. Advisory - a listener that throws never breaks a pass.
@@ -779,6 +789,13 @@ export class BoardDispatcher {
 			// the message: what got done, or why the card is stuck.
 			const card = board.cards.find((c) => c.id === cardId);
 			const lastRun = card?.runs?.[card.runs.length - 1];
+			// Board F3: a `done` card that opted into a PR gets one, fired AFTER the
+			// save and deliberately not awaited (git push + gh take seconds). The gate
+			// is re-checked inside the dep against a fresh board; it is repeated here
+			// so a card that never opted in costs nothing.
+			if (status === 'done' && card?.prOnDone && lastRun?.worktreeBranch) {
+				this.startCardPr(cardId);
+			}
 			this.emitNotification({
 				kind: status,
 				boardId: board.id,
@@ -844,6 +861,19 @@ export class BoardDispatcher {
 					`status listener failed for card "${change.cardId}": ${(err as Error).message}`
 				);
 			}
+		}
+	}
+
+	/**
+	 * Kick off a card's pull request (Board F3). Advisory in exactly the same way
+	 * as {@link emitNotification}: the card is already `done` on disk, so a PR
+	 * starter that throws must not break the pass that put it there.
+	 */
+	private startCardPr(cardId: string): void {
+		try {
+			this.deps.createCardPr?.(cardId);
+		} catch (err) {
+			this.log('warn', `PR start failed for card "${cardId}": ${(err as Error).message}`);
 		}
 	}
 
