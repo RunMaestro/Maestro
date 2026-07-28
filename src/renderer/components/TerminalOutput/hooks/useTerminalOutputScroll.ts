@@ -289,6 +289,14 @@ export function useTerminalOutputScroll({
 
 	useEffect(() => {
 		return () => {
+			// The pending 200ms scrollTop save is DROPPED here, not flushed, on
+			// purpose. `onScrollPositionChange` (see useScrollLogHandlers) resolves
+			// its target from `selectActiveSession` AT CALL TIME, and during an agent
+			// swap the store already points at the NEW session by the time this
+			// component unmounts - so flushing would write the outgoing agent's
+			// offset into the incoming agent's tab. The cost is that up to the last
+			// ~200ms of scrolling is not persisted; the fix would need the callback
+			// to carry the owning sessionId/tabId, which is out of scope here.
 			if (scrollSaveTimerRef.current) {
 				clearTimeout(scrollSaveTimerRef.current);
 			}
