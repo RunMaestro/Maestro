@@ -3740,8 +3740,14 @@ describe('useBatchProcessor hook', () => {
 				);
 			});
 
-			// Should have called spawn with cwd override
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/custom/worktree');
+			// Should have called spawn with cwd override. The 4th arg is the run-scoped
+			// model/effort override, undefined for a run that uses the agent default.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/custom/worktree',
+				undefined
+			);
 		});
 	});
 
@@ -4026,8 +4032,14 @@ describe('useBatchProcessor hook', () => {
 				undefined // sshRemoteId (undefined for local sessions)
 			);
 
-			// Should have spawned agent with worktree path
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/test/worktree');
+			// Should have spawned agent with worktree path. The 4th arg is the run-scoped
+			// model/effort override, undefined for a run that uses the agent default.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/test/worktree',
+				undefined
+			);
 		});
 
 		it('should handle worktree checkout failure with uncommitted changes', async () => {
