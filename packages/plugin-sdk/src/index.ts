@@ -885,6 +885,11 @@ export interface CommandContribution {
 /** Where a contributed panel docks. `modal` (default) keeps today's behavior. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
+/** Chrome size for a `modal` panel. `full` renders edge-to-edge (a summonable
+ * full-window overlay); absent/invalid parses to `default`. Presentation only -
+ * it never changes where a panel routes. Ignored by docked placements. */
+export type PanelSize = 'default' | 'full';
+
 /** A UI panel a (tier-1) plugin contributes, rendered in a locked-down sandboxed
  * iframe. `entry` is a plugin-relative HTML file (traversal-checked). */
 export interface PanelContribution {
@@ -894,6 +899,7 @@ export interface PanelContribution {
 	title: string;
 	entry: string;
 	placement: PanelPlacement;
+	size: PanelSize;
 }
 
 /** A runtime agent a (tier-1) plugin registers - a Left Bar entry backed by a
@@ -1318,6 +1324,9 @@ export const HOST_API = {
 	'ui.hostViewUpdate': { capability: 'ui:hostView' },
 	'ui.hostViewRemove': { capability: 'ui:hostView' },
 	'ui.panelPost': { capability: 'ui:panel' },
+	'ui.openPanel': { capability: 'ui:panel' },
+	'ui.closePanel': { capability: 'ui:panel' },
+	'ui.togglePanel': { capability: 'ui:panel' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -1558,6 +1567,15 @@ export interface MaestroUiApi {
 	 * (`ui:panel`). Delivered to the panel page as a `maestro:panelData` window
 	 * message; JSON-only, capped at MAX_PANEL_POST_BYTES, no reply channel. */
 	panelPost(panelId: string, data: unknown): Promise<void>;
+	/** Show one of this plugin's OWN `modal` panels as a host-drawn overlay
+	 * (`ui:panel`). Own-panels-only: a foreign or namespaced id never resolves,
+	 * and a docked panel is rejected. */
+	openPanel(panelId: string): Promise<void>;
+	/** Hide one of this plugin's own modal panels, if it is the open one. */
+	closePanel(panelId: string): Promise<void>;
+	/** Open the panel, or close it if it is already the open one - the
+	 * press-again-to-dismiss half of a hotkey-summoned overlay. */
+	togglePanel(panelId: string): Promise<void>;
 }
 
 /** Manage Maestro tabs (`tabs:manage`). */

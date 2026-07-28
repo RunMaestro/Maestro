@@ -2381,6 +2381,13 @@ app
 				panelPost: (pluginId, panelId, data) => {
 					safeSend('plugins:panel-data', { pluginId, panelId, data });
 				},
+				// ui.openPanel/closePanel/togglePanel: a pure show/hide signal for the
+				// caller's own modal panel, already resolved and namespaced by the
+				// handler. The renderer owns the single modal-panel mount, so all main
+				// does is broadcast the requested action.
+				panelVisibility: (pluginId, panelId, action) => {
+					safeSend('plugins:panel-visibility', { pluginId, panelId, action });
+				},
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
 						id?: string;

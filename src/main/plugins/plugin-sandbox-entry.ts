@@ -296,6 +296,9 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 					remove: function (id) { return hostCall('ui.hostViewRemove', { id: id }); }
 				}),
 				panelPost: function (panelId, data) { return hostCall('ui.panelPost', { panelId: panelId, data: data }); },
+				openPanel: function (panelId) { return hostCall('ui.openPanel', { panelId: panelId }); },
+				closePanel: function (panelId) { return hostCall('ui.closePanel', { panelId: panelId }); },
+				togglePanel: function (panelId) { return hostCall('ui.togglePanel', { panelId: panelId }); },
 				grouping: Object.freeze({
 					publish: function (params) { return hostCall('ui.groupingPublish', params); },
 					clear: function (id) { return hostCall('ui.groupingClear', { id: id }); }

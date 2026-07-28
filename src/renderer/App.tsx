@@ -172,6 +172,7 @@ import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineW
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
+import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMount';
 
 // Import services
 // gitService - now used in useModalHandlers (Tier 3C)
@@ -2984,6 +2985,9 @@ function MaestroConsoleInner() {
 			{/* Owns Left Bar sort/nav/starred subscriptions; memoized so App wakes
 			    do not re-run this host. Must sit under WindowProvider (ownsSession). */}
 			<SidebarNavSync />
+			{/* The ONE mount for modal-placement plugin panels: serves both the
+			    Settings launch button and a plugin summoning its own overlay. */}
+			<PluginModalPanelMount theme={theme} />
 			<AppShell
 				theme={theme}
 				fontFamily={fontFamily}

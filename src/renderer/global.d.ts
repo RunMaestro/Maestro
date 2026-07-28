@@ -3990,6 +3990,13 @@ interface MaestroAPI {
 		onPanelData: (
 			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
 		) => () => void;
+		onPanelVisibility: (
+			callback: (payload: {
+				pluginId: string;
+				panelId: string;
+				action: 'open' | 'close' | 'toggle';
+			}) => void
+		) => () => void;
 		onRunUiCommand: (
 			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
 		) => () => void;

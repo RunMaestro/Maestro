@@ -137,6 +137,14 @@ export interface UIStoreState {
 	// settings write-through (mirrors hiddenQuotaAccounts) and hydrated by
 	// loadAllSettings on startup.
 	hiddenPluginPanels: string[];
+
+	// Namespaced id (`<pluginId>/<panelId>`) of the ONE `modal`-placement plugin
+	// panel currently open, or null. Deliberately global rather than local to
+	// Settings: the same mount serves the Settings -> Encore -> Plugins launch
+	// path and a plugin summoning its own panel via `ui.openPanel`/`togglePanel`,
+	// so the two can never fight over the panel's webview guest. Transient (not
+	// persisted) - a summoned overlay should not survive a restart.
+	openPluginPanelId: string | null;
 }
 
 export interface UIStoreActions {
@@ -231,6 +239,11 @@ export interface UIStoreActions {
 
 	// Toggle a docked plugin panel between shown and collapsed (reopen rail).
 	toggleHiddenPluginPanel: (panelId: string) => void;
+
+	/** Open (or, with null, close) the single modal plugin-panel mount. */
+	setOpenPluginPanelId: (panelId: string | null) => void;
+	/** Open the panel, or close it if that same panel is already open. */
+	toggleOpenPluginPanelId: (panelId: string) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -332,6 +345,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
 	hiddenPluginPanels: [],
+	openPluginPanelId: null,
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
@@ -462,4 +476,12 @@ export const useUIStore = create<UIStore>()((set) => ({
 			persistHiddenPluginPanels(next);
 			return { hiddenPluginPanels: next };
 		}),
+
+	setOpenPluginPanelId: (panelId) => set({ openPluginPanelId: panelId }),
+
+	// Toggle by namespaced id: open it, or close it if that exact panel is already
+	// the open one. A DIFFERENT panel being open swaps to the requested one rather
+	// than closing, since only one modal panel mount exists.
+	toggleOpenPluginPanelId: (panelId) =>
+		set((s) => ({ openPluginPanelId: s.openPluginPanelId === panelId ? null : panelId })),
 }));
