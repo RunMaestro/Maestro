@@ -96,6 +96,15 @@ function getGlobMatcher(globs: string[]): (input: string) => boolean {
 	return matcher;
 }
 
+/**
+ * Whether a path or pattern is anchored to the filesystem root. Checked against
+ * both platform flavors so a POSIX path evaluated on Windows (SSH remotes, and
+ * vice versa) is still recognized as absolute.
+ */
+function isAbsoluteLike(value: string): boolean {
+	return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
 /** Normalize to forward slashes and drop the project root prefix when present. */
 function toGlobCandidate(filePath: string, cwd?: string): string {
 	let candidate = filePath;
@@ -111,10 +120,23 @@ function toGlobCandidate(filePath: string, cwd?: string): string {
 /**
  * Whether a tool-source file path satisfies a rule's `globs`.
  * An empty glob list means "any path".
+ *
+ * A candidate that is still absolute after `toGlobCandidate` could not be
+ * placed inside the project root (no `cwd`, or the file lives outside it), so
+ * only an explicitly absolute pattern may match it. Handing such a path to a
+ * project-relative pattern would silently widen the rule to the whole
+ * filesystem: a leading `**` happily consumes `/tmp/`, so a rule the user
+ * scoped to their project would fire on any `.ts` file anywhere on the machine.
  */
 export function matchesGlobs(globs: string[], filePath: string, cwd?: string): boolean {
 	if (globs.length === 0) return true;
-	return getGlobMatcher(globs)(toGlobCandidate(filePath, cwd));
+	const candidate = toGlobCandidate(filePath, cwd);
+	if (isAbsoluteLike(candidate)) {
+		const absoluteGlobs = globs.filter(isAbsoluteLike);
+		if (absoluteGlobs.length === 0) return false;
+		return getGlobMatcher(absoluteGlobs)(candidate);
+	}
+	return getGlobMatcher(globs)(candidate);
 }
 
 // ── Eligibility ──────────────────────────────────────────────────────────────
