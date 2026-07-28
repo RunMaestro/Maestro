@@ -49,7 +49,10 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
-import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import {
+	StdoutHandler,
+	pushResolvedOmpContextWindow,
+} from '../../../../main/process-manager/handlers/StdoutHandler';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
@@ -1341,6 +1344,55 @@ describe('StdoutHandler', () => {
 			const stats = usageSpy.mock.calls[0][1];
 			expect(stats.contextWindow).toBe(1_000_000);
 			expect(stats.contextWindowResolved).toBe(true);
+		});
+
+		it('pushes a corrected window once when a late catalog prime lands', () => {
+			__resetOmpModelCatalogForTests();
+			const catalogKey = computeOmpCatalogKey('/usr/local/bin/omp', undefined);
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0.05,
+				contextWindow: 0,
+				model: 'claude-opus-4-8',
+			});
+
+			// The spawn stamped the key, but the prime exceeded the spawn cap so the
+			// catalog is still empty when the first turn's usage arrives.
+			const { handler, emitter, processes, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				contextWindow: 200000,
+				ompModelCatalogKey: catalogKey,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			expect(usageSpy).toHaveBeenCalledTimes(1);
+			expect(usageSpy.mock.calls[0][1].contextWindow).toBe(200000);
+			expect(usageSpy.mock.calls[0][1].contextWindowResolved).toBeUndefined();
+			expect(proc.pendingOmpUsagePush?.model).toBe('claude-opus-4-8');
+
+			// Late prime lands: the corrected window is pushed without a second turn.
+			setOmpModelCatalog([{ id: 'claude-opus-4-8', contextWindow: 1_000_000 }], catalogKey);
+			expect(pushResolvedOmpContextWindow(processes, emitter, sessionId, catalogKey)).toBe(true);
+
+			expect(usageSpy).toHaveBeenCalledTimes(2);
+			const corrected = usageSpy.mock.calls[1][1];
+			expect(corrected.contextWindow).toBe(1_000_000);
+			expect(corrected.contextWindowResolved).toBe(true);
+			expect(corrected.inputTokens).toBe(usageSpy.mock.calls[0][1].inputTokens);
+
+			// Pending payload is cleared, so a repeat call cannot double-emit.
+			expect(proc.pendingOmpUsagePush).toBeUndefined();
+			expect(pushResolvedOmpContextWindow(processes, emitter, sessionId, catalogKey)).toBe(false);
+			expect(usageSpy).toHaveBeenCalledTimes(2);
 		});
 
 		it('does not resolve a mismatched-identity catalog (different binary/env)', () => {
