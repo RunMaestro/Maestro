@@ -6,8 +6,11 @@
  *   - a 3-card DAG (A, B, then C depending on both) drains in order under a WIP
  *     cap of 1;
  *   - a card emitting a block marker lands in `blocked` and does not unblock C;
+ *   - a card emitting a review marker lands in `review` (F2), which is
+ *     authoritative like a block but resets the retry breaker;
  *   - the circuit breaker trips after two failures;
- *   - stale `running` cards are reclaimed.
+ *   - stale `running` cards are reclaimed;
+ *   - the injected PR dep (F3) fires exactly on a qualifying `done` transition.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -60,6 +63,10 @@ const completeMarker = (summary?: string): CardSpawnResult => ({
 });
 const blockMarker = (reason: string): CardSpawnResult => ({
 	output: `<!-- maestro:card-block: ${reason} -->`,
+	exitCode: 0,
+});
+const reviewMarker = (reason?: string): CardSpawnResult => ({
+	output: `<!-- maestro:card-review${reason ? `: ${reason}` : ''} -->`,
 	exitCode: 0,
 });
 const failure = (): CardSpawnResult => ({ output: 'boom', exitCode: 1 });
@@ -203,6 +210,68 @@ describe('applyCardResult', () => {
 		const b = board([running('a')]);
 		expect(applyCardResult(b, 'a', blockMarker('needs creds'), NOW, 2)).toBe('blocked');
 		expect(b.cards[0].runs?.[0]).toMatchObject({ outcome: 'blocked', summary: 'needs creds' });
+	});
+
+	it('moves to review on a review marker and records the reason (F2)', () => {
+		const b = board([running('a')]);
+		expect(
+			applyCardResult(b, 'a', reviewMarker('needs a human eye on the migration'), NOW, 2)
+		).toBe('review');
+		const c = b.cards[0];
+		expect(c.status).toBe('review');
+		// The run audit trail says what actually happened, not `done`.
+		expect(c.runs?.[0]).toMatchObject({
+			outcome: 'review',
+			summary: 'needs a human eye on the migration',
+			endedAt: NOW,
+		});
+	});
+
+	it('moves to review on a bare review marker with no reason', () => {
+		const b = board([running('a')]);
+		expect(applyCardResult(b, 'a', reviewMarker(), NOW, 2)).toBe('review');
+		expect(b.cards[0].runs?.[0]?.outcome).toBe('review');
+	});
+
+	it('reviews on a review marker even when the process exited non-zero', () => {
+		// The marker is authoritative like a block marker: the agent said what it
+		// meant, so a noisy exit code must not turn it into a retried failure.
+		const b = board([running('a')]);
+		const result: CardSpawnResult = { output: reviewMarker('check this').output, exitCode: 1 };
+		expect(applyCardResult(b, 'a', result, NOW, 2)).toBe('review');
+	});
+
+	it('block beats review beats complete when an agent emits several markers', () => {
+		const both = (output: string): CardSpawnResult => ({ output, exitCode: 0 });
+		const complete = '<!-- maestro:card-complete | shipped -->';
+		const review = '<!-- maestro:card-review: eyes please -->';
+		const block = '<!-- maestro:card-block: stuck -->';
+
+		const b1 = board([running('a')]);
+		expect(applyCardResult(b1, 'a', both(`${complete}\n${review}\n${block}`), NOW, 2)).toBe(
+			'blocked'
+		);
+
+		const b2 = board([running('a')]);
+		expect(applyCardResult(b2, 'a', both(`${complete}\n${review}`), NOW, 2)).toBe('review');
+		expect(b2.cards[0].runs?.[0]).toMatchObject({ outcome: 'review', summary: 'eyes please' });
+	});
+
+	it('does NOT count a review run toward the breaker (it reached a conclusion)', () => {
+		const b = board([
+			card({
+				id: 'a',
+				status: 'running',
+				runs: [
+					{ attempt: 1, startedAt: NOW, endedAt: NOW, outcome: 'error' },
+					{ attempt: 2, startedAt: NOW, endedAt: NOW, outcome: 'review' },
+					{ attempt: 3, startedAt: NOW },
+				],
+			}),
+		]);
+		// The review resets the count, so this is the card's first trailing
+		// failure and it retries rather than tripping the breaker.
+		expect(applyCardResult(b, 'a', failure(), NOW, 2)).toBe('ready');
 	});
 
 	it('retries a failed run until the breaker trips', () => {
@@ -422,6 +491,27 @@ describe('BoardDispatcher notifications', () => {
 		]);
 	});
 
+	it('fires a review notification carrying the review reason (F2)', async () => {
+		const h = notifyHarness(board([card({ id: 'a' })], 1), () => reviewMarker('needs a human'));
+
+		h.dispatcher.tick();
+		await flush();
+		// `review` is terminal for notification purposes: the card is parked
+		// waiting on a person, so the user has to hear about it.
+		expect(h.events).toEqual([
+			{
+				kind: 'review',
+				boardId: 'b1',
+				cardId: 'a',
+				cardTitle: 'Card a',
+				detail: 'needs a human',
+				attempt: 1,
+				outcome: 'review',
+			},
+		]);
+		expect(h.status('a')).toBe('review');
+	});
+
 	it('fires blocked only when the circuit breaker actually trips, not on a retry', async () => {
 		const h = notifyHarness(board([card({ id: 'a' })], 1), () => failure());
 
@@ -484,6 +574,117 @@ describe('BoardDispatcher notifications', () => {
 		h.dispatcher.tick();
 		await flush();
 		expect(h.status('a')).toBe('done');
+	});
+});
+
+describe('BoardDispatcher PR-on-done dep (F3)', () => {
+	/** A completion that reports where the isolated run landed. */
+	const isolatedComplete = (): CardSpawnResult => ({
+		...completeMarker('shipped it'),
+		worktreePath: '/repos/worktrees/board/b1/a',
+		worktreeBranch: 'board/b1/a',
+	});
+
+	/** Harness recording every card id handed to the injected PR starter. */
+	function prHarness(
+		initial: Board,
+		spawnScript: (cardId: string) => CardSpawnResult,
+		createCardPr: (cardId: string) => void = () => {}
+	) {
+		const prCalls: string[] = [];
+		const h = harness(initial, spawnScript, {
+			createCardPr: (cardId) => {
+				prCalls.push(cardId);
+				createCardPr(cardId);
+			},
+		});
+		return { ...h, prCalls };
+	}
+
+	it('fires exactly once when a card with prOnDone and a branch lands in done', async () => {
+		const h = prHarness(
+			board([card({ id: 'a', prOnDone: { targetBranch: 'rc' } })], 1),
+			isolatedComplete
+		);
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+		expect(h.prCalls).toEqual(['a']);
+
+		// A second pass over a board with nothing left to claim must not re-fire.
+		h.dispatcher.tick();
+		await flush();
+		expect(h.prCalls).toEqual(['a']);
+	});
+
+	it('does not fire for a card that never opted in', async () => {
+		const h = prHarness(board([card({ id: 'a' })], 1), isolatedComplete);
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+		expect(h.prCalls).toEqual([]);
+	});
+
+	it('does not fire when the run recorded no worktree branch', async () => {
+		// The card opted in but ran in the shared project root, so there is no
+		// isolated branch to open a pull request for.
+		const h = prHarness(board([card({ id: 'a', prOnDone: {} })], 1), () =>
+			completeMarker('shipped it')
+		);
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+		expect(h.prCalls).toEqual([]);
+	});
+
+	it('does not fire on a non-done terminal transition', async () => {
+		const reviewed = prHarness(board([card({ id: 'a', prOnDone: {} })], 1), () => ({
+			...reviewMarker('needs a human'),
+			worktreeBranch: 'board/b1/a',
+		}));
+		reviewed.dispatcher.tick();
+		await flush();
+		expect(reviewed.status('a')).toBe('review');
+		expect(reviewed.prCalls).toEqual([]);
+
+		const blocked = prHarness(board([card({ id: 'b', prOnDone: {} })], 1), () => ({
+			...blockMarker('stuck'),
+			worktreeBranch: 'board/b1/b',
+		}));
+		blocked.dispatcher.tick();
+		await flush();
+		expect(blocked.status('b')).toBe('blocked');
+		expect(blocked.prCalls).toEqual([]);
+	});
+
+	it('leaves the card done when the PR starter throws', async () => {
+		// A PR failure never changes the card's status - the work landed either
+		// way, only the pull request is missing.
+		const h = prHarness(board([card({ id: 'a', prOnDone: {} })], 1), isolatedComplete, () => {
+			throw new Error('gh exploded');
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+		expect(h.prCalls).toEqual(['a']);
+	});
+
+	it('still notifies when the PR starter throws', async () => {
+		const events: CardNotification[] = [];
+		const h = harness(board([card({ id: 'a', prOnDone: {} })], 1), isolatedComplete, {
+			notify: (e) => events.push(e),
+			createCardPr: () => {
+				throw new Error('gh exploded');
+			},
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(events.map((e) => e.kind)).toEqual(['done']);
 	});
 });
 
