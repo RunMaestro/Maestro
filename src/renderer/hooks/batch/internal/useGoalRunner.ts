@@ -81,6 +81,7 @@ type SpawnBackgroundSynopsisFn = (
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
 		customModel?: string;
+		customEffort?: string;
 		customContextWindow?: number;
 		enableMaestroP?: boolean;
 		maestroPMode?: 'interactive' | 'dynamic';
@@ -741,7 +742,11 @@ export function useGoalRunner({
 								customPath: session.customPath,
 								customArgs: session.customArgs,
 								customEnvVars: session.customEnvVars,
-								customModel: session.customModel,
+								// Mirror the primary iteration's effective config: the run-scoped
+								// model/effort override wins over the session default so the handoff
+								// synopsis spawns under the same configuration as the goal run itself.
+								customModel: config.model ?? session.customModel,
+								customEffort: config.effort ?? session.customEffort,
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,

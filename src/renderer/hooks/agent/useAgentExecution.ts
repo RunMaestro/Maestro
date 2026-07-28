@@ -691,6 +691,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
+				customEffort?: string;
 				customContextWindow?: number;
 				// Claude token-source selection. The synopsis spawns under a synthetic
 				// sessionId, so the process:spawn handler can't resolve the token mode
@@ -819,6 +820,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomArgs: sessionConfig?.customArgs,
 							sessionCustomEnvVars: sessionConfig?.customEnvVars,
 							sessionCustomModel: sessionConfig?.customModel,
+							sessionCustomEffort: sessionConfig?.customEffort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the
