@@ -15,6 +15,7 @@
 
 import { visit } from 'unist-util-visit';
 import type { Root, Text, Link, Image } from 'mdast';
+import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import type { FileNode } from '../types/fileTree';
 import {
 	buildFileTreeIndices,
@@ -502,8 +503,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				return;
 			}
 
-			// Decode URL-encoded characters (e.g., %20 -> space)
-			const decodedHref = decodeURIComponent(href);
+			// Decode URL-encoded characters (e.g., %20 -> space). Must not throw:
+			// this runs inside the unified transform, so a URIError from a stray
+			// '%' in a link target ("[see](100% done.md)") propagates out of
+			// react-markdown's render and blanks the whole message. (MAESTRO-XS)
+			const decodedHref = safeDecodeURIComponent(href);
 
 			let resolvedPath: string | null = null;
 

@@ -101,9 +101,10 @@ helpers below.
 
 ### Shared (`src/shared/stringUtils.ts` - Both)
 
-| Function               | Signature            | Purpose                                                                                                     |
-| ---------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `stripAnsiCodes(text)` | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases. |
+| Function                        | Signature            | Purpose                                                                                                                                                                                                                                    |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `stripAnsiCodes(text)`          | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases.                                                                                                                                |
+| `safeDecodeURIComponent(value)` | `(string) => string` | Percent-decode, returning the raw input on malformed escapes (`%`, `%ZZ`) instead of throwing `URIError`. Use for ANY untrusted path/href - agent output and Windows/non-ASCII paths routinely carry a bare `%`. Swallows only `URIError`. |
 
 ## Font Utilities (`src/shared/fontStack.ts` - Both)
 
