@@ -19,6 +19,7 @@ import { AgentDetailModal } from '../AgentDetailModal';
 import { EmptyState } from '../EmptyState';
 import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
+import { TokenSeriesProvider } from '../TokenSeriesContext';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../../hooks/ui/useResizableModal';
@@ -48,6 +49,7 @@ import {
 	OverviewView,
 	ProviderQuotaUsageView,
 	ShortcutsView,
+	TokensView,
 } from './views';
 import { ResizeHandles } from '../../ui/ResizeHandles';
 
@@ -184,6 +186,7 @@ export function UsageDashboardModal({
 						viewMode === 'cue' ||
 						viewMode === 'agent-overview' ||
 						viewMode === 'shortcuts' ||
+						viewMode === 'tokens' ||
 						viewMode === 'anthropic-usage' ||
 						viewMode === 'codex-usage'
 							? 'overview'
@@ -219,6 +222,20 @@ export function UsageDashboardModal({
 
 		if (viewMode === 'shortcuts') {
 			return <ShortcutsView key={viewMode} timeRange={timeRange} theme={theme} />;
+		}
+
+		// Token usage is read from each agent's on-disk transcripts, not the stats
+		// DB, so this tab has data even when no query events were recorded. Must
+		// stay above the `totalQueries === 0` empty-state gate below.
+		if (viewMode === 'tokens') {
+			return (
+				<TokensView
+					key={viewMode}
+					timeRange={timeRange}
+					theme={theme}
+					colorBlindMode={colorBlindMode}
+				/>
+			);
 		}
 
 		if (viewMode === 'anthropic-usage' || viewMode === 'codex-usage') {
@@ -389,7 +406,7 @@ export function UsageDashboardModal({
 					className="flex-1 overflow-y-auto scrollbar-thin p-6"
 					style={{ backgroundColor: theme.colors.bgMain }}
 				>
-					{renderTabContent()}
+					<TokenSeriesProvider timeRange={timeRange}>{renderTabContent()}</TokenSeriesProvider>
 				</div>
 
 				<UsageDashboardFooter

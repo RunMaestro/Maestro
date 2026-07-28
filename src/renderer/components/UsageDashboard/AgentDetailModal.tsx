@@ -2,9 +2,10 @@
  * AgentDetailModal
  *
  * Per-agent stats sub-modal opened by double-clicking an agent card on the
- * Usage Dashboard's Agents tab. Stays scoped to stats - no recent-queries
- * list, no per-agent token/cost (those live in provider session files and
- * aren't aggregated per Maestro session yet).
+ * Usage Dashboard's Agents tab. Stays scoped to stats - no recent-queries list.
+ * Per-agent token/cost is read from the agent's live-accumulated, persisted
+ * `session.usageStats` (input/output/cache split + provider cost, falling back
+ * to a rate-table estimate) via the shared `usageStats` helpers.
  *
  * Reuses `data.bySessionByDay[session.id]` (already fetched by the dashboard)
  * for cheap aggregates and daily activity. Pulls the raw query events for the
@@ -16,7 +17,14 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
-import { formatDurationHuman, formatNumber, formatRelativeTime } from '../../../shared/formatters';
+import {
+	formatCost,
+	formatDurationHuman,
+	formatNumber,
+	formatRelativeTime,
+	formatTokensCompact,
+} from '../../../shared/formatters';
+import { hasUsage, resolveUsageCost, sumUsageTokens } from '../../../shared/usageStats';
 import { Modal } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
@@ -107,6 +115,21 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		const lastActive = activeDays[activeDays.length - 1]?.date ?? null;
 		return { byDay, totalQueries, totalDuration, avgDuration, firstActive, lastActive };
 	}, [data, session.id]);
+
+	// Per-agent token/cost from the live-accumulated, persisted usageStats.
+	const usage = useMemo(() => {
+		const u = session.usageStats;
+		if (!hasUsage(u)) return null;
+		const { costUsd, estimated } = resolveUsageCost(u, session.customModel);
+		return {
+			total: sumUsageTokens(u),
+			inputTokens: u?.inputTokens ?? 0,
+			outputTokens: u?.outputTokens ?? 0,
+			cacheReadTokens: u?.cacheReadInputTokens ?? 0,
+			costUsd,
+			estimated,
+		};
+	}, [session.usageStats, session.customModel]);
 
 	const sourceSplit = useMemo(() => {
 		if (!events) return null;
@@ -204,6 +227,33 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 						theme={theme}
 					/>
 				</section>
+
+				{/* Token & cost usage for this agent (from persisted usageStats). */}
+				{usage && (
+					<section>
+						<SectionHeading theme={theme}>Tokens &amp; Cost</SectionHeading>
+						<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+							<Kpi label="Total tokens" value={formatTokensCompact(usage.total)} theme={theme} />
+							<Kpi
+								label="Input / Output"
+								value={`${formatTokensCompact(usage.inputTokens)} / ${formatTokensCompact(
+									usage.outputTokens
+								)}`}
+								theme={theme}
+							/>
+							<Kpi
+								label="Cache reads"
+								value={formatTokensCompact(usage.cacheReadTokens)}
+								theme={theme}
+							/>
+							<Kpi
+								label={usage.estimated ? 'Cost (est.)' : 'Cost'}
+								value={`${usage.estimated ? '~' : ''}${formatCost(usage.costUsd)}`}
+								theme={theme}
+							/>
+						</div>
+					</section>
+				)}
 
 				{/* Daily activity sparkline (full window) */}
 				{fullSparkline.length > 0 && (

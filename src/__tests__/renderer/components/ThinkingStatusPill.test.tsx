@@ -15,6 +15,8 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThinkingStatusPill } from '../../../renderer/components/ThinkingStatusPill';
+import { useThoughtStreamStore } from '../../../renderer/stores/thoughtStreamStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, BatchRunState, AITab, ThinkingItem } from '../../../renderer/types';
 import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -321,6 +323,91 @@ describe('ThinkingStatusPill', () => {
 			fireEvent.click(claudeIdButton);
 
 			expect(onSessionClick).toHaveBeenCalledWith('session-abc', 'tab-999');
+		});
+	});
+
+	// The pill is a navigation affordance: it jumps to the tab that is thinking.
+	// The Thought Stream is a separate Auto Run surface and must NOT be opened here.
+	describe('navigation only (no thought stream side effects)', () => {
+		beforeEach(() => {
+			useThoughtStreamStore.setState({
+				panelSessionId: null,
+				minimized: false,
+				buffers: {},
+				capturing: {},
+			});
+			useUIStore.setState({ rightPanelOpen: false });
+		});
+
+		it('jumps to the primary session without opening the thought stream', () => {
+			const onSessionClick = vi.fn();
+			const item = createThinkingItem({
+				id: 'session-xyz',
+				name: 'Live Agent',
+				agentSessionId: 'claude-789',
+			});
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			// agentSessionId 'claude-789' -> displayClaudeId 'CLAUDE-7'
+			fireEvent.click(screen.getByText('CLAUDE-7'));
+
+			expect(onSessionClick).toHaveBeenCalledWith('session-xyz', undefined);
+			const streamState = useThoughtStreamStore.getState();
+			expect(streamState.panelSessionId).toBeNull();
+			expect(streamState.capturing['session-xyz']).toBeUndefined();
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('jumps when the agent name is clicked (the segment that survives narrow widths)', () => {
+			const onSessionClick = vi.fn();
+			const item = createThinkingItemWithTab(
+				{ id: 'session-abc', name: 'Named Agent', agentSessionId: undefined },
+				{ id: 'tab-999', name: 'Active Tab', agentSessionId: 'tab-claude-id' }
+			);
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Named Agent'));
+
+			expect(onSessionClick).toHaveBeenCalledWith('session-abc', 'tab-999');
+			expect(useThoughtStreamStore.getState().panelSessionId).toBeNull();
+		});
+
+		it('jumps to a session picked from the dropdown without opening the thought stream', () => {
+			const onSessionClick = vi.fn();
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary' }),
+			];
+			render(
+				<ThinkingStatusPill
+					thinkingItems={items}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
+			const secondaryRow = screen
+				.getAllByRole('button')
+				.find((row) => row.textContent?.includes('Secondary'));
+			expect(secondaryRow).toBeDefined();
+			fireEvent.click(secondaryRow!);
+
+			expect(onSessionClick).toHaveBeenCalledWith('sess-2', undefined);
+			expect(useThoughtStreamStore.getState().panelSessionId).toBeNull();
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
 		});
 	});
 

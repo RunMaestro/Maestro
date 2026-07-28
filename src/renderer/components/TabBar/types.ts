@@ -38,6 +38,12 @@ export interface TabBarProps {
 	/** Whether GitHub CLI is available for gist publishing */
 	ghCliAvailable?: boolean;
 	showUnreadOnly?: boolean;
+	/**
+	 * Ids of AI tabs that have queued execution items. Under the unread filter these
+	 * tabs stay visible (pending queued work needs attention). Undefined outside the
+	 * filter (all tabs shown).
+	 */
+	queuedTabIds?: Set<string>;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
 	/** Handler to open message search (Cmd+F) */
@@ -60,6 +66,8 @@ export interface TabBarProps {
 	onFileTabSelect?: (tabId: string) => void;
 	/** Handler to close a file preview tab */
 	onFileTabClose?: (tabId: string) => void;
+	/** Handler to open the rename dialog for a file preview tab */
+	onFileTabRename?: (tabId: string) => void;
 	/** Currently active browser tab ID (null if no browser tab is active) */
 	activeBrowserTabId?: string | null;
 	/** Handler to select a browser tab */
@@ -114,6 +122,11 @@ export interface TabBarProps {
 	 * falls back to the group's auto-generated name when empty. Persisted upstream.
 	 */
 	onGroupRename?: (groupId: string, name: string) => void;
+	/**
+	 * Set a tab group's chip emoji. An empty string clears it back to the default
+	 * grid glyph. Persisted upstream via the tab-store action.
+	 */
+	onGroupSetEmoji?: (groupId: string, emoji: string) => void;
 	/**
 	 * Break a tab group apart: split it back into individual standalone tabs. The
 	 * chip gates this behind a confirmation dialog before invoking the handler.

@@ -234,13 +234,13 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'wordWrap',
 	'remoteImages',
 	'htmlRender',
+	'openInBrowser',
 	'previewTier',
 	'editToggle',
 	'editImage',
 	'copyContent',
 	'publishGist',
 	'documentGraph',
-	'openInBrowser',
 	'openInDefault',
 	'copyPath',
 ] as const;
@@ -325,6 +325,7 @@ export interface SettingsStoreState {
 	shellEnvVars: Record<string, string>;
 	ghPath: string;
 	fontFamily: string;
+	terminalFontFamily: string;
 	fontSize: number;
 	activeThemeId: ThemeId;
 	customThemeColors: ThemeColors;
@@ -333,9 +334,14 @@ export interface SettingsStoreState {
 	enterToSendAIExpanded: boolean;
 	forcedParallelExecution: boolean;
 	forcedParallelAcknowledged: boolean;
+	/** When forced parallel is on, treat EVERY send as a force-send (no modifier needed). */
+	forcedParallelAlways: boolean;
+	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
+	crossAgentMentionsWritable: boolean;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
+	showToolCalls: boolean;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
@@ -389,6 +395,7 @@ export interface SettingsStoreState {
 	showFilePreviewsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
 	showBrowserTabDomain: boolean;
+	tabBarWheelScroll: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -485,6 +492,7 @@ export interface SettingsStoreActions {
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
 	setFontFamily: (value: string) => void;
+	setTerminalFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
@@ -493,9 +501,12 @@ export interface SettingsStoreActions {
 	setEnterToSendAIExpanded: (value: boolean) => void;
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
+	setForcedParallelAlways: (value: boolean) => void;
+	setCrossAgentMentionsWritable: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	setShowToolCalls: (value: boolean) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
 	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
@@ -542,6 +553,7 @@ export interface SettingsStoreActions {
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	setTabBarWheelScroll: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -720,6 +732,25 @@ export function sanitizeLoadedAutoRunMaxTaskDurationMin(raw: unknown): number {
 // Store Implementation
 // ============================================================================
 
+/**
+ * Resolve whether a send should force-parallel (bypass the busy-agent queue).
+ *
+ * The feature is a two-level opt-in:
+ *  - `forcedParallelExecution` off  → never force (gate closed).
+ *  - on, "modifier" mode            → force only when the caller passed the
+ *    explicit override (the ⌘⇧↩ shortcut or the Force Send button).
+ *  - on, "always" mode              → force EVERY send, no modifier needed.
+ *
+ * Single source of truth for all send paths (inline composer, expanded
+ * composer, custom commands). Reads the store directly so callers don't
+ * duplicate the truth table.
+ */
+export function resolveForceParallel(optionForce?: boolean): boolean {
+	const s = useSettingsStore.getState();
+	if (!s.forcedParallelExecution) return false;
+	return optionForce === true || s.forcedParallelAlways;
+}
+
 export const useSettingsStore = create<SettingsStore>()((set, get) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
@@ -741,6 +772,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		shellEnvVars: {},
 		ghPath: '',
 		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		terminalFontFamily: '',
 		fontSize: 14,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -749,9 +781,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		enterToSendAIExpanded: false,
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
+		forcedParallelAlways: false,
+		crossAgentMentionsWritable: false,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
+		showToolCalls: true,
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
@@ -805,6 +840,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		showFilePreviewsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
 		showBrowserTabDomain: true,
+		tabBarWheelScroll: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -946,6 +982,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('fontFamily', value);
 		},
 
+		setTerminalFontFamily: (value) => {
+			set({ terminalFontFamily: value });
+			window.maestro.settings.set('terminalFontFamily', value);
+		},
+
 		setFontSize: (value) => {
 			set({ fontSize: value });
 			window.maestro.settings.set('fontSize', value);
@@ -986,6 +1027,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('forcedParallelAcknowledged', value);
 		},
 
+		setForcedParallelAlways: (value) => {
+			set({ forcedParallelAlways: value });
+			window.maestro.settings.set('forcedParallelAlways', value);
+		},
+
+		setCrossAgentMentionsWritable: (value) => {
+			set({ crossAgentMentionsWritable: value });
+			window.maestro.settings.set('crossAgentMentionsWritable', value);
+		},
+
 		setDefaultSaveToHistory: (value) => {
 			set({ defaultSaveToHistory: value });
 			window.maestro.settings.set('defaultSaveToHistory', value);
@@ -1000,6 +1051,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setDefaultShowThinking: (value) => {
 			set({ defaultShowThinking: value });
 			window.maestro.settings.set('defaultShowThinking', value);
+		},
+
+		setShowToolCalls: (value) => {
+			set({ showToolCalls: value });
+			window.maestro.settings.set('showToolCalls', value);
 		},
 
 		setLeftSidebarWidth: (value) => {
@@ -1312,6 +1368,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setUseCmd0AsLastTab: (value) => {
 			set({ useCmd0AsLastTab: value });
 			window.maestro.settings.set('useCmd0AsLastTab', value);
+		},
+
+		setTabBarWheelScroll: (value) => {
+			set({ tabBarWheelScroll: value });
+			window.maestro.settings.set('tabBarWheelScroll', value);
 		},
 
 		setShowBrowserTabDomain: (value) => {
@@ -2342,6 +2403,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['fontFamily'] !== undefined)
 			patch.fontFamily = allSettings['fontFamily'] as string;
 
+		if (allSettings['terminalFontFamily'] !== undefined)
+			patch.terminalFontFamily = allSettings['terminalFontFamily'] as string;
+
 		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 
 		if (allSettings['activeThemeId'] !== undefined)
@@ -2363,6 +2427,11 @@ export async function loadAllSettings(): Promise<void> {
 			patch.forcedParallelExecution = allSettings['forcedParallelExecution'] as boolean;
 		if (allSettings['forcedParallelAcknowledged'] !== undefined)
 			patch.forcedParallelAcknowledged = allSettings['forcedParallelAcknowledged'] as boolean;
+		if (allSettings['forcedParallelAlways'] !== undefined)
+			patch.forcedParallelAlways = allSettings['forcedParallelAlways'] as boolean;
+
+		if (allSettings['crossAgentMentionsWritable'] !== undefined)
+			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
 
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
@@ -2376,6 +2445,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.defaultShowThinking =
 				typeof raw === 'boolean' ? (raw ? 'on' : 'off') : (raw as ThinkingMode);
 		}
+
+		if (allSettings['showToolCalls'] !== undefined)
+			patch.showToolCalls = allSettings['showToolCalls'] as boolean;
 
 		// leftSidebarWidth: clamp on load
 		if (allSettings['leftSidebarWidth'] !== undefined)
@@ -2633,6 +2705,17 @@ export async function loadAllSettings(): Promise<void> {
 				hiddenQuotaAccounts: allSettings['hiddenQuotaAccounts'] as Record<string, string[]>,
 			});
 
+		// Collapsed docked plugin panels live in uiStore (toggled from the panel
+		// slot header), so its persisted id list hydrates directly there. Validate
+		// it is an array of strings first: a malformed stored value (null/object)
+		// would otherwise reach PluginPanelSlot, which calls `.includes()` on it.
+		if (Array.isArray(allSettings['hiddenPluginPanels']))
+			useUIStore.setState({
+				hiddenPluginPanels: (allSettings['hiddenPluginPanels'] as unknown[]).filter(
+					(id): id is string => typeof id === 'string'
+				),
+			});
+
 		// Usage Dashboard auto-refresh intervals live in uiStore alongside the
 		// hidden-account map (both are provider-panel state), so the persisted map
 		// hydrates directly there too.
@@ -2691,6 +2774,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['showBrowserTabDomain'] !== undefined)
 			patch.showBrowserTabDomain = allSettings['showBrowserTabDomain'] as boolean;
+
+		if (typeof allSettings['tabBarWheelScroll'] === 'boolean')
+			patch.tabBarWheelScroll = allSettings['tabBarWheelScroll'];
 
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)
@@ -3110,6 +3196,7 @@ export function getSettingsActions() {
 		setShellEnvVars: state.setShellEnvVars,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
+		setTerminalFontFamily: state.setTerminalFontFamily,
 		setFontSize: state.setFontSize,
 		setActiveThemeId: state.setActiveThemeId,
 		setCustomThemeColors: state.setCustomThemeColors,
@@ -3118,6 +3205,7 @@ export function getSettingsActions() {
 		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
 		setSynopsisDebounceSeconds: state.setSynopsisDebounceSeconds,
 		setDefaultShowThinking: state.setDefaultShowThinking,
+		setShowToolCalls: state.setShowToolCalls,
 		setLeftSidebarWidth: state.setLeftSidebarWidth,
 		setRightPanelWidth: state.setRightPanelWidth,
 		setModalSize: state.setModalSize,

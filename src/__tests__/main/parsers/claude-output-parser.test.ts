@@ -410,6 +410,229 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('tool_result extraction', () => {
+		// Fresh parser per test: tool_use id -> name correlation is instance state.
+		const toolUseLine = (id: string, name: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ type: 'tool_use', id, name, input: { file: 'x.ts' } }] },
+			});
+		const toolResultLine = (toolUseId: string, content: unknown, isError?: boolean) =>
+			JSON.stringify({
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: toolUseId,
+							content,
+							...(isError === undefined ? {} : { is_error: isError }),
+						},
+					],
+				},
+			});
+
+		it('should emit a completed tool_use event correlated to the earlier tool_use', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_abc', 'Read'));
+
+			const event = p.parseJsonLine(toolResultLine('toolu_abc', 'file contents here'));
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_abc');
+			expect(event?.toolName).toBe('Read');
+			expect(event?.toolState).toEqual({
+				status: 'completed',
+				output: 'file contents here',
+			});
+		});
+
+		it('should emit status failed when is_error is true', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_err', 'Bash'));
+
+			const event = p.parseJsonLine(toolResultLine('toolu_err', 'command not found', true));
+			expect(event?.toolName).toBe('Bash');
+			expect((event?.toolState as { status: string }).status).toBe('failed');
+		});
+
+		it('should fall back to a generic tool name for unknown tool_use_id', () => {
+			const p = new ClaudeOutputParser();
+
+			const event = p.parseJsonLine(toolResultLine('toolu_unseen', 'output'));
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_unseen');
+			expect(event?.toolName).toBe('Tool');
+		});
+
+		it('should flatten array content into a single output string', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_arr', 'Grep'));
+
+			const event = p.parseJsonLine(
+				toolResultLine('toolu_arr', [
+					{ type: 'text', text: 'line one\n' },
+					{ type: 'image', source: {} },
+					{ type: 'text', text: 'line two' },
+				])
+			);
+			expect((event?.toolState as { output: string }).output).toBe('line one\nline two');
+		});
+
+		it('should not reuse a tool name once its result has been emitted', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_once', 'Edit'));
+
+			expect(p.parseJsonLine(toolResultLine('toolu_once', 'ok'))?.toolName).toBe('Edit');
+			expect(p.parseJsonLine(toolResultLine('toolu_once', 'ok'))?.toolName).toBe('Tool');
+		});
+
+		it('should carry extra parallel tool_results in toolResultBlocks', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_a', 'Read'));
+			p.parseJsonLine(toolUseLine('toolu_b', 'Grep'));
+
+			// One user message bundling two parallel tool_result blocks.
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					message: {
+						role: 'user',
+						content: [
+							{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'a-out' },
+							{ type: 'tool_result', tool_use_id: 'toolu_b', content: 'b-out', is_error: true },
+						],
+					},
+				})
+			);
+
+			// Primary result stays in the top-level fields (existing behavior).
+			expect(event?.type).toBe('tool_use');
+			expect(event?.toolCallId).toBe('toolu_a');
+			expect(event?.toolName).toBe('Read');
+			expect((event?.toolState as { status: string }).status).toBe('completed');
+
+			// The second parallel result rides along so it is not left running.
+			expect(event?.toolResultBlocks).toHaveLength(1);
+			expect(event?.toolResultBlocks?.[0].toolCallId).toBe('toolu_b');
+			expect(event?.toolResultBlocks?.[0].toolName).toBe('Grep');
+			expect((event?.toolResultBlocks?.[0].toolState as { status: string }).status).toBe('failed');
+		});
+
+		it('should omit toolResultBlocks for a single tool_result', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(toolUseLine('toolu_solo', 'Read'));
+			const event = p.parseJsonLine(toolResultLine('toolu_solo', 'ok'));
+			expect(event?.toolResultBlocks).toBeUndefined();
+		});
+
+		it('should not emit tool_result text as assistant prose', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(toolResultLine('toolu_x', 'raw tool output'));
+			expect(event?.type).not.toBe('text');
+			expect(event?.text).toBeUndefined();
+		});
+
+		it('should leave ordinary user messages as system events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: 'hello there' },
+				})
+			);
+			expect(event?.type).toBe('system');
+		});
+	});
+
+	describe('parent_tool_use_id (Task subagents)', () => {
+		it('should carry parentToolUseId on subagent tool_use blocks', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: { pattern: 'x' } },
+						],
+					},
+				})
+			);
+
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+			expect(event?.toolUseBlocks?.[0]?.name).toBe('Grep');
+		});
+
+		it('should carry parentToolUseId on subagent text events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'searching...' }] },
+				})
+			);
+
+			expect(event?.type).toBe('text');
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+		});
+
+		it('should carry parentToolUseId on subagent tool_result events', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'toolu_child', name: 'Grep', input: {} }],
+					},
+				})
+			);
+
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'user',
+					parent_tool_use_id: 'toolu_task_1',
+					message: {
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'toolu_child', content: 'no matches' }],
+					},
+				})
+			);
+
+			expect(event?.type).toBe('tool_use');
+			expect(event?.parentToolUseId).toBe('toolu_task_1');
+		});
+
+		it('should leave parentToolUseId undefined for main-transcript messages', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+				})
+			);
+
+			expect(event?.parentToolUseId).toBeUndefined();
+		});
+
+		it('should normalize a null parent_tool_use_id to undefined', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					parent_tool_use_id: null,
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+				})
+			);
+
+			expect(event?.parentToolUseId).toBeUndefined();
+		});
+	});
+
 	describe('thinking blocks extraction', () => {
 		it('should extract thinking content from assistant messages', () => {
 			const line = JSON.stringify({

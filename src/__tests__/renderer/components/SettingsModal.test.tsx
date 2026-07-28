@@ -53,6 +53,7 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
 	isMacOS: vi.fn(() => false), // Test environment is not Mac
 	formatMetaKey: vi.fn(() => 'Ctrl'),
+	formatMetaKeyName: vi.fn(() => 'Ctrl'),
 	formatEnterToSend: vi.fn((enterToSend: boolean) => (enterToSend ? 'Enter' : 'Ctrl + Enter')),
 	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) =>
 		enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'
@@ -1582,7 +1583,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: 'My Custom Font' } });
 			// Scope to the font input's parent container to avoid ambiguous "Add" button matches
 			const fontContainer = customFontInput.closest('div')!.parentElement!;
@@ -1602,7 +1603,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: 'My Custom Font' } });
 			fireEvent.keyDown(customFontInput, { key: 'Enter' });
 
@@ -1620,7 +1621,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const customFontInput = screen.getByPlaceholderText('Add custom font name...');
+			const customFontInput = screen.getAllByPlaceholderText('Add custom font name...')[0];
 			fireEvent.change(customFontInput, { target: { value: '   ' } });
 			// Scope to the font input's parent container to avoid ambiguous "Add" button matches
 			const fontContainer = customFontInput.closest('div')!.parentElement!;

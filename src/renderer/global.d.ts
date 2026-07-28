@@ -77,9 +77,9 @@ interface ProcessConfig {
 	};
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
-	// Windows command line length workaround
-	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
-	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
+	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
+	// neither of which a renderer (possibly a browser on another OS) can know.
 	// Claude token-source selection. Normally resolved server-side from the
 	// persisted session by sessionId, but spawns using a synthetic sessionId
 	// (e.g. background synopsis) forward these inline so the handler can resolve.
@@ -294,7 +294,7 @@ interface MaestroAPI {
 				syncHistory?: boolean;
 			};
 		}) => Promise<{ exitCode: number }>;
-		getActiveProcesses: () => Promise<
+		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;
 				toolType: string;
@@ -342,6 +342,13 @@ interface MaestroAPI {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				kind?: 'question';
+				questions?: Array<{
+					question: string;
+					header?: string;
+					options: Array<{ label: string; description?: string }>;
+					multiSelect: boolean;
+				}>;
 			}) => void
 		) => () => void;
 		respondPermission: (
@@ -453,7 +460,7 @@ interface MaestroAPI {
 		onRemoteMovement: (
 			callback: (
 				params: {
-					op: 'add' | 'update' | 'move' | 'remove' | 'clear';
+					op: 'begin' | 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
 					id?: string;
 					viewType?: 'view' | 'html';
 					x?: number;
@@ -464,12 +471,26 @@ interface MaestroAPI {
 					body?: string;
 					sourcePlugin?: string;
 					revision?: number;
+					phase?: 'composing' | 'refining' | 'arranging' | 'reviewing' | 'testing';
+					step?: number;
+					steps?: number;
+					notes?: Array<{
+						value: 'quarter' | 'eighth' | 'sixteenth';
+						dotted?: boolean;
+						triad?: boolean;
+						tie?: boolean;
+					}>;
 				},
 				responseChannel?: string
 			) => void
 		) => () => void;
 		sendMovementAppliedResponse: (responseChannel: string, applied: boolean) => void;
 		releaseConcertoHtmlDocument: (surface: 'movement' | 'cadenza', id: string) => void;
+		restoreConcertoHtmlDocument: (
+			surface: 'movement' | 'cadenza',
+			id: string,
+			html: string
+		) => Promise<number>;
 		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
 		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
 		onRequestMovementDesignerInspection: (
@@ -525,6 +546,43 @@ interface MaestroAPI {
 			responseChannel: string,
 			success: boolean,
 			tabId?: string
+		) => void;
+		onRemoteEnqueueCommand: (
+			callback: (
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => void
+		) => () => void;
+		sendRemoteEnqueueCommandResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				tabId?: string;
+				queued?: boolean;
+				queuePosition?: number;
+				queueLength?: number;
+				itemId?: string;
+				error?: string;
+			}
+		) => void;
+		onRemoteListQueue: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		) => () => void;
+		sendRemoteListQueueResponse: (
+			responseChannel: string,
+			result: { success: boolean; queues: unknown[]; error?: string }
+		) => void;
+		onRemoteRemoveQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteRemoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; removed: boolean; error?: string }
 		) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
@@ -2835,6 +2893,10 @@ interface MaestroAPI {
 			// Installation tracking for multi-device differentiation
 			installationId?: string; // Unique GUID per Maestro installation (auto-injected by main process)
 			clientTotalTimeMs?: number; // Client's self-proclaimed total time (for discrepancy detection)
+			// What earned this time. Absent means 'auto-run' (older clients predate
+			// this field). Cue submissions are far more frequent, so the server keys
+			// off this to suppress per-submission Discord notifications.
+			source?: 'auto-run' | 'cue';
 		}) => Promise<{
 			success: boolean;
 			message: string;
@@ -3182,6 +3244,12 @@ interface MaestroAPI {
 				success: boolean;
 			}>
 		>;
+		// Token & cost usage aggregate for the Tokens tab. Reads agent session
+		// transcripts; `force` bypasses the accessor's in-memory memo.
+		getTokenUsage: (
+			query?: import('../shared/tokenUsage').TokenUsageQuery,
+			force?: boolean
+		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
 		// Get aggregated stats for dashboard display
 		getAggregation: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<{
 			totalQueries: number;
@@ -3912,6 +3980,7 @@ interface MaestroAPI {
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		requestConsent: (id: string) => Promise<{ opened: boolean }>;
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		setAgentAllowlist: (id: string, agentIds: string[]) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;

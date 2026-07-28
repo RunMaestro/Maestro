@@ -42,8 +42,12 @@ import {
 	splitPaneRectsByKind,
 	breakApartGroup,
 	renameGroup,
+	setGroupEmoji,
 	normalizeTabGroups,
 	resolveTabRefTitle,
+	resolveTabRefRenameValue,
+	resolveSingleViewTabRef,
+	resolveActiveTabRef,
 	type DropRect,
 } from '../panelLayout';
 import type { PaneRects } from '../../types';
@@ -1041,6 +1045,117 @@ describe('resolveTabRefTitle', () => {
 	});
 });
 
+describe('resolveTabRefRenameValue', () => {
+	function sessionWithTabs(): Session {
+		return {
+			aiTabs: [{ id: 'a1', name: 'My Chat' }, { id: 'a2' }],
+			filePreviewTabs: [{ id: 'f1', name: 'README.md', customName: 'Notes' }, { id: 'f2' }],
+			terminalTabs: [
+				{ id: 't1', name: 'Build' },
+				{ id: 't2', name: null },
+			],
+			browserTabs: [
+				{ id: 'b1', customTitle: 'Pinned', title: 'Docs', url: 'https://x' },
+				{ id: 'b2', title: 'Docs', url: 'https://x' },
+			],
+		} as unknown as Session;
+	}
+
+	it('returns the user-assigned name for each tab kind', () => {
+		const s = sessionWithTabs();
+		expect(resolveTabRefRenameValue(s, aiRef('a1'))).toBe('My Chat');
+		expect(resolveTabRefRenameValue(s, fileRef('f1'))).toBe('Notes');
+		expect(resolveTabRefRenameValue(s, { type: 'terminal', id: 't1' })).toBe('Build');
+		expect(resolveTabRefRenameValue(s, { type: 'browser', id: 'b1' })).toBe('Pinned');
+	});
+
+	it('returns an empty string (never the auto title) when no custom name is set', () => {
+		const s = sessionWithTabs();
+		expect(resolveTabRefRenameValue(s, aiRef('a2'))).toBe('');
+		expect(resolveTabRefRenameValue(s, fileRef('f2'))).toBe('');
+		expect(resolveTabRefRenameValue(s, { type: 'terminal', id: 't2' })).toBe('');
+		expect(resolveTabRefRenameValue(s, { type: 'browser', id: 'b2' })).toBe('');
+	});
+
+	it('returns null when the ref points at a tab that no longer exists', () => {
+		const s = sessionWithTabs();
+		expect(resolveTabRefRenameValue(s, aiRef('gone'))).toBeNull();
+		expect(resolveTabRefRenameValue(s, fileRef('gone'))).toBeNull();
+		expect(resolveTabRefRenameValue(s, { type: 'terminal', id: 'gone' })).toBeNull();
+		expect(resolveTabRefRenameValue(s, { type: 'browser', id: 'gone' })).toBeNull();
+	});
+});
+
+describe('resolveSingleViewTabRef / resolveActiveTabRef', () => {
+	function baseSession(extra?: Partial<Session>): Session {
+		return {
+			id: 'sess',
+			inputMode: 'ai',
+			aiTabs: [{ id: 'a1', name: 'My Chat' }],
+			activeTabId: 'a1',
+			filePreviewTabs: [{ id: 'f1', name: 'README.md' }],
+			terminalTabs: [{ id: 't1', name: null }],
+			browserTabs: [{ id: 'b1', title: 'Docs', url: 'https://x' }],
+			tabGroups: [],
+			activeGroupId: null,
+			...extra,
+		} as unknown as Session;
+	}
+
+	it('follows the single-view render precedence: terminal, file, browser, AI', () => {
+		expect(
+			resolveSingleViewTabRef(baseSession({ inputMode: 'terminal', activeTerminalTabId: 't1' }))
+		).toEqual({ type: 'terminal', id: 't1' });
+		expect(resolveSingleViewTabRef(baseSession({ activeFileTabId: 'f1' }))).toEqual({
+			type: 'file',
+			id: 'f1',
+		});
+		expect(resolveSingleViewTabRef(baseSession({ activeBrowserTabId: 'b1' }))).toEqual({
+			type: 'browser',
+			id: 'b1',
+		});
+		expect(resolveSingleViewTabRef(baseSession())).toEqual({ type: 'ai', id: 'a1' });
+	});
+
+	it('returns null when the agent has nothing showing', () => {
+		expect(resolveSingleViewTabRef(baseSession({ aiTabs: [] }))).toBeNull();
+	});
+
+	it('targets the focused pane when a tiled group is active', () => {
+		const group = createGroupFromTabRefs(
+			[{ type: 'terminal', id: 't1' }, aiRef('a1')],
+			'Group: Terminal 1'
+		);
+		const terminalLeafId = group.layout.kind === 'split' ? group.layout.children[0].id : '';
+		const session = baseSession({
+			tabGroups: [{ ...group, focusedPaneId: terminalLeafId }],
+			activeGroupId: group.id,
+			// The hidden single-view tab must NOT win while the group is showing.
+			activeFileTabId: 'f1',
+		});
+		expect(resolveActiveTabRef(session)).toEqual({ type: 'terminal', id: 't1' });
+	});
+
+	it('falls back to the first pane when the active group has no focused pane', () => {
+		const group = createGroupFromTabRefs([aiRef('a1'), { type: 'terminal', id: 't1' }], 'Group');
+		const session = baseSession({
+			tabGroups: [{ ...group, focusedPaneId: null }],
+			activeGroupId: group.id,
+		});
+		expect(resolveActiveTabRef(session)).toEqual({ type: 'ai', id: 'a1' });
+	});
+
+	it('falls back to the single view when no group is active', () => {
+		const group = createGroupFromTabRefs([aiRef('a1'), { type: 'terminal', id: 't1' }], 'Group');
+		const session = baseSession({
+			tabGroups: [group],
+			activeGroupId: null,
+			activeBrowserTabId: 'b1',
+		});
+		expect(resolveActiveTabRef(session)).toEqual({ type: 'browser', id: 'b1' });
+	});
+});
+
 describe('renameGroup', () => {
 	function sessionWith(group: TabGroup): Session {
 		return { id: 'sess', tabGroups: [group], activeGroupId: group.id } as unknown as Session;
@@ -1062,6 +1177,30 @@ describe('renameGroup', () => {
 		const group = groupFrom(rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]));
 		const next = renameGroup(sessionWith(group), 'missing', 'x', 'Group: a');
 		expect(next.tabGroups[0].name).toBe('g');
+	});
+});
+
+describe('setGroupEmoji', () => {
+	function sessionWith(group: TabGroup): Session {
+		return { id: 'sess', tabGroups: [group], activeGroupId: group.id } as unknown as Session;
+	}
+
+	it('sets a trimmed emoji on the group', () => {
+		const group = groupFrom(rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]));
+		const next = setGroupEmoji(sessionWith(group), 'grp', '  🚀  ');
+		expect(next.tabGroups[0].emoji).toBe('🚀');
+	});
+
+	it('clears the emoji when given a blank value', () => {
+		const group = { ...groupFrom(rowSplit('root', [leaf('l1', aiRef('a'))])), emoji: '🚀' };
+		const next = setGroupEmoji(sessionWith(group), 'grp', '   ');
+		expect(next.tabGroups[0].emoji).toBeUndefined();
+	});
+
+	it('is a no-op copy when the group is unknown', () => {
+		const group = { ...groupFrom(rowSplit('root', [leaf('l1', aiRef('a'))])), emoji: '🚀' };
+		const next = setGroupEmoji(sessionWith(group), 'missing', '🎯');
+		expect(next.tabGroups[0].emoji).toBe('🚀');
 	});
 });
 
@@ -1341,6 +1480,66 @@ describe('normalizeTabGroups', () => {
 		);
 		const next = normalizeTabGroups(sessionWith([group], { aiIds: ['a'], activeGroupId: 'grp' }));
 		expect(next.activeGroupId).toBeNull();
+	});
+
+	it('lands the active group survivor as the active AI tab when it collapses to one pane', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('gone'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(sessionWith([group], { aiIds: ['a'], activeGroupId: 'grp' }));
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeGroupId).toBeNull();
+		expect(next.activeTabId).toBe('a');
+		expect(next.inputMode).toBe('ai');
+		expect(next.activeFileTabId).toBeNull();
+		expect(next.activeTerminalTabId).toBeNull();
+		expect(next.activeBrowserTabId).toBeNull();
+	});
+
+	it('lands a non-AI active group survivor full-screen (file -> activeFileTabId, ai mode)', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', fileRef('f')), leaf('l2', aiRef('gone'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(sessionWith([group], { fileIds: ['f'], activeGroupId: 'grp' }));
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeGroupId).toBeNull();
+		expect(next.activeFileTabId).toBe('f');
+		expect(next.inputMode).toBe('ai');
+	});
+
+	it('lands a terminal active group survivor full-screen in terminal mode', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', { type: 'terminal', id: 't' }), leaf('l2', aiRef('gone'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(sessionWith([group], { termIds: ['t'], activeGroupId: 'grp' }));
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeTerminalTabId).toBe('t');
+		expect(next.inputMode).toBe('terminal');
+	});
+
+	it('does NOT retarget the active tab when a background (non-active) group dissolves', () => {
+		// activeGroupId points at a surviving group; a different group collapses to one
+		// pane. Its survivor is promoted to the strip but must not hijack the panel.
+		const surviving = groupFrom(
+			rowSplit('keep', [leaf('k1', aiRef('x')), leaf('k2', aiRef('y'))]),
+			'k1'
+		);
+		const collapsing: TabGroup = {
+			id: 'bg',
+			name: 'bg',
+			layout: rowSplit('bgroot', [leaf('b1', aiRef('a')), leaf('b2', aiRef('gone'))]),
+			focusedPaneId: 'b1',
+			createdAt: 1,
+		};
+		const next = normalizeTabGroups(
+			sessionWith([surviving, collapsing], { aiIds: ['x', 'y', 'a'], activeGroupId: 'grp' })
+		);
+		expect(next.activeGroupId).toBe('grp');
+		// The background survivor was promoted to the strip but did not become active.
+		expect(next.activeTabId).toBeUndefined();
 	});
 
 	it('keeps activeGroupId when its group survives normalization', () => {

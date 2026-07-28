@@ -615,7 +615,7 @@ describe('InputArea', () => {
 
 			expect(
 				screen.getByTitle(
-					'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation.'
+					'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation. Ask-back questions (AskUserQuestion) are not surfaced in this mode.'
 				)
 			).toBeInTheDocument();
 		});

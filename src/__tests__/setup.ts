@@ -111,6 +111,7 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 		return keys.map(mockFormatKey).join(sep);
 	}),
 	formatMetaKey: vi.fn(() => 'Ctrl'),
+	formatMetaKeyName: vi.fn(() => 'Ctrl'),
 	formatEnterToSend: vi.fn((enterToSend: boolean) => (enterToSend ? 'Enter' : 'Ctrl + Enter')),
 	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) =>
 		enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'
@@ -229,6 +230,7 @@ const mockMaestro = {
 	process: {
 		spawn: vi.fn().mockResolvedValue({ pid: 12345 }),
 		releaseConcertoHtmlDocument: vi.fn(),
+		restoreConcertoHtmlDocument: vi.fn().mockResolvedValue(1),
 		write: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 		resize: vi.fn().mockResolvedValue(undefined),
@@ -502,6 +504,7 @@ const mockMaestro = {
 		getGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
 		requestConsent: vi.fn().mockResolvedValue({ opened: true }),
 		revokeGrants: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
+		setAgentAllowlist: vi.fn().mockResolvedValue({ requested: [], granted: [] }),
 		invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
 		invokeTool: vi.fn().mockResolvedValue({ result: null }),
 		getActivity: vi.fn().mockResolvedValue({}),
@@ -599,6 +602,31 @@ const mockMaestro = {
 	},
 	stats: {
 		recordQuery: vi.fn().mockResolvedValue({ success: true }),
+		getTokenUsage: vi.fn().mockResolvedValue({
+			totals: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+				sessionCount: 0,
+			},
+			byAgent: [],
+			byModel: [],
+			byProject: [],
+			byAccount: [],
+			timeline: [],
+			series: {
+				byDay: {},
+				byHour: {},
+				byAgentByDay: {},
+				bySessionByDay: {},
+				bySource: { user: 0, auto: 0 },
+			},
+			coverageByAgent: {},
+			generatedAtMs: 0,
+		}),
 		getAggregation: vi.fn().mockResolvedValue({
 			totalQueries: 0,
 			totalDuration: 0,

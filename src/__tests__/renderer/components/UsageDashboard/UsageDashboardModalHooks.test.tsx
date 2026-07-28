@@ -145,6 +145,9 @@ describe('UsageDashboardModal hooks', () => {
 		expect(result.current.cueSourceTotals).toEqual({
 			occurrences: 3,
 			totalDurationMs: 1200,
+			// Cue token totals feed the Source Distribution chart's Tokens mode; this
+			// fixture's Cue aggregate reports none.
+			tokens: 0,
 		});
 
 		mockGetAggregation.mockClear();
@@ -213,6 +216,7 @@ describe('UsageDashboardModal hooks', () => {
 			'overview',
 			'agent-overview',
 			'agents',
+			'tokens',
 			'activity',
 			'autorun',
 			'shortcuts',

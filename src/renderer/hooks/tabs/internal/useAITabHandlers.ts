@@ -349,10 +349,13 @@ export function useAITabHandlers(): AITabHandlersReturn {
 		updateAiTab(session.id, currentActiveTab.id, (tab) => {
 			const newMode = cycleThinkingMode(tab.showThinking);
 			if (newMode === 'off') {
+				// Only thinking logs are storage-gated. Tool logs are always recorded
+				// and hidden purely at render (see the global tool-call visibility
+				// setting + TerminalOutput), so turning thinking off must never drop them.
 				return {
 					...tab,
 					showThinking: 'off',
-					logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+					logs: tab.logs.filter((l) => l.source !== 'thinking'),
 				};
 			}
 			return { ...tab, showThinking: newMode };

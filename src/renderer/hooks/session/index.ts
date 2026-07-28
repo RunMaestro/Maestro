@@ -20,6 +20,9 @@ export {
 	compareNamesIgnoringEmojis,
 } from './useSortedSessions';
 export type { UseSortedSessionsDeps, UseSortedSessionsReturn } from './useSortedSessions';
+export { computeSortedSessions } from './computeSortedSessions';
+export type { ComputeSortedSessionsInput, SortedSessionsProjection } from './computeSortedSessions';
+export { SidebarNavSync } from './SidebarNavSync';
 
 // Group management
 export { useGroupManagement } from './useGroupManagement';

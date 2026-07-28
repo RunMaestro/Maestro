@@ -141,6 +141,10 @@
 				{
 					"from": "src/prompts/bmad",
 					"to": "prompts/bmad"
+				},
+				{
+					"from": "examples/plugins/agent-flow",
+					"to": "plugins/agent-flow"
 				}
 			]
 		},
@@ -192,6 +196,10 @@
 				{
 					"from": "src/prompts/bmad",
 					"to": "prompts/bmad"
+				},
+				{
+					"from": "examples/plugins/agent-flow",
+					"to": "plugins/agent-flow"
 				}
 			]
 		},
@@ -235,6 +243,10 @@
 				{
 					"from": "src/prompts/bmad",
 					"to": "prompts/bmad"
+				},
+				{
+					"from": "examples/plugins/agent-flow",
+					"to": "plugins/agent-flow"
 				}
 			]
 		},

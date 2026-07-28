@@ -14,6 +14,10 @@ Yes. Maestro is a pass-through - it calls your provider (Claude Code, Codex, Ope
 
 The only difference is execution mode. When you run Claude Code directly, it's interactive - you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else - your tools, permissions, context - remains identical.
 
+**Claude said it was asking me a question, but no prompt appeared and the agent is stuck.**
+
+Claude Code's `AskUserQuestion` ask-back tool is only wired into Maestro when the tab is in Standard permission mode. In Standard mode, Maestro attaches a permission relay that renders the question as an in-app question picker (the same relay that surfaces tool approvals). In Full Access mode the relay is not attached (permission checks are bypassed with `--dangerously-skip-permissions`), so the question never reaches Maestro and the tool call waits forever, leaving the agent busy (yellow). To unstick it, stop the agent; a follow-up message only queues behind the stalled turn (which never completes), so it won't dispatch and can't recover the turn. If you want ask-back questions to work, switch the tab to Standard mode using the permission pill in the input toolbar. The same limitation applies in Read-Only mode. SSH remote agents can't use Standard mode at all: a Standard-mode Claude Code spawn over SSH fails loudly instead of downgrading, so they always run in Full Access or Read-Only and never surface ask-backs.
+
 ---
 
 ## System Logs

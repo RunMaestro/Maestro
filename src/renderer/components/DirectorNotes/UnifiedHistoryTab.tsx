@@ -35,6 +35,7 @@ import type { TabFocusHandle } from './OverviewTab';
 import { lookbackHoursToDays, bucketCountForLookback } from './lookback';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -671,7 +672,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					<button
 						onClick={openSearch}
 						className="flex-shrink-0 p-1.5 rounded-full transition-colors hover:bg-white/10"
-						title="Search entries (⌘F)"
+						title={`Search entries (${formatShortcutKeys(['Meta', 'f'], '')})`}
 						style={{ color: searchExpanded ? theme.colors.accent : theme.colors.textDim }}
 					>
 						<Search className="w-4 h-4" />

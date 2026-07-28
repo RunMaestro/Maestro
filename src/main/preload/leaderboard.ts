@@ -37,6 +37,13 @@ export interface LeaderboardSubmitData {
 	deltaRuns?: number;
 	installationId?: string;
 	clientTotalTimeMs?: number;
+	/**
+	 * What earned this time. Absent means 'auto-run' (older clients predate
+	 * this field), so the server must treat missing as an Auto Run. Cue
+	 * submissions are far more frequent than Auto Run ones, so the server keys
+	 * off this to suppress per-submission Discord notifications.
+	 */
+	source?: 'auto-run' | 'cue';
 }
 
 /**

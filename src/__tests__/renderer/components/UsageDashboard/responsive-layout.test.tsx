@@ -66,6 +66,7 @@ vi.mock('lucide-react', () => {
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),
 		PenLine: createIcon('pen-line', '✏️'),
+		Coins: createIcon('coins', '🪙'),
 	};
 });
 
@@ -433,7 +434,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 		});
 
-		it('renders all 12 metric cards regardless of column count', async () => {
+		it('renders all 14 metric cards regardless of column count', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
@@ -443,7 +444,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			// Card count grew from 10 to 12 (Interactive % / Local % were
 			// replaced with Current Streak / Best Day / Active Days / Worktree %).
 			const metricCards = screen.getAllByTestId('metric-card');
-			expect(metricCards).toHaveLength(12);
+			expect(metricCards).toHaveLength(14);
 		});
 	});
 
@@ -673,7 +674,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			// Switch to Auto Run view
 			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
-			const autoRunTab = screen.getAllByRole('tab')[4];
+			const autoRunTab = screen.getByRole('tab', { name: /auto run/i });
 			act(() => {
 				autoRunTab.click();
 			});
@@ -699,7 +700,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			// Switch to Auto Run view
 			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
-			const autoRunTab = screen.getAllByRole('tab')[4];
+			const autoRunTab = screen.getByRole('tab', { name: /auto run/i });
 			act(() => {
 				autoRunTab.click();
 			});
@@ -724,7 +725,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			// Switch to Auto Run view
 			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
-			const autoRunTab = screen.getAllByRole('tab')[4];
+			const autoRunTab = screen.getByRole('tab', { name: /auto run/i });
 			act(() => {
 				autoRunTab.click();
 			});

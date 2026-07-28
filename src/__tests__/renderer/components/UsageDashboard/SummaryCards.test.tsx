@@ -173,13 +173,13 @@ describe('SummaryCards', () => {
 			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
 		});
 
-		it('renders all twelve metric cards', () => {
-			// Card count grew from 10 to 12: Interactive % + Local % were removed,
-			// and Current Streak / Best Day / Active Days / Worktree % were added.
+		it('renders all fourteen metric cards', () => {
+			// Card count grew to 14: the Tokens and Cost cards were added alongside
+			// the earlier Streak / Best Day / Active Days additions.
 			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards).toHaveLength(12);
+			expect(cards).toHaveLength(14);
 		});
 
 		it('renders Total Queries metric', async () => {
@@ -390,7 +390,7 @@ describe('SummaryCards', () => {
 			const sparklines = grid.querySelectorAll(
 				'[data-testid="sparkline"], [data-testid="sparkline-empty"]'
 			);
-			expect(svgElements.length - sparklines.length).toBe(12);
+			expect(svgElements.length - sparklines.length).toBe(14);
 		});
 	});
 

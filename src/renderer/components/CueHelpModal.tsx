@@ -27,6 +27,7 @@ import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { CUE_COLOR } from '../../shared/cue-pipeline-types';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { formatMetaKey } from '../utils/shortcutFormatter';
 
 interface CueHelpContentProps {
 	theme: Theme;
@@ -1322,7 +1323,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 									['-', 'Zoom out'],
 									['Delete / Backspace', 'Delete the selected node or edge'],
 									['Escape', 'Close open drawer, then clear selection'],
-									['Cmd / Ctrl + S', 'Save the pipeline'],
+									[`${formatMetaKey()} + S`, 'Save the pipeline'],
 								] as const
 							).map(([key, action], i) => (
 								<tr key={i}>

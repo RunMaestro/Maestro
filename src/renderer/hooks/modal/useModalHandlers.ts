@@ -30,7 +30,8 @@ import { useAgentStore } from '../../stores/agentStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
-import { aiTabFocusFields, getInitialRenameValue } from '../../utils/tabHelpers';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
@@ -713,25 +714,17 @@ export function useModalHandlers(
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
 		if (!currentSession) return;
 
-		const actions = getModalActions();
+		// Same target resolution as the Cmd+Shift+R shortcut: the focused pane when a
+		// tiled group is active, else the visible single-view tab.
+		const renameRef = resolveActiveTabRef(currentSession);
+		if (!renameRef) return;
+		const renameValue = resolveTabRefRenameValue(currentSession, renameRef);
+		if (renameValue === null) return;
 
-		if (currentSession.inputMode === 'terminal' && currentSession.activeTerminalTabId) {
-			const termTab = currentSession.terminalTabs?.find(
-				(t) => t.id === currentSession.activeTerminalTabId
-			);
-			if (termTab) {
-				actions.setRenameTabId(termTab.id);
-				actions.setRenameTabInitialName(termTab.name || '');
-				actions.setRenameTabModalOpen(true);
-			}
-		} else if (currentSession.inputMode === 'ai' && currentSession.activeTabId) {
-			const activeTab = currentSession.aiTabs?.find((t) => t.id === currentSession.activeTabId);
-			if (activeTab) {
-				actions.setRenameTabId(activeTab.id);
-				actions.setRenameTabInitialName(getInitialRenameValue(activeTab));
-				actions.setRenameTabModalOpen(true);
-			}
-		}
+		const actions = getModalActions();
+		actions.setRenameTabId(renameRef.id);
+		actions.setRenameTabInitialName(renameValue);
+		actions.setRenameTabModalOpen(true);
 	}, []);
 
 	const handleQuickActionsOpenTabSwitcher = useCallback(() => {

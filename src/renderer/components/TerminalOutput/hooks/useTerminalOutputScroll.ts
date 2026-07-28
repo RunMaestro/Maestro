@@ -9,6 +9,7 @@ const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
 interface UseTerminalOutputScrollOptions {
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
 	initialScrollTop?: number;
+	initialIsAtBottom?: boolean;
 	sessionId: string;
 	activeTabId: string | undefined;
 	filteredLogsLength: number;
@@ -19,6 +20,7 @@ interface UseTerminalOutputScrollOptions {
 export function useTerminalOutputScroll({
 	scrollContainerRef,
 	initialScrollTop,
+	initialIsAtBottom,
 	sessionId,
 	activeTabId,
 	filteredLogsLength,
@@ -156,24 +158,25 @@ export function useTerminalOutputScroll({
 	useEffect(() => {
 		const currentCount = filteredLogsLength;
 		if (currentCount > lastLogCountRef.current) {
-			const container = scrollContainerRef.current;
-			let actuallyAtBottom = isAtBottom;
-			if (container) {
-				const { scrollTop, scrollHeight, clientHeight } = container;
-				actuallyAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-			}
-
-			if (!actuallyAtBottom) {
+			// A newly-appended entry (e.g. a tall tool badge) must not pause a user
+			// who is already following the bottom. Re-measuring the container here
+			// would read the PRE-scroll position - the MutationObserver's rAF jump
+			// has not run yet - so any entry taller than the 50px slack looks like a
+			// scroll-up and spuriously pauses follow, and the stream then stops
+			// sticking to the bottom. Trust the tracked follow state instead: while
+			// following, mark the new content read and let the observer pin to the new
+			// bottom; only raise the "new messages" pill when genuinely paused.
+			if (isAtBottomRef.current) {
+				if (activeTabId) tabReadStateRef.current.set(activeTabId, currentCount);
+			} else {
 				const newCount = currentCount - lastLogCountRef.current;
 				setHasNewMessages(true);
 				setNewMessageCount((prev) => prev + newCount);
 				setIsAtBottom(false);
-			} else if (activeTabId) {
-				tabReadStateRef.current.set(activeTabId, currentCount);
 			}
 		}
 		lastLogCountRef.current = currentCount;
-	}, [filteredLogsLength, isAtBottom, activeTabId, scrollContainerRef]);
+	}, [filteredLogsLength, activeTabId]);
 
 	useEffect(() => {
 		const container = scrollContainerRef.current;
@@ -213,9 +216,28 @@ export function useTerminalOutputScroll({
 		return () => observer.disconnect();
 	}, [autoScrollPaused, scrollContainerRef, jumpToBottom]);
 
+	// Declared BEFORE the restore effect on purpose. React runs effects in
+	// declaration order, so on mount and every tab switch this clears the latch
+	// first and the restore effect below then latches it for good. Reversing the
+	// order would leave the ref unlatched after commit, letting a later prop
+	// change (e.g. a synchronous isAtBottom flip while initialScrollTop is still
+	// the debounced-stale offset) re-fire the restore and yank the user. (J1)
+	useEffect(() => {
+		hasRestoredScrollRef.current = false;
+	}, [sessionId, activeTabId]);
+
 	useEffect(() => {
 		if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
 			hasRestoredScrollRef.current = true;
+			// Only restore a saved absolute offset when the user had deliberately
+			// scrolled up when they left (initialIsAtBottom === false). When they
+			// were following the bottom (true) - or on a legacy tab that never
+			// persisted the flag (undefined) - skip the restore and let the
+			// mount-time bottom jump + MutationObserver snap to and follow the live
+			// bottom. hasRestoredScrollRef is latched above and the reset effect
+			// runs earlier in declaration order, so a later prop change cannot
+			// re-trigger this. (J1)
+			if (initialIsAtBottom !== false) return;
 			requestAnimationFrame(() => {
 				if (scrollContainerRef.current) {
 					const { scrollHeight, clientHeight } = scrollContainerRef.current;
@@ -232,11 +254,7 @@ export function useTerminalOutputScroll({
 				}
 			});
 		}
-	}, [initialScrollTop, scrollContainerRef]);
-
-	useEffect(() => {
-		hasRestoredScrollRef.current = false;
-	}, [sessionId, activeTabId]);
+	}, [initialScrollTop, initialIsAtBottom, scrollContainerRef]);
 
 	useEffect(() => {
 		return () => {

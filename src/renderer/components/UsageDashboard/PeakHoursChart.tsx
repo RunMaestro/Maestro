@@ -16,8 +16,11 @@ import { memo, useState, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { formatDurationCompact as formatDuration } from '../../../shared/formatters';
+import { MetricModeToggle, type ChartMetricMode } from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 
-type MetricMode = 'count' | 'duration';
+type MetricMode = ChartMetricMode;
 
 interface PeakHoursChartProps {
 	/** Aggregated stats data from the API */
@@ -44,20 +47,25 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 	colorBlindMode: _colorBlindMode = false,
 }: PeakHoursChartProps) {
 	const [metricMode, setMetricMode] = useState<MetricMode>('count');
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 	const [hoveredHour, setHoveredHour] = useState<number | null>(null);
 
 	// Build complete 24-hour data with zeros for missing hours
 	const hourlyData = useMemo(() => {
-		const byHourMap = new Map<number, { count: number; duration: number }>();
+		const byHourMap = new Map<number, { count: number; duration: number; tokens: number }>();
 
 		// Initialize all hours with zeros
 		for (let h = 0; h < 24; h++) {
-			byHourMap.set(h, { count: 0, duration: 0 });
+			byHourMap.set(h, { count: 0, duration: 0, tokens: 0 });
 		}
 
 		// Fill in actual data
 		for (const entry of data.byHour ?? []) {
-			byHourMap.set(entry.hour, { count: entry.count, duration: entry.duration });
+			byHourMap.set(entry.hour, {
+				count: entry.count,
+				duration: entry.duration,
+				tokens: tokenSeries?.byHour?.[String(entry.hour)] ?? 0,
+			});
 		}
 
 		return Array.from(byHourMap.entries())
@@ -66,11 +74,11 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 				hour,
 				...values,
 			}));
-	}, [data.byHour]);
+	}, [data.byHour, tokenSeries]);
 
 	// Calculate max value for scaling
 	const maxValue = useMemo(() => {
-		const values = hourlyData.map((h) => (metricMode === 'count' ? h.count : h.duration));
+		const values = hourlyData.map((h) => h[metricMode]);
 		return Math.max(...values, 1);
 	}, [hourlyData, metricMode]);
 
@@ -78,7 +86,7 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 	const peakHour = useMemo(() => {
 		let peak = { hour: 0, value: 0 };
 		for (const h of hourlyData) {
-			const value = metricMode === 'count' ? h.count : h.duration;
+			const value = h[metricMode];
 			if (value > peak.value) {
 				peak = { hour: h.hour, value };
 			}
@@ -108,41 +116,13 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 				>
 					Peak Hours
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'count' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'count' ? theme.colors.accent : theme.colors.textDim,
-							}}
-							aria-pressed={metricMode === 'count'}
-						>
-							Count
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'duration' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.accent : theme.colors.textDim,
-								borderLeft: `1px solid ${theme.colors.border}`,
-							}}
-							aria-pressed={metricMode === 'duration'}
-						>
-							Duration
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					variant="subtle"
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			{/* Chart */}
@@ -155,10 +135,11 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 				</div>
 			) : (
 				<div className="relative">
+					<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 					{/* Bars */}
 					<div className="flex items-end gap-px" style={{ height: chartHeight }}>
 						{hourlyData.map((h) => {
-							const value = metricMode === 'count' ? h.count : h.duration;
+							const value = h[metricMode];
 							const height = maxValue > 0 ? (value / maxValue) * 100 : 0;
 							const isPeak = h.hour === peakHour && value > 0;
 							const isHovered = hoveredHour === h.hour;

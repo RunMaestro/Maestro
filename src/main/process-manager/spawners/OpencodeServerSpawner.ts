@@ -115,20 +115,6 @@ export class OpencodeServerSpawner {
 		// SSE aborter for the kill path, plus a one-shot exit guard.
 		const streamAbort = new AbortController();
 		let finished = false;
-		const lifecycle: Lifecycle = {
-			isFinished: () => finished,
-			finish: (code: number) => {
-				if (finished) return;
-				finished = true;
-				void this.exitHandler.handleExit(sessionId, code).catch((err) => {
-					logger.error('[OpencodeServerSpawner] handleExit threw', 'OpencodeServer', {
-						sessionId,
-						error: String(err),
-					});
-				});
-			},
-		};
-
 		const managedProcess: ManagedProcess = {
 			sessionId,
 			toolType,
@@ -163,6 +149,19 @@ export class OpencodeServerSpawner {
 					this.abortActiveSession(managedProcess);
 					streamAbort.abort();
 				},
+			},
+		};
+		const lifecycle: Lifecycle = {
+			isFinished: () => finished,
+			finish: (code: number) => {
+				if (finished) return;
+				finished = true;
+				void this.exitHandler.handleExit(sessionId, code, managedProcess).catch((err) => {
+					logger.error('[OpencodeServerSpawner] handleExit threw', 'OpencodeServer', {
+						sessionId,
+						error: String(err),
+					});
+				});
 			},
 		};
 

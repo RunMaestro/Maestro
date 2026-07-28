@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { parseConcertoHref, flashConcertoTarget } from '../../../renderer/utils/concertoLinks';
-import { useMovementStore } from '../../../renderer/stores/movementStore';
+import { applyMovementPayload, useMovementStore } from '../../../renderer/stores/movementStore';
 
 describe('parseConcertoHref', () => {
 	it('parses the canonical maestro:// form for both surfaces', () => {
@@ -56,10 +56,15 @@ describe('flashConcertoTarget', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		useMovementStore.setState({ flashedId: null, hidden: true });
+		useMovementStore.setState({ items: [], dismissedItems: [], flashedId: null, hidden: true });
 		flashCadenza = vi.fn();
 		origMaestro = win.maestro;
-		win.maestro = { process: { flashCadenza } };
+		win.maestro = {
+			process: {
+				flashCadenza,
+				restoreConcertoHtmlDocument: vi.fn().mockResolvedValue(17),
+			},
+		};
 	});
 
 	afterEach(() => {
@@ -68,19 +73,50 @@ describe('flashConcertoTarget', () => {
 		win.maestro = origMaestro;
 	});
 
-	it('flashes the movement store (and un-stashes it) for a movement href', () => {
-		expect(flashConcertoTarget('maestro://concerto/movement/deploy')).toBe(true);
+	it('flashes the movement store (and un-stashes it) for a live movement href', async () => {
+		applyMovementPayload({ op: 'add', id: 'deploy' });
+		useMovementStore.getState().setHidden(true);
+
+		await expect(flashConcertoTarget('maestro://concerto/movement/deploy')).resolves.toBe(true);
 		expect(useMovementStore.getState().flashedId).toBe('deploy');
 		expect(useMovementStore.getState().hidden).toBe(false);
 	});
 
-	it('routes a cadenza href through main (flashCadenza), since cadenzas live in the HUD', () => {
-		expect(flashConcertoTarget('maestro://concerto/cadenza/tests')).toBe(true);
+	it('restores a dismissed HTML movement as a fresh document', async () => {
+		applyMovementPayload({
+			op: 'add',
+			id: 'mockup',
+			viewType: 'html',
+			body: '<button>Fresh</button>',
+			revision: 3,
+		});
+		useMovementStore.getState().dismissItem('mockup');
+
+		await expect(flashConcertoTarget('maestro://concerto/movement/mockup')).resolves.toBe(true);
+
+		expect((win.maestro as any).process.restoreConcertoHtmlDocument).toHaveBeenCalledWith(
+			'movement',
+			'mockup',
+			'<button>Fresh</button>'
+		);
+		expect(useMovementStore.getState().items).toMatchObject([
+			{ id: 'mockup', timestamp: 17, minimized: false },
+		]);
+		expect(useMovementStore.getState().dismissedItems).toEqual([]);
+	});
+
+	it('returns false when the movement is neither live nor recently dismissed', async () => {
+		await expect(flashConcertoTarget('maestro://concerto/movement/missing')).resolves.toBe(false);
+		expect(useMovementStore.getState().flashedId).toBeNull();
+	});
+
+	it('routes a cadenza href through main (flashCadenza), since cadenzas live in the HUD', async () => {
+		await expect(flashConcertoTarget('maestro://concerto/cadenza/tests')).resolves.toBe(true);
 		expect(flashCadenza).toHaveBeenCalledWith('tests');
 	});
 
-	it('is a no-op returning false for a non-concerto href', () => {
-		expect(flashConcertoTarget('https://example.com')).toBe(false);
+	it('is a no-op returning false for a non-concerto href', async () => {
+		await expect(flashConcertoTarget('https://example.com')).resolves.toBe(false);
 		expect(useMovementStore.getState().flashedId).toBeNull();
 		expect(flashCadenza).not.toHaveBeenCalled();
 	});

@@ -658,6 +658,20 @@ Standard cancel/confirm button layout:
 />
 ```
 
+### `<ShortcutHint>` (`src/renderer/components/TabBar/ShortcutHint.tsx`)
+
+The keys badge at the right edge of a tab overlay-menu row:
+
+```tsx
+{
+	tabShortcuts.moveTabToStart && (
+		<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
+	);
+}
+```
+
+Used by every tab item's overlay menu (`AITabOverlayMenu`, `FileTab`, `TerminalTabItem`, `BrowserTabItem`, `GroupTabChip`). It was previously re-declared inline, byte-identical, in four of those components - do NOT add a fifth copy. Positions itself with `ml-auto`, so it only lays out correctly inside a flex row item. Key glyphs come from `formatShortcutKeys`, which is platform-correct; never hard-code `⌘` / `Ctrl` in menu copy.
+
 ### `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/AdditionalDirectoriesSection.tsx`)
 
 The row editor for an agent's extra directory grants (path + independent R / W square toggles + remove). Shared by NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen so all three emit the same `AdditionalDirectory[]`.
@@ -700,6 +714,50 @@ Key features:
 - Built-in Enter key handling with `submitEnabled` guard
 - Error state changes border color to `theme.colors.error`
 - Auto-generated `id` for label association (accessibility)
+
+### `<ToggleSwitch>` (`src/renderer/components/ui/ToggleSwitch.tsx`)
+
+The themed pill toggle. Use it instead of hand-rolling the
+`relative w-10 h-5 rounded-full` + `translate-x-5` button - that markup was
+copy-pasted across the bundled command panels and drifted (some copies lost
+`title`, some lost `aria-checked`):
+
+```tsx
+<ToggleSwitch
+	checked={enabled}
+	onChange={onEnabledChange}
+	theme={theme}
+	ariaLabel="Show Spec Kit commands in slash command autocomplete"
+	title={enabled ? 'Hide from slash command autocomplete' : 'Show in slash command autocomplete'}
+/>
+```
+
+Renders `role="switch"` with `aria-checked`, so tests select it with
+`getByRole('switch', { name: ... })`. For a full labeled settings row with icon,
+section label, and description, use `<SettingCheckbox>` below instead.
+
+### `<CollapsedCommandsNotice>` (`src/renderer/components/ui/CollapsedCommandsNotice.tsx`)
+
+Placeholder shown in place of a disabled command section's list (Spec Kit,
+OpenSpec, BMAD). Turning a section off collapses its commands out of view, but
+they stay reachable for editing behind "Show anyway":
+
+```tsx
+{
+	!enabled && commands.length > 0 && (
+		<CollapsedCommandsNotice
+			theme={theme}
+			count={commands.length}
+			expanded={revealWhileDisabled}
+			onToggle={() => setRevealWhileDisabled((prev) => !prev)}
+			sectionName="Spec Kit"
+		/>
+	);
+}
+```
+
+Panels pair it with a `revealWhileDisabled` state that resets in a
+`useEffect` on `enabled`, so re-disabling a section always re-collapses the list.
 
 ### `<ErrorBoundary>` (`src/renderer/components/ErrorBoundary.tsx`)
 
@@ -827,6 +885,58 @@ The two rules work together: rem keeps the minimum sized correctly across font s
 Existing canonical sites already follow this - see `SessionContextMenu.tsx`, `NodeContextMenu.tsx` (`DocumentGraph/`), `PipelineContextMenu.tsx` (`CuePipelineEditor/`), `FileContextMenu.tsx`, `LinkContextMenu.tsx`, `TerminalSelectionContextMenu.tsx`, `TabBar/AITabOverlayMenu.tsx`, `TabBar/FileTab.tsx`, `TabBar/TerminalTabItem.tsx`, `TabBar/BrowserTabItem.tsx`, `TemplateAutocompleteDropdown.tsx`. When adding a new menu/popover, match this convention so it grows with the user's font size.
 
 This rule applies to **content containers** sized to wrap text. It does NOT apply to layout primitives where px is intentional (icon dimensions, fixed-pixel borders, scrollbar widths, viewport-relative positioning).
+
+---
+
+## Responsive Headers - Container Queries, Not JS Width
+
+Header rows that sit inside a resizable panel (main panel header, left-sidebar section headers) must degrade **on a single line** as the panel narrows: progressively hide the least useful elements rather than wrapping onto a second row. Wrapping is always a bug here - it shifts every row below it and looks broken.
+
+Do this with **CSS container queries**, not JavaScript width detection. A JS approach needs a `ResizeObserver`, re-renders on every drag frame, and lags a pointer-driven resize; the CSS is declarative, runs at layout time, and cannot desync.
+
+### The pattern
+
+Three pieces, all required:
+
+1. **Establish the context** on the header element:
+   ```css
+   .my-header-container {
+   	container-type: inline-size;
+   	container-name: myheader;
+   }
+   ```
+2. **Guarantee no-wrap structurally** in the JSX: `whitespace-nowrap` (plus `truncate` for the title) on the label group, and `shrink-0` on the icons and the right-hand control cluster. This holds the single line even where container queries don't apply - the queries only decide _when_ each item drops, never _whether_ the row wraps.
+3. **Give each droppable element a hook class** and hide it at a threshold, dropping the least informative item first:
+   ```css
+   @container myheader (max-width: 340px) {
+   	.my-count-badge {
+   		display: none;
+   	}
+   }
+   ```
+
+### Rules
+
+- **Drop counts and labels; keep buttons.** Put the hook class on the count `<span>` inside a button, never on the button itself - an affordance that vanishes is unreachable, a number that vanishes costs nothing. Collapse a labelled button to its icon/glyph instead of removing it.
+- **Preserve the accessible name.** When a label is `display: none`, the accessible name must still come from a `title` (or `aria-label`) on the button, or the collapsed control becomes unidentifiable to screen readers.
+- **All thresholds must clear the panel's minimum width.** The left sidebar clamps to `minWidth: 280` (`useResizablePanel` in `SessionList.tsx`); everything droppable must have dropped by then or the header wraps at the drag floor.
+- **Adding a control to one of these headers means adding a drop rule for it.** This is the most likely way to regress the layout - a new button widens the row with no threshold to shed it.
+
+### Canonical implementations
+
+| Surface                     | Container  | Hook classes                                                 | CSS                              |
+| --------------------------- | ---------- | ------------------------------------------------------------ | -------------------------------- |
+| Main panel header           | `header`   | `.header-session-name`, `.header-cost-widget`, ...           | `index.css` "Header Bar"         |
+| Group Chats sidebar section | `gcheader` | `.gc-count-badge`, `.gc-archived-count`, `.gc-newchat-label` | `index.css` "Group Chats Header" |
+
+### Testing
+
+jsdom has **no layout engine and never evaluates container queries**, so no unit test can assert "the label is hidden at 275px". Test the _contract_ instead, in two layers:
+
+- **Render test** (`GroupChatList.test.tsx` -> "single-line header contract"): the container class is present, the anti-wrap utilities survive, each droppable element carries its hook class, and the collapsed button keeps its accessible name and click handler.
+- **Cross-file test** (`groupChatHeaderResponsive.regression.test.ts`): the JSX hook classes and the `@container` rules still agree in both directions (a rename on either side fails), the drop order is preserved, and no threshold falls below the sidebar minimum.
+
+That pairing is what makes the silent failure mode loud - the class names are the only thing tying the two files together, and nothing else in the build would catch drift.
 
 ---
 
@@ -983,7 +1093,7 @@ Each tab has an `AITab` type with:
 - `handleCloseTabsLeft()` / `handleCloseTabsRight()` - close tabs on one side of active
 - `handleCloseCurrentTab()` - returns `CloseCurrentTabResult` indicating which tab type was closed
 - `handleTabReorder(fromIndex, toIndex)` - reorder AI tabs
-- `handleUnifiedTabReorder(fromIndex, toIndex)` - reorder the unified tab bar (mixes AI, file, browser, terminal)
+- `handleUnifiedTabReorder(fromIndex, toIndex)` - reorder the unified tab bar (mixes AI, file, browser, terminal, and tiled-group chips). A tiled group is ONE unified tab and drags/reorders as a single unit like any other chip; its panes are referenced by the group's layout tree, not by `unifiedTabOrder`, so moving the chip never disturbs the tiling.
 - `handleRequestTabRename(tabId)` - open rename modal
 - `handleTabStar(tabId, starred)` - pin/unpin
 - `handleTabMarkUnread(tabId)` - mark unread

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
 	X,
 	Pencil,
+	Edit2,
 	Copy,
 	Clipboard,
 	ExternalLink,
@@ -19,7 +20,7 @@ import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutHint } from './ShortcutHint';
 
 /**
  * Props for the FileTab component.
@@ -43,6 +44,8 @@ export interface FileTabProps {
 	isDragging: boolean;
 	isDragOver: boolean;
 	registerRef?: (el: HTMLDivElement | null) => void;
+	/** Stable callback - receives tabId - opens the rename modal for this file tab */
+	onRename?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -97,6 +100,7 @@ export const FileTab = memo(function FileTab({
 	isDragging,
 	isDragOver,
 	registerRef,
+	onRename,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -137,15 +141,6 @@ export const FileTab = memo(function FileTab({
 	} = useTabHoverOverlay({ registerRef });
 
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
-
-	const ShortcutHint = ({ keys }: { keys: string[] }) => (
-		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
-			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-		>
-			{formatShortcutKeys(keys)}
-		</span>
-	);
 
 	// Event handlers using stable tabId to avoid inline closure captures
 	const handleMouseDown = useCallback(
@@ -208,6 +203,15 @@ export const FileTab = memo(function FileTab({
 			setOverlayOpen(false);
 		},
 		[tab.path, setOverlayOpen]
+	);
+
+	const handleRenameClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onRename?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onRename, tab.id, setOverlayOpen]
 	);
 
 	const handleMoveToFirstClick = useCallback(
@@ -406,7 +410,7 @@ export const FileTab = memo(function FileTab({
 				className="text-xs font-medium whitespace-nowrap"
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
-				{displayName ?? tab.name}
+				{tab.customName || displayName || tab.name}
 			</span>
 
 			{/* Extension badge - small rounded pill, uppercase without leading dot */}
@@ -464,6 +468,24 @@ export const FileTab = memo(function FileTab({
 						>
 							{/* Actions */}
 							<div className="p-1">
+								{/* Rename - primary action, mirrors AI/browser tab overlays */}
+								{onRename && (
+									<>
+										<button
+											onClick={handleRenameClick}
+											className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+											style={{ color: theme.colors.textMain }}
+										>
+											<Edit2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+											Rename Tab
+											{tabShortcuts.renameTab && (
+												<ShortcutHint keys={tabShortcuts.renameTab.keys} theme={theme} />
+											)}
+										</button>
+										<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+									</>
+								)}
+
 								{/* Copy File Path */}
 								<button
 									onClick={handleCopyFilePath}
@@ -522,7 +544,7 @@ export const FileTab = memo(function FileTab({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
 										{tabShortcuts.moveTabToStart && (
-											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -540,7 +562,7 @@ export const FileTab = memo(function FileTab({
 										/>
 										Move to Last Position
 										{tabShortcuts.moveTabToEnd && (
-											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -556,7 +578,9 @@ export const FileTab = memo(function FileTab({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
-									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
+									{tabShortcuts.closeTab && (
+										<ShortcutHint keys={tabShortcuts.closeTab.keys} theme={theme} />
+									)}
 								</button>
 
 								{/* Close Other Tabs */}
@@ -572,7 +596,7 @@ export const FileTab = memo(function FileTab({
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
 										{tabShortcuts.closeOtherTabs && (
-											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -590,7 +614,7 @@ export const FileTab = memo(function FileTab({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
 										{tabShortcuts.closeTabsLeft && (
-											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -613,7 +637,7 @@ export const FileTab = memo(function FileTab({
 										/>
 										Close Tabs to Right
 										{tabShortcuts.closeTabsRight && (
-											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} theme={theme} />
 										)}
 									</button>
 								)}

@@ -8,8 +8,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import {
+	CONCERTO_CREATION_PHASES,
+	CONCERTO_PROGRESS_MAX_STEPS,
+	CONCERTO_PROGRESS_NOTE_VALUES,
 	MOVEMENT_OPS,
 	MOVEMENT_VIEW_TYPES,
+	type ConcertoCreationPhase,
+	type ConcertoProgressNote,
+	type ConcertoProgressNoteValue,
 	type MovementOp,
 	type MovementPayload,
 	type MovementStateSnapshot,
@@ -34,6 +40,15 @@ interface MovementAddOptions {
 	json?: boolean;
 }
 
+interface MovementBeginOptions {
+	x?: string;
+	y?: string;
+	width?: string;
+	height?: string;
+	title?: string;
+	json?: boolean;
+}
+
 interface MovementMoveOptions {
 	x?: string;
 	y?: string;
@@ -41,6 +56,15 @@ interface MovementMoveOptions {
 }
 
 interface MovementRemoveOptions {
+	json?: boolean;
+}
+
+interface MovementProgressOptions {
+	title?: string;
+	phase?: string;
+	step?: string;
+	steps?: string;
+	notes?: string;
 	json?: boolean;
 }
 
@@ -107,6 +131,46 @@ function parseNum(name: string, raw: string | undefined): number | undefined {
 		process.exit(1);
 	}
 	return n;
+}
+
+/** Parse comma-separated musical substeps such as `sixteenth+dotted,eighth+triad`. */
+function parseProgressNotes(
+	raw: string | undefined,
+	json: boolean | undefined
+): ConcertoProgressNote[] | undefined {
+	if (raw === undefined) return undefined;
+	const tokens = raw.split(',').map((token) => token.trim().toLowerCase());
+	if (tokens.some((token) => !token) || tokens.length > CONCERTO_PROGRESS_MAX_STEPS) {
+		failMovementCommand(
+			`--notes must contain 1 through ${CONCERTO_PROGRESS_MAX_STEPS} comma-separated notes`,
+			json
+		);
+	}
+	return tokens.map((token, index) => {
+		const [rawValue, ...rawModifiers] = token.split('+');
+		if (!CONCERTO_PROGRESS_NOTE_VALUES.includes(rawValue as ConcertoProgressNoteValue)) {
+			failMovementCommand(
+				`--notes entry ${index + 1} must start with quarter, eighth, or sixteenth`,
+				json
+			);
+		}
+		const modifiers = new Set(rawModifiers);
+		const unknownModifier = rawModifiers.find(
+			(modifier) => !['dotted', 'triad', 'tie'].includes(modifier)
+		);
+		if (unknownModifier || modifiers.size !== rawModifiers.length) {
+			failMovementCommand(`--notes entry ${index + 1} has an invalid or duplicate modifier`, json);
+		}
+		if (modifiers.has('tie') && index === tokens.length - 1) {
+			failMovementCommand('--notes cannot tie the final note forward', json);
+		}
+		return {
+			value: rawValue as ConcertoProgressNoteValue,
+			...(modifiers.has('dotted') && { dotted: true }),
+			...(modifiers.has('triad') && { triad: true }),
+			...(modifiers.has('tie') && { tie: true }),
+		};
+	});
 }
 
 /** Send one movement op over the bridge and report the result. */
@@ -189,6 +253,27 @@ export async function movementAdd(id: string, options: MovementAddOptions): Prom
 	);
 }
 
+/** Immediately reserve a host-rendered Concerto frame before authored HTML exists. */
+export async function movementBegin(id: string, options: MovementBeginOptions): Promise<void> {
+	requireId(id, 'begin', options.json);
+	const title = options.title?.trim();
+	if (!title) failMovementCommand('movement begin requires --title <text>', options.json);
+	await sendMovement(
+		{
+			op: 'begin',
+			id,
+			viewType: 'html',
+			x: parseNum('x', options.x),
+			y: parseNum('y', options.y),
+			width: parseNum('width', options.width),
+			height: parseNum('height', options.height),
+			title,
+		},
+		options.json,
+		`Concerto '${title}' started`
+	);
+}
+
 export async function movementUpdate(id: string, options: MovementAddOptions): Promise<void> {
 	requireId(id, 'update', options.json);
 	const viewType = resolveViewType(options, false);
@@ -229,6 +314,46 @@ export async function movementClear(options: MovementRemoveOptions): Promise<voi
 	await sendMovement({ op: 'clear' }, options.json, 'Movement cleared');
 }
 
+/** Report one Concerto subagent's current design phase without mutating its window. */
+export async function movementProgress(
+	id: string,
+	options: MovementProgressOptions
+): Promise<void> {
+	requireId(id, 'progress', options.json);
+	const title = options.title?.trim();
+	if (!title) failMovementCommand('movement progress requires --title <text>', options.json);
+	if (!CONCERTO_CREATION_PHASES.includes(options.phase as ConcertoCreationPhase)) {
+		failMovementCommand(
+			`--phase must be one of: ${CONCERTO_CREATION_PHASES.join(', ')}`,
+			options.json
+		);
+	}
+	const phase = options.phase as ConcertoCreationPhase;
+	const notes = parseProgressNotes(options.notes, options.json);
+	const steps = parseNum('steps', options.steps) ?? notes?.length ?? 1;
+	const step = parseNum('step', options.step) ?? 1;
+	if (!Number.isInteger(steps) || steps < 1 || steps > CONCERTO_PROGRESS_MAX_STEPS) {
+		failMovementCommand(
+			`--steps must be an integer from 1 through ${CONCERTO_PROGRESS_MAX_STEPS}`,
+			options.json
+		);
+	}
+	if (!Number.isInteger(step) || step < 1 || step > steps) {
+		failMovementCommand(
+			`--step must be an integer from 1 through --steps (${steps})`,
+			options.json
+		);
+	}
+	if (notes && notes.length !== steps) {
+		failMovementCommand(`--notes must contain exactly --steps (${steps}) entries`, options.json);
+	}
+	await sendMovement(
+		{ op: 'progress', id, title, phase, step, steps, ...(notes && { notes }) },
+		options.json,
+		`Concerto '${title}' is ${phase}, step ${step} of ${steps}`
+	);
+}
+
 /** Read the current movement layout (items + size) so you can place around it. */
 export async function movementState(options: { json?: boolean }): Promise<void> {
 	try {
@@ -243,15 +368,17 @@ export async function movementState(options: { json?: boolean }): Promise<void> 
 			console.error(`Error: ${result.error || 'Failed to read movement state'}`);
 			process.exit(1);
 		}
-		const snapshot = result.snapshot ?? { items: [], width: 0, height: 0 };
+		const snapshot = result.snapshot ?? { items: [], width: 0, height: 0, hidden: false };
 		if (options.json) {
 			console.log(JSON.stringify(snapshot));
 			return;
 		}
-		console.log(`Movement ${snapshot.width}x${snapshot.height}, ${snapshot.items.length} item(s):`);
+		console.log(
+			`Movement ${snapshot.width}x${snapshot.height}, ${snapshot.items.length} active item(s)${snapshot.hidden ? ', layer hidden' : ''}:`
+		);
 		for (const it of snapshot.items) {
 			const title = it.title ? `  "${it.title}"` : '';
-			console.log(`  ${it.id}  (${it.x},${it.y}) ${it.width}x${it.height}${title}`);
+			console.log(`  ${it.id}  (${it.x},${it.y}) ${it.width}x${it.height} z${it.z}${title}`);
 		}
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

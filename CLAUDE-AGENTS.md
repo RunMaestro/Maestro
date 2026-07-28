@@ -16,7 +16,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Agent Capabilities
 
-Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (23 boolean flags + 1 optional). The table below shows key capabilities; see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for the complete list.
+Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (24 boolean flags + 1 optional). The table below shows key capabilities; see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for the complete list.
 
 | Capability                    | Description                              | UI Feature Controlled      |
 | ----------------------------- | ---------------------------------------- | -------------------------- |
@@ -43,6 +43,7 @@ Each agent declares capabilities that control UI feature availability. See `src/
 | `usesJsonLineOutput`          | Uses JSONL output in batch mode          | CLI batch parsing strategy |
 | `usesCombinedContextWindow`   | Uses combined input+output context       | Context bar display mode   |
 | `supportsStreamJsonInput`     | Accepts stream-json input via stdin      | Image input method         |
+| `supportsPromptViaStdin`      | CLI reads the prompt from stdin          | Windows prompt delivery    |
 | `imageResumeMode?`            | Image handling on resume (optional)      | Resume image strategy      |
 
 ### Accessing Capabilities
@@ -70,6 +71,7 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 - **JSON Output:** `--output-format stream-json`
 - **Resume:** `--resume <session-id>`
 - **Read-only:** `--permission-mode plan`
+- **Standard mode:** permission relay (`--permission-prompt-tool` + `--mcp-config`), also carries `AskUserQuestion` ask-backs; absent in full/read-only/SSH/interactive (TUI wrapper) paths
 - **Session Storage:** `~/.claude/projects/<encoded-path>/`
 
 ### Codex
@@ -131,7 +133,7 @@ To add support for a new agent:
 
 1. Add agent ID to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
 2. Add agent definition to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS`
-3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (23 boolean flags)
+3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (24 boolean flags)
 4. Add display name and beta status to `src/shared/agentMetadata.ts` (internal maps, accessed via `getAgentDisplayName()` / `isBetaAgent()`)
 5. Add context window default to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
 6. Sync `AgentCapabilities` interface in renderer: `useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`

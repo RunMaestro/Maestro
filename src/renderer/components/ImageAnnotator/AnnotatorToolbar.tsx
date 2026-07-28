@@ -37,6 +37,7 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState';
 import { ANNOTATOR_PALETTE } from './annotatorConstants';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 interface AnnotatorToolbarProps {
 	state: UseAnnotatorStateReturn;
@@ -281,7 +282,12 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 
 			{divider}
 
-			<HoverTooltip label="Undo" shortcut="⌘Z" theme={theme} placement="left">
+			<HoverTooltip
+				label="Undo"
+				shortcut={formatShortcutKeys(['Meta', 'z'], '')}
+				theme={theme}
+				placement="left"
+			>
 				<GhostIconButton
 					onClick={undo}
 					ariaLabel="Undo"
@@ -432,7 +438,12 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				</GhostIconButton>
 			</HoverTooltip>
 
-			<HoverTooltip label="Copy" shortcut="⌘C" theme={theme} placement="left">
+			<HoverTooltip
+				label="Copy"
+				shortcut={formatShortcutKeys(['Meta', 'c'], '')}
+				theme={theme}
+				placement="left"
+			>
 				<GhostIconButton
 					onClick={() => void handleCopy()}
 					ariaLabel="Copy to clipboard"
@@ -443,7 +454,12 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				</GhostIconButton>
 			</HoverTooltip>
 
-			<HoverTooltip label="Save" shortcut="⌘S" theme={theme} placement="left">
+			<HoverTooltip
+				label="Save"
+				shortcut={formatShortcutKeys(['Meta', 's'], '')}
+				theme={theme}
+				placement="left"
+			>
 				<GhostIconButton
 					onClick={handleSave}
 					ariaLabel="Save"

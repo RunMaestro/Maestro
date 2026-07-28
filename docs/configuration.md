@@ -170,6 +170,29 @@ To override a global variable for a specific agent:
 2. Add the variable with the override value
 3. This session-specific value takes precedence over the global setting
 
+## Built-in LLM Provider
+
+Some built-in AI features call an LLM directly (rather than going through a coding
+agent). The provider for these features is configured under **Settings → LLM** via the
+**LLM Provider** dropdown, a **Model Slug** field, and an **API Key** field. A **Test
+Connection** button sends a short prompt to verify connectivity and configuration.
+
+| Provider   | Base URL                        | API style         | Example model slug            |
+| ---------- | ------------------------------- | ----------------- | ----------------------------- |
+| OpenRouter | `https://openrouter.ai/api/v1`  | OpenAI-compatible | `anthropic/claude-3.5-sonnet` |
+| Requesty   | `https://router.requesty.ai/v1` | OpenAI-compatible | `openai/gpt-4o-mini`          |
+| Anthropic  | `https://api.anthropic.com/v1`  | Messages API      | `claude-3-5-sonnet-20241022`  |
+| Ollama     | `http://localhost:11434`        | Ollama (local)    | `llama3:latest`               |
+
+OpenRouter and Requesty both use OpenAI-compatible `provider/model` slugs and a
+`Bearer` API key. For Requesty, create a key at
+[app.requesty.ai/api-keys](https://app.requesty.ai/api-keys) and browse available
+models at [app.requesty.ai/router/list](https://app.requesty.ai/router/list). See the
+[Requesty docs](https://docs.requesty.ai) for details.
+
+API keys are stored locally in your Maestro settings file (see [Storage
+Location](#storage-location)).
+
 ## Checking for Updates
 
 Maestro checks for updates automatically on startup (configurable in Settings → General → **Check for updates on startup**).
@@ -185,6 +208,26 @@ When an update is available, you'll see:
 - Release notes summary
 - **Download** button to get the latest release from GitHub
 - Option to enable/disable automatic update checks
+
+### Anonymous Check-in
+
+Alongside each update check, Maestro sends a small anonymous ping so we can count how many installs are active and which platforms and themes people actually use. It is the only usage data the app reports about itself.
+
+**What it sends:**
+
+| Field      | Example           | Notes                                                        |
+| ---------- | ----------------- | ------------------------------------------------------------ |
+| Install ID | `9f3a...` (UUID)  | Randomly generated once, stored locally. Not your machine ID |
+| Version    | `0.17.3`          | The Maestro version you're running                           |
+| Platform   | `darwin`, `win32` | Operating system                                             |
+| Arch       | `arm64`, `x64`    | CPU architecture                                             |
+| Theme      | `dracula`         | Active theme ID                                              |
+
+**What it does not send:** your name, email, IP-derived location, file paths, project names, prompts, agent output, or anything you type. The install ID is a random UUID generated on first run and kept in your local app data - it is not derived from your hardware, and it cannot be traced back to you.
+
+**Frequency:** once when Maestro launches, then once per day if you leave it running.
+
+**To turn it off:** Settings → General → **Check for updates on startup**. The check-in rides along with the update check, so disabling that disables both. Development and test builds never check in.
 
 ### Pre-release Channel (Beta Opt-in)
 

@@ -84,8 +84,10 @@ export interface UseSettingsReturn {
 
 	// Font settings
 	fontFamily: string;
+	terminalFontFamily: string;
 	fontSize: number;
 	setFontFamily: (value: string) => void;
+	setTerminalFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
 
 	// UI settings
@@ -107,6 +109,9 @@ export interface UseSettingsReturn {
 	// Default thinking toggle (three states: 'off' | 'on' | 'sticky')
 	defaultShowThinking: ThinkingMode;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	// Global tool-call visibility toggle (Settings -> General)
+	showToolCalls: boolean;
+	setShowToolCalls: (value: boolean) => void;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
@@ -284,6 +289,8 @@ export interface UseSettingsReturn {
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	tabBarWheelScroll: boolean;
+	setTabBarWheelScroll: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
@@ -394,6 +401,10 @@ export interface UseSettingsReturn {
 	setForcedParallelExecution: (value: boolean) => void;
 	forcedParallelAcknowledged: boolean;
 	setForcedParallelAcknowledged: (value: boolean) => void;
+	forcedParallelAlways: boolean;
+	setForcedParallelAlways: (value: boolean) => void;
+	crossAgentMentionsWritable: boolean;
+	setCrossAgentMentionsWritable: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;

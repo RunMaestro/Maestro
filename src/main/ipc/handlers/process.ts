@@ -29,7 +29,7 @@ import {
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
-import { releaseConcertoHtmlDocument } from '../../concerto-html';
+import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -64,6 +64,10 @@ export interface CueProcessEntry {
 	eventType: string;
 	/** For SSH spawns: the agent invocation running on the remote host. */
 	sshRemoteCommand?: string;
+}
+
+interface ProcessQuery {
+	includeChildProcesses?: boolean;
 }
 
 export interface ProcessHandlerDependencies {
@@ -121,6 +125,24 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		}
 		releaseConcertoHtmlDocument(surface, id);
 	});
+
+	ipcMain.handle(
+		'concerto-html:restore',
+		withIpcErrorLogging(
+			handlerOpts('restoreConcertoHtmlDocument'),
+			async (surface: unknown, id: unknown, html: unknown) => {
+				if (
+					(surface !== 'movement' && surface !== 'cadenza') ||
+					typeof id !== 'string' ||
+					!id ||
+					typeof html !== 'string'
+				) {
+					throw new Error('Invalid Concerto HTML restore request');
+				}
+				return restoreConcertoHtmlDocument(surface, id, html);
+			}
+		)
+	);
 
 	// Renderer -> main: the user's allow/deny decision for a relayed request.
 	ipcMain.handle(
@@ -232,7 +254,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Get all active processes managed by the ProcessManager (and Cue runs if available)
 	ipcMain.handle(
 		'process:getActiveProcesses',
-		withIpcErrorLogging(handlerOpts('getActiveProcesses'), async () => {
+		withIpcErrorLogging(handlerOpts('getActiveProcesses'), async (options?: ProcessQuery) => {
 			const processManager = requireProcessManager(getProcessManager);
 			const processes = processManager.getAll();
 			// Return serializable process info (exclude non-serializable PTY/child process objects)
@@ -252,7 +274,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						maestroEnvVars: p.maestroEnvVars,
 						sshRemoteCommand: p.sshRemoteCommand,
 					};
-					if (p.isTerminal && p.pid) {
+					if (options?.includeChildProcesses !== false && p.isTerminal && p.pid) {
 						const children = await getChildProcesses(p.pid);
 						if (children.length > 0) {
 							entry.childProcesses = children;

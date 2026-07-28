@@ -6353,3 +6353,178 @@ describe('Performance: Many file tabs (10+)', () => {
 		expect(inactiveFileTab).toHaveStyle({ marginBottom: '0' });
 	});
 });
+
+// A tiled group is ONE unified tab, so its chip must drag and reorder exactly like
+// an AI / file / terminal / browser chip. It previously rendered with no drag props
+// at all, so a group was the only tab type the user could not move in the strip.
+describe('Group tab chip drag and drop', () => {
+	const mockOnUnifiedTabReorder = vi.fn();
+	const mockOnGroupSelect = vi.fn();
+	const mockOnGroupRename = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		Element.prototype.scrollTo = vi.fn();
+	});
+
+	const aiTabA = createTab({ id: 'ai-tab-1', name: 'AI Tab 1' });
+	const aiTabB = createTab({ id: 'ai-tab-2', name: 'AI Tab 2' });
+
+	const group = {
+		id: 'group-1',
+		name: 'Group: Terminal 1',
+		focusedPaneId: 'leaf-1',
+		createdAt: Date.now(),
+		layout: {
+			kind: 'split' as const,
+			id: 'split-1',
+			direction: 'row' as const,
+			sizes: [0.5, 0.5],
+			children: [
+				{ kind: 'leaf' as const, id: 'leaf-1', tab: { type: 'terminal' as const, id: 'term-1' } },
+				{ kind: 'leaf' as const, id: 'leaf-2', tab: { type: 'ai' as const, id: 'ai-hidden' } },
+			],
+		},
+	};
+
+	// Order: AI Tab 1, <group>, AI Tab 2
+	const unifiedTabs = [
+		{ type: 'ai' as const, id: 'ai-tab-1', data: aiTabA },
+		{ type: 'group' as const, id: 'group-1', data: group },
+		{ type: 'ai' as const, id: 'ai-tab-2', data: aiTabB },
+	];
+
+	function renderWithGroup() {
+		return render(
+			<TabBar
+				tabs={[aiTabA, aiTabB]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={unifiedTabs as never}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+				onGroupSelect={mockOnGroupSelect}
+				onGroupRename={mockOnGroupRename}
+			/>
+		);
+	}
+
+	// Query by id, not by label text: the inline rename flow swaps the name span
+	// for an <input>, so a text lookup would stop resolving mid-test.
+	function groupChip() {
+		return document.querySelector('[data-tab-id="group-1"]')!;
+	}
+
+	it('marks the group chip draggable', () => {
+		renderWithGroup();
+
+		expect(groupChip()).toHaveAttribute('draggable', 'true');
+	});
+
+	it('sets the group id as the drag payload on drag start', () => {
+		renderWithGroup();
+
+		const dataTransfer = {
+			effectAllowed: '',
+			setData: vi.fn(),
+			getData: vi.fn().mockReturnValue('group-1'),
+		};
+		fireEvent.dragStart(groupChip(), { dataTransfer });
+
+		expect(dataTransfer.effectAllowed).toBe('move');
+		expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'group-1');
+	});
+
+	it('does NOT write a tile payload for a group (a group cannot nest in a group)', () => {
+		renderWithGroup();
+
+		const dataTransfer = {
+			effectAllowed: '',
+			setData: vi.fn(),
+			getData: vi.fn().mockReturnValue('group-1'),
+		};
+		fireEvent.dragStart(groupChip(), { dataTransfer });
+
+		// text/plain (reorder) is the ONLY format written for a group.
+		expect(dataTransfer.setData).toHaveBeenCalledTimes(1);
+		expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'group-1');
+	});
+
+	it('reorders the group when dropped on another tab chip', () => {
+		renderWithGroup();
+
+		const targetTab = screen.getByText('AI Tab 2').closest('[data-tab-id]')!;
+
+		fireEvent.dragStart(groupChip(), {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('group-1'),
+			},
+		});
+		fireEvent.drop(targetTab, {
+			dataTransfer: { getData: vi.fn().mockReturnValue('group-1') },
+		});
+
+		// group is at unified index 1, AI Tab 2 at index 2
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
+	});
+
+	it('accepts another tab dropped onto the group chip and reorders it', () => {
+		renderWithGroup();
+
+		const sourceTab = screen.getByText('AI Tab 1').closest('[data-tab-id]')!;
+
+		fireEvent.dragStart(sourceTab, {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('ai-tab-1'),
+			},
+		});
+		fireEvent.drop(groupChip(), {
+			dataTransfer: { getData: vi.fn().mockReturnValue('ai-tab-1') },
+		});
+
+		// ai-tab-1 (index 0) moves to the group's slot (index 1)
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(0, 1);
+	});
+
+	it('sets dropEffect on drag over so the chip is a valid drop target', () => {
+		renderWithGroup();
+
+		const dataTransfer = { dropEffect: '' };
+		fireEvent.dragOver(groupChip(), { dataTransfer });
+
+		expect(dataTransfer.dropEffect).toBe('move');
+	});
+
+	it('does not reorder when the group is dropped on itself', () => {
+		renderWithGroup();
+
+		fireEvent.dragStart(groupChip(), {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('group-1'),
+			},
+		});
+		fireEvent.drop(groupChip(), {
+			dataTransfer: { getData: vi.fn().mockReturnValue('group-1') },
+		});
+
+		expect(mockOnUnifiedTabReorder).not.toHaveBeenCalled();
+	});
+
+	it('suppresses dragging while the chip is being renamed inline', () => {
+		renderWithGroup();
+
+		// Double-click opens the inline rename input; a native drag would otherwise
+		// hijack text selection inside it.
+		fireEvent.doubleClick(groupChip());
+
+		expect(groupChip()).toHaveAttribute('draggable', 'false');
+	});
+});

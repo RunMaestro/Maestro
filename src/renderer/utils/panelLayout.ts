@@ -17,7 +17,7 @@ import type {
 	UnifiedTabRef,
 } from '../types';
 import { generateId } from './ids';
-import { getTabDisplayName } from './tabHelpers';
+import { getActiveTab, getTabDisplayName } from './tabHelpers';
 import { getTerminalTabDisplayName } from './terminalTabHelpers';
 import { getBrowserTabLabel } from './browserTabPersistence';
 
@@ -325,6 +325,78 @@ export function resolveTabRefTitle(session: Session, ref: UnifiedTabRef): string
 	}
 }
 
+/**
+ * Resolve a unified tab ref to the value a rename dialog should seed its input
+ * with: the USER-assigned name only, never the auto-generated display title, so
+ * clearing the field restores the default ("Terminal 2", the filename, the page
+ * title). Returns null when the ref no longer points at a live tab, letting
+ * callers skip opening a rename that could not commit.
+ *
+ * The counterpart to `resolveTabRefTitle` (display) and the single source of
+ * truth for every rename entry point - keyboard shortcut, Quick Actions, and the
+ * tiled pane menu - so they can't drift on what "current name" means.
+ */
+export function resolveTabRefRenameValue(session: Session, ref: UnifiedTabRef): string | null {
+	switch (ref.type) {
+		case 'ai': {
+			const aiTab = session.aiTabs?.find((t) => t.id === ref.id);
+			return aiTab ? (aiTab.name ?? '') : null;
+		}
+		case 'file': {
+			const fileTab = session.filePreviewTabs?.find((t) => t.id === ref.id);
+			return fileTab ? (fileTab.customName ?? '') : null;
+		}
+		case 'terminal': {
+			const terminalTab = session.terminalTabs?.find((t) => t.id === ref.id);
+			return terminalTab ? (terminalTab.name ?? '') : null;
+		}
+		case 'browser': {
+			const browserTab = session.browserTabs?.find((t) => t.id === ref.id);
+			return browserTab ? (browserTab.customTitle ?? '') : null;
+		}
+		default:
+			return null;
+	}
+}
+
+/**
+ * The tab ref the single (non-tiled) view is currently showing. Terminal mode
+ * wins, then a file tab, then a browser tab, then the AI tab - file and browser
+ * tabs keep `inputMode: 'ai'` but outrank the AI tab in render precedence, so
+ * this order mirrors what the panel actually paints. Null when nothing is
+ * showing (an agent with no tabs).
+ */
+export function resolveSingleViewTabRef(session: Session): UnifiedTabRef | null {
+	if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
+		return { type: 'terminal', id: session.activeTerminalTabId };
+	}
+	if (session.activeFileTabId) return { type: 'file', id: session.activeFileTabId };
+	if (session.activeBrowserTabId) return { type: 'browser', id: session.activeBrowserTabId };
+	const aiTab = getActiveTab(session);
+	return aiTab ? { type: 'ai', id: aiTab.id } : null;
+}
+
+/**
+ * The tab a tab-scoped action (rename, and any future per-tab command) should
+ * target. When a tiled group has taken over the panel, that's the group's
+ * FOCUSED PANE - not the single-view tab, which is hidden behind the group and
+ * whose id would silently rename the wrong tab. Falls back to the group's first
+ * pane when nothing is focused, and to the single-view tab when no group is
+ * active.
+ */
+export function resolveActiveTabRef(session: Session): UnifiedTabRef | null {
+	const group =
+		session.activeGroupId != null
+			? session.tabGroups?.find((g) => g.id === session.activeGroupId)
+			: undefined;
+	if (group) {
+		const leaf = group.focusedPaneId ? findLeafById(group.layout, group.focusedPaneId) : null;
+		if (leaf && leaf.kind === 'leaf') return leaf.tab;
+		return collectLeafTabRefs(group.layout)[0] ?? null;
+	}
+	return resolveSingleViewTabRef(session);
+}
+
 /** Build an auto group name from the first tab's title (used for auto-naming). */
 export function generateGroupName(firstTabTitle: string): string {
 	return `Group: ${firstTabTitle}`;
@@ -589,6 +661,19 @@ export function renameGroup(
 	const trimmed = name.trim();
 	const finalName = trimmed.length > 0 ? trimmed : fallbackName;
 	return updateGroupInSession(session, groupId, (g) => ({ ...g, name: finalName }));
+}
+
+/**
+ * Set the emoji shown on the group `groupId`'s chip. A blank/whitespace value
+ * clears it (the chip falls back to the default grid glyph). A no-op copy when the
+ * group isn't found. Pairs with `updateSessionWith` in the set-emoji handler.
+ */
+export function setGroupEmoji(session: Session, groupId: string, emoji: string): Session {
+	const trimmed = emoji.trim();
+	return updateGroupInSession(session, groupId, (g) => ({
+		...g,
+		emoji: trimmed.length > 0 ? trimmed : undefined,
+	}));
 }
 
 /**
@@ -1058,6 +1143,50 @@ function pruneLayoutToLiveTabs(
  * Wired into the session-restoration path so it runs once per session before it
  * lands in the store. A session with no groups round-trips untouched.
  */
+/**
+ * Field patch that makes `ref` the active standalone tab: sets that kind's active
+ * pointer, clears the competing pointers, and picks the matching inputMode. Mirrors
+ * the per-kind activation in navigateToUnifiedTabByIndex so an auto-dissolved
+ * group's lone survivor lands full-screen instead of stranding the panel on a stale
+ * pointer. Does NOT touch activeGroupId (callers clear it as part of the dissolve).
+ * A `group` ref (never a leaf) yields an empty patch.
+ */
+function standaloneFocusPatch(ref: UnifiedTabRef): Partial<Session> {
+	switch (ref.type) {
+		case 'ai':
+			return {
+				activeTabId: ref.id,
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			};
+		case 'file':
+			return {
+				activeFileTabId: ref.id,
+				activeTerminalTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'ai',
+			};
+		case 'browser':
+			return {
+				activeBrowserTabId: ref.id,
+				activeFileTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			};
+		case 'terminal':
+			return {
+				activeTerminalTabId: ref.id,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				inputMode: 'terminal',
+			};
+		default:
+			return {};
+	}
+}
+
 export function normalizeTabGroups(session: Session): Session {
 	const groups = session.tabGroups ?? [];
 	if (groups.length === 0) {
@@ -1074,6 +1203,10 @@ export function normalizeTabGroups(session: Session): Session {
 	const keptGroups: TabGroup[] = [];
 	const promoted: UnifiedTabRef[] = [];
 	const removedGroupIds = new Set<string>();
+	// When the ACTIVE group collapses to its last pane, the survivor this points at is
+	// promoted to the active standalone tab so it lands full-screen. Null otherwise
+	// (background group dissolve, or a 0-survivor teardown - leave the panel alone).
+	let activeSurvivorRef: UnifiedTabRef | null = null;
 	// Stays false while every group survives with all its leaves intact, so a fully
 	// valid session round-trips as the same reference (cheap no-op on the hot path).
 	let changed = false;
@@ -1088,11 +1221,20 @@ export function normalizeTabGroups(session: Session): Session {
 			changed = true;
 			removedGroupIds.add(group.id);
 			if (prunedLayout) {
-				for (const ref of collectLeafTabRefs(prunedLayout)) {
+				const survivors = collectLeafTabRefs(prunedLayout);
+				for (const ref of survivors) {
 					if (!alreadyOrdered.has(tabRefKey(ref))) {
 						alreadyOrdered.add(tabRefKey(ref));
 						promoted.push(ref);
 					}
+				}
+				// The active group dropping to a single pane: land that survivor as the
+				// active standalone tab. The dissolve clears activeGroupId, but the panel
+				// then falls back to whatever active pointer remains - and a non-AI pane's
+				// pointer is cleared on group entry and never re-synced while tiled, so
+				// without this the surviving tab wouldn't actually show.
+				if (session.activeGroupId === group.id && survivors.length === 1) {
+					activeSurvivorRef = survivors[0];
 				}
 			}
 			continue;
@@ -1174,5 +1316,6 @@ export function normalizeTabGroups(session: Session): Session {
 		tabGroups: keptGroups,
 		unifiedTabOrder: orderChanged ? reconciledOrder : session.unifiedTabOrder,
 		activeGroupId: nextActiveGroupId,
+		...(activeSurvivorRef ? standaloneFocusPatch(activeSurvivorRef) : {}),
 	};
 }

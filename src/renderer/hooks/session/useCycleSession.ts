@@ -22,31 +22,48 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { compareNamesIgnoringEmojis } from './useSortedSessions';
 import type { StarredItem } from './useStarredItems';
+import { useSidebarNavStore } from '../../stores/sidebarNavStore';
+import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { getActiveOutageSessionIds } from '../../stores/retryStore';
+import {
+	sessionOrChildrenNeedAttention,
+	type AttentionContext,
+} from '../../utils/sessionAttention';
 
 // ============================================================================
 // Dependencies
 // ============================================================================
 
 export interface CycleSessionDeps {
-	/** Sorted sessions array (used when sidebar is collapsed) */
-	sortedSessions: Session[];
+	/**
+	 * Sorted sessions (sidebar collapsed). Prefer omitting and letting event-time
+	 * code read {@link useSidebarNavStore}; tests may pass an explicit list.
+	 */
+	sortedSessions?: Session[];
 	/** Open a group chat (loads messages etc.) */
 	handleOpenGroupChat: (groupChatId: string) => void;
 	/**
-	 * Starred Sessions rows (open starred tabs + closed starred sessions), in the
-	 * same display order as the Left Bar's "Starred Sessions" section. Cycling
-	 * traverses these at the top of the visual order when the section is shown.
+	 * Starred Sessions rows. Prefer omitting for production (sidebarNavStore);
+	 * tests may pass fixtures.
 	 */
-	starredItems: StarredItem[];
-	/** Activate a starred row (focus its tab, or resume a closed session). */
-	activateStarredItem: (item: StarredItem) => void | Promise<void>;
+	starredItems?: StarredItem[];
+	/** Activate a starred row. Prefer omitting for production (sidebarNavStore). */
+	activateStarredItem?: (item: StarredItem) => void | Promise<void>;
 	/**
-	 * Maps a render-context navKey (`bookmark:{id}`, `group:{gid}:{id}`,
-	 * `ungrouped:{id}`, plus `:wt:` child variants) to its index in navSessions.
-	 * Lets cycling highlight the EXACT occurrence it landed on (e.g. a bookmarked
-	 * agent's group row) instead of the first navSessions occurrence.
+	 * Maps a render-context navKey to its index in navSessions. Prefer omitting
+	 * for production (sidebarNavStore).
 	 */
-	navIndexMap: Map<string, number>;
+	navIndexMap?: Map<string, number>;
+	/**
+	 * Session ids auto-running an Auto Run batch (the AUTO badge). Prefer omitting
+	 * for production (read from batchStore at event time); tests may pass a fixture.
+	 */
+	batchSessionIds?: ReadonlySet<string>;
+	/**
+	 * Session ids stuck auto-retrying an outage. Prefer omitting for production
+	 * (read from retryStore at event time); tests may pass a fixture.
+	 */
+	stuckOutageIds?: ReadonlySet<string>;
 	/**
 	 * Multi-window: optional window-ownership predicate. When provided, cycling
 	 * includes only agent rows THIS window owns, so `Cmd+[` / `Cmd+]` never jumps
@@ -80,14 +97,12 @@ type VisualOrderItem =
  * Left Bar order. Reads all store state at call time.
  */
 export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void {
-	const {
-		sortedSessions,
-		handleOpenGroupChat,
-		starredItems,
-		activateStarredItem,
-		navIndexMap,
-		ownsSession,
-	} = deps;
+	const nav = useSidebarNavStore.getState();
+	const sortedSessions = deps.sortedSessions ?? nav.sortedSessions;
+	const starredItems = deps.starredItems ?? nav.starredItems;
+	const activateStarredItem = deps.activateStarredItem ?? nav.activateStarredItem;
+	const navIndexMap = deps.navIndexMap ?? nav.navIndexMap;
+	const { handleOpenGroupChat, ownsSession } = deps;
 
 	const {
 		sessions,
@@ -238,29 +253,27 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		);
 	}
 
-	// When unread filter is active, restrict cycling to unread/busy agents only
-	// (plus the currently active agent so you don't get lost)
+	// When the unread filter is active, restrict cycling to agents that need
+	// attention (unread / busy / error / auto-running / stuck), plus the currently
+	// active agent so you don't get lost.
 	if (showUnreadAgentsOnly) {
+		const attentionCtx: AttentionContext = {
+			batchSessionIds:
+				deps.batchSessionIds ?? new Set(selectActiveBatchSessionIds(useBatchStore.getState())),
+			stuckOutageIds: deps.stuckOutageIds ?? getActiveOutageSessionIds(),
+		};
 		const currentActiveId = activeGroupChatId || activeSessionId;
 		const filteredOrder = visualOrder.filter((item) => {
 			// Always keep the currently active item
 			if (item.id === currentActiveId) return true;
 			// Group chats pass through (they have their own unread badges)
 			if (item.type === 'groupChat') return true;
-			// Check if session is unread or busy
+			// Defer to the shared predicate (unread / busy / error / auto-running /
+			// stuck), including worktree children, so cycling matches the rendered list.
 			const session = sessions.find((s) => s.id === item.id);
 			if (!session) return false;
-			if (session.aiTabs?.some((tab) => tab.hasUnread)) return true;
-			if (session.state === 'busy') return true;
-			// Check worktree children for unread/busy
 			const children = sessions.filter((s) => s.parentSessionId === session.id);
-			if (
-				children.some(
-					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
-				)
-			)
-				return true;
-			return false;
+			return sessionOrChildrenNeedAttention(session, children, attentionCtx);
 		});
 		visualOrder.length = 0;
 		visualOrder.push(...filteredOrder);

@@ -619,14 +619,18 @@ function ThinkingStatusPillInner({
 					style={{ backgroundColor: theme.colors.warning }}
 				/>
 
-				{/* Maestro session name - always visible, not clickable, truncates on narrow widths */}
-				<span
-					className="text-xs font-medium truncate min-w-0"
+				{/* Maestro session name - always visible, truncates on narrow widths. Clickable:
+				    it jumps to the thinking tab, same as the tab-name segment. The tab-name
+				    segment is the first thing container queries drop on narrow widths, so the
+				    name has to carry the jump too or the pill loses its only affordance. */}
+				<button
+					onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
+					className="text-xs font-medium truncate min-w-0 hover:underline cursor-pointer"
 					style={{ color: theme.colors.textMain }}
-					title={fullTooltip}
+					title={`Jump to this tab · ${fullTooltip}`}
 				>
 					{maestroSessionName}
-				</span>
+				</button>
 
 				{/* Token info / Thinking placeholder - carries its own divider so hiding the
 				    segment on narrow widths (pill-seg-tokens) takes the divider with it */}
@@ -674,7 +678,11 @@ function ThinkingStatusPillInner({
 							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
 							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
 							style={{ color: theme.colors.accent }}
-							title={agentSessionId ? `Claude Session: ${agentSessionId}` : 'Claude Session'}
+							title={
+								agentSessionId
+									? `Jump to this tab · Claude Session: ${agentSessionId}`
+									: 'Jump to this tab'
+							}
 						>
 							{displayClaudeId}
 						</button>

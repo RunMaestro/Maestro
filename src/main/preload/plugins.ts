@@ -89,6 +89,16 @@ export function createPluginsApi() {
 		revokeGrants: (id: string): Promise<PluginGrantsSnapshot> =>
 			ipcRenderer.invoke('plugins:revoke-grants', id),
 
+		/**
+		 * Host-managed dispatch allowlist (issue #1250): replace which agents a
+		 * plugin's already-consented agents:dispatch grant may target. The main
+		 * process re-mints the grant SCOPE into the sealed ledger; the plugin is
+		 * never involved. Only the trusted main renderer may call it. Returns the
+		 * refreshed requested/granted snapshot.
+		 */
+		setAgentAllowlist: (id: string, agentIds: string[]): Promise<PluginGrantsSnapshot> =>
+			ipcRenderer.invoke('plugins:set-agent-allowlist', id, agentIds),
+
 		/** Invoke a contributed command (`<pluginId>/<localId>`) in its sandbox. */
 		invokeCommand: (commandId: string, args?: unknown): Promise<{ dispatched: boolean }> =>
 			ipcRenderer.invoke('plugins:invoke-command', commandId, args),

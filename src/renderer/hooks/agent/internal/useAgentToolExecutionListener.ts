@@ -18,7 +18,6 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
-import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 
@@ -36,6 +35,7 @@ export function useAgentToolExecutionListener(): void {
 					state?: unknown;
 					timestamp: number;
 					toolCallId?: string;
+					parentToolUseId?: string;
 				}
 			) => {
 				// Window scoping: ignore agents this window doesn't own (broadcast events).
@@ -58,7 +58,12 @@ export function useAgentToolExecutionListener(): void {
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab) return s;
-						if (!thinkingLogsRecorded(targetTab.showThinking)) return s;
+						// Always record tool events regardless of the global tool-call
+						// visibility setting. Visibility is a pure render concern (TerminalOutput
+						// hides `source:'tool'` entries when tools are off), so recording
+						// unconditionally keeps running->completed correlation intact
+						// across a mid-run toggle and avoids the transcript churn that
+						// dropping events / deleting logs caused (the flicker bug).
 
 						const newState = toolEvent.state as
 							| NonNullable<LogEntry['metadata']>['toolState']
@@ -99,9 +104,17 @@ export function useAgentToolExecutionListener(): void {
 								...newState,
 								input: newState?.input ?? existingState?.input,
 							};
+							// The parent id can arrive on either the running or the
+							// finalizing event; keep whichever we have seen.
+							const mergedParentToolUseId =
+								toolEvent.parentToolUseId ?? existing.metadata?.parentToolUseId;
 							const mergedLog: LogEntry = {
 								...existing,
-								metadata: { ...existing.metadata, toolState: mergedState },
+								metadata: {
+									...existing.metadata,
+									toolState: mergedState,
+									...(mergedParentToolUseId ? { parentToolUseId: mergedParentToolUseId } : {}),
+								},
 								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [
@@ -115,7 +128,12 @@ export function useAgentToolExecutionListener(): void {
 								timestamp: toolEvent.timestamp,
 								source: 'tool',
 								text: toolEvent.toolName,
-								metadata: { toolState: newState },
+								metadata: {
+									toolState: newState,
+									...(toolEvent.parentToolUseId
+										? { parentToolUseId: toolEvent.parentToolUseId }
+										: {}),
+								},
 								...(isInteractive ? { renderStyle: 'text-stream' as const } : {}),
 							};
 							updatedLogs = [...targetTab.logs, toolLog];
