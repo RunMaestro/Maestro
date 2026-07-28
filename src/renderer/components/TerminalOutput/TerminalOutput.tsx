@@ -85,6 +85,12 @@ export const TerminalOutput = memo(
 
 		// Scroll container ref for native scrolling
 		const scrollContainerRef = useRef<HTMLDivElement>(null);
+		// Single inner wrapper whose border-box height equals the scrollable content
+		// height. The scroll container itself only resizes with the viewport, so a
+		// ResizeObserver needs this element to see content growth (image decode,
+		// async font load, markdown/tool-badge layout settling) that arrives without
+		// a DOM mutation.
+		const contentRef = useRef<HTMLDivElement>(null);
 
 		const activeTabId = session.activeTabId;
 
@@ -192,6 +198,7 @@ export const TerminalOutput = memo(
 			scrollToBottomAndResume,
 		} = useTerminalOutputScroll({
 			scrollContainerRef,
+			contentRef,
 			initialScrollTop,
 			initialIsAtBottom,
 			sessionId: session.id,
@@ -365,92 +372,97 @@ export const TerminalOutput = memo(
 					}}
 					onScroll={handleScroll}
 				>
-					{/* Log entries */}
-					{filteredLogs.map((log, index) => (
-						<LogItem
-							key={log.id}
-							log={log}
-							index={index}
-							isTerminal={isTerminal}
-							isAIMode={isAIMode}
-							theme={theme}
-							fontFamily={fontFamily}
-							maxOutputLines={maxOutputLines}
-							lastUserCommand={
-								isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
-							}
-							isExpanded={expandedLogs.has(log.id)}
-							onToggleExpanded={toggleExpanded}
-							subagentLogs={childrenByParentId.get(log.id)}
-							localFilterQuery={localFilters.get(log.id) || ''}
-							filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
-							activeLocalFilter={activeLocalFilter}
-							onToggleLocalFilter={toggleLocalFilter}
-							onSetLocalFilterQuery={setLocalFilterQuery}
-							onSetFilterMode={setFilterModeForLog}
-							onClearLocalFilter={clearLocalFilter}
-							deleteConfirmLogId={deleteConfirmLogId}
-							onDeleteLog={onDeleteLog}
-							onSetDeleteConfirmLogId={setDeleteConfirmLogId}
-							scrollContainerRef={scrollContainerRef}
-							setLightboxImage={setLightboxImage}
-							copyToClipboard={copyToClipboard}
-							ansiConverter={ansiConverter}
-							markdownEditMode={markdownEditMode}
-							onToggleMarkdownEditMode={toggleMarkdownEditMode}
-							onReplayMessage={onReplayMessage}
-							onForkConversation={onForkConversation}
-							sessionId={session.id}
-							onSessionRecover={onSessionRecover}
-							isRecoveringSession={isRecoveringSession}
-							sessionRecoveryError={sessionRecoveryError}
-							fileTree={fileTree}
-							cwd={cwd}
-							projectRoot={projectRoot}
-							onFileClick={onFileClick}
-							sshRemoteId={
-								session.sessionSshRemoteConfig?.enabled
-									? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
-									: undefined
-							}
-							onShowErrorDetails={onShowErrorDetails}
-							onSaveToFile={handleSaveToFile}
-							ghCliAvailable={ghCliAvailable}
-							onPublishGist={onPublishMessageGist}
-							publishedGistUrl={publishedGists[log.id]?.gistUrl}
-							bionifyReadingMode={globalBionifyReadingMode}
-							bionifyIntensity={globalBionifyIntensity}
-							bionifyAlgorithm={globalBionifyAlgorithm}
-							userMessageAlignment={userMessageAlignment}
-							isClaudeCode={session.toolType === 'claude-code'}
-							isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
-						/>
-					))}
+					{/* Content wrapper: unstyled block so its height tracks the scrollable
+					    content exactly, giving the scroll hook's ResizeObserver something
+					    that grows when late content settles. */}
+					<div ref={contentRef}>
+						{/* Log entries */}
+						{filteredLogs.map((log, index) => (
+							<LogItem
+								key={log.id}
+								log={log}
+								index={index}
+								isTerminal={isTerminal}
+								isAIMode={isAIMode}
+								theme={theme}
+								fontFamily={fontFamily}
+								maxOutputLines={maxOutputLines}
+								lastUserCommand={
+									isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
+								}
+								isExpanded={expandedLogs.has(log.id)}
+								onToggleExpanded={toggleExpanded}
+								subagentLogs={childrenByParentId.get(log.id)}
+								localFilterQuery={localFilters.get(log.id) || ''}
+								filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
+								activeLocalFilter={activeLocalFilter}
+								onToggleLocalFilter={toggleLocalFilter}
+								onSetLocalFilterQuery={setLocalFilterQuery}
+								onSetFilterMode={setFilterModeForLog}
+								onClearLocalFilter={clearLocalFilter}
+								deleteConfirmLogId={deleteConfirmLogId}
+								onDeleteLog={onDeleteLog}
+								onSetDeleteConfirmLogId={setDeleteConfirmLogId}
+								scrollContainerRef={scrollContainerRef}
+								setLightboxImage={setLightboxImage}
+								copyToClipboard={copyToClipboard}
+								ansiConverter={ansiConverter}
+								markdownEditMode={markdownEditMode}
+								onToggleMarkdownEditMode={toggleMarkdownEditMode}
+								onReplayMessage={onReplayMessage}
+								onForkConversation={onForkConversation}
+								sessionId={session.id}
+								onSessionRecover={onSessionRecover}
+								isRecoveringSession={isRecoveringSession}
+								sessionRecoveryError={sessionRecoveryError}
+								fileTree={fileTree}
+								cwd={cwd}
+								projectRoot={projectRoot}
+								onFileClick={onFileClick}
+								sshRemoteId={
+									session.sessionSshRemoteConfig?.enabled
+										? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
+										: undefined
+								}
+								onShowErrorDetails={onShowErrorDetails}
+								onSaveToFile={handleSaveToFile}
+								ghCliAvailable={ghCliAvailable}
+								onPublishGist={onPublishMessageGist}
+								publishedGistUrl={publishedGists[log.id]?.gistUrl}
+								bionifyReadingMode={globalBionifyReadingMode}
+								bionifyIntensity={globalBionifyIntensity}
+								bionifyAlgorithm={globalBionifyAlgorithm}
+								userMessageAlignment={userMessageAlignment}
+								isClaudeCode={session.toolType === 'claude-code'}
+								isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+							/>
+						))}
 
-					{/* Queued items section - filtered to active tab */}
-					{session.executionQueue && session.executionQueue.length > 0 && (
-						<QueuedItemsList
-							executionQueue={session.executionQueue}
-							theme={theme}
-							onRemoveQueuedItem={onRemoveQueuedItem}
-							onTogglePauseQueuedItem={onTogglePauseQueuedItem}
-							onEditQueuedItem={onEditQueuedItem}
-							onReorderItems={
-								onReorderQueuedItem
-									? (fromIndex, toIndex) =>
-											onReorderQueuedItem(fromIndex, toIndex, activeTabId || undefined)
-									: undefined
-							}
-							onForceSendQueuedItem={onForceSendQueuedItem}
-							forcedParallelEnabled={forcedParallelEnabled}
-							getForceSendContext={getForceSendContext}
-							activeTabId={activeTabId || undefined}
-							onOpenLightbox={setLightboxImage}
-						/>
-					)}
+						{/* Queued items section - filtered to active tab */}
+						{session.executionQueue && session.executionQueue.length > 0 && (
+							<QueuedItemsList
+								executionQueue={session.executionQueue}
+								theme={theme}
+								onRemoveQueuedItem={onRemoveQueuedItem}
+								onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+								onEditQueuedItem={onEditQueuedItem}
+								onReorderItems={
+									onReorderQueuedItem
+										? (fromIndex, toIndex) =>
+												onReorderQueuedItem(fromIndex, toIndex, activeTabId || undefined)
+										: undefined
+								}
+								onForceSendQueuedItem={onForceSendQueuedItem}
+								forcedParallelEnabled={forcedParallelEnabled}
+								getForceSendContext={getForceSendContext}
+								activeTabId={activeTabId || undefined}
+								onOpenLightbox={setLightboxImage}
+							/>
+						)}
 
-					{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy */}
-					<div ref={logsEndRef} />
+						{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy */}
+						<div ref={logsEndRef} />
+					</div>
 				</div>
 
 				{/* Scroll-to-bottom / auto-scroll resume (AI mode only) */}

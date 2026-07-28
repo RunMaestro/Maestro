@@ -8,6 +8,13 @@ const PROGRAMMATIC_TARGET_EPSILON_PX = 4;
 
 interface UseTerminalOutputScrollOptions {
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
+	/**
+	 * Inner wrapper whose height equals the scrollable content height. Optional so
+	 * callers (and tests) that do not render one keep the previous behaviour; when
+	 * present it gets a ResizeObserver that re-pins the bottom on content growth
+	 * that arrives without a DOM mutation (image decode, font load, late layout).
+	 */
+	contentRef?: React.RefObject<HTMLElement | null>;
 	initialScrollTop?: number;
 	initialIsAtBottom?: boolean;
 	sessionId: string;
@@ -19,6 +26,7 @@ interface UseTerminalOutputScrollOptions {
 
 export function useTerminalOutputScroll({
 	scrollContainerRef,
+	contentRef,
 	initialScrollTop,
 	initialIsAtBottom,
 	sessionId,
@@ -213,8 +221,31 @@ export function useTerminalOutputScroll({
 			characterData: true,
 		});
 
-		return () => observer.disconnect();
-	}, [autoScrollPaused, scrollContainerRef, jumpToBottom]);
+		// Content can grow WITHOUT any DOM mutation - an image decoding, a web font
+		// loading, markdown or tool-badge layout settling after the initial commit.
+		// The MutationObserver above is blind to that, and for a freshly swapped-in
+		// idle agent no mutations arrive at all, so the mount-time jump's one-frame
+		// scrollHeight reading is all we would ever get and the view lands above the
+		// live bottom. Watch the content wrapper instead: it is the only element
+		// whose height tracks the scrollable content (observing the scroll container
+		// would only fire on viewport resize). Same gate, same rAF, same
+		// jumpToBottom choke point, so the #1140 guard bookkeeping stays in one place.
+		const content = contentRef?.current;
+		let resizeObserver: ResizeObserver | undefined;
+		if (content && typeof ResizeObserver !== 'undefined') {
+			resizeObserver = new ResizeObserver(() => {
+				if (isAtBottomRef.current) {
+					scrollToBottom();
+				}
+			});
+			resizeObserver.observe(content);
+		}
+
+		return () => {
+			observer.disconnect();
+			resizeObserver?.disconnect();
+		};
+	}, [autoScrollPaused, scrollContainerRef, contentRef, jumpToBottom]);
 
 	// Declared BEFORE the restore effect on purpose. React runs effects in
 	// declaration order, so on mount and every tab switch this clears the latch
