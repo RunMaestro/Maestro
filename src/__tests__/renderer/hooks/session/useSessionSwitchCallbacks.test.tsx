@@ -5,6 +5,7 @@
  * rather than silently activating a nonexistent session.
  */
 
+import type { RefObject } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 
@@ -29,7 +30,7 @@ function makeDeps() {
 	return {
 		setActiveSessionId: vi.fn(),
 		handleResumeSession: vi.fn().mockResolvedValue(true),
-		inputRef: { current: null } as React.RefObject<HTMLTextAreaElement | null>,
+		inputRef: { current: null } as RefObject<HTMLTextAreaElement | null>,
 		handleFileClick: vi.fn(),
 	};
 }
