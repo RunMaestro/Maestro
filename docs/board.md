@@ -4,7 +4,7 @@ description: A persistent board (a DAG of cards) that dispatches work to Agent P
 icon: kanban
 ---
 
-The **Board** turns a project into a persistent, git-trackable graph of cards. Each **card** is a unit of work assigned to an **Agent Profile**, and a card only becomes eligible to run once every card it depends on is `done`. On the Maestro Cue heartbeat, a dispatcher drains the graph: it promotes eligible cards, spawns their assignees, and moves them to `done` or `blocked` based on how the run ended.
+The **Board** turns a project into a persistent, git-trackable graph of cards. Each **card** is a unit of work assigned to an **Agent Profile**, and a card only becomes eligible to run once every card it depends on is `done`. On the Maestro Cue heartbeat, a dispatcher drains the graph: it promotes eligible cards, spawns their assignees, and moves them to `done`, `review`, or `blocked` based on how the run ended.
 
 The Board is an Encore Feature and depends on **Maestro Cue** (the Board rides Cue's engine tick, so Cue must be enabled too). The manual Board is fully useful on its own; auto-decompose is a separate, off-by-default layer.
 
@@ -38,6 +38,8 @@ boards:
         worktree: # optional: run this card in its own checkout
           branch: board/8f3c1d2e/b
           path: /home/you/worktrees/board/8f3c1d2e/b
+        prOnDone: # optional: open a pull request when this card finishes
+          targetBranch: develop # optional; omit for the repo's default branch
         runs: # one entry per dispatch attempt, appended by the dispatcher
           - attempt: 1
             startedAt: 2026-07-10T00:05:00.000Z
@@ -46,6 +48,7 @@ boards:
             summary: Added the migration and a round-trip test.
             workerAgentId: agent-2
             worktreeBranch: board/8f3c1d2e/b
+            prUrl: https://github.com/you/repo/pull/42
 ```
 
 Cards are written by hand or by the app; the `runs` list, the derived statuses, and the timestamps are the dispatcher's bookkeeping. Each run records one attempt and never disappears, so a card that took three tries keeps all three.
@@ -55,12 +58,13 @@ Cards are written by hand or by the app; the `runs` list, the derived statuses, 
 | Outcome     | Meaning                                                                                       |
 | ----------- | --------------------------------------------------------------------------------------------- |
 | `done`      | The run completed (complete marker, or a clean exit with no marker).                          |
+| `review`    | The run finished its work but asked a human to approve it (review marker).                    |
 | `blocked`   | The run asked for a human (block marker) or exited non-zero with no completion signal.        |
 | `error`     | The run could not be carried out (spawn failure, killed process).                             |
 | `reclaimed` | The app was restarted mid-run, so the attempt was abandoned and the card returned to `ready`. |
 | `canceled`  | You pressed stop on the card.                                                                 |
 
-`reclaimed` and `canceled` runs do not count toward the circuit breaker: neither one says anything about whether the work is doable.
+`reclaimed` and `canceled` runs do not count toward the circuit breaker: neither one says anything about whether the work is doable. A `review` run resets the breaker the way `done` does, because it reached a deliberate conclusion rather than failing.
 
 ### Card status
 
@@ -70,8 +74,17 @@ Cards are written by hand or by the app; the `runs` list, the derived statuses, 
 | `todo`    | Accepted work, waiting on its parents.                                                                             |
 | `ready`   | Derived: a `todo` card whose parents are all `done`. The dispatcher promotes these; you do not hand-write `ready`. |
 | `running` | A dispatcher has spawned an agent for this card and it is in flight.                                               |
+| `review`  | The work is finished but a human must approve it before it counts. Not a failure, and never auto-retried.          |
 | `blocked` | A run finished without completing, or a parent regressed. Needs attention.                                         |
 | `done`    | Completed successfully. Unblocks children that depend on it.                                                       |
+
+### Review: work that needs a human
+
+`review` exists so that "I finished, but somebody should look at this" stops being confused with "I got stuck", which is what `blocked` means. A card lands in `review` when its agent emits the review marker (see completion markers below), or when you move it there yourself.
+
+A card sitting in `review` is inert: nothing retries it, nothing counts it against the circuit breaker, and it holds no slot against the WIP cap. Crucially it does **not** unblock its children - a child only becomes eligible once every parent is strictly `done` - so a card parked for approval keeps the work behind it parked too.
+
+The only way out is a human: move the card from **Review** to **Done** (drag it, or press `m` on the tile and use the "Move to" picker). That single move is the approval, and it is what releases the children. Moving it back to `todo` sends it around again instead.
 
 ## Profiles
 
@@ -116,7 +129,10 @@ Cancellation is a desktop-app action. `maestro-cli` cannot stop a run, because t
 Terminal card transitions raise a toast:
 
 - **Card done** - green, auto-dismissing. Names the worktree branch when the run was isolated.
+- **Card needs review** - yellow and sticky, carrying the reason the agent gave. It is waiting on your approval.
 - **Card blocked** - red and sticky, because it is waiting on you. Click to dismiss.
+
+A card that opened a pull request raises one more toast: green with the PR link (click it to open the PR), or red and sticky with the `gh` error if the PR could not be created.
 
 Both are stamped as coming from **Board**. When a card is in flight, the Main Window header also shows a small Board pill with the number of `running` and `ready` cards across the project; click it to open the Board. The pill hides itself when nothing is happening.
 
@@ -135,10 +151,13 @@ When a card's agent finishes, it signals the outcome with an HTML-comment marker
 ```text
 <!-- maestro:card-complete -->
 <!-- maestro:card-complete | one-line summary of what changed -->
+<!-- maestro:card-review: what a human needs to check -->
 <!-- maestro:card-block: reason it could not finish -->
 ```
 
-Precedence: a block marker wins (the card goes to `blocked`); otherwise a complete marker (or a clean exit with no marker) sends the card to `done`. The optional summary after `card-complete |` is captured onto the card's latest run and surfaced in the UI as an expandable "Last run summary". Cards encourage a four-question handoff in that summary - what changed, how it was verified, what it unblocks, and any residual risk - so the next card inherits useful context. The summary is optional metadata; the run still completes without it.
+Precedence: a block marker wins (the card goes to `blocked`); then a review marker (the card goes to `review`); otherwise a complete marker (or a clean exit with no marker) sends the card to `done`. Both the block and the review marker are authoritative - they beat even a non-zero exit and are never retried. The reason after `card-review:` is optional and lands on the card's run as its summary, so it shows in the toast and on the tile.
+
+Cards are told to fix whatever they can safely fix and card-complete it, to use card-review when the work is done but needs human judgment or verification, and to reserve card-block for genuinely being stuck. The optional summary after `card-complete |` is captured onto the card's latest run and surfaced in the UI as an expandable "Last run summary". Cards encourage a four-question handoff in that summary - what changed, how it was verified, what it unblocks, and any residual risk - so the next card inherits useful context. The summary is optional metadata; the run still completes without it.
 
 ## WIP limits
 
@@ -169,6 +188,21 @@ git merge board/8f3c1d2e/b
 git worktree remove ../worktrees/board/8f3c1d2e/b
 git branch -d board/8f3c1d2e/b
 ```
+
+### Open a PR when the card is done
+
+An isolated card can open a pull request for its branch the moment it finishes. Turn on **Open PR when done** in the card editor's worktree section (it only appears once **Run in isolated worktree** is on) and optionally name a **PR target branch**; leave that blank to target the repository's default branch, resolved when the PR is actually opened rather than baked into `board.yaml`.
+
+What happens when such a card reaches `done`: Maestro pushes the card's branch and runs `gh pr create` against the target branch, with the card title as the PR title and the card body plus the run's handoff summary as the PR description. The resulting URL is toasted, stored on the card's run as `prUrl`, and never opened twice for the same run. Nothing is merged - the branch is still yours to merge, the PR just puts it in front of a reviewer.
+
+This fires from both routes into `done`: a run that completed on its own, and the human approval move when a card was parked in **Review**. So the natural pairing is a card that emits `card-review`, waits for you, and opens its PR at the moment you approve it.
+
+Requirements and edges worth knowing:
+
+- The [GitHub CLI](https://cli.github.com) (`gh`) must be installed and authenticated. A failure (no `gh`, no auth, a rejected push) raises a red sticky toast and leaves the card `done` - the PR is a side effect, never a gate on the card's status.
+- The option only does anything on a card with worktree isolation on and a branch actually recorded on its last run. A card that ran in the shared project root has no branch to open a PR for and is silently skipped.
+- It is a desktop-app feature. `maestro-cli board tick` applies card outcomes but does not open pull requests.
+- Removing the toggle (or isolation) simply drops the field from `board.yaml`; boards written before this option existed are unaffected.
 
 Worktree cards are local-only: an agent configured to run over an SSH remote executes on the remote host, where a worktree created on your machine does not exist. Such a card is blocked with a clear reason rather than quietly running in the shared project directory. Clear its worktree setting or move it to a local agent.
 
@@ -204,7 +238,7 @@ maestro-cli board tick --agent <id-or-name>
 maestro-cli board watch --agent <id-or-name> --interval 60
 ```
 
-`board tick` reuses the same promotion, WIP, and completion logic as the desktop dispatcher and the same agent spawn path as the rest of the CLI, so SSH remotes and profile model/effort/role overrides are honored exactly as they are in the app. Drive an entire board to completion by adding cards with dependencies, then running `board tick` until every card is terminal (`done` or `blocked`) - a single pass can leave cards `running`, `ready`, or awaiting a retry, so check `board show --json` (card `status` fields) rather than stopping after a quiet tick. Add `--json` to any command for machine-readable output.
+`board tick` reuses the same promotion, WIP, and completion logic as the desktop dispatcher and the same agent spawn path as the rest of the CLI, so SSH remotes and profile model/effort/role overrides are honored exactly as they are in the app. Drive an entire board to completion by adding cards with dependencies, then running `board tick` until every card is terminal (`done`, `review`, or `blocked`) - a single pass can leave cards `running`, `ready`, or awaiting a retry, so check `board show --json` (card `status` fields) rather than stopping after a quiet tick. Add `--json` to any command for machine-readable output.
 
 A few behaviors worth knowing:
 
@@ -212,4 +246,5 @@ A few behaviors worth knowing:
 - `board delete` refuses a board that still has cards which are not `done` unless you pass `--force`. It takes the whole board, cards and run history included.
 - `board update-card` and `profile update` change only the flags you actually pass. Pass an empty string (`--assignee ""`, `--model ""`) to clear a field. `profile update` keeps the profile's id, so cards assigned to that role keep working; `profile create` would mint a new id and leave them pointing at nothing.
 - A `running` card cannot be edited, and removing one needs `--force`. The CLI has no handle on the in-flight agent process (it belongs to whichever dispatcher started it), so it cannot stop the run for you - use the stop button on the card in the app.
+- `board set-status` takes any status, `review` included, so a headless approval is `board set-status <cardId> done`. It does not open a pull request for a card carrying `prOnDone` - that is a desktop-app step (see worktree cards above).
 - `board watch` is just `board tick` on a timer (default 30 seconds, minimum 5), stopped with Ctrl-C. It does not daemonize and takes no lock. Running two dispatchers on the same board (the desktop app with Cue enabled, plus a `watch`) is unsupported: each one can overwrite the other's latest card transition, because their read-modify-write cycles are not serialized across processes (atomic writes only prevent torn files). Pick one dispatcher per board - the CLI tick is meant for headless projects the app is not also dispatching.

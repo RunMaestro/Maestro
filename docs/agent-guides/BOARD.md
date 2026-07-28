@@ -1,4 +1,4 @@
-<!-- Verified 2026-07-22 against build/board-profiles-fullaccess -->
+<!-- Verified 2026-07-28 against build/board-profiles-fullaccess -->
 
 # Board & Agent Profiles
 
@@ -8,6 +8,7 @@ The Board is an Encore Feature that **depends on Maestro Cue** (it rides Cue's e
 
 - **Original build:** Profiles, data model + YAML storage, the dispatcher on the Cue tick, the kanban UI, CLI + optional auto-decompose + docs, and the opt-in **worker pool**.
 - **The 10x pass** (this branch): storage hardening (1), cancellation + push events + toasts + priority (2), full CLI lifecycle parity (3), per-card worktree isolation (4), plugin-bus board events (5), a11y + multi-board UI (6).
+- **Human-and-PR pass** (this branch): the `review` card status with its own marker and column (F2), and per-card PR-on-done for worktree cards (F3).
 
 ---
 
@@ -26,7 +27,11 @@ src/main/board/
 ├── board-dispatcher.ts # pure-ish orchestrator: promote / claim / apply / reclaim (side effects injected)
 ├── board-spawn.ts      # host wiring: resolve profile -> base agent, run via executeCuePrompt
 ├── board-worktree.ts   # per-card worktree provisioning (wraps setupWorktreeLocal)
+├── board-pr.ts         # PR-on-done gate + flow (wraps utils/pr-creator)
+├── board-toast.ts      # terminal-transition + PR toast payloads (presentation)
 └── board-decompose.ts  # OPTIONAL auto-decompose (off by default): parse + fan a triage card
+
+src/main/utils/pr-creator.ts   # THE gh-CLI PR implementation (push + gh pr create), Electron-free
 
 src/shared/profiles/types.ts   # AgentProfile + resolveProfileSpawnOverrides + validator (pure)
 src/main/profiles/profile-storage.ts  # single owner of .maestro/profiles.yaml
@@ -55,9 +60,17 @@ A single top-level `boards:` list; each board owns its `cards:`. See [board.md](
 - **`autoDecompose?: boolean`** is off by default and only serialized when `true`.
 - **Deletes keep the DAG referentially intact.** `deleteCard` splices the dead id out of every other card's `parents` AND reattaches the deleted card's own parents to its children (grandparent adoption), so deleting a middle card neither wedges its children forever nor lets them jump ahead of work they depended on. `deleteBoard` refuses a board with any non-`done` card unless `{ force: true }`.
 
-`CardRun` records one dispatch attempt: attempt number, timestamps, `outcome`, an optional `summary` captured from the completion marker, the `workerAgentId` that ran it (pool), and `worktreePath` / `worktreeBranch` when the attempt was isolated. Cards accumulate one run per attempt so retries are auditable. `CardRunOutcome` is `done | blocked | error | reclaimed | canceled` (`CARD_RUN_OUTCOMES` is the runtime mirror used by the validator).
+`CardRun` records one dispatch attempt: attempt number, timestamps, `outcome`, an optional `summary` captured from the completion marker, the `workerAgentId` that ran it (pool), `worktreePath` / `worktreeBranch` when the attempt was isolated, and `prUrl` once a PR was opened for it. Cards accumulate one run per attempt so retries are auditable. `CardRunOutcome` is `done | review | blocked | error | reclaimed | canceled` (`CARD_RUN_OUTCOMES` is the runtime mirror used by the validator).
 
 `priority?: CardPriority` (`high | normal | low`) is never serialized when `normal`: an absent priority and an explicit `normal` mean the same thing, and `cardPriorityRank` defaults it.
+
+`prOnDone?: CardPrOnDone` (`{ targetBranch?: string }`) is the per-card PR opt-in. Absent = off, and it is never written for a card that did not ask for it, so pre-feature `board.yaml` files round-trip byte-identical. `validateCardPrOnDone` drops anything that is not a plain object (`true`, a string, an array, YAML null), which DISARMS the opt-in rather than arming a PR from a malformed file. An empty object is deliberately valid and means "resolve the repo default branch at PR time". There is no per-board default; that was scoped out.
+
+### Card status
+
+`CardStatus` is `triage | todo | ready | running | review | blocked | done` (`CARD_STATUSES` is the runtime mirror, and **BoardModal's column order follows that array**, so the slot is load-bearing: `review` sits between `running` and `blocked`).
+
+`review` means "finished, but a human must approve it", split out of `blocked` so a deliberate hand-off stops looking like a failure. It is set by the dispatcher from a `card-review` marker or manually by the user. It is NOT terminal-successful: `graph.ts` requires parents strictly `'done'`, so a `review` card does not unblock its children, and `countActiveCards` ignores it so it holds no WIP slot. `review -> done` (drag, or the "Move to" picker) is the ONLY approval path.
 
 ---
 
@@ -87,11 +100,11 @@ Per `tick()`:
 
 **Cancel.** `cancelCard(cardId)` kills a `running` card's process through the injected `cancelSpawn` dep (`cancelBoardCardRun` in `board-spawn.ts`, which remembers the Cue `runId` per card and calls `stopCueRun`) and finalizes the card back to `todo` with a `canceled` run. The card id is tombstoned BEFORE the kill so the spawn promise resolving moments later (with a `null` exit) is discarded instead of re-finalizing the card as a failure. `canceled` and `reclaimed` runs are both skipped by the breaker's `trailingFailureCount`. IPC entry point is `board:cancelCard` -> `CueEngine.cancelBoardCard`, with a storage-only finalize fallback when no dispatcher owns the board (app restarted mid-run).
 
-**Notify.** The optional `notify` dep announces terminal transitions (`done` / `blocked`, including force-blocks). `index.ts` maps it onto the existing `remote:notifyToast` relay (green auto-dismiss / red sticky, `sourceAgent: 'Board'`). The payload is presentation-free; the dispatcher never picks colors.
+**Notify.** The optional `notify` dep announces terminal transitions (`done` / `review` / `blocked`, including force-blocks). `index.ts` maps it onto the existing `remote:notifyToast` relay via `board-toast.ts` (green auto-dismiss / yellow sticky / red sticky, `sourceAgent: 'Board'`). The payload is presentation-free; the dispatcher never picks colors. Note that `notifyCard` in `index.ts` emits `board.cardCompleted` on the `done` kind ONLY - a `review` notification is toast-only, because there is no `board.cardNeedsReview` topic yet (adding one means a host-API bump plus the vendored SDK mirror).
 
 **Dispatch order.** `readyCardsInDispatchOrder` is the single ordering rule for both claim paths: `priority` descending (`high` > `normal` > `low`, absent = `normal`), then `createdAt` ascending, then board order.
 
-`applyCardResult` precedence: **block marker -> `blocked` (outcome `blocked`); complete marker or clean exit -> `done` (outcome `done`); otherwise a failed run** (outcome `error` when the spawn errored or the exit code is `null`, else `blocked`) that retries (`ready`) until the circuit breaker (`DEFAULT_MAX_FAILURES = 2` consecutive non-completing runs) forces `blocked`. A card whose profile can't be resolved is force-blocked immediately (bypassing the breaker - retrying a missing profile is pointless). The worktree path/branch is stamped on the run for EVERY outcome, failures included: the branch still exists and is worth inspecting.
+`applyCardResult` precedence: **block marker -> `blocked` (outcome `blocked`); review marker -> `review` (outcome `review`, reason as the summary); complete marker or clean exit -> `done` (outcome `done`); otherwise a failed run** (outcome `error` when the spawn errored or the exit code is `null`, else `blocked`) that retries (`ready`) until the circuit breaker (`DEFAULT_MAX_FAILURES = 2` consecutive non-completing runs) forces `blocked`. Block and review markers are both authoritative - they win over a non-zero exit and are never retried - and `trailingFailureCount` RESETS on a `review` outcome the way it does on `done` (a review reached a deliberate conclusion, so it is not evidence the card cannot succeed; `reclaimed` / `canceled` are skipped rather than resetting). A card whose profile can't be resolved is force-blocked immediately (bypassing the breaker - retrying a missing profile is pointless). The worktree path/branch is stamped on the run for EVERY outcome, failures included: the branch still exists and is worth inspecting.
 
 **Status-change hook.** `snapshotCardStatuses` before a mutation and `diffCardStatuses` after it produce the transitions that were actually persisted, which is what the injected `onStatusChanged` dep (and, through it, the plugin bus) reports. A promote and a claim landing in the same save collapse into one `todo -> running` change - that is deliberate: it matches what an observer reading `board.yaml` would see. Cards that appeared mid-tick (auto-decompose children) are skipped, since they never transitioned.
 
@@ -123,6 +136,22 @@ A card carrying a `WorktreeRef` runs in its own checkout instead of the shared p
 
 ---
 
+## PR on done (per card)
+
+A card carrying `prOnDone` opens a pull request for its worktree branch when it lands in `done`. Nothing is merged; the branch is just put in front of a reviewer.
+
+- **One gh-CLI implementation.** `createPullRequest` in `src/main/utils/pr-creator.ts` is it: shell-PATH build, `git push -u origin HEAD` from the worktree, `gh pr create`, and the "gh not installed" error mapping. It was LIFTED out of the `git:createPR` IPC handler, which now calls it (unchanged IPC signature, `baseBranch` still required and passed through as an explicit target). `resolveDefaultBranch` in the same module backs `git:getDefaultBranch`. Do NOT add a second `gh pr create` call site, and do NOT reach for the renderer's `useWorktreeManager.createPR` from main.
+- **Target resolution lives in the helper:** explicit `targetBranch` -> `resolveDefaultBranch(mainRepoCwd)` (remote HEAD, then local `main`, then `master`) -> the literal `'main'`. The probe runs in the MAIN repo, not the worktree. The renderer used to own this three-step order; it is now duplicated nowhere.
+- **The gate is pure and testable.** `resolveCardPrRequest(board, cardId)` in `board-pr.ts` returns a request only when the card exists, is `done`, has `prOnDone`, its LATEST run has a `worktreeBranch` and no `prUrl` yet, and a checkout path is known (`run.worktreePath`, falling back to `card.worktree.path`). `run.prUrl` is what makes a re-fire, or a `done -> todo -> done` round trip, idempotent.
+- **Two call sites, one helper.** `finalize` in the dispatcher fires the injected `createCardPr?: (cardId) => void` dep AFTER `saveAndAnnounce`, never awaited (gh takes seconds and must not block the tick); the `board:setCardStatus` handler fires `startCardPr` after its write when the new status is `done`, which is the manual `review -> done` approval path. Both land in `maybeCreateCardPr`.
+- **The stamp is ONE closure, not a load/save pair.** Deps expose `stampPrUrl(cardId, prUrl)`, and `startCardPr` implements it as a re-read plus write inside `enqueueBoardWrite`. Handing the flow a `saveBoard` it could call at an arbitrary later moment would let a seconds-old snapshot clobber a tick's write.
+- **A module-level in-flight set** in `startCardPr`, keyed `projectRoot::boardId::cardId`, is what stops a dispatcher finalize overlapping a human drag from opening two PRs. `run.prUrl` only makes a SEQUENCE of attempts idempotent - it is not written until gh answers. The slot is released on failure so a retry is possible.
+- **Failures never touch card status.** A gh/push failure warn-logs and red-toasts (`buildCardPrToastPayload` in `board-toast.ts`); the card stays `done`. Success toasts green with an `open-url` clickAction to the PR.
+- **The CLI wires nothing.** Headless `board tick` calls `applyCardResult` directly, so CLI-driven cards never open PRs - consistent with how it treats `notify` / `cancelSpawn`.
+- **Inherits the local-only constraint.** Worktree cards refuse SSH, so the PR path never has to think about remotes.
+
+---
+
 ## Plugin-bus board events
 
 The Board publishes four read-only topics on the plugin event bus so other plugins can build on it. All four are declared in `src/shared/plugins/events.ts` (`PLUGIN_EVENT_TOPICS` + `PluginEventPayloads`) and emitted from `src/main/index.ts` through the board deps the Cue engine calls.
@@ -144,7 +173,7 @@ The Board publishes four read-only topics on the plugin event bus so other plugi
 
 ## Completion markers & handoff
 
-`parseCardMarkers` (in `cardMarkers.ts`, mirrors `goalMarkers.ts`) scans a run's output for `<!-- maestro:card-complete [| summary] -->` and `<!-- maestro:card-block[: reason] -->`, last-match-wins. `CARD_HANDOFF_REMINDER` (also in `cardMarkers.ts`, so CLI and desktop share one copy) is prepended to every card prompt to encourage the four-question handoff in the summary. The captured summary lands on `CardRun.summary` and is surfaced in `BoardModal` as an expandable "Last run summary". It is optional metadata - the run completes without it (falling back to the exit status).
+`parseCardMarkers` (in `cardMarkers.ts`, mirrors `goalMarkers.ts`) scans a run's output for `<!-- maestro:card-complete [| summary] -->`, `<!-- maestro:card-review[: reason] -->`, and `<!-- maestro:card-block[: reason] -->`, last-match-wins per type. The parser reports all three flags faithfully and decides nothing: **precedence is the dispatcher's job** (block > review > complete), so do not fold it into the parser. `CARD_HANDOFF_REMINDER` (also in `cardMarkers.ts`, so CLI and desktop share one copy) is prepended to every card prompt to encourage the four-question handoff in the summary and to teach all three markers: fix what you can safely fix and card-complete, card-review when the work needs human judgment or verification, card-block only when genuinely stuck. The captured summary lands on `CardRun.summary` and is surfaced in `BoardModal` as an expandable "Last run summary". It is optional metadata - the run completes without it (falling back to the exit status).
 
 ---
 
@@ -190,5 +219,7 @@ Rules worth knowing before you extend this surface:
 - **The kanban does not poll.** `saveBoards` fires the `setBoardSavedListener` hook, the host (`src/main/index.ts`, next to the other startup wiring) broadcasts `board:changed { projectRoot }` to every window via `safeSend`, and both `BoardModal` (through `window.maestro.board.onBoardChanged`) and the header's `BoardStatusIndicator` refetch on it. `saveProfiles` mirrors it exactly: `setProfilesSavedListener` -> `profiles:changed` -> `window.maestro.profiles.onProfilesChanged` -> `ProfilesModal`. Both hooks live in the host, not in storage, because the CLI imports the same storage modules and has no `webContents`; both are advisory (a listener that throws is logged and never fails the write that already landed). There is exactly one listener per store, set once at startup, last-write-wins - do not add a second broadcast site.
 - **Worktree isolation refuses SSH, it does not downgrade.** `board-spawn.ts` blocks an isolated card whose base agent has `sshRemoteConfig.enabled` with `WORKTREE_SSH_UNSUPPORTED` (from `board-worktree.ts`) instead of provisioning locally. A local checkout is invisible to an agent executing on a remote host, so "isolate it anyway" would silently run the card in the wrong tree. The remote variant (`worktreeSetupRemote` in `utils/remote-git.ts`) is deliberately NOT wired in - do not reach for it without designing remote cleanup first.
 - **Keyboard parity is a "Move to" picker, not ARIA drag-and-drop.** Tiles are `role="button" tabIndex={0}`; arrows walk the grid, Enter opens the card, `m` opens its editor focused on the "Move to" select (which persists through `setCardStatus` immediately, with the same running/derived-status guards as a drop), and Delete twice removes it. Native HTML5 DnD stays for pointer users only - do not reimplement it as a custom ARIA drag surface.
+- **`review` is not a success terminal.** It looks terminal in the UI, but `graph.ts` gates children on strictly `'done'`, so anything keying off "the card finished" must decide explicitly whether `review` counts. It currently does not: no child promotion, no `board.cardCompleted` event, no PR.
+- **The Review column shares Running's yellow.** `ThemeColors` has exactly `success` / `warning` / `error`, so `warning` is the only warning-family key and `STATUS_META.review` uses it. That is a palette limitation, not a decision - do not "fix" it by inventing a sixth semantic color, and do not write tests asserting the column's color.
 - **Multi-board selection is a UI preference, not a setting.** The last board opened per project lives in `localStorage` under `maestro.board.lastBoardId:<projectRoot>`, next to the other view-state keys. It is deliberately not in the settings store: nothing outside the modal reads it.
 - **Cross-platform paths.** All board/profile file paths go through `path.join` on `BOARD_CONFIG_PATH` / `PROFILES_CONFIG_PATH` (`src/shared/maestro-paths.ts`), and project roots come from stored sessions - no separator or home-dir assumptions, so the Windows CI leg stays green.
