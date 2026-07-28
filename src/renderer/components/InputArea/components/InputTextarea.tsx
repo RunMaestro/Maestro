@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useRef } from 'react';
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import type { Session, Group, Theme } from '../../../types';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { useSettingsStore } from '../../../stores/settingsStore';
@@ -102,12 +102,27 @@ export const InputTextarea = memo(function InputTextarea({
 
 	// Keep the decorative overlay pinned to the textarea's scroll position so the
 	// mention highlights track the text as the input grows past one line.
-	const syncOverlayScroll = (target: HTMLTextAreaElement) => {
+	const syncOverlayScroll = useCallback((target: HTMLTextAreaElement) => {
 		const el = overlayRef.current;
 		if (!el) return;
 		el.scrollTop = target.scrollTop;
 		el.scrollLeft = target.scrollLeft;
-	};
+	}, []);
+
+	// Re-sync AFTER the taller overlay has been committed. A keystroke that wraps a
+	// new line makes the browser natively scroll the textarea BEFORE React commits
+	// the grown overlay content, so the `onScroll` sync assigns a scrollTop the
+	// overlay cannot reach yet and the browser clamps it one row short - leaving the
+	// glyphs above the caret and the newest line clipped, with no later event to
+	// repair it. Running the copy in a layout effect keyed on the rendered segments
+	// means the overlay already has its full scrollHeight, so the same scrollTop now
+	// lands unclamped. `onScroll` still owns user-driven scrolling.
+	useLayoutEffect(() => {
+		if (!overlayEnabled) return;
+		const textarea = inputRef.current;
+		if (!textarea || !overlayRef.current) return;
+		syncOverlayScroll(textarea);
+	}, [segments, overlayEnabled, inputRef, syncOverlayScroll]);
 
 	// Chip palette shared with the sent-transcript pill (same fill + border), so
 	// the mention reads as the same object whether the user is typing it or reading
