@@ -280,6 +280,14 @@ program
 	.option('--no-history', 'Do not write history entries')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {
 		const { goalRun } = await import('./commands/goal-run');
 		return goalRun(agentId, goal, options);
@@ -483,6 +491,14 @@ program
 	.option(
 		'--pr-target-branch <branch>',
 		'Target branch for the PR (defaults to the repo default branch)'
+	)
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
 	.action(autoRun);
 

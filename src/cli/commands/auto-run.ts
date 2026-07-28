@@ -18,6 +18,10 @@ interface AutoRunOptions {
 	worktreePath?: string;
 	createPr?: boolean;
 	prTargetBranch?: string;
+	// Run-scoped overrides: they win over the agent's configured model/effort for
+	// this run only and are never written back to the session.
+	model?: string;
+	effort?: string;
 }
 
 export async function autoRun(docs: string[], options: AutoRunOptions): Promise<void> {
@@ -110,6 +114,11 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		process.exit(1);
 	}
 
+	// Run-scoped model/effort overrides. Sent only when set so an omitted flag
+	// leaves the agent's configured default untouched.
+	const runModel = options.model?.trim() || undefined;
+	const runEffort = options.effort?.trim() || undefined;
+
 	try {
 		const result = await withMaestroClient(async (client) => {
 			return client.sendCommand<{
@@ -128,6 +137,8 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 					saveAsPlaybook: options.saveAs,
 					launch: options.launch,
 					worktree,
+					...(runModel && { model: runModel }),
+					...(runEffort && { effort: runEffort }),
 				},
 				'configure_auto_run_result'
 			);
