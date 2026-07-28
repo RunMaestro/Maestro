@@ -576,6 +576,92 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
+	// Handle remote launch-goal-run from the CLI (`goal-run --visible`). Starts a
+	// desktop-visible Goal-Driven Auto Run via the SAME entry point the UI Go
+	// button uses (startBatchRun with a goalConfig), so the run is owned by the
+	// desktop app and appears in the same Auto Run surface. Returns the AI tab it
+	// attached to so the CLI can build an addressable maestro:// deep link.
+	useEventListener('maestro:launchGoalRun', async (e: Event) => {
+		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			config: { goal: string; exitCriteria: string; maxIterations: number | null };
+			responseChannel: string;
+		};
+
+		try {
+			const session =
+				sessionsRef.current.find((s) => s.id === sessionId) ||
+				selectSessionById(sessionId)(useSessionStore.getState());
+			if (!session) {
+				window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, {
+					success: false,
+					error: `Session ${sessionId} not found`,
+				});
+				return;
+			}
+
+			// Deterministic busy handling: refuse rather than queue behind existing
+			// work, mirroring the CLI's checkAgentBusy gate for headless goal runs.
+			if (session.state === 'busy' || session.state === 'connecting') {
+				window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, {
+					success: false,
+					error: `Agent "${session.name || session.id}" is busy`,
+				});
+				return;
+			}
+
+			const goal = config.goal?.trim() ?? '';
+			if (!goal) {
+				window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, {
+					success: false,
+					error: 'Missing or empty goal',
+				});
+				return;
+			}
+
+			// Resolve the AI tab the run is associated with so we can return an
+			// addressable id. Prefer the active tab when it's an AI tab; otherwise
+			// fall back to the first AI tab (goal runs are per-agent, so any AI tab
+			// surfaces the run).
+			const activeAiTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
+			const tabId = activeAiTab?.id ?? session.aiTabs?.[0]?.id;
+
+			const batchConfig: BatchRunConfig = {
+				documents: [],
+				prompt: DEFAULT_BATCH_PROMPT,
+				loopEnabled: false,
+				maxLoops: null,
+				goalConfig: {
+					goal,
+					exitCriteria: config.exitCriteria ?? '',
+					maxIterations: config.maxIterations ?? null,
+				},
+			};
+
+			// Focus the agent so the run is immediately visible, matching the UI
+			// Go button (which runs on the focused agent).
+			setActiveSessionId(sessionId);
+
+			// Ack before starting: startBatchRun is long-running and would exceed the
+			// IPC/CLI timeout if awaited (same pattern as maestro:configureAutoRun).
+			window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, {
+				success: true,
+				...(tabId ? { tabId } : {}),
+			});
+
+			// Goal mode is document-less; folderPath is only stored in batch state.
+			startBatchRun(sessionId, batchConfig, session.autoRunFolderPath || '').catch((err) => {
+				logger.error('[Remote] Failed to start visible goal run:', undefined, err);
+			});
+		} catch (error) {
+			captureException(error, { extra: { sessionId, responseChannel } });
+			window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, {
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	});
+
 	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
 	// git worktree branched off a parent agent, without an Auto Run playbook.
 	// Reuses spawnWorktreeAgentAndDispatch (the same helper the Auto Run launch

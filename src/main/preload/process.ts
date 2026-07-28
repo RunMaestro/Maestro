@@ -1085,6 +1085,54 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote launch-goal-run from the CLI (`goal-run --visible`).
+		 * The renderer starts a visible Goal-Driven Auto Run and must ack via
+		 * sendRemoteLaunchGoalRunResponse with the AI tab it attached to.
+		 */
+		onRemoteLaunchGoalRun: (
+			callback: (
+				sessionId: string,
+				config: { goal: string; exitCriteria: string; maxIterations: number | null },
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: { goal: string; exitCriteria: string; maxIterations: number | null },
+				responseChannel: string
+			) => {
+				try {
+					// callback may return a promise even though typed as void
+					Promise.resolve(callback(sessionId, config, responseChannel)).catch((error) => {
+						ipcRenderer.send(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			};
+			ipcRenderer.on('remote:launchGoalRun', handler);
+			return () => ipcRenderer.removeListener('remote:launchGoalRun', handler);
+		},
+
+		/**
+		 * Send response for remote launch-goal-run. `tabId` is the AI tab the
+		 * visible run attached to, so the CLI can build a `maestro://` deep link.
+		 */
+		sendRemoteLaunchGoalRunResponse: (
+			responseChannel: string,
+			result: { success: boolean; tabId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote create-worktree-agent from the CLI. Creates a new
 		 * agent in a git worktree branched off a parent agent, without Auto Run.
 		 */
