@@ -266,6 +266,14 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
@@ -315,6 +323,14 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (docs: string[], options: Record<string, unknown>) => {
 		const { runDoc } = await import('./commands/run-doc');
 		return runDoc(docs, options as never);

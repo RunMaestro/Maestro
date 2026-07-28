@@ -43,6 +43,13 @@ export async function* runPlaybook(
 		debug?: boolean;
 		verbose?: boolean;
 		skipSynopsis?: boolean;
+		/**
+		 * Run-scoped model override. Wins over `session.customModel` for every
+		 * spawn this run makes; the stored session is never modified.
+		 */
+		model?: string;
+		/** Run-scoped reasoning effort override (same contract as `model`). */
+		effort?: string;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
 	const {
@@ -51,6 +58,8 @@ export async function* runPlaybook(
 		debug = false,
 		verbose = false,
 		skipSynopsis = false,
+		model: runModel,
+		effort: runEffort,
 	} = options;
 	const batchStartTime = Date.now();
 
@@ -477,8 +486,8 @@ export async function* runPlaybook(
 						},
 						() =>
 							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-								customModel: session.customModel,
-								customEffort: session.customEffort,
+								customModel: runModel ?? session.customModel,
+								customEffort: runEffort ?? session.customEffort,
 								customArgs: session.customArgs,
 								additionalDirectories: session.additionalDirectories,
 								customEnvVars: session.customEnvVars,
@@ -538,8 +547,8 @@ export async function* runPlaybook(
 									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
 									result.agentSessionId,
 									{
-										customModel: session.customModel,
-										customEffort: session.customEffort,
+										customModel: runModel ?? session.customModel,
+										customEffort: runEffort ?? session.customEffort,
 										customArgs: session.customArgs,
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
