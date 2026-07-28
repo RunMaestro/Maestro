@@ -110,6 +110,14 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 										)
 									: 0;
 
+			// A context-window correction (omp's catalog primed after the first turn's
+			// fallback usage already emitted) replays an already-counted turn purely to
+			// fix the window. The batched updater applies it as window-only, but the
+			// per-turn side effects below (timeline point, cycle tokens) would still
+			// double-count, so they are skipped for corrections. The gauge percentage is
+			// still recomputed so the corrected window resizes the fill.
+			const isContextWindowCorrection = usageStats.contextWindowCorrectionOnly === true;
+
 			deps.batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			deps.batchedUpdater.updateUsage(actualSessionId, null, usageStats);
 
@@ -151,7 +159,12 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				(usageStats.cacheCreationInputTokens || 0) === 0 &&
 				usageStats.outputTokens === 0 &&
 				(usageStats.reasoningTokens || 0) === 0;
-			if (isInteractiveRun && !isOutputOnlyDelta && !hasNoTurnActivity) {
+			if (
+				isInteractiveRun &&
+				!isOutputOnlyDelta &&
+				!hasNoTurnActivity &&
+				!isContextWindowCorrection
+			) {
 				// For providers whose usage arrives as per-turn deltas of a cumulative
 				// session total (Codex), the delta undercounts the context that is
 				// actually occupying the window - plotting it makes a long run look
@@ -201,7 +214,9 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 					deps.batchedUpdater.updateContextUsage(actualSessionId, Math.min(estimated, maxEstimate));
 				}
 			}
-			deps.batchedUpdater.updateCycleTokens(actualSessionId, usageStats.outputTokens);
+			if (!isContextWindowCorrection) {
+				deps.batchedUpdater.updateCycleTokens(actualSessionId, usageStats.outputTokens);
+			}
 		});
 
 		return () => {

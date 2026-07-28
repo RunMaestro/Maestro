@@ -296,6 +296,24 @@ export interface UsageStats {
 	 */
 	contextWindowResolved?: boolean;
 	/**
+	 * The model whose window `contextWindow` describes, for providers whose window
+	 * is model-dependent (currently Oh My Pi). Consumers that preserve a resolved
+	 * window across an unresolved delta (see `mergeContextWindow`) scope that
+	 * preservation to the SAME model so a mid-session model switch to a model that
+	 * is absent from the primed catalog can't leave the gauge stuck on the previous
+	 * model's window. Undefined for providers with a single static window.
+	 */
+	contextWindowModel?: string;
+	/**
+	 * True when this usage event exists ONLY to correct a previously emitted
+	 * context window (Oh My Pi's catalog primed after the first turn's fallback
+	 * usage was already emitted - see `pushResolvedOmpContextWindow`). The token
+	 * and cost fields are a REPLAY of that already-counted turn, so accumulating
+	 * consumers must NOT add them again: update the context window and leave every
+	 * token/cost total untouched. Undefined for ordinary per-turn usage events.
+	 */
+	contextWindowCorrectionOnly?: boolean;
+	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
 	 * These are already included in outputTokens but tracked separately for UI display.

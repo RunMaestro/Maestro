@@ -75,4 +75,28 @@ describe('mergeContextWindow', () => {
 			)
 		).toEqual({ contextWindow: ONE_M, contextWindowResolved: true });
 	});
+
+	it('keeps a same-model resolved window across a transient unresolved delta', () => {
+		expect(
+			mergeContextWindow(
+				{ contextWindow: FALLBACK, contextWindowModel: 'opus' },
+				{ contextWindow: ONE_M, contextWindowResolved: true, contextWindowModel: 'opus' }
+			)
+		).toEqual({ contextWindow: ONE_M, contextWindowResolved: true, contextWindowModel: 'opus' });
+	});
+
+	it('does NOT keep a resolved window when a different model reports unresolved', () => {
+		// Model switch to a model absent from the primed omp catalog: the gauge must
+		// drop to the new model's fallback rather than stay on the old model's window.
+		expect(
+			mergeContextWindow(
+				{ contextWindow: FALLBACK, contextWindowModel: 'haiku' },
+				{ contextWindow: ONE_M, contextWindowResolved: true, contextWindowModel: 'opus' }
+			)
+		).toEqual({
+			contextWindow: FALLBACK,
+			contextWindowResolved: undefined,
+			contextWindowModel: 'haiku',
+		});
+	});
 });

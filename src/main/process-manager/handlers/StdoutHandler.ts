@@ -297,10 +297,15 @@ export function pushResolvedOmpContextWindow(
 	}
 
 	managedProcess.pendingOmpUsagePush = undefined;
+	// Correction-only: the token/cost fields carried in pending.stats were already
+	// counted when the fallback usage event fired for this turn, so flag this
+	// replay. Accumulating consumers must update the window only and never re-add
+	// the tokens/cost (see mergeContextWindow + useAgentUsageListener).
 	emitter.emit('usage', sessionId, {
 		...pending.stats,
 		contextWindow: resolved,
 		contextWindowResolved: true,
+		contextWindowCorrectionOnly: true,
 	});
 	return true;
 }
@@ -834,6 +839,9 @@ export class StdoutHandler {
 		// default). Local runs only; remotes have their own catalog and keep the
 		// configured/fallback window.
 		if (managedProcess.toolType === 'omp' && !managedProcess.sshRemoteId && usage.model) {
+			// Stamp the model this window belongs to so a downstream resolved-window
+			// preservation can't survive a switch to a different omp model.
+			stats.contextWindowModel = usage.model;
 			const resolved = managedProcess.ompModelCatalogKey
 				? getOmpModelContextWindow(usage.model, managedProcess.ompModelCatalogKey)
 				: undefined;

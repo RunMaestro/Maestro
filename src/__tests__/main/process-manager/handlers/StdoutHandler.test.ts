@@ -1388,6 +1388,10 @@ describe('StdoutHandler', () => {
 			expect(corrected.contextWindow).toBe(1_000_000);
 			expect(corrected.contextWindowResolved).toBe(true);
 			expect(corrected.inputTokens).toBe(usageSpy.mock.calls[0][1].inputTokens);
+			// Flagged correction-only so accumulating consumers update the window
+			// without re-counting the replayed turn's tokens/cost.
+			expect(corrected.contextWindowCorrectionOnly).toBe(true);
+			expect(corrected.contextWindowModel).toBe('claude-opus-4-8');
 
 			// Pending payload is cleared, so a repeat call cannot double-emit.
 			expect(proc.pendingOmpUsagePush).toBeUndefined();
