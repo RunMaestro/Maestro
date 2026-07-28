@@ -49,6 +49,25 @@ export interface WorktreeRef {
 }
 
 /**
+ * Per-card opt-in: open a pull request when the card lands in `done`.
+ *
+ * Only meaningful on a card that also opted into worktree isolation
+ * ({@link BoardCard.worktree}) - the PR is opened for the branch that worktree
+ * holds. An ABSENT field means the feature is off, and it is never serialized
+ * in that case, so existing board.yaml files stay byte-identical until someone
+ * actually turns it on (same convention as {@link CardPriority}).
+ *
+ * The branch is still never auto-merged; a PR is simply opened for it.
+ */
+export interface CardPrOnDone {
+	/**
+	 * Branch the PR targets. Absent means "the repo's default branch", resolved
+	 * at PR time rather than baked into the board file.
+	 */
+	targetBranch?: string;
+}
+
+/**
  * The terminal outcome a dispatcher records for one attempt at a card.
  *
  * `reclaimed` is deliberately distinct from `error`: it means the attempt was
@@ -131,6 +150,13 @@ export interface CardRun {
 	 * auto-merged or auto-deleted).
 	 */
 	worktreeBranch?: string;
+	/**
+	 * URL of the pull request opened for {@link worktreeBranch} when the card
+	 * carried {@link BoardCard.prOnDone} and reached `done`. Absent when the card
+	 * did not opt in, had no worktree branch, or PR creation failed (a failure
+	 * never changes the card's status).
+	 */
+	prUrl?: string;
 	/** Free-form dispatcher metadata (session id, tokens, etc.). */
 	metadata?: Record<string, unknown>;
 }
@@ -181,6 +207,11 @@ export interface BoardCard {
 	priority?: CardPriority;
 	/** Worktree the card runs in, once dispatched. */
 	worktree?: WorktreeRef;
+	/**
+	 * Open a pull request when this card reaches `done`. Absent means off (and is
+	 * never serialized); only meaningful alongside {@link worktree}.
+	 */
+	prOnDone?: CardPrOnDone;
 	/** Per-attempt run history, most-recent last. */
 	runs?: CardRun[];
 	/** ISO timestamp the card was created. */
@@ -246,6 +277,20 @@ function validateWorktreeRef(raw: unknown): WorktreeRef | null {
 	return ref;
 }
 
+/**
+ * Validate an untrusted object as a {@link CardPrOnDone}. Returns `null` when the
+ * value is not an object, so a malformed entry drops the opt-in entirely rather
+ * than silently arming a PR. An empty object is valid and means "default branch".
+ */
+function validateCardPrOnDone(raw: unknown): CardPrOnDone | null {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+	const r = raw as Record<string, unknown>;
+	const prOnDone: CardPrOnDone = {};
+	const targetBranch = optionalString(r.targetBranch);
+	if (targetBranch !== undefined) prOnDone.targetBranch = targetBranch.trim();
+	return prOnDone;
+}
+
 /** Validate a single run entry, dropping malformed fields. Returns null if unusable. */
 function validateCardRun(raw: unknown): CardRun | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -270,6 +315,8 @@ function validateCardRun(raw: unknown): CardRun | null {
 	if (worktreePath !== undefined) run.worktreePath = worktreePath;
 	const worktreeBranch = optionalString(r.worktreeBranch);
 	if (worktreeBranch !== undefined) run.worktreeBranch = worktreeBranch;
+	const prUrl = optionalString(r.prUrl);
+	if (prUrl !== undefined) run.prUrl = prUrl;
 	if (r.metadata && typeof r.metadata === 'object' && !Array.isArray(r.metadata)) {
 		run.metadata = r.metadata as Record<string, unknown>;
 	}
@@ -287,7 +334,8 @@ function validateCardRun(raw: unknown): CardRun | null {
  * (pinned agent) must be a non-empty string. `status` must be a known
  * {@link CardStatus}. `parents` defaults to `[]` and keeps only non-empty string
  * ids. Missing `createdAt`/`updatedAt` fall back to {@link nowIso} when supplied.
- * Optional `worktree`/`runs` are validated structurally and dropped when malformed.
+ * Optional `worktree`/`prOnDone`/`runs` are validated structurally and dropped
+ * when malformed.
  */
 export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -330,6 +378,12 @@ export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | nu
 
 	const worktree = validateWorktreeRef(r.worktree);
 	if (worktree) card.worktree = worktree;
+
+	// Absent/malformed means the opt-in is off, so nothing is written back out.
+	if (r.prOnDone !== undefined) {
+		const prOnDone = validateCardPrOnDone(r.prOnDone);
+		if (prOnDone) card.prOnDone = prOnDone;
+	}
 
 	if (Array.isArray(r.runs)) {
 		const runs = r.runs
