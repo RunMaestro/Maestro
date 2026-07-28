@@ -246,6 +246,9 @@ export const InputTextarea = memo(function InputTextarea({
 							</span>
 						);
 					})}
+					{inputValue.endsWith('\n') && (
+						<span data-testid="maestro-input-overlay-trailing-line">{'\u200b'}</span>
+					)}
 				</div>
 			)}
 			<textarea

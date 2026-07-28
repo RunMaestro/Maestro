@@ -291,6 +291,29 @@ describe('InputArea', () => {
 			expect((mentionDecoration as HTMLElement).style.color).toBe('transparent');
 		});
 
+		it('preserves a trailing empty caret line in the mention overlay', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'Maestro' });
+			const draft = [
+				'Mas agora, foi corrigido.',
+				'',
+				'Acho que é só s',
+				'',
+				'@Maestro  o que acha?',
+				'',
+			].join('\n');
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+
+			const { container } = render(
+				<InputArea {...createDefaultProps({ session, inputValue: draft })} />
+			);
+			const overlay = container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
+			const trailingLine = screen.getByTestId('maestro-input-overlay-trailing-line');
+
+			expect(overlay.textContent).toBe(`${draft}\u200b`);
+			expect(trailingLine).toHaveTextContent('\u200b');
+		});
+
 		it('shows native text and hides the mention overlay during selection changes', () => {
 			const props = createDefaultProps({ inputValue: 'check @src/index.ts now' });
 			const { container } = render(<InputArea {...props} />);
