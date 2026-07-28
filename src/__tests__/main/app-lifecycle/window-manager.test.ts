@@ -15,6 +15,8 @@ import type { WindowManagerDependencies } from '../../../main/app-lifecycle/wind
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
+// The window's `move` listener (drives the cross-display min-size re-clamp).
+let windowMoveHandler: (() => void) | null = null;
 // The factory registers several `closed` listeners; collect them all so a test
 // can fire the full close sequence rather than guessing which one is last.
 let windowClosedHandlers: Array<() => void> = [];
@@ -87,6 +89,7 @@ const mockWindowInstance = {
 	on: vi.fn((event: string, handler: () => void) => {
 		if (event === 'close') windowCloseHandler = handler;
 		if (event === 'closed') windowClosedHandlers.push(handler);
+		if (event === 'move') windowMoveHandler = handler;
 	}),
 };
 
@@ -245,6 +248,7 @@ describe('app-lifecycle/window-manager', () => {
 		vi.clearAllMocks();
 		vi.resetModules(); // Reset module cache to clear devStubsRegistered flag
 		windowCloseHandler = null;
+		windowMoveHandler = null;
 		lastBrowserWindowOptions = null;
 		webContentsEventHandlers.clear();
 		guestWebContentsEventHandlers.clear();
@@ -505,6 +509,39 @@ describe('app-lifecycle/window-manager', () => {
 				mockScreen.emitDisplayMetricsChanged();
 
 				expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledWith(1000, 593);
+			});
+
+			it('re-clamps the minimum size when the window moves onto a smaller display', async () => {
+				// Dragging onto an already-connected smaller display does NOT fire
+				// display-metrics-changed, so the window's own move event must re-clamp.
+				vi.useFakeTimers();
+				try {
+					const windowManager = await makeManager();
+					windowManager.createWindow();
+					expect(windowMoveHandler).not.toBeNull();
+					mockWindowInstance.setMinimumSize.mockClear();
+
+					// A second, smaller display exists; the window drags onto it.
+					mockScreen.state.displays = [
+						{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+						{ workArea: { x: 1920, y: 0, width: 1093, height: 593 } },
+					];
+					mockWindowInstance.getBounds.mockReturnValue({
+						x: 1920,
+						y: 0,
+						width: 1093,
+						height: 593,
+					});
+
+					windowMoveHandler!();
+					// Debounced: nothing until the drag settles.
+					expect(mockWindowInstance.setMinimumSize).not.toHaveBeenCalled();
+					vi.runAllTimers();
+
+					expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledWith(1000, 593);
+				} finally {
+					vi.useRealTimers();
+				}
 			});
 
 			it('stops re-clamping after the window is closed', async () => {

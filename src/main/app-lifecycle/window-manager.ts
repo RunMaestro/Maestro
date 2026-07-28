@@ -217,8 +217,17 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			browserWindow.setMinimumSize(nextMinWidth, nextMinHeight);
 		};
 		screen.on('display-metrics-changed', reclampMinimumSize);
+		// Dragging a window onto an already-connected display whose work area is
+		// smaller does NOT fire display-metrics-changed, so the stale (larger)
+		// minimum would linger and keep blocking maximize on that display. Re-clamp
+		// on the window's own move too, debounced so a live drag (which fires a
+		// flood of move events) collapses into one recompute once it settles on the
+		// new display.
+		const reclampMinimumSizeOnMove = debounce(reclampMinimumSize, WINDOW_STATE_SAVE_DEBOUNCE_MS);
+		browserWindow.on('move', reclampMinimumSizeOnMove);
 		browserWindow.on('closed', () => {
 			screen.removeListener('display-metrics-changed', reclampMinimumSize);
+			reclampMinimumSizeOnMove.cancel();
 		});
 
 		logger.info('Browser window created', 'Window', {
