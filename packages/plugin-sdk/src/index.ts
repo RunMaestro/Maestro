@@ -1160,6 +1160,7 @@ export const PLUGIN_EVENT_TOPICS = [
 	'history.entryAdded', // a history entry was added (ids/classification only)
 	'agent.completed', // an agent reached a terminal state (metadata only, no output)
 	'tool.executed', // a tool call started or finished (name + timing only, no arguments or results)
+	'session.activated', // the focused agent changed (ids only, no titles or content)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -1257,6 +1258,9 @@ export interface PluginEventPayloads {
 		timestamp: number;
 		durationMs?: number;
 	};
+	/** The focused agent changed. Opaque ids ONLY - no title, no project path,
+	 * nothing derived from the session's content. */
+	'session.activated': { sessionId: string; tabId?: string };
 }
 
 /** A typed host event. */

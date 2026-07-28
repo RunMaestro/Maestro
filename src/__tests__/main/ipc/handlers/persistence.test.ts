@@ -230,6 +230,64 @@ describe('persistence IPC handlers', () => {
 
 			expect(mockSessionsStore.set).toHaveBeenCalledWith('activeSessionId', 'quit-id');
 		});
+
+		describe('session.activated plugin event', () => {
+			let emitPluginEvent: ReturnType<typeof vi.fn>;
+			let setHandler: (event: unknown, id: string) => Promise<unknown>;
+
+			beforeEach(() => {
+				handlers.clear();
+				emitPluginEvent = vi.fn();
+				const deps: PersistenceHandlerDependencies = {
+					settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+					sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+					groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+					getWebServer: getWebServerFn,
+					safeSend: mockSafeSend,
+					emitPluginEvent,
+				};
+				registerPersistenceHandlers(deps);
+				setHandler = handlers.get('sessions:setActiveSessionId') as typeof setHandler;
+			});
+
+			it('emits a metadata-only session.activated after its own short debounce', async () => {
+				await setHandler({}, 'sess-1');
+				expect(emitPluginEvent).not.toHaveBeenCalled();
+
+				vi.advanceTimersByTime(100);
+				expect(emitPluginEvent).toHaveBeenCalledTimes(1);
+				const event = emitPluginEvent.mock.calls[0][0];
+				expect(event.topic).toBe('session.activated');
+				expect(event.payload).toEqual({ sessionId: 'sess-1' });
+				expect(typeof event.at).toBe('string');
+			});
+
+			it('coalesces a burst of switches into one event for the session landed on', async () => {
+				await setHandler({}, 'a');
+				await setHandler({}, 'b');
+				await setHandler({}, 'c');
+
+				vi.advanceTimersByTime(100);
+				expect(emitPluginEvent).toHaveBeenCalledTimes(1);
+				expect(emitPluginEvent.mock.calls[0][0].payload).toEqual({ sessionId: 'c' });
+			});
+
+			it('does not re-emit when the same session is re-focused', async () => {
+				await setHandler({}, 'same');
+				vi.advanceTimersByTime(100);
+				await setHandler({}, 'same');
+				vi.advanceTimersByTime(100);
+
+				expect(emitPluginEvent).toHaveBeenCalledTimes(1);
+			});
+
+			it('ignores an empty session id', async () => {
+				await setHandler({}, '');
+				vi.advanceTimersByTime(100);
+
+				expect(emitPluginEvent).not.toHaveBeenCalled();
+			});
+		});
 	});
 
 	describe('settings:get', () => {

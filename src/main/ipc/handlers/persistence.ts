@@ -128,6 +128,36 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	// before windows close; the write is synchronous so it completes in-line.
 	app.on('before-quit', flushActiveSessionId);
 
+	// Metadata-only `session.activated` for subscribed plugins (events:subscribe).
+	// Its own debounce, deliberately much shorter than the 400ms disk debounce
+	// above: that one exists to avoid re-serializing the sessions store and is too
+	// slow to feel live in a plugin surface, while emitting on every raw call would
+	// spray events as the user arrow-keys down the Left Bar. Trailing-edge, so a
+	// burst of navigation yields one event for the session actually landed on.
+	const SESSION_ACTIVATED_DEBOUNCE_MS = 100;
+	let pendingActivatedSessionId: string | null = null;
+	let lastEmittedActivatedSessionId: string | null = null;
+	let sessionActivatedTimer: NodeJS.Timeout | null = null;
+
+	const flushSessionActivated = (): void => {
+		sessionActivatedTimer = null;
+		const id = pendingActivatedSessionId;
+		pendingActivatedSessionId = null;
+		if (!id || !emitPluginEvent) return;
+		// Re-focusing the session the plugins were last told about is a no-op.
+		if (id === lastEmittedActivatedSessionId) return;
+		lastEmittedActivatedSessionId = id;
+		emitPluginEvent({
+			topic: 'session.activated',
+			at: new Date().toISOString(),
+			// `tabId` is intentionally omitted: the renderer only reports which
+			// SESSION is focused here, and the stored session record's tab state can
+			// lag the live one. The field stays optional for a future caller that
+			// does know the tab.
+			payload: { sessionId: id },
+		});
+	};
+
 	// Settings management
 	ipcMain.handle('settings:get', async (_, key: string) => {
 		const value = settingsStore.get(key);
@@ -258,6 +288,13 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
 		activeSessionIdTimer = setTimeout(flushActiveSessionId, ACTIVE_SESSION_ID_DEBOUNCE_MS);
+
+		// Separate, shorter debounce for the plugin event (see flushSessionActivated).
+		if (emitPluginEvent && typeof id === 'string' && id) {
+			pendingActivatedSessionId = id;
+			if (sessionActivatedTimer) clearTimeout(sessionActivatedTimer);
+			sessionActivatedTimer = setTimeout(flushSessionActivated, SESSION_ACTIVATED_DEBOUNCE_MS);
+		}
 	});
 
 	/**
