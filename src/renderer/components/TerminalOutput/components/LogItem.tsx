@@ -560,11 +560,15 @@ export const LogItem = memo(
 						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
-						(log.ttsr ? (
+						(log.ttsr && isUserMessage ? (
 							// TTSR injection boundary: the body is the `<system-interrupt>`
 							// block, which is machinery the user rarely needs to read. Keep it
 							// collapsed by default behind a native <details> disclosure (the
-							// badge in the footer already names the rule[s] that fired).
+							// badge in the footer already names the rule[s] that fired). Scoped
+							// to user entries to mirror the footer badge (line ~1015): the
+							// `ttsr` marker is only ever set on the user-source injection log,
+							// so a non-user entry carrying it should fall through to normal
+							// rendering rather than be replaced by a bare disclosure.
 							<details className="text-sm">
 								<summary
 									className="cursor-pointer select-none text-xs"

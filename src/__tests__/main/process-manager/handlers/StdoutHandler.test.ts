@@ -54,7 +54,6 @@ import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
-import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import { logger } from '../../../../main/utils/logger';
 import type { AgentOutputParser } from '../../../../main/parsers/agent-output-parser';
@@ -2710,18 +2709,20 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			const thinkingSpy = vi.fn();
 			emitter.on('thinking-chunk', thinkingSpy);
 
-			// Prose streams token by token.
+			// Prose streams token by token. Per #1289 claude-code forwards every
+			// partial to the thinking panel as the live preview, so each delta
+			// fires thinking-chunk while also accumulating into streamedText.
 			sendJsonLine(handler, sessionId, textDelta('Hello '));
 			sendJsonLine(handler, sessionId, textDelta('world'));
 			expect(proc.streamedText).toBe('Hello world');
-			// claude-code prose is not routed to the thinking panel.
-			expect(thinkingSpy).not.toHaveBeenCalled();
+			expect(thinkingSpy.mock.calls.map((c) => c[1])).toEqual(['Hello ', 'world']);
 
 			// The closing assistant event carries the same prose but is flagged
-			// textAlreadyStreamed:true - it must not append a second copy.
+			// textAlreadyStreamed:true - it must not append a second copy or
+			// re-emit a thinking-chunk.
 			sendJsonLine(handler, sessionId, assistantMessage('Hello world'));
 			expect(proc.streamedText).toBe('Hello world');
-			expect(thinkingSpy).not.toHaveBeenCalled();
+			expect(thinkingSpy).toHaveBeenCalledTimes(2);
 		});
 
 		it('routes thinking deltas to the thinking panel exactly once, skipping the flagged event', () => {
@@ -2737,15 +2738,15 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			sendJsonLine(handler, sessionId, thinkingDelta('reason.'));
 			sendJsonLine(handler, sessionId, textDelta('Answer.'));
 
-			// thinking-chunk fires for the two thinking deltas only; prose deltas do
-			// not go to the thinking panel and reasoning is never in streamedText.
-			expect(thinkingSpy.mock.calls.map((c) => c[1])).toEqual(['Let me ', 'reason.']);
+			// Both the thinking deltas and the prose delta drive the live thinking
+			// preview (#1289), but reasoning content never enters streamedText.
+			expect(thinkingSpy.mock.calls.map((c) => c[1])).toEqual(['Let me ', 'reason.', 'Answer.']);
 			expect(proc.streamedText).toBe('Answer.');
 
 			// The flagged assistant event (deltas were seen) is skipped: no extra
 			// thinking-chunk, no extra streamedText.
 			sendJsonLine(handler, sessionId, assistantMessage('Answer.'));
-			expect(thinkingSpy).toHaveBeenCalledTimes(2);
+			expect(thinkingSpy).toHaveBeenCalledTimes(3);
 			expect(proc.streamedText).toBe('Answer.');
 		});
 
@@ -2759,10 +2760,12 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			emitter.on('thinking-chunk', thinkingSpy);
 
 			// Without any stream_event deltas the assistant event is unflagged and
-			// still supplies streamedText, exactly as before this change.
+			// still supplies streamedText. Its single partial also drives the live
+			// preview (#1289), firing one thinking-chunk with the full prose.
 			sendJsonLine(handler, sessionId, assistantMessage('Complete answer.'));
 			expect(proc.streamedText).toBe('Complete answer.');
-			expect(thinkingSpy).not.toHaveBeenCalled();
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Complete answer.');
 		});
 	});
 });
