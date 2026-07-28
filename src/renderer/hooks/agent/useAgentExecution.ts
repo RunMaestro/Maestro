@@ -1,17 +1,13 @@
 import { useCallback, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
-import type {
-	Session,
-	SessionState,
-	UsageStats,
-	QueuedItem,
-	LogEntry,
-	ToolType,
-} from '../../types';
-import { getActiveTab, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
+import {
+	getActiveTab,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
-import { generateId } from '../../utils/ids';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
@@ -390,33 +386,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 												};
 											}
 
-											const logEntry: LogEntry | null =
-												nextItem.type === 'message' && nextItem.text
-													? {
-															id: generateId(),
-															timestamp: Date.now(),
-															source: 'user',
-															text: nextItem.text,
-															images: nextItem.images,
-														}
-													: null;
-
 											// Orphan target: the user closed this tab while the message was
-											// still queued. Route the user log to orphanedThinkingTabs and
-											// leave the active tab untouched - the send is fire-and-forget.
+											// still queued. Route the busy state + user log to
+											// orphanedThinkingTabs and leave the active tab untouched - the
+											// send is fire-and-forget.
 											if (target.location === 'orphan') {
 												return {
 													...s,
 													state: 'busy' as SessionState,
 													busySource: 'ai',
-													...(logEntry &&
-														s.orphanedThinkingTabs && {
-															orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
-																tab.id === target.tabId
-																	? { ...tab, logs: [...tab.logs, logEntry] }
-																	: tab
-															),
-														}),
+													...(s.orphanedThinkingTabs && {
+														orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
+															tab.id === target.tabId
+																? markTabRunningQueuedItem(tab, nextItem)
+																: tab
+														),
+													}),
 													executionQueue: remainingQueue,
 													thinkingStartTime: Date.now(),
 													currentCycleTokens: 0,
@@ -425,14 +410,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 												};
 											}
 
-											// Foreground target: append the user log and bring the tab into view.
-											const updatedAiTabs = logEntry
-												? s.aiTabs.map((tab) =>
-														tab.id === target.tabId
-															? { ...tab, logs: [...tab.logs, logEntry] }
-															: tab
-													)
-												: s.aiTabs;
+											// Foreground target: mark the tab busy (so its chip keeps the
+											// in-progress indicator while the dequeued turn runs), append the
+											// user log, and bring the tab into view. Shares
+											// markTabRunningQueuedItem with the other dispatch paths so the
+											// busy-state + log construction stays identical.
+											const updatedAiTabs = s.aiTabs.map((tab) =>
+												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+											);
 
 											return {
 												...s,
@@ -448,24 +433,20 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											};
 										}
 
-										// No queued items - set to idle
-										// Set ALL busy tabs to 'idle' for write-mode tracking
-										const updatedAiTabs =
-											s.aiTabs?.length > 0
-												? s.aiTabs.map((tab) =>
-														tab.state === 'busy'
-															? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-															: tab
-													)
-												: s.aiTabs;
+										// No queued items. This spawn ran under its own `-batch-` process id
+										// and deliberately never marked a tab busy (see the spawn site), so
+										// its exit must not clear tabs whose own `-ai-{tabId}` agents are
+										// still running in parallel - that drops the in-progress indicator
+										// from threads that are very much still working. Each of those tabs
+										// is cleared by its own onExit handler.
+										const anyTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
 
 										return {
 											...s,
-											state: 'idle' as SessionState,
-											busySource: undefined,
-											thinkingStartTime: undefined,
+											state: anyTabStillBusy ? s.state : ('idle' as SessionState),
+											busySource: anyTabStillBusy ? s.busySource : undefined,
+											thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
 											pendingAICommandForSynopsis: undefined,
-											aiTabs: updatedAiTabs,
 										};
 									})
 								);
