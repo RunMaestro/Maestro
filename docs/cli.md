@@ -576,6 +576,9 @@ maestro-cli playbook <playbook-id> --wait --verbose
 # Debug mode for troubleshooting
 maestro-cli playbook <playbook-id> --debug
 
+# Run this playbook on a different model than the agent's default
+maestro-cli playbook <playbook-id> --model opus --effort high
+
 # Clean orphaned playbooks (for deleted sessions)
 maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
@@ -604,15 +607,20 @@ maestro-cli goal-run <agent-id> "Tidy the codebase" --verbose
 
 # Run without writing history entries
 maestro-cli goal-run <agent-id> "Quick experiment" --no-history
+
+# Pursue the goal on a different model than the agent's default
+maestro-cli goal-run <agent-id> "Port the parser to the new API" --model opus --effort high
 ```
 
-| Option                   | Description                                              | Default    |
-| ------------------------ | -------------------------------------------------------- | ---------- |
-| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock    | _(none)_   |
-| `--max-iterations <n>`   | Cap the number of iterations                             | Infinite   |
-| `--no-history`           | Do not write history entries                             | Writes     |
-| `--json`                 | Output as JSON lines (for scripting)                     | Human text |
-| `--verbose`              | Show the full prompt sent to the agent on each iteration | Off        |
+| Option                   | Description                                                                   | Default       |
+| ------------------------ | ----------------------------------------------------------------------------- | ------------- |
+| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock                         | _(none)_      |
+| `--max-iterations <n>`   | Cap the number of iterations                                                  | Infinite      |
+| `--no-history`           | Do not write history entries                                                  | Writes        |
+| `--json`                 | Output as JSON lines (for scripting)                                          | Human text    |
+| `--verbose`              | Show the full prompt sent to the agent on each iteration                      | Off           |
+| `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | Agent default |
+| `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | Agent default |
 
 The run writes an immediate "started" history entry (recording the goal and exit criteria), one entry per iteration, and a final summary with the stop reason and final progress. Goal-Driven runs honor the same per-agent SSH remote and model/effort/args overrides as `playbook`, and refuse to start if the agent is already busy in the desktop app or another CLI instance.
 
@@ -635,9 +643,45 @@ maestro-cli run-doc plans/migrate.md --agent <agent-id> --wait --loop
 
 # JSON output for scripting; skip history writes
 maestro-cli run-doc plans/spec.md --agent <agent-id> --json --no-history
+
+# Run this document on a different model than the agent's default
+maestro-cli run-doc plans/spec.md --agent <agent-id> --model opus --effort high
 ```
 
-`run-doc` accepts the same execution flags as `playbook` (`--dry-run`, `--no-history`, `--json`, `--debug`, `--verbose`, `--no-synopsis`, `--wait`) plus `--prompt`, `--loop`, `--max-loops`, and `--reset-on-completion`. When no `--prompt` is given it uses the default Auto Run prompt.
+`run-doc` accepts the same execution flags as `playbook` (`--dry-run`, `--no-history`, `--json`, `--debug`, `--verbose`, `--no-synopsis`, `--wait`, `--model`, `--effort`) plus `--prompt`, `--loop`, `--max-loops`, and `--reset-on-completion`. When no `--prompt` is given it uses the default Auto Run prompt.
+
+#### Per-run model override
+
+All four Auto Run entry points - `playbook`, `run-doc`, `goal-run`, and
+`auto-run` - accept `--model <model>` and `--effort <effort>`. Both are
+**run-scoped**: they apply to every agent spawn the run makes (including the
+per-task synopsis and goal-handoff spawns) and take precedence over the agent's
+configured model, but nothing is written back to the agent. When the run ends,
+the agent is exactly as it was.
+
+```bash
+maestro-cli playbook <playbook-id> --model opus
+maestro-cli run-doc plans/spec.md --agent <agent-id> --model opus
+maestro-cli goal-run <agent-id> "Ship the migration" --model opus --effort high
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus
+```
+
+Notes:
+
+- Omitting the flags keeps the existing behavior exactly: the run uses the
+  agent's configured model and effort.
+- Valid values are provider-specific (for example `sonnet` / `opus` for Claude
+  Code). The CLI passes the value through rather than validating it against the
+  provider's model list.
+- `--effort` only does something on providers that expose a reasoning-effort
+  setting; it is ignored elsewhere.
+- The headless commands (`playbook`, `run-doc`, `goal-run`) print a
+  `Model: <value> (this run only)` line in human-readable (non-`--json`) output
+  so you can confirm which model the run used. JSONL output is unchanged.
+  `auto-run` hands the run to the desktop app, so confirm that one in the
+  desktop UI instead.
+- The desktop Auto Run launch modal has the same two pickers, both defaulting to
+  "Use agent default". See [Auto Run](autorun-playbooks.md).
 
 > **`playbook` vs `run-doc` vs `auto-run --launch`:** use `playbook <id>` for a saved playbook and `run-doc <docs>` for raw documents - both run headlessly with no desktop dependency. `auto-run --launch` instead hands the run to the running desktop app (needed only when you want the run to appear and be controlled in the desktop UI).
 
@@ -1170,6 +1214,12 @@ maestro-cli auto-run doc1.md --agent <agent-id> --launch \
 maestro-cli auto-run doc1.md --agent <agent-id> --launch \
   --worktree --branch feature/auto-x --worktree-path ../repo-auto-x \
   --create-pr --pr-target-branch develop
+
+# Run this one auto-run on a different model than the agent's default
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus
+
+# Override the reasoning effort too (provider-dependent)
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --model opus --effort high
 ```
 
 | Flag                          | Description                                                                                     |
@@ -1186,6 +1236,15 @@ maestro-cli auto-run doc1.md --agent <agent-id> --launch \
 | `--worktree-path <path>`      | Filesystem path for the worktree (must be a sibling of the repo, not nested inside it)          |
 | `--create-pr`                 | Open a GitHub PR when the auto-run completes successfully                                       |
 | `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo's default branch)                                |
+| `--model <model>`             | Model to use for this run only, overriding the agent's configured default                       |
+| `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                   |
+
+`--model` and `--effort` are **run-scoped**: they apply to every task spawn in
+this auto-run and are never written back to the agent. The agent's interactive
+tabs keep using its configured default, and the override disappears when the run
+ends. Omit them to use the agent default. They are honored in worktree mode too,
+without changing the child worktree session's own configured model. See
+[Per-run model override](#per-run-model-override) for the full picture.
 
 Worktree mode reuses the desktop app's Auto Run pipeline: the app creates the
 worktree (or reuses an existing one on the same repo), checks out the requested
