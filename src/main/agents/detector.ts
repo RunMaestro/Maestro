@@ -506,7 +506,18 @@ export class AgentDetector {
 					// Oh My Pi: `omp models --json` returns { models: [{ id, selector, ... }] }
 					// across every configured provider. Prefer the provider-qualified `selector`
 					// (e.g. anthropic/claude-opus-4-8), which is unambiguous for --model.
-					const result = await execFileNoThrow(command, ['models', '--json'], undefined, env);
+					// Use the same env as the two prime sites (detection warm-up and spawn):
+					// `buildOmpPrimeEnv` expands the PATH with `~/.bun/bin` and prepends the
+					// binary's own directory so a co-located runtime resolves. Running this
+					// discovery with the shared `getExpandedEnv()` result instead would let
+					// it fail (or resolve differently) where the primes succeed, and it feeds
+					// `setOmpModelCatalog` below, so the catalogs must stay in lockstep.
+					const result = await execFileNoThrow(
+						command,
+						['models', '--json'],
+						undefined,
+						buildOmpPrimeEnv(command)
+					);
 					if (result.exitCode !== 0) {
 						logger.warn(
 							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
