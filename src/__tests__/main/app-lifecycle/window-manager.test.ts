@@ -15,7 +15,7 @@ import type { WindowManagerDependencies } from '../../../main/app-lifecycle/wind
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
-// The window's `move` listener (drives the cross-display min-size re-clamp).
+// The window's `moved` listener (drives the cross-display min-size re-clamp).
 let windowMoveHandler: (() => void) | null = null;
 // The factory registers several `closed` listeners; collect them all so a test
 // can fire the full close sequence rather than guessing which one is last.
@@ -89,7 +89,12 @@ const mockWindowInstance = {
 	on: vi.fn((event: string, handler: () => void) => {
 		if (event === 'close') windowCloseHandler = handler;
 		if (event === 'closed') windowClosedHandlers.push(handler);
-		if (event === 'move') windowMoveHandler = handler;
+		if (event === 'moved') windowMoveHandler = handler;
+	}),
+	// The reclamp cleanup on 'closed' removes the window's own `moved` listener,
+	// so the mock must expose removeListener to mirror Electron's EventEmitter.
+	removeListener: vi.fn((event: string) => {
+		if (event === 'moved') windowMoveHandler = null;
 	}),
 };
 
@@ -110,6 +115,7 @@ class MockBrowserWindow {
 	getBounds = mockWindowInstance.getBounds;
 	webContents = mockWindowInstance.webContents;
 	on = mockWindowInstance.on;
+	removeListener = mockWindowInstance.removeListener;
 
 	constructor(options: unknown) {
 		lastBrowserWindowOptions = options as Record<string, unknown>;
@@ -513,35 +519,68 @@ describe('app-lifecycle/window-manager', () => {
 
 			it('re-clamps the minimum size when the window moves onto a smaller display', async () => {
 				// Dragging onto an already-connected smaller display does NOT fire
-				// display-metrics-changed, so the window's own move event must re-clamp.
-				vi.useFakeTimers();
-				try {
-					const windowManager = await makeManager();
-					windowManager.createWindow();
-					expect(windowMoveHandler).not.toBeNull();
-					mockWindowInstance.setMinimumSize.mockClear();
+				// display-metrics-changed, so the window's own `moved` event must
+				// re-clamp against the destination work area.
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+				expect(windowMoveHandler).not.toBeNull();
+				mockWindowInstance.setMinimumSize.mockClear();
 
-					// A second, smaller display exists; the window drags onto it.
-					mockScreen.state.displays = [
-						{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
-						{ workArea: { x: 1920, y: 0, width: 1093, height: 593 } },
-					];
-					mockWindowInstance.getBounds.mockReturnValue({
-						x: 1920,
-						y: 0,
-						width: 1093,
-						height: 593,
-					});
+				// A second, smaller display exists; the window drags onto it.
+				mockScreen.state.displays = [
+					{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+					{ workArea: { x: 1920, y: 0, width: 1093, height: 593 } },
+				];
+				mockWindowInstance.getBounds.mockReturnValue({
+					x: 1920,
+					y: 0,
+					width: 1093,
+					height: 593,
+				});
 
-					windowMoveHandler!();
-					// Debounced: nothing until the drag settles.
-					expect(mockWindowInstance.setMinimumSize).not.toHaveBeenCalled();
-					vi.runAllTimers();
+				windowMoveHandler!();
 
-					expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledWith(1000, 593);
-				} finally {
-					vi.useRealTimers();
-				}
+				expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledWith(1000, 593);
+			});
+
+			it('re-asserts the minimum only once while the same-bounds move repeats', async () => {
+				// On GTK the `moved` event fires repeatedly through a single drag.
+				// The change-guard must collapse identical re-clamps into one
+				// setMinimumSize call so we do not churn on every tick.
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+				expect(windowMoveHandler).not.toBeNull();
+				mockWindowInstance.setMinimumSize.mockClear();
+
+				mockScreen.state.displays = [
+					{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+					{ workArea: { x: 1920, y: 0, width: 1093, height: 593 } },
+				];
+				mockWindowInstance.getBounds.mockReturnValue({
+					x: 1920,
+					y: 0,
+					width: 1093,
+					height: 593,
+				});
+
+				windowMoveHandler!();
+				windowMoveHandler!();
+
+				expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledTimes(1);
+				expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledWith(1000, 593);
+			});
+
+			it('re-clamps the minimum size once immediately after window creation', async () => {
+				// Constraints computed from raw saved x/y can resolve against a
+				// different display than the window opens on; the post-creation
+				// reclamp corrects the minimum against the true getBounds() position.
+				const windowManager = await makeManager();
+				windowManager.createWindow();
+
+				// Default getBounds (1200x800 on the 1920x1080 display) yields the
+				// design minimum, applied once as the window comes up.
+				expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledTimes(1);
+				expect(mockWindowInstance.setMinimumSize).toHaveBeenCalledWith(1000, 600);
 			});
 
 			it('stops re-clamping after the window is closed', async () => {

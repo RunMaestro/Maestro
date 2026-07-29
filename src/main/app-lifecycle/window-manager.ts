@@ -207,28 +207,49 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		// Electron caches the minimum size set at creation, so a display change
 		// while the app runs (the user rescales their display, or drags the window
 		// to a smaller monitor) would leave a stale minimum that can again exceed
-		// the new work area and block maximize. Re-clamp on display-metrics-changed
-		// against the window's current display so the fix survives live changes.
+		// the new work area and block maximize. Re-clamp against the window's
+		// current display, read from getBounds() which is authoritative once the
+		// window exists, so the fix survives live changes.
+		//
+		// Track the last-applied minimum and only re-assert it when it actually
+		// changes. On GTK the `moved` event fires repeatedly through a single drag,
+		// so calling setMinimumSize with the same values every tick would be pure
+		// churn; the guard collapses it to one call per real change.
+		let lastAppliedMinWidth: number | undefined;
+		let lastAppliedMinHeight: number | undefined;
 		const reclampMinimumSize = () => {
 			if (browserWindow.isDestroyed()) return;
 			const { minWidth: nextMinWidth, minHeight: nextMinHeight } = resolveWindowSizeConstraints(
 				browserWindow.getBounds()
 			);
+			if (nextMinWidth === lastAppliedMinWidth && nextMinHeight === lastAppliedMinHeight) return;
+			lastAppliedMinWidth = nextMinWidth;
+			lastAppliedMinHeight = nextMinHeight;
 			browserWindow.setMinimumSize(nextMinWidth, nextMinHeight);
 		};
+		// display-metrics-changed fires only when a display's OWN geometry or scale
+		// changes, NOT when the window is dragged from a large monitor onto an
+		// already-connected smaller one - in that case the stale (larger) minimum
+		// would linger and keep blocking maximize on the destination display. So
+		// re-clamp on the window's own `moved` event too. The change-guard above
+		// absorbs the flood of `moved` events a live drag produces.
+		//
+		// createBrowserWindow is shared by createSecondaryWindow, so each window
+		// registers its own per-window `display-metrics-changed` listener here
+		// (removed on 'closed' below). This is intentional: past ~10 concurrent
+		// windows Node emits a MaxListenersExceededWarning, which is acceptable.
 		screen.on('display-metrics-changed', reclampMinimumSize);
-		// Dragging a window onto an already-connected display whose work area is
-		// smaller does NOT fire display-metrics-changed, so the stale (larger)
-		// minimum would linger and keep blocking maximize on that display. Re-clamp
-		// on the window's own move too, debounced so a live drag (which fires a
-		// flood of move events) collapses into one recompute once it settles on the
-		// new display.
-		const reclampMinimumSizeOnMove = debounce(reclampMinimumSize, WINDOW_STATE_SAVE_DEBOUNCE_MS);
-		browserWindow.on('move', reclampMinimumSizeOnMove);
+		browserWindow.on('moved', reclampMinimumSize);
 		browserWindow.on('closed', () => {
 			screen.removeListener('display-metrics-changed', reclampMinimumSize);
-			reclampMinimumSizeOnMove.cancel();
+			browserWindow.removeListener('moved', reclampMinimumSize);
 		});
+		// Re-clamp once now that the window exists. The constraints computed above
+		// come from the raw saved x/y, which can resolve against a different display
+		// than the window actually opens on (e.g. the Windows -32000 minimized
+		// sentinel matches the leftmost display); getBounds() is the truth once the
+		// window is real, so this corrects the minimum for the true opening display.
+		reclampMinimumSize();
 
 		logger.info('Browser window created', 'Window', {
 			size: `${width}x${height}`,
