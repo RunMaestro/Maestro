@@ -203,8 +203,9 @@ describe('useAgentExitListener', () => {
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
 
-	// Desktop document/spec-mode Auto Run synopsizes each task from this exit path
-	// (not spawnBackgroundSynopsis), so the run-scoped model override must reach the
+	// Desktop document/spec-mode Auto Run synopsizes each task from this exit path,
+	// which sets up the synopsis and dispatches it via runExitSynopsis (reaching
+	// spawnBackgroundSynopsisRef), so the run-scoped model override must reach the
 	// synopsis spawn config here for parity with the CLI batch processor.
 	function setupSynopsisRun(opts: { sessionCustomModel?: string; runModelOverride?: string }) {
 		const tab = createMockAITab({

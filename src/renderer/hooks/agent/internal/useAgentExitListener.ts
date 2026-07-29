@@ -326,7 +326,10 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							thinkingLogsRecorded(completedTab?.showThinking)
 						);
 						// Desktop document/spec-mode Auto Run synopsizes each task from this
-						// exit path (not spawnBackgroundSynopsis). Honor the active run's
+						// exit path: the synopsis is set up here and dispatched via
+						// runExitSynopsis/dispatchSynopsis (which ultimately calls
+						// spawnBackgroundSynopsisRef), rather than the batch runner invoking
+						// the synopsis spawn directly per task. Honor the active run's
 						// per-run model override so the synopsis spawns under the same model
 						// as the run's tasks, matching the CLI batch processor. Same
 						// precedence as every other spawn this run makes: run override wins
