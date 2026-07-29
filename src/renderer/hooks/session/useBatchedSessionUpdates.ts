@@ -652,9 +652,7 @@ export function useBatchedSessionUpdates(
 					existing
 						? {
 								...existing,
-								contextWindow: usage.contextWindow,
-								contextWindowResolved: usage.contextWindowResolved,
-								contextWindowModel: usage.contextWindowModel,
+								...mergeContextWindow(usage, existing),
 							}
 						: {
 								inputTokens: 0,
@@ -680,9 +678,7 @@ export function useBatchedSessionUpdates(
 						inputTokens: usage.inputTokens,
 						cacheReadInputTokens: usage.cacheReadInputTokens,
 						cacheCreationInputTokens: usage.cacheCreationInputTokens,
-						contextWindow: usage.contextWindow,
-						contextWindowResolved: usage.contextWindowResolved,
-						contextWindowModel: usage.contextWindowModel,
+						...mergeContextWindow(usage, existing),
 						outputTokens: usage.outputTokens,
 						totalCostUsd: existing.totalCostUsd + usage.totalCostUsd,
 						reasoningTokens: usage.reasoningTokens,
@@ -697,9 +693,7 @@ export function useBatchedSessionUpdates(
 							existing.cacheCreationInputTokens + usage.cacheCreationInputTokens,
 						totalCostUsd: existing.totalCostUsd + usage.totalCostUsd,
 						reasoningTokens: (existing.reasoningTokens || 0) + (usage.reasoningTokens || 0),
-						contextWindow: usage.contextWindow,
-						contextWindowResolved: usage.contextWindowResolved,
-						contextWindowModel: usage.contextWindowModel,
+						...mergeContextWindow(usage, existing),
 					});
 				}
 			} else {

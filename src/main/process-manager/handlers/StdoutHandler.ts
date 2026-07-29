@@ -298,11 +298,20 @@ export function pushResolvedOmpContextWindow(
 
 	managedProcess.pendingOmpUsagePush = undefined;
 	// Correction-only: the token/cost fields carried in pending.stats were already
-	// counted when the fallback usage event fired for this turn, so flag this
-	// replay. Accumulating consumers must update the window only and never re-add
-	// the tokens/cost (see mergeContextWindow + useAgentUsageListener).
+	// counted when the fallback usage event fired for this turn. This correction
+	// re-emits through the ProcessManager EventEmitter, so EVERY on('usage')
+	// consumer sees it - not just the renderer. Zero every token/cost field at the
+	// source so no present or future accumulating consumer can re-add this turn.
+	// Only the context-window fields carry meaning on a correction; the model tag
+	// rides along from pending.stats so same-model window merges still match.
 	emitter.emit('usage', sessionId, {
 		...pending.stats,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0,
+		reasoningTokens: 0,
 		contextWindow: resolved,
 		contextWindowResolved: true,
 		contextWindowCorrectionOnly: true,

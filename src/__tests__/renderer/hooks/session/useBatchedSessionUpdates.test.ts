@@ -11,8 +11,14 @@
  * rather than through a hook harness.
  */
 
-import { describe, it, expect } from 'vitest';
-import { mergeContextWindow } from '../../../../renderer/hooks/session/useBatchedSessionUpdates';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import {
+	mergeContextWindow,
+	useBatchedSessionUpdates,
+} from '../../../../renderer/hooks/session/useBatchedSessionUpdates';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import type { Session, UsageStats } from '../../../../renderer/types';
 
 const ONE_M = 1_000_000;
 const FALLBACK = 200_000;
@@ -98,5 +104,85 @@ describe('mergeContextWindow', () => {
 			contextWindowResolved: undefined,
 			contextWindowModel: 'haiku',
 		});
+	});
+});
+
+/**
+ * The in-batch accumulator (updateUsage) folds multiple usage events that arrive
+ * between flushes. It now routes its context-window through the same
+ * `mergeContextWindow` rule as the flush path, so a resolved window is preserved
+ * even when a same-model unresolved fallback delta accumulates on top of it
+ * before the batch commits. Token accounting is unchanged.
+ */
+describe('useBatchedSessionUpdates accumulator preserves resolved window', () => {
+	const resolved = (over: Partial<UsageStats> = {}): UsageStats => ({
+		inputTokens: 100,
+		outputTokens: 50,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0.02,
+		contextWindow: ONE_M,
+		contextWindowResolved: true,
+		contextWindowModel: 'opus',
+		...over,
+	});
+
+	// Same model, but the main process re-emits the 200k fallback (catalog not
+	// re-primed for this turn). Must NOT downgrade the gauge.
+	const unresolvedFallback = (over: Partial<UsageStats> = {}): UsageStats => ({
+		inputTokens: 20,
+		outputTokens: 10,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0.01,
+		contextWindow: FALLBACK,
+		contextWindowModel: 'opus',
+		...over,
+	});
+
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [] } as never);
+	});
+
+	it('keeps the resolved window when a same-model fallback delta accumulates (session-level)', () => {
+		useSessionStore.setState({
+			sessions: [{ id: 's1' } as unknown as Session],
+		} as never);
+
+		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+		act(() => {
+			result.current.updateUsage('s1', null, resolved());
+			result.current.updateUsage('s1', null, unresolvedFallback());
+			result.current.flushNow();
+		});
+
+		const stats = useSessionStore.getState().sessions[0].usageStats;
+		expect(stats?.contextWindow).toBe(ONE_M);
+		expect(stats?.contextWindowResolved).toBe(true);
+		// Token accounting still accumulates both deltas at the session level.
+		expect(stats?.inputTokens).toBe(120);
+		expect(stats?.outputTokens).toBe(60);
+	});
+
+	it('keeps the resolved window when a same-model fallback delta accumulates (tab-level)', () => {
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 's1',
+					aiTabs: [{ id: 't1', logs: [] }],
+				} as unknown as Session,
+			],
+		} as never);
+
+		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+		act(() => {
+			result.current.updateUsage('s1', 't1', resolved());
+			result.current.updateUsage('s1', 't1', unresolvedFallback());
+			result.current.flushNow();
+		});
+
+		const tab = useSessionStore.getState().sessions[0].aiTabs?.[0];
+		expect(tab?.usageStats?.contextWindow).toBe(ONE_M);
+		expect(tab?.usageStats?.contextWindowResolved).toBe(true);
 	});
 });

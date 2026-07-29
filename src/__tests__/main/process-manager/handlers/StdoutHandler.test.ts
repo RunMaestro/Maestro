@@ -1387,7 +1387,16 @@ describe('StdoutHandler', () => {
 			const corrected = usageSpy.mock.calls[1][1];
 			expect(corrected.contextWindow).toBe(1_000_000);
 			expect(corrected.contextWindowResolved).toBe(true);
-			expect(corrected.inputTokens).toBe(usageSpy.mock.calls[0][1].inputTokens);
+			// Token/cost fields are zeroed AT THE SOURCE: the correction re-emits
+			// through the ProcessManager EventEmitter, so every on('usage') consumer
+			// sees it. Zeroing here keeps the replayed (already-counted) turn from
+			// landing twice in any accumulating consumer.
+			expect(corrected.inputTokens).toBe(0);
+			expect(corrected.outputTokens).toBe(0);
+			expect(corrected.cacheReadInputTokens).toBe(0);
+			expect(corrected.cacheCreationInputTokens).toBe(0);
+			expect(corrected.totalCostUsd).toBe(0);
+			expect(corrected.reasoningTokens).toBe(0);
 			// Flagged correction-only so accumulating consumers update the window
 			// without re-counting the replayed turn's tokens/cost.
 			expect(corrected.contextWindowCorrectionOnly).toBe(true);
