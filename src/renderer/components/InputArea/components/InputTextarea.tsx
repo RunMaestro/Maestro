@@ -1,11 +1,4 @@
-import React, {
-	memo,
-	useCallback,
-	useLayoutEffect,
-	useMemo,
-	useRef,
-	useState,
-} from 'react';
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Session, Group, Theme } from '../../../types';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { useSettingsStore } from '../../../stores/settingsStore';
