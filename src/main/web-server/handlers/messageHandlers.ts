@@ -40,6 +40,11 @@ import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { getCommitHash } from '../../utils/build-info';
 import {
+	getDispatchCallbackRegistry,
+	DEFAULT_CALLBACK_TIMEOUT_MS,
+	MAX_CALLBACK_TIMEOUT_MS,
+} from '../../dispatch-callbacks';
+import {
 	startProfiling,
 	stopProfiling,
 	getProfilingStatus,
@@ -1050,6 +1055,34 @@ export class WebSocketMessageHandler {
 		// the caller-supplied authoritative tabId).
 		const resolvedTabId = requestedTabId;
 
+		// Arm a `--notify-on-complete` callback BEFORE handing the prompt to the
+		// renderer: the renderer can spawn the agent process before this handler's
+		// promise resolves, and an entry registered after that spawn would sit
+		// unarmed until it timed out. Cancelled below if the dispatch is rejected.
+		let sendCallbackId: string | undefined;
+		if (typeof message.notifyOnComplete === 'string' && message.notifyOnComplete) {
+			if (!requestedTabId) {
+				this.sendError(client, '--notify-on-complete requires an explicit target tab', {
+					sessionId,
+				});
+				return;
+			}
+			const armed = this.armDispatchCallback(message, {
+				agentId: sessionId,
+				tabId: requestedTabId,
+				prompt: effectiveCommand,
+				isNewTab: false,
+			});
+			if (armed.error) {
+				this.sendError(client, armed.error, { sessionId });
+				return;
+			}
+			sendCallbackId = armed.callbackId;
+		}
+		const cancelArmedCallback = () => {
+			if (sendCallbackId) getDispatchCallbackRegistry()?.cancel(sendCallbackId);
+		};
+
 		// Route ALL commands through the renderer for consistent handling
 		// The renderer handles both AI and terminal modes, updating UI and state
 		// Pass clientInputMode so renderer uses the web's intended mode
@@ -1065,11 +1098,13 @@ export class WebSocketMessageHandler {
 					background
 				)
 				.then((success) => {
+					if (!success) cancelArmedCallback();
 					this.send(client, {
 						type: 'command_result',
 						success,
 						sessionId,
 						...(resolvedTabId ? { tabId: resolvedTabId } : {}),
+						...(success && sendCallbackId ? { callbackId: sendCallbackId } : {}),
 						requestId: message.requestId,
 					});
 					if (!success) {
@@ -1080,6 +1115,7 @@ export class WebSocketMessageHandler {
 					}
 				})
 				.catch((error) => {
+					cancelArmedCallback();
 					logger.error(
 						`[Web Command] ${mode} command failed for session ${sessionId}: ${error.message}`,
 						LOG_CONTEXT
@@ -1087,6 +1123,7 @@ export class WebSocketMessageHandler {
 					this.sendError(client, `Failed to execute command: ${error.message}`);
 				});
 		} else {
+			cancelArmedCallback();
 			this.sendError(client, 'Command execution not configured');
 		}
 	}
@@ -2211,6 +2248,74 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Arm a `dispatch --notify-on-complete` callback for a dispatch that just
+	 * landed. Returns the callbackId to echo back, or an error string the caller
+	 * surfaces instead of silently dispatching without the promised wake-up.
+	 *
+	 * Correlation is `(targetAgentId, tabId)` - a specific tab, established at
+	 * dispatch time - which is why the CLI requires `--new-tab` or `--tab`
+	 * alongside `--notify-on-complete`.
+	 */
+	private armDispatchCallback(
+		message: WebClientMessage,
+		target: { agentId: string; tabId: string; prompt: string; isNewTab: boolean }
+	): { callbackId?: string; error?: string } {
+		const callerAgentId =
+			typeof message.notifyOnComplete === 'string' ? message.notifyOnComplete : '';
+		if (!callerAgentId) return {};
+
+		const registry = getDispatchCallbackRegistry();
+		if (!registry) return { error: 'Dispatch callbacks are not available in this build' };
+
+		if (!this.callbacks.getSessionDetail?.(callerAgentId)) {
+			return { error: `Callback agent not found: ${callerAgentId}` };
+		}
+
+		const callerTabId = typeof message.callbackTab === 'string' ? message.callbackTab : undefined;
+
+		// A callback that wakes the very tab it is waiting on is an infinite
+		// self-poke. The CLI rejects the obvious form; this is the server-side
+		// backstop for direct websocket callers.
+		if (callerAgentId === target.agentId && (!callerTabId || callerTabId === target.tabId)) {
+			return { error: 'Callback agent/tab cannot be the dispatch target itself' };
+		}
+
+		if (registry.hasArmedFor(target.agentId, target.tabId)) {
+			return {
+				error: `A dispatch callback is already armed for tab ${target.tabId} (CALLBACK_ALREADY_ARMED)`,
+			};
+		}
+
+		const rawTimeoutSeconds =
+			typeof message.callbackTimeout === 'number' ? message.callbackTimeout : undefined;
+		const timeoutMs =
+			rawTimeoutSeconds && rawTimeoutSeconds > 0
+				? Math.min(rawTimeoutSeconds * 1000, MAX_CALLBACK_TIMEOUT_MS)
+				: DEFAULT_CALLBACK_TIMEOUT_MS;
+
+		const targetName = this.callbacks.getSessions?.()?.find((s) => s.id === target.agentId)?.name;
+
+		try {
+			const entry = registry.register({
+				targetAgentId: target.agentId,
+				targetTabId: target.tabId,
+				...(targetName ? { targetName } : {}),
+				callerAgentId,
+				...(callerTabId ? { callerTabId } : {}),
+				...(typeof message.callbackPrompt === 'string' && message.callbackPrompt
+					? { callbackPrompt: message.callbackPrompt }
+					: {}),
+				timeoutMs,
+				prompt: target.prompt,
+				armFromRecentSpawn: target.isNewTab,
+			});
+			return { callbackId: entry.callbackId };
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	}
+
+	/**
 	 * Handle new_ai_tab_with_prompt message - atomically create a new AI tab
 	 * and dispatch an initial prompt into it. Used by `send --live --new-tab`
 	 * to guarantee a fresh conversation rather than writing into whichever tab
@@ -2258,11 +2363,29 @@ export class WebSocketMessageHandler {
 		this.callbacks
 			.newAITabWithPrompt(sessionId, prompt, background)
 			.then((result) => {
+				// Arm the callback only once the fresh tab id is known - that id is
+				// the correlation key. `isNewTab` lets the registry adopt a spawn the
+				// renderer may already have emitted while this ack was in flight.
+				let callbackId: string | undefined;
+				if (result.success && result.tabId) {
+					const armed = this.armDispatchCallback(message, {
+						agentId: sessionId,
+						tabId: result.tabId,
+						prompt,
+						isNewTab: true,
+					});
+					if (armed.error) {
+						sendErrorResult(armed.error);
+						return;
+					}
+					callbackId = armed.callbackId;
+				}
 				this.send(client, {
 					type: 'new_ai_tab_with_prompt_result',
 					success: result.success,
 					sessionId,
 					...(result.tabId ? { tabId: result.tabId } : {}),
+					...(callbackId ? { callbackId } : {}),
 					requestId: message.requestId,
 				});
 			})
@@ -2320,13 +2443,40 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
+		// Same pre-arm rationale as send_command. A queued prompt can sit behind a
+		// predecessor turn for minutes; the entry stays `pending` until OUR
+		// process spawns, so the predecessor's exit cannot fire it.
+		let enqueueCallbackId: string | undefined;
+		if (typeof message.notifyOnComplete === 'string' && message.notifyOnComplete) {
+			if (!requestedTabId) {
+				sendErrorResult('--notify-on-complete requires an explicit target tab');
+				return;
+			}
+			const armed = this.armDispatchCallback(message, {
+				agentId: sessionId,
+				tabId: requestedTabId,
+				prompt: command ?? '',
+				isNewTab: false,
+			});
+			if (armed.error) {
+				sendErrorResult(armed.error);
+				return;
+			}
+			enqueueCallbackId = armed.callbackId;
+		}
+		const cancelArmedCallback = () => {
+			if (enqueueCallbackId) getDispatchCallbackRegistry()?.cancel(enqueueCallbackId);
+		};
+
 		this.callbacks
 			.enqueueCommand(sessionId, command ?? '', clientInputMode, requestedTabId, images, background)
 			.then((result) => {
+				if (!result.success) cancelArmedCallback();
 				this.send(client, {
 					type: 'enqueue_command_result',
 					success: result.success,
 					sessionId,
+					...(result.success && enqueueCallbackId ? { callbackId: enqueueCallbackId } : {}),
 					...(result.tabId ? { tabId: result.tabId } : {}),
 					...(result.queued !== undefined ? { queued: result.queued } : {}),
 					...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
@@ -2337,6 +2487,7 @@ export class WebSocketMessageHandler {
 				});
 			})
 			.catch((error) => {
+				cancelArmedCallback();
 				captureException(error instanceof Error ? error : new Error(String(error)), {
 					extra: { area: 'web-server', handler: 'enqueue_command', sessionId },
 				});

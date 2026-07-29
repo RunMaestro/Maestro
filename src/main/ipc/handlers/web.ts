@@ -26,6 +26,7 @@ import { ipcMain, app } from 'electron';
 import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
+import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
 import type { SettingsStoreInterface } from '../../stores/types';
 import {
 	writeCliServerInfo,
@@ -281,6 +282,14 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				goalIteration?: number;
 			} | null
 		) => {
+			// Feed the first-party main-process tracker FIRST, unconditionally.
+			// The web-server branch below returns early when Live Mode is off, so
+			// anything downstream of it (dispatch callbacks, and later Cue's
+			// agent.completed) would otherwise never learn that an Auto Run batch
+			// finished. Auto Run finality is main-process state now, not a
+			// web-broadcast side effect.
+			getAutoRunStateTracker().update(sessionId, state);
+
 			const webServer = getWebServer();
 			if (webServer) {
 				// Always call broadcastAutoRunState - it stores the state for new clients

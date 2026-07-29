@@ -159,6 +159,56 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 
 Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
+### Dispatch with Callback (`--notify-on-complete`)
+
+`dispatch` is fire-and-forget: it returns a tab id and exits, and nothing tells the caller when that delegated run finished. `--notify-on-complete` closes that loop. When the dispatch finishes, Maestro starts a **real turn in the calling agent's live tab** carrying the result plus a handle to the full output, so an orchestrator can run build -> review -> fix -> verify without a human relaying "it's done, carry on".
+
+```bash
+# Delegate a review, and wake me when it is done
+maestro-cli dispatch <reviewer-agent> "review the diff on feat/x" \
+  --new-tab \
+  --notify-on-complete <orchestrator-agent>
+```
+
+The response echoes the armed callback:
+
+```json
+{
+	"success": true,
+	"agentId": "reviewer-...",
+	"sessionId": "tab-xyz",
+	"tabId": "tab-xyz",
+	"callbackId": "cb_01j...",
+	"notifyOnComplete": "orchestrator-..."
+}
+```
+
+| Flag                              | Description                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------- |
+| `--notify-on-complete <agent-id>` | Agent to wake when this dispatch finishes. Requires `--new-tab` or `--tab`                |
+| `--callback-tab <id>`             | Specific caller tab to wake. Default: the caller's active AI tab                          |
+| `--callback-prompt <text>`        | Replace the default wake-up prompt body. `{{DISPATCH_*}}` variables below are substituted |
+| `--callback-timeout <seconds>`    | Give up and fire a `timeout` callback after this long. Default 3600, hard cap 86400       |
+
+**Semantics**
+
+- **Correlated.** The callback is bound to the `(target agent, target tab)` pair established at dispatch time, and only arms once the dispatched process actually starts. Other tabs of the same agent, and a predecessor turn a `--queue`d dispatch is waiting behind, never trigger it. This is why an explicit `--new-tab` or `--tab` is required.
+- **Fires exactly once**, on final completion. A second exit is a no-op.
+- **Auto Run aware.** If the dispatched prompt starts an Auto Run, the callback waits for the whole batch, not for task 1. A 6-task run wakes the caller once.
+- **Carries a handle, not just a slice.** The inlined result is capped at 5000 characters (same as Cue's `{{CUE_SOURCE_OUTPUT}}`); `{{DISPATCH_TARGET_ID}}` and `{{DISPATCH_TAB_ID}}` let the caller read the untruncated transcript with `maestro-cli session show <tabId>`.
+- **Busy-safe delivery.** The wake-up turn goes through the same execution queue `dispatch --queue` uses, so a busy caller gets it on its next idle turn instead of having it dropped or interleaved.
+- **Self-cleaning.** Entries live in a main-process registry, never in `cue.yaml`. They expire on timeout and are dropped when the dispatch is rejected. They do not survive a desktop restart.
+- **Non-blocking.** The dispatching turn ends normally; the callback opens a new turn later.
+
+**Callback prompt variables** (usable in `--callback-prompt`):
+
+`{{DISPATCH_CALLBACK_ID}}`, `{{DISPATCH_TARGET_ID}}`, `{{DISPATCH_TARGET_NAME}}`, `{{DISPATCH_TAB_ID}}`, `{{DISPATCH_STATUS}}` (`completed` | `failed` | `timeout` | `cancelled`), `{{DISPATCH_EXIT_CODE}}`, `{{DISPATCH_DURATION}}`, `{{DISPATCH_OUTPUT}}`, `{{DISPATCH_OUTPUT_TRUNCATED}}`, `{{DISPATCH_TASKS_COMPLETED}}`, `{{DISPATCH_TASKS_TOTAL}}`, `{{DISPATCH_PROMPT}}`.
+
+> [!NOTE]
+> `{{DISPATCH_OUTPUT}}` is another agent's output landing in your agent's prompt - the same trust model as Cue's `{{CUE_SOURCE_OUTPUT}}` and cross-agent consults. The default wrapper fences it and labels it as untrusted data. Keep that fencing if you supply your own `--callback-prompt`.
+
+Additional error cases: a callback agent that cannot be resolved (`AGENT_NOT_FOUND`), a callback that targets the dispatch tab itself, a tab that already has an armed callback (`CALLBACK_ALREADY_ARMED`), and callback flags passed without `--notify-on-complete` (all `INVALID_OPTIONS`).
+
 ### Listing Sessions
 
 Browse an agent's session history, sorted most recent to oldest. Supports pagination with limit/skip and keyword search.

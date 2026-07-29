@@ -114,6 +114,7 @@ import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
+import { initDispatchCallbacks } from './dispatch-callbacks';
 import {
 	initializeStores,
 	getEarlySettings,
@@ -1110,6 +1111,38 @@ app
 			settingsStore: store,
 		};
 		await ensureCliServer(cliServerDeps);
+
+		// dispatch --notify-on-complete. Wired here because it needs the same
+		// web-server handle the CLI round-trips through: the callback is
+		// delivered as a real turn in the caller's live tab via the renderer's
+		// execution queue, not as a fresh headless process.
+		initDispatchCallbacks({
+			enqueue: async (agentId, prompt, tabId) => {
+				const server = webServer;
+				if (!server) return { success: false, error: 'Desktop web server unavailable' };
+				const result = await server.enqueueCommandFromMain(agentId, prompt, tabId);
+				return {
+					success: result.success === true,
+					...(result.error ? { error: result.error } : {}),
+				};
+			},
+			getTargetOutput: async (agentId, since) => {
+				// Best-effort: the newest history entry the target wrote after the
+				// dispatch was armed. History is per agent (entries carry no tabId),
+				// so the timestamp floor is the correlation we have - the tab handle
+				// in the callback prompt is how the caller reads the real transcript.
+				const entries = await getHistoryManager().getEntries(agentId);
+				const candidate = entries
+					.filter((entry) => entry.timestamp >= since)
+					.sort((a, b) => b.timestamp - a.timestamp)[0];
+				return candidate?.fullResponse || candidate?.summary || undefined;
+			},
+			logger: {
+				info: (msg, context) => logger.info(msg, context ?? 'DispatchCallback'),
+				warn: (msg, context) => logger.warn(msg, context ?? 'DispatchCallback'),
+			},
+		});
+
 		// Defense in depth: if the initial attempt silently dropped the
 		// discovery file (or any later code deletes / clobbers it), the
 		// watchdog republishes within seconds so maestro-cli works without

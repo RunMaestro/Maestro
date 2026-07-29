@@ -20,7 +20,7 @@
  * - Select session with focus (window foregrounding)
  */
 
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { WebSocket } from 'ws';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -36,6 +36,11 @@ import {
 	isPluginsFeatureEnabled,
 } from '../../../../main/plugins/plugin-manager-singleton';
 import type { PluginManager } from '../../../../main/plugins/plugin-manager';
+import {
+	initDispatchCallbacks,
+	getDispatchCallbackRegistry,
+	disposeDispatchCallbacks,
+} from '../../../../main/dispatch-callbacks';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -1404,6 +1409,146 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.success).toBe(false);
 				expect(lastResponse.error).toContain('boom');
 			});
+		});
+	});
+
+	describe('Dispatch Callbacks (dispatch --notify-on-complete)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		beforeEach(() => {
+			initDispatchCallbacks({ enqueue: vi.fn().mockResolvedValue({ success: true }) });
+		});
+
+		afterEach(() => {
+			disposeDispatchCallbacks();
+		});
+
+		it('arms a callback on new_ai_tab_with_prompt and echoes the callbackId', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'go',
+				notifyOnComplete: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('new_ai_tab_with_prompt_result');
+				expect(response.success).toBe(true);
+				expect(response.callbackId).toBeTruthy();
+			});
+			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-mock-123')).toBe(true);
+		});
+
+		it('arms a callback on send_command for an explicit tab', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('command_result');
+				expect(response.callbackId).toBeTruthy();
+			});
+			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-7')).toBe(true);
+		});
+
+		it('rejects send_command without an explicit target tab', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				notifyOnComplete: 'caller-1',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('error');
+			expect(String(response.message)).toContain('requires an explicit target tab');
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+		});
+
+		it('cancels the armed callback when the dispatch is rejected', async () => {
+			vi.mocked(callbacks.executeCommand!).mockResolvedValue(false);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+
+			await vi.waitFor(() => expect(lastSend().type).toBe('command_result'));
+			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-7')).toBe(false);
+		});
+
+		it('refuses a second callback on the same tab', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+			await vi.waitFor(() => expect(lastSend().type).toBe('command_result'));
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'again',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+			expect(String(lastSend().message)).toContain('CALLBACK_ALREADY_ARMED');
+		});
+
+		it('refuses a callback that would wake the dispatch target itself', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'session-1',
+			});
+			expect(String(lastSend().message)).toContain('cannot be the dispatch target itself');
+		});
+
+		it('refuses an unknown callback agent', () => {
+			vi.mocked(callbacks.getSessionDetail!).mockImplementation((id: string) =>
+				id === 'session-1' ? ({ state: 'idle', inputMode: 'ai' } as never) : null
+			);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'ghost',
+			});
+			expect(String(lastSend().message)).toContain('Callback agent not found');
+		});
+
+		it('leaves plain dispatches untouched', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'go',
+			});
+			await vi.waitFor(() => expect(lastSend().type).toBe('new_ai_tab_with_prompt_result'));
+			expect(lastSend().callbackId).toBeUndefined();
+			expect(getDispatchCallbackRegistry()!.list()).toHaveLength(0);
 		});
 	});
 

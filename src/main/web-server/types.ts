@@ -252,6 +252,18 @@ export interface WebClientMessage {
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
+	/**
+	 * `dispatch --notify-on-complete <agent>`: agent to wake with a real turn
+	 * when THIS dispatch finishes. Accepted on send_command,
+	 * new_ai_tab_with_prompt and enqueue_command.
+	 */
+	notifyOnComplete?: string;
+	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	callbackTab?: string;
+	/** Overrides the default callback prompt body. */
+	callbackPrompt?: string;
+	/** Give-up window for the callback, in seconds. */
+	callbackTimeout?: number;
 	[key: string]: unknown;
 }
 
