@@ -11,7 +11,10 @@ import {
 	buildProcessSessionId,
 	MAX_ARMED_CALLBACKS,
 } from '../../../main/dispatch-callbacks/dispatch-callback-registry';
-import type { DispatchCallbackFire } from '../../../main/dispatch-callbacks/types';
+import type {
+	DispatchCallbackFire,
+	DispatchCallbackRegistration,
+} from '../../../main/dispatch-callbacks/types';
 
 const TARGET = 'agent-target';
 const TAB = 'tab-1';
@@ -21,13 +24,16 @@ interface Harness {
 	registry: DispatchCallbackRegistry;
 	fires: DispatchCallbackFire[];
 	setNow: (ms: number) => void;
+	/** `true` marks Auto Run as having started at the harness's current clock. */
 	setAutoRun: (running: boolean) => void;
+	/** Mark Auto Run as having started at an explicit timestamp. */
+	setAutoRunSince: (since: number | undefined) => void;
 	runTimers: () => void;
 }
 
 function makeHarness(opts: { graceMs?: number } = {}): Harness {
 	let now = 1_000_000;
-	let autoRunning = false;
+	let autoRunSince: number | undefined;
 	const fires: DispatchCallbackFire[] = [];
 	const pending: Array<{ id: number; fn: () => void }> = [];
 	let timerId = 0;
@@ -38,7 +44,7 @@ function makeHarness(opts: { graceMs?: number } = {}): Harness {
 			let n = 0;
 			return () => `cb_${++n}`;
 		})(),
-		isAutoRunActive: () => autoRunning,
+		autoRunRunningSince: () => autoRunSince,
 		onFire: (fire) => fires.push(fire),
 		graceMs: opts.graceMs ?? 3000,
 		setTimeoutFn: ((fn: () => void) => {
@@ -59,7 +65,10 @@ function makeHarness(opts: { graceMs?: number } = {}): Harness {
 			now = ms;
 		},
 		setAutoRun: (running) => {
-			autoRunning = running;
+			autoRunSince = running ? now : undefined;
+		},
+		setAutoRunSince: (since) => {
+			autoRunSince = since;
 		},
 		runTimers: () => {
 			const queued = pending.splice(0, pending.length);
@@ -68,7 +77,10 @@ function makeHarness(opts: { graceMs?: number } = {}): Harness {
 	};
 }
 
-function register(registry: DispatchCallbackRegistry, overrides: Record<string, unknown> = {}) {
+function register(
+	registry: DispatchCallbackRegistry,
+	overrides: Partial<DispatchCallbackRegistration> = {}
+) {
 	return registry.register({
 		targetAgentId: TARGET,
 		targetTabId: TAB,
@@ -167,6 +179,20 @@ describe('DispatchCallbackRegistry', () => {
 			expect(h.fires).toHaveLength(1);
 		});
 
+		it('does not park behind an Auto Run that was already running before the dispatch', () => {
+			// Auto Run is agent-scoped with no tab dimension, so a batch running in
+			// another tab of the same agent must not delay - or donate its task
+			// counts to - a callback correlated to this tab's turn.
+			h.setAutoRunSince(500_000); // started long before this dispatch
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('completed');
+			expect(h.fires[0].tasksTotal).toBeUndefined();
+		});
+
 		it('ignores an Auto Run finality edge from another agent', () => {
 			register(h.registry);
 			h.setAutoRun(true);
@@ -184,6 +210,39 @@ describe('DispatchCallbackRegistry', () => {
 			h.registry.noteExit(KEY, 0);
 			h.runTimers();
 			expect(h.fires).toHaveLength(1);
+		});
+
+		it('replays an exit that landed before registration', () => {
+			// A very short turn can spawn AND exit before the new-tab ack round-trips
+			// back to the web server. Adopting only the spawn would leave the entry
+			// armed until it reported a bogus timeout.
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 0);
+			register(h.registry, { armFromRecentSpawn: true });
+			h.runTimers();
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('completed');
+		});
+
+		it('replays a failing pre-registration exit with its exit code', () => {
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 3);
+			register(h.registry, { armFromRecentSpawn: true });
+			h.runTimers();
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('failed');
+			expect(h.fires[0].exitCode).toBe(3);
+		});
+
+		it('does not replay an exit that predates the adopted spawn', () => {
+			// The predecessor turn's exit, then our spawn: still running, nothing to
+			// replay.
+			h.registry.noteExit(KEY, 0);
+			h.setNow(1_000_100);
+			h.registry.noteSpawn(KEY);
+			register(h.registry, { armFromRecentSpawn: true });
+			h.runTimers();
+			expect(h.fires).toHaveLength(0);
 		});
 
 		it('does not adopt a prior spawn for an existing tab', () => {

@@ -170,6 +170,25 @@ function emitErrorJson(error: string, code: string): void {
  * send_command and enqueue_command paths so both surface "app down" vs
  * "session not found" vs "unsupported build" identically.
  */
+/**
+ * The prompt landed but the desktop never acked a callbackId - an older desktop
+ * build that ignores `notifyOnComplete`, or an arming path that silently did
+ * nothing. Reporting success here would leave the caller waiting forever for a
+ * wake-up that nobody armed, so fail loudly with a dedicated code and hand back
+ * the tab id so the caller can still poll or re-dispatch.
+ */
+function callbackNotArmedResponse(agentId: string, tabId: string | null): DispatchResponse {
+	return {
+		success: false,
+		agentId,
+		sessionId: tabId,
+		tabId,
+		error:
+			'Prompt was dispatched but the desktop did not arm the completion callback (no callbackId acknowledged). No wake-up will arrive.',
+		code: 'CALLBACK_NOT_ARMED',
+	};
+}
+
 function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	if (error instanceof UnsupportedCommandError) {
 		return { success: false, error: error.message, code: 'UNSUPPORTED' };
@@ -342,6 +361,9 @@ export async function runDispatch(
 		// build / no active tab known), fall back to the value the caller
 		// supplied so callers can still chain dispatches deterministically.
 		const resolvedTabId = dispatched.tabId ?? options.tab ?? null;
+		if (callback.callerAgentId && !dispatched.callbackId) {
+			return callbackNotArmedResponse(agentId, resolvedTabId);
+		}
 		return {
 			success: true,
 			agentId,
@@ -407,6 +429,9 @@ async function runQueueDispatch(
 		}
 
 		const resolvedTabId = result.tabId ?? options.tab ?? null;
+		if (typeof callbackFields.notifyOnComplete === 'string' && !result.callbackId) {
+			return callbackNotArmedResponse(agentId, resolvedTabId);
+		}
 		return {
 			success: true,
 			agentId,

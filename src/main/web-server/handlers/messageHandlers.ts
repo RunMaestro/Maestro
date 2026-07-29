@@ -1116,11 +1116,13 @@ export class WebSocketMessageHandler {
 				})
 				.catch((error) => {
 					cancelArmedCallback();
-					logger.error(
-						`[Web Command] ${mode} command failed for session ${sessionId}: ${error.message}`,
-						LOG_CONTEXT
+					this.reportHandlerError(
+						client,
+						error,
+						'send_command',
+						{ sessionId, mode, requestId: message.requestId },
+						'Failed to execute command'
 					);
-					this.sendError(client, `Failed to execute command: ${error.message}`);
 				});
 		} else {
 			cancelArmedCallback();
@@ -2256,16 +2258,17 @@ export class WebSocketMessageHandler {
 	 * dispatch time - which is why the CLI requires `--new-tab` or `--tab`
 	 * alongside `--notify-on-complete`.
 	 */
-	private armDispatchCallback(
+	private validateCallbackRequest(
 		message: WebClientMessage,
-		target: { agentId: string; tabId: string; prompt: string; isNewTab: boolean }
-	): { callbackId?: string; error?: string } {
+		target: { agentId: string; tabId?: string }
+	): { error?: string } {
 		const callerAgentId =
 			typeof message.notifyOnComplete === 'string' ? message.notifyOnComplete : '';
 		if (!callerAgentId) return {};
 
-		const registry = getDispatchCallbackRegistry();
-		if (!registry) return { error: 'Dispatch callbacks are not available in this build' };
+		if (!getDispatchCallbackRegistry()) {
+			return { error: 'Dispatch callbacks are not available in this build' };
+		}
 
 		if (!this.callbacks.getSessionDetail?.(callerAgentId)) {
 			return { error: `Callback agent not found: ${callerAgentId}` };
@@ -2275,10 +2278,35 @@ export class WebSocketMessageHandler {
 
 		// A callback that wakes the very tab it is waiting on is an infinite
 		// self-poke. The CLI rejects the obvious form; this is the server-side
-		// backstop for direct websocket callers.
-		if (callerAgentId === target.agentId && (!callerTabId || callerTabId === target.tabId)) {
+		// backstop for direct websocket callers. With no target tab id yet (the
+		// pre-dispatch pass for `--new-tab`) only the no-caller-tab form is
+		// decidable: a tab that does not exist yet can never equal an existing one.
+		if (
+			callerAgentId === target.agentId &&
+			(!callerTabId || (target.tabId !== undefined && callerTabId === target.tabId))
+		) {
 			return { error: 'Callback agent/tab cannot be the dispatch target itself' };
 		}
+
+		return {};
+	}
+
+	private armDispatchCallback(
+		message: WebClientMessage,
+		target: { agentId: string; tabId: string; prompt: string; isNewTab: boolean }
+	): { callbackId?: string; error?: string } {
+		const callerAgentId =
+			typeof message.notifyOnComplete === 'string' ? message.notifyOnComplete : '';
+		if (!callerAgentId) return {};
+
+		const invalid = this.validateCallbackRequest(message, target);
+		if (invalid.error) return invalid;
+
+		// Non-null by the check above; re-read rather than thread it through.
+		const registry = getDispatchCallbackRegistry();
+		if (!registry) return { error: 'Dispatch callbacks are not available in this build' };
+
+		const callerTabId = typeof message.callbackTab === 'string' ? message.callbackTab : undefined;
 
 		if (registry.hasArmedFor(target.agentId, target.tabId)) {
 			return {
@@ -2357,6 +2385,17 @@ export class WebSocketMessageHandler {
 
 		if (!this.callbacks.newAITabWithPrompt) {
 			sendErrorResult('New AI tab with prompt not configured');
+			return;
+		}
+
+		// Reject impossible callback requests BEFORE the tab exists. Arming needs
+		// the fresh tab id, but every tab-independent rejection (no registry,
+		// unknown caller, self-target) would otherwise surface only after the tab
+		// was created and its prompt was already running - leaving the caller a
+		// `success: false` plus a live turn in an orphaned tab.
+		const callbackPrecheck = this.validateCallbackRequest(message, { agentId: sessionId });
+		if (callbackPrecheck.error) {
+			sendErrorResult(callbackPrecheck.error);
 			return;
 		}
 

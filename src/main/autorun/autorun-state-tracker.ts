@@ -19,6 +19,8 @@
  * non-null branch, which is why `autorun_complete` was unreliable there.
  */
 
+import { captureException } from '../utils/sentry';
+
 export interface AutoRunTrackedState {
 	isRunning: boolean;
 	totalTasks?: number;
@@ -36,6 +38,8 @@ type FinalListener = (agentId: string, payload: AutoRunFinalPayload) => void;
 
 export class AutoRunStateTracker {
 	private states = new Map<string, AutoRunTrackedState>();
+	/** agentId -> when the current running batch began. */
+	private runningSince = new Map<string, number>();
 	private listeners = new Set<FinalListener>();
 
 	/**
@@ -49,17 +53,33 @@ export class AutoRunStateTracker {
 
 		if (!state) {
 			this.states.delete(agentId);
+			this.runningSince.delete(agentId);
 			if (wasRunning) this.emitFinal(agentId, previous);
 			return;
 		}
 
 		this.states.set(agentId, state);
+		if (state.isRunning) {
+			if (!wasRunning) this.runningSince.set(agentId, Date.now());
+		} else {
+			this.runningSince.delete(agentId);
+		}
 		if (wasRunning && !state.isRunning) this.emitFinal(agentId, state);
 	}
 
 	/** True while a batch is running for this agent. */
 	isRunning(agentId: string): boolean {
 		return this.states.get(agentId)?.isRunning === true;
+	}
+
+	/**
+	 * When the current batch started, or `undefined` when none is running.
+	 * Consumers that correlate against a specific turn (dispatch callbacks) need
+	 * this to tell "the batch my dispatch just started" from "a batch that was
+	 * already running in some other tab of the same agent".
+	 */
+	getRunningSince(agentId: string): number | undefined {
+		return this.runningSince.get(agentId);
 	}
 
 	getState(agentId: string): AutoRunTrackedState | undefined {
@@ -75,6 +95,7 @@ export class AutoRunStateTracker {
 	/** Forget an agent entirely (agent deleted). Does not emit an edge. */
 	clear(agentId: string): void {
 		this.states.delete(agentId);
+		this.runningSince.delete(agentId);
 	}
 
 	private emitFinal(agentId: string, state: AutoRunTrackedState | undefined): void {
@@ -93,8 +114,13 @@ export class AutoRunStateTracker {
 		for (const listener of this.listeners) {
 			try {
 				listener(agentId, payload);
-			} catch {
-				// Listener failures must never break Auto Run state tracking.
+			} catch (error) {
+				// One bad listener must not break Auto Run state tracking for the
+				// others, but the failure is a real bug - report it rather than
+				// discarding it.
+				void captureException(error instanceof Error ? error : new Error(String(error)), {
+					extra: { area: 'autorun-state-tracker', hook: 'onFinal', agentId },
+				});
 			}
 		}
 	}

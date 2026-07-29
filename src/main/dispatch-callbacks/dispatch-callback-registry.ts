@@ -49,11 +49,16 @@ export interface DispatchCallbackRegistryDeps {
 	now?: () => number;
 	generateId?: () => string;
 	/**
-	 * Whether an Auto Run batch is currently running for this agent. Fed by the
-	 * main-process AutoRunStateTracker (Phase 2). When absent, callbacks behave
-	 * as single-run only.
+	 * When an Auto Run batch started for this agent, or `undefined` when none is
+	 * running. Fed by the main-process AutoRunStateTracker (Phase 2). When absent,
+	 * callbacks behave as single-run only.
+	 *
+	 * The timestamp (not just a boolean) is what keeps the parking tab-safe: Auto
+	 * Run is agent-scoped with no tab dimension, so a batch that was already
+	 * running in another tab when our dispatch started is by definition unrelated
+	 * to it and must not delay - or contribute its task counts to - our callback.
 	 */
-	isAutoRunActive?: (agentId: string) => boolean;
+	autoRunRunningSince?: (agentId: string) => number | undefined;
 	/** Invoked exactly once per entry when it fires. */
 	onFire: (fire: DispatchCallbackFire) => void;
 	graceMs?: number;
@@ -79,6 +84,8 @@ export class DispatchCallbackRegistry {
 	private graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	/** processSessionId -> last observed spawn time (see SPAWN_LOOKBACK_MS). */
 	private recentSpawns = new Map<string, number>();
+	/** processSessionId -> last observed exit (see SPAWN_LOOKBACK_MS). */
+	private recentExits = new Map<string, { at: number; exitCode: number | null }>();
 	private readonly now: () => number;
 	private readonly generateId: () => string;
 	private readonly graceMs: number;
@@ -107,7 +114,13 @@ export class DispatchCallbackRegistry {
 			);
 		}
 		const now = this.now();
-		const timeoutMs = Math.min(Math.max(registration.timeoutMs, 1000), MAX_CALLBACK_TIMEOUT_MS);
+		// A non-finite timeout would propagate NaN into `expiresAt`, and `NaN >
+		// now` is always false - the entry would never expire, defeating the
+		// runaway guard MAX_CALLBACK_TIMEOUT_MS exists for.
+		const requestedTimeoutMs = Number.isFinite(registration.timeoutMs)
+			? registration.timeoutMs
+			: DEFAULT_CALLBACK_TIMEOUT_MS;
+		const timeoutMs = Math.min(Math.max(requestedTimeoutMs, 1000), MAX_CALLBACK_TIMEOUT_MS);
 		const entry: DispatchCallbackEntry = {
 			...registration,
 			timeoutMs,
@@ -121,11 +134,17 @@ export class DispatchCallbackRegistry {
 		// --new-tab only: the renderer may already have spawned the agent before
 		// this registration landed. The tab id is brand new, so a recent spawn
 		// against it can only be our dispatch.
+		let replayExit: { at: number; exitCode: number | null } | undefined;
 		if (registration.armFromRecentSpawn) {
 			const spawnedAt = this.recentSpawns.get(entry.processSessionId);
 			if (spawnedAt !== undefined && now - spawnedAt <= SPAWN_LOOKBACK_MS) {
 				entry.state = 'armed';
 				entry.startedAt = spawnedAt;
+				// A short turn can spawn AND exit before the new-tab ack round-trips
+				// back here. Adopting only the spawn would leave the entry armed
+				// forever, reporting a bogus `timeout` instead of the real result.
+				const exit = this.recentExits.get(entry.processSessionId);
+				if (exit && exit.at >= spawnedAt) replayExit = exit;
 			}
 		}
 
@@ -133,6 +152,12 @@ export class DispatchCallbackRegistry {
 		this.deps.logger?.info(
 			`[DispatchCallback] armed ${entry.callbackId} target=${entry.processSessionId} caller=${entry.callerAgentId}`
 		);
+		if (replayExit) {
+			this.deps.logger?.info(
+				`[DispatchCallback] ${entry.callbackId} replaying exit observed before registration`
+			);
+			this.noteExit(entry.processSessionId, replayExit.exitCode);
+		}
 		return entry;
 	}
 
@@ -152,11 +177,26 @@ export class DispatchCallbackRegistry {
 		}
 	}
 
-	/** Keep the spawn-lookback map from growing without bound. */
+	/** Keep the spawn/exit lookback maps from growing without bound. */
 	private prunePendingSpawns(now: number): void {
 		for (const [key, at] of this.recentSpawns) {
 			if (now - at > SPAWN_LOOKBACK_MS) this.recentSpawns.delete(key);
 		}
+		for (const [key, exit] of this.recentExits) {
+			if (now - exit.at > SPAWN_LOOKBACK_MS) this.recentExits.delete(key);
+		}
+	}
+
+	/**
+	 * Whether an Auto Run batch that this dispatch itself could have started is
+	 * running on the target agent. Auto Run state is agent-scoped (no tab
+	 * dimension), so a batch already running before our turn started belongs to
+	 * some other tab and must not park us.
+	 */
+	private shouldAwaitAutoRun(entry: DispatchCallbackEntry): boolean {
+		const runningSince = this.deps.autoRunRunningSince?.(entry.targetAgentId);
+		if (runningSince === undefined) return false;
+		return runningSince >= (entry.startedAt ?? entry.createdAt);
 	}
 
 	/**
@@ -164,13 +204,16 @@ export class DispatchCallbackRegistry {
 	 * entry until the Auto Run batch finishes.
 	 */
 	noteExit(processSessionId: string, exitCode: number | null): void {
+		const observedAt = this.now();
+		this.recentExits.set(processSessionId, { at: observedAt, exitCode });
+		this.prunePendingSpawns(observedAt);
 		for (const entry of [...this.entries.values()]) {
 			if (entry.processSessionId !== processSessionId) continue;
 			if (entry.state !== 'armed') continue;
 			entry.exitCode = exitCode;
 			entry.durationMs = this.now() - (entry.startedAt ?? entry.createdAt);
 
-			if (this.deps.isAutoRunActive?.(entry.targetAgentId)) {
+			if (this.shouldAwaitAutoRun(entry)) {
 				entry.state = 'awaiting-autorun';
 				this.deps.logger?.info(
 					`[DispatchCallback] ${entry.callbackId} parked - Auto Run still running on ${entry.targetAgentId}`
@@ -184,7 +227,7 @@ export class DispatchCallbackRegistry {
 				const current = this.entries.get(entry.callbackId);
 				if (!current || current.state !== 'grace') return;
 				// An Auto Run started during the grace window: park instead of firing.
-				if (this.deps.isAutoRunActive?.(current.targetAgentId)) {
+				if (this.shouldAwaitAutoRun(current)) {
 					current.state = 'awaiting-autorun';
 					return;
 				}
@@ -270,6 +313,7 @@ export class DispatchCallbackRegistry {
 		this.graceTimers.clear();
 		this.entries.clear();
 		this.recentSpawns.clear();
+		this.recentExits.clear();
 	}
 
 	private countActive(): number {

@@ -156,6 +156,32 @@ describe('dispatch --notify-on-complete', () => {
 			expect(result.notifyOnComplete).toBe('caller');
 		});
 
+		it('fails with CALLBACK_NOT_ARMED when the desktop acks without a callbackId', async () => {
+			// An older desktop build that ignores notifyOnComplete: the prompt lands
+			// but nothing is armed, so claiming success would leave the caller
+			// waiting forever for a wake-up nobody scheduled.
+			mockSend({ tabId: 'tab-1' });
+			const result = await runDispatch('target', 'go', {
+				tab: 'tab-1',
+				notifyOnComplete: 'caller',
+			});
+			expect(result.success).toBe(false);
+			expect(result.code).toBe('CALLBACK_NOT_ARMED');
+			expect(result.tabId).toBe('tab-1');
+		});
+
+		it('fails with CALLBACK_NOT_ARMED when a queued dispatch acks without a callbackId', async () => {
+			mockSend({ success: true, tabId: 'tab-1' });
+			const result = await runDispatch('target', 'go', {
+				tab: 'tab-1',
+				queue: true,
+				notifyOnComplete: 'caller',
+			});
+			expect(result.success).toBe(false);
+			expect(result.code).toBe('CALLBACK_NOT_ARMED');
+			expect(result.tabId).toBe('tab-1');
+		});
+
 		it('omits callback fields entirely when the flag is absent', async () => {
 			const captured = mockSend({ tabId: 'new-tab' });
 			const result = await runDispatch('target', 'go', { newTab: true });

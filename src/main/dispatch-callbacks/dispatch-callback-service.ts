@@ -57,7 +57,7 @@ export function initDispatchCallbacks(deps: DispatchCallbackServiceDeps): Dispat
 	const tracker = getAutoRunStateTracker();
 
 	registry = new DispatchCallbackRegistry({
-		isAutoRunActive: (agentId) => tracker.isRunning(agentId),
+		autoRunRunningSince: (agentId) => tracker.getRunningSince(agentId),
 		onFire: (fire) => {
 			void deliverCallback(fire, deps);
 		},

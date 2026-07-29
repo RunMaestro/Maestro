@@ -166,8 +166,8 @@ Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO
 ```bash
 # Delegate a review, and wake me when it is done
 maestro-cli dispatch <reviewer-agent> "review the diff on feat/x" \
-  --new-tab \
-  --notify-on-complete <orchestrator-agent>
+	--new-tab \
+	--notify-on-complete <orchestrator-agent>
 ```
 
 The response echoes the armed callback:
