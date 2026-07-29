@@ -328,6 +328,10 @@ export function useBatchRunner({
 					worktreePath,
 					worktreeBranch,
 					customPrompt: prompt !== '' ? prompt : undefined,
+					// Persist the run-scoped model override so the exit-path synopsis can
+					// spawn per-task synopses under the run's model (CLI parity). Only the
+					// model is stored: SynopsisData.sessionConfig has no effort field.
+					runModelOverride: config.model || undefined,
 					startTime: batchStartTime,
 					// Time tracking
 					cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)

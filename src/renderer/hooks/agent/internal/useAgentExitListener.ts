@@ -325,6 +325,16 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							!!currentSession.pendingAICommandForSynopsis,
 							thinkingLogsRecorded(completedTab?.showThinking)
 						);
+						// Desktop document/spec-mode Auto Run synopsizes each task from this
+						// exit path (not spawnBackgroundSynopsis). Honor the active run's
+						// per-run model override so the synopsis spawns under the same model
+						// as the run's tasks, matching the CLI batch processor. Same
+						// precedence as every other spawn this run makes: run override wins
+						// over the session default. Effort is intentionally not threaded:
+						// SynopsisData.sessionConfig has no effort field.
+						const runModelOverride = deps.getBatchStateRef.current?.(
+							actualSessionId
+						)?.runModelOverride;
 						synopsisData = {
 							sessionId: actualSessionId,
 							cwd: currentSession.cwd,
@@ -342,7 +352,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								customPath: currentSession.customPath,
 								customArgs: currentSession.customArgs,
 								customEnvVars: currentSession.customEnvVars,
-								customModel: currentSession.customModel,
+								customModel: runModelOverride ?? currentSession.customModel,
 								customContextWindow: currentSession.customContextWindow,
 								// Carry the agent's Claude token source into the synopsis spawn so
 								// it resolves the same TUI/Dynamic/API mode as a normal turn.
