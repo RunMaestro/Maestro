@@ -183,6 +183,17 @@ export function registerPersistenceHandlers(
 	const noteSessionActivated = (sessionId: string): void => {
 		if (!sessionId) return;
 		lastEmittedActivatedSessionId = sessionId;
+		// Supersede any pending debounced flush: a queued activation for a DIFFERENT
+		// session (e.g. the user navigated to A and its 100ms timer is still armed)
+		// would otherwise fire after this direct plugin emit for B and re-announce
+		// A, leaving subscribers on the wrong session - the same desync class this
+		// hook exists to prevent, just via the timer path. Drop the queued id and
+		// cancel the timer so the direct emit is authoritative.
+		pendingActivatedSessionId = null;
+		if (sessionActivatedTimer) {
+			clearTimeout(sessionActivatedTimer);
+			sessionActivatedTimer = null;
+		}
 	};
 
 	// Settings management
