@@ -71,12 +71,11 @@ describe('InputTextarea', () => {
 		expect(textarea.style.maxHeight).toBe('176px');
 	});
 
-	it('renders every glyph in the overlay over a transparent textarea in AI mode', () => {
+	it('keeps native text visible and skips decoration without a recognized mention', () => {
 		const { textarea, overlay } = renderTextarea({ inputValue: 'plain text, no mention' });
 
-		expect(overlay).not.toBeNull();
-		expect(overlay.textContent).toBe('plain text, no mention');
-		expect(textarea.style.color).toBe('transparent');
+		expect(overlay).toBeNull();
+		expect(textarea).toHaveStyle({ color: inputAreaTheme.colors.textMain });
 	});
 
 	it('does not render the overlay in terminal mode', () => {
@@ -87,7 +86,9 @@ describe('InputTextarea', () => {
 	});
 
 	it('re-syncs the overlay after the grown content commits, repairing the stale clamp', () => {
-		const { textarea, overlay, rerenderWith } = renderTextarea({ inputValue: 'line one' });
+		const { textarea, overlay, rerenderWith } = renderTextarea({
+			inputValue: 'line one @src/index.ts',
+		});
 
 		// Text region is 8 rows of 20px. The textarea has already outgrown it; the
 		// overlay is still rendering the shorter, pre-keystroke content.
@@ -106,14 +107,14 @@ describe('InputTextarea', () => {
 		// Commit the taller overlay content. The layout effect keyed on the rendered
 		// segments re-copies the scroll position once the overlay can actually reach it.
 		overlayScroll.grow(220);
-		rerenderWith('line one\nline two');
+		rerenderWith('line one @src/index.ts\nline two');
 
 		expect(overlay.scrollTop).toBe(60);
 		expect(overlay.scrollTop).toBe(textarea.scrollTop);
 	});
 
 	it('keeps syncing the overlay on user-driven scrolling', () => {
-		const { textarea, overlay } = renderTextarea({ inputValue: 'line one' });
+		const { textarea, overlay } = renderTextarea({ inputValue: 'line one @src/index.ts' });
 
 		makeScrollable(textarea, 400, 160);
 		makeScrollable(overlay, 400, 160);
