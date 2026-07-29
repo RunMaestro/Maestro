@@ -423,7 +423,6 @@ export const TEMPLATE_VARIABLES = [
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
-	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
