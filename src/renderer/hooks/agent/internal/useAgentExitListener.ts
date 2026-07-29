@@ -332,9 +332,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						// precedence as every other spawn this run makes: run override wins
 						// over the session default. Effort is intentionally not threaded:
 						// SynopsisData.sessionConfig has no effort field.
-						const runModelOverride = deps.getBatchStateRef.current?.(
-							actualSessionId
-						)?.runModelOverride;
+						const runModelOverride =
+							deps.getBatchStateRef.current?.(actualSessionId)?.runModelOverride;
 						synopsisData = {
 							sessionId: actualSessionId,
 							cwd: currentSession.cwd,
