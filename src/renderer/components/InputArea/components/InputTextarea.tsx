@@ -1,4 +1,12 @@
-import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import type { Session, Group, Theme } from '../../../types';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { useSettingsStore } from '../../../stores/settingsStore';
@@ -112,6 +120,16 @@ export const InputTextarea = memo(function InputTextarea({
 		const nextHasSelection = target.selectionStart !== target.selectionEnd;
 		setHasSelection((current) => (current === nextHasSelection ? current : nextHasSelection));
 	};
+
+	// `hasSelection` is only ever cleared by an event fired ON the focused
+	// textarea, so it would stay stuck `true` whenever the overlay stops
+	// listening while a range is selected: switching to terminal mode, or
+	// deleting the last mention out of the draft. The chip would then come back
+	// invisible on the next render. Clear the flag whenever the decorative layer
+	// is not rendered (blur is handled on the textarea's own onBlur).
+	useEffect(() => {
+		if (!overlayRendered) setHasSelection(false);
+	}, [overlayRendered]);
 
 	// React's textarea onSelect fires on mouseup, after a drag selection has
 	// already become visible. Track the document selectionchange event so the
@@ -267,7 +285,13 @@ export const InputTextarea = memo(function InputTextarea({
 				value={inputValue}
 				spellCheck={spellCheckEnabled}
 				onFocus={onInputFocus}
-				onBlur={onInputBlur}
+				onBlur={() => {
+					// Chromium stops painting the selection once the textarea loses focus,
+					// so the decoration has to come back with it. Without this the chip
+					// stays hidden until the user clicks back in and collapses the caret.
+					setHasSelection(false);
+					onInputBlur?.();
+				}}
 				onChange={(e) => {
 					updateSelectionState(e.currentTarget);
 					onChange(e);

@@ -1,6 +1,6 @@
 import { fireEvent, render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { RefObject } from 'react';
+import type { ComponentProps, RefObject } from 'react';
 import { InputTextarea } from '../../../../../renderer/components/InputArea/components/InputTextarea';
 import { TEXTAREA_MAX_HEIGHT } from '../../../../../renderer/components/InputArea/utils/textareaSizing';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
@@ -33,9 +33,11 @@ function makeScrollable(el: HTMLElement, scrollHeight: number, clientHeight: num
 	};
 }
 
-function renderTextarea(overrides: Record<string, unknown> = {}) {
+type TextareaProps = ComponentProps<typeof InputTextarea>;
+
+function renderTextarea(overrides: Partial<TextareaProps> = {}) {
 	const inputRef: RefObject<HTMLTextAreaElement> = { current: null };
-	const props = {
+	const props: TextareaProps = {
 		session: createInputAreaSession(),
 		theme: inputAreaTheme,
 		isTerminalMode: false,
@@ -49,15 +51,20 @@ function renderTextarea(overrides: Record<string, unknown> = {}) {
 		handleDrop: vi.fn(),
 		...overrides,
 	};
-	const view = render(<InputTextarea {...(props as any)} />);
+	const view = render(<InputTextarea {...props} />);
 	const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement;
 	const overlay = view.container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
 	return {
 		...view,
 		textarea,
 		overlay,
-		rerenderWith: (value: string) =>
-			view.rerender(<InputTextarea {...(props as any)} inputValue={value} />),
+		// Re-query after a rerender that unmounts/remounts the overlay (mode flip,
+		// last mention deleted) - the captured `overlay` node is stale by then.
+		getOverlay: () =>
+			view.container.querySelector('.maestro-input-text-overlay') as HTMLDivElement | null,
+		rerenderWith: (value: string) => view.rerender(<InputTextarea {...props} inputValue={value} />),
+		rerenderProps: (next: Partial<TextareaProps>) =>
+			view.rerender(<InputTextarea {...props} {...next} />),
 	};
 }
 
@@ -83,6 +90,43 @@ describe('InputTextarea', () => {
 
 		expect(container.querySelector('.maestro-input-text-overlay')).toBeNull();
 		expect(textarea.style.color).not.toBe('transparent');
+	});
+
+	it('restores mention decoration when the selected textarea loses focus', () => {
+		const { textarea, overlay } = renderTextarea({ inputValue: 'check @src/index.ts now' });
+
+		textarea.focus();
+		textarea.setSelectionRange(0, 5);
+		fireEvent(document, new Event('selectionchange'));
+
+		expect(overlay).toHaveStyle({ visibility: 'hidden' });
+
+		// Chromium stops painting the selection on blur, so the chip has to come
+		// back with it - nothing else fires until the user clicks back in.
+		fireEvent.blur(textarea);
+
+		expect(overlay).toHaveStyle({ visibility: 'visible' });
+	});
+
+	it('clears stale selection state while the decoration is unmounted', () => {
+		const { textarea, getOverlay, rerenderProps } = renderTextarea({
+			inputValue: 'check @src/index.ts now',
+		});
+
+		textarea.focus();
+		textarea.setSelectionRange(0, 5);
+		fireEvent(document, new Event('selectionchange'));
+
+		expect(getOverlay()).toHaveStyle({ visibility: 'hidden' });
+
+		// Terminal mode unmounts the overlay AND detaches the selectionchange
+		// listener, so nothing can clear `hasSelection` while it is gone. Coming
+		// back must not restore a permanently hidden decoration layer.
+		rerenderProps({ isTerminalMode: true });
+		expect(getOverlay()).toBeNull();
+
+		rerenderProps({ isTerminalMode: false });
+		expect(getOverlay()).toHaveStyle({ visibility: 'visible' });
 	});
 
 	it('re-syncs the overlay after the grown content commits, repairing the stale clamp', () => {
