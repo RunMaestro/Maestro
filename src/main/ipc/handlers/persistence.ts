@@ -81,9 +81,28 @@ export interface PersistenceHandlerDependencies {
 }
 
 /**
+ * Handles exposed by {@link registerPersistenceHandlers} for callers that emit
+ * `session.activated` outside the debounced `setActiveSessionId` flush.
+ */
+export interface PersistenceHandlers {
+	/**
+	 * Record that a session was activated through a path OTHER than this module's
+	 * debounced flush - specifically the plugin focus verbs in index.ts, which
+	 * emit `session.activated` directly onto the same plugin event bus. Without
+	 * this, the two emit paths keep separate dedupe state: the plugin emits B
+	 * while `flushSessionActivated` still believes the last emitted id is A, so a
+	 * later user navigation back to A is wrongly suppressed and subscribers stay
+	 * stuck on B. Call this AFTER emitting so both paths share one last-emitted id.
+	 */
+	noteSessionActivated: (sessionId: string) => void;
+}
+
+/**
  * Register all persistence-related IPC handlers.
  */
-export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies): void {
+export function registerPersistenceHandlers(
+	deps: PersistenceHandlerDependencies
+): PersistenceHandlers {
 	const { settingsStore, sessionsStore, groupsStore, getWebServer, emitPluginEvent, safeSend } =
 		deps;
 
@@ -156,6 +175,14 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			// does know the tab.
 			payload: { sessionId: id },
 		});
+	};
+
+	// Shared dedupe hook for the plugin focus path (see PersistenceHandlers).
+	// The plugin verbs emit `session.activated` themselves, bypassing the flush
+	// above, so they must record the id here or the two paths desync.
+	const noteSessionActivated = (sessionId: string): void => {
+		if (!sessionId) return;
+		lastEmittedActivatedSessionId = sessionId;
 	};
 
 	// Settings management
@@ -582,4 +609,6 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			return [];
 		}
 	});
+
+	return { noteSessionActivated };
 }

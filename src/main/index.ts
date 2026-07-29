@@ -508,6 +508,10 @@ let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
+// Set by registerPersistenceHandlers (in setupIpcHandlers). Lets the plugin
+// focus verbs record into the persistence layer's `session.activated` dedupe so
+// the two emit paths never desync. Null before IPC setup / when unavailable.
+let noteSessionActivatedInPersistence: ((sessionId: string) => void) | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
@@ -1970,6 +1974,11 @@ app
 				at: new Date().toISOString(),
 				payload: { sessionId },
 			});
+			// Keep the persistence-layer dedupe in sync: flushSessionActivated guards
+			// repeats with its own last-emitted id, and this direct emit bypasses it.
+			// Without recording here, a later user navigation back to the previously
+			// focused session would be wrongly suppressed (see PersistenceHandlers).
+			noteSessionActivatedInPersistence?.(sessionId);
 		};
 		const pluginTabsFocus = async (tabId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
@@ -2031,6 +2040,13 @@ app
 				sessions.map((s) => (s.id === sessionId ? { ...s, ...pluginAiFocusFields(target) } : s))
 			);
 			emitPluginSessionActivated(sessionId);
+			// The store write above is only the persistence path: the renderer's
+			// Zustand session store is canonical and reads main's store only at
+			// startup, then flushes its own tree back down - so a main-side write is
+			// invisible to the live UI and gets clobbered on the next flush. Push a
+			// focus-request event alongside it so a renderer listener applies the
+			// jump through the same canonical helpers, moving the visible workspace.
+			safeSend('sessions:focus-request', { sessionId, tabId: target });
 			return true;
 		};
 		const pluginTabsClose = async (tabId: string): Promise<boolean> => {
@@ -3310,7 +3326,7 @@ function setupIpcHandlers() {
 	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
-	registerPersistenceHandlers({
+	const persistenceHandlers = registerPersistenceHandlers({
 		settingsStore: store,
 		sessionsStore,
 		groupsStore,
@@ -3321,6 +3337,9 @@ function setupIpcHandlers() {
 		emitPluginEvent: (event) => pluginEventBus?.emit(event),
 		safeSend,
 	});
+	// Wire the plugin focus verbs into the persistence layer's session.activated
+	// dedupe so the two emit paths share one last-emitted id.
+	noteSessionActivatedInPersistence = persistenceHandlers.noteSessionActivated;
 
 	// System operations - extracted to src/main/ipc/handlers/system.ts
 	registerSystemHandlers({

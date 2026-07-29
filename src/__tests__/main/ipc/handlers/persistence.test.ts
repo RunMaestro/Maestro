@@ -287,6 +287,45 @@ describe('persistence IPC handlers', () => {
 
 				expect(emitPluginEvent).not.toHaveBeenCalled();
 			});
+
+			// Regression: the plugin focus verbs (index.ts) emit session.activated
+			// directly, bypassing flushSessionActivated's dedupe. If the plugin path
+			// does not record its id via noteSessionActivated, the two paths desync:
+			// after the user is on A and a plugin focuses B, returning to A would be
+			// wrongly suppressed and subscribers stay stuck on B.
+			it('keeps the plugin path in sync so returning to a prior session still emits', async () => {
+				handlers.clear();
+				const localEmit = vi.fn();
+				const { noteSessionActivated } = registerPersistenceHandlers({
+					settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+					sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+					groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+					getWebServer: getWebServerFn,
+					safeSend: mockSafeSend,
+					emitPluginEvent: localEmit,
+				});
+				const localSetHandler = handlers.get('sessions:setActiveSessionId') as (
+					event: unknown,
+					id: string
+				) => Promise<unknown>;
+
+				// User navigates to A: the flush path emits A (lastEmitted = A).
+				await localSetHandler({}, 'A');
+				vi.advanceTimersByTime(100);
+				expect(localEmit).toHaveBeenCalledTimes(1);
+				expect(localEmit.mock.calls[0][0].payload).toEqual({ sessionId: 'A' });
+
+				// Agent Flow calls sessions.focus(B): index.ts emits B directly, then
+				// records it through the shared dedupe. Simulate that record here.
+				noteSessionActivated('B');
+
+				// User returns to A: A differs from the last-emitted id (now B), so it
+				// must still be emitted rather than suppressed as a repeat.
+				await localSetHandler({}, 'A');
+				vi.advanceTimersByTime(100);
+				expect(localEmit).toHaveBeenCalledTimes(2);
+				expect(localEmit.mock.calls[1][0].payload).toEqual({ sessionId: 'A' });
+			});
 		});
 	});
 

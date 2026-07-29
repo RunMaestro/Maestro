@@ -52,6 +52,17 @@ export function createSessionsApi() {
 			ipcRenderer.invoke('sessions:setMany', updates, removeIds),
 		getActiveSessionId: () => ipcRenderer.invoke('sessions:getActiveSessionId') as Promise<string>,
 		setActiveSessionId: (id: string) => ipcRenderer.invoke('sessions:setActiveSessionId', id),
+		/**
+		 * Listen for main-side focus requests (plugin `sessions.focus` verb). The
+		 * main store write alone is invisible to the live renderer store, so the
+		 * renderer must apply the jump itself through the canonical helpers.
+		 */
+		onFocusRequest: (handler: (payload: { sessionId: string; tabId?: string }) => void) => {
+			const wrappedHandler = (_: unknown, payload: { sessionId: string; tabId?: string }) =>
+				handler(payload);
+			ipcRenderer.on('sessions:focus-request', wrappedHandler);
+			return () => ipcRenderer.removeListener('sessions:focus-request', wrappedHandler);
+		},
 	};
 }
 

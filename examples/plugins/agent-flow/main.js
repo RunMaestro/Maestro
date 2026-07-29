@@ -594,7 +594,19 @@ function activate(maestro) {
 		if (!args || typeof args.sessionId !== 'string' || !args.sessionId) return;
 		var tabId = typeof args.tabId === 'string' && args.tabId ? args.tabId : undefined;
 		swallow(function () {
-			return maestro.sessions.focus(args.sessionId, tabId);
+			var p = maestro.sessions.focus(args.sessionId, tabId);
+			// Dismiss the overlay once a jump lands: the graph is a launcher, so
+			// clicking a node should return the user to the workspace rather than
+			// leave the full-window overlay covering the agent they just navigated
+			// to. Close only on a successful focus so a rejected/false jump keeps
+			// the graph up.
+			if (p && typeof p.then === 'function') {
+				return p.then(function (ok) {
+					if (ok !== false) maestro.ui.closePanel('flow');
+					return ok;
+				});
+			}
+			return p;
 		});
 	});
 

@@ -29,6 +29,7 @@ interface Stub {
 	run: (commandId: string, args?: unknown) => void;
 	panelPost: ReturnType<typeof vi.fn>;
 	togglePanel: ReturnType<typeof vi.fn>;
+	closePanel: ReturnType<typeof vi.fn>;
 	focus: ReturnType<typeof vi.fn>;
 	/** Latest snapshot pushed to the panel. */
 	snapshot: () => Record<string, unknown> | undefined;
@@ -39,6 +40,7 @@ function makeStub(): Stub {
 	const commands = new Map<string, CommandHandler>();
 	const panelPost = vi.fn(() => Promise.resolve(undefined));
 	const togglePanel = vi.fn(() => Promise.resolve(undefined));
+	const closePanel = vi.fn(() => Promise.resolve(undefined));
 	const focus = vi.fn(() => Promise.resolve(undefined));
 
 	return {
@@ -54,13 +56,14 @@ function makeStub(): Stub {
 			commands: {
 				register: (id: string, handler: CommandHandler) => commands.set(id, handler),
 			},
-			ui: { panelPost, togglePanel },
+			ui: { panelPost, togglePanel, closePanel },
 			sessions: { list: () => Promise.resolve([]), focus },
 		},
 		emit: (topic, payload) => (events.get(topic) ?? []).forEach((h) => h(payload, undefined)),
 		run: (commandId, args) => commands.get(commandId)?.(args),
 		panelPost,
 		togglePanel,
+		closePanel,
 		focus,
 		snapshot: () => {
 			const call = panelPost.mock.calls[panelPost.mock.calls.length - 1] as
@@ -112,6 +115,24 @@ describe('agent-flow plugin main.js', () => {
 	it('drops a non-string tabId rather than forwarding it', () => {
 		stub.run('jump', { sessionId: 's1', tabId: 7 });
 		expect(stub.focus).toHaveBeenCalledWith('s1', undefined);
+	});
+
+	it('dismisses the overlay after a successful jump', async () => {
+		stub.run('jump', { sessionId: 's1' });
+		// closePanel is chained off the focus promise, so let the microtask settle.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(stub.focus).toHaveBeenCalledWith('s1', undefined);
+		expect(stub.closePanel).toHaveBeenCalledWith('flow');
+	});
+
+	it('leaves the overlay up when the jump is rejected', async () => {
+		stub.focus.mockResolvedValueOnce(false);
+		stub.run('jump', { sessionId: 'nope' });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(stub.focus).toHaveBeenCalledWith('nope', undefined);
+		expect(stub.closePanel).not.toHaveBeenCalled();
 	});
 
 	it('carries the activated session id in snapshots', () => {

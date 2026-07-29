@@ -133,6 +133,7 @@ import {
 	useSessionSwitchCallbacks,
 } from './hooks';
 import { SidebarNavSync } from './hooks/session/SidebarNavSync';
+import { usePluginFocusRequestListener } from './hooks/session/usePluginFocusRequestListener';
 import { useSidebarNavStore } from './stores/sidebarNavStore';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
@@ -2273,6 +2274,10 @@ function MaestroConsoleInner() {
 		skipCurrentDocument: skipCurrentAutoRunDocument,
 		abortBatchOnError: abortAutoRunBatchOnError,
 	});
+
+	// Plugin `sessions.focus` (e.g. Agent Flow node-jump) writes main's store,
+	// which is invisible to the live renderer store - apply it via canonical helpers.
+	usePluginFocusRequestListener();
 
 	// --- GROUP MANAGEMENT ---
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)
