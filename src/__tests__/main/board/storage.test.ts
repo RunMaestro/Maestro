@@ -490,10 +490,27 @@ describe('board-storage card mutations', () => {
 		}
 	);
 
-	it.each(['triage', 'todo', 'blocked', 'done'] as const)(
+	it.each(['triage', 'todo', 'review', 'blocked', 'done'] as const)(
 		'updateCardStatus still accepts the author-owned status "%s"',
 		(manual) => {
 			expect(updateCardStatus(projectRoot, 'b1', 'a', manual).cards[0].status).toBe(manual);
+		}
+	);
+
+	// Regression: the `CardStatus` parameter type is erased at runtime, and this
+	// sits behind an IPC boundary. An off-enum string was written through, and
+	// the load-side validator then dropped the card entirely - a silent delete
+	// of the user's work with no error surfaced to the caller.
+	it.each(['teleported', '', 'DONE', 'done ', '__proto__'])(
+		'updateCardStatus rejects the off-enum status "%s" without destroying the card',
+		(bogus) => {
+			expect(() =>
+				updateCardStatus(projectRoot, 'b1', 'a', bogus as unknown as CardStatus)
+			).toThrow(/not a valid card status/i);
+			// The card must still be on the board, with its previous status intact.
+			const cards = loadBoards(projectRoot)[0].cards;
+			expect(cards.map((c) => c.id)).toContain('a');
+			expect(cards.find((c) => c.id === 'a')?.status).toBe('done');
 		}
 	);
 

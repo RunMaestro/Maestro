@@ -42,6 +42,7 @@ import { MAESTRO_DIR, BOARD_CONFIG_PATH } from '../../shared/maestro-paths';
 import {
 	validateBoard,
 	validateBoardCard,
+	CARD_STATUSES,
 	type Board,
 	type BoardCard,
 	type CardStatus,
@@ -408,8 +409,9 @@ const DERIVED_STATUSES: ReadonlySet<CardStatus> = new Set<CardStatus>(['ready', 
 
 /**
  * Update a card's status. Stamps `updatedAt`. Throws if the board or card is
- * missing, or if the caller tried to set a dispatcher-derived status (see
- * {@link DERIVED_STATUSES}). Returns the updated board.
+ * missing, if `status` is not a real {@link CardStatus}, or if the caller tried
+ * to set a dispatcher-derived status (see {@link DERIVED_STATUSES}). Returns the
+ * updated board.
  */
 export function updateCardStatus(
 	projectRoot: string,
@@ -417,6 +419,17 @@ export function updateCardStatus(
 	cardId: string,
 	status: CardStatus
 ): Board {
+	// The `CardStatus` annotation is compile-time only, and this runs behind an
+	// IPC boundary the renderer and the web-desktop bridge both reach. An
+	// off-enum string used to be written straight through, and the load-side
+	// validator then dropped the whole card as malformed - a silent delete. Fail
+	// the write instead.
+	if (!(CARD_STATUSES as readonly string[]).includes(status)) {
+		throw new Error(
+			`updateCardStatus: "${status}" is not a valid card status. ` +
+				`Valid: ${CARD_STATUSES.join(', ')}.`
+		);
+	}
 	if (DERIVED_STATUSES.has(status)) {
 		throw new Error(
 			`updateCardStatus: "${status}" is set by the dispatcher, not manually. ` +
