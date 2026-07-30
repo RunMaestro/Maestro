@@ -269,6 +269,44 @@ describe('useTerminalOutputScroll mount-time restore gate (J1)', () => {
 		// Must stay where the user scrolled, NOT be yanked back to the stale 8000.
 		expect(ref.current.scrollTop).toBe(2000);
 	});
+
+	it('Case 6: preserves manual reading position after the final response is already rendered', async () => {
+		const ref = { current: makeRestoreContainer(9000) };
+
+		const { result } = renderHook(() =>
+			useTerminalOutputScroll({
+				scrollContainerRef: ref,
+				initialIsAtBottom: true,
+				sessionId: 's1',
+				activeTabId: 't1',
+				filteredLogsLength: 3,
+			})
+		);
+
+		flushRaf();
+		expect(ref.current.scrollTop).toBe(9000);
+
+		// A bottom-position scroll event consumes the throttle's leading edge.
+		// The next event can therefore be delayed even though it is the user's
+		// deliberate move away from the final, already-rendered response.
+		act(() => {
+			result.current.handleScroll();
+		});
+		ref.current.scrollTop = 2000;
+		act(() => {
+			result.current.handleScroll();
+		});
+
+		// A later internal DOM mutation (for example markdown decoration) must
+		// not treat the delayed state update as permission to jump to the end.
+		await act(async () => {
+			ref.current.appendChild(document.createTextNode('settled-render-update'));
+			await Promise.resolve();
+		});
+		flushRaf();
+
+		expect(ref.current.scrollTop).toBe(2000);
+	});
 });
 
 /**

@@ -41,6 +41,10 @@ export function useTerminalOutputScroll({
 	const lastLogCountRef = useRef(0);
 	const prevIsAtBottomRef = useRef(true);
 	const isAtBottomRef = useRef(true);
+	// Records the user's intent separately from React state. The public scroll
+	// handler updates this ref immediately, before its throttled state update,
+	// so a settled-response DOM mutation cannot steal the reading position.
+	const userScrolledAwayRef = useRef(initialIsAtBottom === false);
 	isAtBottomRef.current = isAtBottom;
 
 	const [autoScrollPaused, setAutoScrollPaused] = useState(false);
@@ -72,6 +76,7 @@ export function useTerminalOutputScroll({
 			isProgrammaticScrollRef.current &&
 			scrollTop >= programmaticTargetTopRef.current - PROGRAMMATIC_TARGET_EPSILON_PX;
 		if (atBottom || !parkedAtProgrammaticTarget) {
+			userScrolledAwayRef.current = !atBottom;
 			setIsAtBottom(atBottom);
 			// Mirror into the ref synchronously so MutationObserver sees the user's
 			// new position before a content re-render can yank to bottom (#1140).
@@ -111,7 +116,32 @@ export function useTerminalOutputScroll({
 		scrollContainerRef,
 	]);
 
-	const handleScroll = useThrottledCallback(handleScrollInner, 16);
+	const throttledHandleScroll = useThrottledCallback(handleScrollInner, 16);
+
+	const handleScroll = useCallback(() => {
+		const container = scrollContainerRef.current;
+		if (container) {
+			const { scrollTop, scrollHeight, clientHeight } = container;
+			const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+			const parkedAtProgrammaticTarget =
+				isProgrammaticScrollRef.current &&
+				scrollTop >= programmaticTargetTopRef.current - PROGRAMMATIC_TARGET_EPSILON_PX;
+
+			// The throttled handler persists position and updates UI state, but the
+			// user's scroll-away intent must become authoritative immediately.
+			// Otherwise a DOM mutation in the same frame can observe stale
+			// at-bottom state and jump over what the user is reading.
+			if (atBottom) {
+				userScrolledAwayRef.current = false;
+				isAtBottomRef.current = true;
+			} else if (!parkedAtProgrammaticTarget) {
+				userScrolledAwayRef.current = true;
+				isAtBottomRef.current = false;
+			}
+		}
+
+		throttledHandleScroll();
+	}, [scrollContainerRef, throttledHandleScroll]);
 
 	// Single choke point for programmatic bottom-jumps. Records the clamped
 	// bottom target so handleScrollInner can tell our own scroll events apart
@@ -135,6 +165,7 @@ export function useTerminalOutputScroll({
 			setHasNewMessages(false);
 			setNewMessageCount(0);
 			setIsAtBottom(true);
+			userScrolledAwayRef.current = false;
 			lastLogCountRef.current = filteredLogsLength;
 			return;
 		}
@@ -148,16 +179,19 @@ export function useTerminalOutputScroll({
 				setHasNewMessages(true);
 				setNewMessageCount(unreadCount);
 				setIsAtBottom(false);
+				userScrolledAwayRef.current = true;
 			} else {
 				setHasNewMessages(false);
 				setNewMessageCount(0);
 				setIsAtBottom(true);
+				userScrolledAwayRef.current = false;
 			}
 		} else {
 			tabReadStateRef.current.set(activeTabId, currentCount);
 			setHasNewMessages(false);
 			setNewMessageCount(0);
 			setIsAtBottom(true);
+			userScrolledAwayRef.current = false;
 		}
 
 		lastLogCountRef.current = currentCount;
@@ -174,7 +208,7 @@ export function useTerminalOutputScroll({
 			// sticking to the bottom. Trust the tracked follow state instead: while
 			// following, mark the new content read and let the observer pin to the new
 			// bottom; only raise the "new messages" pill when genuinely paused.
-			if (isAtBottomRef.current) {
+			if (isAtBottomRef.current && !userScrolledAwayRef.current) {
 				if (activeTabId) tabReadStateRef.current.set(activeTabId, currentCount);
 			} else {
 				const newCount = currentCount - lastLogCountRef.current;
@@ -195,7 +229,7 @@ export function useTerminalOutputScroll({
 			requestAnimationFrame(() => {
 				// Re-check isAtBottomRef inside the rAF so a scroll-up that happens
 				// after schedule but before paint cancels the yank (#1140).
-				if (scrollContainerRef.current && isAtBottomRef.current) {
+				if (scrollContainerRef.current && isAtBottomRef.current && !userScrolledAwayRef.current) {
 					jumpToBottom();
 				}
 			});
@@ -205,12 +239,12 @@ export function useTerminalOutputScroll({
 		// Gating on isAtBottom (not `!autoScrollPaused`) keeps a content re-render
 		// after generation finishes - code-block re-highlight, markdown reflow -
 		// from yanking the view down while the user reads earlier output. (#1140)
-		if (isAtBottomRef.current) {
+		if (isAtBottomRef.current && !userScrolledAwayRef.current) {
 			scrollToBottom();
 		}
 
 		const observer = new MutationObserver(() => {
-			if (isAtBottomRef.current) {
+			if (isAtBottomRef.current && !userScrolledAwayRef.current) {
 				scrollToBottom();
 			}
 		});
@@ -255,6 +289,7 @@ export function useTerminalOutputScroll({
 	// the debounced-stale offset) re-fire the restore and yank the user. (J1)
 	useEffect(() => {
 		hasRestoredScrollRef.current = false;
+		userScrolledAwayRef.current = initialIsAtBottom === false;
 	}, [sessionId, activeTabId]);
 
 	useEffect(() => {
@@ -277,9 +312,12 @@ export function useTerminalOutputScroll({
 					if (targetScroll < maxScroll - 50) {
 						// Flip isAtBottomRef first so the observer's live at-bottom
 						// check sees the restored position this frame (#1140).
+						userScrolledAwayRef.current = true;
 						isAtBottomRef.current = false;
 						setAutoScrollPaused(true);
 						setIsAtBottom(false);
+					} else {
+						userScrolledAwayRef.current = false;
 					}
 					scrollContainerRef.current.scrollTop = targetScroll;
 				}
@@ -305,6 +343,7 @@ export function useTerminalOutputScroll({
 	}, []);
 
 	const scrollToBottomAndResume = useCallback(() => {
+		userScrolledAwayRef.current = false;
 		setAutoScrollPaused(false);
 		setHasNewMessages(false);
 		setNewMessageCount(0);
