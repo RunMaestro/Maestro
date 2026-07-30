@@ -313,6 +313,16 @@ export interface WorktreeConfig extends BaseWorktreeConfig {
 	ghPath?: string; // Custom path to gh CLI binary (optional, UI-specific)
 }
 
+// Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
+// Distinct from `WorktreeConfig` above, which describes a single batch run's worktree.
+export interface SessionWorktreeConfig {
+	basePath: string; // Directory where worktrees are stored
+	watchEnabled: boolean; // Whether to watch for new worktrees via chokidar
+	// Shell command run inside each newly created worktree (copy .env files,
+	// run setup.sh, install deps). Blank/undefined disables it.
+	setupScript?: string;
+}
+
 // Worktree path validation state (used by useWorktreeValidation hook)
 export interface WorktreeValidationState {
 	checking: boolean; // Currently validating the path
@@ -680,10 +690,7 @@ export interface Session {
 	gitTags?: string[];
 	gitRefsCacheTime?: number; // Timestamp when branches/tags were last fetched
 	// Worktree configuration (only set on parent sessions that manage worktrees)
-	worktreeConfig?: {
-		basePath: string; // Directory where worktrees are stored
-		watchEnabled: boolean; // Whether to watch for new worktrees via chokidar
-	};
+	worktreeConfig?: SessionWorktreeConfig;
 	// Worktree child indicator (only set on worktree child sessions)
 	parentSessionId?: string; // Links back to parent agent session
 	worktreeBranch?: string; // The git branch this worktree is checked out to

@@ -9,6 +9,12 @@ export interface ExecOptions {
 	input?: string; // Content to write to stdin
 	/** Timeout in milliseconds. If the process exceeds this, it is killed and an error is returned. */
 	timeout?: number;
+	/**
+	 * Environment for the child process. Replaces the parent env entirely, so
+	 * spread `process.env` in when you want to inherit it. Only honored on the
+	 * ExecOptions form of the signature (the legacy bare-env form still works).
+	 */
+	env?: NodeJS.ProcessEnv;
 }
 
 // Maximum buffer size for command output (100MB).
@@ -99,11 +105,12 @@ export async function execFileNoThrow(
 	let timeout: number | undefined;
 
 	if (options) {
-		if ('input' in options || 'timeout' in options) {
+		if ('input' in options || 'timeout' in options || 'env' in options) {
 			// New signature with ExecOptions
 			const execOpts = options as ExecOptions;
 			input = execOpts.input;
 			timeout = execOpts.timeout;
+			env = execOpts.env;
 		} else {
 			// Old signature with just env
 			env = options as NodeJS.ProcessEnv;
@@ -112,7 +119,7 @@ export async function execFileNoThrow(
 
 	// If input is provided, use spawn instead of execFile to write to stdin
 	if (input !== undefined) {
-		return execFileWithInput(command, args, cwd, input, timeout);
+		return execFileWithInput(command, args, cwd, input, timeout, env);
 	}
 
 	try {
@@ -212,13 +219,15 @@ async function execFileWithInput(
 	args: string[],
 	cwd: string | undefined,
 	input: string,
-	timeout?: number
+	timeout?: number,
+	env?: NodeJS.ProcessEnv
 ): Promise<ExecResult> {
 	return new Promise((resolve) => {
 		const useShell = isWindows() && needsWindowsShell(command);
 
 		const child = spawn(command, args, {
 			cwd,
+			env,
 			shell: useShell,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
