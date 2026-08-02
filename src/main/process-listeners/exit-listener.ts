@@ -10,6 +10,22 @@ import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
 import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
 
 /**
+ * True when routing a participant's response failed only because the group chat
+ * no longer exists.
+ *
+ * Participants keep running after the user deletes their group chat, so the exit
+ * that fires minutes later routes into a chat `loadGroupChat` can no longer
+ * find. The listener already handles it (the participant is marked done and the
+ * buffer is cleared), so it is an expected outcome of a normal user action
+ * rather than a defect worth reporting (MAESTRO-M4). Any other routing failure
+ * still reaches Sentry.
+ */
+export function isDeletedGroupChatFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /^Group chat not found: /i.test(message);
+}
+
+/**
  * Sets up the exit listener for process termination.
  * Handles:
  * - Power management cleanup
@@ -459,7 +475,7 @@ export function setupExitListener(
 							markAndMaybeSynthesize();
 						}
 					} catch (err) {
-						void captureException(err);
+						if (!isDeletedGroupChatFailure(err)) void captureException(err);
 						debugLog('GroupChat:Debug', ` ERROR loading chat for participant:`, err);
 						logger.error(
 							'[GroupChat] Failed to load chat for participant output parsing',
@@ -483,7 +499,7 @@ export function setupExitListener(
 								markAndMaybeSynthesize();
 							}
 						} catch (routeErr) {
-							void captureException(routeErr);
+							if (!isDeletedGroupChatFailure(routeErr)) void captureException(routeErr);
 							debugLog('GroupChat:Debug', ` ERROR routing agent response (fallback):`, routeErr);
 							logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
 								error: String(routeErr),
