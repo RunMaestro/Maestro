@@ -21,6 +21,7 @@ import type {
 import type { SshRemoteConfig } from '../../shared/types';
 
 import { isInitialized, getStoreInstances, getCachedPaths } from './instances';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Initialization Check
@@ -114,11 +115,32 @@ export function getProductionDataPath(): string {
 // Convenience Functions
 // ============================================================================
 
+/** Logged at most once per process - see getSshRemoteById. */
+let warnedAboutMalformedSshRemotes = false;
+
 /**
  * Get SSH remote configuration by ID from the settings store.
  * Returns undefined if not found.
+ *
+ * `settings.json` is a plain file in userData that users hand-edit and that
+ * sync tools rewrite, and electron-store only substitutes the `[]` default when
+ * the key is absent - not when it holds a non-array. A malformed value used to
+ * take down every caller with `sshRemotes.find is not a function`, including
+ * the Right Bar's git:status/git:numstat polls on agents that use no SSH remote
+ * at all (MAESTRO-YB/YC). Treat an unusable value as "no remotes configured"
+ * and warn once so the bad file is still diagnosable.
  */
 export function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
 	const sshRemotes = getSettingsStore().get('sshRemotes', []);
+	if (!Array.isArray(sshRemotes)) {
+		if (!warnedAboutMalformedSshRemotes) {
+			warnedAboutMalformedSshRemotes = true;
+			logger.warn(
+				`Ignoring malformed 'sshRemotes' setting (expected an array, got ${typeof sshRemotes})`,
+				'Settings'
+			);
+		}
+		return undefined;
+	}
 	return sshRemotes.find((r) => r.id === sshRemoteId);
 }

@@ -217,5 +217,21 @@ describe('stores/getters', () => {
 
 			expect(result).toBeUndefined();
 		});
+
+		// electron-store only substitutes the `[]` default when the key is absent,
+		// so a hand-edited or sync-mangled settings.json can hand back a non-array.
+		// That used to throw `sshRemotes.find is not a function` and take down
+		// unrelated callers - git:status/git:numstat polls on agents with no SSH
+		// remote at all (MAESTRO-YB/YC).
+		it.each([
+			['an object', {}],
+			['a string', 'remote-1'],
+			['null', null],
+		])('should return undefined when sshRemotes is %s', (_label, stored) => {
+			mockStores.settingsStore.get.mockReturnValue(stored);
+
+			expect(() => getSshRemoteById('remote-1')).not.toThrow();
+			expect(getSshRemoteById('remote-1')).toBeUndefined();
+		});
 	});
 });
