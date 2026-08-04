@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BoardModal } from '../../../renderer/components/BoardModal';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { openUrl } from '../../../renderer/utils/openUrl';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { Board, BoardCard, CardRun } from '../../../shared/board/types';
@@ -22,6 +23,12 @@ vi.mock('../../../renderer/hooks/ui/useModalLayer', () => ({
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: vi.fn(),
+}));
+
+// The PR chip routes through the canonical external-open helper; stub it so the
+// test asserts the call rather than the settings/session plumbing behind it.
+vi.mock('../../../renderer/utils/openUrl', () => ({
+	openUrl: vi.fn(),
 }));
 
 /** Spy for the Board's "no profiles yet" escape hatch into the Profiles modal. */
@@ -643,6 +650,65 @@ describe('BoardModal worker chip + summary discoverability (I1)', () => {
 		const matches = await screen.findAllByText(SUMMARY);
 		const preview = matches.find((el) => el.className.includes('line-clamp-2'));
 		expect(preview).toBeTruthy();
+	});
+});
+
+describe('BoardModal PR-on-done outcome on the card (X1)', () => {
+	function doneCard(runOverrides: Partial<CardRun> = {}): BoardCard {
+		return makeCard({
+			id: 'cardA',
+			title: 'Card A',
+			status: 'done',
+			runs: [
+				{
+					attempt: 1,
+					startedAt: '2026-07-21T00:00:00.000Z',
+					endedAt: '2026-07-21T00:10:00.000Z',
+					outcome: 'done',
+					...runOverrides,
+				},
+			],
+		});
+	}
+
+	it('renders the PR link when the last run stamped a prUrl', async () => {
+		const PR_URL = 'https://github.com/chr1syy/Maestro/pull/1272';
+		installApis([{ id: 'b1', name: 'My Board', cards: [doneCard({ prUrl: PR_URL })] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const link = await screen.findByRole('button', { name: /🔗 PR/ });
+		expect(link).toHaveAttribute('title', expect.stringContaining(PR_URL));
+
+		fireEvent.click(link);
+		expect(openUrl).toHaveBeenCalledWith(PR_URL, { ctrlKey: false });
+		// The chip's stopPropagation kept the tile's editor from opening.
+		expect(screen.queryByPlaceholderText('e.g. Design the schema')).not.toBeInTheDocument();
+	});
+
+	it('renders the failure affordance with the persisted prError text', async () => {
+		const REASON = 'Failed to push branch: remote rejected';
+		installApis([{ id: 'b1', name: 'My Board', cards: [doneCard({ prError: REASON })] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const badge = await screen.findByText(/⚠ PR failed/);
+		expect(badge).toHaveAttribute('title', expect.stringContaining(REASON));
+		// Display only: a failed PR never gets a retry button, and the card stays Done.
+		expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+		expect(screen.getByRole('button', { name: /^Card A, Done$/i })).toBeInTheDocument();
+	});
+
+	it('prefers the link over the error badge when a later attempt succeeded', async () => {
+		// `stampCardPrUrl` clears `prError`, but a hand-edited board could carry
+		// both; the success affordance wins and the failure badge stays hidden.
+		const card = doneCard({ prUrl: 'https://example.com/pr/9', prError: 'stale reason' });
+		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		expect(await screen.findByRole('button', { name: /🔗 PR/ })).toBeInTheDocument();
+		expect(screen.queryByText(/⚠ PR failed/)).toBeNull();
 	});
 });
 

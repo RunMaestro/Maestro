@@ -31,6 +31,7 @@ import { formatElapsedTime, truncatePath } from '../../shared/formatters';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { triggerHaptic, HAPTIC_PATTERNS, isCoarsePointer } from '../utils/touch';
+import { openUrl } from '../utils/openUrl';
 
 export interface BoardModalProps {
 	theme: Theme;
@@ -1298,6 +1299,13 @@ function BoardCardTile({
 	// holds its output - nothing merges or removes it automatically.
 	const runBranch = latestRun?.worktreeBranch;
 	const runWorktreePath = latestRun?.worktreePath;
+	// X1: the PR-on-done outcome of the last run. A successful attempt stamps
+	// `prUrl`; a failed one stamps `prError` and leaves the card `done`. Display
+	// only - there is deliberately no retry button here, because the PR gate
+	// keys on `prUrl` alone, so moving the card out of `done` and back re-fires
+	// the flow.
+	const runPrUrl = latestRun?.prUrl;
+	const runPrError = latestRun?.prError;
 	// Phase 6: a running card says how long it has been going, which attempt this
 	// is, and which pooled worker claimed it.
 	const isRunning = card.status === 'running';
@@ -1464,6 +1472,29 @@ function BoardCardTile({
 						title={`Last run used the worktree at ${runWorktreePath ?? 'an isolated checkout'} on branch ${runBranch}`}
 					>
 						🌳 {runBranch}
+					</span>
+				)}
+				{runPrUrl && (
+					<button
+						onClick={(e) => {
+							// Don't also open the card editor behind the link.
+							e.stopPropagation();
+							openUrl(runPrUrl, { ctrlKey: e.ctrlKey || e.metaKey });
+						}}
+						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
+						style={{ backgroundColor: theme.colors.success + '22', color: theme.colors.success }}
+						title={`Pull request opened for this card: ${runPrUrl}`}
+					>
+						🔗 PR
+					</button>
+				)}
+				{!runPrUrl && runPrError && (
+					<span
+						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full select-text"
+						style={{ backgroundColor: theme.colors.error + '22', color: theme.colors.error }}
+						title={`PR on done failed: ${runPrError}. Move the card out of Done and back to retry.`}
+					>
+						⚠ PR failed
 					</span>
 				)}
 			</div>
