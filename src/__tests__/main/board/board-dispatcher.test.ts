@@ -769,7 +769,7 @@ describe('BoardDispatcher status-change stream (Phase 5)', () => {
 		]);
 	});
 
-	it('announces a cancel back to todo', async () => {
+	it('announces a cancel as a hold back in todo', async () => {
 		let settle: ((result: CardSpawnResult) => void) | null = null;
 		const changes: CardStatusChange[] = [];
 		const h = harness(board([card({ id: 'a' })], 1), () => failure(), {
@@ -784,6 +784,7 @@ describe('BoardDispatcher status-change stream (Phase 5)', () => {
 		await flush();
 
 		expect(changes.at(-1)).toMatchObject({ fromStatus: 'running', toStatus: 'todo' });
+		expect(h.cardById('a').heldByUser).toBe(true);
 	});
 
 	it('survives a status listener that throws', async () => {
@@ -834,7 +835,7 @@ describe('BoardDispatcher cancelCard', () => {
 		return { ...h, killed, settle: (r: CardSpawnResult) => settle?.(r) };
 	}
 
-	it('kills the run, returns the card to todo, and records a canceled run', async () => {
+	it('kills the run, holds the card in todo, and records a canceled run', async () => {
 		const h = pendingHarness(board([card({ id: 'a' })], 1));
 
 		h.dispatcher.tick();
@@ -845,10 +846,46 @@ describe('BoardDispatcher cancelCard', () => {
 		expect(h.dispatcher.cancelCard('a')).toBe(true);
 		expect(h.killed).toEqual(['a']);
 		expect(h.status('a')).toBe('todo');
+		expect(h.cardById('a').heldByUser).toBe(true);
 		expect(h.dispatcher.isInFlight('a')).toBe(false);
 		const run = h.cardById('a').runs?.[0];
 		expect(run?.outcome).toBe('canceled');
 		expect(run?.endedAt).toBe(NOW);
+	});
+
+	it('leaves the card held on the next tick instead of re-promoting and re-spawning it', async () => {
+		// AB1 regression. Before the hold flag, `applyCardCancel` sent the card back
+		// to plain `todo` and the very next dispatcher pass promoted it to `ready`
+		// and spawned attempt 2 (~19s after the user hit Stop), so Stop did not
+		// stop. This test FAILS if `card.heldByUser = true` is removed from
+		// `applyCardCancel` or if `getEligibleCards` stops honouring the flag: the
+		// card would come back as `ready`/`running` with a second spawn.
+		let settle: ((result: CardSpawnResult) => void) | null = null;
+		const spawned: string[] = [];
+		const h = harness(board([card({ id: 'a' })], 1), () => failure(), {
+			spawn: async ({ card: c }) => {
+				spawned.push(c.id);
+				return new Promise<CardSpawnResult>((resolve) => (settle = resolve));
+			},
+			cancelSpawn: () => true,
+		});
+
+		h.dispatcher.tick();
+		await flush();
+		expect(spawned).toEqual(['a']);
+
+		expect(h.dispatcher.cancelCard('a')).toBe(true);
+		settle?.({ output: '', exitCode: null, error: 'killed' });
+		await flush();
+
+		// One more full pass: promote, claim, dispatch.
+		h.dispatcher.tick();
+		await flush();
+
+		expect(h.status('a')).toBe('todo');
+		expect(h.cardById('a').heldByUser).toBe(true);
+		expect(spawned).toEqual(['a']);
+		expect(h.cardById('a').runs?.length).toBe(1);
 	});
 
 	it('ignores the killed run resolving afterwards instead of re-finalizing it', async () => {

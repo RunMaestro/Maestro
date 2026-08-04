@@ -67,6 +67,30 @@ describe('validateBoardCard priority', () => {
 	});
 });
 
+describe('validateBoardCard heldByUser', () => {
+	it('round-trips a user hold through YAML so a stopped card stays stopped', () => {
+		// The validator rebuilds the card from a whitelist, so a flag it does not
+		// copy is silently dropped on the next save. Losing this one would let the
+		// dispatcher re-promote a card the user stopped (AB1).
+		const held = validateBoardCard(raw({ heldByUser: true }))!;
+		expect(held.heldByUser).toBe(true);
+
+		const reloaded = validateBoardCard(yaml.load(yaml.dump(held)));
+		expect(reloaded?.heldByUser).toBe(true);
+	});
+
+	it('never serializes the not-held default, including a junk value', () => {
+		const plain = validateBoardCard(raw())!;
+		expect('heldByUser' in plain).toBe(false);
+		expect(yaml.dump(plain)).not.toContain('heldByUser');
+
+		// Anything that is not exactly `true` means not held, and the card is kept.
+		expect(validateBoardCard(raw({ heldByUser: false }))?.heldByUser).toBeUndefined();
+		expect(validateBoardCard(raw({ heldByUser: 'yes' }))?.id).toBe('c1');
+		expect(validateBoardCard(raw({ heldByUser: 'yes' }))?.heldByUser).toBeUndefined();
+	});
+});
+
 describe('cardPriorityRank', () => {
 	it('orders high above normal above low, defaulting an absent priority', () => {
 		const rank = (priority?: BoardCard['priority']) => cardPriorityRank({ priority });

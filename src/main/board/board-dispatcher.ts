@@ -412,10 +412,13 @@ function trailingFailureCount(card: BoardCard): number {
 
 /**
  * Finalize a `running` card as user-canceled: close its open run with the
- * `canceled` outcome and send the card back to `todo` (from where the promote
- * pass re-derives `ready` once its parents are still done, so a cancel is a
- * pause, not a demotion). Mutates in place; returns `false` when the card is
- * missing or is not actually running.
+ * `canceled` outcome and HOLD the card. A cancel is a hold, not a demotion and
+ * not a pause that expires: the card goes back to `todo` (the work genuinely is
+ * still waiting) and is stamped `heldByUser`, which `getEligibleCards` honours,
+ * so the promote pass never touches it again until a person resumes it. Without
+ * that flag the very next tick re-promoted and re-spawned the card, which is
+ * what made Stop fail to stop. Mutates in place; returns `false` when the card
+ * is missing or is not actually running.
  *
  * The `canceled` run is deliberately NOT a failure - see
  * {@link trailingFailureCount} - so stopping a card three times never trips the
@@ -431,6 +434,7 @@ export function applyCardCancel(board: Board, cardId: string, nowIso: string): b
 		run.summary = 'Canceled by user.';
 	}
 	card.status = 'todo';
+	card.heldByUser = true;
 	card.updatedAt = nowIso;
 	return true;
 }

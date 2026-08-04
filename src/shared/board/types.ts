@@ -208,6 +208,15 @@ export interface BoardCard {
 	/** Lifecycle status. */
 	status: CardStatus;
 	/**
+	 * The user stopped this card and it is held until they resume it. Set by
+	 * `applyCardCancel`, honoured by `getEligibleCards` (a held card is never
+	 * promoted to `ready`), and cleared when the user resumes the card. The card
+	 * keeps its `todo` status while held - the work is genuinely not done and still
+	 * waiting - so the hold is a separate axis rather than a seventh
+	 * {@link CardStatus}. Absent means not held and is never serialized.
+	 */
+	heldByUser?: boolean;
+	/**
 	 * Dispatch priority. Absent means `normal`; the dispatcher claims `ready`
 	 * cards by priority descending, then oldest-first within a priority.
 	 */
@@ -344,7 +353,7 @@ function validateCardRun(raw: unknown): CardRun | null {
  * {@link CardStatus}. `parents` defaults to `[]` and keeps only non-empty string
  * ids. Missing `createdAt`/`updatedAt` fall back to {@link nowIso} when supplied.
  * Optional `worktree`/`prOnDone`/`runs` are validated structurally and dropped
- * when malformed.
+ * when malformed. `heldByUser` is carried through only when it is exactly `true`.
  */
 export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -384,6 +393,12 @@ export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | nu
 	// `normal` is the default and is deliberately dropped rather than stored, so
 	// a card is only ever serialized with a priority when it is not the default.
 	if (r.priority === 'high' || r.priority === 'low') card.priority = r.priority;
+
+	// Same "only the non-default" rule as `priority`: not-held is the default, so
+	// only a genuine hold is carried through. This copy is what makes a user's
+	// stop survive a save/load round trip - the card literal above is a whitelist
+	// rebuild, so a field missing here is silently dropped on the next save.
+	if (r.heldByUser === true) card.heldByUser = true;
 
 	const worktree = validateWorktreeRef(r.worktree);
 	if (worktree) card.worktree = worktree;

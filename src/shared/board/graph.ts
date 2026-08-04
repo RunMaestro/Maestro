@@ -36,10 +36,15 @@ export function getBlockers(card: BoardCard, board: Board): BoardCard['id'][] {
 }
 
 /**
- * Return the cards that are eligible to run right now: status `todo` and every
- * parent already `done`. This is the set the dispatcher promotes to `ready`.
- * Cards already `ready`/`running`/`blocked`/`done`/`triage` are excluded - only
- * accepted-but-waiting work (`todo`) is considered.
+ * Return the cards that are eligible to run right now: status `todo`, not held
+ * by the user, and every parent already `done`. This is the set the dispatcher
+ * promotes to `ready`. Cards already `ready`/`running`/`blocked`/`done`/`triage`
+ * are excluded - only accepted-but-waiting work (`todo`) is considered.
+ *
+ * `heldByUser` is the second predicate and is what makes Stop actually stop: a
+ * card the user cancelled stays `todo` (the work really is still waiting) but
+ * must not be re-promoted on the very next tick. The flag is cleared when the
+ * user resumes the card.
  *
  * Order preserves the board's card order for deterministic dispatch.
  */
@@ -47,6 +52,7 @@ export function getEligibleCards(board: Board): BoardCard[] {
 	const byId = indexById(board);
 	return board.cards.filter((card) => {
 		if (card.status !== 'todo') return false;
+		if (card.heldByUser) return false;
 		return card.parents.every((parentId) => byId.get(parentId)?.status === 'done');
 	});
 }
