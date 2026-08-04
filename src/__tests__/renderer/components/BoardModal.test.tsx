@@ -274,6 +274,50 @@ describe('BoardModal run cancellation', () => {
 		await waitFor(() => expect(boardApi.cancelCard).toHaveBeenCalledTimes(1));
 		expect(boardApi.cancelCard).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA');
 	});
+
+	// AB1: the toast has to tell the user the card is HELD, not that it went back
+	// into the queue - the whole point of the fix is that it will not restart on
+	// its own. Fails if the old "back in To Do" copy comes back.
+	it('reports the hold in the success toast rather than a requeue', async () => {
+		const running = makeCard({ id: 'cardA', title: 'Card A', status: 'running' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [running] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: /Stop Card A/i }));
+
+		await waitFor(() => expect(notifyToast).toHaveBeenCalled());
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				color: 'orange',
+				message: 'Stopped the run. The card is held in To Do until you resume it.',
+			})
+		);
+	});
+
+	// AB1 / Decision 2: Resume mirrors Stop. It only shows on held cards, and it
+	// clears the flag through `updateCard` so the promote pass sees the card again.
+	it('shows a resume button on held cards only, and clears the hold through updateCard', async () => {
+		const held = makeCard({ id: 'cardA', title: 'Card A', heldByUser: true });
+		const idle = makeCard({ id: 'cardB', title: 'Card B' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [held, idle] };
+		installApis([board]);
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+
+		const resume = await screen.findByRole('button', { name: /Resume Card A/i });
+		expect(screen.queryByRole('button', { name: /Resume Card B/i })).toBeNull();
+		// The tile says why it is sitting still.
+		expect(screen.getByText('held')).toBeInTheDocument();
+
+		fireEvent.click(resume);
+		await waitFor(() => expect(boardApi.updateCard).toHaveBeenCalledTimes(1));
+		expect(boardApi.updateCard).toHaveBeenCalledWith(
+			PROJECT_ROOT,
+			'b1',
+			expect.objectContaining({ id: 'cardA', status: 'todo', heldByUser: false })
+		);
+	});
 });
 
 describe('BoardModal live updates', () => {

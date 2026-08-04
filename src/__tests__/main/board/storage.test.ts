@@ -497,6 +497,17 @@ describe('board-storage card mutations', () => {
 		}
 	);
 
+	// AB1: a manual move is the other "go" signal besides the Resume button, so
+	// it has to release the hold a Stop left on the card. Without this a user
+	// could drag a stopped card out of To Do and back and it would still never be
+	// promoted, with nothing on screen saying why.
+	it('updateCardStatus clears an AB1 user hold', () => {
+		saveBoards(projectRoot, [board([card({ id: 'held', status: 'todo', heldByUser: true })])]);
+		const updated = updateCardStatus(projectRoot, 'b1', 'held', 'todo');
+		expect(updated.cards[0].heldByUser).toBeUndefined();
+		expect(loadBoards(projectRoot)[0].cards[0].heldByUser).toBeUndefined();
+	});
+
 	// Regression: the `CardStatus` parameter type is erased at runtime, and this
 	// sits behind an IPC boundary. An off-enum string was written through, and
 	// the load-side validator then dropped the card entirely - a silent delete

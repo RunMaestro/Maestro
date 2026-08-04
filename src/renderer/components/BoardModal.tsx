@@ -8,6 +8,7 @@ import {
 	RefreshCw,
 	ChevronLeft,
 	Square,
+	Play,
 	Pencil,
 	Check,
 } from 'lucide-react';
@@ -608,12 +609,44 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				notifyToast({
 					color: 'orange',
 					title: 'Board',
-					message: 'Stopped the run. The card is back in To Do.',
+					message: 'Stopped the run. The card is held in To Do until you resume it.',
 				});
 			} catch (err) {
 				logger.error(`Failed to cancel card: ${String(err)}`);
 				captureException(err, { tags: { operation: 'board:cancelCard' } });
 				notifyToast({ color: 'red', title: 'Board', message: 'Failed to stop the card.' });
+			}
+		},
+		[board, projectRoot, applyBoard]
+	);
+
+	/**
+	 * AB1: release the hold a Stop put on a card. The card never left `todo`, so
+	 * this only clears `heldByUser` and lets the dispatcher's promote pass see it
+	 * again on the next tick. Goes through `updateCard` rather than a dedicated
+	 * IPC: the flag lives on the card, and `validateBoardCard` serializes it only
+	 * when it is `true`, so writing `false` drops it from `board.yaml` entirely.
+	 */
+	const handleResumeCard = useCallback(
+		async (cardId: string) => {
+			if (!board || !projectRoot) return;
+			const card = board.cards.find((c) => c.id === cardId);
+			if (!card?.heldByUser) return;
+			try {
+				const updated = await window.maestro.board.updateCard(projectRoot, board.id, {
+					...card,
+					heldByUser: false,
+				});
+				applyBoard(updated);
+				notifyToast({
+					color: 'green',
+					title: 'Board',
+					message: 'Resumed the card. It runs again once its parents are done.',
+				});
+			} catch (err) {
+				logger.error(`Failed to resume card: ${String(err)}`);
+				captureException(err, { tags: { operation: 'board:resumeCard' } });
+				notifyToast({ color: 'red', title: 'Board', message: 'Failed to resume the card.' });
 			}
 		},
 		[board, projectRoot, applyBoard]
@@ -1056,6 +1089,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 														onNavigate={(key) => navigateTiles(status, index, key)}
 														onDelete={() => void handleDeleteCard(card.id)}
 														onCancelRun={() => void handleCancelCard(card.id)}
+														onResume={() => void handleResumeCard(card.id)}
 													/>
 												))}
 												{cards.length === 0 && (
@@ -1179,6 +1213,8 @@ interface BoardCardTileProps {
 	onDelete: () => void;
 	/** Stop the in-flight run. Only rendered on `running` cards. */
 	onCancelRun: () => void;
+	/** Release an AB1 user hold. Only rendered on cards with `heldByUser`. */
+	onResume: () => void;
 }
 
 /** A single draggable, focusable card. Shows its title, assignee, parent count,
@@ -1201,6 +1237,7 @@ function BoardCardTile({
 	onNavigate,
 	onDelete,
 	onCancelRun,
+	onResume,
 }: BoardCardTileProps) {
 	// Delete is armed by the first click and fires on the second, mirroring the
 	// "click again to confirm" idiom the browser tab's clear-data button uses.
@@ -1309,6 +1346,9 @@ function BoardCardTile({
 	// Phase 6: a running card says how long it has been going, which attempt this
 	// is, and which pooled worker claimed it.
 	const isRunning = card.status === 'running';
+	// AB1: a card the user stopped stays in To Do but carries an explicit hold the
+	// promote pass honours, so it needs a visible reason and a way back.
+	const isHeld = !!card.heldByUser;
 	const workerAgentId = latestRun?.workerAgentId ?? null;
 	const workerText = workerAgentId ? agentName(workerAgentId) : null;
 	// The worker chip is a jump affordance only while the worker agent still
@@ -1373,6 +1413,20 @@ function BoardCardTile({
 							<Square className="w-3.5 h-3.5" />
 						</button>
 					)}
+					{isHeld && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onResume();
+							}}
+							className="p-0.5 rounded hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.success }}
+							aria-label={`Resume ${card.title}`}
+							title="Resume this card - it was stopped and is held until you say go"
+						>
+							<Play className="w-3.5 h-3.5" />
+						</button>
+					)}
 					<button
 						onClick={handleDeleteClick}
 						className={`p-0.5 rounded hover:bg-white/10 transition-opacity ${deleteVisibility}`}
@@ -1405,6 +1459,18 @@ function BoardCardTile({
 				>
 					{assigneeText}
 				</span>
+				{isHeld && (
+					<span
+						className="text-[10px] rounded px-1.5 py-0.5"
+						style={{
+							backgroundColor: theme.colors.warning + '22',
+							color: theme.colors.warning,
+						}}
+						title="You stopped this card. It stays put until you resume it."
+					>
+						held
+					</span>
+				)}
 				{isRunning && latestRun && (
 					<span
 						className="text-[10px] rounded px-1.5 py-0.5"

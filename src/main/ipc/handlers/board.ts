@@ -188,9 +188,10 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		)
 	);
 
-	// Cancel a running card: kill its agent process and send it back to `todo`
-	// with a `canceled` run (which does NOT count toward the circuit breaker).
-	// Returns the updated board.
+	// Cancel a running card: kill its agent process and record a `canceled` run
+	// (which does NOT count toward the circuit breaker). The card returns to
+	// `todo` but is HELD there (`heldByUser`), so the promote pass leaves it alone
+	// until a person resumes it. Returns the updated board.
 	ipcMain.handle(
 		'board:cancelCard',
 		withIpcErrorLogging(

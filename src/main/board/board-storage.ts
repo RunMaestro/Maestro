@@ -412,6 +412,12 @@ const DERIVED_STATUSES: ReadonlySet<CardStatus> = new Set<CardStatus>(['ready', 
  * missing, if `status` is not a real {@link CardStatus}, or if the caller tried
  * to set a dispatcher-derived status (see {@link DERIVED_STATUSES}). Returns the
  * updated board.
+ *
+ * AB1: a manual move also releases a user hold. A stopped card sits in `todo`
+ * with `heldByUser` set, so dragging it (or `maestro-cli board set-status`) is
+ * the other way a person says "go" besides the Resume button. Leaving the flag
+ * on would strand the card: it would land wherever the user dropped it and still
+ * never be promoted, with nothing on screen explaining why.
  */
 export function updateCardStatus(
 	projectRoot: string,
@@ -443,6 +449,7 @@ export function updateCardStatus(
 		throw new Error(`updateCardStatus: card "${cardId}" not found on board "${boardId}"`);
 	}
 	card.status = status;
+	delete card.heldByUser;
 	card.updatedAt = nowIso();
 	saveBoards(projectRoot, boards);
 	return board;
