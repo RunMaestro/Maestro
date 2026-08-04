@@ -254,6 +254,109 @@ describe('createPullRequest push + create', () => {
 	});
 });
 
+describe('createPullRequest empty-branch precondition (X1 decision 6)', () => {
+	/** Route `rev-list` per ref so the local / origin fallback can be exercised. */
+	function routeRevList(perRef: Record<string, ReturnType<typeof ok>>) {
+		execFileNoThrow.mockImplementation((command: string, args: string[] = []) => {
+			if (command === '/usr/bin/gh') return Promise.resolve(ok('https://github.com/o/r/pull/20'));
+			if (args[0] === 'rev-list') {
+				const range = args[2] ?? '';
+				const ref = range.replace(/\.\.HEAD$/, '');
+				return Promise.resolve(perRef[ref] ?? fail(`unknown revision ${ref}`));
+			}
+			return Promise.resolve(ok());
+		});
+	}
+
+	it('skips the push entirely when the branch has no commits ahead', async () => {
+		routeRevList({ main: ok('0\n') });
+		const log = vi.fn();
+		const result = await createPullRequest({
+			worktreePath: WORKTREE,
+			targetBranch: 'main',
+			title: 'T',
+			body: 'B',
+			skipHooks: true,
+			log,
+		});
+
+		expect(result).toEqual({
+			success: false,
+			targetBranch: 'main',
+			error: 'branch has no commits ahead of main',
+		});
+		// The remote is never touched: no push, and no gh invocation either.
+		expect(calls().some((c) => c[1] === 'push')).toBe(false);
+		expect(calls().some((c) => c[0] === '/usr/bin/gh')).toBe(false);
+		expect(log).toHaveBeenCalledWith('Skipping PR: branch has no commits ahead of main');
+	});
+
+	it('proceeds to push when the branch is ahead', async () => {
+		routeRevList({ main: ok('3\n') });
+		const result = await createPullRequest({
+			worktreePath: WORKTREE,
+			targetBranch: 'main',
+			title: 'T',
+			body: 'B',
+			skipHooks: true,
+		});
+
+		expect(result.success).toBe(true);
+		expect(calls().find((c) => c[1] === 'push')).toEqual([
+			'git',
+			'push',
+			'--no-verify',
+			'-u',
+			'origin',
+			'HEAD',
+		]);
+	});
+
+	it('falls back to origin/<base> when the base ref is not local', async () => {
+		routeRevList({ 'origin/rc': ok('0') });
+		const result = await createPullRequest({
+			worktreePath: WORKTREE,
+			targetBranch: 'rc',
+			title: 'T',
+			body: 'B',
+			skipHooks: true,
+		});
+
+		expect(result.error).toBe('branch has no commits ahead of rc');
+		expect(calls().some((c) => c[1] === 'push')).toBe(false);
+	});
+
+	it('never false-blocks: an unresolvable base ref still pushes', async () => {
+		routeRevList({});
+		const result = await createPullRequest({
+			worktreePath: WORKTREE,
+			targetBranch: 'rc',
+			title: 'T',
+			body: 'B',
+			skipHooks: true,
+		});
+
+		expect(result.success).toBe(true);
+		expect(calls().some((c) => c[1] === 'push')).toBe(true);
+	});
+
+	it('does not run the precheck for the default (human) caller', async () => {
+		// Decision 2 guard: the manual `git:createPR` path is untouched, so an
+		// empty branch there still pushes exactly as it did before.
+		routeRevList({ main: ok('0') });
+		const result = await createPullRequest({
+			worktreePath: WORKTREE,
+			targetBranch: 'main',
+			title: 'T',
+			body: 'B',
+		});
+
+		expect(result.success).toBe(true);
+		expect(calls().some((c) => c[1] === 'rev-list')).toBe(false);
+		expect(calls().find((c) => c[1] === 'push')).toEqual(['git', 'push', '-u', 'origin', 'HEAD']);
+	});
+});
+
 describe('createPullRequest failures', () => {
 	it('reports a failed push and never calls gh', async () => {
 		routeExec({ 'git push': fail('rejected: non-fast-forward') });

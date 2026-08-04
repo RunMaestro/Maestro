@@ -103,6 +103,23 @@ export async function resolveDefaultBranch(cwd: string): Promise<string | null> 
 }
 
 /**
+ * Count the commits on HEAD that are not on `base`, trying the local ref first
+ * and then `origin/<base>` for worktrees that never fetched a local copy.
+ *
+ * Returns null when neither ref resolves. Callers must treat that as "unknown"
+ * and proceed with the push rather than false-blocking a legitimate PR.
+ */
+async function countCommitsAhead(cwd: string, base: string): Promise<number | null> {
+	for (const ref of [base, `origin/${base}`]) {
+		const result = await execFileNoThrow('git', ['rev-list', '--count', `${ref}..HEAD`], cwd);
+		if (result.exitCode !== 0) continue;
+		const count = Number.parseInt(result.stdout.trim(), 10);
+		if (Number.isFinite(count)) return count;
+	}
+	return null;
+}
+
+/**
  * Push the worktree's current branch to origin and open a PR with the gh CLI.
  * Never throws for expected failures (missing gh, push rejected, gh error) -
  * those come back as `{ success: false, error }`.
@@ -116,6 +133,23 @@ export async function createPullRequest(
 	let targetBranch = options.targetBranch;
 	if (!targetBranch) {
 		targetBranch = (await resolveDefaultBranch(mainRepoCwd || worktreePath)) || 'main';
+	}
+
+	// Empty-branch precondition (X1, decision 6). An unattended caller can be
+	// handed a card an agent marked done without ever committing: pushing that
+	// branch litters the remote with empty `board/<uuid>/<uuid>` refs and then
+	// fails at `gh pr create` anyway. Scoped to hook-skipping (machine-driven)
+	// callers so the human `git:createPR` path is byte-identical to before.
+	if (skipHooks) {
+		const ahead = await countCommitsAhead(worktreePath, targetBranch);
+		if (ahead === 0) {
+			log?.(`Skipping PR: branch has no commits ahead of ${targetBranch}`);
+			return {
+				success: false,
+				targetBranch,
+				error: `branch has no commits ahead of ${targetBranch}`,
+			};
+		}
 	}
 
 	// Resolve gh CLI path (uses cached detection or custom path)
