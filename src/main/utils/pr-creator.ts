@@ -43,6 +43,19 @@ export interface CreatePullRequestOptions {
 	body: string;
 	/** Custom path to the `gh` binary. Detection is used when omitted. */
 	ghPath?: string;
+	/**
+	 * Push with `--no-verify`, skipping the repository's pre-push hooks.
+	 *
+	 * This exists for unattended, machine-driven callers (the Board dispatcher's
+	 * "open PR when done") whose worktrees carry no `node_modules` and whose
+	 * pushes therefore must not run dependency-requiring hooks - this repo's own
+	 * `.husky/pre-push` hard-requires `node_modules/.bin/prettier` and otherwise
+	 * runs the full validation suite, which fails or stalls every board card.
+	 *
+	 * Human-initiated callers (the `git:createPR` IPC handler behind the UI's
+	 * "create PR" button) must leave this unset so the repo's gates still run.
+	 */
+	skipHooks?: boolean;
 	/** Debug log sink. */
 	log?: PrLog;
 	/** Non-fatal warning sink (Sentry in the IPC handler, logger elsewhere). */
@@ -97,7 +110,7 @@ export async function resolveDefaultBranch(cwd: string): Promise<string | null> 
 export async function createPullRequest(
 	options: CreatePullRequestOptions
 ): Promise<CreatePullRequestResult> {
-	const { worktreePath, mainRepoCwd, title, body, ghPath, log, warn } = options;
+	const { worktreePath, mainRepoCwd, title, body, ghPath, skipHooks, log, warn } = options;
 
 	// Resolve the base branch: explicit value, else the repo default, else main
 	let targetBranch = options.targetBranch;
@@ -123,13 +136,12 @@ export async function createPullRequest(
 		);
 	}
 
-	// First, push the current branch to origin
-	const pushResult = await execFileNoThrow(
-		'git',
-		['push', '-u', 'origin', 'HEAD'],
-		worktreePath,
-		shellEnv
-	);
+	// First, push the current branch to origin. Unattended callers opt out of the
+	// pre-push hooks (see `skipHooks`); everyone else keeps the default argv.
+	const pushArgs = skipHooks
+		? ['push', '--no-verify', '-u', 'origin', 'HEAD']
+		: ['push', '-u', 'origin', 'HEAD'];
+	const pushResult = await execFileNoThrow('git', pushArgs, worktreePath, shellEnv);
 	if (pushResult.exitCode !== 0) {
 		return { success: false, targetBranch, error: `Failed to push branch: ${pushResult.stderr}` };
 	}

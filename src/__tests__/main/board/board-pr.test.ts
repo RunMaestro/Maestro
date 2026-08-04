@@ -302,6 +302,17 @@ describe('maybeCreateCardPr', () => {
 			})
 		);
 	});
+
+	it('asks the gh helper to skip the pre-push hooks (X1)', async () => {
+		// Board worktrees have no `node_modules`, so the repo's pre-push hook fails
+		// every card. The Board is the only caller allowed to opt out.
+		createPullRequest.mockResolvedValue(success);
+		await maybeCreateCardPr('c1', {
+			loadBoard: () => board(),
+			mainRepoCwd: PROJECT_ROOT,
+		});
+		expect(createPullRequest).toHaveBeenCalledWith(expect.objectContaining({ skipHooks: true }));
+	});
 });
 
 describe('startCardPr', () => {

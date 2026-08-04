@@ -177,6 +177,39 @@ describe('createPullRequest push + create', () => {
 		expect(execFileNoThrow.mock.calls[pushAt][2]).toBe(WORKTREE);
 	});
 
+	it('pushes with --no-verify when the caller opts out of hooks', async () => {
+		// X1: the Board dispatcher pushes from a worktree with no `node_modules`,
+		// so its push must skip the repo's dependency-requiring pre-push hook.
+		routeExec({ '/usr/bin/gh pr': ok('https://github.com/o/r/pull/15') });
+		const result = await createPullRequest({
+			worktreePath: WORKTREE,
+			targetBranch: 'main',
+			title: 'Ship it',
+			body: 'Body',
+			skipHooks: true,
+		});
+
+		expect(result.success).toBe(true);
+		const ordered = calls();
+		const pushAt = ordered.findIndex((c) => c[1] === 'push');
+		const createAt = ordered.findIndex((c) => c[0] === '/usr/bin/gh');
+		expect(ordered[pushAt]).toEqual(['git', 'push', '--no-verify', '-u', 'origin', 'HEAD']);
+		expect(createAt).toBeGreaterThan(pushAt);
+	});
+
+	it('keeps the default argv when skipHooks is explicitly false', async () => {
+		routeExec({ '/usr/bin/gh pr': ok('https://github.com/o/r/pull/16') });
+		await createPullRequest({
+			worktreePath: WORKTREE,
+			targetBranch: 'main',
+			title: 'T',
+			body: 'B',
+			skipHooks: false,
+		});
+		const pushCall = calls().find((c) => c[1] === 'push');
+		expect(pushCall).toEqual(['git', 'push', '-u', 'origin', 'HEAD']);
+	});
+
 	it('runs git and gh with the user shell PATH so hooks find their tools', async () => {
 		routeExec({ '/usr/bin/gh pr': ok('https://github.com/o/r/pull/12') });
 		await createPullRequest({
