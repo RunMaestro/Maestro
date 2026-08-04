@@ -13,6 +13,8 @@
  *   fresh, goal-restating turn when it cannot).
  * - `ttsr:abortCleared` releases that mark when main withdraws an abort, so a
  *   turn that was never actually stopped is not left suppressed forever.
+ * - `ttsr:matched` counts every match, interrupting or not, into the display
+ *   store so the Rules panel can show that a `never`-mode rule fired at all.
  *
  * Mount once, gated on the `ttsr` Encore feature.
  */
@@ -229,6 +231,23 @@ export function useTtsr(enabled: boolean): void {
 			void runTtsrCorrectiveTurn(payload);
 		});
 
+		// Every match, interrupting or not, is counted for the Rules panel's match
+		// line - a `never`-mode rule otherwise fires in complete silence, which
+		// users read as TTSR being broken. Display-only: EVERY client records
+		// (desktop, extra windows, web-desktop), because the store is per-renderer
+		// display state, so there is no ownership gate and no `isWebDesktop()`
+		// branch here. Older preloads and some web-desktop builds lack the method;
+		// TTSR degrades rather than crashing, same as the missing-bridge case.
+		const offMatched = bridge.onMatched
+			? bridge.onMatched((payload) => {
+					const target = resolveTtsrTarget(useSessionStore.getState().sessions, payload);
+					// No tab means no project root to key the counts by. Nothing was
+					// reserved for this payload, so dropping it costs a display line.
+					if (!target) return;
+					useTtsrStore.getState().noteMatched(target.session.cwd, payload);
+				})
+			: undefined;
+
 		// Main withdrew the abort: the turn was never stopped, so exit handling has
 		// to be released or the tab stays busy for good.
 		const offAbortCleared = bridge.onAbortCleared((payload) => {
@@ -243,6 +262,7 @@ export function useTtsr(enabled: boolean): void {
 			offAbortPending();
 			offTriggered();
 			offAbortCleared();
+			offMatched?.();
 			// Nothing is listening for `ttsr:triggered` any more, so any mark still
 			// standing can never be cleared by the normal path - and a standing mark
 			// suppresses that session's exits for good. Drop them with the listeners.

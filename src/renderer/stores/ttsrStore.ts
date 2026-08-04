@@ -5,10 +5,21 @@
  * (matching, repeat policy, injected-rule records). Nothing here is a source of
  * truth - it is a cache of the last push events so exit handling can tell a TTSR
  * abort apart from a failed turn.
+ *
+ * The {@link TtsrStore.matches} map is the display side of the same deal: it
+ * counts `ttsr:matched` pushes so a non-interrupting rule is visible somewhere
+ * instead of firing in total silence. Those counts are per-renderer and since
+ * app start (in a browser client, since this browser session) - they are NOT
+ * persisted and are NOT the injection counts main keeps in `ttsr-state.json`.
  */
 
 import { create } from 'zustand';
-import type { TtsrAbortPendingPayload, TtsrTriggeredPayload } from '../../shared/ttsr-types';
+import type {
+	TtsrAbortPendingPayload,
+	TtsrMatchedPayload,
+	TtsrScope,
+	TtsrTriggeredPayload,
+} from '../../shared/ttsr-types';
 
 /**
  * How long an abort-pending mark may suppress a turn's exit.
@@ -28,13 +39,42 @@ interface TtsrAbortPendingEntry {
 	at: number;
 }
 
+/** What the Rules panel shows for one rule that has fired this session. */
+export interface TtsrRuleMatchStats {
+	count: number;
+	lastMatchedAt: number;
+	lastSource: TtsrScope;
+	/** True when the last match was allowed to abort the turn. */
+	lastWillInterrupt: boolean;
+	lastFilePath?: string;
+}
+
+/**
+ * Key for the {@link TtsrStore.matches} map.
+ *
+ * Rule paths are project-relative, so two projects can hold a rule at the same
+ * path. The NUL separator cannot occur in either half, so the pair is
+ * unambiguous no matter what the path or the root looks like.
+ */
+export function matchKey(projectRoot: string, rulePath: string): string {
+	return `${projectRoot}\u0000${rulePath}`;
+}
+
 interface TtsrStore {
 	/** Turns currently being aborted by TTSR, keyed by process session id. */
 	abortPending: Record<string, TtsrAbortPendingEntry>;
 	/** Last corrective turn per process session id. Recorded but not yet surfaced by any component. */
 	lastTriggered: Record<string, TtsrTriggeredPayload>;
+	/**
+	 * Per-rule match stats keyed by {@link matchKey}, surfaced as the Rules
+	 * panel's match line. Bounded by the number of rules on disk, so it needs no
+	 * eviction.
+	 */
+	matches: Record<string, TtsrRuleMatchStats>;
 	noteAbortPending: (payload: TtsrAbortPendingPayload) => void;
 	noteTriggered: (payload: TtsrTriggeredPayload) => void;
+	/** Record a `ttsr:matched` push against every rule it names. */
+	noteMatched: (projectRoot: string, payload: TtsrMatchedPayload) => void;
 	clearAbortPending: (sessionId: string) => void;
 	/** Drop every mark at once (the hook unmounting, or TTSR being turned off). */
 	clearAllAbortPending: () => void;
@@ -43,6 +83,7 @@ interface TtsrStore {
 export const useTtsrStore = create<TtsrStore>()((set) => ({
 	abortPending: {},
 	lastTriggered: {},
+	matches: {},
 
 	noteAbortPending: (payload) =>
 		set((state) => ({
@@ -61,6 +102,24 @@ export const useTtsrStore = create<TtsrStore>()((set) => ({
 				abortPending,
 				lastTriggered: { ...state.lastTriggered, [payload.sessionId]: payload },
 			};
+		}),
+
+	noteMatched: (projectRoot, payload) =>
+		set((state) => {
+			if (payload.rules.length === 0) return state;
+			const at = Date.now();
+			const matches = { ...state.matches };
+			for (const rule of payload.rules) {
+				const key = matchKey(projectRoot, rule.path);
+				matches[key] = {
+					count: (matches[key]?.count ?? 0) + 1,
+					lastMatchedAt: at,
+					lastSource: payload.source,
+					lastWillInterrupt: payload.willInterrupt,
+					lastFilePath: payload.filePath,
+				};
+			}
+			return { ...state, matches };
 		}),
 
 	clearAbortPending: (sessionId) =>

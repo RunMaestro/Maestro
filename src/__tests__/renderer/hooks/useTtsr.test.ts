@@ -38,12 +38,14 @@ import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
 	isTtsrAbortPending,
+	matchKey,
 	TTSR_ABORT_PENDING_TTL_MS,
 	useTtsrStore,
 } from '../../../renderer/stores/ttsrStore';
 import type {
 	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
+	TtsrMatchedPayload,
 	TtsrTriggeredPayload,
 } from '../../../shared/ttsr-types';
 
@@ -86,22 +88,39 @@ function currentTab() {
 	return useSessionStore.getState().sessions[0].aiTabs[0];
 }
 
+function makeMatched(overrides: Partial<TtsrMatchedPayload> = {}): TtsrMatchedPayload {
+	return {
+		sessionId: 'session-1-ai-tab-1',
+		agentId: 'claude-code',
+		source: 'text',
+		rules: [{ name: 'no-console-log', path: '.maestro/rules/no-console-log.md' }],
+		willInterrupt: false,
+		...overrides,
+	};
+}
+
 /**
- * Mock the three TTSR push channels and hand back the callbacks the hook
- * registered, so a test can fire a real `ttsr:triggered` instead of calling the
- * respawn directly.
+ * Mock the TTSR push channels and hand back the callbacks the hook registered,
+ * so a test can fire a real `ttsr:triggered` instead of calling the respawn
+ * directly.
  */
 function wireBridge() {
 	const listeners: {
 		abortPending?: (payload: TtsrAbortPendingPayload) => void;
 		triggered?: (payload: TtsrTriggeredPayload) => void;
 		abortCleared?: (payload: TtsrAbortClearedPayload) => void;
+		matched?: (payload: TtsrMatchedPayload) => void;
 	} = {};
 	const off = {
 		abortPending: vi.fn(),
 		triggered: vi.fn(),
 		abortCleared: vi.fn(),
+		matched: vi.fn(),
 	};
+	window.maestro.ttsr.onMatched = vi.fn((cb) => {
+		listeners.matched = cb;
+		return off.matched;
+	});
 	window.maestro.ttsr.onAbortPending = vi.fn((cb) => {
 		listeners.abortPending = cb;
 		return off.abortPending;
@@ -536,5 +555,130 @@ describe('useTtsr subscription wiring', () => {
 		rerender({ on: false });
 
 		expect(off.triggered).toHaveBeenCalledTimes(1);
+	});
+});
+
+// A non-interrupting match (`interruptMode: never`) emits `ttsr:matched` and
+// nothing else - no toast, no abort, no transcript line - so without this
+// subscription the rule fires in total silence and reads as broken.
+describe('useTtsr match recording', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockOwnsSession = undefined;
+		useTtsrStore.setState({ abortPending: {}, lastTriggered: {}, matches: {} });
+	});
+
+	it('records a match against every rule it names, keyed by the project root', () => {
+		const session = seedSession();
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		listeners.matched?.(
+			makeMatched({
+				rules: [
+					{ name: 'no-console-log', path: '.maestro/rules/no-console-log.md' },
+					{ name: 'no-any', path: '.maestro/rules/no-any.md' },
+				],
+			})
+		);
+
+		const { matches } = useTtsrStore.getState();
+		const entry = matches[matchKey(session.cwd, '.maestro/rules/no-console-log.md')];
+		expect(entry?.count).toBe(1);
+		expect(entry?.lastSource).toBe('text');
+		expect(entry?.lastWillInterrupt).toBe(false);
+		expect(matches[matchKey(session.cwd, '.maestro/rules/no-any.md')]?.count).toBe(1);
+	});
+
+	it('counts repeats and keeps the newest interrupt flag and file path', () => {
+		const session = seedSession();
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		listeners.matched?.(makeMatched());
+		listeners.matched?.(
+			makeMatched({ willInterrupt: true, source: 'tool:edit', filePath: 'src/a.ts' })
+		);
+
+		const entry =
+			useTtsrStore.getState().matches[matchKey(session.cwd, '.maestro/rules/no-console-log.md')];
+		expect(entry?.count).toBe(2);
+		expect(entry?.lastWillInterrupt).toBe(true);
+		expect(entry?.lastSource).toBe('tool:edit');
+		expect(entry?.lastFilePath).toBe('src/a.ts');
+	});
+
+	// The tab can go away while the match is in flight. Nothing was reserved for
+	// this payload, so it is dropped - but it must not throw and take the
+	// subscription down with it.
+	it('drops a payload whose session cannot be resolved', () => {
+		seedSession();
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		expect(() => listeners.matched?.(makeMatched({ sessionId: 'gone-ai-tab-9' }))).not.toThrow();
+		expect(Object.keys(useTtsrStore.getState().matches)).toHaveLength(0);
+	});
+
+	it('does not crash on a preload without `onMatched`', () => {
+		seedSession();
+		const { listeners, off } = wireBridge();
+		const original = window.maestro.ttsr.onMatched;
+		delete (window.maestro.ttsr as Partial<typeof window.maestro.ttsr>).onMatched;
+		try {
+			const { unmount } = renderHook(() => useTtsr(true));
+			// The other three channels still work; only the match line is missing.
+			listeners.triggered?.(makePayload());
+			expect(useTtsrStore.getState().lastTriggered['session-1-ai-tab-1']).toBeDefined();
+			expect(() => unmount()).not.toThrow();
+			expect(off.matched).not.toHaveBeenCalled();
+		} finally {
+			window.maestro.ttsr.onMatched = original;
+		}
+	});
+
+	it('unsubscribes the match listener on unmount', () => {
+		const { off } = wireBridge();
+
+		const { unmount } = renderHook(() => useTtsr(true));
+		unmount();
+
+		expect(off.matched).toHaveBeenCalledTimes(1);
+	});
+
+	// Display state is per-renderer, so browser clients count too - the Rules
+	// panel there would otherwise stay blank while the desktop panel fills in.
+	it('records in a web-desktop client as well', () => {
+		const session = seedSession();
+		mockIsWebDesktop = true;
+		try {
+			const { listeners } = wireBridge();
+
+			renderHook(() => useTtsr(true));
+			listeners.matched?.(makeMatched());
+
+			expect(
+				useTtsrStore.getState().matches[matchKey(session.cwd, '.maestro/rules/no-console-log.md')]
+					?.count
+			).toBe(1);
+		} finally {
+			mockIsWebDesktop = false;
+		}
+	});
+
+	// Ownership gates the corrective SPAWN, not the display cache: a non-owning
+	// window still shows what its own Rules panel is scoped to.
+	it('records in a window that does not own the agent', () => {
+		const session = seedSession();
+		mockOwnsSession = (id: string) => id === 'some-other-agent';
+		const { listeners } = wireBridge();
+
+		renderHook(() => useTtsr(true));
+		listeners.matched?.(makeMatched());
+
+		expect(
+			useTtsrStore.getState().matches[matchKey(session.cwd, '.maestro/rules/no-console-log.md')]
+				?.count
+		).toBe(1);
 	});
 });
