@@ -18,7 +18,10 @@
  * - `triage`  - captured but not yet groomed; needs a human decision before it
  *               can move to `todo`. Never auto-run.
  * - `todo`    - accepted work, waiting on its parents. The author's default
- *               resting state for a real task.
+ *               resting state for a real task. Two populations live here: cards
+ *               that have never run, and cards a user stopped mid-run, which
+ *               stay `todo` but carry {@link BoardCard.heldByUser} and are never
+ *               auto-promoted until a person resumes them.
  * - `ready`   - derived/promoted: a `todo` card whose parents are all `done`,
  *               eligible for dispatch. Phase 3 computes this; authors do NOT
  *               hand-write it (see {@link getEligibleCards}).
@@ -78,7 +81,9 @@ export interface CardPrOnDone {
  *
  * `canceled` is the same idea for a USER-initiated stop: the person hit the stop
  * button, so the attempt says nothing about whether the card can succeed. It is
- * likewise excluded from the breaker, and the card returns to `todo`.
+ * likewise excluded from the breaker. The card keeps its `todo` status but is
+ * HELD ({@link BoardCard.heldByUser}), so the promote pass leaves it alone until
+ * a person resumes it - a stop really stops, it does not re-queue the card.
  *
  * `review` records that the attempt finished deliberately but handed the card to
  * a human for approval or verification (see the `review` {@link CardStatus}). It

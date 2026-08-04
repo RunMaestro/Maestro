@@ -67,6 +67,34 @@ describe('getEligibleCards', () => {
 		expect(getEligibleCards(b)).toEqual([]);
 	});
 
+	it('excludes a todo card the user is holding, even with no parents', () => {
+		// AB1 Decision 3: a stopped card stays `todo` (the work really is still
+		// waiting) but must never be re-promoted until a person resumes it. This
+		// is the single source of truth for "Stop actually stops".
+		const b = board([card({ id: 'a', status: 'todo', heldByUser: true }), card({ id: 'b' })]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['b']);
+	});
+
+	it('excludes a held card whose parents are all done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'c', parents: ['a'], heldByUser: true }),
+		]);
+		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('does not unblock children when a parent is held by the user', () => {
+		// AB1 Decision 3, other half: holding a parent must not let its children
+		// run. The card is not `done`, so `getBlockers` gates the child exactly
+		// as it would for any other unfinished parent.
+		const b = board([
+			card({ id: 'a', status: 'todo', heldByUser: true }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getEligibleCards(b)).toEqual([]);
+		expect(getBlockers(b.cards[1], b)).toEqual(['a']);
+	});
+
 	it('does not unblock children when a parent is only in review', () => {
 		// A review parent finished its run but is waiting on a human, so its
 		// children must stay gated until someone approves it into `done`. This is
@@ -114,6 +142,23 @@ describe('getBlockers', () => {
 		]);
 		const c = b.cards.find((x) => x.id === 'c')!;
 		expect(getBlockers(c, b)).toEqual(['b']);
+	});
+
+	it('counts a triage parent as a blocker', () => {
+		// A triage parent has not been groomed, let alone run, so it gates its
+		// children the same way any other non-done parent does.
+		const b = board([card({ id: 'a', status: 'triage' }), card({ id: 'c', parents: ['a'] })]);
+		const c = b.cards.find((x) => x.id === 'c')!;
+		expect(getBlockers(c, b)).toEqual(['a']);
+	});
+
+	it('counts a held todo parent as a blocker', () => {
+		const b = board([
+			card({ id: 'a', status: 'todo', heldByUser: true }),
+			card({ id: 'c', parents: ['a'] }),
+		]);
+		const c = b.cards.find((x) => x.id === 'c')!;
+		expect(getBlockers(c, b)).toEqual(['a']);
 	});
 
 	it('counts a missing parent id as a blocker', () => {
