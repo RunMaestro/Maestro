@@ -25,8 +25,15 @@ import {
 	updateCardStatus,
 	deleteCard,
 	saveBoard,
+	enqueueBoardWrite,
 } from '../../main/board/board-storage';
-import type { Board, BoardCard, CardStatus } from '../../shared/board/types';
+import {
+	maybeCreateCardPr,
+	stampCardPrUrl,
+	stampCardPrError,
+	type CardPrResult,
+} from '../../main/board/board-pr';
+import type { Board, BoardCard, CardPrOnDone, CardStatus } from '../../shared/board/types';
 import { CARD_PRIORITIES, CARD_STATUSES } from '../../shared/board/types';
 import { getBlockers } from '../../shared/board/graph';
 import { CARD_HANDOFF_REMINDER } from '../../shared/board/cardMarkers';
@@ -88,6 +95,12 @@ interface BoardAddCardOptions extends BoardCommonOptions {
 	/** Dispatch priority (`--priority high|normal|low`). Defaults to normal. */
 	priority?: string;
 	worktree?: boolean;
+	/**
+	 * `--pr-on-done [targetBranch]`: open a PR when the card lands in `done`.
+	 * Commander hands `true` for the bare flag (repo default branch at PR time)
+	 * and the string for an explicit base.
+	 */
+	prOnDone?: string | boolean;
 }
 
 interface BoardUpdateCardOptions extends BoardCommonOptions {
@@ -103,6 +116,12 @@ interface BoardUpdateCardOptions extends BoardCommonOptions {
 	priority?: string;
 	/** `--worktree` records the advisory ref, `--no-worktree` clears it. */
 	worktree?: boolean;
+	/**
+	 * `--pr-on-done [targetBranch]` sets the opt-in (bare flag = repo default
+	 * branch), `--no-pr-on-done` clears it. Commander hands `false` for the
+	 * negated form, mirroring `--worktree` / `--no-worktree`.
+	 */
+	prOnDone?: string | boolean;
 }
 
 interface BoardRemoveCardOptions extends BoardCommonOptions {
@@ -377,6 +396,12 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 		if (priority === 'high' || priority === 'low') card.priority = priority;
 		if (options.worktree)
 			card.worktree = buildCardWorktreeRef(session.projectRoot, board.id, cardId);
+		// Board F3 opt-in. Only meaningful together with `--worktree` (the PR is
+		// opened for that worktree's branch), but not enforced here: a card can gain
+		// its worktree later via `update-card --worktree`.
+		if (options.prOnDone !== undefined && options.prOnDone !== false) {
+			card.prOnDone = parsePrOnDone(options.prOnDone);
+		}
 
 		addCard(session.projectRoot, board.id, card);
 
@@ -469,11 +494,17 @@ export async function boardUpdateCard(
 			delete next.worktree;
 			changed = true;
 		}
+		if (options.prOnDone !== undefined) {
+			if (options.prOnDone === false) delete next.prOnDone;
+			else next.prOnDone = parsePrOnDone(options.prOnDone);
+			changed = true;
+		}
 
 		if (!changed) {
 			throw new Error(
 				'Nothing to update. Pass at least one of --title, --body, --assignee, ' +
-					'--assignee-agent, --parents, --priority, --worktree/--no-worktree.'
+					'--assignee-agent, --parents, --priority, --worktree/--no-worktree, ' +
+					'--pr-on-done/--no-pr-on-done.'
 			);
 		}
 
@@ -549,7 +580,15 @@ export async function boardRemoveCard(
 	}
 }
 
-/** `board set-status <cardId> <status> --agent <id>` - move a card. */
+/**
+ * `board set-status <cardId> <status> --agent <id>` - move a card.
+ *
+ * A move into `done` fires the same PR-on-done flow the `board:setCardStatus` IPC
+ * handler fires, so a headless board behaves like the desktop one. It is AWAITED
+ * rather than fire-and-forget (`startCardPr`): this process exits as soon as the
+ * command returns, which would kill the push mid-flight. The opt-in gate lives in
+ * `maybeCreateCardPr`, so a card without `prOnDone` costs one board read.
+ */
 export async function boardSetStatus(
 	cardId: string,
 	status: string,
@@ -564,18 +603,72 @@ export async function boardSetStatus(
 		const located = locateCard(session.projectRoot, cardId, options.board);
 		updateCardStatus(session.projectRoot, located.board.id, located.card.id, status as CardStatus);
 
+		const pr =
+			status === 'done'
+				? await createCardPrFromCli(session.projectRoot, located.board.id, located.card.id, options)
+				: null;
+
 		if (options.json) {
 			console.log(
-				JSON.stringify({ card: located.card.id, board: located.board.id, status }, null, 2)
+				JSON.stringify(
+					{
+						card: located.card.id,
+						board: located.board.id,
+						status,
+						// Only present when a PR was actually attempted (the gate passed).
+						...(pr ? { prUrl: pr.prUrl, prError: pr.success ? undefined : pr.error } : {}),
+					},
+					null,
+					2
+				)
 			);
 			return;
 		}
 		console.log(
 			formatSuccess(`Card "${located.card.title}" (${located.card.id.slice(0, 8)}) -> ${status}.`)
 		);
+		if (pr?.success && pr.prUrl) console.log(formatSuccess(`Opened PR: ${pr.prUrl}`));
+		else if (pr) console.log(formatWarning(`PR not opened: ${pr.error ?? 'unknown error'}`));
 	} catch (error) {
 		reportError(error, options.json);
 	}
+}
+
+/**
+ * Run the PR-on-done flow for a card the CLI just moved into `done`, with the
+ * same storage wiring `startCardPr` binds in the desktop host: fresh board reads,
+ * and both stamps applied inside the shared board write queue. Returns `null` when
+ * the gate declined (no `prOnDone`, no branch, or a PR already exists).
+ */
+function createCardPrFromCli(
+	projectRoot: string,
+	boardId: string,
+	cardId: string,
+	options: BoardSetStatusOptions
+): Promise<CardPrResult | null> {
+	return maybeCreateCardPr(cardId, {
+		loadBoard: () => getBoard(projectRoot, boardId),
+		stampPrUrl: (id, prUrl) =>
+			enqueueBoardWrite(projectRoot, () => {
+				const board = getBoard(projectRoot, boardId);
+				if (board && stampCardPrUrl(board, id, prUrl, new Date().toISOString())) {
+					saveBoard(projectRoot, board);
+				}
+			}),
+		stampPrError: (id, error) =>
+			enqueueBoardWrite(projectRoot, () => {
+				const board = getBoard(projectRoot, boardId);
+				if (board && stampCardPrError(board, id, error, new Date().toISOString())) {
+					saveBoard(projectRoot, board);
+				}
+			}),
+		mainRepoCwd: projectRoot,
+		// No toast sink: there is no renderer to relay to from a CLI process. The
+		// outcome is printed by the caller and persisted on the run either way.
+		onLog: (level, message) => {
+			if (!options.json && level !== 'info') console.error(formatWarning(`[pr] ${message}`));
+		},
+	});
 }
 
 /** `board tick --agent <id> [--board <id>]` - run one dispatcher pass headlessly. */
@@ -1053,6 +1146,19 @@ function parsePriority(raw: string | undefined): string {
 		throw new Error(`Invalid --priority "${raw}". Use one of: high, normal, low.`);
 	}
 	return priority;
+}
+
+/**
+ * Normalize a `--pr-on-done [targetBranch]` value into a {@link CardPrOnDone}.
+ *
+ * A bare flag (commander hands `true`) stores `{}`, which means "the repo's
+ * default branch, resolved at PR time" rather than baking a branch name into the
+ * board file. A value stores it trimmed. The shape is re-validated by the storage
+ * layer's card validator on write, so a blank value degrades to the bare form.
+ */
+function parsePrOnDone(raw: string | boolean): CardPrOnDone {
+	const targetBranch = typeof raw === 'string' ? raw.trim() : '';
+	return targetBranch ? { targetBranch } : {};
 }
 
 /** Short human-facing assignee label: role profile and/or pinned agent. */

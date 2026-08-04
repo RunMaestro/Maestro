@@ -31,6 +31,14 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 	spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
 }));
 
+// X1 task 8: `set-status done` fires the PR-on-done flow. The gh/git plumbing is
+// stubbed at its lowest shared seam so the real `board-pr` gate, stamping and
+// write-queue wiring all run for real (and no test ever touches a remote).
+const mockCreatePullRequest = vi.fn();
+vi.mock('../../../main/utils/pr-creator', () => ({
+	createPullRequest: (...args: unknown[]) => mockCreatePullRequest(...args),
+}));
+
 import {
 	boardList,
 	boardCreate,
@@ -468,6 +476,130 @@ describe('maestro-cli board', () => {
 		await boardSetStatus('c1', 'bogus', { agent: 'Alpha', json: true });
 		expect(exitSpy).toHaveBeenCalledWith(1);
 		expect(loadBoards(projectRoot)[0].cards[0].status).toBe('todo');
+	});
+
+	// X1 task 8: `board set-status <id> done` used to move the card and exit, so a
+	// headless board never opened the PR the desktop path opens on the very same
+	// transition. The flow is AWAITED here - the process exits when the command
+	// returns, and fire-and-forget would kill the push mid-flight.
+	describe('PR-on-done parity (X1)', () => {
+		/** A card that satisfies every gate condition once it lands in `done`. */
+		function prReadyCard(overrides: Partial<BoardCard> = {}): BoardCard {
+			return card('c1', {
+				status: 'review',
+				prOnDone: {},
+				worktree: { path: '/tmp/wt/c1', branch: 'board/b/c1' },
+				runs: [
+					{
+						attempt: 1,
+						startedAt: '2026-08-04T00:00:00.000Z',
+						endedAt: '2026-08-04T00:01:00.000Z',
+						outcome: 'success',
+						summary: 'did the thing',
+						worktreePath: '/tmp/wt/c1',
+						worktreeBranch: 'board/b/c1',
+					},
+				],
+				...overrides,
+			});
+		}
+
+		it('opens the PR, awaits it, and stamps the url on the run', async () => {
+			const b = createBoard(projectRoot, 'B');
+			addCard(projectRoot, b.id, prReadyCard());
+			let resolved = false;
+			mockCreatePullRequest.mockImplementation(async () => {
+				await new Promise((r) => setTimeout(r, 5));
+				resolved = true;
+				return { success: true, prUrl: 'https://github.com/o/r/pull/7', targetBranch: 'rc' };
+			});
+
+			await boardSetStatus('c1', 'done', { agent: 'Alpha', json: true });
+
+			// Awaited, not fire-and-forget: the creator finished before we returned.
+			expect(resolved).toBe(true);
+			expect(mockCreatePullRequest).toHaveBeenCalledTimes(1);
+			const stored = loadBoards(projectRoot)[0].cards[0];
+			expect(stored.status).toBe('done');
+			expect(stored.runs?.[0].prUrl).toBe('https://github.com/o/r/pull/7');
+			const payload = JSON.parse(logSpy.mock.calls.map((c) => c[0]).join('\n'));
+			expect(payload.prUrl).toBe('https://github.com/o/r/pull/7');
+		});
+
+		it('persists prError and leaves the card done when the PR fails', async () => {
+			const b = createBoard(projectRoot, 'B');
+			addCard(projectRoot, b.id, prReadyCard());
+			mockCreatePullRequest.mockResolvedValue({
+				success: false,
+				error: 'branch has no commits ahead of rc',
+			});
+
+			await boardSetStatus('c1', 'done', { agent: 'Alpha', json: true });
+
+			const stored = loadBoards(projectRoot)[0].cards[0];
+			expect(stored.status).toBe('done');
+			expect(stored.runs?.[0].prError).toBe('branch has no commits ahead of rc');
+			expect(stored.runs?.[0].prUrl).toBeUndefined();
+			expect(exitSpy).not.toHaveBeenCalled();
+			const payload = JSON.parse(logSpy.mock.calls.map((c) => c[0]).join('\n'));
+			expect(payload.prError).toBe('branch has no commits ahead of rc');
+		});
+
+		it('attempts nothing for a card that never opted in', async () => {
+			const b = createBoard(projectRoot, 'B');
+			addCard(projectRoot, b.id, prReadyCard({ prOnDone: undefined }));
+
+			await boardSetStatus('c1', 'done', { agent: 'Alpha', json: true });
+
+			expect(mockCreatePullRequest).not.toHaveBeenCalled();
+			const payload = JSON.parse(logSpy.mock.calls.map((c) => c[0]).join('\n'));
+			expect(payload).not.toHaveProperty('prUrl');
+			expect(payload).not.toHaveProperty('prError');
+		});
+
+		it('attempts nothing for a move into a status other than done', async () => {
+			const b = createBoard(projectRoot, 'B');
+			addCard(projectRoot, b.id, prReadyCard());
+			await boardSetStatus('c1', 'blocked', { agent: 'Alpha', json: true });
+			expect(mockCreatePullRequest).not.toHaveBeenCalled();
+		});
+
+		it('add-card --pr-on-done persists the target branch, and the bare flag does not', async () => {
+			const b = createBoard(projectRoot, 'B');
+			await boardAddCard(b.id, {
+				agent: 'Alpha',
+				title: 'Targeted',
+				assignee: 'p1',
+				worktree: true,
+				prOnDone: 'rc',
+				json: true,
+			});
+			await boardAddCard(b.id, {
+				agent: 'Alpha',
+				title: 'Default base',
+				assignee: 'p1',
+				worktree: true,
+				prOnDone: true,
+				json: true,
+			});
+			const cards = loadBoards(projectRoot)[0].cards;
+			expect(cards.find((c) => c.title === 'Targeted')?.prOnDone?.targetBranch).toBe('rc');
+			const bare = cards.find((c) => c.title === 'Default base');
+			expect(bare?.prOnDone).toBeDefined();
+			expect(bare?.prOnDone?.targetBranch).toBeUndefined();
+		});
+
+		it('update-card sets and then clears prOnDone', async () => {
+			const b = createBoard(projectRoot, 'B');
+			addCard(projectRoot, b.id, card('c1'));
+
+			await boardUpdateCard('c1', { agent: 'Alpha', prOnDone: 'main', json: true });
+			expect(loadBoards(projectRoot)[0].cards[0].prOnDone?.targetBranch).toBe('main');
+
+			await boardUpdateCard('c1', { agent: 'Alpha', prOnDone: false, json: true });
+			expect(loadBoards(projectRoot)[0].cards[0].prOnDone).toBeUndefined();
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	// `board watch` is a loop, so every test here drives exactly one iteration and

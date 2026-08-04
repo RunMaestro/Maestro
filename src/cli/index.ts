@@ -708,6 +708,10 @@ board
 	.option('--parents <ids>', 'Comma-separated parent card ids this card depends on')
 	.option('--priority <level>', 'Dispatch priority: high|normal|low (default normal)')
 	.option('--worktree', 'Run this card in its own git worktree (created on first run)')
+	.option(
+		'--pr-on-done [targetBranch]',
+		'Open a pull request when the card lands in done (bare flag targets the repo default branch)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardAddCard);
 
@@ -724,6 +728,11 @@ board
 	.option('--priority <level>', 'Dispatch priority: high|normal|low ("normal" clears it)')
 	.option('--worktree', 'Run this card in its own git worktree (created on first run)')
 	.option('--no-worktree', 'Run this card in the shared project directory')
+	.option(
+		'--pr-on-done [targetBranch]',
+		'Open a pull request when the card lands in done (bare flag targets the repo default branch)'
+	)
+	.option('--no-pr-on-done', 'Do not open a pull request when the card lands in done')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(boardUpdateCard);
 
@@ -738,7 +747,9 @@ board
 
 board
 	.command('set-status <cardId> <status>')
-	.description(`Set a card's status (${CARD_STATUS_LIST})`)
+	.description(
+		`Set a card's status (${CARD_STATUS_LIST}). Moving to done opens the card's PR when it opted in`
+	)
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
 	.option('--json', 'Output as JSON (for scripting)')
