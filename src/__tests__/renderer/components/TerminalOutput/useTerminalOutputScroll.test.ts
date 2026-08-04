@@ -469,3 +469,74 @@ describe('useTerminalOutputScroll content-resize re-pin (O1)', () => {
 		expect(resizeObservers).toHaveLength(0);
 	});
 });
+
+/**
+ * Y1: a deliberately scrolled-up position is lost when the user swaps agents
+ * within the 200ms scroll-save debounce.
+ *
+ * The two halves of the saved scroll state are persisted on different
+ * schedules inside handleScrollInner: the at-bottom flag goes out
+ * SYNCHRONOUSLY (but only on a transition), while the absolute offset is
+ * debounced by 200ms. The unmount cleanup DROPS the pending debounced save
+ * rather than flushing it (deliberately - see the cleanup comment and #1323:
+ * onScrollPositionChange resolves its target tab at call time, and during an
+ * agent swap the store already points at the incoming session).
+ *
+ * So a fast swap persists `isAtBottom: false` with no matching scrollTop, the
+ * remount restore gate (which requires initialScrollTop > 0) skips, and the
+ * mount-time bottom jump wins.
+ *
+ * The test below PINS that broken behaviour as documentation of the race. It
+ * is inverted once the fix lands.
+ */
+describe('scrolled-up persistence across unmount (Y1)', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('persists the at-bottom flag but loses the offset when the swap beats the 200ms debounce', () => {
+		// 10000 - 5000 - 200 = 4800px from the bottom: well past the 50px
+		// at-bottom threshold, so this is a deliberate scroll-up.
+		const ref = { current: makeContainer(10000, 200, 5000) };
+		const onScrollPositionChange = vi.fn();
+		const onAtBottomChange = vi.fn();
+
+		const { result, unmount } = renderHook(() =>
+			useTerminalOutputScroll({
+				scrollContainerRef: ref,
+				sessionId: 's1',
+				activeTabId: 't1',
+				filteredLogsLength: 3,
+				onScrollPositionChange,
+				onAtBottomChange,
+			})
+		);
+
+		// The throttle runs on the leading edge, so this first call reaches
+		// handleScrollInner without any timer advance.
+		act(() => {
+			result.current.handleScroll();
+		});
+
+		// The flag half went out synchronously, on the transition.
+		expect(onAtBottomChange).toHaveBeenCalledWith(false);
+		expect(result.current.isAtBottom).toBe(false);
+
+		// The user swaps agents before the 200ms debounce fires.
+		act(() => {
+			vi.advanceTimersByTime(100);
+		});
+		unmount();
+		act(() => {
+			vi.advanceTimersByTime(500);
+		});
+
+		// The offset half is dropped: `isAtBottom: false` was saved without a
+		// matching scrollTop, which is exactly the Y1 snap-to-bottom.
+		expect(onScrollPositionChange).not.toHaveBeenCalled();
+	});
+});
