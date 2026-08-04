@@ -2,8 +2,9 @@
  * Preload API for Time-Traveling Stream Rules (TTSR).
  *
  * TTSR is main-authoritative (Gate B): matching, repeat policy and the abort
- * all happen in main with no renderer round-trip. The renderer only listens,
- * so this namespace is push-events only - there is nothing to invoke.
+ * all happen in main with no renderer round-trip. The renderer only listens and,
+ * once, reports back (`reportCorrectiveResult`) - it never asks main to match or
+ * interrupt anything.
  *
  * - `ttsr:abortPending` - a turn is being signalled; the exit that follows is a
  *   TTSR abort, not a failure.
@@ -12,6 +13,8 @@
  * - `ttsr:abortCleared` - the announced abort is off; no corrective turn is
  *   coming, so resume normal exit handling.
  * - `ttsr:matched` - observability only (a rule matched, interrupting or not).
+ * - `ttsr:correctiveResult` - the renderer's ack that the corrective turn did
+ *   (or did not) start, which cancels main's watchdog toast.
  * - `ttsr:rulesChanged` - a project's rules were edited on disk or through the
  *   handlers below, so any list of them is now stale.
  */
@@ -20,6 +23,7 @@ import { ipcRenderer } from 'electron';
 import type {
 	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
+	TtsrCorrectiveResult,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrRuleListResult,
@@ -31,6 +35,7 @@ import type {
 export type {
 	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
+	TtsrCorrectiveResult,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrRule,
@@ -95,6 +100,13 @@ export function createTtsrApi() {
 				ipcRenderer.removeListener('ttsr:rulesChanged', handler);
 			};
 		},
+
+		// The renderer that spawned (or failed to spawn) the corrective turn
+		// reporting back, which cancels main's "did not start" watchdog. The one
+		// non-push call in this namespace: it reports an outcome, it does not ask
+		// main to do anything.
+		reportCorrectiveResult: (result: TtsrCorrectiveResult): Promise<void> =>
+			ipcRenderer.invoke('ttsr:correctiveResult', result),
 
 		// ── Rule management (project-scoped; every call names its project) ──
 

@@ -25,7 +25,8 @@ const LOG_CONTEXT = 'TTSR';
 export interface TtsrToastParams {
 	title: string;
 	message: string;
-	color: 'orange';
+	/** Orange announces the interrupt; red says the corrective turn never began. */
+	color: 'orange' | 'red';
 	/** Sticky: an interrupted turn is worth an explicit acknowledgement. */
 	dismissible: true;
 	/** Owning agent id, so the renderer can resolve the header strip. */
@@ -35,9 +36,10 @@ export interface TtsrToastParams {
 	/**
 	 * Structured detection marker. The display layer (Toast.tsx) reads `mode` to
 	 * append the client-specific outcome line; the plain `message` above stays a
-	 * sensible fallback for clients that ignore this field.
+	 * sensible fallback for clients that ignore this field. Absent on the failure
+	 * toast, whose whole point is that no client-specific outcome happened.
 	 */
-	ttsr: TtsrToastMarker;
+	ttsr?: TtsrToastMarker;
 }
 
 /**
@@ -73,6 +75,34 @@ export function buildTtsrToast(payload: TtsrTriggeredPayload): TtsrToastParams {
 }
 
 /**
+ * Shape the toast for a corrective turn that never started. Exported for tests;
+ * production goes through {@link emitTtsrFailureToast}.
+ *
+ * "Did not start" rather than "failed": from main's side the two are
+ * indistinguishable (an unacked interrupt looks the same whether the renderer
+ * errored or was simply not there), and the honest instruction is the same -
+ * open the desktop app, which is the only client that spawns corrective turns.
+ * Red and sticky, because this one retracts a promise the orange toast made.
+ */
+export function buildTtsrFailureToast(
+	payload: TtsrTriggeredPayload,
+	error?: string
+): TtsrToastParams {
+	const agentSessionId = resolveOwningMaestroSessionId(payload.sessionId);
+	const detail = error ? ` (${error})` : '';
+
+	return {
+		title: `TTSR could not resume ${getAgentDisplayName(payload.agentId)}`,
+		message: `TTSR interrupted the turn but the corrective turn did not start${detail} - open the desktop app.`,
+		color: 'red',
+		dismissible: true,
+		sessionId: agentSessionId,
+		tabId: payload.tabId,
+		clickAction: { kind: 'jump-session', sessionId: agentSessionId, tabId: payload.tabId },
+	};
+}
+
+/**
  * Raise the interrupt toast. Never throws: a toast is advisory, and the
  * corrective turn must run whether or not the renderer was reachable.
  */
@@ -84,6 +114,26 @@ export function emitTtsrTriggeredToast(
 		safeSend('remote:notifyToast', buildTtsrToast(payload));
 	} catch (err) {
 		logger.warn('Failed to send TTSR interrupt toast', LOG_CONTEXT, {
+			sessionId: payload.sessionId,
+			error: err instanceof Error ? err.message : String(err),
+		});
+	}
+}
+
+/**
+ * Raise the "corrective turn did not start" toast. Never throws, for the same
+ * reason as {@link emitTtsrTriggeredToast}: it is called from a watchdog timer,
+ * where an exception would have nowhere to go.
+ */
+export function emitTtsrFailureToast(
+	safeSend: (channel: string, ...args: unknown[]) => void,
+	payload: TtsrTriggeredPayload,
+	error?: string
+): void {
+	try {
+		safeSend('remote:notifyToast', buildTtsrFailureToast(payload, error));
+	} catch (err) {
+		logger.warn('Failed to send TTSR corrective-failure toast', LOG_CONTEXT, {
 			sessionId: payload.sessionId,
 			error: err instanceof Error ? err.message : String(err),
 		});

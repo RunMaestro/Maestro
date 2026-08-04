@@ -19,6 +19,7 @@ import type {
 	TtsrAbortClearedPayload,
 	TtsrAbortPendingPayload,
 	TtsrContextMode,
+	TtsrCorrectiveResult,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrRulesChangedPayload,
@@ -40,6 +41,16 @@ import {
 } from './ttsr-spawn-registry';
 
 const LOG_CONTEXT = 'TTSR';
+
+/**
+ * The corrective-ack surface the runtime holds. Structural rather than the
+ * concrete `TtsrCorrectiveAckTracker`, so the runtime keeps knowing nothing
+ * about toasts.
+ */
+export interface TtsrCorrectiveAckLike {
+	resolve(result: TtsrCorrectiveResult): void;
+	dispose(): void;
+}
 
 export interface TtsrRuntimeDeps {
 	/**
@@ -74,6 +85,12 @@ export interface TtsrRuntimeDeps {
 	 * turn without telling the renderer to respawn it would strand the agent.
 	 */
 	onTriggered?(payload: TtsrTriggeredPayload): void;
+	/**
+	 * Watchdog for the corrective spawn, armed by the `onTriggered` sink and
+	 * acked over `ttsr:correctiveResult`. Held here only so shutdown drops its
+	 * timers with everything else the runtime owns; the runtime never arms it.
+	 */
+	correctiveAck?: TtsrCorrectiveAckLike;
 	/**
 	 * Sink for `ttsr:abortPending`, fired the moment a turn is signalled so the
 	 * renderer stops treating the imminent exit as a failed turn.
@@ -430,9 +447,21 @@ export class TtsrRuntime {
 		this.deps.persistence?.flush();
 	}
 
+	/**
+	 * The corrective-spawn watchdog, when one was wired. The IPC handler for
+	 * `ttsr:correctiveResult` reaches it through here - the runtime is the object
+	 * main already holds.
+	 */
+	get correctiveAck(): TtsrCorrectiveAckLike | null {
+		return this.deps.correctiveAck ?? null;
+	}
+
 	/** Detach from the process manager and persist whatever is still pending. */
 	dispose(): void {
 		this.detach?.();
+		// Pending watchdogs would otherwise fire a "did not start" toast at a
+		// renderer that is on its way out with the rest of the app.
+		this.deps.correctiveAck?.dispose();
 		for (const close of this.watchers.values()) close();
 		this.watchers.clear();
 		this.cache.clear();

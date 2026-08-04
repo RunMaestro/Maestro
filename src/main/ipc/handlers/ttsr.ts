@@ -29,6 +29,7 @@ import {
 import { parseTtsrRule } from '../../ttsr/config/ttsr-config-normalizer';
 import { ttsrRuleFilePath } from '../../../shared/maestro-paths';
 import type {
+	TtsrCorrectiveResult,
 	TtsrProjectSettings,
 	TtsrRule,
 	TtsrRuleListEntry,
@@ -50,6 +51,12 @@ export interface TtsrHandlerDependencies {
 	 * user just clicked something - the list must not lie in the meantime.
 	 */
 	onRulesChanged?: (projectRoot: string) => void;
+	/**
+	 * The renderer reporting whether it managed to spawn a corrective turn.
+	 * Cancels main's "did not start" watchdog; omitted in hosts that never armed
+	 * one, where the report is simply dropped.
+	 */
+	onCorrectiveResult?: (result: TtsrCorrectiveResult) => void;
 }
 
 /** Strip the compiled regexes so the rule survives structured cloning. */
@@ -187,6 +194,27 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 				const path = writeTtsrConfigFile(args.projectRoot, dumped);
 				deps.onRulesChanged?.(args.projectRoot);
 				return { path };
+			}
+		)
+	);
+
+	// The one call that reports back INTO the runtime rather than reading rules:
+	// the renderer that owns the interrupted turn says whether the corrective
+	// spawn started. Main raised the interrupt toast optimistically, so without
+	// this ack a corrective turn that never began leaves every client - the web
+	// ones especially, since they never spawn and never see the desktop's local
+	// failure toast - believing the turn is being fixed.
+	ipcMain.handle(
+		'ttsr:correctiveResult',
+		withIpcErrorLogging(
+			handlerOpts('correctiveResult'),
+			async (args: TtsrCorrectiveResult): Promise<void> => {
+				if (!args || typeof args.sessionId !== 'string') return;
+				deps.onCorrectiveResult?.({
+					sessionId: args.sessionId,
+					ok: args.ok === true,
+					error: typeof args.error === 'string' ? args.error : undefined,
+				});
 			}
 		)
 	);

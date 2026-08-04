@@ -3939,6 +3939,12 @@ interface MaestroAPI {
 		onRulesChanged: (
 			callback: (payload: import('../shared/ttsr-types').TtsrRulesChangedPayload) => void
 		) => () => void;
+		// Ack for a corrective turn; cancels main's "did not start" watchdog.
+		// Optional: older preloads and some web-desktop shims lack it, and TTSR
+		// degrades to the timeout rather than crashing the caller.
+		reportCorrectiveResult?: (
+			result: import('../shared/ttsr-types').TtsrCorrectiveResult
+		) => Promise<void>;
 		// Rule management. Project-scoped: rules live in each project's
 		// .maestro/rules/, so every call names the project it acts on.
 		listRules: (projectRoot: string) => Promise<import('../shared/ttsr-types').TtsrRuleListResult>;

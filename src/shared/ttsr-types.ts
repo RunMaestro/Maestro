@@ -297,6 +297,26 @@ export interface TtsrTriggeredPayload {
 }
 
 /**
+ * Payload of the `ttsr:correctiveResult` ack, sent by the renderer that spawned
+ * (or failed to spawn) the corrective turn.
+ *
+ * Main raises the interrupt toast optimistically, before any renderer has done
+ * the work. This ack is what turns that promise into a checked one: an `ok`
+ * result cancels main's watchdog, and a failure - or silence past the timeout -
+ * broadcasts the "did not start" toast to EVERY client, including web-desktop
+ * ones that never spawn and would otherwise be left with an orange toast that
+ * quietly became a lie.
+ */
+export interface TtsrCorrectiveResult {
+	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
+	sessionId: string;
+	/** True once the corrective spawn returned. */
+	ok: boolean;
+	/** Why it did not start, for the toast detail and the log. */
+	error?: string;
+}
+
+/**
  * Structured marker carried on a TTSR interrupt toast.
  *
  * The broadcast toast describes only the *detection* (which rule fired, that the

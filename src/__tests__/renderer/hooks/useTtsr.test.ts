@@ -682,3 +682,110 @@ describe('useTtsr match recording', () => {
 		).toBe(1);
 	});
 });
+
+/**
+ * D2 item 4: main raises the interrupt toast optimistically, so the renderer
+ * that was told to respawn has to say whether it managed to. Without the ack,
+ * a corrective turn that never starts leaves a web-desktop user staring at an
+ * orange toast promising a correction that is not coming.
+ */
+describe('corrective-turn ack', () => {
+	let report: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useTtsrStore.setState({ abortPending: {}, lastTriggered: {} });
+		report = vi.fn().mockResolvedValue(undefined);
+		window.maestro.ttsr.reportCorrectiveResult = report;
+		window.maestro.agents.get = vi.fn().mockResolvedValue({
+			command: 'claude',
+			path: '/usr/local/bin/claude',
+			args: ['--print'],
+			capabilities: { supportsStreamJsonInput: true },
+		});
+		window.maestro.process.spawn = vi.fn().mockResolvedValue({ pid: 1, success: true });
+	});
+
+	it('acks success only after the spawn returns', async () => {
+		seedSession();
+		let resolveSpawn: (() => void) | undefined;
+		window.maestro.process.spawn = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					resolveSpawn = () => resolve({ pid: 1, success: true });
+				})
+		);
+
+		const running = runTtsrCorrectiveTurn(makePayload());
+		await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalled());
+		// The promise the toast made is "the turn is being corrected", and until
+		// the spawn resolves it is not.
+		expect(report).not.toHaveBeenCalled();
+
+		resolveSpawn?.();
+		await running;
+
+		expect(report).toHaveBeenCalledWith({
+			sessionId: 'session-1-ai-tab-1',
+			ok: true,
+			error: undefined,
+		});
+	});
+
+	it('acks failure with the spawn error', async () => {
+		seedSession();
+		window.maestro.process.spawn = vi.fn().mockRejectedValue(new Error('spawn failed'));
+
+		await runTtsrCorrectiveTurn(makePayload());
+
+		expect(report).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-ai-tab-1', ok: false, error: 'spawn failed' })
+		);
+	});
+
+	it('acks failure when the tab is gone, so main does not wait out the timeout', async () => {
+		useSessionStore.getState().setSessions([]);
+
+		await runTtsrCorrectiveTurn(makePayload());
+
+		expect(report).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-ai-tab-1', ok: false })
+		);
+	});
+
+	// Older preloads and some web-desktop shims lack the method; TTSR degrades to
+	// main's timeout rather than failing the corrective turn it just spawned.
+	it('spawns normally when the preload has no ack method', async () => {
+		seedSession();
+		(window.maestro.ttsr as Record<string, unknown>).reportCorrectiveResult = undefined;
+
+		await expect(runTtsrCorrectiveTurn(makePayload())).resolves.toBe(true);
+		expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+	});
+
+	// The ack is advisory: a rejected report must not turn a corrective turn that
+	// DID start into a reported failure.
+	it('keeps the turn successful when the ack itself fails', async () => {
+		seedSession();
+		report.mockRejectedValue(new Error('bridge down'));
+
+		await expect(runTtsrCorrectiveTurn(makePayload())).resolves.toBe(true);
+	});
+
+	// Web-desktop clients never spawn the corrective turn, so they must never ack
+	// either: a false "ok" from a client that did nothing would cancel the very
+	// watchdog that exists to cover them.
+	it('does not ack from a web-desktop client', async () => {
+		seedSession();
+		const { listeners } = wireBridge();
+		mockIsWebDesktop = true;
+
+		renderHook(() => useTtsr(true));
+		listeners.triggered?.(makePayload());
+		await waitFor(() => expect(currentTab().logs).toHaveLength(1));
+
+		expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		expect(report).not.toHaveBeenCalled();
+		mockIsWebDesktop = false;
+	});
+});

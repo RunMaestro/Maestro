@@ -3277,6 +3277,9 @@ function setupIpcHandlers() {
 	// would also catch it, a debounce later.
 	registerTtsrHandlers({
 		onRulesChanged: (projectRoot: string) => ttsrRuntime?.invalidateRules(projectRoot),
+		// The spawning renderer's ack for a corrective turn, which cancels the
+		// "did not start" watchdog armed when the interrupt was broadcast.
+		onCorrectiveResult: (result) => ttsrRuntime?.correctiveAck?.resolve(result),
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts

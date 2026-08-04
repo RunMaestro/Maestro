@@ -32,6 +32,7 @@ type Handler = (event: unknown, args: Record<string, unknown>) => Promise<unknow
 let projectRoot: string;
 let handlers: Map<string, Handler>;
 let onRulesChanged: ReturnType<typeof vi.fn>;
+let onCorrectiveResult: ReturnType<typeof vi.fn>;
 
 const RULE = [
 	'---',
@@ -67,7 +68,8 @@ beforeEach(() => {
 		handlers.set(channel, handler);
 	}) as never);
 	onRulesChanged = vi.fn();
-	registerTtsrHandlers({ onRulesChanged });
+	onCorrectiveResult = vi.fn();
+	registerTtsrHandlers({ onRulesChanged, onCorrectiveResult });
 });
 
 afterEach(() => {
@@ -249,5 +251,49 @@ describe('ttsr project settings', () => {
 		);
 
 		expect(settings).toMatchObject({ enabled: false, disabledRules: ['noisy-rule'] });
+	});
+});
+
+// The one handler that reports back into the runtime: the renderer saying
+// whether the corrective turn it was told to spawn actually started.
+describe('ttsr:correctiveResult', () => {
+	it('forwards the ack to the runtime watchdog', async () => {
+		await call('ttsr:correctiveResult', { sessionId: 'session-1-ai-tab-1', ok: true });
+
+		expect(onCorrectiveResult).toHaveBeenCalledWith({
+			sessionId: 'session-1-ai-tab-1',
+			ok: true,
+			error: undefined,
+		});
+	});
+
+	it('forwards a failure with its reason', async () => {
+		await call('ttsr:correctiveResult', {
+			sessionId: 'session-1-ai-tab-1',
+			ok: false,
+			error: 'spawn failed',
+		});
+
+		expect(onCorrectiveResult).toHaveBeenCalledWith({
+			sessionId: 'session-1-ai-tab-1',
+			ok: false,
+			error: 'spawn failed',
+		});
+	});
+
+	// Anything but an explicit `true` is a failure: a renderer that reports a
+	// malformed ack must not silently cancel the watchdog.
+	it('treats a non-boolean ok as a failure', async () => {
+		await call('ttsr:correctiveResult', { sessionId: 'session-1-ai-tab-1', ok: 'yes' });
+
+		expect(onCorrectiveResult).toHaveBeenCalledWith(
+			expect.objectContaining({ ok: false, error: undefined })
+		);
+	});
+
+	it('drops a report with no session id', async () => {
+		await call('ttsr:correctiveResult', { ok: true });
+
+		expect(onCorrectiveResult).not.toHaveBeenCalled();
 	});
 });

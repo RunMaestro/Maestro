@@ -16,6 +16,7 @@ import type {
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
 import { watchTtsrConfig } from './config/ttsr-config-loader';
+import { TtsrCorrectiveAckTracker } from './ttsr-corrective-ack';
 import type { TtsrInterruptTarget } from './ttsr-interrupt-driver';
 import { emitTtsrTriggeredToast } from './ttsr-notify';
 import { TtsrRuntime } from './ttsr-runtime';
@@ -26,7 +27,18 @@ export { TtsrRuntime } from './ttsr-runtime';
 export { TtsrManager } from './ttsr-manager';
 export { TtsrInterruptDriver } from './ttsr-interrupt-driver';
 export { TtsrSpawnRegistry } from './ttsr-spawn-registry';
-export { buildTtsrToast, emitTtsrTriggeredToast, type TtsrToastParams } from './ttsr-notify';
+export {
+	buildTtsrToast,
+	buildTtsrFailureToast,
+	emitTtsrTriggeredToast,
+	emitTtsrFailureToast,
+	type TtsrToastParams,
+} from './ttsr-notify';
+export {
+	TtsrCorrectiveAckTracker,
+	TTSR_CORRECTIVE_ACK_TIMEOUT_MS,
+	type TtsrCorrectiveAckDeps,
+} from './ttsr-corrective-ack';
 export { TtsrStateStore } from './ttsr-state-store';
 export {
 	createTtsrStatePersistence,
@@ -67,6 +79,8 @@ export interface InstallTtsrOptions {
 	 * headless hosts with no renderer to notify.
 	 */
 	notifyOnInterrupt?: boolean;
+	/** Test override for the corrective-turn ack watchdog (default 10s). */
+	correctiveAckTimeoutMs?: number;
 }
 
 /**
@@ -78,7 +92,16 @@ export function installTtsrRuntime(
 	options: InstallTtsrOptions
 ): TtsrRuntime {
 	const safeSend = options.safeSend;
+	// The interrupt toast is raised optimistically, so something has to check that
+	// a renderer actually spawned the corrective turn. Only wired where a toast
+	// can be raised at all: a headless host (`notifyOnInterrupt: false`) has no
+	// renderer to ack, so every interrupt would time out into a toast nobody sees.
+	const correctiveAck =
+		safeSend && options.notifyOnInterrupt !== false
+			? new TtsrCorrectiveAckTracker({ safeSend, timeoutMs: options.correctiveAckTimeoutMs })
+			: undefined;
 	const runtime = new TtsrRuntime({
+		correctiveAck,
 		isGloballyEnabled: options.isGloballyEnabled,
 		getDisabledRules: options.getDisabledRules,
 		getContextMode: options.getContextMode,
@@ -103,6 +126,9 @@ export function installTtsrRuntime(
 		interruptTarget: safeSend ? processManager : undefined,
 		onTriggered: safeSend
 			? (payload: TtsrTriggeredPayload) => {
+					// Armed before the broadcast so an instant ack can never beat its own
+					// watchdog into existence and leave a timer nobody can cancel.
+					correctiveAck?.arm(payload);
 					// The corrective respawn comes first: the toast is advisory, and the
 					// renderer should be reinjecting before the user is told about it.
 					safeSend('ttsr:triggered', payload);

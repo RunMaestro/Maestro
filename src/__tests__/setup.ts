@@ -754,6 +754,7 @@ const mockMaestro = {
 		onTriggered: vi.fn().mockReturnValue(() => {}),
 		onAbortCleared: vi.fn().mockReturnValue(() => {}),
 		onMatched: vi.fn().mockReturnValue(() => {}),
+		reportCorrectiveResult: vi.fn().mockResolvedValue(undefined),
 		listRules: vi.fn().mockResolvedValue({
 			rules: [],
 			settings: { enabled: true, disabledRules: [] },

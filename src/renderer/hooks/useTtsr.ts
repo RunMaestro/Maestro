@@ -15,6 +15,8 @@
  *   turn that was never actually stopped is not left suppressed forever.
  * - `ttsr:matched` counts every match, interrupting or not, into the display
  *   store so the Rules panel can show that a `never`-mode rule fired at all.
+ * - `ttsr:correctiveResult` reports back whether the respawn happened, so main
+ *   can retract its optimistic interrupt toast on every client when it did not.
  *
  * Mount once, gated on the `ttsr` Encore feature.
  */
@@ -121,6 +123,25 @@ function releaseAfterFailedRespawn(
 }
 
 /**
+ * Tell main whether the corrective turn started.
+ *
+ * Main raised the interrupt toast optimistically and armed a watchdog; this ack
+ * is what cancels it. Advisory in both directions: a preload without the method
+ * (older build, some web-desktop shims) just falls through to main's timeout,
+ * which raises the same failure toast a beat later.
+ */
+function reportCorrectiveResult(sessionId: string, ok: boolean, error?: string): void {
+	const report = window.maestro?.ttsr?.reportCorrectiveResult;
+	if (!report) return;
+	void report({ sessionId, ok, error })?.catch((err: unknown) => {
+		logger.warn('[TTSR] Could not report corrective result', undefined, {
+			sessionId,
+			error: err instanceof Error ? err.message : String(err),
+		});
+	});
+}
+
+/**
  * Spawn the corrective turn for one `ttsr:triggered` payload.
  *
  * Exported for tests; the hook is a thin subscription around it.
@@ -135,6 +156,7 @@ export async function runTtsrCorrectiveTurn(payload: TtsrTriggeredPayload): Prom
 			sessionId: payload.sessionId,
 		});
 		useTtsrStore.getState().clearAbortPending(payload.sessionId);
+		reportCorrectiveResult(payload.sessionId, false, 'the tab no longer exists');
 		return false;
 	}
 
@@ -172,10 +194,18 @@ export async function runTtsrCorrectiveTurn(payload: TtsrTriggeredPayload): Prom
 		}));
 
 		await processService.spawn(config);
+		// Acked only after the spawn returns: the promise the interrupt toast made
+		// is "the turn is being corrected", and until this resolves it is not.
+		reportCorrectiveResult(payload.sessionId, true);
 		return true;
 	} catch (error) {
 		logger.error('[TTSR] Corrective turn failed to spawn', undefined, error);
 		releaseAfterFailedRespawn(session, tab.id, payload, error);
+		reportCorrectiveResult(
+			payload.sessionId,
+			false,
+			error instanceof Error ? error.message : String(error)
+		);
 		return false;
 	}
 }
