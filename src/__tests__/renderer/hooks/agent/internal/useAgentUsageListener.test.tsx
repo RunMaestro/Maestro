@@ -305,4 +305,166 @@ describe('useAgentUsageListener', () => {
 		const last = calls[calls.length - 1];
 		expect(last?.[1]).toBeLessThanOrEqual(75);
 	});
+
+	describe('occupancy snapshot bootstrap (finding Q1, D1)', () => {
+		// The reported repro: a claude-code session whose FIRST turn is tool-heavy.
+		// The CLI's result message sums every internal API call, so the turn totals
+		// blow past the window; the last call's usage rides along as absoluteUsage
+		// and is the real occupancy.
+		const OVERFLOWING_FIRST_TURN = {
+			inputTokens: 2_400_000,
+			outputTokens: 5_000,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			absoluteUsage: {
+				inputTokens: 2_000,
+				outputTokens: 500,
+				cacheReadInputTokens: 200_000,
+				cacheCreationInputTokens: 38_000,
+				reasoningTokens: 0,
+			},
+		};
+
+		it('establishes a nonzero baseline from the snapshot when the first turn overflows', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', { ...OVERFLOWING_FIRST_TURN, contextWindow: 1_000_000 });
+
+			// 2000 + 200000 + 38000 = 240000 of a 1M window. Before the fix the turn
+			// totals overflowed, no baseline existed, and the gauge stayed at 0%.
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 24);
+		});
+
+		it('bootstraps against the session window when the event reports none', () => {
+			// The event carries no window, so the primary estimate sizes the snapshot
+			// against the static 200k table and still overflows; only the hook's
+			// resolved window (here a per-agent 1M override) can size it correctly.
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+				customContextWindow: 1_000_000,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', { ...OVERFLOWING_FIRST_TURN, contextWindow: 0 });
+
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 24);
+		});
+
+		it('is not capped to the yellow-warning gap - a snapshot is a measurement', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', {
+				...OVERFLOWING_FIRST_TURN,
+				contextWindow: 200_000,
+				absoluteUsage: { ...OVERFLOWING_FIRST_TURN.absoluteUsage, cacheReadInputTokens: 140_000 },
+			});
+
+			// 2000 + 140000 + 38000 = 180000 of 200k = 90%, above the 75 cap the
+			// extrapolated growth estimate is held under.
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 90);
+		});
+
+		it('leaves the existing behavior intact when an overflowing first turn has no snapshot', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			const { absoluteUsage: _snapshot, ...noSnapshot } = OVERFLOWING_FIRST_TURN;
+			handler!('sess-1', { ...noSnapshot, contextWindow: 1_000_000 });
+
+			// Nothing real to seed from, so no value is invented: the hook stays
+			// silent rather than fabricating a baseline.
+			expect(batched.updateContextUsage).not.toHaveBeenCalled();
+		});
+
+		it('keeps the growth estimate for a session that already has a baseline', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 25,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			const { absoluteUsage: _snapshot, ...noSnapshot } = OVERFLOWING_FIRST_TURN;
+			handler!('sess-1', { ...noSnapshot, contextWindow: 1_000_000 });
+
+			const calls = (batched.updateContextUsage as any).mock.calls;
+			expect(calls[calls.length - 1]?.[1]).toBeLessThanOrEqual(75);
+		});
+
+		it('records a claude-code output-only turn once it carries a snapshot', () => {
+			// Behavior change flagged by Task 4: the output-only guard is written as
+			// `!usageStats.absoluteUsage && ...`, so claude output-only turns stop
+			// being skipped by the timeline now that claude attaches a snapshot. That
+			// is the intended reading - with real occupancy the row is meaningful.
+			const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', {
+				inputTokens: 0,
+				outputTokens: 300,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				contextWindow: 200_000,
+				absoluteUsage: {
+					inputTokens: 1_000,
+					outputTokens: 300,
+					cacheReadInputTokens: 59_000,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				},
+			});
+
+			const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+			expect(points).toHaveLength(1);
+			// Claude semantics: output does not occupy the input window.
+			expect(points[0].contextTokens).toBe(60_000);
+			expect(points[0].percentage).toBe(30);
+		});
+	});
 });
