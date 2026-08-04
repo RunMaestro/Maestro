@@ -104,6 +104,18 @@ export interface ParsedEvent {
 		cacheCreationTokens?: number;
 		contextWindow?: number;
 		/**
+		 * Authority marker for `contextWindow`: true only when the window value
+		 * came from the provider's own payload, never from a config value or a
+		 * static-table fallback the parser injected. Parsers routinely seed
+		 * `contextWindow` with a fallback (see `usage-aggregator.ts` and
+		 * `codex-output-parser.ts`), so the presence of a window says nothing
+		 * about its provenance - only this flag does. Downstream,
+		 * `StdoutHandler.buildUsageStats` forwards it into
+		 * `UsageStats.contextWindowResolved`, which the renderer ranks above a
+		 * stored `customContextWindow` (finding P1).
+		 */
+		contextWindowReported?: boolean;
+		/**
 		 * Model identifier the provider reported for this turn (e.g.
 		 * `claude-opus-4-8`). Enables downstream resolution of the model's real
 		 * context window from the provider catalog. Set by providers whose window

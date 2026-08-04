@@ -836,6 +836,7 @@ export class StdoutHandler {
 			cacheCreationTokens?: number;
 			costUsd?: number;
 			contextWindow?: number;
+			contextWindowReported?: boolean;
 			reasoningTokens?: number;
 			model?: string;
 			absoluteUsage?: UsageStats['absoluteUsage'];
@@ -856,6 +857,15 @@ export class StdoutHandler {
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
 			reasoningTokens: usage.reasoningTokens,
 		};
+		// A window is only AUTHORITATIVE when the parser saw it in the provider's
+		// own payload; parsers seed the same field with config values and static
+		// fallbacks, so the flag - not the presence of a number - is the signal.
+		// The renderer ranks a resolved window above the session's stored
+		// customContextWindow, which is usually a materialized creation-time
+		// default rather than a value the user chose (finding P1).
+		if (usage.contextWindowReported && (usage.contextWindow || 0) > 0) {
+			stats.contextWindowResolved = true;
+		}
 		// Oh My Pi's window is model-dependent and reported per turn, so resolve the
 		// per-turn model against the catalog primed for THIS process's binary + env
 		// (ompModelCatalogKey) and let that authoritative value win over the static

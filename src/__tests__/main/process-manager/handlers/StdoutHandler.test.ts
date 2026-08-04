@@ -1120,6 +1120,7 @@ describe('StdoutHandler', () => {
 				cacheCreationTokens?: number;
 				costUsd?: number;
 				contextWindow?: number;
+				contextWindowReported?: boolean;
 				reasoningTokens?: number;
 				model?: string;
 			} | null
@@ -1311,6 +1312,64 @@ describe('StdoutHandler', () => {
 				cacheCreationInputTokens: 180,
 				reasoningTokens: 0,
 			});
+		});
+
+		it('sets contextWindowResolved when a non-omp parser flags a provider-reported window', () => {
+			// The parser saw the window in the provider's own payload (e.g. codex's
+			// model_context_window), so the value is authoritative and must outrank
+			// the session's stored customContextWindow in the renderer (finding P1).
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				costUsd: 0.05,
+				contextWindow: 400000,
+				contextWindowReported: true,
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				// Spawn config carries a different number; the reported one wins.
+				contextWindow: 200000,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(400000);
+			expect(stats.contextWindowResolved).toBe(true);
+		});
+
+		it('does not set contextWindowResolved for an unflagged usage payload', () => {
+			// Same window value, but the parser injected it from config or a static
+			// table rather than reading it from the provider. Provenance is only
+			// knowable at the parser, so an unflagged window stays a fallback.
+			const parser = createOutputParserMock({
+				inputTokens: 1000,
+				outputTokens: 500,
+				costUsd: 0.05,
+				contextWindow: 400000,
+			});
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				contextWindow: 200000,
+				outputParser: parser as unknown as AgentOutputParser,
+			});
+
+			const usageSpy = vi.fn();
+			emitter.on('usage', usageSpy);
+
+			sendJsonLine(handler, sessionId, { type: 'message', text: 'hi' });
+
+			const stats = usageSpy.mock.calls[0][1];
+			expect(stats.contextWindow).toBe(400000);
+			expect(stats.contextWindowResolved).toBeUndefined();
 		});
 
 		it('resolves the omp model window from the local catalog and flags it authoritative', () => {
