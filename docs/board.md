@@ -62,7 +62,7 @@ Cards are written by hand or by the app; the `runs` list, the derived statuses, 
 | `blocked`   | The run asked for a human (block marker) or exited non-zero with no completion signal.        |
 | `error`     | The run could not be carried out (spawn failure, killed process).                             |
 | `reclaimed` | The app was restarted mid-run, so the attempt was abandoned and the card returned to `ready`. |
-| `canceled`  | You pressed stop on the card.                                                                 |
+| `canceled`  | You pressed stop on the card, which also holds it (see below).                                |
 
 `reclaimed` and `canceled` runs do not count toward the circuit breaker: neither one says anything about whether the work is doable. A `review` run resets the breaker the way `done` does, because it reached a deliberate conclusion rather than failing.
 
@@ -71,7 +71,7 @@ Cards are written by hand or by the app; the `runs` list, the derived statuses, 
 | Status    | Meaning                                                                                                            |
 | --------- | ------------------------------------------------------------------------------------------------------------------ |
 | `triage`  | Captured but not groomed. Never auto-run; waits for a human (or auto-decompose).                                   |
-| `todo`    | Accepted work, waiting on its parents.                                                                             |
+| `todo`    | Accepted work, waiting on its parents. Also where a card you stopped waits, held until you resume it.              |
 | `ready`   | Derived: a `todo` card whose parents are all `done`. The dispatcher promotes these; you do not hand-write `ready`. |
 | `running` | A dispatcher has spawned an agent for this card and it is in flight.                                               |
 | `review`  | The work is finished but a human must approve it before it counts. Not a failure, and never auto-retried.          |
@@ -108,7 +108,7 @@ On each Maestro Cue engine tick, the Board dispatcher runs one pass per board (g
 
 1. **Reclaim** stale `running` cards. A card left `running` with no live process (for example after the app restarted mid-run) is returned to `ready` and its open run is closed as `reclaimed`.
 2. **Auto-decompose** (optional, see below).
-3. **Promote** every `todo` card whose parents are all `done` to `ready`.
+3. **Promote** every `todo` card whose parents are all `done` to `ready`, skipping any card you have stopped and not yet resumed.
 4. **Claim** `ready` cards up to the work-in-progress cap, mark each `running`, open a run record, and spawn its assignee. The board is persisted _before_ any spawn resolves, so a crash or the next tick sees the cards as `running` and never double-dispatches them.
 5. **Apply** each finished run's outcome (see completion markers).
 
@@ -120,9 +120,18 @@ When more cards are `ready` than the WIP cap allows, they are claimed by **prior
 
 ## Stopping a running card
 
-Press **Stop** on a `running` card to kill its agent process. The card goes back to `todo` (from where it is promoted again once you are ready) and the attempt is recorded as a `canceled` run, which does not count against the circuit breaker. A cancel is safe to press even if the run happens to finish at the same moment: the late result is discarded rather than overwriting the cancellation.
+Press **Stop** on a `running` card to kill its agent process. The attempt is recorded as a `canceled` run, which does not count against the circuit breaker. A cancel is safe to press even if the run happens to finish at the same moment: the late result is discarded rather than overwriting the cancellation.
 
-Cancellation is a desktop-app action. `maestro-cli` cannot stop a run, because the agent process belongs to whichever dispatcher started it, in another process.
+Stop is a **hold**, not a pause that expires. The card returns to **To Do** carrying an explicit user hold, and the dispatcher's promote pass skips held cards entirely, so it will not be picked up again on the next tick or any tick after it. A held tile shows a `held` badge so it is clear why it is sitting still.
+
+You resume it yourself, either way:
+
+- Press **Resume** on the tile (it appears in the same spot Stop occupied).
+- Move the card out of To Do and back - drag it, press `m` on the tile and use the "Move to" picker, or run `maestro-cli board set-status <cardId> todo`. Any manual status move releases the hold.
+
+A held card does **not** unblock its children, exactly like any other non-`done` card: a child only becomes eligible once every parent is strictly `done`. So stopping a card parks the work behind it too.
+
+Cancellation itself is a desktop-app action. `maestro-cli` cannot stop an in-flight run, because the agent process belongs to whichever dispatcher started it, in another process. Releasing a hold from the CLI works fine, because that is only a board file change.
 
 ## Notifications
 
