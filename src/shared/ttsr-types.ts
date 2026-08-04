@@ -35,6 +35,10 @@ export const TTSR_PATH_SCOPES: readonly TtsrScope[] = ['tool:edit', 'tool:write'
  * - `prose-only`: interrupt only on text/thinking matches
  * - `tool-only`: interrupt only on tool-source matches
  * - `always`: interrupt on any match
+ *
+ * On message-granularity agents (claude-code today, per the Gate A matrix below)
+ * a `tool-only` or `always` interrupt fires AFTER the tool call has executed, so
+ * the rule corrects the result rather than preventing it.
  */
 export const TTSR_INTERRUPT_MODES = ['never', 'prose-only', 'tool-only', 'always'] as const;
 export type TtsrInterruptMode = (typeof TTSR_INTERRUPT_MODES)[number];

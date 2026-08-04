@@ -42,18 +42,18 @@ Push to your own branch and open a pull request instead.
 
 ## Fields
 
-| Field           | Meaning                                                                                                                |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `name`          | Optional. Defaults to the filename. Must be unique in the project; the first file wins and later ones are shadowed.    |
-| `description`   | One line, shown in the rules list.                                                                                     |
-| `condition`     | Regex strings, OR'd. JavaScript regex syntax. Matched against whichever streams `scope` names.                         |
-| `astCondition`  | ast-grep patterns, OR'd. Structural matching over written file content. Only for `.ts/.tsx/.js/.jsx/.css/.html` files. |
-| `scope`         | Which streams to match. See below. Defaults to `[text, thinking]`.                                                     |
-| `globs`         | Narrows `tool:edit`/`tool:write` matches by file path. Ignored by every other scope, including `tool:bash`.            |
-| `interruptMode` | `always` (default), `never`, `prose-only`, `tool-only`. `never` defers to a reminder on the next prompt instead.       |
-| `repeatMode`    | `after-gap` (default) re-fires after `repeatGap` turns; `once` fires a single time per conversation.                   |
-| `repeatGap`     | Integer >= 1, default 3. Only meaningful with `after-gap`.                                                             |
-| `agents`        | Optional allowlist. Leave it out - it defaults to exactly the agents whose control surface can evaluate the rule.      |
+| Field           | Meaning                                                                                                                                                                                                                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`          | Optional. Defaults to the filename. Must be unique in the project; the first file wins and later ones are shadowed.                                                                                                                                                                                       |
+| `description`   | One line, shown in the rules list.                                                                                                                                                                                                                                                                        |
+| `condition`     | Regex strings, OR'd. JavaScript regex syntax. Matched against whichever streams `scope` names.                                                                                                                                                                                                            |
+| `astCondition`  | ast-grep patterns, OR'd. Structural matching over written file content. Only for `.ts/.tsx/.js/.jsx/.css/.html` files.                                                                                                                                                                                    |
+| `scope`         | Which streams to match. See below. Defaults to `[text, thinking]`.                                                                                                                                                                                                                                        |
+| `globs`         | Narrows `tool:edit`/`tool:write` matches by file path. Ignored by every other scope, including `tool:bash`.                                                                                                                                                                                               |
+| `interruptMode` | `always` (default), `never`, `prose-only`, `tool-only`. `never` defers to a reminder on the next prompt instead. On message-granularity agents (claude-code today) a `tool-only` or `always` interrupt fires after the tool call has executed, so the rule corrects the result rather than preventing it. |
+| `repeatMode`    | `after-gap` (default) re-fires after `repeatGap` turns; `once` fires a single time per conversation.                                                                                                                                                                                                      |
+| `repeatGap`     | Integer >= 1, default 3. Only meaningful with `after-gap`.                                                                                                                                                                                                                                                |
+| `agents`        | Optional allowlist. Leave it out - it defaults to exactly the agents whose control surface can evaluate the rule.                                                                                                                                                                                         |
 
 ## Scopes: pick the one that matches the actual behaviour
 
@@ -78,8 +78,11 @@ on `tool:write`/`tool:edit`, optionally narrowed with `globs`.
 
 - **`tool:bash` and `tool:edit`/`tool:write` are corrective, not preventive.**
   Maestro sees the tool call as it streams, so a fast command may already have
-  run. The rule makes the agent answer for it; it does not block it. Never write
-  a rule body that claims the action was prevented.
+  run. On message-granularity agents (claude-code today) the tool call reaches
+  Maestro only at the assistant-message boundary, which is after it executed, so
+  the write is already on disk when the rule fires. The rule makes the agent
+  answer for it; it does not block it. Never write a rule body that claims the
+  action was prevented.
 - **factory-droid and grok report no tool calls at all.** Any `tool:*` rule
   simply excludes them. That is expected, not a bug.
 - **`astCondition` needs a supported language.** Non-JS/TS files are skipped.
