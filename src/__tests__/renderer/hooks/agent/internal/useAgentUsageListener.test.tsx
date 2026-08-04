@@ -279,6 +279,94 @@ describe('useAgentUsageListener', () => {
 		expect(last.percentage).toBe(10); // round(100000 / 1000000 * 100)
 	});
 
+	it('lets a resolved window beat a per-session customContextWindow override', () => {
+		// The stored override is a materialized creation-time default (finding P1),
+		// so a genuinely provider-resolved window outranks it.
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'omp',
+			customContextWindow: 200000,
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 100000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(1000000);
+		expect(last.percentage).toBe(10); // round(100000 / 1000000 * 100)
+	});
+
+	it('keeps an unresolved reported window below the per-session override', () => {
+		// Without the `contextWindowResolved` flag the reported value may be a
+		// parser-injected static fallback, so the stored override still wins.
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'omp',
+			customContextWindow: 200000,
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 20000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(200000);
+		expect(last.percentage).toBe(10); // round(20000 / 200000 * 100)
+	});
+
+	it('keeps a [1m] custom-model marker above a resolved window', () => {
+		// The marker is an explicit model choice, so it stays at the top of the
+		// precedence list even against a provider-resolved window.
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			customModel: 'claude-sonnet-4-5[1m]',
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 100000,
+			outputTokens: 100,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 200000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(1_000_000);
+	});
+
 	it('falls back to accumulated growth estimate when contextPercentage is null', () => {
 		const session = createMockSession({
 			id: 'sess-1',
