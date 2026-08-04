@@ -251,7 +251,10 @@ export function buildTabCommands({
 			id: 'closeAllTabs',
 			label: 'Close All Tabs',
 			shortcut: tabShortcuts?.closeAllTabs,
-			subtext: `Close all ${activeSession.aiTabs.length} tabs (creates new tab)`,
+			subtext:
+				activeSession.aiTabs.length === 1
+					? 'Close 1 tab'
+					: `Close all ${activeSession.aiTabs.length} tabs`,
 			action: () => {
 				onCloseAllTabs();
 				setQuickActionOpen(false);

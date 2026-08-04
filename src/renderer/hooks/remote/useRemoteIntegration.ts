@@ -1220,7 +1220,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prevSessionStatesRef.current.set(session.id, session.state);
 				}
 
-				if (!session.aiTabs || session.aiTabs.length === 0) return;
+				// An empty aiTabs array is a valid state and still has to be broadcast,
+				// otherwise remote clients keep rendering tabs the user already closed.
+				if (!session.aiTabs) return;
 
 				// Create a hash of tab properties that should trigger a broadcast when changed
 				const tabsHash = session.aiTabs
