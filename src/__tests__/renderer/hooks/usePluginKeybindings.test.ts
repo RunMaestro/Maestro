@@ -123,15 +123,32 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
 	});
 
-	it('never hijacks typing in an input', async () => {
-		await mountWithChords();
+	it('never hijacks typing in an input (bare chord)', async () => {
+		// A plugin that bound a bare letter must stay inert while the user types.
+		await mountWithChords([{ ...OVERLAY_CHORD, key: 'F' }]);
 
-		const input = document.createElement('input');
-		document.body.appendChild(input);
-		press({ key: 'F', altKey: true, shiftKey: true, target: input });
-		input.remove();
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		press({ key: 'F', target: textarea });
+		press({ key: 'F', shiftKey: true, target: textarea }); // Shift+letter is typing too
+		textarea.remove();
 
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+	});
+
+	it('still fires a modifier-bearing chord while a textarea has focus', async () => {
+		// The composer textarea is Maestro's resting focus state, so Alt+Shift+F
+		// must work there or the chord is inert in the default state (finding AA1).
+		await mountWithChords();
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const event = press({ key: 'F', altKey: true, shiftKey: true, target: textarea });
+		textarea.remove();
+
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledTimes(1);
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.flow/overlay');
+		expect(event.defaultPrevented).toBe(true);
 	});
 
 	it('stops matching once the chord is unmounted', async () => {

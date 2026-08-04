@@ -11,8 +11,12 @@
  *
  * Conflict policy - plugin keybindings must never clobber the app's own
  * shortcuts:
- *   - skip while an input/textarea/select/contentEditable element is focused, so
- *     typing is never hijacked;
+ *   - while an input/textarea/select/contentEditable element is focused, skip
+ *     bare (unmodified) chords so typing is never hijacked, but still let
+ *     chords carrying Alt or Ctrl/Cmd through - nobody types with those held,
+ *     and the composer textarea is Maestro's resting focus state, so an
+ *     unconditional skip would leave every contributed chord inert by default.
+ *     Shift alone does NOT count as a modifier here (Shift+letter is typing);
  *   - skip if the event was already handled (`defaultPrevented`), so an app
  *     shortcut that ran first wins. The app's central handler
  *     (useMainKeyboardHandler) binds a bubble-phase `window` keydown too, so
@@ -93,7 +97,7 @@ function matches(e: KeyboardEvent, chord: ParsedChord): boolean {
 	return false;
 }
 
-/** Is focus on a text-entry surface where the chord must not be intercepted? */
+/** Is focus on a text-entry surface where a bare chord must not be intercepted? */
 function isEditableTarget(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
 	if (!el || typeof el.tagName !== 'string') return false;
@@ -125,8 +129,10 @@ export function usePluginKeybindings(): void {
 		const onKeyDown = (e: KeyboardEvent): void => {
 			// An app shortcut that ran first already claimed this event.
 			if (e.defaultPrevented) return;
-			// Never hijack typing.
-			if (isEditableTarget(e.target)) return;
+			// Never hijack typing: while a text surface has focus only chords that
+			// carry Alt or Ctrl/Cmd may fire. Shift alone is typing, not a chord.
+			const hasHardModifier = e.altKey || e.ctrlKey || e.metaKey;
+			if (!hasHardModifier && isEditableTarget(e.target)) return;
 			for (const chord of chordsRef.current) {
 				if (!matches(e, chord)) continue;
 				e.preventDefault();
