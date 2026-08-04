@@ -117,6 +117,23 @@ export interface ParsedEvent {
 		 * These are already included in outputTokens but tracked separately for UI display.
 		 */
 		reasoningTokens?: number;
+		/**
+		 * Absolute context-occupancy snapshot for the turn, when the provider can
+		 * report one. Distinct from the fields above, which for some providers are
+		 * per-turn token SPEND (claude-code sums every internal API call of a turn,
+		 * so a tool-heavy turn can exceed the context window). Set by the
+		 * claude-code parser from the LAST internal API call's `message.usage`,
+		 * which is real occupancy because a single call's input is what was
+		 * physically sent to the model. Copied straight onto `UsageStats.absoluteUsage`
+		 * by StdoutHandler.buildUsageStats.
+		 */
+		absoluteUsage?: {
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadInputTokens: number;
+			cacheCreationInputTokens: number;
+			reasoningTokens: number;
+		};
 	};
 
 	/**

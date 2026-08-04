@@ -42,6 +42,20 @@ interface ClaudeContentBlock {
 }
 
 /**
+ * Token usage as Claude reports it, both per API call (on `assistant` messages)
+ * and as the turn total (on `result` messages).
+ */
+interface ClaudeCallUsage {
+	input_tokens?: number;
+	output_tokens?: number;
+	cache_read_input_tokens?: number;
+	cache_creation_input_tokens?: number;
+}
+
+/** Absolute context-occupancy snapshot, in the shape `UsageStats.absoluteUsage` expects. */
+type OccupancySnapshot = NonNullable<NonNullable<ParsedEvent['usage']>['absoluteUsage']>;
+
+/**
  * Raw message structure from Claude Code stream-json output
  */
 interface ClaudeRawMessage {
@@ -59,15 +73,16 @@ interface ClaudeRawMessage {
 		id?: string;
 		role?: string;
 		content?: string | ClaudeContentBlock[];
+		/**
+		 * Per-call token usage, present on every `assistant` message. This is the
+		 * usage of ONE internal API call, unlike the result message's `modelUsage`
+		 * which is the CLI's own sum across every call of the turn.
+		 */
+		usage?: ClaudeCallUsage;
 	};
 	slash_commands?: string[];
 	modelUsage?: Record<string, ModelStats>;
-	usage?: {
-		input_tokens?: number;
-		output_tokens?: number;
-		cache_read_input_tokens?: number;
-		cache_creation_input_tokens?: number;
-	};
+	usage?: ClaudeCallUsage;
 	total_cost_usd?: number;
 }
 
@@ -131,6 +146,24 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * Claude runs tools in parallel.
 	 */
 	private readonly toolNamesById = new Map<string, string>();
+
+	/**
+	 * Occupancy snapshot taken from the most recent main-transcript `assistant`
+	 * message of the CURRENT turn, attached to that turn's usage event as
+	 * `absoluteUsage` and cleared at the `result` message (the turn boundary) so
+	 * a snapshot can never leak into the next turn.
+	 *
+	 * Why the LAST call and not the turn total: the result message's `modelUsage`
+	 * is the CLI's own sum across every internal API call of the turn, which is
+	 * token SPEND. A tool-heavy turn therefore reports far more than the window
+	 * holds (a captured two-call turn summed to 49,063 against a real occupancy
+	 * of 24,586), which is what pinned the context gauge at 0% (finding Q1). A
+	 * single call's input is what was physically sent to the model, so it cannot
+	 * exceed the window, and it grows across a turn as each call re-reads the
+	 * prior context from cache - making the last call the end-of-turn occupancy.
+	 * It also tracks auto-compaction correctly, which no accumulated figure can.
+	 */
+	private lastCallOccupancy: OccupancySnapshot | undefined = undefined;
 
 	/**
 	 * Parse a single JSON line from Claude Code output.
@@ -209,11 +242,17 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				event.usage = usage;
 			}
 
+			// The result message ends the turn, so the next turn starts without a
+			// snapshot rather than inheriting this one.
+			this.lastCallOccupancy = undefined;
+
 			return event;
 		}
 
 		// Handle assistant messages (streaming partial responses)
 		if (msg.type === 'assistant') {
+			this.trackCallOccupancy(msg);
+
 			const text = this.extractTextFromMessage(msg);
 			const thinkingText = this.extractThinkingFromMessage(msg);
 			const toolUseBlocks = this.extractToolUseBlocks(msg);
@@ -427,6 +466,34 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Record an `assistant` message's per-call usage as the turn's running
+	 * occupancy snapshot (see `lastCallOccupancy`). Last-wins, which is also what
+	 * makes it idempotent under stream-json's habit of emitting each assistant
+	 * message twice.
+	 *
+	 * Subagent messages are skipped: a Task subagent runs in its own context
+	 * window, so its calls say nothing about the main transcript's occupancy.
+	 */
+	private trackCallOccupancy(msg: ClaudeRawMessage): void {
+		if (normalizeParentToolUseId(msg)) {
+			return;
+		}
+
+		const usage = msg.message?.usage;
+		if (!usage) {
+			return;
+		}
+
+		this.lastCallOccupancy = {
+			inputTokens: usage.input_tokens || 0,
+			outputTokens: usage.output_tokens || 0,
+			cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+			cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+			reasoningTokens: 0,
+		};
+	}
+
+	/**
 	 * Extract usage statistics from raw Claude message
 	 */
 	private extractUsageFromRaw(msg: ClaudeRawMessage): ParsedEvent['usage'] | null {
@@ -448,6 +515,9 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			cacheCreationTokens: aggregated.cacheCreationInputTokens,
 			contextWindow: aggregated.contextWindow,
 			costUsd: aggregated.totalCostUsd,
+			// The fields above are the turn's summed SPEND and can exceed the window;
+			// this is the same turn's real occupancy, when the stream gave us one.
+			...(this.lastCallOccupancy ? { absoluteUsage: this.lastCallOccupancy } : {}),
 		};
 	}
 
