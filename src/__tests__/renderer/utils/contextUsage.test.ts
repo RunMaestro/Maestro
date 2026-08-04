@@ -7,6 +7,7 @@ import {
 	estimateContextUsage,
 	calculateContextTokens,
 	calculateContextDisplay,
+	computeOverLimitDisplay,
 	calculateDisplayInputTokens,
 	estimateAccumulatedGrowth,
 	DEFAULT_CONTEXT_WINDOWS,
@@ -488,6 +489,103 @@ describe('calculateContextDisplay', () => {
 		// Falls back to: round(100/100 * 200000) = 200000
 		expect(result.tokens).toBe(200000);
 		expect(result.percentage).toBe(100);
+	});
+});
+
+describe('computeOverLimitDisplay', () => {
+	const WINDOW = 200000;
+
+	it('reports an under-limit point with its true percentage and proportional fill', () => {
+		const result = computeOverLimitDisplay(100000, WINDOW);
+
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBe(0.5);
+	});
+
+	it('treats a point exactly at the window as 100% but NOT over limit', () => {
+		const result = computeOverLimitDisplay(WINDOW, WINDOW);
+
+		expect(result.truePercentage).toBe(100);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBe(1);
+	});
+
+	it('reports the true unclamped percentage for an over-limit point', () => {
+		// 294000 / 200000 = 147%
+		const result = computeOverLimitDisplay(294000, WINDOW);
+
+		expect(result.truePercentage).toBe(147);
+		expect(result.overLimit).toBe(true);
+		// Without a headroom scale the bar saturates at the track end.
+		expect(result.fillFraction).toBe(1);
+	});
+
+	it('fills proportionally against a shared headroom scale', () => {
+		const result = computeOverLimitDisplay(294000, WINDOW, WINDOW * 2);
+
+		expect(result.truePercentage).toBe(147);
+		expect(result.overLimit).toBe(true);
+		// 294000 / 400000 = 0.735, so the bar sits past the 100% tick at 0.5.
+		expect(result.fillFraction).toBeCloseTo(0.735, 5);
+	});
+
+	it('keeps an under-limit point below the tick when a headroom scale applies', () => {
+		const result = computeOverLimitDisplay(100000, WINDOW, WINDOW * 2);
+
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBeCloseTo(0.25, 5);
+	});
+
+	it('uses each point OWN window for the percentage, not the shared scale', () => {
+		// A mid-session window change must not retroactively distort old rows.
+		const older = computeOverLimitDisplay(90000, 100000, 400000);
+
+		expect(older.truePercentage).toBe(90);
+		expect(older.overLimit).toBe(false);
+		expect(older.fillFraction).toBeCloseTo(0.225, 5);
+	});
+
+	it('returns zeros (not NaN) for a degenerate zero window', () => {
+		const result = computeOverLimitDisplay(50000, 0);
+
+		expect(result.truePercentage).toBe(0);
+		expect(result.fillFraction).toBe(0);
+		expect(result.overLimit).toBe(false);
+		expect(Number.isNaN(result.truePercentage)).toBe(false);
+		expect(Number.isNaN(result.fillFraction)).toBe(false);
+	});
+
+	it('returns zeros for a negative or non-finite window', () => {
+		expect(computeOverLimitDisplay(50000, -1)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+		expect(computeOverLimitDisplay(50000, Number.NaN)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+	});
+
+	it('floors negative or non-finite token counts at zero', () => {
+		expect(computeOverLimitDisplay(-500, WINDOW)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+		expect(computeOverLimitDisplay(Number.NaN, WINDOW)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+	});
+
+	it('ignores an unusable scaleMax and falls back to the window', () => {
+		expect(computeOverLimitDisplay(100000, WINDOW, 0).fillFraction).toBe(0.5);
+		expect(computeOverLimitDisplay(100000, WINDOW, Number.NaN).fillFraction).toBe(0.5);
 	});
 });
 

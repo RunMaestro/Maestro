@@ -273,6 +273,71 @@ export function calculateContextDisplay(
 }
 
 /**
+ * Result of an over-limit display calculation.
+ *
+ * The finding-R1 invariant: the label, the bar width and the color of a context
+ * row must ALL derive from this one return value, so they cannot disagree.
+ */
+export interface OverLimitDisplayResult {
+	/**
+	 * The UNCLAMPED usage percentage of this measurement against its OWN window.
+	 * An over-limit point reads e.g. `147`. 0 when the window is unknown.
+	 */
+	truePercentage: number;
+	/**
+	 * How much of the rendered track this point fills, 0-1. Measured against
+	 * `scaleMax` (the shared per-panel headroom scale) when one is supplied,
+	 * otherwise against the point's own window.
+	 */
+	fillFraction: number;
+	/** True when this measurement exceeds its own context window. */
+	overLimit: boolean;
+}
+
+/**
+ * Compute the display math for one context measurement, including the
+ * over-limit case (finding R1).
+ *
+ * Before this helper, an over-limit point was rendered as a full-width bar
+ * labelled `100%` or `~`, so the panel stopped conveying information exactly
+ * when the context story got interesting. `truePercentage` is deliberately
+ * NOT clamped: showing `147%` is the numeric floor of the fix.
+ *
+ * The per-panel headroom scale (Decision 3) is expressed through `scaleMax`:
+ * callers pass `max(window, observedPeakTokens)` across the rendered points so
+ * over-limit bars extend proportionally past the 100% tick, which sits at
+ * `window / scaleMax`. Only the SCALE maximum is shared - `truePercentage` uses
+ * each point's own `contextWindow`, so a mid-session window change cannot
+ * retroactively distort older rows.
+ *
+ * @param contextTokens - Tokens measured for this point
+ * @param contextWindow - The window this point was measured against (0 = unknown)
+ * @param scaleMax - Optional shared track maximum; defaults to `contextWindow`
+ * @returns True percentage, fill fraction (0-1) and the over-limit flag
+ */
+export function computeOverLimitDisplay(
+	contextTokens: number,
+	contextWindow: number,
+	scaleMax?: number
+): OverLimitDisplayResult {
+	if (!contextWindow || contextWindow <= 0 || !Number.isFinite(contextWindow)) {
+		return { truePercentage: 0, fillFraction: 0, overLimit: false };
+	}
+
+	const tokens = Number.isFinite(contextTokens) && contextTokens > 0 ? contextTokens : 0;
+	const truePercentage = Math.round((tokens / contextWindow) * 100);
+	const overLimit = tokens > contextWindow;
+
+	// A scaleMax below the window would push in-window points past the track,
+	// so an unusable value falls back to the window itself.
+	const effectiveScale =
+		scaleMax != null && Number.isFinite(scaleMax) && scaleMax > 0 ? scaleMax : contextWindow;
+	const fillFraction = Math.min(1, Math.max(0, tokens / effectiveScale));
+
+	return { truePercentage, fillFraction, overLimit };
+}
+
+/**
  * Estimate context growth during accumulated (multi-tool) turns.
  *
  * When estimateContextUsage returns null (accumulated values), the percentage
