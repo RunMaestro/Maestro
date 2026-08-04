@@ -423,6 +423,27 @@ describe('calculateContextDisplay', () => {
 		expect(result.trustworthy).toBe(false);
 	});
 
+	it('should return untrustworthy zeros when accumulated values overflow with a zero fallback', () => {
+		// Finding Q1: a zero fallback is the ABSENCE of a prior measurement, not a
+		// measurement of zero. Accepting it derived tokens = 0 and flagged the frame
+		// trustworthy, which latched the gauge at 0% for the life of any session
+		// whose first turn already overflowed the window.
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			0 // no baseline established yet
+		);
+		expect(result.tokens).toBe(0);
+		expect(result.percentage).toBe(0);
+		expect(result.contextWindow).toBe(200000);
+		expect(result.trustworthy).toBe(false);
+	});
+
 	it('should clamp fallback percentages above 100 before deriving tokens', () => {
 		const result = calculateContextDisplay(
 			{
