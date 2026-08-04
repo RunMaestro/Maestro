@@ -86,6 +86,15 @@ export function useTerminalOutputScroll({
 			if (atBottom !== prevIsAtBottomRef.current) {
 				prevIsAtBottomRef.current = atBottom;
 				onAtBottomChange?.(atBottom);
+				// The flag and the offset MUST be persisted together. The debounced
+				// save below is dropped on unmount (see the cleanup effect), so a
+				// swap within 200ms of crossing the boundary would otherwise store
+				// `isAtBottom: false` with no matching scrollTop - and the remount
+				// restore, which requires `initialScrollTop > 0`, then skips and the
+				// mount-time bottom jump snaps the user back down. Writing both
+				// halves in the same tick, in both directions, keeps the saved pair
+				// coherent no matter when the component goes away. (Y1)
+				onScrollPositionChange?.(scrollTop);
 			}
 
 			if (atBottom) {
@@ -304,9 +313,14 @@ export function useTerminalOutputScroll({
 			// its target from `selectActiveSession` AT CALL TIME, and during an agent
 			// swap the store already points at the NEW session by the time this
 			// component unmounts - so flushing would write the outgoing agent's
-			// offset into the incoming agent's tab. The cost is that up to the last
-			// ~200ms of scrolling is not persisted; the fix would need the callback
-			// to carry the owning sessionId/tabId, which is out of scope here.
+			// offset into the incoming agent's tab. The cost is now only that up to
+			// the last ~200ms of scrolling REFINEMENT is not persisted, never the
+			// coherence of the saved pair: handleScrollInner writes the flag and the
+			// offset together, synchronously, whenever the at-bottom boundary is
+			// crossed (Y1), so a dropped debounce can only cost precision within a
+			// position that was already saved. Removing even that imprecision would
+			// need the callback to carry the owning sessionId/tabId, which is out of
+			// scope here.
 			if (scrollSaveTimerRef.current) {
 				clearTimeout(scrollSaveTimerRef.current);
 			}
