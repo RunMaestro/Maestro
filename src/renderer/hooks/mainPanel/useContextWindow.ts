@@ -34,19 +34,30 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 	}, [activeSession?.toolType, activeSession?.customContextWindow]);
 
 	const activeTabContextWindow = useMemo(() => {
-		// Explicit per-session override always wins.
-		const sessionOverride = activeSession?.customContextWindow ?? 0;
-		if (sessionOverride > 0) return sessionOverride;
+		// Precedence (finding P1). Keep this list POSITIONALLY IDENTICAL to
+		// useAgentUsageListener's, or the header gauge and the Context Timeline
+		// disagree again (the bug PR #1221 fixed):
+		//   1. `[1m]` model marker
+		//   2. resolved reported window
+		//   3. `customContextWindow` override
+		//   4. async configured window
+		//   5. raw reported window
 		// A `[1m]` marker on the session's custom model is an explicit model choice
-		// and outranks a runtime-resolved window, matching useAgentUsageListener's
-		// precedence so the header gauge and the timeline never disagree.
+		// the user made per-session, so it stays at the top.
 		const modelMarker = getModelContextWindowOverride(activeSession?.customModel) ?? 0;
 		if (modelMarker > 0) return modelMarker;
 		const reported = activeTab?.usageStats?.contextWindow ?? 0;
-		// A genuinely provider/model-resolved window (omp's per-turn model catalog,
-		// flagged via `contextWindowResolved`) is the ACTUAL window, so it beats the
-		// agent-level configured fallback (e.g. opus's 1M vs the 200k default).
+		// A genuinely provider-resolved window (flagged via `contextWindowResolved`,
+		// set only where the value came from the provider's own payload) is runtime
+		// truth, so it outranks the stored override below.
 		if (activeTab?.usageStats?.contextWindowResolved && reported > 0) return reported;
+		// `customContextWindow` is NOT reliably something the user chose: the agent
+		// definition's `contextWindow` default is materialized into every new session
+		// at creation time (see P1), which is how a fresh omp agent displayed 200k
+		// instead of the provider's real 1M. Treat it as a fallback that applies
+		// until the provider reports an authoritative window.
+		const sessionOverride = activeSession?.customContextWindow ?? 0;
+		if (sessionOverride > 0) return sessionOverride;
 		return configuredContextWindow > 0 ? configuredContextWindow : reported;
 	}, [
 		configuredContextWindow,
