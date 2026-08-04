@@ -129,12 +129,29 @@ describe('useAgentThinkingListener', () => {
 	// Regression: the fast (rAF) writer must not append a thinking log below the
 	// turn's answer, which the slow (200ms batched) writer flushed in between.
 	describe('stale straggler after the turn answer landed', () => {
-		function makeLog(source: LogEntry['source'], text: string, id: string): LogEntry {
-			return { id, timestamp: 1, source, text };
+		function makeLog(
+			source: LogEntry['source'],
+			text: string,
+			id: string,
+			timestamp = 1
+		): LogEntry {
+			return { id, timestamp, source, text };
 		}
 
-		it('drops the chunk when the last log is the turn stdout answer', () => {
-			const logs = [makeLog('user', 'prompt', 'l1'), makeLog('stdout', 'final answer', 'l2')];
+		/**
+		 * Reproduce the real interleaving: the chunk is buffered FIRST, then the
+		 * 200ms batch flushes the answer, then the rAF fires. The stdout log must
+		 * therefore carry a timestamp LATER than the moment buffering started -
+		 * that ordering is exactly what marks the chunk stale. Placing the answer
+		 * with an earlier timestamp would instead model an intermediate assistant
+		 * message, which must NOT drop the chunk (see the mid-turn cases below).
+		 */
+		function landAnswerAfterBuffering(logs: LogEntry[], answerText: string): LogEntry[] {
+			return [...logs, makeLog('stdout', answerText, 'answer', Date.now() + 1000)];
+		}
+
+		it('drops the chunk when the turn stdout answer landed after buffering', () => {
+			const logs = landAnswerAfterBuffering([makeLog('user', 'prompt', 'l1')], 'final answer');
 			const tab = createMockAITab({ id: 'tab-1', showThinking: 'on', logs });
 			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
 			useSessionStore.setState({ sessions: [session] } as any);
@@ -147,6 +164,31 @@ describe('useAgentThinkingListener', () => {
 			expect(tabAfter.logs).toHaveLength(2);
 			expect(tabAfter.logs.some((l) => l.source === 'thinking')).toBe(false);
 			expect(tabAfter.logs).toEqual(logs);
+		});
+
+		// Greptile P1 on PR #1347: claude-code and factory-droid stream at MESSAGE
+		// granularity, so an intermediate assistant message flushes as stdout
+		// mid-turn and more reasoning legitimately follows it. A source-only guard
+		// treated that as the final answer and silenced thinking for the rest of
+		// the turn.
+		it('still appends reasoning that arrives AFTER an intermediate stdout message', () => {
+			const logs = [
+				makeLog('user', 'prompt', 'l1'),
+				makeLog('stdout', 'intermediate assistant message', 'l2'),
+			];
+			const tab = createMockAITab({ id: 'tab-1', showThinking: 'on', logs });
+			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentThinkingListener());
+			// Buffered AFTER that stdout already existed, so it is new content.
+			handler!('sess-1-ai-tab-1', 'more reasoning');
+			flushRaf();
+
+			const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tabAfter.logs).toHaveLength(3);
+			expect(tabAfter.logs[2].source).toBe('thinking');
+			expect(tabAfter.logs[2].text).toBe('more reasoning');
 		});
 
 		it('still appends when the last log is the user prompt (normal turn start)', () => {
@@ -188,10 +230,10 @@ describe('useAgentThinkingListener', () => {
 		});
 
 		it('drops the stale chunk in sticky mode but keeps existing thinking logs', () => {
-			const logs = [
-				makeLog('thinking', 'earlier reasoning', 'l1'),
-				makeLog('stdout', 'final answer', 'l2'),
-			];
+			const logs = landAnswerAfterBuffering(
+				[makeLog('thinking', 'earlier reasoning', 'l1')],
+				'final answer'
+			);
 			const tab = createMockAITab({ id: 'tab-1', showThinking: 'sticky', logs });
 			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
 			useSessionStore.setState({ sessions: [session] } as any);

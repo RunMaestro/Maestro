@@ -36,7 +36,13 @@ import { canAppendToLogEntry } from '../../../utils/logEntries';
 import type { LogEntry } from '../../../types';
 
 export function useAgentThinkingListener(): void {
-	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map());
+	// Buffered text plus the moment buffering STARTED for that tab. The timestamp
+	// is what separates a chunk that outlived its turn's answer (stale) from
+	// reasoning that legitimately follows an intermediate assistant message: only
+	// the former was already in hand before the stdout log appeared.
+	const thinkingChunkBufferRef = useRef<Map<string, { text: string; bufferedAt: number }>>(
+		new Map()
+	);
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
 	const ownedGate = useOwnedSessionGate();
 
@@ -55,8 +61,12 @@ export function useAgentThinkingListener(): void {
 				const tabId = aiTabMatch[2];
 				const bufferKey = `${actualSessionId}:${tabId}`;
 
-				const existingContent = thinkingChunkBufferRef.current.get(bufferKey) || '';
-				thinkingChunkBufferRef.current.set(bufferKey, existingContent + content);
+				const existing = thinkingChunkBufferRef.current.get(bufferKey);
+				thinkingChunkBufferRef.current.set(bufferKey, {
+					text: (existing?.text ?? '') + content,
+					// Keep the FIRST chunk's timestamp for the whole coalesced batch.
+					bufferedAt: existing?.bufferedAt ?? Date.now(),
+				});
 
 				if (thinkingChunkRafIdRef.current === null) {
 					thinkingChunkRafIdRef.current = requestAnimationFrame(() => {
@@ -87,7 +97,8 @@ export function useAgentThinkingListener(): void {
 								const isInteractive = s.claudeInteractive?.mode === 'interactive';
 
 								let updatedTabs = s.aiTabs;
-								for (const [key, bufferedContent] of chunksToProcess) {
+								for (const [key, buffered] of chunksToProcess) {
+									const bufferedContent = buffered.text;
 									const [chunkSessionId, chunkTabId] = key.split(':');
 									if (chunkSessionId !== s.id) continue;
 
@@ -120,7 +131,17 @@ export function useAgentThinkingListener(): void {
 									// now would resurrect a stale prefix of that same answer underneath
 									// it. Tested explicitly (not as !isContinuation) because a
 									// self-contained thinking card is a non-continuation too.
-									if (lastLog?.source === 'stdout') continue;
+									//
+									// The timestamp comparison is what keeps this narrow. Claude Code and
+									// Factory Droid stream at MESSAGE granularity, so an intermediate
+									// assistant message flushes as stdout mid-turn and more reasoning can
+									// legitimately follow it. Dropping on `source === 'stdout'` alone
+									// silenced that reasoning for the rest of the turn. Only a chunk that
+									// was ALREADY buffered when the stdout landed is stale; one that
+									// arrived afterwards is new content and must be appended.
+									const outlivedItsAnswer =
+										lastLog?.source === 'stdout' && lastLog.timestamp >= buffered.bufferedAt;
+									if (outlivedItsAnswer) continue;
 
 									// Same rule as every other coalescing site: same source AND not a
 									// self-contained card. See utils/logEntries.ts.
