@@ -15,10 +15,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, FileText, Plus, Power, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { formatRelativeTime } from '../../../shared/formatters';
 import { TTSR_RULES_DIR } from '../../../shared/maestro-paths';
 import { buildRuleAuthoringPrompt, isTtsrRuleApiAvailable, ttsrService } from '../../services/ttsr';
 import { notifyToast } from '../../stores/notificationStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { matchKey, useTtsrStore } from '../../stores/ttsrStore';
 import { logger } from '../../utils/logger';
 import type {
 	Theme,
@@ -58,6 +60,14 @@ function scopeLabel(rule: TtsrRule): string {
 	return rule.scope.join(', ');
 }
 
+/**
+ * The match counts come from the renderer's own `ttsr:matched` cache, not from
+ * the injection counts main persists in `ttsr-state.json`. Saying so where the
+ * number is on screen stops "3 matches" being read as a lifetime total.
+ */
+const MATCH_COUNT_HINT =
+	'Match counts are since the app started (in a browser, since this browser session). They are not the persisted injection counts.';
+
 export function TtsrRulesPanel({
 	theme,
 	projectRoot,
@@ -76,6 +86,10 @@ export function TtsrRulesPanel({
 	// though this project says nothing about it, so the panel has to show that.
 	const globalDisabled = useSettingsStore((state) => state.ttsrDisabledRules);
 	const setGlobalDisabled = useSettingsStore((state) => state.setTtsrDisabledRules);
+	// Per-rule match counts. A non-interrupting rule fires without a toast, a
+	// transcript entry, or any other trace, so this line is the only place a user
+	// can see that it worked at all.
+	const matches = useTtsrStore((state) => state.matches);
 
 	useEffect(() => {
 		return () => {
@@ -352,6 +366,12 @@ export function TtsrRulesPanel({
 				<div className="flex items-center justify-between px-3 py-2">
 					<span className="text-[10px] font-bold uppercase" style={{ color: theme.colors.textDim }}>
 						{rules.length} rule{rules.length === 1 ? '' : 's'}
+						{rules.some((rule) => matches[matchKey(projectRoot, rule.path)]) && (
+							<span className="font-normal normal-case" title={MATCH_COUNT_HINT}>
+								{' '}
+								· counts since app start
+							</span>
+						)}
 					</span>
 					<button
 						type="button"
@@ -377,6 +397,9 @@ export function TtsrRulesPanel({
 						// Either list can hold a rule down, and both read as "off" here.
 						const off = rule.disabled || globalDisabled.includes(rule.name);
 						const armed = armedDelete === rule.path;
+						// No entry means the rule has not fired since this renderer started.
+						// Rendering "0 matches" for every rule would bury the ones that did.
+						const stats = matches[matchKey(projectRoot, rule.path)];
 						return (
 							<div
 								key={rule.path}
@@ -404,6 +427,17 @@ export function TtsrRulesPanel({
 											{scopeLabel(rule)} · {rule.interruptMode}
 											{off ? ' · disabled' : ''}
 										</div>
+										{stats && (
+											<div
+												className="text-[10px] mt-0.5"
+												style={{ color: theme.colors.textDim }}
+												title={MATCH_COUNT_HINT}
+											>
+												{stats.count} match{stats.count === 1 ? '' : 'es'} · last{' '}
+												{stats.lastWillInterrupt ? 'interrupted ' : ''}
+												{formatRelativeTime(stats.lastMatchedAt)}
+											</div>
+										)}
 									</div>
 									<div className="flex items-center gap-0.5">
 										<div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">

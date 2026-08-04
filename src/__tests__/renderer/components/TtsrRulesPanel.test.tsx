@@ -17,6 +17,7 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 import { TtsrRulesPanel } from '../../../renderer/components/TtsrRulesPanel';
 import { createMockTheme } from '../../helpers/mockTheme';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { matchKey, useTtsrStore } from '../../../renderer/stores/ttsrStore';
 import type { TtsrRuleListEntry, TtsrRuleListResult } from '../../../shared/ttsr-types';
 
 const theme = createMockTheme();
@@ -70,6 +71,7 @@ beforeEach(() => {
 		.fn()
 		.mockResolvedValue({ success: true, content: 'Brief. {{USER_REQUEST}}' });
 	useSettingsStore.setState({ ttsrDisabledRules: [] });
+	useTtsrStore.setState({ matches: {} });
 });
 
 describe('TtsrRulesPanel', () => {
@@ -380,6 +382,91 @@ describe('TtsrRulesPanel', () => {
 
 		expect(screen.queryByRole('button', { name: /write this rule/i })).not.toBeInTheDocument();
 		expect(screen.queryByPlaceholderText(/force-push/i)).not.toBeInTheDocument();
+	});
+
+	// A non-interrupting rule leaves no toast and no transcript entry, so this
+	// line is the whole of its visible output.
+	describe('match line', () => {
+		const quiet = makeRule({
+			name: 'prefer-rg',
+			path: '.maestro/rules/prefer-rg.md',
+			interruptMode: 'never',
+		});
+		const loud = makeRule();
+
+		it('shows counts for the rule that fired and nothing for the others', async () => {
+			window.maestro.ttsr.listRules = vi
+				.fn()
+				.mockResolvedValue(listResult({ rules: [quiet, loud] }));
+			useTtsrStore.setState({
+				matches: {
+					[matchKey(PROJECT, quiet.path)]: {
+						count: 2,
+						lastMatchedAt: Date.now(),
+						lastSource: 'tool:bash',
+						lastWillInterrupt: false,
+					},
+				},
+			});
+
+			render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
+
+			expect(await screen.findByText(/2 matches · last just now/)).toBeInTheDocument();
+			expect(screen.queryByText(/1 match ·/)).not.toBeInTheDocument();
+			expect(screen.getByText(/counts since app start/i)).toBeInTheDocument();
+		});
+
+		// The counts are keyed by project root because rule paths are relative:
+		// another project's match must not decorate this project's rule.
+		it('ignores a match recorded against a different project root', async () => {
+			window.maestro.ttsr.listRules = vi.fn().mockResolvedValue(listResult({ rules: [quiet] }));
+			useTtsrStore.setState({
+				matches: {
+					[matchKey('/other', quiet.path)]: {
+						count: 5,
+						lastMatchedAt: Date.now(),
+						lastSource: 'tool:bash',
+						lastWillInterrupt: false,
+					},
+				},
+			});
+
+			render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
+			await screen.findByText(quiet.name);
+
+			expect(screen.queryByText(/match/i)).not.toBeInTheDocument();
+		});
+
+		it('says so when the last match interrupted the turn', async () => {
+			window.maestro.ttsr.listRules = vi.fn().mockResolvedValue(listResult({ rules: [loud] }));
+			useTtsrStore.setState({
+				matches: {
+					[matchKey(PROJECT, loud.path)]: {
+						count: 1,
+						lastMatchedAt: Date.now(),
+						lastSource: 'tool:bash',
+						lastWillInterrupt: true,
+					},
+				},
+			});
+
+			render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
+
+			expect(await screen.findByText(/1 match · last interrupted just now/)).toBeInTheDocument();
+		});
+
+		// "0 matches" on every rule would bury the one that actually fired.
+		it('renders nothing when no rule has matched', async () => {
+			window.maestro.ttsr.listRules = vi
+				.fn()
+				.mockResolvedValue(listResult({ rules: [quiet, loud] }));
+
+			render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
+			await screen.findByText(quiet.name);
+
+			expect(screen.queryByText(/match/i)).not.toBeInTheDocument();
+			expect(screen.queryByText(/counts since app start/i)).not.toBeInTheDocument();
+		});
 	});
 
 	it('degrades when the preload has no rule API', () => {

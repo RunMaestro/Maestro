@@ -56,7 +56,12 @@ export interface TtsrRuntimeDeps {
 	 * that does name one still wins - it is the more specific statement.
 	 */
 	getContextMode?(): TtsrContextMode;
-	/** Observability sink for `ttsr:matched`. Wired to `safeSend` in Phase 4. */
+	/**
+	 * Observability sink for `ttsr:matched`. Wired to `safeSend`; every renderer
+	 * counts the push into its TTSR store and the Right Bar Rules panel shows it
+	 * as the per-rule match line, which is the only trace a non-interrupting
+	 * match leaves.
+	 */
 	onMatched?(payload: TtsrMatchedPayload): void;
 	/**
 	 * The process manager's abort surface. Omit it and the runtime stays

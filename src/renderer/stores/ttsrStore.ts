@@ -8,7 +8,9 @@
  *
  * The {@link TtsrStore.matches} map is the display side of the same deal: it
  * counts `ttsr:matched` pushes so a non-interrupting rule is visible somewhere
- * instead of firing in total silence. Those counts are per-renderer and since
+ * instead of firing in total silence. Its consumer is the Right Bar Rules
+ * panel, which renders one match line per rule. Those counts are per-renderer
+ * and since
  * app start (in a browser client, since this browser session) - they are NOT
  * persisted and are NOT the injection counts main keeps in `ttsr-state.json`.
  */
