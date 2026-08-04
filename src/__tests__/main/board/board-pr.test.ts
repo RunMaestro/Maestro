@@ -28,6 +28,7 @@ vi.mock('../../../main/utils/pr-creator', () => ({
 import {
 	resolveCardPrRequest,
 	stampCardPrUrl,
+	stampCardPrError,
 	maybeCreateCardPr,
 	startCardPr,
 	type CardPrResult,
@@ -124,6 +125,12 @@ describe('resolveCardPrRequest', () => {
 		expect(resolveCardPrRequest(board([already]), 'c1')).toBeNull();
 	});
 
+	it('still opens a PR for a run whose earlier attempt only recorded an error', () => {
+		// A failed attempt must stay retryable: only a real `prUrl` closes the gate.
+		const failed = card({ runs: [run({ prError: 'Failed to push branch: boom' })] });
+		expect(resolveCardPrRequest(board([failed]), 'c1')).toMatchObject({ cardId: 'c1' });
+	});
+
 	it('falls back to the card worktree path when the run recorded none', () => {
 		const handWritten = card({
 			runs: [run({ worktreePath: undefined })],
@@ -165,6 +172,35 @@ describe('stampCardPrUrl', () => {
 	it('reports false when the card or run vanished in the meantime', () => {
 		expect(stampCardPrUrl(board(), 'gone', 'url', NOW)).toBe(false);
 		expect(stampCardPrUrl(board([card({ runs: [] })]), 'c1', 'url', NOW)).toBe(false);
+	});
+
+	it('clears a stale error from an earlier failed attempt', () => {
+		const b = board([card({ runs: [run({ prError: 'Failed to push branch: boom' })] })]);
+		expect(stampCardPrUrl(b, 'c1', 'https://github.com/o/r/pull/7', NOW)).toBe(true);
+		expect(b.cards[0].runs?.[0].prError).toBeUndefined();
+	});
+});
+
+describe('stampCardPrError', () => {
+	it('records the reason on the latest run and touches updatedAt', () => {
+		const b = board();
+		expect(stampCardPrError(b, 'c1', 'gh: not authenticated', '2026-07-29T00:00:00.000Z')).toBe(
+			true
+		);
+		expect(b.cards[0].runs?.[0].prError).toBe('gh: not authenticated');
+		expect(b.cards[0].runs?.[0].prUrl).toBeUndefined();
+		expect(b.cards[0].updatedAt).toBe('2026-07-29T00:00:00.000Z');
+	});
+
+	it('truncates a pages-long git error', () => {
+		const b = board();
+		stampCardPrError(b, 'c1', 'x'.repeat(2000), NOW);
+		expect(b.cards[0].runs?.[0].prError).toHaveLength(500);
+	});
+
+	it('reports false when the card or run vanished in the meantime', () => {
+		expect(stampCardPrError(board(), 'gone', 'boom', NOW)).toBe(false);
+		expect(stampCardPrError(board([card({ runs: [] })]), 'c1', 'boom', NOW)).toBe(false);
 	});
 });
 
@@ -226,21 +262,51 @@ describe('maybeCreateCardPr', () => {
 		expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining('yaml is broken'));
 	});
 
-	it('toasts red and skips the stamp when the PR fails', async () => {
+	it('toasts red, records the error, and skips the url stamp when the PR fails', async () => {
 		const stampPrUrl = vi.fn();
+		const stampPrError = vi.fn();
 		const notify = vi.fn();
+		const cards = [card()];
 		const result = await maybeCreateCardPr('c1', {
-			loadBoard: () => board(),
+			loadBoard: () => board(cards),
 			stampPrUrl,
+			stampPrError,
 			createPr: async () => ({ success: false, error: 'gh: not authenticated' }),
 			notify,
 		});
 
 		expect(result).toMatchObject({ success: false });
 		expect(stampPrUrl).not.toHaveBeenCalled();
+		expect(stampPrError).toHaveBeenCalledWith('c1', 'gh: not authenticated');
+		// Decision 3: a PR failure never moves the card off `done`.
+		expect(cards[0].status).toBe('done');
 		expect(notify).toHaveBeenCalledWith(
 			expect.objectContaining({ color: 'red', dismissible: true })
 		);
+	});
+
+	it('records a placeholder reason when the creator failed without one', async () => {
+		const stampPrError = vi.fn();
+		await maybeCreateCardPr('c1', {
+			loadBoard: () => board(),
+			stampPrError,
+			createPr: async () => ({ success: false }),
+		});
+		expect(stampPrError).toHaveBeenCalledWith('c1', 'unknown error');
+	});
+
+	it('still reports the failure when the error stamp itself fails', async () => {
+		const onLog = vi.fn();
+		const result = await maybeCreateCardPr('c1', {
+			loadBoard: () => board(),
+			stampPrError: () => {
+				throw new Error('disk full');
+			},
+			createPr: async () => ({ success: false, error: 'gh: not authenticated' }),
+			onLog,
+		});
+		expect(result).toMatchObject({ success: false });
+		expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining('disk full'));
 	});
 
 	it('turns a thrown creator into a red toast rather than an unhandled rejection', async () => {
@@ -352,6 +418,34 @@ describe('startCardPr', () => {
 		expect(enqueueBoardWrite).toHaveBeenCalledWith(PROJECT_ROOT, expect.any(Function));
 		const saved = saveBoard.mock.calls[0][1] as Board;
 		expect(saved.cards[0].runs?.[0].prUrl).toBe('https://github.com/o/r/pull/7');
+	});
+
+	it('persists the failure reason through the board write queue and keeps the card done', async () => {
+		const cards = [card()];
+		listBoards.mockReturnValue([board(cards)]);
+		createPullRequest.mockResolvedValue({ success: false, error: 'Failed to push branch: boom' });
+
+		startCardPr(PROJECT_ROOT, 'b1', 'c1');
+
+		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
+		expect(enqueueBoardWrite).toHaveBeenCalledWith(PROJECT_ROOT, expect.any(Function));
+		const saved = saveBoard.mock.calls[0][1] as Board;
+		expect(saved.cards[0].runs?.[0].prError).toBe('Failed to push branch: boom');
+		expect(saved.cards[0].runs?.[0].prUrl).toBeUndefined();
+		expect(saved.cards[0].status).toBe('done');
+	});
+
+	it('clears the recorded error once a later attempt succeeds', async () => {
+		const cards = [card({ runs: [run({ prError: 'Failed to push branch: boom' })] })];
+		listBoards.mockReturnValue([board(cards)]);
+		createPullRequest.mockResolvedValue({ success: true, prUrl: 'https://github.com/o/r/pull/7' });
+
+		startCardPr(PROJECT_ROOT, 'b1', 'c1');
+
+		await vi.waitFor(() => expect(saveBoard).toHaveBeenCalledTimes(1));
+		const saved = saveBoard.mock.calls[0][1] as Board;
+		expect(saved.cards[0].runs?.[0].prUrl).toBe('https://github.com/o/r/pull/7');
+		expect(saved.cards[0].runs?.[0].prError).toBeUndefined();
 	});
 
 	it('releases the in-flight slot so a later attempt can run', async () => {

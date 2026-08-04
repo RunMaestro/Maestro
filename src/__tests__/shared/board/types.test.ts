@@ -235,3 +235,37 @@ describe('validateCardRun prUrl', () => {
 		expect(card?.runs?.[1].prUrl).toBeUndefined();
 	});
 });
+
+describe('validateCardRun prError', () => {
+	it('round-trips the failure reason recorded on a run', () => {
+		const card = validateBoardCard(
+			raw({
+				runs: [
+					{
+						attempt: 1,
+						startedAt: NOW,
+						outcome: 'done',
+						worktreeBranch: 'board/1a2b3c4d/5e6f7a8b',
+						prError: 'Failed to push branch: permission denied',
+					},
+				],
+			})
+		)!;
+		const reloaded = validateBoardCard(yaml.load(yaml.dump(card)));
+		expect(reloaded?.runs?.[0].prError).toBe('Failed to push branch: permission denied');
+	});
+
+	it('drops a blank or non-string prError instead of rejecting the run', () => {
+		const card = validateBoardCard(
+			raw({
+				runs: [
+					{ attempt: 1, startedAt: NOW, prError: '   ' },
+					{ attempt: 2, startedAt: NOW, prError: 42 },
+				],
+			})
+		);
+		expect(card?.runs?.map((r) => r.attempt)).toEqual([1, 2]);
+		expect(card?.runs?.[0].prError).toBeUndefined();
+		expect(card?.runs?.[1].prError).toBeUndefined();
+	});
+});

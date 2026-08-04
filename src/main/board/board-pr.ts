@@ -15,8 +15,8 @@
  * board, so a caller that fires it speculatively costs nothing.
  *
  * A PR failure NEVER changes the card's status - the work is done either way,
- * only the pull request is missing. The failure is warn-logged and red-toasted so
- * the user can open the PR by hand.
+ * only the pull request is missing. The failure is warn-logged, red-toasted and
+ * persisted as `run.prError` so the user can open the PR by hand.
  */
 
 import type { Board, BoardCard, CardRun } from '../../shared/board/types';
@@ -62,6 +62,12 @@ export interface CardPrFlowDeps {
 	 * apply inside it.
 	 */
 	stampPrUrl?: (cardId: string, prUrl: string) => void | Promise<void>;
+	/**
+	 * Record why the attempt failed on the card's latest run, so the failure
+	 * outlives the toast. Same read-modify-write-inside-the-host's-queue contract
+	 * as {@link stampPrUrl}; {@link stampCardPrError} is the mutation to apply.
+	 */
+	stampPrError?: (cardId: string, error: string) => void | Promise<void>;
 	/**
 	 * Main repository checkout, used only to resolve the default branch when the
 	 * card names no `targetBranch`. Absent => the worktree itself is used.
@@ -109,6 +115,9 @@ function buildCardPrBody(card: BoardCard, run: CardRun): string {
  *     project root, so there is no isolated branch to open a PR for);
  *   - a PR was already opened for that run (`run.prUrl` set) - this is what
  *     makes a re-fire, or a done -> todo -> done round trip, idempotent.
+ *
+ * A recorded `run.prError` does NOT decline: a failed attempt must stay
+ * retryable, and only a real `prUrl` closes the gate.
  */
 export function resolveCardPrRequest(board: Board, cardId: string): CardPrRequest | null {
 	const card = board.cards.find((c) => c.id === cardId);
@@ -139,6 +148,9 @@ export function resolveCardPrRequest(board: Board, cardId: string): CardPrReques
  * Stamp a created PR's url onto the card's latest run, in place. Returns `false`
  * when the card or run vanished between the request and the result (the board is
  * reloaded in between, so this is a real case, not a paranoid one).
+ *
+ * A success clears any {@link CardRun.prError} left by an earlier attempt: the PR
+ * exists now, so the old reason is stale.
  */
 export function stampCardPrUrl(
 	board: Board,
@@ -150,6 +162,29 @@ export function stampCardPrUrl(
 	const run = card ? latestRun(card) : undefined;
 	if (!card || !run) return false;
 	run.prUrl = prUrl;
+	delete run.prError;
+	card.updatedAt = nowIso;
+	return true;
+}
+
+/** Longest failure reason kept on the run; gh/git errors can be pages of text. */
+const PR_ERROR_MAX_LENGTH = 500;
+
+/**
+ * Stamp a failed attempt's reason onto the card's latest run, in place. Same
+ * vanished-card guard as {@link stampCardPrUrl}. The card's status is untouched:
+ * a missing pull request does not undo the work.
+ */
+export function stampCardPrError(
+	board: Board,
+	cardId: string,
+	error: string,
+	nowIso: string
+): boolean {
+	const card = board.cards.find((c) => c.id === cardId);
+	const run = card ? latestRun(card) : undefined;
+	if (!card || !run) return false;
+	run.prError = error.slice(0, PR_ERROR_MAX_LENGTH);
 	card.updatedAt = nowIso;
 	return true;
 }
@@ -217,7 +252,16 @@ export async function maybeCreateCardPr(
 		}
 		deps.onLog?.('info', `card "${cardId}" -> PR ${result.prUrl}`);
 	} else {
-		deps.onLog?.('warn', `card "${cardId}" PR failed: ${result.error ?? 'unknown error'}`);
+		const reason = result.error ?? 'unknown error';
+		deps.onLog?.('warn', `card "${cardId}" PR failed: ${reason}`);
+		try {
+			await deps.stampPrError?.(cardId, reason);
+		} catch (err) {
+			deps.onLog?.(
+				'warn',
+				`card "${cardId}" PR failure could not be recorded on the board - ${(err as Error).message}`
+			);
+		}
 	}
 
 	notifySafely(deps, buildCardPrToastPayload(request, result));
@@ -262,6 +306,13 @@ export function startCardPr(
 			enqueueBoardWrite(projectRoot, () => {
 				const board = listBoards(projectRoot).find((b) => b.id === boardId);
 				if (board && stampCardPrUrl(board, id, prUrl, new Date().toISOString())) {
+					saveBoard(projectRoot, board);
+				}
+			}),
+		stampPrError: (id, error) =>
+			enqueueBoardWrite(projectRoot, () => {
+				const board = listBoards(projectRoot).find((b) => b.id === boardId);
+				if (board && stampCardPrError(board, id, error, new Date().toISOString())) {
 					saveBoard(projectRoot, board);
 				}
 			}),

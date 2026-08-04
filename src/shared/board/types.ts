@@ -157,6 +157,13 @@ export interface CardRun {
 	 * never changes the card's status).
 	 */
 	prUrl?: string;
+	/**
+	 * Why the most recent PR-on-done attempt failed (push rejected, gh missing, no
+	 * commits ahead of the base). Persisted so the failure survives the toast and
+	 * stays visible on the card; cleared when a later attempt succeeds and stamps
+	 * {@link prUrl}. A failed attempt never changes the card's status.
+	 */
+	prError?: string;
 	/** Free-form dispatcher metadata (session id, tokens, etc.). */
 	metadata?: Record<string, unknown>;
 }
@@ -317,6 +324,8 @@ function validateCardRun(raw: unknown): CardRun | null {
 	if (worktreeBranch !== undefined) run.worktreeBranch = worktreeBranch;
 	const prUrl = optionalString(r.prUrl);
 	if (prUrl !== undefined) run.prUrl = prUrl;
+	const prError = optionalString(r.prError);
+	if (prError !== undefined) run.prError = prError;
 	if (r.metadata && typeof r.metadata === 'object' && !Array.isArray(r.metadata)) {
 		run.metadata = r.metadata as Record<string, unknown>;
 	}
