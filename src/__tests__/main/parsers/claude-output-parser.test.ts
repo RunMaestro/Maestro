@@ -218,6 +218,30 @@ describe('ClaudeOutputParser', () => {
 			expect(usage?.cacheCreationTokens).toBe(10);
 			expect(usage?.contextWindow).toBe(200000);
 			expect(usage?.costUsd).toBe(0.01);
+			// 200000 here is the aggregator's untouched fallback seed (the model's
+			// own 200000 is not LARGER than it), so it carries no provider authority.
+			expect(usage?.contextWindowReported).toBeUndefined();
+		});
+
+		it('flags a genuinely reported context window as provider-reported', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					result: 'test',
+					modelUsage: {
+						'claude-opus-5': {
+							inputTokens: 100,
+							outputTokens: 50,
+							contextWindow: 1000000,
+						},
+					},
+					total_cost_usd: 0.01,
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage?.contextWindow).toBe(1000000);
+			expect(usage?.contextWindowReported).toBe(true);
 		});
 
 		it('should extract usage with fallback to top-level usage', () => {

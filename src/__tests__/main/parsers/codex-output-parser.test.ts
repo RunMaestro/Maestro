@@ -711,6 +711,24 @@ describe('CodexOutputParser', () => {
 				})
 			);
 			expect(usageEvent?.usage?.contextWindow).toBe(200000);
+			// The window came from Codex's own turn_context, so it is authoritative
+			// even though it happens to equal the static fallback constant.
+			expect(usageEvent?.usage?.contextWindowReported).toBe(true);
+		});
+
+		it('should not flag the config/static-table seed as provider-reported', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context and no model_context_window anywhere: the window can
+			// only be the constructor's config / lookup-table seed.
+			const usageEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(usageEvent?.usage?.contextWindow).toBeGreaterThan(0);
+			expect(usageEvent?.usage?.contextWindowReported).toBe(false);
 		});
 
 		it('should handle turn_context without payload', () => {
@@ -811,6 +829,7 @@ describe('CodexOutputParser', () => {
 				expect(event?.usage?.cacheReadTokens).toBe(3000);
 				expect(event?.usage?.cacheCreationTokens).toBe(0);
 				expect(event?.usage?.contextWindow).toBe(400000);
+				expect(event?.usage?.contextWindowReported).toBe(true);
 				expect(event?.usage?.reasoningTokens).toBe(200);
 			});
 
@@ -834,6 +853,8 @@ describe('CodexOutputParser', () => {
 
 				// Should fall back to cached context window (default model)
 				expect(event?.usage?.contextWindow).toBeGreaterThan(0);
+				// ...and that fallback is NOT provider-reported.
+				expect(event?.usage?.contextWindowReported).toBe(false);
 			});
 
 			it('should handle token_count with zero values', () => {

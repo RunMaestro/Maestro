@@ -295,6 +295,15 @@ export class CodexOutputParser implements AgentOutputParser {
 
 	// Cached context window - read once from config
 	private contextWindow: number;
+	/**
+	 * Provenance of `contextWindow`: true only once Codex itself reported a
+	 * `model_context_window` (turn_context or token_count). The constructor seed
+	 * below is a config value or a static-table lookup, never provider truth, so
+	 * it deliberately leaves this false. Emitted as `usage.contextWindowReported`
+	 * so `StdoutHandler.buildUsageStats` can mark the window authoritative
+	 * (finding P1) without guessing from the number alone.
+	 */
+	private contextWindowReported = false;
 	private model: string;
 
 	// Track tool name from tool_call to carry over to tool_result
@@ -379,6 +388,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (msg.type === 'turn_context' && msg.payload) {
 			if (msg.payload.model_context_window) {
 				this.contextWindow = msg.payload.model_context_window;
+				this.contextWindowReported = true;
 			}
 			if (msg.payload.model) {
 				this.model = msg.payload.model;
@@ -511,6 +521,12 @@ export class CodexOutputParser implements AgentOutputParser {
 					cacheReadTokens: cachedInputTokens,
 					cacheCreationTokens: 0,
 					contextWindow: payload.info.model_context_window || this.contextWindow,
+					// Authoritative when this payload carried the window itself, or when an
+					// earlier turn_context reported the cached one. A config / static-table
+					// seed leaves the flag off (see `contextWindowReported`).
+					contextWindowReported: payload.info.model_context_window
+						? true
+						: this.contextWindowReported,
 					reasoningTokens: reasoningOutputTokens,
 				},
 				raw: msg,
@@ -836,8 +852,10 @@ export class CodexOutputParser implements AgentOutputParser {
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
 			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			// Context window from Codex config (~/.codex/config.toml) or model lookup table
+			// Context window from Codex config (~/.codex/config.toml) or model lookup table,
+			// unless a turn_context / token_count already replaced it with Codex's own value
 			contextWindow: this.contextWindow,
+			contextWindowReported: this.contextWindowReported,
 			// Store reasoning tokens separately for UI display
 			reasoningTokens: reasoningOutputTokens,
 		};

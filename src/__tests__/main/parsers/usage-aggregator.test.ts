@@ -65,6 +65,20 @@ describe('aggregateModelUsage', () => {
 	it('should use default context window of 200000', () => {
 		const result = aggregateModelUsage(undefined, {}, 0);
 		expect(result.contextWindow).toBe(200000);
+		// The default is an injected fallback, never provider truth (finding P1).
+		expect(result.contextWindowResolved).toBeUndefined();
+	});
+
+	it('should not flag a fallback-sized window as resolved', () => {
+		// The model reports a window no larger than the fallback, so the returned
+		// 200000 is still the injected default rather than an aggregated value.
+		const modelUsage: Record<string, ModelStats> = {
+			model1: { inputTokens: 100, contextWindow: 150000 },
+		};
+
+		const result = aggregateModelUsage(modelUsage, {}, 0);
+		expect(result.contextWindow).toBe(200000);
+		expect(result.contextWindowResolved).toBeUndefined();
 	});
 
 	it('should use highest context window from models', () => {
@@ -76,6 +90,8 @@ describe('aggregateModelUsage', () => {
 
 		const result = aggregateModelUsage(modelUsage, {}, 0);
 		expect(result.contextWindow).toBe(300000);
+		// A model actually reported this one, so it is authoritative.
+		expect(result.contextWindowResolved).toBe(true);
 	});
 });
 

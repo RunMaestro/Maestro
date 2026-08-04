@@ -170,6 +170,10 @@ export function aggregateModelUsage(
 	let maxCacheReadTokens = 0;
 	let maxCacheCreationTokens = 0;
 	let contextWindow = FALLBACK_CONTEXT_WINDOW; // Default for Claude
+	// Provenance of the value above: it starts as an injected fallback, and only a
+	// window that some model actually reported below flips it to authoritative
+	// (finding P1 - the presence of a number says nothing about where it came from).
+	let contextWindowReported = false;
 
 	if (modelUsage) {
 		for (const modelStats of Object.values(modelUsage)) {
@@ -183,6 +187,7 @@ export function aggregateModelUsage(
 			// Use the highest context window from any model
 			if (modelStats.contextWindow && modelStats.contextWindow > contextWindow) {
 				contextWindow = modelStats.contextWindow;
+				contextWindowReported = true;
 			}
 		}
 	}
@@ -203,5 +208,8 @@ export function aggregateModelUsage(
 		cacheCreationInputTokens: maxCacheCreationTokens,
 		totalCostUsd,
 		contextWindow,
+		// Only set when the window above came from the provider's own modelUsage,
+		// so consumers can rank it above a stored per-session fallback.
+		...(contextWindowReported ? { contextWindowResolved: true } : {}),
 	};
 }
