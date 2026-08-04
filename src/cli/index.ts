@@ -139,6 +139,11 @@ import {
 	campaignShow,
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
+import { CARD_STATUSES } from '../shared/board/types';
+
+// Derived from the single source of truth (`src/shared/board/types.ts`) so the
+// `board set-status` help text can never drift from what the command accepts.
+const CARD_STATUS_LIST = CARD_STATUSES.join('|');
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -733,7 +738,7 @@ board
 
 board
 	.command('set-status <cardId> <status>')
-	.description("Set a card's status (triage|todo|ready|running|blocked|done)")
+	.description(`Set a card's status (${CARD_STATUS_LIST})`)
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the card')
 	.option('--board <boardId>', 'Scope the card lookup to a specific board')
 	.option('--json', 'Output as JSON (for scripting)')

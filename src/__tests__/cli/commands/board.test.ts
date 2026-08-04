@@ -253,6 +253,83 @@ describe('maestro-cli board', () => {
 		expect(loadBoards(projectRoot)[0].cards).toHaveLength(0);
 	});
 
+	// X1 task 7: `--assignee-agent` used to be stored verbatim, so a typo or a
+	// prefix only surfaced at dispatch as `blocked (Agent "<id>" not found.)`.
+	describe('--assignee-agent write-time validation (X1)', () => {
+		const FULL_ID = 'agent-2-0123456789abcdef';
+
+		/** Route the shared agent-lookup mocks: `Alpha` and a unique prefix resolve. */
+		function routeAgentLookup(): void {
+			mockResolveAgentId.mockImplementation((partial: string) => {
+				if (partial === 'Alpha') return 'agent-1';
+				if (FULL_ID.startsWith(partial)) return FULL_ID;
+				throw new Error(`Agent not found: ${partial}`);
+			});
+			mockGetSessionById.mockImplementation((id: string) => {
+				if (id === 'agent-1') {
+					return {
+						id: 'agent-1',
+						name: 'Alpha',
+						toolType: 'claude-code',
+						projectRoot,
+						cwd: projectRoot,
+					};
+				}
+				if (id === FULL_ID) {
+					return {
+						id: FULL_ID,
+						name: 'Beta',
+						toolType: 'claude-code',
+						projectRoot,
+						cwd: projectRoot,
+					};
+				}
+				return undefined;
+			});
+		}
+
+		it('board add-card rejects a nonexistent --assignee-agent and writes nothing', async () => {
+			routeAgentLookup();
+			const b = createBoard(projectRoot, 'B');
+			await boardAddCard(b.id, {
+				agent: 'Alpha',
+				title: 'Pinned to a ghost',
+				assigneeAgent: 'no-such-agent',
+				json: true,
+			});
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(loadBoards(projectRoot)[0].cards).toHaveLength(0);
+		});
+
+		it('board add-card resolves a unique --assignee-agent prefix to the full id', async () => {
+			routeAgentLookup();
+			const b = createBoard(projectRoot, 'B');
+			await boardAddCard(b.id, {
+				agent: 'Alpha',
+				title: 'Pinned',
+				assigneeAgent: 'agent-2',
+				json: true,
+			});
+			expect(exitSpy).not.toHaveBeenCalled();
+			expect(loadBoards(projectRoot)[0].cards[0].assigneeAgentId).toBe(FULL_ID);
+		});
+
+		it('board update-card resolves --assignee-agent and rejects an unknown one', async () => {
+			routeAgentLookup();
+			const b = createBoard(projectRoot, 'B');
+			addCard(projectRoot, b.id, card('c1'));
+
+			await boardUpdateCard('c1', { agent: 'Alpha', assigneeAgent: 'agent-2', json: true });
+			expect(exitSpy).not.toHaveBeenCalled();
+			expect(loadBoards(projectRoot)[0].cards[0].assigneeAgentId).toBe(FULL_ID);
+
+			await boardUpdateCard('c1', { agent: 'Alpha', assigneeAgent: 'nope', json: true });
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			// The rejected edit left the earlier resolved pin in place.
+			expect(loadBoards(projectRoot)[0].cards[0].assigneeAgentId).toBe(FULL_ID);
+		});
+	});
+
 	it('board add-card wires comma-separated parents', async () => {
 		const b = createBoard(projectRoot, 'B');
 		addCard(projectRoot, b.id, card('a'));
@@ -280,6 +357,18 @@ describe('maestro-cli board', () => {
 	});
 
 	it('board update-card rewrites assignee, parents and priority', async () => {
+		// `--assignee-agent` is resolved at write time now, so the pinned agent has
+		// to exist for the edit to land.
+		mockResolveAgentId.mockImplementation((partial: string) =>
+			partial === 'Alpha' ? 'agent-1' : partial
+		);
+		mockGetSessionById.mockImplementation((id: string) => ({
+			id,
+			name: id === 'agent-1' ? 'Alpha' : id,
+			toolType: 'claude-code',
+			projectRoot,
+			cwd: projectRoot,
+		}));
 		const b = createBoard(projectRoot, 'B');
 		addCard(projectRoot, b.id, card('a'));
 		addCard(projectRoot, b.id, card('c1', { parents: ['a'] }));

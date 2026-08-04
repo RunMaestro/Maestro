@@ -153,6 +153,21 @@ function resolveAgentSession(partial: string | undefined): SessionInfo {
 	return session;
 }
 
+/**
+ * Resolve `--assignee-agent` (id, id prefix or name) to a FULL agent id.
+ *
+ * Stored verbatim, a prefix or a typo still writes a valid-looking card and only
+ * fails much later at dispatch with `blocked (Agent "<id>" not found.)`, wasting
+ * a whole dispatch cycle. Resolving at write time makes `--assignee-agent`
+ * behave exactly like `--agent` does.
+ */
+function resolveAssigneeAgentId(value: string): string {
+	const id = resolveAgentId(value);
+	const session = getSessionById(id);
+	if (!session) throw new Error(`Agent "${value}" not found (--assignee-agent).`);
+	return session.id;
+}
+
 /** `board list --agent <id>` - list boards in the agent's project. */
 export async function boardList(options: BoardCommonOptions): Promise<void> {
 	try {
@@ -356,7 +371,8 @@ export async function boardAddCard(boardId: string, options: BoardAddCardOptions
 			updatedAt: now,
 		};
 		if (assignee) card.assigneeProfileId = assignee;
-		if (assigneeAgent) card.assigneeAgentId = assigneeAgent;
+		// Store the RESOLVED id so a prefix behaves like `--agent` does.
+		if (assigneeAgent) card.assigneeAgentId = resolveAssigneeAgentId(assigneeAgent);
 		// `normal` is the default and is never serialized.
 		if (priority === 'high' || priority === 'low') card.priority = priority;
 		if (options.worktree)
@@ -423,7 +439,8 @@ export async function boardUpdateCard(
 		}
 		if (options.assigneeAgent !== undefined) {
 			const value = options.assigneeAgent.trim();
-			if (value) next.assigneeAgentId = value;
+			// Store the RESOLVED id so a prefix behaves like `--agent` does.
+			if (value) next.assigneeAgentId = resolveAssigneeAgentId(value);
 			else delete next.assigneeAgentId;
 			changed = true;
 		}
