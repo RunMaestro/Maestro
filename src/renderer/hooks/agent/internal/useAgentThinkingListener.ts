@@ -10,6 +10,14 @@
  * - 'off':  the chunk is dropped.
  * - 'on'/'sticky': the chunk is appended to the last `source: 'thinking'` log
  *   if present, otherwise a new thinking log is created.
+ * - Stale-straggler drop: if the tab's last log is already the turn's
+ *   `source: 'stdout'` answer, the chunk is dropped instead of creating a new
+ *   thinking log below that answer. This hook writes on a ~16ms rAF while the
+ *   answer arrives via the 200ms batched flush in useBatchedSessionUpdates,
+ *   whose inline clear point owns the mid-turn removal of thinking logs; a
+ *   chunk buffered just before that flush would otherwise land just after it.
+ *   Applies in 'sticky' mode too - sticky preserves thinking logs already on
+ *   screen, it does not entitle a stale buffer to materialize a new one.
  *
  * Concatenated-tool-name guard: malformed chunks containing a stream of
  * back-to-back tool names get dropped (or *replace* an existing log) rather
@@ -105,6 +113,15 @@ export function useAgentThinkingListener(): void {
 									//      tool names → replace last log with this chunk only
 									//      (drop the prior text rather than worsen the noise).
 									const lastLog = targetTab.logs[targetTab.logs.length - 1];
+
+									// A chunk that outlives its turn's answer is stale: the inline clear
+									// point in useBatchedSessionUpdates already removed the thinking block
+									// this chunk belonged to and appended the answer below it. Appending
+									// now would resurrect a stale prefix of that same answer underneath
+									// it. Tested explicitly (not as !isContinuation) because a
+									// self-contained thinking card is a non-continuation too.
+									if (lastLog?.source === 'stdout') continue;
+
 									// Same rule as every other coalescing site: same source AND not a
 									// self-contained card. See utils/logEntries.ts.
 									const isContinuation = canAppendToLogEntry(lastLog, 'thinking');

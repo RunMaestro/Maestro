@@ -4,6 +4,7 @@ import { useAgentThinkingListener } from '../../../../../renderer/hooks/agent/in
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+import type { LogEntry } from '../../../../../renderer/types';
 
 let handler: ((sessionId: string, content: string) => void) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -123,6 +124,105 @@ describe('useAgentThinkingListener', () => {
 
 		flushRaf();
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
+	});
+
+	// Regression: the fast (rAF) writer must not append a thinking log below the
+	// turn's answer, which the slow (200ms batched) writer flushed in between.
+	describe('stale straggler after the turn answer landed', () => {
+		function makeLog(source: LogEntry['source'], text: string, id: string): LogEntry {
+			return { id, timestamp: 1, source, text };
+		}
+
+		it('drops the chunk when the last log is the turn stdout answer', () => {
+			const logs = [makeLog('user', 'prompt', 'l1'), makeLog('stdout', 'final answer', 'l2')];
+			const tab = createMockAITab({ id: 'tab-1', showThinking: 'on', logs });
+			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentThinkingListener());
+			handler!('sess-1-ai-tab-1', 'final ans');
+			flushRaf();
+
+			const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tabAfter.logs).toHaveLength(2);
+			expect(tabAfter.logs.some((l) => l.source === 'thinking')).toBe(false);
+			expect(tabAfter.logs).toEqual(logs);
+		});
+
+		it('still appends when the last log is the user prompt (normal turn start)', () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [makeLog('user', 'prompt', 'l1')],
+			});
+			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentThinkingListener());
+			handler!('sess-1-ai-tab-1', 'thinking...');
+			flushRaf();
+
+			const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tabAfter.logs).toHaveLength(2);
+			expect(tabAfter.logs[1].source).toBe('thinking');
+			expect(tabAfter.logs[1].text).toBe('thinking...');
+		});
+
+		it('still coalesces into an open thinking log', () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [makeLog('user', 'prompt', 'l1'), makeLog('thinking', 'hello ', 'l2')],
+			});
+			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentThinkingListener());
+			handler!('sess-1-ai-tab-1', 'world');
+			flushRaf();
+
+			const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tabAfter.logs).toHaveLength(2);
+			expect(tabAfter.logs[1].source).toBe('thinking');
+			expect(tabAfter.logs[1].text).toBe('hello world');
+		});
+
+		it('drops the stale chunk in sticky mode but keeps existing thinking logs', () => {
+			const logs = [
+				makeLog('thinking', 'earlier reasoning', 'l1'),
+				makeLog('stdout', 'final answer', 'l2'),
+			];
+			const tab = createMockAITab({ id: 'tab-1', showThinking: 'sticky', logs });
+			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentThinkingListener());
+			handler!('sess-1-ai-tab-1', 'final ans');
+			flushRaf();
+
+			const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tabAfter.logs).toEqual(logs);
+			expect(tabAfter.logs.filter((l) => l.source === 'thinking')).toHaveLength(1);
+		});
+
+		it('still appends when the last log is tool activity (thinking resumes mid-turn)', () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [makeLog('user', 'prompt', 'l1'), makeLog('tool', 'Read(file.ts)', 'l2')],
+			});
+			const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentThinkingListener());
+			handler!('sess-1-ai-tab-1', 'back to thinking');
+			flushRaf();
+
+			const tabAfter = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tabAfter.logs).toHaveLength(3);
+			expect(tabAfter.logs[2].source).toBe('thinking');
+			expect(tabAfter.logs[2].text).toBe('back to thinking');
+		});
 	});
 
 	it('ignores non-AI session ids', () => {
