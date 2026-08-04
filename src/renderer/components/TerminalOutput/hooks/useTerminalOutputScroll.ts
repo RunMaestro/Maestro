@@ -273,7 +273,13 @@ export function useTerminalOutputScroll({
 	}, [sessionId, activeTabId]);
 
 	useEffect(() => {
-		if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
+		// `>= 0`, not `> 0`: scrolling to the ABSOLUTE TOP of an overflowing
+		// transcript persists `scrollTop: 0` with `isAtBottom: false`, which is a
+		// perfectly ordinary deliberate position. Requiring a positive offset made
+		// that one spot unrestorable, so returning to a tab left at the very top
+		// snapped it to the live bottom. `initialIsAtBottom !== false` below is the
+		// real gate; the offset only needs to exist. (Y1 review)
+		if (initialScrollTop !== undefined && initialScrollTop >= 0 && !hasRestoredScrollRef.current) {
 			hasRestoredScrollRef.current = true;
 			// Only restore a saved absolute offset when the user had deliberately
 			// scrolled up when they left (initialIsAtBottom === false). When they

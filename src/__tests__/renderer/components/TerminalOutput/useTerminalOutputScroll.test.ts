@@ -675,5 +675,50 @@ describe('scrolled-up persistence across unmount (Y1)', () => {
 			expect(restored.result.current.isAtBottom).toBe(false);
 			expect(restored.result.current.autoScrollPaused).toBe(true);
 		});
+
+		// Review follow-up: the restore gate used to require a POSITIVE offset, so
+		// the one position a user reaches by scrolling all the way up - offset 0
+		// with `isAtBottom: false` - was unrestorable and snapped back to the live
+		// bottom. Zero is a real saved position, not a missing one.
+		it('restores a transcript left scrolled to the absolute top (offset 0)', () => {
+			const restoreRef = { current: makeRestoreContainer(9000) };
+			const restored = renderHook(() =>
+				useTerminalOutputScroll({
+					scrollContainerRef: restoreRef,
+					initialScrollTop: 0,
+					initialIsAtBottom: false,
+					sessionId: 's1',
+					activeTabId: 't1',
+					filteredLogsLength: 3,
+				})
+			);
+
+			flushRaf();
+
+			expect(restoreRef.current.scrollTop).toBe(0);
+			expect(restored.result.current.isAtBottom).toBe(false);
+			expect(restored.result.current.autoScrollPaused).toBe(true);
+		});
+
+		// Guard the other half of the gate: offset 0 with the flag ABSENT (a legacy
+		// tab that never persisted it) or true must still fall through to the
+		// mount-time bottom jump rather than pinning the view to the top.
+		it('does NOT restore offset 0 when the at-bottom flag is not false', () => {
+			const restoreRef = { current: makeRestoreContainer(9000) };
+			const restored = renderHook(() =>
+				useTerminalOutputScroll({
+					scrollContainerRef: restoreRef,
+					initialScrollTop: 0,
+					initialIsAtBottom: undefined,
+					sessionId: 's1',
+					activeTabId: 't1',
+					filteredLogsLength: 3,
+				})
+			);
+
+			flushRaf();
+
+			expect(restored.result.current.autoScrollPaused).toBe(false);
+		});
 	});
 });
