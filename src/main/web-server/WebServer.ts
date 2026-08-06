@@ -244,6 +244,10 @@ export class WebServer {
 			path.join(__dirname, '..', '..', 'web'),
 			// Alternative: relative to __dirname going up to dist
 			path.join(__dirname, '..', 'web'),
+			// Production build may output to web-desktop instead of web
+			path.join(process.cwd(), 'dist', 'web-desktop'),
+			path.join(__dirname, '..', '..', 'web-desktop'),
+			path.join(__dirname, '..', 'web-desktop'),
 		];
 
 		for (const p of possiblePaths) {

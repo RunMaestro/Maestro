@@ -14,6 +14,7 @@ import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { AppOverlays } from './AppOverlays';
+import { GitPillModals } from './GitPillModals';
 import { PlaygroundPanel } from './PlaygroundPanel';
 import { GistPublishModal } from './GistPublishModal';
 import type { GistInfo } from './GistPublishModal';
@@ -305,6 +306,9 @@ function AppStandaloneModalsInner({
 					onClose={() => setPlaygroundOpen(false)}
 				/>
 			)}
+
+			{/* --- GIT PILL: STREAMING PULL/PUSH CONSOLE + BRANCH SWITCHER --- */}
+			<GitPillModals theme={theme} />
 
 			{/* --- DEBUG: VIEW APPLICATION STATS --- */}
 			{debugApplicationStatsOpen && (

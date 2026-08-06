@@ -33,6 +33,19 @@
  * // Returns: 'Hello'
  * ```
  */
+/**
+ * Escape special regex characters so a literal string can be embedded in a
+ * `RegExp` without being interpreted as a pattern.
+ *
+ * @example
+ * ```typescript
+ * new RegExp(escapeRegExp('file (1).txt'), 'g'); // matches the literal name
+ * ```
+ */
+export function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function stripAnsiCodes(text: string): string {
 	// Matches ANSI CSI sequences, including DEC private modes like ESC[?1h.
 	let result = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');

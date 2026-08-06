@@ -115,8 +115,8 @@ export function setupForwardingListeners(
 		safeSend('process:stderr', sessionId, data);
 	});
 
-	// Handle command exit (from runCommand - separate from PTY exit)
-	processManager.on('command-exit', (sessionId: string, code: number) => {
-		safeSend('process:command-exit', sessionId, code);
-	});
+	// NOTE: `command-exit` is deliberately NOT forwarded here. It has to be sent
+	// AFTER the coalesced process:data buffer is flushed, or a fast command's
+	// output arrives after its own exit and gets dropped. It lives in
+	// data-listener.ts next to that flush - see the comment there.
 }

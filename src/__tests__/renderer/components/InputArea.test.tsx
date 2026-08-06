@@ -152,10 +152,18 @@ const createMockSession = (overrides: Partial<Session> & { wizardState?: any } =
 // out of props for perf), so an `inputValue` override is seeded into the store
 // here rather than passed as a prop. Call sites stay unchanged.
 const createDefaultProps = (
-	overrides: Partial<Parameters<typeof InputArea>[0]> & { inputValue?: string } = {}
+	overrides: Partial<Parameters<typeof InputArea>[0]> & {
+		inputValue?: string;
+		/** Command mode is composer state, not a `!` in the text - seed it here. */
+		commandMode?: boolean;
+	} = {}
 ) => {
-	const { inputValue = '', ...rest } = overrides;
-	useComposerInputStore.setState({ aiValue: inputValue, terminalValue: inputValue });
+	const { inputValue = '', commandMode = false, ...rest } = overrides;
+	useComposerInputStore.setState({
+		aiValue: inputValue,
+		terminalValue: inputValue,
+		aiCommandMode: commandMode,
+	});
 	const inputRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
 	return {
 		session: createMockSession(),
@@ -1082,6 +1090,76 @@ describe('InputArea', () => {
 		});
 	});
 
+	describe('Command Mode', () => {
+		// Command mode is composer state; the `!` gesture is consumed on entry, so
+		it('shows the command mode bar when the composer is in command mode', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai', cwd: '/Users/test/project' }),
+				inputValue: 'git status',
+				commandMode: true,
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Command Mode')).toBeInTheDocument();
+		});
+
+		it('shows the bar on an empty command line, before a command is typed', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: '',
+				commandMode: true,
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Command Mode')).toBeInTheDocument();
+		});
+
+		it('tells the user how to get out', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				commandMode: true,
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Esc')).toBeInTheDocument();
+			expect(screen.getByText(/exits/)).toBeInTheDocument();
+		});
+
+		it('hides the bar for an ordinary AI message', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: 'fix the login bug',
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+
+		it('does NOT infer command mode from a leading bang in the text', () => {
+			// A draft can legitimately start with `!` without being a command - that
+			// is what the `\\!` escape produces once unwrapped.
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: '!important note',
+				commandMode: false,
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+
+		it('does not show the bar in terminal mode, which is already a shell', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'terminal' }),
+				inputValue: 'ls',
+				commandMode: true,
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Tab Completion', () => {
 		it('shows tab completion in terminal mode when open', () => {
 			const props = createDefaultProps({
@@ -1100,15 +1178,33 @@ describe('InputArea', () => {
 			expect(screen.getByText('main')).toBeInTheDocument();
 		});
 
-		it('does NOT show tab completion in AI mode', () => {
+		it('does NOT show tab completion for an ordinary AI message', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
+				inputValue: 'fix the login bug',
 				tabCompletionOpen: true,
 				tabCompletionSuggestions: [{ value: 'ls', type: 'history', displayText: 'ls' }],
 			});
 			render(<InputArea {...props} />);
 
 			expect(screen.queryByText('Tab Completion')).not.toBeInTheDocument();
+		});
+
+		it('DOES show tab completion when the composer is in command mode', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai', isGitRepo: true }),
+				inputValue: 'git checkout ma',
+				commandMode: true,
+				tabCompletionOpen: true,
+				tabCompletionSuggestions: [
+					{ value: 'git checkout main', type: 'branch', displayText: 'main' },
+				],
+				setTabCompletionFilter: vi.fn(),
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('Tab Completion')).toBeInTheDocument();
+			expect(screen.getByText('main')).toBeInTheDocument();
 		});
 
 		it('shows filter buttons for git repos', () => {

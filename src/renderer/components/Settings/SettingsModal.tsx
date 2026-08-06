@@ -17,7 +17,10 @@ import {
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { ResizeHandles } from '../ui/ResizeHandles';
+import { jumpToElement } from '../../utils/jumpHighlight';
 import { AICommandsPanel } from '../AICommandsPanel';
 import { MaestroPromptsTab } from './tabs/MaestroPromptsTab';
 import { SpecKitCommandsPanel } from '../SpecKitCommandsPanel';
@@ -185,6 +188,12 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		status: 'success' | 'error' | null;
 		message: string;
 	}>({ status: null, message: '' });
+	const resizableModal = useResizableModal({
+		resizeKey: 'settings',
+		defaultSize: { width: 980, height: 900 },
+		minSize: { width: 720, height: 480 },
+		enabled: isOpen,
+	});
 	// Search state
 	const [searchActive, setSearchActive] = useState(false);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -218,38 +227,21 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		const targetId = pendingScrollIdRef.current;
 		if (!targetId || searchActive) return;
 
-		let cancelled = false;
-		let attempts = 0;
-		const MAX_ATTEMPTS = 30; // ~500ms at 60fps — enough for tab content + lazy renders
-
-		const tryScroll = () => {
-			if (cancelled) return;
-			const el = contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`);
-			// offsetParent is null while any ancestor is display:none — the most
-			// common reason scroll fails right after exiting search mode.
-			if (el && el.offsetParent !== null) {
-				pendingScrollIdRef.current = null;
-				el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-				// Themed arrow indicator + outline flash; duration must match the
-				// 3s animations in .settings-search-highlight / ::before.
-				el.style.setProperty('--settings-search-jump-color', jumpAccentRef.current);
-				el.classList.add('settings-search-highlight');
-				setTimeout(() => {
-					el.classList.remove('settings-search-highlight');
-					el.style.removeProperty('--settings-search-jump-color');
-				}, 3000);
-				return;
-			}
-			if (attempts++ < MAX_ATTEMPTS) {
-				requestAnimationFrame(tryScroll);
-			} else {
-				pendingScrollIdRef.current = null;
-			}
+		// Scroll + themed arrow/outline flash. The retry loop inside jumpToElement
+		// covers the race where the target tab's content is still display:none from
+		// search mode, which would otherwise make scrollIntoView silently no-op.
+		const clearPending = () => {
+			pendingScrollIdRef.current = null;
 		};
-		requestAnimationFrame(tryScroll);
-		return () => {
-			cancelled = true;
-		};
+		return jumpToElement(
+			() => contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`),
+			{
+				color: jumpAccentRef.current,
+				arrow: true,
+				onFound: clearPending,
+				onTimeout: clearPending,
+			}
+		);
 	}, [searchActive, activeTab]);
 
 	const search = useSettingsSearch({
@@ -461,19 +453,28 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999]"
+			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] p-4"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Settings"
 		>
 			<div
-				className="h-[900px] rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
+				ref={resizableModal.modalRef}
+				className="relative rounded-xl border shadow-2xl overflow-hidden flex flex-col select-none"
 				style={{
-					width: 'min(calc(980px * var(--font-scale, 1)), 95vw)',
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="settings"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Search Bar + Close Button */}
 				<div className="flex items-center border-b" style={{ borderColor: theme.colors.border }}>
 					<div className="flex-1">
