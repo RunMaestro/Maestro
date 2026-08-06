@@ -2741,6 +2741,30 @@ describe('TerminalOutput', () => {
 			expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'auto' });
 		});
 
+		it('does not degrade pinned state when programmatic bottom restoration reports an intermediate position', async () => {
+			const onAtBottomChange = vi.fn();
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ initialIsAtBottom: true, onAtBottomChange })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			configureScrollableTranscript(scrollContainer, 300);
+			scrollContainer.scrollTo = vi.fn();
+
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+			fireEvent.scroll(scrollContainer);
+
+			expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+
+			await act(async () => {
+				vi.advanceTimersByTime(40);
+			});
+			fireEvent.scroll(scrollContainer);
+
+			expect(onAtBottomChange).toHaveBeenCalledWith(false);
+		});
+
 		it('preserves a middle position across window blur and focus without persisting transient zero', async () => {
 			const onScrollPositionChange = vi.fn();
 			const { container } = render(

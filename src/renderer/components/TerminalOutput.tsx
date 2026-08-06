@@ -2091,6 +2091,10 @@ export const TerminalOutput = memo(
 			const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
 			// Consider "at bottom" if within 50px of the bottom
 			const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+			// A scrollTo-bottom can report an intermediate non-bottom position while
+			// transcript layout is still expanding. Keep the semantic pinned state;
+			// the fallback timer clears this guard for the next genuine user scroll.
+			if (isProgrammaticScrollRef.current && !atBottom) return;
 			isAtBottomRef.current = atBottom;
 			setIsAtBottom(atBottom);
 
@@ -2112,17 +2116,9 @@ export const TerminalOutput = memo(
 					tabReadStateRef.current.set(activeTabId, filteredLogs.length);
 				}
 			} else {
-				if (isProgrammaticScrollRef.current) {
-					// This scroll event was triggered by our own scrollTo() call —
-					// consume the guard flag here inside the throttled handler to avoid
-					// the race where queueMicrotask clears the flag before a deferred
-					// throttled invocation fires (throttle delay is 16ms > microtask).
-					isProgrammaticScrollRef.current = false;
-				} else {
-					// Genuine user scroll away from bottom — pause auto-scroll
-					autoScrollPausedRef.current = true;
-					setAutoScrollPaused(true);
-				}
+				// Genuine user scroll away from bottom — pause auto-scroll
+				autoScrollPausedRef.current = true;
+				setAutoScrollPaused(true);
 			}
 
 			// Throttled scroll position save (200ms)
@@ -2272,8 +2268,7 @@ export const TerminalOutput = memo(
 				requestAnimationFrame(() => {
 					if (scrollContainerRef.current) {
 						// Set guard flag BEFORE scrollTo — the throttled scroll handler
-						// checks this flag and consumes it (clears it) when it fires,
-						// preventing the programmatic scroll from being misinterpreted
+						// checks this flag, preventing the programmatic scroll from being misinterpreted
 						// as a user scroll-up that should pause auto-scroll.
 						isProgrammaticScrollRef.current = true;
 						scrollContainerRef.current.scrollTo({
