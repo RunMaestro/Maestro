@@ -31,6 +31,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
 import { useDebouncedValue, useThrottledCallback, useProgressiveRenderWindow } from '../hooks';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
@@ -1527,6 +1528,13 @@ export const TerminalOutput = memo(
 		// Guard flag: prevents the scroll handler from pausing auto-scroll
 		// during programmatic scrollTo() calls from the MutationObserver effect.
 		const isProgrammaticScrollRef = useRef(false);
+		// Chromium can briefly report scrollTop=0 while restoring a focused window's
+		// layout. Focus-transition and restoration scrolls are not user intent.
+		const suppressScrollPersistenceRef = useRef(false);
+		const focusScrollSnapshotRef = useRef<{ scrollTop: number; pinnedToBottom: boolean } | null>(
+			null
+		);
+		const focusRestoreFrameRef = useRef<number | null>(null);
 		// Guard flag: a cross-tab search jump is landing, so the follow-the-tail
 		// auto-scroll must stand down. Switching tabs re-renders every row, and the
 		// MutationObserver below reacts to that by slamming the container to the
@@ -2113,7 +2121,7 @@ export const TerminalOutput = memo(
 			}
 
 			// Throttled scroll position save (200ms)
-			if (onScrollPositionChange) {
+			if (onScrollPositionChange && !suppressScrollPersistenceRef.current) {
 				if (scrollSaveTimerRef.current) {
 					clearTimeout(scrollSaveTimerRef.current);
 				}
@@ -2126,6 +2134,51 @@ export const TerminalOutput = memo(
 
 		// PERF: Throttle at 16ms (60fps) instead of 4ms to reduce state updates during scroll
 		const handleScroll = useThrottledCallback(handleScrollInner, 16);
+
+		useEventListener('blur', () => {
+			const container = scrollContainerRef.current;
+			if (!container) return;
+
+			focusScrollSnapshotRef.current = {
+				scrollTop: container.scrollTop,
+				pinnedToBottom: isAtBottomRef.current && !autoScrollPausedRef.current,
+			};
+			onScrollPositionChange?.(container.scrollTop);
+			suppressScrollPersistenceRef.current = true;
+			if (scrollSaveTimerRef.current) {
+				clearTimeout(scrollSaveTimerRef.current);
+				scrollSaveTimerRef.current = null;
+			}
+		});
+
+		useEventListener('focus', () => {
+			const snapshot = focusScrollSnapshotRef.current;
+			if (!snapshot) return;
+
+			if (focusRestoreFrameRef.current !== null) {
+				cancelAnimationFrame(focusRestoreFrameRef.current);
+			}
+			focusRestoreFrameRef.current = requestAnimationFrame(() => {
+				focusRestoreFrameRef.current = null;
+				const container = scrollContainerRef.current;
+				if (!container) {
+					suppressScrollPersistenceRef.current = false;
+					return;
+				}
+
+				const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+				const targetScroll = snapshot.pinnedToBottom
+					? maxScroll
+					: Math.min(snapshot.scrollTop, maxScroll);
+				if (container.scrollTop !== targetScroll) {
+					container.scrollTop = targetScroll;
+				}
+				focusScrollSnapshotRef.current = null;
+				requestAnimationFrame(() => {
+					suppressScrollPersistenceRef.current = false;
+				});
+			});
+		});
 
 		// Restore read state when switching tabs
 		useEffect(() => {
@@ -2280,7 +2333,11 @@ export const TerminalOutput = memo(
 							setAutoScrollPaused(true);
 							setIsAtBottom(false);
 						}
+						suppressScrollPersistenceRef.current = true;
 						scrollContainerRef.current.scrollTop = targetScroll;
+						requestAnimationFrame(() => {
+							suppressScrollPersistenceRef.current = false;
+						});
 					}
 				});
 			}
@@ -2296,6 +2353,9 @@ export const TerminalOutput = memo(
 			return () => {
 				if (scrollSaveTimerRef.current) {
 					clearTimeout(scrollSaveTimerRef.current);
+				}
+				if (focusRestoreFrameRef.current !== null) {
+					cancelAnimationFrame(focusRestoreFrameRef.current);
 				}
 			};
 		}, []);

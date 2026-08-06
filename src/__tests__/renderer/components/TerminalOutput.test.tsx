@@ -2636,6 +2636,32 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('scroll position persistence', () => {
+		const configureScrollableTranscript = (
+			container: HTMLElement,
+			initialScrollTop: number,
+			scrollHeight = 1000,
+			clientHeight = 400
+		) => {
+			let scrollTop = initialScrollTop;
+			Object.defineProperties(container, {
+				scrollTop: {
+					configurable: true,
+					get: () => scrollTop,
+					set: (value: number) => {
+						scrollTop = value;
+					},
+				},
+				scrollHeight: { configurable: true, value: scrollHeight },
+				clientHeight: { configurable: true, value: clientHeight },
+			});
+			return {
+				getScrollTop: () => scrollTop,
+				setScrollTop: (value: number) => {
+					scrollTop = value;
+				},
+			};
+		};
+
 		it('calls onScrollPositionChange when scrolling (throttled)', async () => {
 			const onScrollPositionChange = vi.fn();
 			const props = createDefaultProps({ onScrollPositionChange });
@@ -2661,6 +2687,127 @@ describe('TerminalOutput', () => {
 
 			// The scroll restoration happens via requestAnimationFrame
 			// In tests this is mocked, so we just verify the prop is used
+		});
+
+		it('preserves a middle position across window blur and focus without persisting transient zero', async () => {
+			const onScrollPositionChange = vi.fn();
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ initialScrollTop: 400, onScrollPositionChange })}
+				/>
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scroll = configureScrollableTranscript(scrollContainer, 400);
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+			onScrollPositionChange.mockClear();
+
+			fireEvent.blur(window);
+			scroll.setScrollTop(0);
+			fireEvent.scroll(scrollContainer);
+			fireEvent.focus(window);
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			expect(scroll.getScrollTop()).toBe(400);
+			expect(onScrollPositionChange).not.toHaveBeenCalledWith(0);
+		});
+
+		it('keeps a bottom-pinned transcript pinned across window blur and focus', async () => {
+			const onScrollPositionChange = vi.fn();
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ initialScrollTop: 600, onScrollPositionChange })}
+				/>
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scroll = configureScrollableTranscript(scrollContainer, 600);
+
+			fireEvent.blur(window);
+			scroll.setScrollTop(0);
+			fireEvent.scroll(scrollContainer);
+			fireEvent.focus(window);
+			await act(async () => {
+				vi.advanceTimersByTime(300);
+			});
+
+			expect(scroll.getScrollTop()).toBe(600);
+			expect(onScrollPositionChange).not.toHaveBeenCalledWith(0);
+		});
+
+		it('keeps different saved positions isolated when switching agents after focus', async () => {
+			const firstSession = createDefaultSession({ id: 'session-1' });
+			const secondSession = createDefaultSession({ id: 'session-2' });
+			const { container, rerender } = render(
+				<TerminalOutput
+					key="session-1-tab-1"
+					{...createDefaultProps({ session: firstSession, initialScrollTop: 250 })}
+				/>
+			);
+			let scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			let scroll = configureScrollableTranscript(scrollContainer, 250);
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			fireEvent.blur(window);
+			scroll.setScrollTop(0);
+			fireEvent.focus(window);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			expect(scroll.getScrollTop()).toBe(250);
+
+			rerender(
+				<TerminalOutput
+					key="session-2-tab-1"
+					{...createDefaultProps({ session: secondSession, initialScrollTop: 500 })}
+				/>
+			);
+			scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			scroll = configureScrollableTranscript(scrollContainer, 500);
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			fireEvent.blur(window);
+			scroll.setScrollTop(0);
+			fireEvent.focus(window);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scroll.getScrollTop()).toBe(500);
+		});
+
+		it('still persists an intentional user scroll to the top after focus restoration settles', async () => {
+			const onScrollPositionChange = vi.fn();
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ initialScrollTop: 400, onScrollPositionChange })}
+				/>
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scroll = configureScrollableTranscript(scrollContainer, 400);
+
+			fireEvent.blur(window);
+			fireEvent.focus(window);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			onScrollPositionChange.mockClear();
+			scroll.setScrollTop(0);
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			expect(onScrollPositionChange).toHaveBeenCalledWith(0);
 		});
 	});
 
