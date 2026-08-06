@@ -19,6 +19,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
+import { EscCloseButton } from './ui/EscCloseButton';
 import { useSessionStore } from '../stores/sessionStore';
 import { logger } from '../utils/logger';
 import { formatRelativeTime } from '../../shared/formatters';
@@ -624,16 +625,14 @@ export function LogViewer({
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
 					/>
-					<button
-						onClick={() => {
+					<EscCloseButton
+						theme={theme}
+						label="Close search (Esc)"
+						onClose={() => {
 							setSearchOpen(false);
 							setSearchQuery('');
 						}}
-						className="text-xs font-bold opacity-50 hover:opacity-100"
-						style={{ color: theme.colors.textDim }}
-					>
-						ESC
-					</button>
+					/>
 				</div>
 			)}
 

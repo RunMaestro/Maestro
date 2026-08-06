@@ -1659,4 +1659,24 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			}
 		)
 	);
+
+	// Terminate an in-flight process:runCommand. Needed because a one-shot
+	// command can block forever (a program waiting on stdin, `tail -f`, a
+	// runaway build) and runCommand's child isn't in the ProcessManager's
+	// process map, so process:kill can't reach it.
+	ipcMain.handle(
+		'process:cancelCommand',
+		withIpcErrorLogging(
+			handlerOpts('cancelCommand'),
+			async (config: { sessionId: string }): Promise<boolean> => {
+				const processManager = requireProcessManager(getProcessManager);
+				const cancelled = processManager.cancelCommand(config.sessionId);
+				logger.debug(`Cancel command requested`, LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					cancelled,
+				});
+				return cancelled;
+			}
+		)
+	);
 }

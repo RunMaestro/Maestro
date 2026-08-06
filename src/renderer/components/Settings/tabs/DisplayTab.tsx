@@ -44,6 +44,7 @@ import { Modal } from '../../ui/Modal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { DEFAULT_BIONIFY_ALGORITHM } from '../../../utils/bionifyReadingMode';
 import { formatMetaKeyName } from '../../../utils/shortcutFormatter';
+import { getRevealLabel } from '../../../utils/platformUtils';
 
 const BIONIFY_ALGORITHM_PATTERN = /^[+-](\s+\d+){4}\s+(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
 
@@ -52,14 +53,17 @@ const TOOLBAR_BUTTON_LABELS: Record<FilePreviewToolbarButton, string> = {
 	wordWrap: 'Word wrap',
 	remoteImages: 'Show remote images',
 	htmlRender: 'Render HTML',
+	openInBrowser: 'Open in Maestro browser',
 	previewTier: 'Preview tier chip',
 	editToggle: 'Edit / preview toggle',
 	editImage: 'Edit image',
 	copyContent: 'Copy content',
 	publishGist: 'Publish as gist',
 	documentGraph: 'Document graph',
-	openInBrowser: 'Open in Maestro browser',
 	openInDefault: 'Open in default app',
+	// Platform-dependent wording ("Reveal in Finder" / "Explorer" / "File Manager")
+	// is resolved at render time via getRevealLabel().
+	revealInFolder: 'Reveal in Finder',
 	copyPath: 'Copy file path',
 };
 
@@ -999,7 +1003,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 						</p>
 						<div className="grid grid-cols-2 gap-2 mt-3">
 							{FILE_PREVIEW_TOOLBAR_BUTTON_KEYS.map((key) => {
-								const label = TOOLBAR_BUTTON_LABELS[key];
+								const label =
+									key === 'revealInFolder'
+										? getRevealLabel(window.maestro?.platform ?? '')
+										: TOOLBAR_BUTTON_LABELS[key];
 								const enabled = filePreviewToolbarVisibility[key];
 								return (
 									<label

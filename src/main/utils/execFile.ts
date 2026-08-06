@@ -203,6 +203,91 @@ export async function execFileBufferNoThrow(
 	}
 }
 
+/** Which pipe a streamed chunk came from. */
+export type ExecStreamName = 'stdout' | 'stderr';
+
+export interface ExecStreamingOptions {
+	cwd?: string;
+	env?: NodeJS.ProcessEnv;
+	/** Called for every chunk as it arrives, decoded as utf8. */
+	onChunk: (chunk: string, stream: ExecStreamName) => void;
+}
+
+export interface ExecStreamingHandle {
+	/** Resolves once the process exits, with the full captured output. */
+	result: Promise<ExecResult>;
+	/** Terminate the running process. Resolves `result` with exitCode 'SIGTERM'. */
+	cancel: () => void;
+}
+
+/**
+ * Streaming sibling of `execFileNoThrow`: invokes `onChunk` as output arrives
+ * instead of only handing back the buffered result at exit.
+ *
+ * Use this for long-running commands whose progress the user should watch live
+ * (e.g. `git pull` / `git push` in the Git command modal). The full output is
+ * still captured and returned so callers don't have to re-assemble chunks.
+ */
+export function execFileStreaming(
+	command: string,
+	args: string[],
+	options: ExecStreamingOptions
+): ExecStreamingHandle {
+	const { cwd, env, onChunk } = options;
+	const useShell = isWindows() && needsWindowsShell(command);
+
+	const child = spawn(command, args, {
+		cwd,
+		env,
+		shell: useShell,
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+
+	let stdout = '';
+	let stderr = '';
+	let cancelled = false;
+
+	const collect = (stream: ExecStreamName) => (data: Buffer | string) => {
+		const chunk = data.toString();
+		if (stream === 'stdout') {
+			stdout += chunk;
+		} else {
+			stderr += chunk;
+		}
+		onChunk(chunk, stream);
+	};
+
+	child.stdout?.on('data', collect('stdout'));
+	child.stderr?.on('data', collect('stderr'));
+
+	const result = new Promise<ExecResult>((resolve) => {
+		child.on('close', (code) => {
+			resolve({
+				stdout,
+				stderr,
+				exitCode: cancelled ? 'SIGTERM' : (code ?? 1),
+			});
+		});
+
+		child.on('error', (err) => {
+			resolve({
+				stdout,
+				stderr: stderr || err.message,
+				// Node stamps spawn failures with a string code (ENOENT, EACCES, ...).
+				exitCode: (err as NodeJS.ErrnoException).code ?? 1,
+			});
+		});
+	});
+
+	return {
+		result,
+		cancel: () => {
+			cancelled = true;
+			child.kill();
+		},
+	};
+}
+
 /**
  * Execute a command with input written to stdin
  * Uses spawn to allow writing to the process stdin

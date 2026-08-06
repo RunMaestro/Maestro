@@ -3503,4 +3503,94 @@ describe('useMainKeyboardHandler', () => {
 			openModalSpy.mockRestore();
 		});
 	});
+
+	describe('searchAllTabs (cross-tab message search)', () => {
+		/**
+		 * The handler must resolve the agent from the store, NOT from
+		 * `ctx.activeSession`. The multi-window work drops `activeSession` from the
+		 * keyboard context, and a branch reading it there went silently dead: the
+		 * guard was always falsy while preventDefault had already run, so the
+		 * shortcut ate the keystroke with no visible effect. These tests pin the
+		 * store-resolved behavior by omitting `activeSession` from the context.
+		 */
+		const dispatchOptCmdF = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'ƒ', // macOS rewrites Alt+F
+						code: 'KeyF',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		it('opens cross-tab search using the store-resolved agent', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: 't1', aiTabs: [{ id: 't1' }] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				// Deliberately omitted: activeSession. The branch must not need it.
+				activeSession: undefined,
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			dispatchOptCmdF();
+			expect(handleOpenCrossTabSearch).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not fire in a group chat', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: 't1', aiTabs: [{ id: 't1' }] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: 'gc1',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			dispatchOptCmdF();
+			expect(handleOpenCrossTabSearch).not.toHaveBeenCalled();
+		});
+
+		it('leaves the keystroke unconsumed when the agent has no AI tabs', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: null, aiTabs: [] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			const evt = new KeyboardEvent('keydown', {
+				key: 'ƒ',
+				code: 'KeyF',
+				altKey: true,
+				metaKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			act(() => {
+				window.dispatchEvent(evt);
+			});
+
+			expect(handleOpenCrossTabSearch).not.toHaveBeenCalled();
+			// Must not silently swallow the key when it cannot act.
+			expect(evt.defaultPrevented).toBe(false);
+		});
+	});
 });

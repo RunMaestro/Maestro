@@ -45,6 +45,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 											file.pendingScrollToLine !== undefined
 												? file.pendingScrollToLine
 												: tab.pendingScrollToLine,
+										// Re-opening the file already in this tab: leave playback
+										// alone rather than restarting something mid-listen.
 									}
 								: tab
 						);
@@ -92,6 +94,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 								navigationHistory: finalHistory,
 								navigationIndex: finalHistory.length - 1,
 								pendingScrollToLine: file.pendingScrollToLine,
+								// This tab is being repurposed to a file the user just opened,
+								// so it plays on arrival if it turns out to be media.
+								autoplayMedia: true,
 							};
 						});
 						return {
@@ -123,6 +128,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 						navigationIndex: 0,
 						pendingScrollToLine: file.pendingScrollToLine,
+						// Freshly opened by the user, so media starts playing on arrival.
+						autoplayMedia: true,
 					};
 
 					const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };

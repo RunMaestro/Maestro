@@ -1723,8 +1723,11 @@ describe('MainPanel', () => {
 		});
 	});
 
-	describe('Git tooltip', () => {
-		it('should show git tooltip on hover for git repos', async () => {
+	// The pill's hover card was retired: it had been clipped invisible by the
+	// header's overflow-hidden wrappers since the container-query refactor, and
+	// its branch/origin detail now lives in the click-opened dropdown.
+	describe('Git pill detail', () => {
+		it('should show branch detail in the menu on click for git repos', async () => {
 			const session = createSession({ isGitRepo: true });
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
@@ -1732,14 +1735,26 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			// Find and hover over the git badge
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
+			fireEvent.click(screen.getByText(/main|GIT/));
 
 			await waitFor(() => {
-				// Tooltip content should appear
-				expect(screen.getByText('Branch')).toBeInTheDocument();
+				expect(screen.getByTestId('git-pill-menu-detail')).toBeInTheDocument();
 			});
+			expect(screen.getByText('Branch')).toBeInTheDocument();
+		});
+
+		it('should not show branch detail until the pill is clicked', async () => {
+			const session = createSession({ isGitRepo: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
+			});
+
+			// Hovering no longer reveals anything - the card is gone.
+			fireEvent.mouseEnter(screen.getByText(/main|GIT/).parentElement!);
+
+			expect(screen.queryByTestId('git-pill-menu-detail')).not.toBeInTheDocument();
 		});
 
 		it('should copy branch name when copy button is clicked', async () => {
@@ -1753,22 +1768,19 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			// Hover to show tooltip
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
+			fireEvent.click(screen.getByText(/main|GIT/));
 
 			await waitFor(() => {
 				expect(screen.getByText('Branch')).toBeInTheDocument();
 			});
 
-			// Click copy button
 			const copyButtons = screen.getAllByTitle(/Copy branch name/);
 			fireEvent.click(copyButtons[0]);
 
 			expect(writeText).toHaveBeenCalledWith('main');
 		});
 
-		it('should open git log when clicking on SSH remote git badge', async () => {
+		it('should open the git menu when clicking on SSH remote git badge', async () => {
 			const setGitLogOpen = vi.fn();
 			const session = createSession({
 				isGitRepo: true,
@@ -1788,8 +1800,11 @@ describe('MainPanel', () => {
 				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
 			});
 
+			// The pill now opens the git dropdown; the log is one entry in it.
 			fireEvent.click(screen.getByText('my-ssh-remote'));
+			expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
 
+			fireEvent.click(screen.getByTestId('git-pill-menu-log'));
 			expect(setGitLogOpen).toHaveBeenCalledWith(true);
 		});
 
@@ -2289,15 +2304,15 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
+			fireEvent.click(screen.getByText(/main|GIT/));
 
+			// Ahead/behind now badge the Push/Pull rows in the dropdown.
 			await waitFor(() => {
-				expect(screen.getByText('5')).toBeInTheDocument();
+				expect(screen.getByTestId('git-pill-menu-push')).toHaveTextContent('5');
 			});
 		});
 
-		it('should display behind count in git tooltip', async () => {
+		it('should display behind count in the git menu', async () => {
 			setMockGitStatus('session-1', {
 				fileCount: 0,
 				branch: 'main',
@@ -2318,15 +2333,14 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
+			fireEvent.click(screen.getByText(/main|GIT/));
 
 			await waitFor(() => {
-				expect(screen.getByText('3')).toBeInTheDocument();
+				expect(screen.getByTestId('git-pill-menu-pull')).toHaveTextContent('3');
 			});
 		});
 
-		it('should show uncommitted changes count in git tooltip', async () => {
+		it('should delegate working-tree status to the git status widget, not the pill menu', async () => {
 			setMockGitStatus('session-1', {
 				fileCount: 7,
 				branch: 'main',
@@ -2347,15 +2361,22 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
-
+			// Working-tree state is owned by GitStatusWidget (which sits beside the
+			// pill and is mocked here; its real counts are covered by its own
+			// suite). The pill menu must NOT duplicate it - the retired hover card
+			// did, which is why the same numbers lived in two places.
 			await waitFor(() => {
-				expect(screen.getByText(/7 uncommitted changes/)).toBeInTheDocument();
+				expect(screen.getByTestId('git-status-widget')).toBeInTheDocument();
 			});
+
+			fireEvent.click(screen.getByText(/main|GIT/));
+			await waitFor(() => {
+				expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
+			});
+			expect(screen.queryByText(/uncommitted change/)).not.toBeInTheDocument();
 		});
 
-		it('should show working tree clean message when no uncommitted changes', async () => {
+		it('should hide the git status widget when the working tree is clean', async () => {
 			setMockGitStatus('session-1', {
 				fileCount: 0,
 				branch: 'main',
@@ -2376,17 +2397,19 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
-
 			await waitFor(() => {
-				expect(screen.getByText('Working tree clean')).toBeInTheDocument();
+				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
+
+			// A clean tree renders no widget at all - that absence is the signal,
+			// replacing the retired hover card's explicit "Working tree clean" row.
+			expect(screen.queryByTestId('git-status-tooltip')).not.toBeInTheDocument();
+			expect(screen.queryByText('Working tree clean')).not.toBeInTheDocument();
 		});
 	});
 
 	describe('Remote origin display', () => {
-		it('should display remote URL in git tooltip', async () => {
+		it('should display remote URL in the git menu', async () => {
 			setMockGitStatus('session-1', {
 				fileCount: 0,
 				branch: 'main',
@@ -2407,13 +2430,12 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
+			fireEvent.click(screen.getByText(/main|GIT/));
 
 			await waitFor(() => {
 				expect(screen.getByText('Origin')).toBeInTheDocument();
-				expect(screen.getByText('github.com/user/my-repo')).toBeInTheDocument();
 			});
+			expect(screen.getByText('github.com/user/my-repo')).toBeInTheDocument();
 		});
 
 		it('should copy remote URL when copy button is clicked', async () => {
@@ -2440,8 +2462,7 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
+			fireEvent.click(screen.getByText(/main|GIT/));
 
 			await waitFor(() => {
 				expect(screen.getByText('Origin')).toBeInTheDocument();
@@ -2628,8 +2649,10 @@ describe('MainPanel', () => {
 		});
 	});
 
-	describe('Hover bridge behavior', () => {
-		it('should keep git tooltip open when moving to bridge element', async () => {
+	// Replaces the retired hover card's bridge behavior: the menu is now click-
+	// driven, so it must survive the pointer leaving the pill entirely.
+	describe('Git menu persistence', () => {
+		it('should keep the git menu open after the pointer leaves the pill', async () => {
 			const session = createSession({ isGitRepo: true });
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
@@ -2638,22 +2661,60 @@ describe('MainPanel', () => {
 			});
 
 			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
+			fireEvent.click(gitBadge);
 
 			await waitFor(() => {
-				expect(screen.getByText('Branch')).toBeInTheDocument();
+				expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
 			});
 
-			// Mouse leave should start closing timeout
 			fireEvent.mouseLeave(gitBadge.parentElement!);
 
-			// But if we enter the bridge element, it should stay open
-			// (This is handled by the internal state, tooltip should still be visible)
+			expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
+		});
+
+		it('should keep the git menu open when the pill is clicked again', async () => {
+			// The menu is hover-driven, so clicking is "open", not "toggle". A
+			// toggle would close a menu the pointer is still sitting on, and hover
+			// could not reopen it until the pointer left and came back.
+			const session = createSession({ isGitRepo: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
+			});
+
+			// Capture the pill up front: once the menu opens, the branch name is on
+			// screen twice (pill + menu detail row), so re-querying by text is
+			// ambiguous.
+			const pill = screen.getByText(/main|GIT/);
+			fireEvent.click(pill);
+			await waitFor(() => {
+				expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
+			});
+
+			fireEvent.click(pill);
+			expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
+		});
+
+		it('should open the git menu when hovering the pill', async () => {
+			const session = createSession({ isGitRepo: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
+			});
+
+			fireEvent.mouseEnter(screen.getByText(/main|GIT/).closest('div')!);
+
+			// Opens after the hover delay rather than instantly.
+			await waitFor(() => {
+				expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
+			});
 		});
 	});
 
-	describe('Singularization in uncommitted changes', () => {
-		it('should use singular form for 1 uncommitted change', async () => {
+	describe('Single-file change display', () => {
+		it('should not phrase single-file changes in the pill menu', async () => {
 			setMockGitStatus('session-1', {
 				fileCount: 1,
 				branch: 'main',
@@ -2674,12 +2735,14 @@ describe('MainPanel', () => {
 				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
 			});
 
-			const gitBadge = screen.getByText(/main|GIT/);
-			fireEvent.mouseEnter(gitBadge.parentElement!);
-
+			// The retired hover card phrased this as "1 uncommitted change". The
+			// widget beside the pill carries the counts now, so the singular/plural
+			// wording no longer exists anywhere in the header.
+			fireEvent.click(screen.getByText(/main|GIT/));
 			await waitFor(() => {
-				expect(screen.getByText(/1 uncommitted change$/)).toBeInTheDocument();
+				expect(screen.getByTestId('git-pill-menu')).toBeInTheDocument();
 			});
+			expect(screen.queryByText(/uncommitted change/)).not.toBeInTheDocument();
 		});
 	});
 

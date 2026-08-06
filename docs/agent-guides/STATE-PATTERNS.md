@@ -20,19 +20,20 @@ All stores are in `src/renderer/stores/`.
 
 ## Store Inventory
 
-| Store                 | File                   | Hook                   | Purpose                                                                                     |
-| --------------------- | ---------------------- | ---------------------- | ------------------------------------------------------------------------------------------- |
-| **sessionStore**      | `sessionStore.ts`      | `useSessionStore`      | Sessions, groups, active session, bookmarks, worktree tracking, initialization              |
-| **uiStore**           | `uiStore.ts`           | `useUIStore`           | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing                   |
-| **tabStore**          | `tabStore.ts`          | `useTabStore`          | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers.ts + sessionStore |
-| **agentStore**        | `agentStore.ts`        | `useAgentStore`        | Agent detection cache, error recovery, queue processing, agent lifecycle                    |
-| **modalStore**        | `modalStore.ts`        | `useModalStore`        | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields               |
-| **groupChatStore**    | `groupChatStore.ts`    | `useGroupChatStore`    | Group chat state: chats list, messages, moderator, participants, execution queue            |
-| **settingsStore**     | `settingsStore.ts`     | `useSettingsStore`     | App settings (theme, font, shortcuts, agent configs, etc.)                                  |
-| **fileExplorerStore** | `fileExplorerStore.ts` | `useFileExplorerStore` | File explorer panel state                                                                   |
-| **batchStore**        | `batchStore.ts`        | `useBatchStore`        | Batch/Auto Run execution state                                                              |
-| **notificationStore** | `notificationStore.ts` | `useNotificationStore` | In-app notification queue                                                                   |
-| **operationStore**    | `operationStore.ts`    | `useOperationStore`    | Long-running operation tracking                                                             |
+| Store                  | File                    | Hook                    | Purpose                                                                                     |
+| ---------------------- | ----------------------- | ----------------------- | ------------------------------------------------------------------------------------------- |
+| **sessionStore**       | `sessionStore.ts`       | `useSessionStore`       | Sessions, groups, active session, bookmarks, worktree tracking, initialization              |
+| **uiStore**            | `uiStore.ts`            | `useUIStore`            | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing                   |
+| **tabStore**           | `tabStore.ts`           | `useTabStore`           | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers.ts + sessionStore |
+| **agentStore**         | `agentStore.ts`         | `useAgentStore`         | Agent detection cache, error recovery, queue processing, agent lifecycle                    |
+| **modalStore**         | `modalStore.ts`         | `useModalStore`         | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields               |
+| **groupChatStore**     | `groupChatStore.ts`     | `useGroupChatStore`     | Group chat state: chats list, messages, moderator, participants, execution queue            |
+| **settingsStore**      | `settingsStore.ts`      | `useSettingsStore`      | App settings (theme, font, shortcuts, agent configs, etc.)                                  |
+| **fileExplorerStore**  | `fileExplorerStore.ts`  | `useFileExplorerStore`  | File explorer panel state                                                                   |
+| **batchStore**         | `batchStore.ts`         | `useBatchStore`         | Batch/Auto Run execution state                                                              |
+| **notificationStore**  | `notificationStore.ts`  | `useNotificationStore`  | In-app notification queue                                                                   |
+| **operationStore**     | `operationStore.ts`     | `useOperationStore`     | Long-running operation tracking                                                             |
+| **mediaPlaybackStore** | `mediaPlaybackStore.ts` | `useMediaPlaybackStore` | Audio/video playback state + slot geometry for the app-level media host                     |
 
 ---
 
@@ -328,6 +329,66 @@ interface GroupChatStoreState {
 
 - `clearGroupChatError()` - Clear error state
 - `resetGroupChatState()` - Reset to initial values (close chat view)
+
+---
+
+## mediaPlaybackStore
+
+**File:** `src/renderer/stores/mediaPlaybackStore.ts`
+**Hook:** `useMediaPlaybackStore`
+
+State for the app's single audio/video player. Only the float geometry persists.
+
+```typescript
+interface MediaPlaybackStoreState {
+	activeTabId: string | null; // the one file tab with a mounted player
+	playing: boolean;
+	dismissed: boolean; // floating widget hidden (playback continues)
+	minimized: boolean; // collapsed to a pill
+	pendingAutoplay: boolean; // one-shot: play when ready
+	toggleRequest: number; // nonce; each increment toggles play/pause
+	slots: Record<string, { rect: MediaSlotRect; visible: boolean }>; // docked placement
+	resumeTimes: Record<string, number>; // per tab, so navigating back resumes
+	floatRect: MediaFloatRect | null; // persisted via settings
+}
+```
+
+### Why this store exists
+
+`MainPanelContent` renders `FilePreview` only for the **active file tab of the
+active session**, so switching tabs or agents unmounts it. Removing a media
+element from the document runs the HTML spec's internal pause steps, which would
+kill playback every time the user looked at something else.
+
+So the element lives in `MediaPlaybackHost`, mounted once in `App.tsx` and never
+unmounted. It renders in one of two placements:
+
+- **Docked** - `FilePreview` renders a `MediaViewportSlot` in place of the
+  player; the slot publishes its rect here and the host parks a `position: fixed`
+  box over it.
+- **Floating** - `FloatingMediaPlayer`, a draggable/resizable now-playing widget,
+  when the owning tab is off screen.
+
+**One player, always.** Overlapping audio is structurally impossible rather than
+a rule to enforce: switching files unmounts the previous element. Use
+`stepMediaTab()` (`utils/mediaTabs.ts`) to navigate between open media tabs.
+
+### Gotchas
+
+- **Dismissing does not stop playback.** Hiding a control must not have the side
+  effect of stopping media. The widget returns via the "Show Floating Media
+  Player" palette command or by opening a media file.
+- **Minimizing must not unmount the player.** `FloatingMediaPlayer` hides the body
+  with a class; unmounting it would pause the media.
+- A visible media tab always owns the player - `MediaViewportSlot` claims it on
+  mount. Without that, viewing file B while A floats would leave B's tab showing
+  an empty slot.
+- `setSlotRect` bails out on an identical rect. Without that, ResizeObserver churn
+  re-renders the host and with it the media element.
+- `hideSlot` retains the rect; only `clearTab` (tab closed) forgets it. Never
+  zero-size a docked player: a collapsed video can lose its decode pipeline.
+- `toggleRequest` is a nonce, not a callback in state, so the pill's play button
+  can drive the element without a ref crossing the frame boundary.
 
 ---
 

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
+import { getTabDisplayName } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -327,7 +329,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					isOutputSearchOpen &&
 					(ctx.isShortcut(e, 'agentSwitcher') ||
 						ctx.isShortcut(e, 'quickAction') ||
-						ctx.isShortcut(e, 'fuzzyFileSearch'));
+						ctx.isShortcut(e, 'fuzzyFileSearch') ||
+						// "Not in this tab - search them all" is the natural escalation
+						// from an open Find bar, so it must not be eaten by the guard.
+						ctx.isShortcut(e, 'searchAllTabs'));
 				const isOutputSearchRefocusShortcut =
 					isOutputSearchOpen &&
 					(e.metaKey || e.ctrlKey) &&
@@ -648,6 +653,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.mainPanelRef?.current?.focusActiveTab();
 				trackShortcut('focusActiveTab');
+			} else if (ctx.isShortcut(e, 'searchAllTabs')) {
+				// Resolve the agent from the store at event time rather than reading
+				// `ctx.activeSession`. The keyboard context's shape is not stable across
+				// branches (the multi-window work drops `activeSession` from the ref and
+				// resolves it per event), and a missing property here made the guard
+				// silently falsy - which, with preventDefault already called, swallowed
+				// the keystroke with no visible effect.
+				const searchSession = selectActiveSession(useSessionStore.getState());
+				// Group chats have no AI tabs to search across. preventDefault only when
+				// we actually act, so an inapplicable context falls through instead of
+				// eating the key.
+				if (!ctx.activeGroupChatId && searchSession?.aiTabs?.length) {
+					e.preventDefault();
+					ctx.handleOpenCrossTabSearch?.();
+					trackShortcut('searchAllTabs');
+				}
 			} else if (ctx.isShortcut(e, 'viewGitDiff') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				ctx.handleViewGitDiff();
@@ -952,6 +973,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				// Bulk close shortcuts (AI mode only — terminal tabs don't have bulk close)
 				if (ctx.activeSession.inputMode === 'ai') {
+					// Snooze the active AI tab (Opt+Cmd+S). AI-only: file, terminal, and
+					// browser tabs have no conversation to come back to.
+					if (ctx.isTabShortcut(e, 'snoozeTab')) {
+						e.preventDefault();
+						const session = ctx.activeSession;
+						const tab = session.aiTabs?.find((t: AITab) => t.id === session.activeTabId);
+						if (tab) {
+							useModalStore.getState().openModal('snoozeTab', {
+								tabId: tab.id,
+								tabLabel: getTabDisplayName(tab, session.agentSessionId),
+							});
+							trackShortcut('snoozeTab');
+						}
+					}
 					if (ctx.isTabShortcut(e, 'closeAllTabs')) {
 						e.preventDefault();
 						ctx.handleCloseAllTabs();

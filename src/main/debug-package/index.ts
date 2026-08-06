@@ -15,6 +15,7 @@ import { collectSystemInfo, SystemInfo } from './collectors/system';
 import { collectSettings, SanitizedSettings } from './collectors/settings';
 import { collectAgents, AgentsInfo } from './collectors/agents';
 import { collectExternalTools, ExternalToolsInfo } from './collectors/external-tools';
+import { collectGroups, GroupInfo } from './collectors/groups';
 import { collectSessions, DebugSessionInfo } from './collectors/sessions';
 import { collectProcesses, ProcessInfo } from './collectors/processes';
 import { collectLogs, LogsInfo } from './collectors/logs';
@@ -142,7 +143,7 @@ export async function generateDebugPackage(
 
 	// Collect groups (always included)
 	try {
-		const groupsData = deps.groupsStore.get('groups', []);
+		const groupsData = collectGroups(deps.groupsStore);
 		contents['groups.json'] = groupsData;
 		filesIncluded.push('groups.json');
 	} catch (error) {
@@ -329,6 +330,7 @@ export type {
 	AgentsInfo,
 	ExternalToolsInfo,
 	WindowsDiagnosticsInfo,
+	GroupInfo,
 	DebugSessionInfo,
 	ProcessInfo,
 	LogsInfo,

@@ -39,10 +39,11 @@ vi.mock('../../../main/agents/session-storage', () => ({
 
 import {
 	snapshotStarredTranscript,
-	deleteStarredMirror,
+	releaseTranscriptMirror,
+	releaseSnoozedTranscriptMirror,
 	restoreStarredTranscript,
 	listMirroredStarredSessions,
-	flushStarredMirrorsSync,
+	flushTranscriptMirrorsSync,
 	setMirrorRootForTest,
 } from '../../../main/storage/starred-transcript-mirror';
 
@@ -65,6 +66,25 @@ async function readMaybe(p: string): Promise<string | null> {
 	} catch {
 		return null;
 	}
+}
+
+/** Raw index entry for a session, so tests can assert on retention reasons. */
+async function readIndexEntry(
+	sessionId: string
+): Promise<{ retain?: string[]; sessionName?: string } | undefined> {
+	const raw = await readMaybe(path.join(mirrorRoot, 'index.json'));
+	if (!raw) return undefined;
+	return JSON.parse(raw)[`${AGENT}::${sessionId}`];
+}
+
+/** Rewrite the index without `retain`, simulating a pre-retention-reasons entry. */
+async function stripRetainFromIndex(): Promise<void> {
+	const indexPath = path.join(mirrorRoot, 'index.json');
+	const index = JSON.parse((await readMaybe(indexPath))!);
+	for (const entry of Object.values(index) as Array<Record<string, unknown>>) {
+		delete entry.retain;
+	}
+	await fsp.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
 }
 
 beforeEach(async () => {
@@ -175,20 +195,20 @@ describe('restoreStarredTranscript', () => {
 	});
 });
 
-describe('deleteStarredMirror', () => {
+describe('releaseTranscriptMirror', () => {
 	it('removes the mirror file and its index entry on unstar', async () => {
 		await writeProviderFile(SESSION, 'bye\n');
 		await snapshotStarredTranscript({ agentId: AGENT, projectPath: PROJECT, sessionId: SESSION });
 		expect(await listMirroredStarredSessions()).toHaveLength(1);
 
-		await deleteStarredMirror({ agentId: AGENT, sessionId: SESSION });
+		await releaseTranscriptMirror({ agentId: AGENT, sessionId: SESSION });
 		expect(await listMirroredStarredSessions()).toHaveLength(0);
 		const mirrorFile = path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`);
 		expect(await readMaybe(mirrorFile)).toBeNull();
 	});
 });
 
-describe('flushStarredMirrorsSync', () => {
+describe('flushTranscriptMirrorsSync', () => {
 	it('mirrors only starred open tabs with a provider session id', async () => {
 		await writeProviderFile('s-starred', 'starred-content\n');
 		await writeProviderFile('s-unstarred', 'unstarred-content\n');
@@ -205,11 +225,182 @@ describe('flushStarredMirrorsSync', () => {
 			},
 		];
 
-		flushStarredMirrorsSync(sessions);
+		flushTranscriptMirrorsSync(sessions);
 
 		const entries = await listMirroredStarredSessions();
 		expect(entries.map((e) => e.sessionId)).toEqual(['s-starred']);
 		const mirrorFile = path.join(mirrorRoot, AGENT, 's-starred.jsonl');
 		expect(realFs.readFileSync(mirrorFile, 'utf-8')).toBe('starred-content\n');
+	});
+
+	it('mirrors snoozed tabs, which are not in aiTabs and outlive provider retention', async () => {
+		await writeProviderFile('s-snoozed', 'snoozed-content\n');
+
+		flushTranscriptMirrorsSync([
+			{
+				toolType: AGENT,
+				projectRoot: PROJECT,
+				aiTabs: [],
+				snoozedTabs: [
+					{
+						id: 'snooze-1',
+						wakeAt: Date.now() + 86_400_000,
+						tab: { agentSessionId: 's-snoozed', starred: false, name: 'Back tomorrow' },
+					},
+				],
+			},
+		]);
+
+		const mirrorFile = path.join(mirrorRoot, AGENT, 's-snoozed.jsonl');
+		expect(realFs.readFileSync(mirrorFile, 'utf-8')).toBe('snoozed-content\n');
+
+		// Retained for snooze only, so it must NOT surface as a starred session.
+		expect(await listMirroredStarredSessions()).toHaveLength(0);
+		expect(await readIndexEntry('s-snoozed')).toMatchObject({ retain: ['snoozed'] });
+	});
+
+	it('records both reasons for a tab that is snoozed and starred', async () => {
+		await writeProviderFile('s-both', 'both\n');
+
+		flushTranscriptMirrorsSync([
+			{
+				toolType: AGENT,
+				projectRoot: PROJECT,
+				aiTabs: [],
+				snoozedTabs: [{ id: 'x', tab: { agentSessionId: 's-both', starred: true, name: 'Both' } }],
+			},
+		]);
+
+		const entry = await readIndexEntry('s-both');
+		expect(entry?.retain?.slice().sort()).toEqual(['snoozed', 'starred']);
+		// Starred, so it still belongs in the aged-out starred listing.
+		expect((await listMirroredStarredSessions()).map((e) => e.sessionId)).toEqual(['s-both']);
+	});
+});
+
+describe('retention reasons', () => {
+	it('keeps the mirror when unstarring a session that is still snoozed', async () => {
+		// The whole point: a months-long snooze must not be collected by an unstar.
+		await writeProviderFile(SESSION, 'precious\n');
+		await snapshotStarredTranscript({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+			reason: 'starred',
+		});
+		await snapshotStarredTranscript({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+			reason: 'snoozed',
+		});
+
+		await releaseTranscriptMirror({ agentId: AGENT, sessionId: SESSION, reason: 'starred' });
+
+		const mirrorFile = path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`);
+		expect(await readMaybe(mirrorFile)).toBe('precious\n');
+		expect(await readIndexEntry(SESSION)).toMatchObject({ retain: ['snoozed'] });
+		// No longer starred, so it drops out of the starred listing.
+		expect(await listMirroredStarredSessions()).toHaveLength(0);
+	});
+
+	it('deletes the mirror once the last reason is released', async () => {
+		await writeProviderFile(SESSION, 'temp\n');
+		await snapshotStarredTranscript({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+			reason: 'snoozed',
+		});
+
+		await releaseTranscriptMirror({ agentId: AGENT, sessionId: SESSION, reason: 'snoozed' });
+
+		const mirrorFile = path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`);
+		expect(await readMaybe(mirrorFile)).toBeNull();
+		expect(await readIndexEntry(SESSION)).toBeUndefined();
+	});
+
+	it('treats a legacy entry with no retain field as starred', async () => {
+		// Entries written before retention reasons existed were all stars.
+		await writeProviderFile(SESSION, 'legacy\n');
+		await snapshotStarredTranscript({ agentId: AGENT, projectPath: PROJECT, sessionId: SESSION });
+		await stripRetainFromIndex();
+
+		expect((await listMirroredStarredSessions()).map((e) => e.sessionId)).toEqual([SESSION]);
+
+		// Releasing a snooze it never had must not delete it.
+		await releaseTranscriptMirror({ agentId: AGENT, sessionId: SESSION, reason: 'snoozed' });
+		expect(await readMaybe(path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`))).toBe('legacy\n');
+
+		// Unstarring it does.
+		await releaseTranscriptMirror({ agentId: AGENT, sessionId: SESSION, reason: 'starred' });
+		expect(await readMaybe(path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`))).toBeNull();
+	});
+
+	it('widens retention on an unchanged transcript without re-copying', async () => {
+		await writeProviderFile(SESSION, 'v1\n');
+		await snapshotStarredTranscript({ agentId: AGENT, projectPath: PROJECT, sessionId: SESSION });
+
+		// Sentinel proves the mtime gate still suppresses the copy while the new
+		// reason is recorded.
+		const mirrorFile = path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`);
+		await fsp.writeFile(mirrorFile, 'SENTINEL\n', 'utf-8');
+
+		await snapshotStarredTranscript({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+			reason: 'snoozed',
+		});
+
+		expect(await readMaybe(mirrorFile)).toBe('SENTINEL\n');
+		expect((await readIndexEntry(SESSION))?.retain?.slice().sort()).toEqual(['snoozed', 'starred']);
+	});
+});
+
+describe('releaseSnoozedTranscriptMirror', () => {
+	it('rehydrates an aged-out transcript before letting the mirror go', async () => {
+		// A wake must never be the thing that loses the conversation.
+		const providerPath = await writeProviderFile(SESSION, 'survived\n');
+		await snapshotStarredTranscript({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+			reason: 'snoozed',
+		});
+		await fsp.rm(providerPath); // provider ages it out during the snooze
+
+		await releaseSnoozedTranscriptMirror({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+		});
+
+		// Conversation is back where the provider expects it...
+		expect(await readMaybe(providerPath)).toBe('survived\n');
+		// ...and the now-unneeded mirror is gone.
+		expect(await readMaybe(path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`))).toBeNull();
+	});
+
+	it('leaves the mirror in place when the session is also starred', async () => {
+		await writeProviderFile(SESSION, 'still-starred\n');
+		await snapshotStarredTranscript({ agentId: AGENT, projectPath: PROJECT, sessionId: SESSION });
+		await snapshotStarredTranscript({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+			reason: 'snoozed',
+		});
+
+		await releaseSnoozedTranscriptMirror({
+			agentId: AGENT,
+			projectPath: PROJECT,
+			sessionId: SESSION,
+		});
+
+		expect(await readMaybe(path.join(mirrorRoot, AGENT, `${SESSION}.jsonl`))).toBe(
+			'still-starred\n'
+		);
+		expect(await readIndexEntry(SESSION)).toMatchObject({ retain: ['starred'] });
 	});
 });

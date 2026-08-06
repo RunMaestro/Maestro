@@ -14,6 +14,7 @@ import { useTemplateAutocomplete } from '../hooks';
 import { captureException } from '../utils/sentry';
 import { CollapsedCommandsNotice, ToggleSwitch } from './ui';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { openUrl } from '../utils/openUrl';
 
 interface BmadCommandsPanelProps {
@@ -54,6 +55,12 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 				setEditingCommand({ ...editingCommand, prompt: value });
 			}
 		},
+	});
+
+	const editPromptResize = useResizableTextarea({
+		sizeKey: 'bmad-command-edit-prompt',
+		minHeight: 300,
+		externalRef: editCommandTextareaRef,
 	});
 
 	useEffect(() => {
@@ -323,7 +330,11 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 											}}
 											rows={15}
 											className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
-											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												...editPromptResize.style,
+											}}
 										/>
 										<TemplateAutocompleteDropdown
 											ref={editAutocompleteRef}

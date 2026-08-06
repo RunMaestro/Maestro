@@ -52,6 +52,7 @@ import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isImageFile } from '../../../shared/gitUtils';
+import { getFileTabMediaKind } from '../../utils/mediaTabs';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
 	getLanguageFromFilename,
@@ -74,6 +75,7 @@ import { useFilePreviewSearch } from '../../hooks/file';
 import type { FilePreviewSearchAdapter } from './search/types';
 import { FilePreviewHeader } from './FilePreviewHeader';
 import { ImageViewer } from './ImageViewer';
+import { MediaViewportSlot } from '../MediaPlayback';
 import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
@@ -108,6 +110,7 @@ export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
 		{
 			file,
+			fileTabId,
 			onClose,
 			theme,
 			markdownEditMode,
@@ -330,13 +333,27 @@ export const FilePreview = React.memo(
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
+		// Playable audio/video. Shares one predicate with MediaPlaybackHost and the
+		// Command palette so all three agree on what counts as media.
+		// `file.name` already carries the extension (tab name + extension, joined
+		// upstream), which is what getFileTabMediaKind needs.
+		const mediaKind = useMemo(
+			() => (file ? getFileTabMediaKind(file.name, file.content) : null),
+			[file]
+		);
+		const isMedia = mediaKind !== null;
+
 		// Check for binary files - either by extension or by content analysis
 		// Memoize to avoid recalculating on every render (content analysis can be expensive)
+		// Media counts as binary so every "text-only" guard below (edit mode,
+		// preview tiers, TOC, search) excludes it; the render branch picks the
+		// media slot off mediaKind before it ever reaches the binary fallback.
 		const isBinary = useMemo(() => {
 			if (!file) return false;
 			if (isImage) return false;
+			if (isMedia) return true;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
-		}, [isImage, file]);
+		}, [isImage, isMedia, file]);
 
 		// Any non-binary, non-image file can be edited as text
 		const isEditableText = !isImage && !isBinary;
@@ -1239,6 +1256,15 @@ export const FilePreview = React.memo(
 				} else {
 					failClipboardToast('Failed to Copy Image');
 				}
+			} else if (isMedia) {
+				// The "content" of a media tab is an internal stream URL, which is
+				// useless on the clipboard. Copy the file path instead.
+				const ok = await safeClipboardWrite(file.path);
+				if (ok) {
+					flashCopiedToClipboard(undefined, 'Path Copied');
+				} else {
+					failClipboardToast('Failed to Copy Path');
+				}
 			} else {
 				const ok = await safeClipboardWrite(file.content);
 				if (ok) {
@@ -1864,6 +1890,11 @@ export const FilePreview = React.memo(
 					)}
 					{isImage ? (
 						<ImageViewer src={file.content} alt={file.name} theme={theme} />
+					) : mediaKind && fileTabId ? (
+						// The player itself lives in MediaPlaybackHost so playback survives
+						// this component unmounting on every tab switch; the slot only
+						// reserves the area and reports where to park it.
+						<MediaViewportSlot tabId={fileTabId} />
 					) : isBinary ? (
 						<div className="flex flex-col items-center justify-center h-full gap-4">
 							<FileCode className="w-16 h-16" style={{ color: theme.colors.textDim }} />
