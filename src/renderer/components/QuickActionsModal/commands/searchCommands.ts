@@ -1,4 +1,4 @@
-import type { RightPanelTab } from '../../../types';
+import type { RightPanelTab, Shortcut } from '../../../types';
 import type { QuickAction } from '../types';
 
 interface BuildSearchCommandsArgs {
@@ -11,6 +11,9 @@ interface BuildSearchCommandsArgs {
 	setOutputSearchOpen: (open: boolean) => void;
 	setFileTreeFilterOpen: (open: boolean) => void;
 	setHistorySearchFilterOpen: (open: boolean) => void;
+	/** Open cross-tab message search. Omitted when there are no AI tabs to search. */
+	openCrossTabSearch?: () => void;
+	searchAllTabsShortcut?: Shortcut;
 }
 
 export function buildSearchCommands({
@@ -23,6 +26,8 @@ export function buildSearchCommands({
 	setOutputSearchOpen,
 	setFileTreeFilterOpen,
 	setHistorySearchFilterOpen,
+	openCrossTabSearch,
+	searchAllTabsShortcut,
 }: BuildSearchCommandsArgs): QuickAction[] {
 	return [
 		{
@@ -38,7 +43,7 @@ export function buildSearchCommands({
 		},
 		{
 			id: 'searchMessages',
-			label: 'Search: Message History',
+			label: 'Search: Messages (This Tab)',
 			subtext: 'Search messages in the current conversation',
 			action: () => {
 				setQuickActionOpen(false);
@@ -46,6 +51,21 @@ export function buildSearchCommands({
 				setTimeout(() => setOutputSearchOpen(true), 50);
 			},
 		},
+		...(openCrossTabSearch
+			? [
+					{
+						id: 'searchAllTabs',
+						label: 'Search: Messages (All Agent Tabs)',
+						subtext: 'Search every open tab in this agent and jump to the hit',
+						shortcut: searchAllTabsShortcut,
+						action: () => {
+							setQuickActionOpen(false);
+							setActiveFocus('main');
+							openCrossTabSearch();
+						},
+					} satisfies QuickAction,
+				]
+			: []),
 		{
 			id: 'searchFiles',
 			label: 'Search: Files',

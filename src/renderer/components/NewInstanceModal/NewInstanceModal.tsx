@@ -1161,6 +1161,7 @@ export function NewInstanceModal({
 					label="New Session Message"
 					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
 					placeholder="Instructions sent with the first message of every new session..."
+					sizeKey="new-session-message"
 				/>
 
 				{/* Nudge Message */}

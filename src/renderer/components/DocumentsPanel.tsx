@@ -16,8 +16,10 @@ import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, BatchDocumentEntry } from '../types';
 import { generateId } from '../utils/ids';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 // Tree node type for folder structure
 export interface DocTreeNode {
@@ -397,6 +399,11 @@ function DocumentSelectorModal({
 		});
 		return count;
 	}, [selectedDocs, taskCounts]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'document-selector',
+		defaultSize: { width: 760, height: 620 },
+		minSize: { width: 520, height: 360 },
+	});
 
 	return (
 		<div
@@ -414,10 +421,23 @@ function DocumentSelectorModal({
 				aria-label="Close document selector"
 			/>
 			<div
-				className="relative z-10 modal-w-xl max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
-				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+				ref={resizableModal.modalRef}
+				className="relative z-10 border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
 				onClick={(e) => e.stopPropagation()}
+				data-modal-resize-key="document-selector"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Selector Header */}
 				<div
 					className="p-4 border-b flex items-center justify-between shrink-0"

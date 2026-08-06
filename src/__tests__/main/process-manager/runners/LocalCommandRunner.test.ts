@@ -73,4 +73,46 @@ describe('LocalCommandRunner', () => {
 		expect(stderrEvents).toEqual(['Error: permission denied']);
 		expect(exitEvents).toEqual([1]);
 	});
+
+	describe('cancel', () => {
+		/** Minimal node-pty double whose exit is driven by the test. */
+		function stubPty() {
+			let exitHandler: ((e: { exitCode: number }) => void) | undefined;
+			const kill = vi.fn(() => exitHandler?.({ exitCode: 143 }));
+			mockPtySpawn.mockReturnValue({
+				onData: vi.fn(),
+				onExit: (cb: (e: { exitCode: number }) => void) => {
+					exitHandler = cb;
+				},
+				kill,
+			});
+			return { kill };
+		}
+
+		it('kills an in-flight command and resolves the run', async () => {
+			const { kill } = stubPty();
+			const runner = new LocalCommandRunner(new EventEmitter());
+
+			const run = runner.run('session-1', 'tail -f log', '/tmp');
+			expect(runner.cancel('session-1')).toBe(true);
+			expect(kill).toHaveBeenCalledTimes(1);
+			await expect(run).resolves.toEqual({ exitCode: 143 });
+		});
+
+		it('returns false when nothing is running under that id', () => {
+			const runner = new LocalCommandRunner(new EventEmitter());
+			expect(runner.cancel('session-nope')).toBe(false);
+		});
+
+		it('stops tracking a command once it exits', async () => {
+			stubPty();
+			const runner = new LocalCommandRunner(new EventEmitter());
+
+			const run = runner.run('session-1', 'ls', '/tmp');
+			runner.cancel('session-1');
+			await run;
+
+			expect(runner.cancel('session-1')).toBe(false);
+		});
+	});
 });

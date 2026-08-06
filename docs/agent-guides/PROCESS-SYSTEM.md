@@ -40,6 +40,7 @@ Source directories:
 | `getParser(sessionId)`                 | Get the output parser for a session's agent          |
 | `parseLine(sessionId, line)`           | Parse a JSON line using the session's parser         |
 | `runCommand(sessionId, cmd, cwd, ...)` | Run a one-off command (local or SSH)                 |
+| `cancelCommand(sessionId)`             | Kill an in-flight `runCommand` (local or SSH)        |
 
 **Emitted events** (defined in `ProcessManagerEvents`):
 
@@ -140,6 +141,8 @@ Runs one-off terminal commands. On Unix, uses a transient PTY for shell alias su
 
 **SshCommandRunner** (`runners/SshCommandRunner.ts`):
 Runs terminal commands on remote hosts via SSH. Builds SSH args (key, options, port, destination), wraps command with `cd` and env exports, and spawns the SSH binary directly.
+
+Both runners keep a `sessionId -> kill` registry of in-flight commands so `cancelCommand()` can terminate one that never exits on its own (a program waiting on stdin, `tail -f`, a runaway build). These children are deliberately NOT in the ProcessManager's process map, so `kill(sessionId)` cannot reach them - `cancelCommand()` is the only way to stop one. The registry entry is removed on exit/error.
 
 ### Utility Modules
 

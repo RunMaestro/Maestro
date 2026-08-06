@@ -15,6 +15,7 @@ import type { Theme, CustomAICommand } from '../types';
 import { TEMPLATE_VARIABLES_GENERAL } from '../utils/templateVariables';
 import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 
 interface AICommandsPanelProps {
 	theme: Theme;
@@ -73,6 +74,17 @@ export function AICommandsPanel({
 		textareaRef: editCommandTextareaRef,
 		value: editingCommand?.prompt || '',
 		onChange: (value) => editingCommand && setEditingCommand({ ...editingCommand, prompt: value }),
+	});
+
+	const newPromptResize = useResizableTextarea({
+		sizeKey: 'ai-command-new-prompt',
+		minHeight: 150,
+		externalRef: newCommandTextareaRef,
+	});
+	const editPromptResize = useResizableTextarea({
+		sizeKey: 'ai-command-edit-prompt',
+		minHeight: 300,
+		externalRef: editCommandTextareaRef,
 	});
 
 	const toggleExpanded = (id: string) => {
@@ -298,7 +310,11 @@ export function AICommandsPanel({
 							placeholder="The actual prompt sent to the AI agent when this command is invoked... (type {{ for variables)"
 							rows={10}
 							className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[150px]"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+								...newPromptResize.style,
+							}}
 						/>
 						<TemplateAutocompleteDropdown
 							ref={newAutocompleteRef}
@@ -434,7 +450,11 @@ export function AICommandsPanel({
 											}}
 											rows={15}
 											className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
-											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												...editPromptResize.style,
+											}}
 										/>
 										<TemplateAutocompleteDropdown
 											ref={editAutocompleteRef}

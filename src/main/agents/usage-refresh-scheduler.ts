@@ -20,6 +20,10 @@
  *   - `start()` reads the persisted intervals and arms one timer per provider
  *     with a positive interval, then subscribes to `usageRefreshIntervals`
  *     changes to re-arm. Idempotent.
+ *   - `warmUp()` runs one sampling pass per provider that has no usable cached
+ *     snapshot yet, so the dashboard's provider tabs exist on the FIRST open
+ *     rather than only after a sample the user's first open kicked off has
+ *     landed. Called once on boot, after the strict startup pass settles.
  *   - Each tick fires the provider's sampler fire-and-forget; the sampler never
  *     throws (failures are warn-logged), and overlapping ticks are guarded so a
  *     slow `--status` spawn can't stack.
@@ -33,6 +37,12 @@ import type { AgentConfigsData, MaestroSettings, SessionsData } from '../stores/
 import { logger } from '../utils/logger';
 import { runStartupUsageSampling } from './claude-usage-startup';
 import { runCodexUsageSampling } from './codex-usage-startup';
+import { getAllSnapshots as getAllClaudeUsageSnapshots } from '../stores/claudeUsageStore';
+import { getAllCodexUsageSnapshots } from '../stores/codexUsageStore';
+import {
+	hasUsefulAnthropicQuotaDetails,
+	hasUsefulCodexQuotaDetails,
+} from '../../shared/usageQuota';
 
 const LOG_CONTEXT = '[UsageRefreshScheduler]';
 
@@ -74,6 +84,35 @@ export class UsageRefreshScheduler {
 		this.unsubscribe = this.deps.settingsStore.onDidChange('usageRefreshIntervals', () =>
 			this.reschedule()
 		);
+	}
+
+	/**
+	 * One-shot boot pass: sample any provider whose snapshot store holds nothing
+	 * the dashboard could render. Without this, the provider tabs are a closed
+	 * loop for anyone who never picked an auto-refresh interval - the tab only
+	 * appears once a usable snapshot exists, and the only thing that produced
+	 * the first one was opening the dashboard (whose sampler frequently lands
+	 * after the user has already closed it, hence "reopen and now they show up").
+	 *
+	 * Skips providers that already have usable data so a normal launch costs
+	 * nothing, and reuses `tick()`'s in-flight guard so it can't stack with a
+	 * scheduled refresh. Never throws.
+	 */
+	async warmUp(): Promise<void> {
+		const claudeCold = !Object.values(getAllClaudeUsageSnapshots()).some(
+			hasUsefulAnthropicQuotaDetails
+		);
+		const codexCold = !Object.values(getAllCodexUsageSnapshots()).some(hasUsefulCodexQuotaDetails);
+		if (!claudeCold && !codexCold) return;
+
+		logger.info('Warming cold provider quota snapshots', LOG_CONTEXT, {
+			claude: claudeCold,
+			codex: codexCold,
+		});
+		await Promise.all([
+			claudeCold ? this.tick(CLAUDE_PROVIDER_ID) : Promise.resolve(),
+			codexCold ? this.tick(CODEX_PROVIDER_ID) : Promise.resolve(),
+		]);
 	}
 
 	/** Tear down all timers and the settings subscription. */

@@ -124,44 +124,42 @@ describe('Debug Package Collectors', () => {
 		});
 	});
 
-	describe('sanitizePath', () => {
-		it('should replace home directory with ~', async () => {
-			const { sanitizePath } = await import('../../../main/debug-package/collectors/sanitize');
+	describe('redactPath', () => {
+		it('should replace the path with a descriptor that keeps no folder names', async () => {
+			const { redactPath } = await import('../../../main/debug-package/collectors/sanitize');
 
 			const homeDir = os.homedir();
-			const testPath = `${homeDir}/Projects/Test`;
+			const redacted = redactPath(`${homeDir}/Projects/Test`);
 
-			const sanitized = sanitizePath(testPath);
-
-			expect(sanitized).toBe('~/Projects/Test');
-			expect(sanitized).not.toContain(homeDir);
+			expect(redacted).toMatch(/^\[path#[0-9a-f]{8} root=home depth=2\]$/);
+			expect(redacted).not.toContain(homeDir);
+			expect(redacted).not.toContain('Projects');
+			expect(redacted).not.toContain('Test');
 		});
 
 		it('should handle Windows-style paths', async () => {
-			const { sanitizePath } = await import('../../../main/debug-package/collectors/sanitize');
-
-			// Mock homedir for Windows
 			const originalHomedir = os.homedir;
 			vi.spyOn(os, 'homedir').mockReturnValue('C:\\Users\\testuser');
 
-			const { sanitizePath: freshSanitizePath } =
+			const { redactPath: freshRedactPath } =
 				await import('../../../main/debug-package/collectors/sanitize');
 
-			const testPath = 'C:\\Users\\testuser\\Documents\\Project';
-			const sanitized = freshSanitizePath(testPath);
+			const redacted = freshRedactPath('C:\\Users\\testuser\\Documents\\Project');
 
-			// Should normalize backslashes and replace home dir
-			expect(sanitized).not.toContain('testuser');
+			expect(redacted).not.toContain('testuser');
+			expect(redacted).not.toContain('Documents');
+			expect(redacted).not.toContain('Project');
 
 			vi.spyOn(os, 'homedir').mockImplementation(originalHomedir);
 		});
 
 		it('should return non-string values unchanged', async () => {
-			const { sanitizePath } = await import('../../../main/debug-package/collectors/sanitize');
+			const { redactPath } = await import('../../../main/debug-package/collectors/sanitize');
 
-			expect(sanitizePath(null as any)).toBeNull();
-			expect(sanitizePath(undefined as any)).toBeUndefined();
-			expect(sanitizePath(123 as any)).toBe(123);
+			expect(redactPath(null as any)).toBeNull();
+			expect(redactPath(undefined as any)).toBeUndefined();
+			expect(redactPath(123 as any)).toBe(123);
+			expect(redactPath('')).toBe('');
 		});
 	});
 
@@ -177,7 +175,7 @@ describe('Debug Package Collectors', () => {
 			expect(sanitized).toContain('[TRUNCATED]');
 		});
 
-		it('should sanitize paths in messages', async () => {
+		it('should redact paths in messages', async () => {
 			const { sanitizeLogMessage } =
 				await import('../../../main/debug-package/collectors/sanitize');
 
@@ -187,7 +185,8 @@ describe('Debug Package Collectors', () => {
 			const sanitized = sanitizeLogMessage(message);
 
 			expect(sanitized).not.toContain(homeDir);
-			expect(sanitized).toContain('~/Projects/test');
+			expect(sanitized).not.toContain('Projects');
+			expect(sanitized).toContain('Process started in [path#');
 		});
 	});
 
@@ -228,7 +227,7 @@ describe('Debug Package Collectors', () => {
 			expect(result.sanitizedFields).toContain('password');
 		});
 
-		it('should sanitize paths in settings', async () => {
+		it('should redact paths in settings', async () => {
 			const { collectSettings } = await import('../../../main/debug-package/collectors/settings');
 
 			const homeDir = os.homedir();
@@ -245,14 +244,46 @@ describe('Debug Package Collectors', () => {
 
 			const result = await collectSettings(mockStore as any);
 
-			// Verify paths are sanitized
-			expect(result.raw.customPath).toBe('~/custom/path');
-			expect(result.raw.ghPath).toBe('~/.local/bin/gh');
-			expect(result.raw.customShellPath).toBe('~/shells/zsh');
-			expect(result.raw.cwd).toBe('~/Projects/current');
+			for (const key of ['customPath', 'ghPath', 'customShellPath', 'cwd']) {
+				expect(result.raw[key]).toMatch(/^\[path#[0-9a-f]{8} root=home/);
+			}
 
-			// Verify no raw home dir paths
-			expect(JSON.stringify(result.raw)).not.toContain(homeDir);
+			// No folder names, no home dir
+			const serialized = JSON.stringify(result.raw);
+			expect(serialized).not.toContain(homeDir);
+			expect(serialized).not.toContain('Projects');
+			expect(serialized).not.toContain('shells');
+		});
+
+		it('should redact identity keys such as SSH usernames and hosts', async () => {
+			const { collectSettings } = await import('../../../main/debug-package/collectors/settings');
+
+			const mockStore = {
+				get: vi.fn(),
+				set: vi.fn(),
+				store: {
+					sshRemotes: [
+						{
+							id: 'remote-1',
+							name: 'Acme Prod Box',
+							host: 'build.acme-internal.com',
+							username: 'jdoe',
+							port: 22,
+							enabled: true,
+						},
+					],
+				},
+			};
+
+			const result = await collectSettings(mockStore as any);
+			const serialized = JSON.stringify(result.raw);
+
+			expect(serialized).not.toContain('Acme Prod Box');
+			expect(serialized).not.toContain('acme-internal.com');
+			expect(serialized).not.toContain('jdoe');
+			// Structural fields survive
+			expect((result.raw.sshRemotes as any)[0].port).toBe(22);
+			expect((result.raw.sshRemotes as any)[0].enabled).toBe(true);
 		});
 
 		it('should handle nested objects with sensitive keys', async () => {
@@ -274,10 +305,11 @@ describe('Debug Package Collectors', () => {
 			const result = await collectSettings(mockStore as any);
 
 			expect((result.raw.agent as any).claude.apiKey).toBe('[REDACTED]');
-			expect((result.raw.agent as any).claude.endpoint).toBe('https://api.example.com');
+			// URLs keep their scheme and registrable domain only
+			expect((result.raw.agent as any).claude.endpoint).toContain('https://example.com');
 		});
 
-		it('should handle arrays with sensitive values', async () => {
+		it('should redact paths held in plain string arrays', async () => {
 			const { collectSettings } = await import('../../../main/debug-package/collectors/settings');
 
 			const homeDir = os.homedir();
@@ -290,9 +322,12 @@ describe('Debug Package Collectors', () => {
 			};
 
 			const result = await collectSettings(mockStore as any);
+			const serialized = JSON.stringify(result.raw);
 
-			// Array elements should be processed
-			expect(result.raw.recentPaths).toBeDefined();
+			expect(result.raw.recentPaths).toHaveLength(2);
+			expect(serialized).not.toContain(homeDir);
+			expect(serialized).not.toContain('Project1');
+			expect(serialized).not.toContain('Project2');
 		});
 	});
 
@@ -349,10 +384,12 @@ describe('Debug Package Collectors', () => {
 			expect(session.hasAutoRunFolder).toBe(true);
 			expect(session.changedFilesCount).toBe(2);
 
-			// Verify paths are sanitized
-			expect(session.cwd).toBe('~/Projects/Test');
-			expect(session.projectRoot).toBe('~/Projects/Test');
+			// Verify paths are redacted, and that identical paths still match
+			expect(session.cwd).toMatch(/^\[path#[0-9a-f]{8} root=home depth=2\]$/);
+			expect(session.projectRoot).toBe(session.cwd);
 			expect(session.cwd).not.toContain(homeDir);
+			expect(session.cwd).not.toContain('Projects');
+			expect(session.cwd).not.toContain('Test');
 
 			// Verify no conversation content (check session object doesn't have aiTabs with logs)
 			expect((session as any).aiTabs).toBeUndefined();
@@ -472,7 +509,7 @@ describe('Debug Package Collectors', () => {
 	});
 
 	describe('collectProcesses', () => {
-		it('should collect process info with sanitized paths', async () => {
+		it('should collect process info with redacted paths', async () => {
 			const { collectProcesses } = await import('../../../main/debug-package/collectors/processes');
 
 			const homeDir = os.homedir();
@@ -501,8 +538,9 @@ describe('Debug Package Collectors', () => {
 			expect(proc.sessionId).toBe('session-1');
 			expect(proc.toolType).toBe('claude-code');
 			expect(proc.pid).toBe(12345);
-			expect(proc.cwd).toBe('~/Projects/Test');
+			expect(proc.cwd).toMatch(/^\[path#[0-9a-f]{8} root=home depth=2\]$/);
 			expect(proc.cwd).not.toContain(homeDir);
+			expect(proc.cwd).not.toContain('Projects');
 			expect(proc.isTerminal).toBe(false);
 			expect(proc.isBatchMode).toBe(true);
 			expect(proc.uptimeMs).toBeGreaterThan(0);
@@ -847,6 +885,45 @@ describe('Debug Package Collectors', () => {
 		});
 	});
 
+	describe('collectGroups', () => {
+		it('should collect group structure without group names', async () => {
+			const { collectGroups } = await import('../../../main/debug-package/collectors/groups');
+
+			const mockStore = {
+				get: vi.fn().mockReturnValue([
+					{ id: 'group-1', name: 'Acme Billing', emoji: '💰', collapsed: false },
+					{ id: 'group-2', name: 'Personal', emoji: '', collapsed: true },
+				]),
+				set: vi.fn(),
+				store: {},
+			};
+
+			const result = collectGroups(mockStore as any);
+			const serialized = JSON.stringify(result);
+
+			expect(result).toHaveLength(2);
+			expect(result[0]).toEqual({
+				id: 'group-1',
+				collapsed: false,
+				nameLength: 12,
+				hasEmoji: true,
+			});
+			expect(result[1].collapsed).toBe(true);
+			expect(result[1].hasEmoji).toBe(false);
+			expect(serialized).not.toContain('Acme Billing');
+			expect(serialized).not.toContain('Personal');
+		});
+
+		it('should handle a missing or malformed groups list', async () => {
+			const { collectGroups } = await import('../../../main/debug-package/collectors/groups');
+
+			expect(collectGroups({ get: vi.fn().mockReturnValue(undefined) } as any)).toEqual([]);
+			expect(collectGroups({ get: vi.fn().mockReturnValue([{}]) } as any)).toEqual([
+				{ id: 'unknown', collapsed: false, nameLength: 0, hasEmoji: false },
+			]);
+		});
+	});
+
 	describe('collectGroupChats', () => {
 		it('should collect group chat metadata without message content', async () => {
 			const fs = await import('fs');
@@ -950,7 +1027,10 @@ describe('Debug Package Collectors', () => {
 			const result = await collectSettings(mockStore as any);
 
 			expect((result.raw.level1 as any).level2.level3.apiKey).toBe('[REDACTED]');
-			expect((result.raw.level1 as any).level2.level3.path).toBe('~/deep/path');
+			expect((result.raw.level1 as any).level2.level3.path).toMatch(
+				/^\[path#[0-9a-f]{8} root=home depth=2\]$/
+			);
+			expect(JSON.stringify(result.raw)).not.toContain(homeDir);
 		});
 
 		it('should handle case variations in sensitive key names', async () => {

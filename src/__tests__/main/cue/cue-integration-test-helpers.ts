@@ -128,6 +128,7 @@ export interface InMemoryCueDb {
 		failure?: { errorMessage?: string | null; exitCode?: number | null }
 	): void;
 	getRecentCueEvents(since: number, limit?: number): CueEventRecord[];
+	getHistoricalConductorCreditMs(): number;
 	safeRecordCueEvent(event: Parameters<InMemoryCueDb['recordCueEvent']>[0]): void;
 	safeUpdateCueEventStatus(
 		id: string,
@@ -275,6 +276,21 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 
 			const sliced = limit !== undefined ? rows.slice(0, limit) : rows;
 			return sliced.map((row) => ({ ...row }));
+		},
+
+		getHistoricalConductorCreditMs() {
+			requireReady();
+			// Mirrors the SQL: completed runs only, each floored to whole minutes
+			// via integer division before summing.
+			let wholeMinutes = 0;
+			for (const id of state.eventOrder) {
+				const row = state.events.get(id);
+				if (!row) continue;
+				if (row.status !== 'completed') continue;
+				if (row.completedAt == null || row.completedAt < row.createdAt) continue;
+				wholeMinutes += Math.floor((row.completedAt - row.createdAt) / 60000);
+			}
+			return Math.max(0, wholeMinutes) * 60000;
 		},
 
 		safeRecordCueEvent(event) {
@@ -462,6 +478,7 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 			failure?: { errorMessage?: string | null; exitCode?: number | null }
 		) => getDb().updateCueEventStatus(id, status, providerSessionId, failure),
 		getRecentCueEvents: (since: number, limit?: number) => getDb().getRecentCueEvents(since, limit),
+		getHistoricalConductorCreditMs: () => getDb().getHistoricalConductorCreditMs(),
 		safeRecordCueEvent: (event: Parameters<InMemoryCueDb['recordCueEvent']>[0]) =>
 			getDb().safeRecordCueEvent(event),
 		safeUpdateCueEventStatus: (

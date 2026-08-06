@@ -10,6 +10,7 @@ import {
 	Trash2,
 	FilePlus,
 	FolderPlus,
+	FolderOpen,
 	Files,
 	Download,
 } from 'lucide-react';
@@ -294,7 +295,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 								<span>{getRevealLabel(platform)}</span>
 							</button>
 						)}
