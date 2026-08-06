@@ -55,6 +55,8 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { jumpToElement } from '../utils/jumpHighlight';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { AgentTaskListCard } from './AgentTaskListCard';
+import { extractAgentTaskList } from '../utils/agentTaskList';
 import { RetryStatusCard } from './RetryStatusCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
@@ -81,17 +83,6 @@ const safeCommand = (v: unknown): string | null => {
 		return v.join(' ');
 	}
 	return null;
-};
-
-/** Summarize TodoWrite todos array — shows in-progress task and progress count */
-const summarizeTodos = (v: unknown): string | null => {
-	if (!Array.isArray(v) || v.length === 0) return null;
-	const todos = v as Array<{ content?: string; status?: string; activeForm?: string }>;
-	const completed = todos.filter((t) => t.status === 'completed').length;
-	const inProgress = todos.find((t) => t.status === 'in_progress');
-	const label = inProgress?.activeForm || inProgress?.content || todos[0]?.content;
-	if (!label) return `${todos.length} tasks`;
-	return `${label} (${completed}/${todos.length})`;
 };
 
 /** Structured result from summarizeToolInput for richer rendering */
@@ -122,10 +113,6 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 		return null;
 	}
 	const inputRecord = input as Record<string, unknown>;
-
-	// Special case: TodoWrite todos array
-	const todosResult = summarizeTodos(inputRecord.todos);
-	if (todosResult) return { detail: todosResult };
 
 	// Extract description field separately for structured display
 	const description =
@@ -781,8 +768,12 @@ const LogItemComponent = memo(
 						(() => {
 							// Extract tool input details for display
 							const toolInput = log.metadata?.toolState?.input;
+							// Checklist-shaped payloads (Claude Code/OpenCode TodoWrite,
+							// Codex update_plan) get the richer inline card instead of the
+							// generic key/value summary.
+							const taskList = extractAgentTaskList(toolInput);
 							const toolSummary =
-								toolInput !== undefined && toolInput !== null
+								!taskList && toolInput !== undefined && toolInput !== null
 									? summarizeToolInput(toolInput)
 									: null;
 							// Show the tool result once it has finished. Without this the
@@ -839,6 +830,7 @@ const LogItemComponent = memo(
 											</span>
 										)}
 									</div>
+									{taskList && <AgentTaskListCard theme={theme} taskList={taskList} />}
 									{toolSummary?.detail && (
 										<div
 											className="mt-1 ml-1 pl-2 opacity-70 break-words whitespace-pre-wrap border-l"
