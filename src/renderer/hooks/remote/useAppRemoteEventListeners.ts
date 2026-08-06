@@ -17,6 +17,7 @@ import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
+import { getBasename, isAbsolutePath } from '../../../shared/formatters';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -53,6 +54,28 @@ import {
 	canCreateGroupInside,
 	removeGroupAndPromoteChildren,
 } from '../../../shared/groupHierarchy';
+
+function resolveRemoteAutoRunFilename(filename: string, folderPath: string): string {
+	const normalized = filename.replace(/\\/g, '/').replace(/\.md$/i, '');
+	const normalizedFolder = folderPath.replace(/\\/g, '/').replace(/\/$/, '');
+	let relative = normalized;
+
+	if (isAbsolutePath(filename)) {
+		if (!normalized.toLowerCase().startsWith(`${normalizedFolder.toLowerCase()}/`)) {
+			throw new Error(
+				`Auto Run document is outside the configured folder: ${getBasename(filename)}`
+			);
+		}
+		relative = normalized.slice(normalizedFolder.length + 1);
+	}
+
+	relative = relative.replace(/^\.\/+/, '');
+	if (!relative || relative.split('/').includes('..')) {
+		throw new Error(`Invalid Auto Run document path: ${filename}`);
+	}
+
+	return relative;
+}
 
 // ============================================================================
 // Dependencies interface
@@ -668,32 +691,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				}
 
 				const documents = (config.documents || []).map(
-					(doc: { filename: string; resetOnCompletion?: boolean }) => {
-						// Compute path relative to the session's autoRunFolderPath.
-						// CLI sends full absolute paths (e.g., "/path/to/Auto Run Docs/subdir/temp.md")
-						// but the batch processor expects the path relative to folderPath without .md
-						// (e.g., "subdir/temp").
-						let name = doc.filename.replace(/\.md$/i, '');
-						// Normalize separators to forward slash for comparison
-						const normalized = name.replace(/\\/g, '/');
-						const normalizedFolder = (folderPath || '').replace(/\\/g, '/');
-						// Case-insensitive prefix check for cross-platform compatibility (Windows drive letters)
-						const normalizedLower = normalized.toLowerCase();
-						const folderLower = normalizedFolder.toLowerCase();
-						if (normalizedFolder && normalizedLower.startsWith(folderLower + '/')) {
-							name = normalized.substring(normalizedFolder.length + 1);
-						} else {
-							// Fallback for paths not under folderPath: use basename only
-							const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-							if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-						}
-						return {
-							id: generateId(),
-							filename: name,
-							resetOnCompletion: doc.resetOnCompletion || false,
-							isDuplicate: false,
-						};
-					}
+					(doc: { filename: string; resetOnCompletion?: boolean }) => ({
+						id: generateId(),
+						filename: resolveRemoteAutoRunFilename(doc.filename, folderPath),
+						resetOnCompletion: doc.resetOnCompletion || false,
+						isDuplicate: false,
+					})
 				);
 
 				if (documents.length === 0) {
@@ -849,7 +852,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			const documents: BatchDocumentEntry[] = (config.documents || []).map(
 				(doc: { filename: string; resetOnCompletion?: boolean }) => ({
 					id: generateId(),
-					filename: doc.filename.replace(/\.md$/i, ''),
+					filename: resolveRemoteAutoRunFilename(doc.filename, folderPath),
 					resetOnCompletion: doc.resetOnCompletion || false,
 					isDuplicate: false,
 				})

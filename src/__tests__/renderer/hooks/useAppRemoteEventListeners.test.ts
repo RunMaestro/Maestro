@@ -110,4 +110,57 @@ describe('useAppRemoteEventListeners', () => {
 			},
 		});
 	});
+
+	it('preserves a nested relative document path when launching', async () => {
+		const folderPath = path.join(os.tmpdir(), 'maestro-auto-run');
+		const session = createMockSession({ autoRunFolderPath: folderPath });
+		const startBatchRun = vi.fn().mockResolvedValue(undefined);
+
+		const deps: UseAppRemoteEventListenersDeps = {
+			sessionsRef: { current: [session] },
+			setActiveSessionId: vi.fn(),
+			setSessions: vi.fn(),
+			setGroups: vi.fn(),
+			handleOpenFileTab: vi.fn(),
+			refreshFileTree: vi.fn(),
+			handleAutoRunRefresh: vi.fn(),
+			startBatchRun,
+			stopBatchRun: vi.fn(),
+			resumeAfterError: vi.fn(),
+			skipCurrentDocument: vi.fn(),
+			abortBatchOnError: vi.fn(),
+		};
+
+		renderHook(() => useAppRemoteEventListeners(deps));
+
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:configureAutoRun', {
+					detail: {
+						sessionId: session.id,
+						config: {
+							documents: [{ filename: 'nested/spec.md', resetOnCompletion: true }],
+							launch: true,
+						},
+						responseChannel: 'launch-response',
+					},
+				})
+			);
+		});
+
+		await waitFor(() => {
+			expect(startBatchRun).toHaveBeenCalledWith(
+				session.id,
+				expect.objectContaining({
+					documents: [
+						expect.objectContaining({
+							filename: 'nested/spec',
+							resetOnCompletion: true,
+						}),
+					],
+				}),
+				folderPath
+			);
+		});
+	});
 });
