@@ -18,7 +18,7 @@ import { flushTelemetry } from '../cue/cue-telemetry';
 import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
-import { flushStarredMirrorsSync } from '../storage/starred-transcript-mirror';
+import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -340,7 +340,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// mtime-gated, so unchanged transcripts cost only a stat.
 		if (getPersistedSessions) {
 			try {
-				flushStarredMirrorsSync(getPersistedSessions());
+				flushTranscriptMirrorsSync(getPersistedSessions());
 			} catch (err) {
 				logger.error(`Error flushing starred transcripts on quit: ${err}`, 'Shutdown');
 			}

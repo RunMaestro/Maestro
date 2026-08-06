@@ -255,6 +255,8 @@ interface MaestroAPI {
 				syncHistory?: boolean;
 			};
 		}) => Promise<{ exitCode: number }>;
+		/** Terminate an in-flight `runCommand`. False when nothing is running under that id. */
+		cancelCommand: (sessionId: string) => Promise<boolean>;
 		getActiveProcesses: () => Promise<
 			Array<{
 				sessionId: string;
@@ -795,6 +797,32 @@ interface MaestroAPI {
 			}>;
 			error: string | null;
 		}>;
+		/**
+		 * Run a network git operation (pull/push/fetch) and stream its output.
+		 * Subscribe via `onCommandOutput` before calling.
+		 */
+		runCommand: (options: {
+			runId: string;
+			operation: import('../shared/gitUtils').GitStreamingOperation;
+			cwd: string;
+			sshRemoteId?: string;
+			remoteCwd?: string;
+			setUpstream?: boolean;
+		}) => Promise<import('../shared/gitUtils').GitRunCommandResult>;
+		/** Terminate an in-flight `runCommand`. */
+		cancelCommand: (runId: string) => Promise<{ success: boolean }>;
+		/** Subscribe to streamed `runCommand` output. Returns an unsubscribe. */
+		onCommandOutput: (
+			callback: (data: import('../shared/gitUtils').GitCommandOutputChunk) => void
+		) => () => void;
+		/** Check out a branch (pass createTracking for an origin-only branch). */
+		checkoutBranch: (
+			cwd: string,
+			branch: string,
+			createTracking?: boolean,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; output?: string; error?: string }>;
 		commitCount: (
 			cwd: string,
 			sshRemoteId?: string
@@ -1331,7 +1359,13 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			sessionName?: string
+			sessionName?: string,
+			reason?: 'starred' | 'snoozed'
+		) => Promise<void>;
+		releaseSnoozedTranscript: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string
 		) => Promise<void>;
 	};
 	dialog: {
@@ -3331,7 +3365,7 @@ interface MaestroAPI {
 	directorNotes: {
 		getUnifiedHistory: (options: {
 			lookbackDays: number;
-			filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+			filter?: HistoryEntryType | HistoryEntryType[] | null;
 			limit?: number;
 			offset?: number;
 			graphBucketCount?: number;
@@ -3364,15 +3398,16 @@ interface MaestroAPI {
 				autoCount: number;
 				userCount: number;
 				cueCount: number;
+				agentEntryCount: number;
 				totalCount: number;
 			};
-			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
+			graphBuckets?: Array<{ auto: number; user: number; cue: number; agent: number }>;
 		}>;
 		getGraphData: (
 			bucketCount: number,
 			lookbackHours: number | null
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number }>;
+			buckets: Array<{ auto: number; user: number; cue: number; agent: number }>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
@@ -3380,6 +3415,7 @@ interface MaestroAPI {
 			autoCount: number;
 			userCount: number;
 			cueCount: number;
+			agentCount: number;
 			cached: boolean;
 			stats: {
 				agentCount: number;
@@ -3387,6 +3423,7 @@ interface MaestroAPI {
 				autoCount: number;
 				userCount: number;
 				cueCount: number;
+				agentEntryCount: number;
 				totalCount: number;
 			};
 		}>;
@@ -3394,9 +3431,43 @@ interface MaestroAPI {
 			timestamp: number,
 			options?: {
 				lookbackDays?: number;
-				filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+				filter?: HistoryEntryType | HistoryEntryType[] | null;
 			}
 		) => Promise<number>;
+		/**
+		 * Deterministic Rich Mode stats computed in the main process over
+		 * history entries (never inferred by the AI synopsis).
+		 */
+		getRichOverviewStats: (options: { lookbackDays: number; bucketCount?: number }) => Promise<{
+			totalEntries: number;
+			agentCount: number;
+			sessionCount: number;
+			autoCount: number;
+			userCount: number;
+			cueCount: number;
+			agentEntryCount: number;
+			successCount: number;
+			failureCount: number;
+			successRate: number;
+			totalElapsedMs: number;
+			avgElapsedMs: number;
+			timelineBuckets: Array<{
+				startTime: number;
+				auto: number;
+				user: number;
+				cue: number;
+				agent: number;
+			}>;
+			perAgent: Array<{
+				sessionId: string;
+				agentName: string;
+				entryCount: number;
+				successCount: number;
+				failureCount: number;
+			}>;
+			lookbackDays: number;
+			generatedAt: number;
+		}>;
 		generateSynopsis: (options: {
 			lookbackDays: number;
 			provider: string;
@@ -3413,6 +3484,12 @@ interface MaestroAPI {
 				durationMs: number;
 			};
 			error?: string;
+			/** Parsed structured narrative, from a clean parse or a salvage. */
+			narrative?: import('../shared/directorNotesNarrative').DirectorNotesNarrative;
+			/** Set when the raw synopsis could not be parsed into a structured narrative. */
+			narrativeError?: string;
+			/** Set when `narrative` was salvaged; explains what had to be recovered. */
+			narrativeRecovery?: string;
 		}>;
 		/** Subscribe to synopsis generation progress updates. Returns cleanup function. */
 		onSynopsisProgress: (

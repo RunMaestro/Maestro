@@ -23,6 +23,7 @@ import { isLikelyConcatenatedToolNames } from '../../../constants/app';
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
+import { canAppendToLogEntry } from '../../../utils/logEntries';
 import type { LogEntry } from '../../../types';
 
 export function useAgentThinkingListener(): void {
@@ -100,7 +101,9 @@ export function useAgentThinkingListener(): void {
 									//      tool names → replace last log with this chunk only
 									//      (drop the prior text rather than worsen the noise).
 									const lastLog = targetTab.logs[targetTab.logs.length - 1];
-									const isContinuation = lastLog?.source === 'thinking';
+									// Same rule as every other coalescing site: same source AND not a
+									// self-contained card. See utils/logEntries.ts.
+									const isContinuation = canAppendToLogEntry(lastLog, 'thinking');
 									const combinedText = isContinuation ? lastLog.text + bufferedContent : '';
 									const continuationIsMalformed =
 										isContinuation && isLikelyConcatenatedToolNames(combinedText);

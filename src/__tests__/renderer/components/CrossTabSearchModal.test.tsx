@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { CrossTabSearchModal } from '../../../renderer/components/CrossTabSearchModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { MOUNT_FOCUS_DELAY_MS } from '../../../renderer/hooks/utils/useFocusAfterRender';
 import { mockTheme } from '../../helpers/mockTheme';
 import { createMockAITab } from '../../helpers';
 import type { AITab, LogEntry } from '../../../renderer/types';
@@ -69,6 +70,16 @@ describe('CrossTabSearchModal', () => {
 	it('prompts for a query before anything has been typed', () => {
 		renderModal();
 		expect(screen.getByText('Type to search every open tab in this agent')).toBeInTheDocument();
+	});
+
+	// Keyboard-first: however the modal is opened (shortcut, tab-bar popover,
+	// command palette), the caret must already be in the search box.
+	it('focuses the search input when it opens', () => {
+		renderModal();
+		act(() => {
+			vi.advanceTimersByTime(MOUNT_FOCUS_DELAY_MS);
+		});
+		expect(screen.getByRole('textbox')).toHaveFocus();
 	});
 
 	it('groups hits under each tab that contains them', () => {
@@ -153,6 +164,15 @@ describe('CrossTabSearchModal', () => {
 		typeQuery('(unclosed');
 
 		expect(screen.getByText(/Invalid regex:/)).toBeInTheDocument();
+	});
+
+	// Remote desktop and tablet users have no Escape key to reach for.
+	it('closes when the ESC pill is clicked', () => {
+		const { onClose } = renderModal();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+
+		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
 	it('shows a match-count pill when an entry contains several hits', () => {

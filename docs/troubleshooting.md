@@ -50,16 +50,17 @@ The **Process Monitor** displays a hierarchical tree view:
 - **Wizard processes** - Active wizard conversations and playbook generation
 
 **Process types shown:**
-| Type | Description |
-|------|-------------|
-| AI Agent | Main Claude Code (or other agent) process |
-| Terminal | Shell process for the session |
-| Batch | Auto Run document processing agent |
-| Synopsis | Context compaction synopsis generation |
-| Moderator | Group chat moderator process |
-| Participant | Group chat participant agent |
-| Wizard | Wizard conversation process |
-| Wizard Gen | Playbook document generation process |
+
+| Type        | Description                               |
+| ----------- | ----------------------------------------- |
+| AI Agent    | Main Claude Code (or other agent) process |
+| Terminal    | Shell process for the session             |
+| Batch       | Auto Run document processing agent        |
+| Synopsis    | Context compaction synopsis generation    |
+| Moderator   | Group chat moderator process              |
+| Participant | Group chat participant agent              |
+| Wizard      | Wizard conversation process               |
+| Wizard Gen  | Playbook document generation process      |
 
 **Features:**
 

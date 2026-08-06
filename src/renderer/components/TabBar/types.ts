@@ -32,6 +32,8 @@ export interface TabBarProps {
 	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Handler to export tab as HTML */
 	onExportHtml?: (tabId: string) => void;
+	/** Open the snooze picker for an AI tab (AI tabs only). */
+	onSnooze?: (tabId: string) => void;
 	/** Handler to publish tab context as GitHub Gist */
 	onPublishGist?: (tabId: string) => void;
 	/** Whether GitHub CLI is available for gist publishing */

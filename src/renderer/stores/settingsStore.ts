@@ -44,7 +44,16 @@ import { isToastWidth } from '../../shared/toastWidth';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import { useMediaPlaybackStore, type MediaFloatRect } from './mediaPlaybackStore';
 import { logger } from '../utils/logger';
-import { useUIStore, type ModalSize } from './uiStore';
+import { useUIStore } from './uiStore';
+import {
+	useSnoozeHistoryStore,
+	sanitizeSnoozeHistory,
+	SNOOZE_HISTORY_SETTINGS_KEY,
+} from './snoozeHistoryStore';
+import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
+import { sanitizeTextareaHeights } from '../utils/textareaSizing';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -234,6 +243,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'publishGist',
 	'documentGraph',
 	'openInDefault',
+	'revealInFolder',
 	'copyPath',
 ] as const;
 
@@ -331,6 +341,8 @@ export interface SettingsStoreState {
 	defaultShowThinking: ThinkingMode;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
+	modalSizes: ModalSizes;
+	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
 	bionifyReadingMode: boolean;
@@ -482,6 +494,12 @@ export interface SettingsStoreActions {
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
+	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
+	resetModalSize: (key: ModalResizeKey) => void;
+	resetModalSizes: () => void;
+	/** Remember the height a user dragged a resizable textarea to. */
+	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
 	setBionifyReadingMode: (value: boolean) => void;
@@ -702,6 +720,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
+		modalSizes: {},
+		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		bionifyReadingMode: false,
@@ -956,6 +976,45 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const clamped = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, value));
 			set({ rightPanelWidth: clamped });
 			window.maestro.settings.set('rightPanelWidth', clamped);
+		},
+
+		setModalSize: (key, value) => {
+			const normalized = sanitizeModalSizes({ [key]: value })[key];
+			if (!normalized) return;
+			const next = {
+				...get().modalSizes,
+				[key]: normalized,
+			};
+			set({ modalSizes: next });
+			window.maestro.settings.set('modalSizes', next);
+		},
+
+		// Single-key counterpart to resetModalSizes, backing the double-click-to-reset
+		// gesture on a single modal's resize handles.
+		resetModalSize: (key) => {
+			const current = get().modalSizes;
+			if (!(key in current)) return;
+			const next = { ...current };
+			delete next[key];
+			set({ modalSizes: next });
+			window.maestro.settings.set('modalSizes', next);
+		},
+
+		resetModalSizes: () => {
+			set({ modalSizes: {} });
+			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setTextareaHeight: (key, value) => {
+			const normalized = sanitizeTextareaHeights({ [key]: value })[key];
+			if (!normalized) return;
+			if (get().textareaHeights[key] === normalized) return;
+			const next = {
+				...get().textareaHeights,
+				[key]: normalized,
+			};
+			set({ textareaHeights: next });
+			window.maestro.settings.set('textareaHeights', next);
 		},
 
 		setMarkdownEditMode: (value) => {
@@ -2183,6 +2242,10 @@ function migrateShortcuts(
  * Called once on app startup and again on system resume from sleep.
  */
 export async function loadAllSettings(): Promise<void> {
+	// Snapshot before the awaited reads below. Anything the user changes while
+	// they are in flight must survive this load - see the filter before setState.
+	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
+
 	try {
 		// Batch load all settings in a single IPC call
 		const allSettings = (await window.maestro.settings.getAll()) as Record<string, unknown>;
@@ -2277,6 +2340,12 @@ export async function loadAllSettings(): Promise<void> {
 				RIGHT_PANEL_MIN_WIDTH,
 				Math.min(RIGHT_PANEL_MAX_WIDTH, allSettings['rightPanelWidth'] as number)
 			);
+
+		if (allSettings['modalSizes'] !== undefined)
+			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
+
+		if (allSettings['textareaHeights'] !== undefined)
+			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
 
 		if (allSettings['markdownEditMode'] !== undefined)
 			patch.markdownEditMode = allSettings['markdownEditMode'] as boolean;
@@ -2512,16 +2581,20 @@ export async function loadAllSettings(): Promise<void> {
 				usageRefreshIntervals: allSettings['usageRefreshIntervals'] as Record<string, number>,
 			});
 
-		// Per-modal sizes live in uiStore next to the other persisted UI maps, so
-		// the resize hook can read and write them without a settings round-trip.
-		if (allSettings['modalSizes'] !== undefined && typeof allSettings['modalSizes'] === 'object')
-			useUIStore.setState({
-				modalSizes: allSettings['modalSizes'] as Record<string, ModalSize>,
+		// Resolved-snooze history lives in snoozeHistoryStore (it's appended from
+		// the wake scheduler and the Snoozed Tabs modal, not from Settings), so its
+		// persisted array hydrates directly there. Sanitized first: entries are
+		// read straight back from disk and rendered.
+		if (allSettings[SNOOZE_HISTORY_SETTINGS_KEY] !== undefined)
+			useSnoozeHistoryStore.setState({
+				entries: sanitizeSnoozeHistory(allSettings[SNOOZE_HISTORY_SETTINGS_KEY]),
 			});
 
-		// Floating media player geometry lives in mediaPlaybackStore for the same
-		// reason as modalSizes above: the drag/resize handlers read and write it
-		// without a settings round-trip.
+		// Floating media player geometry lives in mediaPlaybackStore so the
+		// drag/resize handlers can read and write it without a settings
+		// round-trip. (Per-modal `modalSizes` is NOT hydrated here: rc keeps it in
+		// settingsStore behind sanitizeModalSizes, hydrated above with the other
+		// settings-owned keys.)
 		if (
 			allSettings['mediaPlayerFloatRect'] !== undefined &&
 			allSettings['mediaPlayerFloatRect'] !== null &&
@@ -2912,6 +2985,23 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['annotatorTextBgColor'] !== undefined)
 			patch.annotatorTextBgColor = allSettings['annotatorTextBgColor'] as string;
 
+		// On a RELOAD (system resume, another window's write), drop any key the user
+		// changed while the reads above were in flight. This load is several IPC
+		// round trips long, so reapplying the older snapshot on top of live typing
+		// loses keystrokes and yanks the caret to the end of the field. Those edits
+		// persisted themselves on the way in, so the in-memory value is the newer
+		// one. Skipped on the initial hydration, where the store still holds
+		// defaults and every disk value must land.
+		if (beforeRead.settingsLoaded === true) {
+			const live = useSettingsStore.getState() as unknown as Record<string, unknown>;
+			const patchKeys = patch as unknown as Record<string, unknown>;
+			for (const key of Object.keys(patchKeys)) {
+				if (live[key] !== beforeRead[key]) {
+					delete patchKeys[key];
+				}
+			}
+		}
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
@@ -3005,6 +3095,10 @@ export function getSettingsActions() {
 		setDefaultShowThinking: state.setDefaultShowThinking,
 		setLeftSidebarWidth: state.setLeftSidebarWidth,
 		setRightPanelWidth: state.setRightPanelWidth,
+		setModalSize: state.setModalSize,
+		resetModalSize: state.resetModalSize,
+		resetModalSizes: state.resetModalSizes,
+		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
 		setBionifyReadingMode: state.setBionifyReadingMode,

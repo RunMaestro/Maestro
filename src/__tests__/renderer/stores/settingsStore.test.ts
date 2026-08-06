@@ -1502,6 +1502,36 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
 		});
 
+		it('keeps edits made while a reload is in flight', async () => {
+			// A reload (system resume, or another window's write) takes several IPC
+			// round trips. Anything typed during that window must not be reverted to
+			// the older on-disk snapshot - that loses characters and, because the
+			// textarea is controlled, snaps the caret to the end of the field.
+			useSettingsStore.setState({ settingsLoaded: true, conductorProfile: 'abc' });
+			vi.mocked(window.maestro.settings.getAll).mockImplementation(async () => {
+				useSettingsStore.getState().setConductorProfile('abcdef');
+				return { conductorProfile: 'abc', fontSize: 16 };
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.conductorProfile).toBe('abcdef');
+			// Untouched keys still load normally.
+			expect(state.fontSize).toBe(16);
+		});
+
+		it('applies the disk value on the initial load even for touched keys', async () => {
+			useSettingsStore.setState({ settingsLoaded: false, conductorProfile: '' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				conductorProfile: 'from disk',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().conductorProfile).toBe('from disk');
+		});
+
 		it('uses defaults when settings are empty/undefined', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
 

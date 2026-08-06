@@ -16,6 +16,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 
 // Mock dependencies
@@ -176,6 +177,8 @@ describe('TerminalOutput', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		// A jump left behind by one test would fire inside the next one.
+		useUIStore.setState({ pendingLogJump: null });
 	});
 
 	afterEach(() => {
@@ -398,6 +401,149 @@ describe('TerminalOutput', () => {
 				el.getAttribute('data-log-id')
 			);
 			expect(ids).toEqual(['resp-1']);
+		});
+
+		/**
+		 * jsdom has no layout engine, so the real scroll positions can't be
+		 * asserted. What these cover is the arbitration: a pending jump has to
+		 * reach the target row, and the two things that scroll the transcript on
+		 * their own (follow-the-tail auto-scroll, saved-position restore) have to
+		 * stand down while it does. Getting that wrong is what left the user on
+		 * the right tab but the wrong message.
+		 */
+		function setupJump(logs: LogEntry[], logId: string, extraProps = {}) {
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			useUIStore.getState().setPendingLogJump({ sessionId: session.id, tabId: 'tab-1', logId });
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, ...extraProps })} />
+			);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-log-id]'));
+			for (const row of rows) {
+				row.scrollIntoView = vi.fn();
+				Object.defineProperty(row, 'offsetParent', {
+					get: () => document.body,
+					configurable: true,
+				});
+			}
+			return { container, scrollContainer, scrollToSpy, rows };
+		}
+
+		const rowById = (rows: HTMLElement[], id: string) =>
+			rows.find((r) => r.getAttribute('data-log-id') === id)!;
+
+		it('scrolls to the jumped-to entry and flashes it', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'A question', source: 'user' }),
+				createLogEntry({ id: 'user-2', text: 'The hit', source: 'user' }),
+			];
+			const { rows } = setupJump(logs, 'user-2');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			const target = rowById(rows, 'user-2');
+			expect(target.scrollIntoView).toHaveBeenCalled();
+			expect(target.classList.contains('jump-flash')).toBe(true);
+			expect(rowById(rows, 'user-1').scrollIntoView).not.toHaveBeenCalled();
+		});
+
+		it('resolves a hit inside a collapsed group to the row that renders it', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'Part 1. ', source: 'stdout' }),
+				createLogEntry({ id: 'resp-2', text: 'Part 2.', source: 'stdout' }),
+			];
+			// resp-2 has no row of its own; the jump must land on resp-1's row.
+			const { rows } = setupJump(logs, 'resp-2');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(rowById(rows, 'resp-1').scrollIntoView).toHaveBeenCalled();
+		});
+
+		it('does not let auto-scroll yank the view back to the bottom', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'A reply', source: 'stdout' }),
+			];
+			const { scrollToSpy } = setupJump(logs, 'user-1');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('does not let the saved scroll position override the jump', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'A reply', source: 'stdout' }),
+			];
+			const { scrollContainer, rows } = setupJump(logs, 'user-1', { initialScrollTop: 900 });
+
+			// jsdom clamps every scrollTop to 0 (no layout), so the restored VALUE
+			// can't be asserted - watch for the assignment itself instead.
+			const scrollTopWrites = vi.fn();
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				get: () => 0,
+				set: scrollTopWrites,
+				configurable: true,
+			});
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollTopWrites).not.toHaveBeenCalled();
+			expect(rowById(rows, 'user-1').scrollIntoView).toHaveBeenCalled();
+		});
+
+		it('consumes the jump so it does not re-fire on the next render', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' })];
+			setupJump(logs, 'user-1');
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(useUIStore.getState().pendingLogJump).toBeNull();
+		});
+
+		it('ignores a jump aimed at a different tab', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'The hit', source: 'user' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			useUIStore.getState().setPendingLogJump({
+				sessionId: session.id,
+				tabId: 'tab-2',
+				logId: 'user-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			const row = container.querySelector<HTMLElement>('[data-log-id="user-1"]')!;
+			row.scrollIntoView = vi.fn();
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(row.scrollIntoView).not.toHaveBeenCalled();
+			// Still pending: the tab it belongs to hasn't rendered it yet.
+			expect(useUIStore.getState().pendingLogJump).not.toBeNull();
 		});
 	});
 
@@ -2739,6 +2885,89 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic TUI Wrapper')).not.toBeInTheDocument();
 			expect(screen.queryByText('Dynamic claude -p')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('progressive transcript rendering (#1342)', () => {
+		// Switching to an agent with a long transcript used to mount every entry in
+		// one synchronous commit, freezing the UI for seconds on the PREVIOUS agent's
+		// view. The newest entries must render immediately; the rest backfills later.
+		const createLongTranscript = (count: number): LogEntry[] =>
+			Array.from({ length: count }, (_, i) =>
+				createLogEntry({
+					id: `log-${i}`,
+					text: `Message ${i}`,
+					source: i % 2 === 0 ? 'user' : 'stdout',
+				})
+			);
+
+		const renderedIndices = (container: HTMLElement): number[] =>
+			Array.from(container.querySelectorAll('[data-log-index]')).map((el) =>
+				Number(el.getAttribute('data-log-index'))
+			);
+
+		it('bounds the first commit instead of mounting the whole transcript', () => {
+			const logs = createLongTranscript(400);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			const indices = renderedIndices(container);
+			expect(indices.length).toBeLessThan(logs.length);
+			// The newest entry is what the user is looking at — it must be present.
+			expect(screen.getByText('Message 399')).toBeInTheDocument();
+			// Ancient history is deferred, not dropped (see backfill test below).
+			expect(screen.queryByText('Message 0')).not.toBeInTheDocument();
+		});
+
+		it('keeps absolute log indices so message navigation still targets correctly', () => {
+			const logs = createLongTranscript(400);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			const indices = renderedIndices(container);
+			// Indices are offsets into the full log list, not into the rendered window,
+			// so the last one is 399 rather than (window length - 1).
+			expect(indices[indices.length - 1]).toBe(399);
+			expect(indices[0]).toBeGreaterThan(0);
+		});
+
+		it('backfills the deferred history over subsequent idle ticks', async () => {
+			const logs = createLongTranscript(40);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(renderedIndices(container).length).toBeLessThan(40);
+
+			// jsdom has no requestIdleCallback, so the hook uses its setTimeout fallback.
+			await act(async () => {
+				vi.advanceTimersByTime(500);
+			});
+
+			expect(renderedIndices(container).length).toBe(40);
+			expect(screen.getByText('Message 0')).toBeInTheDocument();
+		});
+
+		it('renders short transcripts in full immediately', () => {
+			const logs = createLongTranscript(5);
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(renderedIndices(container)).toEqual([0, 1, 2, 3, 4]);
 		});
 	});
 });

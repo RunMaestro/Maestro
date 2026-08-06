@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -9,6 +10,19 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { mockTheme } from '../../helpers/mockTheme';
+
+/**
+ * The action rows, in render order. Scoped to `[data-action-label]` rather than
+ * `getAllByRole('button')` because the header also renders buttons (the ESC
+ * close pill), and an index into every button on screen breaks the moment one
+ * is added.
+ */
+function getActionRows(): HTMLElement[] {
+	return Array.from(document.querySelectorAll<HTMLElement>('[data-action-label]')).map(
+		(label) => label.closest('button') as HTMLElement
+	);
+}
+
 // Add missing window.maestro.devtools and debug mocks
 beforeAll(() => {
 	(window.maestro as any).devtools = {
@@ -72,6 +86,11 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	useGitDetail: () => ({
 		getFileDetails: () => undefined,
 		refreshGitStatus: refreshGitStatusMock,
+	}),
+	// useGitAgentActions (which now backs the palette's git entries) reads
+	// polled branch state from here.
+	useGitBranch: () => ({
+		getBranchInfo: () => ({ branch: 'main', remote: '', ahead: 0, behind: 0 }),
 	}),
 }));
 
@@ -745,11 +764,13 @@ describe('QuickActionsModal', () => {
 
 			fireEvent.click(screen.getByText('View Git Diff'));
 
+			// The palette now routes through useGitAgentActions, which opens the
+			// viewer via the modal store rather than a prop setter.
 			await waitFor(() => {
 				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
-				expect(props.setGitDiffPreview).toHaveBeenCalledWith('mock diff content');
-				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+				expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('mock diff content');
 			});
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
 		it('handles View Git Diff with SSH remote ID when session has SSH remote config enabled', async () => {
@@ -818,7 +839,59 @@ describe('QuickActionsModal', () => {
 
 			fireEvent.click(screen.getByText('View Git Log'));
 
-			expect(props.setGitLogOpen).toHaveBeenCalledWith(true);
+			expect(useModalStore.getState().isOpen('gitLog')).toBe(true);
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('offers the full git action set, matching the pill and right-click menus', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('View Git Log')).toBeInTheDocument();
+			expect(screen.getByText('View Git Diff')).toBeInTheDocument();
+			expect(screen.getByText('Git Pull')).toBeInTheDocument();
+			expect(screen.getByText('Git Push')).toBeInTheDocument();
+			expect(screen.getByText('Change Branch')).toBeInTheDocument();
+			expect(screen.getByText('Configure Worktrees')).toBeInTheDocument();
+		});
+
+		it('handles Git Pull action', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Git Pull'));
+
+			expect(useModalStore.getState().getData('gitCommandRunner')?.operation).toBe('pull');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('handles Git Push action', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Git Push'));
+
+			expect(useModalStore.getState().getData('gitCommandRunner')?.operation).toBe('push');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('handles Change Branch action', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Change Branch'));
+
+			expect(useModalStore.getState().isOpen('branchSwitcher')).toBe(true);
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('handles Configure Worktrees action', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Configure Worktrees'));
+
+			expect(useModalStore.getState().isOpen('worktreeConfig')).toBe(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
@@ -912,7 +985,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.change(input, { target: { value: 'settings' } });
 
 			// Selected index should be reset to 0 - first button is selected
-			const buttons = screen.getAllByRole('button');
+			const buttons = getActionRows();
 			// First button should have accent background (selected)
 			expect(buttons[0]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
@@ -1049,7 +1122,7 @@ describe('QuickActionsModal', () => {
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
 			fireEvent.keyDown(input, { key: 'ArrowDown' });
 
-			const buttons = screen.getAllByRole('button');
+			const buttons = getActionRows();
 			// Second button should now be selected (first is at index 0)
 			expect(buttons[1]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
@@ -1067,7 +1140,7 @@ describe('QuickActionsModal', () => {
 			// Move up
 			fireEvent.keyDown(input, { key: 'ArrowUp' });
 
-			const buttons = screen.getAllByRole('button');
+			const buttons = getActionRows();
 			expect(buttons[1]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
@@ -1081,7 +1154,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.keyDown(input, { key: 'ArrowUp' });
 			fireEvent.keyDown(input, { key: 'ArrowUp' });
 
-			const buttons = screen.getAllByRole('button');
+			const buttons = getActionRows();
 			expect(buttons[0]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
@@ -1512,7 +1585,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			const buttons = screen.getAllByRole('button');
+			const buttons = getActionRows();
 			expect(buttons[0]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
@@ -1520,7 +1593,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			const buttons = screen.getAllByRole('button');
+			const buttons = getActionRows();
 			// Non-selected items should not have accent background
 			expect(buttons[1]).not.toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});

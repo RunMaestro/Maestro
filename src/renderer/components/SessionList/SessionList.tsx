@@ -45,6 +45,7 @@ import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPillRows } from './CollapsedSessionPill';
+import { EscCloseButton } from '../ui/EscCloseButton';
 import { SidebarActions } from './SidebarActions';
 import { SkinnySidebar } from './SkinnySidebar';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
@@ -1181,15 +1182,15 @@ function SessionListInner(props: SessionListProps) {
 								className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 							/>
-							<div
-								className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-								style={{
-									backgroundColor: theme.colors.bgMain,
-									color: theme.colors.textDim,
+							<EscCloseButton
+								theme={theme}
+								variant="adornment"
+								label="Close filter (Esc)"
+								onClose={() => {
+									setSessionFilterOpen(false);
+									setSessionFilter('');
 								}}
-							>
-								ESC
-							</div>
+							/>
 						</div>
 					)}
 

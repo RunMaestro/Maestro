@@ -82,6 +82,46 @@ describe('flashJumpTarget', () => {
 		cancel();
 		expect(el.classList.contains('jump-flash')).toBe(false);
 	});
+
+	it('scrolls exactly once when stabilizeFrames is not requested', () => {
+		const el = makeTarget();
+		flashJumpTarget(el);
+
+		flushFrames(5);
+		expect(el.scrollIntoView).toHaveBeenCalledTimes(1);
+	});
+
+	it('re-asserts the scroll position for the requested number of frames', () => {
+		const el = makeTarget();
+		flashJumpTarget(el, { behavior: 'auto', stabilizeFrames: 3 });
+
+		// The initial scroll, then one correction per stabilize frame.
+		expect(el.scrollIntoView).toHaveBeenCalledTimes(1);
+		flushFrames(3);
+		expect(el.scrollIntoView).toHaveBeenCalledTimes(4);
+
+		// And it stops there rather than re-scrolling forever.
+		flushFrames(5);
+		expect(el.scrollIntoView).toHaveBeenCalledTimes(4);
+	});
+
+	it('corrections are always instant, even when the first scroll is smooth', () => {
+		const el = makeTarget();
+		flashJumpTarget(el, { stabilizeFrames: 2 });
+		flushFrames(2);
+
+		expect(el.scrollIntoView).toHaveBeenNthCalledWith(1, { behavior: 'smooth', block: 'center' });
+		expect(el.scrollIntoView).toHaveBeenNthCalledWith(2, { behavior: 'auto', block: 'center' });
+	});
+
+	it('cancel() stops the stabilize loop', () => {
+		const el = makeTarget();
+		const cancel = flashJumpTarget(el, { behavior: 'auto', stabilizeFrames: 5 });
+		cancel();
+
+		flushFrames(5);
+		expect(el.scrollIntoView).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe('jumpToElement', () => {

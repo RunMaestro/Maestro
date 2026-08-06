@@ -26,7 +26,6 @@ function resetStore() {
 		editingGroupId: null,
 		editingSessionId: null,
 		usageDashboardViewMode: 'overview',
-		modalSizes: {},
 	});
 }
 
@@ -473,31 +472,6 @@ describe('uiStore', () => {
 
 			useUIStore.getState().setPreFilterActiveTabId(null);
 			expect(useUIStore.getState().preFilterActiveTabId).toBeNull();
-		});
-
-		it('remembers and forgets modal sizes, writing through to settings', () => {
-			const set = vi.fn();
-			(window as unknown as { maestro: { settings: { set: typeof set } } }).maestro = {
-				settings: { set },
-			};
-
-			useUIStore.getState().setModalSize('about', { width: 700, height: 500 });
-			expect(useUIStore.getState().modalSizes).toEqual({ about: { width: 700, height: 500 } });
-			expect(set).toHaveBeenCalledWith('modalSizes', { about: { width: 700, height: 500 } });
-
-			useUIStore.getState().resetModalSize('about');
-			expect(useUIStore.getState().modalSizes).toEqual({});
-			expect(set).toHaveBeenLastCalledWith('modalSizes', {});
-		});
-
-		it('does not persist a reset for a modal that was never resized', () => {
-			const set = vi.fn();
-			(window as unknown as { maestro: { settings: { set: typeof set } } }).maestro = {
-				settings: { set },
-			};
-
-			useUIStore.getState().resetModalSize('never-resized');
-			expect(set).not.toHaveBeenCalled();
 		});
 
 		it('supports the preTerminalFileTabId ref-replacement pattern', () => {

@@ -267,6 +267,24 @@ export interface LogEntry {
 	// card collapses all subsequent auto-retry attempts into a single live stat
 	// readout (attempt count, elapsed, next-retry countdown, Retry now / Stop).
 	retryOutageId?: string;
+	// Command mode: anchors the live output card for a `!command` the user ran
+	// from the AI composer. The command never reaches the agent - Maestro runs
+	// it directly and streams stdout/stderr into `text`. See
+	// services/shellCommand.ts and components/ShellCommandCard.tsx.
+	shellCommand?: {
+		/** The command as typed, without the leading `!`. */
+		command: string;
+		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
+		cwd: string;
+		/** SSH remote name when the agent runs remotely, else undefined. */
+		remoteName?: string;
+		status: 'running' | 'finished' | 'cancelled';
+		exitCode?: number;
+		/** Wall-clock duration in ms, set on finish. */
+		durationMs?: number;
+		/** True when output hit the size cap and was cut short. */
+		truncated?: boolean;
+	};
 }
 
 // Queued item for the session-level execution queue
@@ -493,6 +511,11 @@ export interface AITab {
 	logs: LogEntry[]; // Conversation history
 	agentError?: AgentError; // Tab-specific agent error (shown in banner)
 	inputValue: string; // Pending input text for this tab
+	// When true, this tab's composer is in command mode (`!`) and `inputValue`
+	// is a shell command, not a message for the agent. Persisted alongside
+	// inputValue so a draft restored after a tab switch or restart is still
+	// routed the way the user intended - the text alone can't say which.
+	commandMode?: boolean;
 	stagedImages: string[]; // Staged images (base64) for this tab
 	usageStats?: UsageStats; // Token usage for this tab
 	createdAt: number; // Timestamp for ordering
@@ -660,6 +683,54 @@ export type ClosedTabEntry =
 	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number }
 	| { type: 'browser'; tab: BrowserTab; unifiedIndex: number; closedAt: number };
 
+/**
+ * A snoozed AI tab, held out of the tab bar until `wakeAt`.
+ *
+ * Snoozing removes the tab from `aiTabs` entirely (rather than flagging it in
+ * place) so every consumer of the tab list - rendering, Cmd+1..9 navigation,
+ * cross-tab search, the thinking pill - hides it with no extra filtering. The
+ * shape mirrors {@link ClosedTabEntry} because waking reuses the same
+ * restore-at-original-position logic as reopening a closed tab.
+ *
+ * Unlike `unifiedClosedTabHistory` (a runtime-only undo stack), this list IS
+ * persisted: a snooze has to survive quitting the app.
+ */
+/**
+ * How a snooze ended. All three mean "no longer snoozed", but the distinction
+ * is what makes the history readable: a tab that came back on schedule reads
+ * very differently from one the user gave up on.
+ */
+export type SnoozeResolution = 'woke' | 'unsnoozed' | 'dismissed';
+
+/**
+ * A completed snooze, kept for the history log.
+ *
+ * Deliberately a flat record rather than a reference to the tab: the tab may
+ * since have been closed, renamed, or had its agent deleted, and the history
+ * should still read correctly. It stores what was true when the snooze ended.
+ */
+export interface SnoozeHistoryEntry {
+	id: string; // History entry ID
+	label: string; // Tab label at resolution time
+	sessionId: string; // Owning agent (may no longer exist)
+	sessionName: string; // Agent name at resolution time
+	tabId: string; // Restored tab ID (stale once that tab is closed)
+	note?: string; // The reminder message, the reason this mattered
+	snoozedAt: number; // When the user snoozed it
+	wakeAt: number; // When it was scheduled to return
+	resolvedAt: number; // When it actually returned or was discarded
+	resolution: SnoozeResolution;
+}
+
+export interface SnoozedTabEntry {
+	id: string; // Snooze ID (stable across edits, used for list keys and wake dedupe)
+	tab: AITab; // The full tab, restored verbatim on wake
+	unifiedIndex: number; // Position in unifiedTabOrder at snooze time (restore target)
+	snoozedAt: number; // When the user snoozed it
+	wakeAt: number; // When it should come back (ms epoch)
+	note?: string; // Optional note-to-self surfaced in the wake notification
+}
+
 export interface Session {
 	id: string;
 	groupId?: string;
@@ -784,6 +855,9 @@ export interface Session {
 	// can surface them until the underlying agent process finishes. Runtime-only,
 	// not persisted. Entries are removed by the agent exit/error listeners.
 	orphanedThinkingTabs?: AITab[];
+	// AI tabs the user snoozed. Held out of aiTabs until their wakeAt passes, then
+	// restored by useSnoozeScheduler with a sticky notification. Persisted.
+	snoozedTabs?: SnoozedTabEntry[];
 
 	// File Preview Tabs - in-tab file viewing (coexists with AI tabs and terminal tabs)
 	// Tabs are interspersed visually but stored separately for type safety
@@ -1105,6 +1179,18 @@ export interface DirectorNotesSettings {
 	provider: ToolType;
 	/** Default lookback period in days (1-90) */
 	defaultLookbackDays: number;
+	/** Default AI Overview reading mode (Rich widget dashboard vs Plain markdown). Defaults to 'rich'. */
+	defaultMode?: 'rich' | 'plain';
+	/**
+	 * Free-form description of where the fleet is trying to get to: the active
+	 * projects, which agents belong to each, and what "done" looks like.
+	 *
+	 * Optional and empty by default. When blank the synopsis prompt is byte-for-byte
+	 * what it has always been. When filled it is injected into the prompt, which
+	 * prioritizes the named projects when reading history and asks for an extra
+	 * `progress` narrative section measuring distance to the target.
+	 */
+	idealEndState?: string;
 	/** Custom path to the agent binary */
 	customPath?: string;
 	/** Custom arguments for the agent */

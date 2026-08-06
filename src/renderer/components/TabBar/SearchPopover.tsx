@@ -18,6 +18,41 @@ interface SearchPopoverProps {
 	searchAllTabsKeys?: string[];
 	/** Number of open tabs in the current session, shown as a pill next to "Search Tabs" */
 	openTabCount?: number;
+	/** Open the snoozed tabs list */
+	onShowSnoozedTabs: () => void;
+	/** Total snoozed tabs across all agents, shown as a pill. Omitted/0 hides it. */
+	snoozedTabCount?: number;
+}
+
+/**
+ * Count badge for a popover row (open tabs, snoozed tabs).
+ *
+ * Deliberately rendered inline, right after the row's label, and never with
+ * `ml-auto`: the right edge of every row belongs to the keyboard shortcut, so a
+ * right-aligned number reads as a keybind rather than a count.
+ */
+function CountPill({
+	theme,
+	count,
+	ariaLabel,
+}: {
+	theme: Theme;
+	count: number;
+	ariaLabel: string;
+}) {
+	return (
+		<span
+			className="px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-none"
+			style={{
+				backgroundColor: `${theme.colors.accent}20`,
+				color: theme.colors.accent,
+				border: `1px solid ${theme.colors.accent}40`,
+			}}
+			aria-label={ariaLabel}
+		>
+			{count}
+		</span>
+	);
 }
 
 /**
@@ -33,6 +68,8 @@ export const SearchPopover = memo(function SearchPopover({
 	searchOutputKeys,
 	searchAllTabsKeys,
 	openTabCount,
+	onShowSnoozedTabs,
+	snoozedTabCount,
 }: SearchPopoverProps) {
 	const [popoverOpen, setPopoverOpen] = useState(false);
 	const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
@@ -51,13 +88,28 @@ export const SearchPopover = memo(function SearchPopover({
 		return () => document.removeEventListener('mousedown', handler);
 	}, [popoverOpen]);
 
-	// Auto-focus popover when opened, restore focus to button when closed
+	// Tracks whether the popover has ever been open, so the close branch below
+	// can't fire on mount and yank focus out of whatever the user was typing in.
+	const wasOpenRef = useRef(false);
+	// Set when a menu item is chosen: the item opens a modal that owns focus, so
+	// handing focus back to the trigger would leave the user typing nowhere.
+	const actionTakenRef = useRef(false);
+
+	// Auto-focus popover when opened, restore focus to the button when the user
+	// dismisses it (Escape / outside click) without picking anything.
 	useEffect(() => {
 		if (popoverOpen) {
+			wasOpenRef.current = true;
 			requestAnimationFrame(() => popoverRef.current?.focus());
-		} else {
-			btnRef.current?.focus();
+			return;
 		}
+		if (!wasOpenRef.current) return;
+		wasOpenRef.current = false;
+		if (actionTakenRef.current) {
+			actionTakenRef.current = false;
+			return;
+		}
+		btnRef.current?.focus();
 	}, [popoverOpen]);
 
 	const handleClick = useCallback(() => {
@@ -69,6 +121,7 @@ export const SearchPopover = memo(function SearchPopover({
 	}, []);
 
 	const closeAndDo = useCallback((action: () => void) => {
+		actionTakenRef.current = true;
 		setPopoverOpen(false);
 		action();
 	}, []);
@@ -114,17 +167,11 @@ export const SearchPopover = memo(function SearchPopover({
 							<Search className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							Search Tabs
 							{typeof openTabCount === 'number' && (
-								<span
-									className="px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-none"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
-									aria-label={`${openTabCount} open tabs`}
-								>
-									{openTabCount}
-								</span>
+								<CountPill
+									theme={theme}
+									count={openTabCount}
+									ariaLabel={`${openTabCount} open tabs`}
+								/>
 							)}
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 								{formatShortcutKeys(tabSwitcherKeys)}
@@ -156,6 +203,24 @@ export const SearchPopover = memo(function SearchPopover({
 								)}
 							</button>
 						)}
+
+						{/* Point-and-click route to the snoozed tabs list */}
+						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+						<button
+							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+							onClick={() => closeAndDo(onShowSnoozedTabs)}
+						>
+							<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							See All Snoozed Tabs
+							{snoozedTabCount != null && snoozedTabCount > 0 && (
+								<CountPill
+									theme={theme}
+									count={snoozedTabCount}
+									ariaLabel={`${snoozedTabCount} snoozed tabs`}
+								/>
+							)}
+						</button>
 					</div>,
 					document.body
 				)}

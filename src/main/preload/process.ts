@@ -220,6 +220,13 @@ export function createProcessApi() {
 			ipcRenderer.invoke('process:runCommand', config),
 
 		/**
+		 * Terminate an in-flight runCommand. Returns false when nothing is running
+		 * under that sessionId (already exited, or never started).
+		 */
+		cancelCommand: (sessionId: string): Promise<boolean> =>
+			ipcRenderer.invoke('process:cancelCommand', { sessionId }),
+
+		/**
 		 * Get all active processes from ProcessManager
 		 */
 		getActiveProcesses: (): Promise<ActiveProcess[]> =>

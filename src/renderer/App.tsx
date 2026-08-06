@@ -87,6 +87,7 @@ import {
 	// Tab handlers
 	useTabHandlers,
 	useTerminalTabHandlers,
+	useSnoozeScheduler,
 	// Group chat handlers
 	useGroupChatHandlers,
 	// Modal handlers
@@ -314,6 +315,7 @@ function MaestroConsoleInner() {
 		// Worktree Modals
 		createWorktreeSession,
 		createPRSession,
+		createPRSourceBranch,
 		setCreatePRSession,
 		deleteWorktreeSession,
 		// Tab Switcher Modal
@@ -876,6 +878,10 @@ function MaestroConsoleInner() {
 		handleAtBottomChange,
 		handleDeleteLog,
 	} = useTabHandlers();
+
+	// Wakes snoozed tabs when their time arrives (and on launch, for wakes
+	// missed while Maestro was closed).
+	useSnoozeScheduler();
 
 	// --- TERMINAL TAB HANDLERS ---
 	const { handleOpenTerminalTab, handleSelectTerminalTab, handleCloseTerminalTab } =
@@ -2978,6 +2984,7 @@ function MaestroConsoleInner() {
 					onCloseCreateWorktreeModal={handleCloseCreateWorktreeModal}
 					onCreateWorktree={handleCreateWorktree}
 					createPRSession={createPRSession}
+					createPRSourceBranch={createPRSourceBranch}
 					onCloseCreatePRModal={handleCloseCreatePRModal}
 					onPRCreated={handlePRCreated}
 					deleteWorktreeSession={deleteWorktreeSession}
@@ -3012,8 +3019,6 @@ function MaestroConsoleInner() {
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}
 					setActiveAgentSessionId={setActiveAgentSessionId}
-					setGitDiffPreview={setGitDiffPreview}
-					setGitLogOpen={setGitLogOpen}
 					isAiMode={activeSession?.inputMode === 'ai'}
 					onQuickActionsRenameTab={handleQuickActionsRenameTab}
 					onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}

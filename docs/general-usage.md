@@ -27,6 +27,31 @@ Each agent shows a color-coded status indicator:
 - 🟠 **Pulsing Orange** - Attempting to establish connection
 - 🔴 **Red Badge** - Unread messages (small red dot overlapping top-right of status indicator, iPhone-style)
 
+## Git Actions
+
+For agents whose working directory is a git repository, the same set of git actions is reachable three ways:
+
+- **Header branch pill** - hover the pill showing the current branch name (clicking works too).
+- **Left Bar right-click** - right-click the agent in the agent list.
+- **Command palette** (`Cmd+K` / `Ctrl+K`) - search for the action by name, no mouse required.
+
+| Action                  | What it does                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **View Git Log**        | Opens the commit history viewer.                                                                              |
+| **View Git Diff**       | Opens the working-tree diff. Flashes "No diff to examine" when the tree is clean.                             |
+| **Git Pull**            | Runs `git pull` and shows the live command output in a dismissible modal. Badged with how far behind you are. |
+| **Git Push**            | Runs `git push` the same way. Badged with how many commits you're ahead.                                      |
+| **Change Branch**       | Opens a fuzzy branch picker. Type to filter, Enter to check out.                                              |
+| **Create Pull Request** | Opens the PR composer for the current branch (needs the GitHub CLI).                                          |
+
+The header menu also shows the current **branch** and **origin** at the top. Each has a copy button, and clicking the origin opens the repository in your browser. Below the actions it offers **Configure Worktrees**.
+
+The header pill and the command palette act on the agent you're looking at. The right-click menu acts on the agent you right-clicked, so you can pull or check the log of a background agent without switching to it first.
+
+Pull and push stream their output as it happens, so you can watch the transfer and read git's error message if it fails. Dismissing the modal leaves the command running; **Cancel** stops it. When a push fails because the branch has no upstream, the modal offers a one-click **Push and Set Upstream** retry.
+
+Working-tree changes are shown by the **git status widget** beside the pill (`+` additions, `−` deletions, `~` modified). Hover it for a list of changed files with diff bars, plus shortcuts to the full diff and the log.
+
 ## File Explorer and Preview
 
 The **File Explorer** (Right Panel → Files tab) lets you browse project files. Click any file to open it in the **File Preview** view.
@@ -39,8 +64,39 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Markdown rendering** with toggle between raw/preview (`Cmd+E` / `Ctrl+E`)
 - **Image viewing** for common image formats
 - **Audio and video playback** with a speed control that sticks (see below)
+- **CSV and TSV tables** with sortable columns and a per-row detail view (see below)
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
+
+### CSV and TSV Tables
+
+`.csv` and `.tsv` files render as a real table instead of raw text. Click any
+column header to sort by it (click again to reverse, a third time to clear), and
+`Cmd+F` / `Ctrl+F` filters the table down to matching rows with the hits
+highlighted.
+
+Wide rows get cut off at the edge of the screen, which is the wrong shape for
+reading one record closely. **Double-click a row** to flip it into a vertical
+view: a modal listing every column as a field/value pair, one per line. Long and
+multi-line values wrap and keep their line breaks instead of being truncated,
+and each value has a copy button on hover.
+
+Inside that view:
+
+- **Left and Right arrows**, or the chevrons in the header, step through rows
+  without closing the modal. Navigation follows whatever the table is currently
+  showing, so it respects your active sort and search.
+- **Up and Down arrows** scroll the field list, with `PageUp` / `PageDown` for
+  whole screens and `Home` / `End` to jump to the top or bottom. Handy when a
+  row has more fields than fit at once.
+- `/` jumps to the **filter box**, which narrows to fields whose name or value
+  matches what you type. `Enter` hands focus back to the field list so the
+  arrows resume stepping through rows.
+- Drag any edge or corner to resize. The size is remembered for next time.
+- `Esc` closes the row view and leaves the file open.
+
+The field list takes focus the moment the view opens, so every one of those
+keys works without clicking first.
 
 ### Audio and Video Playback
 
@@ -158,10 +214,11 @@ Share files directly as GitHub Gists from the File Preview:
 3. Use `Cmd+K` / `Ctrl+K` → "Publish Document as GitHub Gist"
 
 **Visibility options:**
-| Option | Description |
-|--------|-------------|
+
+| Option                       | Description                                                                |
+| ---------------------------- | -------------------------------------------------------------------------- |
 | **Publish Secret** (default) | Creates an unlisted gist - not searchable, only accessible via direct link |
-| **Publish Public** | Creates a public gist - visible on your profile and searchable |
+| **Publish Public**           | Creates a public gist - visible on your profile and searchable             |
 
 The confirmation modal focuses "Publish Secret" by default, so you can press `Enter` to quickly publish. Press `Esc` to cancel.
 
@@ -181,6 +238,62 @@ Reference files in your AI prompts using `@` mentions:
 1. Type `@` followed by a filename
 2. Select from the autocomplete dropdown
 3. The file path is inserted, giving the AI context about that file
+
+## Command Mode (`!`)
+
+Press `!` in an empty chat composer and it turns into a command line: what you type next runs as a shell command in the agent's working directory instead of being sent to the agent. It is a way to check something without leaving the chat.
+
+The `!` is a gesture, not part of the command - it disappears the moment it switches modes, and you just type the command:
+
+```
+$ git status
+```
+
+You will know you are in command mode: a `$` appears at the left of the input, and a **COMMAND MODE** strip above it names the directory the command will run in.
+
+**Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
+
+**How it behaves:**
+
+- **The agent is bypassed entirely.** It is never spawned, never written to, and never sees the command or its output. Nothing you run this way enters the agent's context - if you want the agent to see the result, copy it into a message.
+- **It runs immediately, even while the agent is working.** Command mode does not queue and does not interrupt the turn in progress, so you can check `git log` while the agent is mid-edit.
+- **It runs in the agent's working directory** (on the agent's SSH remote, if it has one). Each command is independent - there is no persistent shell, so `cd src` on its own does nothing. Chain instead: `cd src && ls`.
+- **Output streams into the transcript** as a card showing the command, where it ran, and a live spinner while it works. When it finishes, the card shows the exit code and how long it took, with a button to copy the output.
+- **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
+
+### Tab Completion in Command Mode
+
+Command mode gets the same `Tab` completion the [Command Terminal](#command-terminal) has, so you are not typing paths from memory:
+
+| Press `Tab` after... | You get                                                      |
+| -------------------- | ------------------------------------------------------------ |
+| nothing              | The commands you have run before in this agent               |
+| `cat pack`           | Matching files - `cat package.json`                          |
+| `ls sr`              | Matching directories, with a trailing slash - `ls src/`      |
+| `cat src/comp`       | Files inside that directory, one level at a time             |
+| `git checkout ma`    | Matching git branches - `git checkout main` (git repos only) |
+| `git checkout v2`    | Matching git tags (git repos only)                           |
+
+One match completes in place. Several open a picker: `↑` / `↓` to move, `Enter` to accept, `Esc` to dismiss. In a git repo, `Tab` inside the picker cycles the category filter (All, History, Branches, Tags, Files) and `Shift+Tab` cycles back.
+
+Completion resolves from the **agent's working directory**, which is where the command will actually run. This is deliberately not the Command Terminal's directory - `cd`-ing in a terminal tab does not move where your commands run, so it must not move where completion looks either.
+
+Two chat affordances stand down in command mode, because a shell line means different things by the same characters:
+
+- **`@` file mentions** - an `@` here is an `scp` target or an email in a commit message, not a file reference for the agent.
+- **Slash commands** - a leading `/` here is an absolute path (`/usr/bin/env`), not `/history`.
+
+**Stopping a command:** a running command's card has a **Stop** button. Reach for it if you start something long or something that waits for input.
+
+<Note>
+Command mode has no keyboard - nothing is connected to the command's stdin. Programs that prompt for input (`sudo`, an editor opened by `git commit`, an interactive installer) will hang until you press **Stop**. Run those in a [Command Terminal](#command-terminal) tab instead.
+</Note>
+
+Very large output is capped so a runaway command cannot bloat your transcript; the card says so when it truncates.
+
+**Sending a message that starts with `!`:** typing `!` first only enters command mode when the composer is empty, so a bang inside a sentence is safe. To start a message with one, prefix it with a backslash: `\!important` reaches the agent as `!important`.
+
+Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you are already at a shell, so `!` is an ordinary character.
 
 ## Prompt Composer
 
@@ -513,9 +626,15 @@ Right-click any agent for quick actions:
 - **Edit Agent...** - Open configuration modal
 - **Add/Remove Bookmark** - Toggle bookmark status
 - **Move to Group** - Organize into groups
+- **Move to Window** - Send the agent to another Maestro window
+- **View Git Log / View Git Diff / Git Pull / Git Push / Change Branch / Create Pull Request** - the full [git menu](#git-actions), for git repositories only
 - **Create Worktree** - Create a git worktree sub-agent (if configured)
 - **Configure Worktrees** - Set up worktree configuration
+- **Configure Maestro Cue** - Set up event-driven automation for this agent
+- **Copy Agent GUID to Clipboard** - Copy the agent's unique identifier
 - **Remove Agent** - Delete the agent from Maestro
+
+The git actions here act on the agent you right-clicked, so you can pull or inspect the log of a background agent without switching to it first.
 
 ### Sidebar Width
 
@@ -545,12 +664,13 @@ When you send your first message to a new tab, Maestro automatically generates a
 4. If you've already renamed the tab, automatic naming is skipped
 
 **Examples of generated tab names:**
-| Your message | Generated name |
-|--------------|----------------|
+
+| Your message                                     | Generated name          |
+| ------------------------------------------------ | ----------------------- |
 | "Help me implement user authentication with JWT" | JWT Auth Implementation |
-| "Fix the bug in the checkout flow" | Checkout Bug Fix |
-| "Add dark mode support to the app" | Dark Mode Support |
-| "Refactor the database queries" | Database Query Refactor |
+| "Fix the bug in the checkout flow"               | Checkout Bug Fix        |
+| "Add dark mode support to the app"               | Dark Mode Support       |
+| "Refactor the database queries"                  | Database Query Refactor |
 
 **Configuring automatic tab naming:**
 
@@ -569,6 +689,69 @@ You can always rename tabs manually:
 - Right-click a tab → **Rename Tab**
 - Or double-click the tab name to edit it directly
 - Manual names take precedence over automatic naming
+
+### Snoozing Tabs
+
+Snooze hides an AI tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to conversations: park work you can't act on yet without closing it or letting it clutter the tab bar.
+
+Hover a tab and choose **Snooze Tab**, press `Opt+Cmd+S` / `Alt+Ctrl+S`, or run **Snooze Tab** from Quick Actions (`Cmd+K` / `Ctrl+K`). Snoozing is available on AI tabs only.
+
+**Choosing when it comes back**
+
+The snooze dialog gives you three ways to pick a time, and always previews the exact moment it resolved to before you commit:
+
+- **Presets** - Later today, This evening, Tomorrow, This weekend, Next week, Next month. Presets that have already passed for the day drop off the list.
+- **Free-form text** - type it the way you'd say it:
+
+| What you type                         | When it comes back                            |
+| ------------------------------------- | --------------------------------------------- |
+| `1d`, `10h`, `45m`                    | That far from now                             |
+| `2 weeks`, `3 days`, `1d 4h`          | Compound durations work too                   |
+| `tomorrow`, `next week`, `next month` | 9:00 AM on that day                           |
+| `tonight`                             | 6:00 PM today                                 |
+| `friday`                              | The upcoming Friday                           |
+| `next friday`                         | Friday of the following week                  |
+| `3pm`, `15:45`                        | Today if it's still ahead, otherwise tomorrow |
+| `friday 3pm`, `tomorrow at 9am`       | A day plus a time                             |
+| `aug 5`, `2026-08-05`, `12/25 6pm`    | A specific date                               |
+
+- **Calendar** - pick a date from the month grid and set a time of day.
+
+**Note to self**
+
+Every snooze takes an optional note, and that note becomes the body of the notification when the tab returns. This is what turns snooze into a reminder system: leave yourself the reason you're coming back ("check if the migration finished", "review this before standup") instead of rediscovering it later.
+
+**What happens while a tab is snoozed**
+
+The tab disappears from the tab bar and from tab navigation. The conversation is preserved exactly as you left it, and the tab returns to its original position when it wakes. If you snooze an agent's only tab, a fresh empty tab takes its place so you're never left staring at an empty workspace.
+
+When the time arrives, the tab reappears and Maestro raises a notification that stays until you dismiss it, so a reminder can't scroll past unseen. Click it to jump straight to the tab.
+
+<Note>
+Wakes are delivered by the running app. If Maestro is closed when a snooze comes due, the tab returns the next time you launch - overdue reminders are never silently dropped.
+</Note>
+
+**Long snoozes are safe.** Your AI provider owns the conversation transcript and eventually ages old ones out, which would leave a tab snoozed for months coming back empty. Maestro keeps its own copy for the length of every snooze, exactly as it does for [starred sessions](#session-management), and restores it when the tab wakes. That copy is held until the snooze ends, so unstarring a snoozed session does not discard it either.
+
+**Managing snoozed tabs**
+
+Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, or run **See All Snoozed Tabs** from Quick Actions. It shows every snoozed tab across all agents, soonest first, with its note and a countdown. Each row offers:
+
+- **Unsnooze** - bring the tab back right now
+- **Reschedule** - pick a new time or edit the note
+- **Dismiss** - drop the snooze and the tab, for when you no longer care
+
+**Snooze history**
+
+Click **View History** in the Snoozed Tabs header to see snoozes that have already finished. It is one chronological list across every agent, newest first, and each entry keeps the note you left yourself along with when it was due and when it actually came back. Entries are marked by how they ended: came back on schedule, brought back early, or dismissed.
+
+Click any entry to jump back to it. If the tab is still open you land directly on it; if only the agent is still around you land there instead. Entries whose agent has since been deleted are shown but not clickable.
+
+The log keeps the most recent 100 entries; older ones drop off as new ones arrive.
+
+<Note>
+Dismissing only discards Maestro's tab. The underlying conversation is still on disk and can be reopened from the Session Explorer.
+</Note>
 
 ## Session Management
 

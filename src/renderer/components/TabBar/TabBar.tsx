@@ -5,6 +5,8 @@ import { hasDraft } from '../../utils/tabHelpers';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useStuckTabSignature } from '../../stores/retryStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useModalStore } from '../../stores/modalStore';
 import { AITab as AITabComponent } from './AITab';
 import { BrowserTabItem } from './BrowserTabItem';
 import { FileTab } from './FileTab';
@@ -44,6 +46,7 @@ function TabBarInner({
 	onSummarizeAndContinue,
 	onCopyContext,
 	onExportHtml,
+	onSnooze,
 	onPublishGist,
 	ghCliAvailable,
 	showUnreadOnly: showUnreadOnlyProp,
@@ -107,6 +110,15 @@ function TabBarInner({
 
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	// Snoozed tabs are a cross-agent concept, so the count and the list opener
+	// come straight from the stores rather than through TabBar's prop surface.
+	const snoozedTabCount = useSessionStore((s) =>
+		s.sessions.reduce((total, session) => total + (session.snoozedTabs?.length ?? 0), 0)
+	);
+	const openSnoozedTabs = useCallback(() => {
+		useModalStore.getState().openModal('snoozedTabs');
+	}, []);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
 	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
@@ -398,6 +410,7 @@ function TabBarInner({
 			onSummarizeAndContinue && (tab.logs?.length ?? 0) >= 5 ? onSummarizeAndContinue : undefined,
 		onCopyContext: onCopyContext && (tab.logs?.length ?? 0) >= 1 ? onCopyContext : undefined,
 		onExportHtml: onExportHtml || undefined,
+		onSnooze: onSnooze || undefined,
 		onPublishGist:
 			onPublishGist && ghCliAvailable && (tab.logs?.length ?? 0) >= 1 ? onPublishGist : undefined,
 		onMoveToFirst:
@@ -444,6 +457,8 @@ function TabBarInner({
 						searchOutputKeys={shortcuts.searchOutput?.keys ?? ['Meta', 'f']}
 						searchAllTabsKeys={shortcuts.searchAllTabs?.keys ?? ['Alt', 'Meta', 'f']}
 						openTabCount={unifiedTabs?.length ?? tabs.length}
+						onShowSnoozedTabs={openSnoozedTabs}
+						snoozedTabCount={snoozedTabCount}
 					/>
 				)}
 				<button

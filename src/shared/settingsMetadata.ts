@@ -256,7 +256,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, copyPath.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath.',
 		type: 'object',
 		default: {
 			save: true,
@@ -271,6 +271,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			publishGist: true,
 			documentGraph: true,
 			openInDefault: true,
+			revealInFolder: true,
 			copyPath: true,
 		},
 		category: 'appearance',
@@ -1011,9 +1012,9 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'advanced',
 	},
 	directorNotesSettings: {
-		description: "Director's Notes settings: provider, lookback window.",
+		description: "Director's Notes settings: provider, lookback window, optional ideal end state.",
 		type: 'object',
-		default: { provider: 'claude-code', defaultLookbackDays: 7 },
+		default: { provider: 'claude-code', defaultLookbackDays: 7, defaultMode: 'rich' },
 		category: 'advanced',
 	},
 

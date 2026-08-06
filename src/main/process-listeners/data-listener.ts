@@ -110,6 +110,25 @@ export function setupDataListener(
 		flushData(sessionId);
 	});
 
+	// One-off commands (process:runCommand - command mode, terminal mode) need the
+	// same data-then-exit ordering, and they need it MORE: a fast command like
+	// `ls` produces all of its output and exits well inside the coalescing window,
+	// so without this flush the renderer is told the command finished while its
+	// output is still sitting in `dataBuffers`. Consumers tear down their output
+	// listeners on exit, so that output was silently dropped and the command
+	// looked like it printed nothing.
+	//
+	// The forwarding of `process:command-exit` lives HERE rather than with the
+	// other pass-throughs in forwarding-listeners.ts on purpose: that module is
+	// registered BEFORE this one (see process-listeners/index.ts), so an exit
+	// forwarded from there would beat this flush no matter what. Keeping the flush
+	// and the send adjacent makes the ordering structural instead of a cross-module
+	// registration-order dependency that the next refactor would quietly break.
+	processManager.on('command-exit', (sessionId: string, code: number) => {
+		flushData(sessionId);
+		safeSend('process:command-exit', sessionId, code);
+	});
+
 	// Listen to raw stdout for live output streaming to group chat participant peek panels.
 	// The 'data' event for stream-json sessions only fires at turn completion (result ready),
 	// so we need raw-stdout to stream chunks in real time during agent work.
