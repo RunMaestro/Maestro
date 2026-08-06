@@ -500,3 +500,95 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 });
+
+// =============================================================================
+// DETECTED INSTALLATION CHOOSER TESTS
+// =============================================================================
+
+describe('AgentConfigPanel - detected installation chooser', () => {
+	const CODEX_PATHS = [
+		'/opt/homebrew/bin/codex',
+		'/Users/test/.nvm/versions/node/v20.11.0/bin/codex',
+		'/usr/local/bin/codex-multi-auth-codex',
+	];
+
+	function renderWithPaths(
+		overrides: Partial<Parameters<typeof AgentConfigPanel>[0]> = {},
+		agentOverrides: Partial<AgentConfig> = {}
+	) {
+		const props = createDefaultProps({
+			agent: createMockAgent({
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: CODEX_PATHS[0],
+				allPaths: CODEX_PATHS,
+				...agentOverrides,
+			}),
+			...overrides,
+		});
+		render(<AgentConfigPanel {...props} />);
+		return props;
+	}
+
+	it('does not render a chooser when only one installation was detected', () => {
+		renderWithPaths({}, { allPaths: ['/opt/homebrew/bin/codex'] });
+
+		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
+	});
+
+	it('does not render a chooser when detection reported no alternatives', () => {
+		renderWithPaths({}, { allPaths: undefined });
+
+		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
+	});
+
+	it('lists every detected installation when more than one exists', () => {
+		renderWithPaths();
+
+		expect(screen.getByText('Detected installations (3)')).toBeInTheDocument();
+		for (const p of CODEX_PATHS) {
+			expect(screen.getByRole('option', { name: p })).toBeInTheDocument();
+		}
+	});
+
+	it('preselects the detected path when no custom path is set', () => {
+		renderWithPaths();
+
+		const select = screen.getByRole('combobox') as HTMLSelectElement;
+		expect(select.value).toBe(CODEX_PATHS[0]);
+	});
+
+	it('preselects the custom path when it matches a detected installation', () => {
+		renderWithPaths({ customPath: CODEX_PATHS[2] });
+
+		const select = screen.getByRole('combobox') as HTMLSelectElement;
+		expect(select.value).toBe(CODEX_PATHS[2]);
+	});
+
+	it('persists the selection immediately when a path is chosen', () => {
+		const props = renderWithPaths();
+
+		const select = screen.getByRole('combobox');
+		fireEvent.change(select, { target: { value: CODEX_PATHS[1] } });
+
+		expect(props.onCustomPathChange).toHaveBeenCalledWith(CODEX_PATHS[1]);
+		expect(props.onCustomPathBlur).toHaveBeenCalled();
+	});
+
+	it('surfaces a hand-typed wrapper as an explicit Custom entry', () => {
+		// A wrapper that detection never found (e.g. not on PATH) must not be
+		// silently misrepresented as the first detected option.
+		renderWithPaths({ customPath: '~/bin/codex-wrapper' });
+
+		const select = screen.getByRole('combobox') as HTMLSelectElement;
+		expect(screen.getByRole('option', { name: 'Custom: ~/bin/codex-wrapper' })).toBeInTheDocument();
+		expect(select.value).not.toBe(CODEX_PATHS[0]);
+	});
+
+	it('hides the chooser when the agent runs over SSH', () => {
+		renderWithPaths({ isSshEnabled: true });
+
+		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
+	});
+});

@@ -29,6 +29,10 @@ import { logger } from '../../utils/logger';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
+// Sentinel value for the installation chooser's "Custom" entry, used when the
+// active path was typed by hand and isn't one of the auto-detected locations.
+const CUSTOM_PATH_OPTION = '__custom__';
+
 // Counter for generating stable IDs for env vars
 let envVarIdCounter = 0;
 
@@ -497,6 +501,15 @@ export function AgentConfigPanel({
 		onEnvVarsBlur();
 	};
 
+	// Multi-install chooser state. `activePath` is whatever the Path field
+	// currently resolves to; it may be a hand-typed wrapper (or a tilde path
+	// that detection reports in expanded form), in which case it won't match
+	// any detected option and we surface it as an explicit "Custom" entry
+	// rather than letting the <select> silently display the first option.
+	const detectedPaths = agent.allPaths ?? [];
+	const activePath = customPath || agent.path || '';
+	const activePathIsDetected = detectedPaths.includes(activePath);
+
 	return (
 		<div className={spacing}>
 			{/* Path input - pre-filled with detected path, editable to override */}
@@ -540,6 +553,53 @@ export function AgentConfigPanel({
 						}}
 					/>
 				</div>
+				{/*
+				 * Multi-install chooser (e.g. nvm-managed codex alongside a
+				 * codex-multi-auth-codex wrapper). Only shown for local agents
+				 * when detection found more than one valid binary.
+				 */}
+				{!isSshEnabled && detectedPaths.length > 1 && (
+					<div className="mt-2">
+						<label
+							className="block text-xs font-medium mb-1"
+							style={{ color: theme.colors.textDim }}
+						>
+							Detected installations ({detectedPaths.length})
+						</label>
+						<select
+							value={activePathIsDetected ? activePath : CUSTOM_PATH_OPTION}
+							onChange={(e) => {
+								const next = e.target.value;
+								if (next === CUSTOM_PATH_OPTION) return;
+								onCustomPathChange(next);
+								// Persist immediately - selecting from the chooser is an explicit commit
+								onCustomPathBlur();
+							}}
+							onClick={(e) => e.stopPropagation()}
+							className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono cursor-pointer"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+								backgroundColor: theme.colors.bgMain,
+							}}
+						>
+							{!activePathIsDetected && (
+								<option value={CUSTOM_PATH_OPTION} style={{ backgroundColor: theme.colors.bgMain }}>
+									{activePath ? `Custom: ${activePath}` : 'Custom path'}
+								</option>
+							)}
+							{detectedPaths.map((p) => (
+								<option key={p} value={p} style={{ backgroundColor: theme.colors.bgMain }}>
+									{p}
+								</option>
+							))}
+						</select>
+						<p className="text-xs opacity-50 mt-1">
+							Multiple {agent.binaryName} binaries were found. Your selection is saved as the
+							default for future agents.
+						</p>
+					</div>
+				)}
 				<p className="text-xs opacity-50 mt-2">
 					{isSshEnabled
 						? `Remote command/binary for ${agent.binaryName}. Leave empty to use default.`

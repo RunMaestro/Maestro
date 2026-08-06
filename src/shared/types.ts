@@ -447,6 +447,13 @@ export interface AgentConfig {
 	available: boolean;
 	path?: string;
 	customPath?: string;
+	/**
+	 * Every detected installation path for this agent's binary, in priority
+	 * order. Only populated when detection finds more than one, so the UI can
+	 * offer a chooser (e.g. an nvm-managed `codex` alongside a
+	 * `codex-multi-auth-codex` wrapper).
+	 */
+	allPaths?: string[];
 	requiresPty?: boolean;
 	hidden?: boolean;
 	configOptions?: AgentConfigOption[];
