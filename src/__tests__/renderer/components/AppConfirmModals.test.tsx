@@ -29,6 +29,34 @@ vi.mock('lucide-react', () => ({
 	Hourglass: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="hourglass-icon" className={className} style={style} />
 	),
+	// Pulled in transitively via SnoozedTabsModal -> SnoozeHistoryModal.
+	BellRing: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="bell-ring-icon" className={className} style={style} />
+	),
+	History: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="history-icon" className={className} style={style} />
+	),
+	RotateCcw: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="rotate-ccw-icon" className={className} style={style} />
+	),
+	StickyNote: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="sticky-note-icon" className={className} style={style} />
+	),
+	Clock: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="clock-icon" className={className} style={style} />
+	),
+	CalendarClock: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="calendar-clock-icon" className={className} style={style} />
+	),
+	CalendarDays: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="calendar-days-icon" className={className} style={style} />
+	),
+	ChevronLeft: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="chevron-left-icon" className={className} style={style} />
+	),
+	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="chevron-right-icon" className={className} style={style} />
+	),
 }));
 
 const testTheme: Theme = {

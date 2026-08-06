@@ -41,6 +41,12 @@ export interface AchievementCardViewModel {
 	timeRemaining: string;
 	currentLevel: number;
 	cumulativeTimeFormatted: string;
+	/** Portion of the cumulative time credited by autonomous Cue runs */
+	cueTimeFormatted: string;
+	/** Portion of the cumulative time credited by Auto Run (cumulative minus Cue) */
+	autoRunTimeFormatted: string;
+	/** Cue share of the cumulative time, 0-100 */
+	cueSharePercent: number;
 	longestRunFormatted: string;
 	totalRuns: number;
 	unlockedCountLabel: string;

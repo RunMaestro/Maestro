@@ -38,6 +38,7 @@ import {
 } from './defaults';
 
 import { getCustomSyncPath } from './utils';
+import { trackStoreWrites } from './write-tracker';
 
 function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
 	return parseJsonWithBom<T>(value);
@@ -100,12 +101,17 @@ export function initializeStores(options: StoreInitOptions): {
 	console.log(`[STARTUP] productionDataPath (agent configs): ${_productionDataPath}`);
 
 	// 3. Initialize all other stores
-	_settingsStore = new Store<MaestroSettings>({
-		name: 'maestro-settings',
-		cwd: _syncPath,
-		defaults: SETTINGS_DEFAULTS,
-		deserialize: deserializeStoreJson,
-	});
+	// Instrumented so the settings file watcher can tell our own writes from an
+	// external edit (maestro-cli, an editor) - see stores/write-tracker.ts.
+	_settingsStore = trackStoreWrites(
+		new Store<MaestroSettings>({
+			name: 'maestro-settings',
+			cwd: _syncPath,
+			defaults: SETTINGS_DEFAULTS,
+			deserialize: deserializeStoreJson,
+		}),
+		'maestro-settings.json'
+	);
 
 	_sessionsStore = new Store<SessionsData>({
 		name: 'maestro-sessions',
@@ -123,12 +129,15 @@ export function initializeStores(options: StoreInitOptions): {
 
 	// Agent configs are ALWAYS stored in the production path, even in dev mode
 	// This ensures agent paths, custom args, and env vars are shared between dev and prod
-	_agentConfigsStore = new Store<AgentConfigsData>({
-		name: 'maestro-agent-configs',
-		cwd: _productionDataPath,
-		defaults: AGENT_CONFIGS_DEFAULTS,
-		deserialize: deserializeStoreJson,
-	});
+	_agentConfigsStore = trackStoreWrites(
+		new Store<AgentConfigsData>({
+			name: 'maestro-agent-configs',
+			cwd: _productionDataPath,
+			defaults: AGENT_CONFIGS_DEFAULTS,
+			deserialize: deserializeStoreJson,
+		}),
+		'maestro-agent-configs.json'
+	);
 
 	// Agent capability snapshots — keyed by `agentId` or `agentId:remoteUuid`.
 	// Per-device because detection state (installed paths, auth status) is

@@ -78,6 +78,10 @@ src/prompts/index.ts
 | `tab-naming.md`            | `tabNamingPrompt`     | Prompt for automatic tab naming based on conversation content                                                                |
 | `director-notes.md`        | `directorNotesPrompt` | Prompt for Director's Notes (unified history + synopsis generation)                                                          |
 
+<!-- prettier-ignore -->
+> [!NOTE]
+> `director-notes.md` is only the BASE of the synopsis prompt. `buildDirectorNotesSynopsisPrompt()` (`src/main/utils/director-notes-prompt.ts`) appends the session-history manifest and, when the conductor has configured an Ideal End State, the block built by `buildIdealEndStateBlock()` in `src/shared/directorNotesEndState.ts`. That block lives in code rather than in the prompt file on purpose: prompt files are user-customizable and persisted to `userData/core-prompts-customizations.json`, so anyone running a customized copy would never receive an edit made to the `.md`. Add conditional prompt sections in the builder, not in the customizable base.
+
 ## Template Variables
 
 Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` syntax and are case-insensitive.

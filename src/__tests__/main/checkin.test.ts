@@ -26,10 +26,13 @@ global.fetch = mockFetch as unknown as typeof fetch;
 
 let userDataDir: string;
 
-// Minimal Electron `app` stand-in - checkin.ts only ever calls getPath +
-// getVersion, and imports the App type only (no runtime electron dependency).
-function makeApp(version = '9.9.9') {
+// Minimal Electron `app` stand-in - checkin.ts only ever reads isPackaged and
+// calls getPath + getVersion, and imports the App type only (no runtime electron
+// dependency). Defaults to packaged: unpackaged runs never ping, so every test
+// that expects a request needs a packaged app.
+function makeApp(version = '9.9.9', isPackaged = true) {
 	return {
+		isPackaged,
 		getPath: (name: string) => {
 			expect(name).toBe('userData');
 			return userDataDir;
@@ -126,5 +129,28 @@ describe('checkin', () => {
 		mockFetch.mockRejectedValue(new Error('offline'));
 		const { sendCheckin } = await loadModule();
 		await expect(sendCheckin(makeApp())).resolves.toBeUndefined();
+	});
+
+	it('never pings from an unpackaged build', async () => {
+		// Dev runs and the e2e suite are not part of the install base. An
+		// unpackaged launch can also report the Electron binary version rather
+		// than Maestro's, which is what put phantom installs in the analytics.
+		const { sendCheckin } = await loadModule();
+		await sendCheckin(makeApp('1.2.3', false));
+
+		expect(mockFetch).not.toHaveBeenCalled();
+		// It must not even mint an install id - that file is what makes a
+		// machine countable, and a throwaway CI profile would create a new one
+		// on every run.
+		expect(fs.existsSync(path.join(userDataDir, 'checkin-id.json'))).toBe(false);
+	});
+
+	it('warns when the endpoint rejects the ping', async () => {
+		mockFetch.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
+		const { logger } = await import('../../main/utils/logger');
+		const { sendCheckin } = await loadModule();
+		await expect(sendCheckin(makeApp())).resolves.toBeUndefined();
+
+		expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('HTTP 500'), 'Checkin');
 	});
 });

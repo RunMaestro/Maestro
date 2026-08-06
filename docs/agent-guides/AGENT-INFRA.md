@@ -378,6 +378,36 @@ Sticky mode (`'sticky'`) opts out of all three clear points. Off mode
 suppresses appending in the first place at the renderer's `onThinkingChunk`
 listener.
 
+### Streams vs cards: what may be appended to
+
+A `LogEntry` is one of two things, and coalescing must tell them apart:
+
+- **A stream** - `stdout` / `stderr` / `thinking` text arriving in chunks.
+  Consecutive chunks coalesce into one entry so the transcript isn't one
+  bubble per packet.
+- **A self-contained card** - a `!` command's output, a retry-outage card, a
+  session-recovery prompt, a tool call. Its text is owned by whoever created
+  it and is updated by log id, never appended to.
+
+Cards keep a **natural `source`**: a command-mode card is `source: 'stdout'`
+because its body genuinely is terminal output. So `source` alone cannot tell
+you whether appending is safe, and every site that assumed it could has
+produced a bug - most recently agent replies being concatenated into a `!`
+command's terminal output, because the card was the newest `stdout` entry when
+the next chunk arrived (command mode runs _during_ a turn by design, so this
+was near-certain rather than a rare race).
+
+The rule lives in one place, `renderer/utils/logEntries.ts`:
+
+- `isSelfContainedCard(entry)` - enumerates the card markers
+- `canAppendToLogEntry(entry, source)` - same source **and** not a card
+
+Used by all three coalescing sites (`useBatchedSessionUpdates` AI-tab path,
+its legacy `shellLogs` path, and `useAgentThinkingListener`). Callers keep
+their own policy on top (the 500ms window, session-busy). **Adding a new card
+kind:** add its marker to `isSelfContainedCard` and every site is correct by
+construction.
+
 **Adding a new agent:** make sure your parser tags reasoning deltas with
 `isReasoning: true` and emits tool-use events through the standard
 `tool_use` ParsedEvent type. Verify the tab transitions to `idle` cleanly

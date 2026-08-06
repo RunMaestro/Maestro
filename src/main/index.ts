@@ -119,6 +119,8 @@ import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
 import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
+import { MEDIA_SCHEME } from '../shared/mediaTypes';
+import { handleMediaStreamRequest } from './media/media-stream';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -196,6 +198,19 @@ const IMAGE_SCHEME = 'maestro-image';
 		{
 			scheme: IMAGE_SCHEME,
 			privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+		},
+		// Streams local audio/video into <audio>/<video> in the file preview.
+		// `stream: true` keeps range responses flowing chunk-by-chunk instead of
+		// buffering, which is what makes seeking a multi-GB video cheap.
+		{
+			scheme: MEDIA_SCHEME,
+			privileges: {
+				standard: true,
+				secure: true,
+				supportFetchAPI: true,
+				corsEnabled: true,
+				stream: true,
+			},
 		},
 	];
 	if (!isDevelopment) {
@@ -518,6 +533,12 @@ app
 			}
 		});
 
+		// Stream local audio/video files into the file preview's <audio>/<video>
+		// element with HTTP range support, so scrubbing a large recording does not
+		// pull it through IPC or into the renderer heap. Registered on the default
+		// session only, so browser tab webviews (own partitions) cannot reach it.
+		protocol.handle(MEDIA_SCHEME, handleMediaStreamRequest);
+
 		// Serve the production renderer over `app://` so static and dynamic ES
 		// module imports succeed on Electron 41 (Chromium 138 blocks both under
 		// file://). `net.fetch` cannot read file:// URLs in Electron 41 either, so
@@ -772,7 +793,7 @@ app
 		// context-window popover has fresh quota data on first turn. Failures here
 		// are non-fatal — the spawner's resolver tolerates a null snapshot by
 		// defaulting to interactive, and the next sampler refresh will repopulate.
-		void runStartupUsageSampling({
+		const startupUsageSampling = runStartupUsageSampling({
 			sessionsStore,
 			agentConfigsStore,
 			settingsStore: store,
@@ -795,6 +816,21 @@ app
 			agentDetector,
 		});
 		usageRefreshScheduler.start();
+
+		// Warm any provider the strict startup pass left cold (no auto-refresh
+		// interval picked, no eligible recent maestro-p session, Codex not sampled
+		// on boot at all). Runs after that pass settles so the two can't spawn
+		// `maestro-p --status` for the same account at once, and no-ops when the
+		// snapshots already hold renderable data. This is what makes the Usage
+		// Dashboard's Anthropic / OpenAI tabs show up on the first open instead of
+		// only after a close-and-reopen.
+		void startupUsageSampling
+			.then(() => usageRefreshScheduler?.warmUp())
+			.catch((err: unknown) => {
+				logger.warn('Provider quota warm-up failed', 'Startup', {
+					error: err instanceof Error ? err.message : String(err),
+				});
+			});
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({

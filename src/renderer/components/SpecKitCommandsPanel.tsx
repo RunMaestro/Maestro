@@ -14,6 +14,7 @@ import type { Theme, SpecKitCommand, SpecKitMetadata } from '../types';
 import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { CollapsedCommandsNotice, ToggleSwitch } from './ui';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
 
@@ -57,6 +58,12 @@ export function SpecKitCommandsPanel({
 		textareaRef: editCommandTextareaRef,
 		value: editingCommand?.prompt || '',
 		onChange: (value) => editingCommand && setEditingCommand({ ...editingCommand, prompt: value }),
+	});
+
+	const editPromptResize = useResizableTextarea({
+		sizeKey: 'speckit-command-edit-prompt',
+		minHeight: 300,
+		externalRef: editCommandTextareaRef,
 	});
 
 	// Load commands and metadata on mount
@@ -354,7 +361,11 @@ export function SpecKitCommandsPanel({
 											}}
 											rows={15}
 											className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
-											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												...editPromptResize.style,
+											}}
 										/>
 										<TemplateAutocompleteDropdown
 											ref={editAutocompleteRef}

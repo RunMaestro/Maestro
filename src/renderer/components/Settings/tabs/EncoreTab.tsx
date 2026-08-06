@@ -24,6 +24,7 @@ import {
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
 import { useDebouncedCallback } from '../../../hooks/utils/useThrottle';
+import { useResizableTextarea } from '../../../hooks/ui/useResizableTextarea';
 import { captureException } from '../../../utils/sentry';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
@@ -31,6 +32,7 @@ import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
 import { isBetaAgent } from '../../../../shared/agentMetadata';
 import { SYMPHONY_REGISTRY_URL } from '../../../../shared/symphony-constants';
 import { DEFAULT_CUE_SETTINGS, type CueSettings } from '../../../../shared/cue';
+import { IDEAL_END_STATE_MAX_LENGTH } from '../../../../shared/directorNotesEndState';
 import { cueService } from '../../../services/cue';
 
 export interface EncoreTabProps {
@@ -214,6 +216,11 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		});
 		ac.handleAgentChange(agentId);
 	};
+
+	const idealEndStateResize = useResizableTextarea({
+		sizeKey: 'settings-director-notes-ideal-end-state',
+		minHeight: 120,
+	});
 
 	const persistDnCustomConfig = () => {
 		setDirectorNotesSettings({
@@ -1252,6 +1259,56 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
 								How far back to look when generating notes (can be adjusted per-report)
 							</p>
+						</div>
+
+						{/* Ideal End State - optional; drives the extra progress section */}
+						<div data-setting-id="encore-director-notes-ideal-end-state">
+							<div
+								className="block text-xs font-bold mb-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Ideal End State (optional)
+							</div>
+							<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+								Describe where you are trying to get to: the projects in flight, which agents belong
+								to each, and what finished looks like. Leave this empty and notes are generated
+								exactly as they are today. Fill it in and the notes prioritize the projects you
+								name, frame Next Steps around them, and add a Progress Toward Ideal End State
+								section measuring how far the window moved you.
+							</p>
+							<textarea
+								ref={idealEndStateResize.textareaRef}
+								value={directorNotesSettings.idealEndState ?? ''}
+								onChange={(e) =>
+									setDirectorNotesSettings({
+										...directorNotesSettings,
+										idealEndState: e.target.value,
+									})
+								}
+								placeholder={
+									'e.g., Shipping v2 of the ingest pipeline. Agents parser-a, parser-b and schema-migration are all on it; done means the new schema is live and the legacy path is deleted.\n\nSeparately, the docs rewrite (agent docs-refresh) needs every page under /guides updated for the new CLI flags.'
+								}
+								className="w-full p-3 rounded border bg-transparent outline-none text-sm resize-y"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									minHeight: '120px',
+									...idealEndStateResize.style,
+								}}
+								maxLength={IDEAL_END_STATE_MAX_LENGTH}
+							/>
+							<div
+								className="text-xs mt-1 text-right"
+								style={{
+									color:
+										(directorNotesSettings.idealEndState?.length ?? 0) >
+										IDEAL_END_STATE_MAX_LENGTH * 0.9
+											? theme.colors.warning
+											: theme.colors.textDim,
+								}}
+							>
+								{directorNotesSettings.idealEndState?.length ?? 0}/{IDEAL_END_STATE_MAX_LENGTH}
+							</div>
 						</div>
 					</div>
 				)}

@@ -252,6 +252,7 @@ describe('useSettings', () => {
 
 			expect(result.current.autoRunStats).toEqual({
 				cumulativeTimeMs: 0,
+				cueTimeMs: 0,
 				longestRunMs: 0,
 				longestRunTimestamp: 0,
 				totalRuns: 0,

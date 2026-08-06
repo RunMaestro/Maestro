@@ -14,6 +14,7 @@ import {
 	Share2,
 	GitGraph,
 	ExternalLink,
+	FolderOpen,
 	WrapText,
 } from 'lucide-react';
 import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
@@ -21,6 +22,7 @@ import { Spinner } from '../ui/Spinner';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { getRevealLabel } from '../../utils/platformUtils';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
@@ -252,6 +254,23 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
+						{/* Open in Maestro Browser - HTML files only, not over SSH
+						    (file:// can't reach the remote host). Mirrors the file-tree
+						    right-click action so JS-heavy local HTML renders in the full
+						    webview instead of the sandboxed preview iframe. Sits next to the
+						    HTML render toggle since both are "view this in a browser" actions. */}
+						{toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser && (
+							<HoverTooltip theme={theme} label="Open in Maestro Browser">
+								<button
+									onClick={onOpenInBrowser}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="open-in-maestro-browser"
+								>
+									<AppWindow className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
 						{/* Preview tier chip - compact icon-only mode inside the toolbar */}
 						{toolbarVisibility.previewTier && showTierChip && (
 							<PreviewTierChip
@@ -352,22 +371,6 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Open in Maestro Browser — HTML files only, not over SSH
-						    (file:// can't reach the remote host). Mirrors the file-tree
-						    right-click action so JS-heavy local HTML renders in the full
-						    webview instead of the sandboxed preview iframe. */}
-						{toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser && (
-							<HoverTooltip theme={theme} label="Open in Maestro Browser">
-								<button
-									onClick={onOpenInBrowser}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-									data-testid="open-in-maestro-browser"
-								>
-									<AppWindow className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
 						{toolbarVisibility.openInDefault && !sshRemoteId && (
 							<HoverTooltip theme={theme} label="Open in Default App">
 								<button
@@ -376,6 +379,19 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									style={{ color: theme.colors.textDim }}
 								>
 									<ExternalLink className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
+						{/* Reveal in Finder / Explorer / File Manager — local files only */}
+						{toolbarVisibility.revealInFolder && !sshRemoteId && (
+							<HoverTooltip theme={theme} label={getRevealLabel(window.maestro?.platform ?? '')}>
+								<button
+									onClick={() => window.maestro?.shell?.showItemInFolder(file.path)}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="reveal-in-folder-button"
+								>
+									<FolderOpen className={headerIconClass} />
 								</button>
 							</HoverTooltip>
 						)}

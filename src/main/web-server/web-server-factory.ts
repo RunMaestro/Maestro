@@ -2830,6 +2830,15 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					sessionNameMap,
 					lookbackDays,
 					basePrompt: getPrompt('director-notes'),
+					// Same setting the desktop path reads, so a CLI-driven synopsis
+					// is framed by the end state too.
+					idealEndState: (() => {
+						const dn = (settingsStore.get('directorNotesSettings') ?? {}) as Record<
+							string,
+							unknown
+						>;
+						return typeof dn.idealEndState === 'string' ? dn.idealEndState : '';
+					})(),
 				});
 
 				if (!prompt) {
