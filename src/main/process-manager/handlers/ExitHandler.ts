@@ -255,6 +255,21 @@ export class ExitHandler {
 		// before the exit event, so listeners see all data before exit fires.
 		this.bufferManager.flushDataBuffer(sessionId);
 
+		// `awaitCopilotShutdown` above can park this handler for seconds, long
+		// enough for the session to be re-spawned under the same key. Emitting
+		// then would settle the successor's turn with this process's exit code,
+		// and the delete would orphan a running process. Callers already screen
+		// out replaced generations before entering; this re-checks the window
+		// that opened while we awaited.
+		if (this.processes.get(sessionId) !== managedProcess) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing exit event',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
+
 		this.emitter.emit('exit', sessionId, code);
 		this.processes.delete(sessionId);
 	}

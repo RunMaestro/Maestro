@@ -147,6 +147,19 @@ export class PtySpawner {
 
 			this.processes.set(sessionId, managedProcess);
 
+			// A killed PTY can still deliver data and its exit after ProcessManager
+			// has registered a replacement under the same sessionId key (`spawn()`
+			// kills the predecessor first, then the spawner re-uses the key). Late
+			// events keyed by sessionId alone would land on the live successor:
+			// the predecessor's exit code would be reported as the successor dying
+			// and the `delete` below would orphan a process that is still running.
+			// A missing entry is NOT superseded - that's the ordinary post-kill
+			// path whose exit event the renderer needs to settle the tab.
+			const isSuperseded = (): boolean => {
+				const current = this.processes.get(sessionId);
+				return current !== undefined && current !== managedProcess;
+			};
+
 			// Terminal session IDs use the format {sessionId}-terminal-{tabId} (desktop)
 			// or {sessionId}-terminal (web). xterm.js renders escape sequences itself,
 			// so raw PTY data must be forwarded without any stripping.
@@ -155,6 +168,7 @@ export class PtySpawner {
 
 			// Handle output
 			ptyProcess.onData((data) => {
+				if (isSuperseded()) return;
 				if (isTerminalTab) {
 					// Raw pass-through for xterm.js terminal tabs — no filtering
 					if (data.length > 0) {
@@ -181,6 +195,16 @@ export class PtySpawner {
 			});
 
 			ptyProcess.onExit(({ exitCode, signal }) => {
+				if (isSuperseded()) {
+					logger.warn('[ProcessManager] Ignoring exit from superseded PTY', 'ProcessManager', {
+						sessionId,
+						pid: ptyProcess.pid,
+						exitCode,
+						signal,
+					});
+					return;
+				}
+
 				// Flush any remaining buffered data before exit
 				this.bufferManager.flushDataBuffer(sessionId);
 
