@@ -74,6 +74,8 @@ function createMockDeps(
 		syncFileTreeToTabCompletion: vi.fn(),
 		processInput: vi.fn(),
 		getTabCompletionSuggestions: vi.fn().mockReturnValue([]),
+		getCommandMode: () => false,
+		setCommandMode: vi.fn(),
 		inputRef: { current: { focus: vi.fn(), blur: vi.fn() } } as any,
 		terminalOutputRef: { current: { focus: vi.fn() } } as any,
 		...rest,
@@ -805,7 +807,9 @@ describe('Tab completion trigger', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		expect(deps.getTabCompletionSuggestions).toHaveBeenCalledWith('sr');
+		// Terminal mode passes commandMode=false, so completion resolves against
+		// shellCwd and the shell history rather than the agent's cwd.
+		expect(deps.getTabCompletionSuggestions).toHaveBeenCalledWith('sr', 'all', false);
 		expect(deps.setInputValue).toHaveBeenCalledWith('src/');
 	});
 
@@ -1524,6 +1528,83 @@ describe('General edge cases — additional', () => {
 
 		expect(e.preventDefault).not.toHaveBeenCalled();
 		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
+	describe('command mode exit', () => {
+		// The `!` gesture consumes the bang, so there is no character left to
+		// delete. Escape and Backspace on an empty command line are the way out.
+		function commandModeDeps(overrides: Parameters<typeof createMockDeps>[0] = {}) {
+			return createMockDeps({ getCommandMode: () => true, ...overrides });
+		}
+
+		it.each(['Escape', 'Backspace'])('exits on %s when the line is empty', (key) => {
+			setActiveSession({ inputMode: 'ai' });
+			const deps = commandModeDeps({ inputValue: '' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			const e = createKeyEvent(key);
+
+			act(() => {
+				result.current.handleInputKeyDown(e);
+			});
+
+			expect(deps.setCommandMode).toHaveBeenCalledWith(false);
+			expect(e.preventDefault).toHaveBeenCalled();
+		});
+
+		it.each(['Escape', 'Backspace'])('does NOT exit on %s with a half-typed command', (key) => {
+			setActiveSession({ inputMode: 'ai' });
+			const deps = commandModeDeps({ inputValue: 'git pu' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => {
+				result.current.handleInputKeyDown(createKeyEvent(key));
+			});
+
+			expect(deps.setCommandMode).not.toHaveBeenCalled();
+		});
+
+		it('leaves Escape alone outside command mode', () => {
+			setActiveSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ inputValue: '' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => {
+				result.current.handleInputKeyDown(createKeyEvent('Escape'));
+			});
+
+			expect(deps.setCommandMode).not.toHaveBeenCalled();
+			// Falls through to the existing blur-the-composer behaviour.
+			expect(deps.inputRef.current!.blur).toHaveBeenCalled();
+		});
+
+		it('does not hijack Backspace in a terminal tab', () => {
+			setActiveSession({ inputMode: 'terminal' });
+			const deps = commandModeDeps({ inputValue: '' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => {
+				result.current.handleInputKeyDown(createKeyEvent('Backspace'));
+			});
+
+			expect(deps.setCommandMode).not.toHaveBeenCalled();
+		});
+
+		it('opens completion on Tab for an EMPTY command line', () => {
+			// "what have I run before" - the terminal has no equivalent.
+			setActiveSession({ inputMode: 'ai' });
+			const getTabCompletionSuggestions = vi.fn().mockReturnValue([
+				{ value: 'git status', displayText: 'git status', type: 'history' },
+				{ value: 'npm test', displayText: 'npm test', type: 'history' },
+			]);
+			const deps = commandModeDeps({ inputValue: '', getTabCompletionSuggestions });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => {
+				result.current.handleInputKeyDown(createKeyEvent('Tab'));
+			});
+
+			expect(getTabCompletionSuggestions).toHaveBeenCalledWith('', 'all', true);
+		});
 	});
 
 	it('handleInputKeyDown return value is stable across re-renders', () => {

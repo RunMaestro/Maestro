@@ -41,8 +41,19 @@ import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { isToastWidth } from '../../shared/toastWidth';
+import { normalizePlaybackRate } from '../../shared/mediaTypes';
+import { useMediaPlaybackStore, type MediaFloatRect } from './mediaPlaybackStore';
 import { logger } from '../utils/logger';
-import { useUIStore, type ModalSize } from './uiStore';
+import { useUIStore } from './uiStore';
+import {
+	useSnoozeHistoryStore,
+	sanitizeSnoozeHistory,
+	SNOOZE_HISTORY_SETTINGS_KEY,
+} from './snoozeHistoryStore';
+import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
+import { sanitizeTextareaHeights } from '../utils/textareaSizing';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -232,6 +243,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'publishGist',
 	'documentGraph',
 	'openInDefault',
+	'revealInFolder',
 	'copyPath',
 ] as const;
 
@@ -315,6 +327,8 @@ export interface SettingsStoreState {
 	ghPath: string;
 	fontFamily: string;
 	fontSize: number;
+	/** Playback speed for audio/video in the file preview. Sticky across files. */
+	mediaPlaybackRate: number;
 	activeThemeId: ThemeId;
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
@@ -327,6 +341,8 @@ export interface SettingsStoreState {
 	defaultShowThinking: ThinkingMode;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
+	modalSizes: ModalSizes;
+	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
 	bionifyReadingMode: boolean;
@@ -465,6 +481,7 @@ export interface SettingsStoreActions {
 	setGhPath: (value: string) => void;
 	setFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
+	setMediaPlaybackRate: (value: number) => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
@@ -477,6 +494,12 @@ export interface SettingsStoreActions {
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
+	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
+	resetModalSize: (key: ModalResizeKey) => void;
+	resetModalSizes: () => void;
+	/** Remember the height a user dragged a resizable textarea to. */
+	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
 	setBionifyReadingMode: (value: boolean) => void;
@@ -684,6 +707,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		ghPath: '',
 		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
 		fontSize: 14,
+		mediaPlaybackRate: 1,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 		customThemeBaseId: 'dracula',
@@ -696,6 +720,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
+		modalSizes: {},
+		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		bionifyReadingMode: false,
@@ -883,6 +909,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('fontSize', value);
 		},
 
+		setMediaPlaybackRate: (value) => {
+			const rate = normalizePlaybackRate(value);
+			set({ mediaPlaybackRate: rate });
+			window.maestro.settings.set('mediaPlaybackRate', rate);
+		},
+
 		setActiveThemeId: (value) => {
 			set({ activeThemeId: value });
 			window.maestro.settings.set('activeThemeId', value);
@@ -944,6 +976,45 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const clamped = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, value));
 			set({ rightPanelWidth: clamped });
 			window.maestro.settings.set('rightPanelWidth', clamped);
+		},
+
+		setModalSize: (key, value) => {
+			const normalized = sanitizeModalSizes({ [key]: value })[key];
+			if (!normalized) return;
+			const next = {
+				...get().modalSizes,
+				[key]: normalized,
+			};
+			set({ modalSizes: next });
+			window.maestro.settings.set('modalSizes', next);
+		},
+
+		// Single-key counterpart to resetModalSizes, backing the double-click-to-reset
+		// gesture on a single modal's resize handles.
+		resetModalSize: (key) => {
+			const current = get().modalSizes;
+			if (!(key in current)) return;
+			const next = { ...current };
+			delete next[key];
+			set({ modalSizes: next });
+			window.maestro.settings.set('modalSizes', next);
+		},
+
+		resetModalSizes: () => {
+			set({ modalSizes: {} });
+			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setTextareaHeight: (key, value) => {
+			const normalized = sanitizeTextareaHeights({ [key]: value })[key];
+			if (!normalized) return;
+			if (get().textareaHeights[key] === normalized) return;
+			const next = {
+				...get().textareaHeights,
+				[key]: normalized,
+			};
+			set({ textareaHeights: next });
+			window.maestro.settings.set('textareaHeights', next);
 		},
 
 		setMarkdownEditMode: (value) => {
@@ -2095,6 +2166,12 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[]; toKeys: stri
 		fromKeys: ['Meta', 'Shift', '2'],
 		toKeys: ['Meta', 'Shift', 'e'],
 	},
+	// focusActiveTab moved off Opt+Cmd+F to free that combo for searchAllTabs
+	// (cross-tab message search), which reads as an escalation of Cmd+F.
+	focusActiveTab: {
+		fromKeys: ['Alt', 'Meta', 'f'],
+		toKeys: ['Alt', 'Meta', 'ArrowUp'],
+	},
 };
 
 function keysEqual(a: string[], b: string[]): boolean {
@@ -2165,6 +2242,10 @@ function migrateShortcuts(
  * Called once on app startup and again on system resume from sleep.
  */
 export async function loadAllSettings(): Promise<void> {
+	// Snapshot before the awaited reads below. Anything the user changes while
+	// they are in flight must survive this load - see the filter before setState.
+	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
+
 	try {
 		// Batch load all settings in a single IPC call
 		const allSettings = (await window.maestro.settings.getAll()) as Record<string, unknown>;
@@ -2211,6 +2292,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 
+		if (allSettings['mediaPlaybackRate'] !== undefined)
+			patch.mediaPlaybackRate = normalizePlaybackRate(allSettings['mediaPlaybackRate']);
+
 		if (allSettings['activeThemeId'] !== undefined)
 			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
 
@@ -2256,6 +2340,12 @@ export async function loadAllSettings(): Promise<void> {
 				RIGHT_PANEL_MIN_WIDTH,
 				Math.min(RIGHT_PANEL_MAX_WIDTH, allSettings['rightPanelWidth'] as number)
 			);
+
+		if (allSettings['modalSizes'] !== undefined)
+			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
+
+		if (allSettings['textareaHeights'] !== undefined)
+			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
 
 		if (allSettings['markdownEditMode'] !== undefined)
 			patch.markdownEditMode = allSettings['markdownEditMode'] as boolean;
@@ -2491,11 +2581,27 @@ export async function loadAllSettings(): Promise<void> {
 				usageRefreshIntervals: allSettings['usageRefreshIntervals'] as Record<string, number>,
 			});
 
-		// Per-modal sizes live in uiStore next to the other persisted UI maps, so
-		// the resize hook can read and write them without a settings round-trip.
-		if (allSettings['modalSizes'] !== undefined && typeof allSettings['modalSizes'] === 'object')
-			useUIStore.setState({
-				modalSizes: allSettings['modalSizes'] as Record<string, ModalSize>,
+		// Resolved-snooze history lives in snoozeHistoryStore (it's appended from
+		// the wake scheduler and the Snoozed Tabs modal, not from Settings), so its
+		// persisted array hydrates directly there. Sanitized first: entries are
+		// read straight back from disk and rendered.
+		if (allSettings[SNOOZE_HISTORY_SETTINGS_KEY] !== undefined)
+			useSnoozeHistoryStore.setState({
+				entries: sanitizeSnoozeHistory(allSettings[SNOOZE_HISTORY_SETTINGS_KEY]),
+			});
+
+		// Floating media player geometry lives in mediaPlaybackStore so the
+		// drag/resize handlers can read and write it without a settings
+		// round-trip. (Per-modal `modalSizes` is NOT hydrated here: rc keeps it in
+		// settingsStore behind sanitizeModalSizes, hydrated above with the other
+		// settings-owned keys.)
+		if (
+			allSettings['mediaPlayerFloatRect'] !== undefined &&
+			allSettings['mediaPlayerFloatRect'] !== null &&
+			typeof allSettings['mediaPlayerFloatRect'] === 'object'
+		)
+			useMediaPlaybackStore.setState({
+				floatRect: allSettings['mediaPlayerFloatRect'] as MediaFloatRect,
 			});
 
 		if (allSettings['tourCompleted'] !== undefined)
@@ -2879,13 +2985,80 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['annotatorTextBgColor'] !== undefined)
 			patch.annotatorTextBgColor = allSettings['annotatorTextBgColor'] as string;
 
+		// On a RELOAD (system resume, another window's write), drop any key the user
+		// changed while the reads above were in flight. This load is several IPC
+		// round trips long, so reapplying the older snapshot on top of live typing
+		// loses keystrokes and yanks the caret to the end of the field. Those edits
+		// persisted themselves on the way in, so the in-memory value is the newer
+		// one. Skipped on the initial hydration, where the store still holds
+		// defaults and every disk value must land.
+		if (beforeRead.settingsLoaded === true) {
+			const live = useSettingsStore.getState() as unknown as Record<string, unknown>;
+			const patchKeys = patch as unknown as Record<string, unknown>;
+			for (const key of Object.keys(patchKeys)) {
+				if (live[key] !== beforeRead[key]) {
+					delete patchKeys[key];
+				}
+			}
+		}
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
+
+		// Deliberately not awaited: it reads the Cue database over IPC and only
+		// refines a display subtotal, so it must not hold up settings load.
+		void backfillCueTimeIfNeeded(allSettings['cueTimeBackfillApplied'] === true);
 	} catch (error) {
 		logger.error('[Settings] Failed to load settings:', undefined, error);
 		// Mark settings as loaded even if there was an error (use defaults)
 		useSettingsStore.setState({ settingsLoaded: true });
+	}
+}
+
+/**
+ * One-time backfill of `autoRunStats.cueTimeMs`.
+ *
+ * Cue and Auto Run time were credited through one identical code path before
+ * the split existed, so the Cue share of the already-accrued `cumulativeTimeMs`
+ * cannot be recovered from settings alone. The Cue database still holds per-run
+ * durations for its retention window, so this reconstructs the Cue share from
+ * there using the engine's own crediting rule.
+ *
+ * This only re-attributes time already inside `cumulativeTimeMs` - it never adds
+ * to the total, and is clamped so the subtotal can't exceed it. History older
+ * than the Cue retention window is unrecoverable and stays attributed to Auto
+ * Run, so the result is a floor, not an exact split.
+ */
+async function backfillCueTimeIfNeeded(alreadyApplied: boolean): Promise<void> {
+	if (alreadyApplied) return;
+	try {
+		const historicalCreditMs = await window.maestro.cueStats.getHistoricalConductorCredit();
+		// Mark applied regardless of the amount: a user with no retained Cue
+		// history should not re-query the database on every launch.
+		window.maestro.settings.set('cueTimeBackfillApplied', true);
+		if (!Number.isFinite(historicalCreditMs) || historicalCreditMs <= 0) return;
+
+		const prev = useSettingsStore.getState().autoRunStats;
+		// Take the larger of the two: live Cue credit may already have accrued
+		// between app launch and this call, and that time is also represented in
+		// the historical total once its run completed.
+		const cueTimeMs = Math.min(
+			Math.max(prev.cueTimeMs ?? 0, historicalCreditMs),
+			prev.cumulativeTimeMs
+		);
+		if (cueTimeMs === (prev.cueTimeMs ?? 0)) return;
+
+		const updated: AutoRunStats = { ...prev, cueTimeMs };
+		useSettingsStore.setState({ autoRunStats: updated });
+		window.maestro.settings.set('autoRunStats', updated);
+		logger.info(
+			`[Settings] Backfilled Cue Conductor time from cue.db: ${Math.round(cueTimeMs / 60000)} minutes`
+		);
+	} catch (error) {
+		// A missing/failed Cue database just means no historical split is
+		// available. Leave the flag unset so a later launch can retry.
+		logger.warn('[Settings] Cue time backfill skipped', undefined, error);
 	}
 }
 
@@ -2912,6 +3085,7 @@ export function getSettingsActions() {
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setFontSize: state.setFontSize,
+		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,
 		setCustomThemeColors: state.setCustomThemeColors,
 		setCustomThemeBaseId: state.setCustomThemeBaseId,
@@ -2921,6 +3095,10 @@ export function getSettingsActions() {
 		setDefaultShowThinking: state.setDefaultShowThinking,
 		setLeftSidebarWidth: state.setLeftSidebarWidth,
 		setRightPanelWidth: state.setRightPanelWidth,
+		setModalSize: state.setModalSize,
+		resetModalSize: state.resetModalSize,
+		resetModalSizes: state.resetModalSizes,
+		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
 		setBionifyReadingMode: state.setBionifyReadingMode,

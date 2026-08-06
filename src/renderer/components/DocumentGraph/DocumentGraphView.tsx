@@ -35,8 +35,10 @@ import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
+import { ResizeHandles } from '../ui/ResizeHandles';
 import { useDebouncedCallback } from '../../hooks/utils';
 import {
 	buildGraphData,
@@ -356,7 +358,7 @@ export function DocumentGraphView({
 	const abortBacklinkScanRef = useRef<(() => void) | null>(null);
 	const currentGraphDataRef = useRef<GraphData | null>(null);
 
-	// Progressive expansion state — true while BFS is still walking outward after
+	// Progressive expansion state - true while BFS is still walking outward after
 	// the focus node has been rendered. Drives the non-blocking "expanding graph"
 	// badge in the bottom-left corner.
 	const [expandingGraph, setExpandingGraph] = useState(false);
@@ -547,7 +549,7 @@ export function DocumentGraphView({
 			);
 
 			if (update.phase === 'focus') {
-				// First update — replace any stale state from a previous build with
+				// First update - replace any stale state from a previous build with
 				// just the focus node, dismiss the spinner, and flag the BFS
 				// expansion as in-flight.
 				streamingActiveRef.current = true;
@@ -689,7 +691,7 @@ export function DocumentGraphView({
 				// If the streaming flow has already populated nodes/links, only
 				// flip the visible list when toggling state requires it (e.g. the
 				// user has external-links enabled and externals just arrived).
-				// Otherwise replace state — the streaming path may have been a
+				// Otherwise replace state - the streaming path may have been a
 				// no-op (e.g. focus file failed to parse and we got the empty
 				// fallback return).
 				if (!streamingActiveRef.current) {
@@ -703,7 +705,7 @@ export function DocumentGraphView({
 				// Set active focus file from the required focusFilePath prop
 				setActiveFocusFile(focusFilePath);
 
-				// Streaming BFS is done — clear the in-flight badge.
+				// Streaming BFS is done - clear the in-flight badge.
 				setExpandingGraph(false);
 				setExpandProgress(null);
 
@@ -983,7 +985,7 @@ export function DocumentGraphView({
 	);
 
 	/**
-	 * Handle layout type change — clears drag overrides since they're layout-specific
+	 * Handle layout type change - clears drag overrides since they're layout-specific
 	 */
 	const handleLayoutTypeChange = useCallback(
 		(type: MindMapLayoutType) => {
@@ -1364,6 +1366,13 @@ export function DocumentGraphView({
 			return Math.round(clamped * 10) / 10;
 		});
 	}, []);
+	const resizableModal = useResizableModal({
+		resizeKey: 'document-graph',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 500 },
+		enabled: isOpen,
+		externalRef: containerRef,
+	});
 
 	if (!isOpen) return null;
 
@@ -1397,16 +1406,23 @@ export function DocumentGraphView({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Document Graph"
-				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
-					width: '90vw',
-					height: '90vh',
 				}}
+				data-modal-resize-key="document-graph"
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={handleContainerKeyDown}
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Header */}
 				<div
 					className="px-6 py-4 border-b flex items-center justify-between flex-shrink-0"
@@ -2148,7 +2164,7 @@ export function DocumentGraphView({
 									: `Load more (${totalDocuments - loadedDocuments} remaining)`}
 							</button>
 						)}
-						{/* BFS expansion indicator — visible after the focus node has
+						{/* BFS expansion indicator - visible after the focus node has
 						    rendered while we're still walking outward */}
 						{expandingGraph && (
 							<span

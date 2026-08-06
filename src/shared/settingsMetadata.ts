@@ -109,6 +109,20 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: [],
 		category: 'appearance',
 	},
+	mediaPlayerFloatRect: {
+		description:
+			'Position and size of the floating media player, remembered across restarts. Null until the user moves or resizes it.',
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
+	mediaPlaybackRate: {
+		description:
+			'Playback speed for audio and video files opened in the file preview. Persists across files and restarts. Range 0.25 to 4.',
+		type: 'number',
+		default: 1,
+		category: 'editor',
+	},
 	colorBlindMode: {
 		description: 'Enable colorblind-friendly palettes for status indicators and charts.',
 		type: 'boolean',
@@ -242,7 +256,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, copyPath.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath.',
 		type: 'object',
 		default: {
 			save: true,
@@ -257,6 +271,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			publishGist: true,
 			documentGraph: true,
 			openInDefault: true,
+			revealInFolder: true,
 			copyPath: true,
 		},
 		category: 'appearance',
@@ -997,9 +1012,9 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'advanced',
 	},
 	directorNotesSettings: {
-		description: "Director's Notes settings: provider, lookback window.",
+		description: "Director's Notes settings: provider, lookback window, optional ideal end state.",
 		type: 'object',
-		default: { provider: 'claude-code', defaultLookbackDays: 7 },
+		default: { provider: 'claude-code', defaultLookbackDays: 7, defaultMode: 'rich' },
 		category: 'advanced',
 	},
 

@@ -48,8 +48,11 @@ export function BadgeStatsGrid({
 	longestRunFormatted,
 	totalRuns,
 }: BadgeStatsGridProps) {
+	// Fixed 4 columns rather than a `lg:` breakpoint: Tailwind breakpoints key off
+	// the viewport, not this card's container, so a breakpoint here would reflow
+	// the tiles on window resize while the card itself stayed the same width.
 	return (
-		<div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+		<div className="grid grid-cols-4 gap-2 mb-4">
 			<StatTile
 				theme={theme}
 				icon={<Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />}

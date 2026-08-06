@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
 	RefreshCw,
 	Save,
@@ -14,6 +14,8 @@ import {
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
+import { RichOverview } from './RichOverview';
+import { NarrativeParseError } from './NarrativeParseError';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
@@ -21,6 +23,12 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { formatNumber } from '../../../shared/formatters';
 import { notifyToast } from '../../stores/notificationStore';
 import { useModalStore } from '../../stores/modalStore';
+import {
+	looksLikeStructuredOutput,
+	narrativeToMarkdown,
+	STRUCTURED_OUTPUT_UNPARSED_MESSAGE,
+	type DirectorNotesNarrative,
+} from '../../../shared/directorNotesNarrative';
 
 type SynopsisStats = NonNullable<
 	Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']
@@ -51,12 +59,36 @@ function loadFontScale(): number {
 	return clampFontScale(Number(raw));
 }
 
+// Rich vs Plain reading mode for the AI Overview. Rich is a widget dashboard
+// (stat cards, timeline, breakdowns) rendered from deterministic data. Plain
+// reproduces the pre-Rich-Mode reading experience: a markdown synopsis. The
+// agent now emits the structured JSON narrative, so Plain Mode (and Copy/Save)
+// render `narrativeToMarkdown(narrative)` rather than the raw JSON string,
+// falling back to the raw `synopsis` for legacy/no-data/parse-failure results.
+//
+// Mode resolution layers two sources: the persisted `directorNotesSettings.
+// defaultMode` is the baseline default (a real product setting), and the
+// localStorage key below is a transient per-session override that the in-tab
+// toggle writes. The override wins when present; otherwise we fall back to the
+// persisted default, then to 'rich'.
+const VIEW_MODE_STORAGE_KEY = 'directorNotes.viewMode';
+type ViewMode = 'rich' | 'plain';
+const VIEW_MODE_DEFAULT: ViewMode = 'rich';
+
+function loadViewMode(persistedDefault: ViewMode): ViewMode {
+	const raw = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+	return raw === 'rich' || raw === 'plain' ? raw : persistedDefault;
+}
+
 // Module-level cache so synopsis survives tab switches (unmount/remount)
 let cachedSynopsis: {
 	content: string;
 	generatedAt: number;
 	lookbackDays: number;
 	stats?: SynopsisStats;
+	narrative?: DirectorNotesNarrative | null;
+	narrativeError?: string | null;
+	narrativeRecovery?: string | null;
 } | null = null;
 
 // Exported for testing only – allows resetting the module-level cache between test runs
@@ -93,6 +125,19 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 	const { directorNotesSettings, bionifyReadingMode } = useSettings();
 	const [lookbackDays, setLookbackDays] = useState(directorNotesSettings.defaultLookbackDays);
 	const [synopsis, setSynopsis] = useState<string>(cachedSynopsis?.content ?? '');
+	// Structured narrative and its overt parse-failure detail, both derived from
+	// the synopsis result. BOTH reading modes render from the narrative: Rich as
+	// section cards, Plain as markdown prose. `narrativeRecovery` is set when the
+	// narrative had to be salvaged, and drives the partial-recovery banner.
+	const [narrative, setNarrative] = useState<DirectorNotesNarrative | null>(
+		cachedSynopsis?.narrative ?? null
+	);
+	const [narrativeError, setNarrativeError] = useState<string | null>(
+		cachedSynopsis?.narrativeError ?? null
+	);
+	const [narrativeRecovery, setNarrativeRecovery] = useState<string | null>(
+		cachedSynopsis?.narrativeRecovery ?? null
+	);
 	const [generatedAt, setGeneratedAt] = useState<number | null>(
 		cachedSynopsis?.generatedAt ?? null
 	);
@@ -102,6 +147,11 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 	const [error, setError] = useState<string | null>(null);
 	const [stats, setStats] = useState<SynopsisStats | null>(cachedSynopsis?.stats ?? null);
 	const [fontScale, setFontScale] = useState<number>(loadFontScale);
+	// Baseline default from the persisted setting; the localStorage override
+	// (written by the in-tab toggle) layers on top of it.
+	const [viewMode, setViewMode] = useState<ViewMode>(() =>
+		loadViewMode(directorNotesSettings.defaultMode ?? VIEW_MODE_DEFAULT)
+	);
 	const mountedRef = useRef(true);
 
 	// Adjust the synopsis font size and persist the new scale.
@@ -112,16 +162,43 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			return next;
 		});
 	}, []);
+
+	// Switch reading mode and persist the choice.
+	const changeViewMode = useCallback((mode: ViewMode) => {
+		setViewMode(mode);
+		localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+	}, []);
+
+	// Three paths consume a synopsis result (fresh generation, attaching to an
+	// in-flight run, restoring the cache) and each has to apply the same narrative
+	// triple. Applying it in one place is what keeps a surface from silently
+	// missing a field.
+	const applyNarrative = useCallback(
+		(source: {
+			narrative?: DirectorNotesNarrative | null;
+			narrativeError?: string | null;
+			narrativeRecovery?: string | null;
+		}) => {
+			setNarrative(source.narrative ?? null);
+			setNarrativeError(source.narrativeError ?? null);
+			setNarrativeRecovery(source.narrativeRecovery ?? null);
+		},
+		[]
+	);
 	const isGeneratingRef = useRef(false);
 
-	// Generate prose styles for markdown rendering. MarkdownRenderer's root
-	// `.prose` carries Tailwind's `text-sm` (0.875rem, an absolute rem unit),
-	// which would otherwise pin the base font size and ignore the zoom control.
-	// Override it with a scaled size (same selector → higher specificity than the
-	// utility class) so the em-based prose children scale proportionally.
-	const proseStyles =
-		generateTerminalProseStyles(theme, '.director-notes-content') +
-		`\n.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`;
+	// Base prose styling for the Plain-mode markdown block. (Rich mode frames the
+	// narrative inside RichOverview, which injects its own base prose styles.)
+	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
+
+	// Font-scale override. MarkdownRenderer's root `.prose` carries Tailwind's
+	// `text-sm` (0.875rem, an absolute rem unit), which would otherwise pin the
+	// base font size and ignore the zoom control. Override it with a scaled size
+	// (same selector → higher specificity than the utility class) so the em-based
+	// prose children scale proportionally. Injected at the content-container
+	// level so it applies to both the Plain block and the Rich narrative, which
+	// share the `.director-notes-content` class.
+	const proseScaleRule = `.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`;
 
 	// Format generation duration for display
 	const formatDurationMs = (ms: number): string => {
@@ -144,17 +221,37 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 		});
 	};
 
-	// Copy synopsis markdown to clipboard
+	// Does the raw output claim to be the structured narrative? This is the
+	// discriminator for what a MISSING narrative means. The handler already
+	// makes the same call, but this recomputes it locally on purpose: the
+	// narrative fields also arrive from the module-level synopsis cache, which
+	// can hold a result produced before this logic existed. Deriving the shape
+	// from the synopsis itself is what makes the no-raw-JSON invariant hold no
+	// matter where the content came from.
+	const isStructuredShaped = useMemo(() => looksLikeStructuredOutput(synopsis ?? ''), [synopsis]);
+
+	// Human-readable markdown for Plain Mode, Copy, and Save. A parsed narrative
+	// becomes prose. Otherwise the raw string IS the report (a markdown synopsis
+	// from a markdown-contract prompt, or the no-history message) - unless it is
+	// JSON-shaped, in which case there is no readable report to show and the
+	// parse-error banner takes over. Empty rather than raw JSON: dumping the
+	// object into the markdown renderer is the wall-of-JSON regression itself.
+	const plainContent = useMemo(
+		() => (narrative ? narrativeToMarkdown(narrative) : isStructuredShaped ? '' : synopsis),
+		[narrative, synopsis, isStructuredShaped]
+	);
+
+	// Copy the readable synopsis markdown to clipboard
 	const copyToClipboard = useCallback(async () => {
-		if (!synopsis) return;
-		const ok = await safeClipboardWrite(synopsis);
+		if (!plainContent) return;
+		const ok = await safeClipboardWrite(plainContent);
 		if (ok) {
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		}
-	}, [synopsis]);
+	}, [plainContent]);
 
-	// Generate synopsis — the handler reads history files directly via file paths,
+	// Generate synopsis - the handler reads history files directly via file paths,
 	// so the renderer only needs to make a single IPC call.
 	const generateSynopsis = useCallback(async () => {
 		setIsGenerating(true);
@@ -181,6 +278,9 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					generatedAt: ts,
 					lookbackDays,
 					stats: result.stats,
+					narrative: result.narrative ?? null,
+					narrativeError: result.narrativeError ?? null,
+					narrativeRecovery: result.narrativeRecovery ?? null,
 				};
 			}
 
@@ -195,6 +295,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			if (result.success) {
 				const ts = result.generatedAt ?? Date.now();
 				setSynopsis(result.synopsis);
+				applyNarrative(result);
 				setGeneratedAt(ts);
 				setStats(result.stats ?? null);
 				onSynopsisReady?.();
@@ -214,13 +315,14 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				setIsGenerating(false);
 			}
 		}
-	}, [lookbackDays, directorNotesSettings, onSynopsisReady]);
+	}, [lookbackDays, directorNotesSettings, onSynopsisReady, applyNarrative]);
 
 	// On mount: use cache if available, attach to in-flight generation, or start fresh
 	useEffect(() => {
 		mountedRef.current = true;
 		if (cachedSynopsis) {
 			setSynopsis(cachedSynopsis.content);
+			applyNarrative(cachedSynopsis);
 			setGeneratedAt(cachedSynopsis.generatedAt);
 			setStats(cachedSynopsis.stats ?? null);
 			setLookbackDays(cachedSynopsis.lookbackDays);
@@ -238,6 +340,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					if (result.success) {
 						const ts = result.generatedAt ?? Date.now();
 						setSynopsis(result.synopsis);
+						applyNarrative(result);
 						setGeneratedAt(ts);
 						setStats(result.stats ?? null);
 						if (cachedSynopsis) setLookbackDays(cachedSynopsis.lookbackDays);
@@ -274,22 +377,26 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				{/* Lookback slider */}
 				<div className="flex items-center gap-3 flex-1 min-w-[200px]">
 					<label
+						htmlFor="director-notes-lookback"
 						className="text-xs font-bold whitespace-nowrap"
 						style={{ color: theme.colors.textMain }}
 					>
 						Lookback: {lookbackDays} days
 					</label>
 					<input
+						id="director-notes-lookback"
 						type="range"
 						min={1}
 						max={90}
 						value={lookbackDays}
 						onChange={(e) => setLookbackDays(Number(e.target.value))}
-						className="flex-1 accent-indigo-500"
+						className="focus-ring rounded flex-1"
+						style={{ accentColor: theme.colors.accent }}
+						aria-label={`Lookback window: ${lookbackDays} days`}
 					/>
 				</div>
 
-				{/* Generated at timestamp — stays visible during regeneration */}
+				{/* Generated at timestamp - stays visible during regeneration */}
 				{generatedAt && (
 					<div className="flex items-center gap-1.5" style={{ color: theme.colors.textDim }}>
 						<Clock className="w-3 h-3" />
@@ -297,11 +404,46 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					</div>
 				)}
 
-				{/* Regenerate button — only this disables during generation */}
+				{/* Rich/Plain mode toggle - segmented control. Rich is the default
+				    widget dashboard; Plain is today's exact markdown view. */}
+				<div
+					className="flex items-center rounded overflow-hidden"
+					style={{ border: `1px solid ${theme.colors.border}` }}
+					role="group"
+					aria-label="Reading mode"
+				>
+					{(['rich', 'plain'] as ViewMode[]).map((mode) => {
+						const active = viewMode === mode;
+						return (
+							<button
+								key={mode}
+								type="button"
+								onClick={() => changeViewMode(mode)}
+								aria-pressed={active}
+								// Inset ring (the wrapper is rounded + overflow-hidden, so an
+								// outset ring would be clipped). On the active segment the ring
+								// rides an accent fill, so use the contrasting accentForeground.
+								className="focus-ring-inset px-3 py-1.5 text-xs font-medium capitalize transition-colors"
+								style={{
+									backgroundColor: active ? theme.colors.accent : 'transparent',
+									color: active ? theme.colors.accentForeground : theme.colors.textDim,
+									['--focus-ring-color' as any]: active
+										? theme.colors.accentForeground
+										: theme.colors.accent,
+								}}
+							>
+								{mode}
+							</button>
+						);
+					})}
+				</div>
+
+				{/* Regenerate button - only this disables during generation */}
 				<button
+					type="button"
 					onClick={generateSynopsis}
 					disabled={isGenerating}
-					className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+					className="focus-ring flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors"
 					style={{
 						backgroundColor: theme.colors.accent,
 						color: theme.colors.accentForeground,
@@ -312,11 +454,12 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					{isGenerating ? 'Regenerating…' : 'Regenerate'}
 				</button>
 
-				{/* Save button — enabled whenever we have content */}
+				{/* Save button - enabled whenever we have content */}
 				<button
+					type="button"
 					onClick={() => setShowSaveModal(true)}
 					disabled={!synopsis}
-					className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+					className="focus-ring flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors"
 					style={{
 						backgroundColor: theme.colors.bgActivity,
 						color: theme.colors.textMain,
@@ -328,11 +471,12 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					Save
 				</button>
 
-				{/* Copy to clipboard button — enabled whenever we have content */}
+				{/* Copy to clipboard button - enabled whenever we have content */}
 				<button
+					type="button"
 					onClick={copyToClipboard}
 					disabled={!synopsis}
-					className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+					className="focus-ring flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors"
 					style={{
 						backgroundColor: theme.colors.bgActivity,
 						color: copied ? theme.colors.accent : theme.colors.textMain,
@@ -345,7 +489,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				</button>
 			</div>
 
-			{/* Stats bar — stays visible during regeneration */}
+			{/* Stats bar - stays visible during regeneration */}
 			{stats && synopsis && (
 				<div
 					className="shrink-0 flex items-center gap-6 px-6 py-2.5 border-b"
@@ -382,14 +526,15 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						</div>
 					)}
 
-					{/* Font-size controls — right-justified, scale only the synopsis text */}
+					{/* Font-size controls - right-justified, scale only the synopsis text */}
 					<div className="ml-auto flex items-center gap-1">
 						<button
+							type="button"
 							onClick={() => adjustFontScale(-1)}
 							disabled={fontScale <= FONT_SCALE_MIN}
 							aria-label="Decrease font size"
 							title="Decrease font size"
-							className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
+							className="focus-ring flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
 							style={{
 								color: theme.colors.textDim,
 								border: `1px solid ${theme.colors.border}`,
@@ -400,11 +545,12 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 							<AArrowDown className="w-4 h-4" />
 						</button>
 						<button
+							type="button"
 							onClick={() => adjustFontScale(1)}
 							disabled={fontScale >= FONT_SCALE_MAX}
 							aria-label="Increase font size"
 							title="Increase font size"
-							className="flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
+							className="focus-ring flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
 							style={{
 								color: theme.colors.textDim,
 								border: `1px solid ${theme.colors.border}`,
@@ -418,9 +564,11 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				</div>
 			)}
 
-			{/* Content — old notes stay visible and scrollable during regeneration */}
+			{/* Content - old notes stay visible and scrollable during regeneration */}
 			<div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-				{/* Error banner — shown above content so old notes remain readable */}
+				{/* Font-scale override - applies to both Plain and Rich narratives. */}
+				<style>{proseScaleRule}</style>
+				{/* Error banner - shown above content so old notes remain readable */}
 				{error && (
 					<div
 						className={`p-4 rounded border ${synopsis ? 'mb-4' : ''}`}
@@ -434,16 +582,52 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					</div>
 				)}
 				{synopsis ? (
-					<div className="director-notes-content">
-						<style>{proseStyles}</style>
-						<MarkdownRenderer
-							content={synopsis}
+					viewMode === 'rich' ? (
+						<RichOverview
 							theme={theme}
-							onCopy={(text) => safeClipboardWrite(text)}
+							stats={stats}
+							synopsis={synopsis}
+							narrative={narrative}
+							narrativeError={narrativeError}
+							narrativeRecovery={narrativeRecovery}
+							lookbackDays={lookbackDays}
 							enableBionifyReadingMode={bionifyReadingMode}
 							chatMath
 						/>
-					</div>
+					) : (
+						// Content-driven AI output: opt back into text selection under
+						// the modal's select-none (see CLAUDE.md modal text rules).
+						<div className="director-notes-content select-text flex flex-col gap-4">
+							<style>{proseStyles}</style>
+							{/* Plain Mode fails as loudly as Rich Mode. Dumping the raw
+							    structured output into the markdown renderer would show a
+							    wall of JSON where a report should be. Shown whenever the
+							    output is JSON-shaped but produced no narrative - including
+							    when no error came back at all, which is how a stale cached
+							    result used to fall through to the raw string. */}
+							{(narrativeError || (!narrative && isStructuredShaped)) && (
+								<NarrativeParseError
+									theme={theme}
+									error={narrativeError ?? STRUCTURED_OUTPUT_UNPARSED_MESSAGE}
+									rawOutput={synopsis}
+									recovery={narrativeRecovery}
+								/>
+							)}
+							{/* Prose from the narrative, or the raw string when the output is
+							    not JSON-shaped - a markdown synopsis from a markdown-contract
+							    prompt, or the "no history files" message. Gated on shape, not
+							    on the error, so raw JSON can never reach the renderer. */}
+							{(narrative || !isStructuredShaped) && (
+								<MarkdownRenderer
+									content={plainContent}
+									theme={theme}
+									onCopy={(text) => safeClipboardWrite(text)}
+									enableBionifyReadingMode={bionifyReadingMode}
+									chatMath
+								/>
+							)}
+						</div>
+					)
 				) : isGenerating ? (
 					<div className="flex items-center justify-center h-full">
 						<div className="flex items-center gap-3">
@@ -460,7 +644,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			{showSaveModal && (
 				<SaveMarkdownModal
 					theme={theme}
-					content={synopsis}
+					content={plainContent}
 					onClose={() => setShowSaveModal(false)}
 					defaultFolder=""
 				/>

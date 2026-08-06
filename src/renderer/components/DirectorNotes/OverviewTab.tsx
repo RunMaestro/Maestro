@@ -60,7 +60,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 							doing, you get a bird's-eye view of every completed task, decision, and interaction.
 						</p>
 						<p>
-							Think of it as your project logbook — a searchable, filterable record of everything
+							Think of it as your project logbook - a searchable, filterable record of everything
 							that's been accomplished.
 						</p>
 					</div>
@@ -90,7 +90,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 									<strong style={{ color: theme.colors.textMain }}>AI Overview</strong>
 								</div>
 								<p>
-									An AI-generated synopsis of recent work — auto-generated when you open Director's
+									An AI-generated synopsis of recent work - auto-generated when you open Director's
 									Notes.
 								</p>
 							</div>
@@ -118,7 +118,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 								USER
 							</span>
 							<p>
-								Interactive work sessions — created via{' '}
+								Interactive work sessions - created via{' '}
 								<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 									/history
 								</code>{' '}
@@ -248,7 +248,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 								maestro-cli director-notes
 							</code>
-							— great for scripts, cron jobs, or piping into your own tooling.
+							- great for scripts, cron jobs, or piping into your own tooling.
 						</p>
 						<div
 							className="rounded border p-3 font-mono text-[11px] space-y-1.5"

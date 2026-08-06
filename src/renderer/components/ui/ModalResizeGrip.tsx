@@ -1,9 +1,13 @@
 /**
- * ModalResizeGrip - bottom-right corner grip for a resizable Modal.
+ * ModalResizeGrip - bottom-right corner grip for a free-floating resizable
+ * surface. Double-click clears the remembered size and snaps back to the
+ * declared default.
  *
- * Rendered by Modal whenever a `resizeKey` is supplied; not meant to be used
- * standalone. Double-click clears the remembered size and snaps the modal back
- * to its declared default.
+ * NOT the primitive for modals: `Modal` resizes through `ResizeHandles`, which
+ * offers all eight edges/corners. This grip exists for surfaces whose resize
+ * math is corner-only - currently just `FloatingMediaPlayer`, which grows from
+ * the bottom-right and would mis-resize if given the other seven handles.
+ * Reach for `ResizeHandles` unless you are in that situation.
  */
 
 import type { Theme } from '../../types';
@@ -12,7 +16,7 @@ interface ModalResizeGripProps {
 	theme: Theme;
 	onResizeStart: (e: React.MouseEvent) => void;
 	onReset: () => void;
-	/** True once the modal carries a user-chosen size, so reset does something */
+	/** True once the surface carries a user-chosen size, so reset does something */
 	canReset: boolean;
 }
 

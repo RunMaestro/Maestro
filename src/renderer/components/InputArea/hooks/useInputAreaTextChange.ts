@@ -2,10 +2,17 @@ import { startTransition, useCallback } from 'react';
 import type React from 'react';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT, resizeTextareaToContent } from '../utils/textareaSizing';
 import { getAtMentionTrigger, shouldOpenSlashCommand } from '../utils/inputTriggers';
+import { detectCommandModeEntry } from '../../../utils/shellCommandInput';
 
 interface UseInputAreaTextChangeArgs {
 	isTerminalMode: boolean;
 	slashCommandOpen: boolean;
+	/** Whether the AI composer is already in command mode. */
+	isCommandMode: boolean;
+	/** Enter/leave command mode (the `!` gesture). */
+	setCommandMode: (commandMode: boolean) => void;
+	/** Live draft as of before this edit, used to detect the entry gesture. */
+	getPreviousValue: () => string;
 	/**
 	 * Set true here (and cleared in the resize rAF) so useInputAreaAutosize skips
 	 * its own synchronous resize for this keystroke - the rAF below owns it. See
@@ -24,6 +31,9 @@ interface UseInputAreaTextChangeArgs {
 export function useInputAreaTextChange({
 	isTerminalMode,
 	slashCommandOpen,
+	isCommandMode,
+	setCommandMode,
+	getPreviousValue,
 	keystrokeResizeScheduledRef,
 	setInputValue,
 	setSlashCommandOpen,
@@ -35,13 +45,30 @@ export function useInputAreaTextChange({
 }: UseInputAreaTextChangeArgs): (e: React.ChangeEvent<HTMLTextAreaElement>) => void {
 	return useCallback(
 		(e) => {
-			const value = e.target.value;
+			let value = e.target.value;
 			const cursorPosition = e.target.selectionStart || 0;
+
+			// The `!` gesture: typing (or pasting) a bang into an empty AI composer
+			// switches into command mode and is consumed - the character never lands
+			// in the text. Read the previous value BEFORE setInputValue below, since
+			// that is what makes "the composer was empty" true.
+			let nowInCommandMode = isCommandMode;
+			if (!isTerminalMode && !isCommandMode) {
+				const body = detectCommandModeEntry(getPreviousValue(), value);
+				if (body !== null) {
+					value = body;
+					nowInCommandMode = true;
+					setCommandMode(true);
+				}
+			}
 
 			setInputValue(value);
 
 			startTransition(() => {
-				if (shouldOpenSlashCommand(value)) {
+				// Slash commands are agent commands. In command mode a leading `/` is
+				// an absolute path (`/usr/bin/env`, `/etc`), so the popover must stay
+				// shut - and close if the `!` gesture just switched modes under it.
+				if (!nowInCommandMode && shouldOpenSlashCommand(value)) {
 					if (!slashCommandOpen) {
 						setSelectedSlashCommandIndex(0);
 					}
@@ -57,7 +84,12 @@ export function useInputAreaTextChange({
 					setAtMentionStartIndex &&
 					setSelectedAtMentionIndex
 				) {
-					const trigger = getAtMentionTrigger(value, cursorPosition);
+					// @-mentions inject file paths for the agent to read. In command mode
+					// the draft is a shell line the agent never sees, and `@` there is
+					// ordinary shell text (an scp target, an email in a commit message),
+					// so suppress the popover - and close it if the `!` gesture is what
+					// just switched modes out from under an open one.
+					const trigger = nowInCommandMode ? null : getAtMentionTrigger(value, cursorPosition);
 					if (trigger) {
 						setAtMentionOpen(true);
 						setAtMentionFilter(trigger.filter);
@@ -92,6 +124,9 @@ export function useInputAreaTextChange({
 		},
 		[
 			isTerminalMode,
+			isCommandMode,
+			setCommandMode,
+			getPreviousValue,
 			keystrokeResizeScheduledRef,
 			setAtMentionFilter,
 			setAtMentionOpen,

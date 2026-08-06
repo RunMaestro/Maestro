@@ -34,6 +34,17 @@ export interface OutputSearchSlot {
 	regex: boolean;
 }
 
+/**
+ * A request to scroll a specific transcript entry into view and flash it.
+ * Set by cross-tab message search (Opt+Cmd+F) after it switches tabs; consumed
+ * by the TerminalOutput instance whose agent+tab match, which clears it.
+ */
+export interface PendingLogJump {
+	sessionId: string;
+	tabId: string;
+	logId: string;
+}
+
 export interface UIStoreState {
 	// Sidebar
 	leftSidebarOpen: boolean;
@@ -64,6 +75,10 @@ export interface UIStoreState {
 	// outputSearchKeyFor in utils/outputSearch). Slots are pruned when a search is
 	// closed with an empty term, so the map only holds windows with an active find.
 	outputSearchByKey: Record<string, OutputSearchSlot>;
+
+	// Pending "jump to this message" request from cross-tab search. Null when no
+	// jump is in flight; the target transcript clears it once it has scrolled.
+	pendingLogJump: PendingLogJump | null;
 
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
@@ -106,19 +121,6 @@ export interface UIStoreState {
 	// scheduler (usage-refresh-scheduler.ts) reads the same persisted map and is
 	// the sole driver of background sampling on this cadence.
 	usageRefreshIntervals: Record<string, number>;
-
-	// User-chosen size for every resizable modal, keyed by the modal's stable
-	// `resizeKey` (see Modal's `resizeKey` prop). A missing entry means the modal
-	// is still at its declared default size. Persisted via settings write-through
-	// (same pattern as hiddenQuotaAccounts) and hydrated by loadAllSettings on
-	// startup, so a resize survives restarts.
-	modalSizes: Record<string, ModalSize>;
-}
-
-/** Pixel size a user dragged a resizable modal to. */
-export interface ModalSize {
-	width: number;
-	height: number;
 }
 
 export interface UIStoreActions {
@@ -169,6 +171,11 @@ export interface UIStoreActions {
 	setOutputSearchRegex: (key: string, regex: boolean | ((prev: boolean) => boolean)) => void;
 	toggleOutputSearchRegex: (key: string) => void;
 
+	// Cross-tab search jump target
+	setPendingLogJump: (jump: PendingLogJump | null) => void;
+	/** Clear only if the pending jump still points at this exact entry. */
+	clearPendingLogJump: (logId: string) => void;
+
 	// Session filter (sidebar agent search)
 	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 
@@ -201,12 +208,6 @@ export interface UIStoreActions {
 
 	// Set the auto-refresh interval (ms; 0 = off) for a provider quota panel.
 	setUsageRefreshInterval: (providerId: string, ms: number) => void;
-
-	// Remember the size a resizable modal was dragged to.
-	setModalSize: (resizeKey: string, size: ModalSize) => void;
-
-	// Forget a modal's remembered size, so it reopens at its declared default.
-	resetModalSize: (resizeKey: string) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -269,15 +270,6 @@ function persistUsageRefreshIntervals(value: Record<string, number>): void {
 	window.maestro?.settings?.set('usageRefreshIntervals', value);
 }
 
-/**
- * Persist the per-modal size map so a resized modal reopens at the size the user
- * left it, across restarts. Hydrated back into this store on startup by
- * `loadAllSettings` in settingsStore.
- */
-function persistModalSizes(value: Record<string, ModalSize>): void {
-	window.maestro?.settings?.set('modalSizes', value);
-}
-
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
@@ -292,6 +284,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	selectedSidebarIndex: 0,
 	sidebarExtraSelection: null,
 	outputSearchByKey: {},
+	pendingLogJump: null,
 	sessionFilterOpen: false,
 	historySearchFilterOpen: false,
 	groupChatHistorySearchFilterOpen: false,
@@ -303,7 +296,6 @@ export const useUIStore = create<UIStore>()((set) => ({
 	usageDashboardViewMode: 'overview',
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
-	modalSizes: {},
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
@@ -375,6 +367,11 @@ export const useUIStore = create<UIStore>()((set) => ({
 			}),
 		})),
 
+	setPendingLogJump: (jump) => set({ pendingLogJump: jump }),
+	// Guarded so a stale consumer can't wipe a newer jump the user just queued.
+	clearPendingLogJump: (logId) =>
+		set((s) => (s.pendingLogJump?.logId === logId ? { pendingLogJump: null } : s)),
+
 	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
 	setHistorySearchFilterOpen: (v) =>
 		set((s) => ({ historySearchFilterOpen: resolve(v, s.historySearchFilterOpen) })),
@@ -411,21 +408,5 @@ export const useUIStore = create<UIStore>()((set) => ({
 			const nextMap = { ...s.usageRefreshIntervals, [providerId]: ms };
 			persistUsageRefreshIntervals(nextMap);
 			return { usageRefreshIntervals: nextMap };
-		}),
-
-	setModalSize: (resizeKey, size) =>
-		set((s) => {
-			const nextMap = { ...s.modalSizes, [resizeKey]: size };
-			persistModalSizes(nextMap);
-			return { modalSizes: nextMap };
-		}),
-
-	resetModalSize: (resizeKey) =>
-		set((s) => {
-			if (s.modalSizes[resizeKey] === undefined) return {};
-			const nextMap = { ...s.modalSizes };
-			delete nextMap[resizeKey];
-			persistModalSizes(nextMap);
-			return { modalSizes: nextMap };
 		}),
 }));

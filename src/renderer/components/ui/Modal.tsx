@@ -34,13 +34,23 @@
  * ```
  */
 
-import React, { useRef, useEffect, useCallback, ReactNode } from 'react';
+import React, { useRef, useEffect, ReactNode, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
 import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
-import { useResizableModal, MODAL_MIN_WIDTH } from '../../hooks/ui/useResizableModal';
-import { ModalResizeGrip } from './ModalResizeGrip';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import type { ModalResizeKey, ModalSize } from '../../utils/modalSizing';
+import { ResizeHandles } from './ResizeHandles';
+
+function getDefaultResizeKey(priority: number, title: string): ModalResizeKey {
+	const slug = title
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-|-$/g, '');
+	return `modal-${priority}-${slug || 'dialog'}`;
+}
 
 export interface ModalProps {
 	/** Theme object for styling */
@@ -59,6 +69,13 @@ export interface ModalProps {
 	customHeader?: ReactNode;
 	/** Optional icon to display before the title */
 	headerIcon?: ReactNode;
+	/**
+	 * Optional content rendered in the header, just before the close button.
+	 * For secondary affordances that belong to the modal as a whole (a "View
+	 * History" link, a filter toggle) rather than to its body. Use this instead
+	 * of `customHeader` when you only want to ADD to the standard header.
+	 */
+	headerActions?: ReactNode;
 	/** Modal width in pixels. Defaults to 400 */
 	width?: number;
 	/**
@@ -99,20 +116,32 @@ export interface ModalProps {
 	/** Ref to the inner modal card (used by callers that need to animate the card itself) */
 	cardRef?: React.Ref<HTMLDivElement>;
 	/**
-	 * Opt this modal into drag-to-resize. The value is the stable key its size
-	 * persists under (one entry in uiStore's `modalSizes` map), so it must be
-	 * unique per modal and must not change between renders. Omit for a modal
-	 * that should stay at its declared size.
+	 * Render into `document.body` instead of in place. Required for any modal
+	 * opened from inside the Main Panel: `MainPanel.tsx` wraps the session view
+	 * in `isolate` (`isolation: isolate`), which creates a stacking context, so
+	 * the backdrop's z-index is scoped to that subtree and the Left Bar
+	 * (`relative z-20`) and Right Panel (later in DOM order) paint over it -
+	 * the panels stay bright while only the center dims. No z-index can win
+	 * across a stacking context; escaping to the body is the fix. Defaults to
+	 * false since most modals already mount at the App root.
 	 */
-	resizeKey?: string;
+	portal?: boolean;
+	/** Enable persisted modal resizing. Defaults to true, but has no effect without `resizeKey` (see below). */
+	resizable?: boolean;
 	/**
-	 * Smallest width the user may drag to, in px. Defaults to MODAL_MIN_WIDTH,
-	 * or the declared `width` when that is already narrower. Raise it for a
-	 * modal whose content stops making sense below a certain width.
+	 * Stable settings key used to persist this modal's size. Resizing is only
+	 * enabled when this is explicitly provided: a title-derived fallback key
+	 * isn't stable across unrelated dialogs (e.g. every default-titled
+	 * ConfirmModal would collide on one persisted size), so a Modal without
+	 * a `resizeKey` renders with the legacy fixed `width`/`maxHeight` sizing.
 	 */
-	minWidth?: number;
-	/** Smallest height the user may drag to, in px. Defaults to MODAL_MIN_HEIGHT */
-	minHeight?: number;
+	resizeKey?: ModalResizeKey;
+	/** Default resizable frame size in pixels. Width falls back to `width`; height defaults to 320. */
+	defaultSize?: Partial<ModalSize>;
+	/** Minimum resizable frame size in pixels. */
+	minSize?: Partial<ModalSize>;
+	/** Maximum resizable frame size in pixels before viewport clamping. */
+	maxSize?: Partial<ModalSize>;
 }
 
 /**
@@ -127,6 +156,7 @@ export function Modal({
 	footer,
 	customHeader,
 	headerIcon,
+	headerActions,
 	width = 400,
 	scaleWidthWithFont = true,
 	maxWidthCss = '95vw',
@@ -141,33 +171,35 @@ export function Modal({
 	contentClassName,
 	allowOverflow = false,
 	cardRef,
+	portal = false,
+	resizable = true,
 	resizeKey,
-	minWidth,
-	minHeight,
+	defaultSize,
+	minSize,
+	maxSize,
 }: ModalProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const cardElementRef = useRef<HTMLDivElement | null>(null);
+	// Resizing requires a caller-supplied resizeKey. A title-derived fallback key
+	// is not stable across unrelated dialogs (e.g. every default-titled ConfirmModal
+	// would collide on the same persisted size), so without an explicit key we fall
+	// back to the legacy fixed-size rendering below instead of enabling resize.
+	const effectiveResizeKey = resizeKey ?? getDefaultResizeKey(priority, title);
+	const resizingEnabled = resizable && resizeKey !== undefined;
+	const resizableModal = useResizableModal({
+		resizeKey: effectiveResizeKey,
+		defaultSize: {
+			width: defaultSize?.width ?? width,
+			height: defaultSize?.height ?? 320,
+		},
+		minSize,
+		maxSize,
+		enabled: resizingEnabled,
+		externalRef: cardElementRef,
+	});
 
 	// Register with layer stack for Escape handling and focus management
 	useModalLayer(priority, title, onClose, layerOptions);
-
-	const resize = useResizableModal({
-		resizeKey,
-		// Never let the floor exceed the modal's own declared width - a narrow
-		// modal (e.g. a 400px confirm) would otherwise open wider than designed.
-		minWidth: minWidth ?? Math.min(width, MODAL_MIN_WIDTH),
-		minHeight,
-	});
-
-	// Merge the internal resize ref with any caller-supplied cardRef so both see
-	// the same node (callers use theirs to animate the card).
-	const setCardRef = useCallback(
-		(node: HTMLDivElement | null) => {
-			(resize.cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-			if (typeof cardRef === 'function') cardRef(node);
-			else if (cardRef) (cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-		},
-		[cardRef, resize.cardRef]
-	);
 
 	// Auto-focus on mount
 	useEffect(() => {
@@ -184,7 +216,7 @@ export function Modal({
 	const handleBackdropClick = (e: React.MouseEvent) => {
 		// Only close if clicking directly on backdrop, not on modal content.
 		// Stop propagation so a parent modal's backdrop handler doesn't also
-		// fire — matters when a Modal renders nested inside another modal
+		// fire, which matters when a Modal renders nested inside another modal
 		// (e.g. AgentDetailModal inside UsageDashboardModal); without this
 		// the outer modal would close too.
 		if (closeOnBackdropClick && e.target === e.currentTarget) {
@@ -193,7 +225,19 @@ export function Modal({
 		}
 	};
 
-	return (
+	const setCardRef = useCallback(
+		(node: HTMLDivElement | null) => {
+			cardElementRef.current = node;
+			if (typeof cardRef === 'function') {
+				cardRef(node);
+			} else if (cardRef) {
+				(cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+			}
+		},
+		[cardRef]
+	);
+
+	const overlay = (
 		<div
 			ref={containerRef}
 			className="fixed inset-0 modal-overlay flex items-center justify-center animate-in fade-in duration-200 outline-none"
@@ -208,22 +252,31 @@ export function Modal({
 		>
 			<div
 				ref={setCardRef}
-				className={`border rounded-lg shadow-2xl flex flex-col relative ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'} ${resize.isResizing ? 'select-none' : ''}`}
+				className={`relative border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
 				style={{
-					// A size the user dragged to wins over the declared width, and
-					// stays clamped to the viewport so it survives a display change.
-					width: resize.size
-						? `min(${resize.size.width}px, 95vw)`
-						: scaleWidthWithFont
-							? `min(calc(${width}px * var(--font-scale, 1)), ${maxWidthCss})`
-							: `${width}px`,
-					height: resize.size ? `min(${resize.size.height}px, 95vh)` : undefined,
-					maxHeight: resize.size ? undefined : maxHeight,
+					...(resizingEnabled
+						? resizableModal.style
+						: {
+								width: scaleWidthWithFont
+									? `min(calc(${width}px * var(--font-scale, 1)), ${maxWidthCss})`
+									: `${width}px`,
+								maxHeight,
+							}),
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
 				onClick={(e) => e.stopPropagation()}
+				data-modal-resize-key={resizingEnabled ? effectiveResizeKey : undefined}
 			>
+				{resizingEnabled && (
+					<ResizeHandles
+						onResizeStart={resizableModal.onResizeStart}
+						accentColor={theme.colors.accent}
+						onResetSize={resizableModal.onResetSize}
+						canReset={resizableModal.canReset}
+					/>
+				)}
+
 				{/* Header */}
 				{showHeader &&
 					(customHeader || (
@@ -237,20 +290,23 @@ export function Modal({
 									{title}
 								</h2>
 							</div>
-							{showCloseButton && (
-								<GhostIconButton
-									onClick={onClose}
-									ariaLabel="Close modal"
-									color={theme.colors.textDim}
-								>
-									<X className="w-4 h-4" />
-								</GhostIconButton>
-							)}
+							<div className="flex items-center gap-2">
+								{headerActions}
+								{showCloseButton && (
+									<GhostIconButton
+										onClick={onClose}
+										ariaLabel="Close modal"
+										color={theme.colors.textDim}
+									>
+										<X className="w-4 h-4" />
+									</GhostIconButton>
+								)}
+							</div>
 						</div>
 					))}
 
 				{/* Content */}
-				<div className={contentClassName ?? 'p-6 overflow-y-auto flex-1'}>{children}</div>
+				<div className={contentClassName ?? 'p-6 overflow-y-auto flex-1 min-h-0'}>{children}</div>
 
 				{/* Footer */}
 				{footer && (
@@ -261,18 +317,11 @@ export function Modal({
 						{footer}
 					</div>
 				)}
-
-				{resize.enabled && (
-					<ModalResizeGrip
-						theme={theme}
-						onResizeStart={resize.onResizeStart}
-						onReset={resize.onResetSize}
-						canReset={resize.size !== null}
-					/>
-				)}
 			</div>
 		</div>
 	);
+
+	return portal ? createPortal(overlay, document.body) : overlay;
 }
 
 /**

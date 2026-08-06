@@ -36,7 +36,7 @@ import { app } from 'electron';
 import { captureException } from '../../utils/sentry';
 import {
 	snapshotStarredTranscript,
-	deleteStarredMirror,
+	releaseTranscriptMirror,
 } from '../../storage/starred-transcript-mirror';
 
 /**
@@ -1744,7 +1744,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						sessionName: starSessionName,
 					});
 				} else {
-					void deleteStarredMirror({ agentId: 'claude-code', sessionId: agentSessionId });
+					void releaseTranscriptMirror({ agentId: 'claude-code', sessionId: agentSessionId });
 				}
 				return true;
 			}

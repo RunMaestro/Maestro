@@ -1627,7 +1627,7 @@ describe('HistoryDetailModal', () => {
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
 			);
 
-			const modal = container.querySelector('.w-full.max-w-3xl');
+			const modal = container.querySelector('[data-modal-resize-key="history-detail"]');
 			expect(modal).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
 		});
 

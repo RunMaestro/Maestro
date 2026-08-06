@@ -119,6 +119,8 @@ import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
 import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
+import { MEDIA_SCHEME } from '../shared/mediaTypes';
+import { handleMediaStreamRequest } from './media/media-stream';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -196,6 +198,19 @@ const IMAGE_SCHEME = 'maestro-image';
 		{
 			scheme: IMAGE_SCHEME,
 			privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+		},
+		// Streams local audio/video into <audio>/<video> in the file preview.
+		// `stream: true` keeps range responses flowing chunk-by-chunk instead of
+		// buffering, which is what makes seeking a multi-GB video cheap.
+		{
+			scheme: MEDIA_SCHEME,
+			privileges: {
+				standard: true,
+				secure: true,
+				supportFetchAPI: true,
+				corsEnabled: true,
+				stream: true,
+			},
 		},
 	];
 	if (!isDevelopment) {
@@ -517,6 +532,12 @@ app
 				throw err;
 			}
 		});
+
+		// Stream local audio/video files into the file preview's <audio>/<video>
+		// element with HTTP range support, so scrubbing a large recording does not
+		// pull it through IPC or into the renderer heap. Registered on the default
+		// session only, so browser tab webviews (own partitions) cannot reach it.
+		protocol.handle(MEDIA_SCHEME, handleMediaStreamRequest);
 
 		// Serve the production renderer over `app://` so static and dynamic ES
 		// module imports succeed on Electron 41 (Chromium 138 blocks both under
