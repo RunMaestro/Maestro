@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { Session } from '../../types';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { useComposerInputStore } from '../../stores/composerInputStore';
 
 /**
  * Dependencies required by the useInputSync hook
@@ -49,6 +50,12 @@ export function useInputSync(
 	const syncAiInputToSession = useCallback(
 		(value: string) => {
 			if (!activeSession) return;
+			// Command mode is read from the store rather than passed in, so it can
+			// never drift from the text it qualifies: every caller that flushes the
+			// draft flushes the mode with it, without having to remember to. The
+			// same string is a shell command or a chat message depending on this
+			// flag, so a tab restored with one and not the other routes wrongly.
+			const commandMode = useComposerInputStore.getState().aiCommandMode;
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
@@ -57,7 +64,7 @@ export function useInputSync(
 					return {
 						...s,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === currentActiveTab.id ? { ...tab, inputValue: value } : tab
+							tab.id === currentActiveTab.id ? { ...tab, inputValue: value, commandMode } : tab
 						),
 					};
 				})

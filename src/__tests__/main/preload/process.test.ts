@@ -146,6 +146,25 @@ describe('Process Preload API', () => {
 		});
 	});
 
+	describe('cancelCommand', () => {
+		it('should invoke process:cancelCommand with the session id', async () => {
+			mockInvoke.mockResolvedValue(true);
+
+			const result = await api.cancelCommand('session-123');
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:cancelCommand', {
+				sessionId: 'session-123',
+			});
+			expect(result).toBe(true);
+		});
+
+		it('should return false when nothing was running', async () => {
+			mockInvoke.mockResolvedValue(false);
+
+			await expect(api.cancelCommand('session-gone')).resolves.toBe(false);
+		});
+	});
+
 	describe('getActiveProcesses', () => {
 		it('should invoke process:getActiveProcesses', async () => {
 			const mockProcesses = [

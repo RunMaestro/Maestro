@@ -14,7 +14,25 @@ import type { SshRemoteConfig } from '../../../shared/types';
  * Runs terminal commands on remote hosts via SSH.
  */
 export class SshCommandRunner {
+	/**
+	 * In-flight SSH commands keyed by sessionId. Killing the local `ssh` client
+	 * drops the channel, which terminates the remote command. Entries are
+	 * removed on exit. Mirrors LocalCommandRunner's registry.
+	 */
+	private running = new Map<string, () => void>();
+
 	constructor(private emitter: EventEmitter) {}
+
+	/**
+	 * Terminate an in-flight command started by `run()`.
+	 * Returns false when nothing is running under that sessionId.
+	 */
+	cancel(sessionId: string): boolean {
+		const kill = this.running.get(sessionId);
+		if (!kill) return false;
+		kill();
+		return true;
+	}
 
 	/**
 	 * Run a terminal command on a remote host via SSH
@@ -112,6 +130,10 @@ export class SshCommandRunner {
 				},
 			});
 
+			this.running.set(sessionId, () => {
+				childProcess.kill();
+			});
+
 			// Handle stdout
 			childProcess.stdout?.on('data', (data: Buffer) => {
 				const output = data.toString();
@@ -147,6 +169,7 @@ export class SshCommandRunner {
 
 			// Handle process exit
 			childProcess.on('exit', (code) => {
+				this.running.delete(sessionId);
 				logger.debug('[ProcessManager] runCommandViaSsh exit', 'ProcessManager', {
 					sessionId,
 					exitCode: code,
@@ -157,6 +180,7 @@ export class SshCommandRunner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				this.running.delete(sessionId);
 				logger.error('[ProcessManager] runCommandViaSsh error', 'ProcessManager', {
 					sessionId,
 					error: error.message,

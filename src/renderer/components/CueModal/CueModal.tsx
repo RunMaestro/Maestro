@@ -1,5 +1,5 @@
 /**
- * CueModal — Main modal for Maestro Cue dashboard and pipeline editor.
+ * CueModal - Main modal for Maestro Cue dashboard and pipeline editor.
  *
  * Thin shell: layer stack, tab switching, help overlay, unsaved changes
  * confirmation. Delegates:
@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useCue } from '../../hooks/useCue';
 import type { CueSessionStatus } from '../../hooks/useCue';
@@ -32,6 +33,7 @@ import { CueModalHeader, type CueModalTab } from './CueModalHeader';
 import { CueDashboard } from './CueDashboard';
 import { ActivityLog } from './ActivityLog';
 import { BackupTab } from './BackupTab';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 export interface CueModalProps {
 	theme: Theme;
@@ -91,7 +93,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const showHelpRef = useRef(false);
 	showHelpRef.current = showHelp;
 
-	// Activity Log search state — lifted here so the modal layer escape handler
+	// Activity Log search state - lifted here so the modal layer escape handler
 	// can clear it before the layer stack closes the modal.
 	const [activitySearchQuery, setActivitySearchQuery] = useState('');
 	const activitySearchInputRef = useRef<HTMLInputElement>(null);
@@ -110,7 +112,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 			setActivitySearchQuery('');
 			return;
 		}
-		// Skip the dirty-changes confirmation when a save is already in flight —
+		// Skip the dirty-changes confirmation when a save is already in flight -
 		// the save promise lives in the persistence hook and continues running
 		// after CueModal unmounts (it toasts success/failure when it lands).
 		// Forcing the user to wait or discard would defeat the whole point of
@@ -230,7 +232,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const [activeRunsExpanded, setActiveRunsExpanded] = useState(true);
 
 	// Wrap tab switching so navigating away from the pipeline tab clears the
-	// pending selection token — prevents a stale nonce from re-snapping the editor
+	// pending selection token - prevents a stale nonce from re-snapping the editor
 	// to the "View in Pipeline" target on the next remount.
 	const handleSetActiveTab = useCallback((tab: CueModalTab) => {
 		if (tab !== 'pipeline') setPendingPipelineId(null);
@@ -265,6 +267,11 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		refresh();
 		refreshGraphData();
 	}, [refresh, refreshGraphData]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'cue',
+		defaultSize: { width: 1200, height: 760 },
+		minSize: { width: 760, height: 520 },
+	});
 
 	return (
 		<>
@@ -281,14 +288,25 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 					{/* Modal */}
 					<div
+						ref={resizableModal.modalRef}
+						role="dialog"
+						aria-modal="true"
+						aria-label="Maestro Cue"
 						className="relative rounded-xl shadow-2xl flex flex-col select-none"
 						style={{
-							width: '90vw',
-							height: '90vh',
+							...resizableModal.style,
 							backgroundColor: theme.colors.bgMain,
 							border: `1px solid ${theme.colors.border}`,
 						}}
+						data-modal-resize-key="cue"
 					>
+						<ResizeHandles
+							onResizeStart={resizableModal.onResizeStart}
+							accentColor={theme.colors.accent}
+							onResetSize={resizableModal.onResetSize}
+							canReset={resizableModal.canReset}
+						/>
+
 						<CueModalHeader
 							theme={theme}
 							activeTab={activeTab}
@@ -328,7 +346,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								/>
 							</div>
 						) : activeTab === 'activity' ? (
-							<div className="flex-1 min-h-0 px-5 py-4">
+							<div className="flex-1 min-h-0 px-5 py-4 select-text">
 								<ActivityLog
 									log={activityLog}
 									theme={theme}

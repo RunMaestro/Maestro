@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Target, ExternalLink, Copy } from 'lucide-react';
+import { FileText, Target, ExternalLink, FolderOpen, Copy } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -178,7 +178,7 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						<span>{getRevealLabel(window.maestro?.platform ?? '')}</span>
 					</button>
 				)}

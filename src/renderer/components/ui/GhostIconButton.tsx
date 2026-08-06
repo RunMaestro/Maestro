@@ -49,6 +49,12 @@ export interface GhostIconButtonProps {
 	onKeyDown?: (e: React.KeyboardEvent<HTMLButtonElement>) => void;
 	/** Whether to stop propagation on click. Defaults to false */
 	stopPropagation?: boolean;
+	/**
+	 * Mousedown handler. Needed when the button sits inside a drag handle: the
+	 * parent starts a drag on mousedown, so the button must stop propagation
+	 * there (stopping it on click is too late to prevent the drag).
+	 */
+	onMouseDown?: (e: MouseEvent<HTMLButtonElement>) => void;
 }
 
 /**
@@ -71,6 +77,7 @@ export const GhostIconButton = forwardRef<HTMLButtonElement, GhostIconButtonProp
 			tabIndex,
 			onKeyDown,
 			stopPropagation = false,
+			onMouseDown,
 		},
 		ref
 	) {
@@ -86,6 +93,7 @@ export const GhostIconButton = forwardRef<HTMLButtonElement, GhostIconButtonProp
 				ref={ref}
 				type={type}
 				onClick={handleClick}
+				onMouseDown={onMouseDown}
 				onKeyDown={onKeyDown}
 				disabled={disabled}
 				title={title}

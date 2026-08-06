@@ -26,6 +26,7 @@ import type {
 	WorktreeRunTarget,
 } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
@@ -50,6 +51,7 @@ import { logger } from '../utils/logger';
 import { resolveEffectiveContextWindow } from '../utils/contextWindowResolver';
 import { getModelContextWindowOverride } from '../../shared/agentConstants';
 import { formatTokens } from '../../shared/formatters';
+import { ResizeHandles } from './ui/ResizeHandles';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -623,6 +625,11 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 	const isModified = prompt !== DEFAULT_BATCH_PROMPT;
 	const hasUnsavedChanges = prompt !== savedPrompt && prompt !== DEFAULT_BATCH_PROMPT;
+	const resizableModal = useResizableModal({
+		resizeKey: 'batch-runner',
+		defaultSize: { width: 720, height: 720 },
+		minSize: { width: 560, height: 440 },
+	});
 
 	return (
 		<div
@@ -633,9 +640,22 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			tabIndex={-1}
 		>
 			<div
-				className="modal-w-lg max-h-[92vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
-				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+				ref={resizableModal.modalRef}
+				className="relative border rounded-lg shadow-2xl overflow-hidden flex flex-col select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="batch-runner"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Header */}
 				<div
 					className="p-4 border-b flex items-center justify-between shrink-0"

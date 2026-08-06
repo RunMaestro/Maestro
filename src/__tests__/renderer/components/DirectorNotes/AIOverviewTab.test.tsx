@@ -7,15 +7,20 @@ import {
 } from '../../../../renderer/components/DirectorNotes/AIOverviewTab';
 
 import { mockTheme } from '../../../helpers/mockTheme';
-// Mock useSettings hook
-vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
-	useSettings: () => ({
+// Mock useSettings hook. Mutable (via vi.hoisted) so tests can flip the
+// persisted Director's Notes defaultMode and assert the initial view mode.
+const settingsMock = vi.hoisted(() => ({
+	value: {
 		directorNotesSettings: {
 			provider: 'claude-code',
 			defaultLookbackDays: 7,
+			defaultMode: undefined as 'rich' | 'plain' | undefined,
 		},
 		bionifyReadingMode: false,
-	}),
+	},
+}));
+vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
+	useSettings: () => settingsMock.value,
 }));
 
 // Mock MarkdownRenderer
@@ -33,10 +38,31 @@ vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
 	),
 }));
 
-// Mock SaveMarkdownModal
+// Mock RichOverview - the Rich-mode dashboard is exercised in its own test
+// file. Here we only need a lightweight stub that proves Rich mode rendered and
+// still surfaces the narrative (via the shared markdown-renderer testid) so the
+// existing synopsis assertions hold under the new Rich default.
+vi.mock('../../../../renderer/components/DirectorNotes/RichOverview', () => ({
+	RichOverview: ({
+		synopsis,
+		enableBionifyReadingMode,
+	}: {
+		synopsis: string;
+		enableBionifyReadingMode?: boolean;
+	}) => (
+		<div data-testid="rich-overview">
+			<div data-testid="markdown-renderer" data-bionify={enableBionifyReadingMode ? 'on' : 'off'}>
+				{synopsis}
+			</div>
+		</div>
+	),
+}));
+
+// Mock SaveMarkdownModal - surface the `content` prop so tests can assert Save
+// always operates on the raw synopsis markdown (in both Rich and Plain modes).
 vi.mock('../../../../renderer/components/SaveMarkdownModal', () => ({
-	SaveMarkdownModal: ({ onClose }: { onClose: () => void }) => (
-		<div data-testid="save-markdown-modal">
+	SaveMarkdownModal: ({ content, onClose }: { content: string; onClose: () => void }) => (
+		<div data-testid="save-markdown-modal" data-content={content}>
 			<button onClick={onClose} data-testid="save-modal-close">
 				Close
 			</button>
@@ -76,6 +102,9 @@ const mockGenerateSynopsis = vi.fn();
 beforeEach(() => {
 	// Reset module-level synopsis cache so each test starts fresh
 	_resetCacheForTesting();
+
+	// Reset the persisted default mode so each test starts from "unset".
+	settingsMock.value.directorNotesSettings.defaultMode = undefined;
 
 	// jsdom in this environment doesn't provide a working Storage on
 	// window.localStorage, so install a minimal in-memory mock that satisfies
@@ -215,6 +244,10 @@ describe('AIOverviewTab', () => {
 
 		const slider = screen.getByRole('slider');
 		expect(slider).toHaveValue('7');
+		// Cross-theme guard: the lookback range used to be hardcoded
+		// `accent-indigo-500`; it must derive its accent from the active theme.
+		expect(slider).toHaveStyle({ accentColor: mockTheme.colors.accent });
+		expect(slider).not.toHaveClass('accent-indigo-500');
 	});
 
 	it('renders Regenerate button', async () => {
@@ -422,7 +455,7 @@ describe('AIOverviewTab', () => {
 		// Unmount (simulates closing the modal)
 		unmount();
 
-		// Resolve the generation after unmount — should not throw or update state
+		// Resolve the generation after unmount - should not throw or update state
 		await act(async () => {
 			resolveGeneration({
 				success: true,
@@ -515,5 +548,417 @@ describe('AIOverviewTab', () => {
 		// Close save modal
 		fireEvent.click(screen.getByTestId('save-modal-close'));
 		expect(screen.queryByTestId('save-markdown-modal')).not.toBeInTheDocument();
+	});
+
+	describe('Rich/Plain view mode toggle', () => {
+		const VIEW_MODE_STORAGE_KEY = 'directorNotes.viewMode';
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: '# Synopsis\n\nbody text',
+				stats: { agentCount: 3, entryCount: 42, durationMs: 5000 },
+			});
+		});
+
+		it('renders the Rich and Plain segmented control', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: /^rich$/i })).toBeInTheDocument();
+			});
+			expect(screen.getByRole('button', { name: /^plain$/i })).toBeInTheDocument();
+		});
+
+		it('defaults to Rich mode and renders the RichOverview dashboard', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+			expect(screen.getByRole('button', { name: /^rich$/i })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		});
+
+		it('switches to Plain (raw markdown) and persists the choice', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			// Rich dashboard gone; the Plain markdown block remains reachable.
+			expect(screen.queryByTestId('rich-overview')).not.toBeInTheDocument();
+			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			expect(window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)).toBe('plain');
+		});
+
+		it('switches back to Rich and restores the dashboard', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+			expect(screen.queryByTestId('rich-overview')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /^rich$/i }));
+			expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			expect(window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)).toBe('rich');
+		});
+
+		it('loads the persisted Plain mode from localStorage on mount', async () => {
+			window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'plain');
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('rich-overview')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /^plain$/i })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		});
+
+		it('opens in the persisted defaultMode when no localStorage override exists', async () => {
+			// Persisted setting says Plain; no per-session override in localStorage.
+			settingsMock.value.directorNotesSettings.defaultMode = 'plain';
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('rich-overview')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /^plain$/i })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		});
+
+		it('lets a localStorage override win over the persisted defaultMode', async () => {
+			// Persisted default is Plain, but the session override (the in-tab
+			// toggle) chose Rich - the override wins.
+			settingsMock.value.directorNotesSettings.defaultMode = 'plain';
+			window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'rich');
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+			expect(screen.getByRole('button', { name: /^rich$/i })).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+		});
+
+		it('Copy operates on the raw synopsis markdown in Rich mode', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Copy'));
+
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalledWith('# Synopsis\n\nbody text');
+			});
+		});
+
+		it('Copy operates on the raw synopsis markdown in Plain mode too', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			// Switch to Plain, then copy - same raw markdown, unaffected by mode.
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+			fireEvent.click(screen.getByText('Copy'));
+
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalledWith('# Synopsis\n\nbody text');
+			});
+		});
+
+		it('Save hands the raw synopsis markdown to the modal in Rich mode', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.getByTestId('save-markdown-modal')).toHaveAttribute(
+				'data-content',
+				'# Synopsis\n\nbody text'
+			);
+		});
+
+		it('Save hands the raw synopsis markdown to the modal in Plain mode too', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.getByTestId('save-markdown-modal')).toHaveAttribute(
+				'data-content',
+				'# Synopsis\n\nbody text'
+			);
+		});
+	});
+
+	// The agent emits the structured JSON narrative now. Plain Mode (and the
+	// Copy/Save outputs) must convert it back to readable markdown prose instead
+	// of dumping the raw JSON object - the regression that made Plain Mode look
+	// like an error.
+	describe('Plain Mode renders the structured narrative as prose', () => {
+		const narrative = {
+			version: 1 as const,
+			sections: [
+				{
+					kind: 'accomplishments' as const,
+					title: 'Accomplishments',
+					items: [{ text: 'Shipped Plain Mode', severity: 'info' as const, agent: 'Maestro' }],
+				},
+				{
+					kind: 'challenges' as const,
+					title: 'Challenges',
+					items: [{ text: 'Build broke', severity: 'critical' as const, agent: 'rc' }],
+				},
+			],
+		};
+		// What the agent actually returns as the raw synopsis string.
+		const rawJson = JSON.stringify(narrative);
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: rawJson,
+				narrative,
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		it('renders converted markdown prose, not the raw JSON object', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			const md = screen.getByTestId('markdown-renderer');
+			expect(md.textContent).toContain('## Accomplishments');
+			expect(md.textContent).toContain('- Shipped Plain Mode _(Maestro)_');
+			expect(md.textContent).toContain('- **Build broke** _(rc)_');
+			// Regression guard: Plain Mode must NOT dump the raw JSON object.
+			expect(md.textContent).not.toContain('"version"');
+			expect(md.textContent).not.toContain('"sections"');
+		});
+
+		it('Copy exports the readable prose, not the raw JSON', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Copy'));
+
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalled();
+			});
+			const copied = mockWriteText.mock.calls[0][0] as string;
+			expect(copied).toContain('## Accomplishments');
+			expect(copied).not.toContain('"version"');
+		});
+
+		it('Save hands the readable prose to the modal, not the raw JSON', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Save'));
+
+			const content = screen.getByTestId('save-markdown-modal').getAttribute('data-content') || '';
+			expect(content).toContain('## Accomplishments');
+			expect(content).not.toContain('"version"');
+		});
+	});
+
+	// The Director's Notes prompt is a USER SETTING persisted to userData, so a
+	// profile can hold a prompt written against the other branch's contract. Both
+	// directions have to degrade correctly, and neither may put raw JSON on
+	// screen. See looksLikeStructuredOutput in shared/directorNotesNarrative.
+	describe('Plain Mode tolerates either prompt contract', () => {
+		it('renders a markdown synopsis as the report when no narrative came back', async () => {
+			// Direction 1: markdown-contract prompt meeting a JSON-expecting build.
+			// The agent obeyed its prompt, so this IS the report - not a failure.
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: '# Synopsis\n\n## Accomplishments\n\n- Shipped the thing',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+
+			render(<AIOverviewTab theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			const md = screen.getByTestId('markdown-renderer');
+			expect(md.textContent).toContain('- Shipped the thing');
+			// No accusation of a broken narrative - nothing was broken.
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		});
+
+		it('never renders raw JSON even when no narrativeError came back', async () => {
+			// Direction 2, and the invariant: JSON-shaped output with NEITHER a
+			// narrative nor an error - the shape of a result cached before the
+			// narrative fields existed. This used to fall through to the raw string
+			// and paint a wall of JSON where the report belongs.
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: '{"version":1,"sections":[{"kind":"accomplishments"}]}',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+
+			render(<AIOverviewTab theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			expect(screen.getByRole('alert')).toBeInTheDocument();
+			expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
+		});
+	});
+
+	// When the structured output cannot be parsed at all, Plain Mode used to feed
+	// the raw string straight to the markdown renderer - which meant a wall of raw
+	// JSON where the report should be. It must fail as loudly as Rich Mode does.
+	describe('Plain Mode with an unparseable narrative', () => {
+		const rawJson = '{"version":1,"sections":[{"kind":"accomplishments","title":"Accomp';
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: rawJson,
+				narrativeError: 'No JSON object found in the response.',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		it('shows the parse-failure banner instead of dumping the raw output', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			expect(screen.getByRole('alert')).toHaveTextContent(
+				/could not parse the AI's structured output/i
+			);
+			expect(screen.getByText('No JSON object found in the response.')).toBeInTheDocument();
+			// The raw output is reachable behind the disclosure, never rendered as
+			// if it were the report.
+			expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
+		});
+
+		it('keeps the raw output reachable behind the disclosure', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+			fireEvent.click(screen.getByText('View raw output'));
+
+			expect(screen.getByText(rawJson)).toBeInTheDocument();
+		});
+	});
+
+	// A salvaged narrative is still shown - a run costs minutes - but never
+	// silently: the banner says what had to be recovered.
+	describe('Plain Mode with a salvaged narrative', () => {
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis:
+					'{"version":1,"sections":[{"kind":"challenges","title":"Challenges","items":[{"tex',
+				narrative: {
+					version: 1 as const,
+					sections: [
+						{
+							kind: 'accomplishments' as const,
+							title: 'Accomplishments',
+							items: [{ text: 'Recovered bullet', severity: 'info' as const }],
+						},
+					],
+				},
+				narrativeError: 'No JSON object found in the response.',
+				narrativeRecovery:
+					'Recovered what could be read: the response was cut off before it finished.',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		it('renders the recovered prose alongside the partial-recovery banner', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			expect(screen.getByRole('alert')).toHaveTextContent(/cut off before it finished/i);
+			expect(screen.getByRole('alert')).toHaveTextContent(
+				/Part of the AI's structured output could not be parsed/i
+			);
+
+			const md = screen.getByTestId('markdown-renderer');
+			expect(md.textContent).toContain('## Accomplishments');
+			expect(md.textContent).toContain('- Recovered bullet');
+			expect(md.textContent).not.toContain('"version"');
+		});
+
+		it('Copy exports the recovered prose rather than the unparseable raw output', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Copy'));
+
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalled();
+			});
+			const copied = mockWriteText.mock.calls[0][0] as string;
+			expect(copied).toContain('- Recovered bullet');
+			expect(copied).not.toContain('"version"');
+		});
 	});
 });

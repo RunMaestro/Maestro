@@ -5,12 +5,14 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
 import { useModalStore, selectModalData } from '../../stores/modalStore';
 import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 // Lazy load tab components
 const UnifiedHistoryTab = lazy(() =>
@@ -23,7 +25,7 @@ const AIOverviewTab = lazy(() =>
 interface DirectorNotesModalProps {
 	theme: Theme;
 	onClose: () => void;
-	// Session navigation — jumps to an agent's session tab (closes modal first)
+	// Session navigation - jumps to an agent's session tab (closes modal first)
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
@@ -55,7 +57,7 @@ export function DirectorNotesModal({
 		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
 	);
 
-	// "Director's Notes Since Friday May 8th" — updates live when the
+	// "Director's Notes Since Friday May 8th" - updates live when the
 	// user changes the lookback period in the activity graph. "All time"
 	// suppresses the suffix.
 	const titleText = useMemo(() => {
@@ -172,10 +174,16 @@ export function DirectorNotesModal({
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
 	}, [navigateTab]);
+	const resizableModal = useResizableModal({
+		resizeKey: 'director-notes',
+		defaultSize: { width: 1200, height: 820 },
+		minSize: { width: 720, height: 480 },
+		externalRef: modalRef,
+	});
 
 	return createPortal(
 		<div
-			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
 			style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
 			onClick={(e) => {
 				if (e.target === e.currentTarget) onClose();
@@ -188,17 +196,21 @@ export function DirectorNotesModal({
 				aria-modal="true"
 				aria-labelledby="director-notes-title"
 				tabIndex={-1}
-				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
-					width: '60vw',
-					maxWidth: 1050,
-					// Fill the viewport leaving the same gap at the bottom as the
-					// overlay's pt-16 (4rem) leaves at the top.
-					height: 'calc(100vh - 8rem)',
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="director-notes"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Header */}
 				<div
 					className="flex items-center justify-between px-4 py-3 border-b"
@@ -255,7 +267,7 @@ export function DirectorNotesModal({
 
 				{/* Tab content */}
 				<div
-					className="flex-1 overflow-hidden min-h-0 flex flex-col"
+					className="flex-1 overflow-hidden min-h-0 flex flex-col select-text"
 					style={{ backgroundColor: theme.colors.bgMain }}
 				>
 					<Suspense

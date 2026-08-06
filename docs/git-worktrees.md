@@ -6,6 +6,20 @@ icon: code-branch
 
 Maestro integrates deeply with Git, providing visual tools for exploring repository history and enabling parallel development with worktree sub-agents.
 
+## The Git Menu
+
+Every agent whose working directory is a git repository has a git menu, reachable three ways:
+
+- **Header branch pill** - hover the pill showing the current branch name (clicking works too).
+- **Left Bar right-click** - right-click the agent in the agent list.
+- **Command palette** (`Cmd+K` / `Ctrl+K`) - every action is searchable by name.
+
+All three offer the same actions: **View Git Log**, **View Git Diff**, **Git Pull**, **Git Push**, **Change Branch**, and **Create Pull Request**. Pull and Push are badged with how many commits you're behind and ahead. The header menu additionally shows the current branch and origin (each with a copy button, and the origin clickable to open the repo in your browser) and a **Configure Worktrees** entry.
+
+The header pill and the command palette act on the agent you're looking at; the right-click menu acts on the agent you right-clicked, so you can pull or check the log of a background agent without switching to it.
+
+See [Git Actions](./general-usage#git-actions) for the full walkthrough, including the live pull/push output and the fuzzy branch picker.
+
 ## Git Log Viewer
 
 Browse your commit history directly in Maestro:
@@ -18,7 +32,7 @@ The log viewer shows:
 - **Branch visualization** with merge points
 - **Quick navigation** to any commit
 
-Access via **Command Palette** (`Cmd+K` / `Ctrl+K`) → "Git Log" or the git menu in the Left Bar.
+Access via the git menu (branch pill or right-click) → **View Git Log**, **Command Palette** (`Cmd+K` / `Ctrl+K`) → "Git Log", or `Cmd+Shift+G` / `Ctrl+Shift+G`.
 
 ## Diff Viewer
 
@@ -32,7 +46,7 @@ The diff viewer displays:
 - **Syntax highlighting** matched to file type
 - **Line-by-line changes** with additions and deletions clearly marked
 
-Access diffs from the git log viewer by clicking any commit, or use **Command Palette** → "Git Diff".
+Access the working-tree diff from the git menu (branch pill or right-click) → **View Git Diff**, **Command Palette** (`Cmd+K` / `Ctrl+K`) → "Git Diff", or `Cmd+Shift+D` / `Ctrl+Shift+D`. Clicking any commit in the git log viewer opens that commit's diff instead.
 
 ---
 
@@ -53,18 +67,23 @@ Worktree sub-agents appear nested under their parent agent in the Left Bar:
 
 ### Creating a Worktree Sub-Agent
 
-There are two ways to access worktree configuration:
+There are three ways to access worktree configuration:
 
 **From the Header (Main Panel):**
 
 1. Select an agent that's in a git repository
-2. Hover over the **branch pill** in the header (shows the current branch name, e.g., "main")
-3. In the hover overlay, click **"Configure Worktrees"**
+2. Hover the **branch pill** in the header (shows the current branch name, e.g., "main")
+3. In the menu, click **"Configure Worktrees"**
 
 **From the Context Menu (Left Bar):**
 
 1. Right-click an agent in the session list
 2. Select **"Configure Worktrees"** (only shown for git repositories)
+
+**From the Command Palette:**
+
+1. Press `Cmd+K` / `Ctrl+K`
+2. Search for **"Configure Worktrees"**
 
 In the configuration modal:
 
@@ -86,20 +105,24 @@ Right-click any worktree sub-agent to access management options:
 
 ![Worktree right-click menu](./screenshots/git-worktree-right-click.png)
 
-| Action                  | Description                                    |
-| ----------------------- | ---------------------------------------------- |
-| **Rename**              | Change the display name of the worktree agent  |
-| **Edit Agent...**       | Modify agent configuration                     |
-| **Duplicate...**        | Create a new agent with the same configuration |
-| **Create Pull Request** | Open a PR from this worktree's branch          |
-| **Remove Worktree**     | Delete the worktree agent (see below)          |
+| Action                  | Description                                                                |
+| ----------------------- | -------------------------------------------------------------------------- |
+| **Rename**              | Change the display name of the worktree agent                              |
+| **Edit Agent...**       | Modify agent configuration                                                 |
+| **Duplicate...**        | Create a new agent with the same configuration                             |
+| **Git actions**         | View Git Log, View Git Diff, Git Pull, Git Push, Change Branch (see above) |
+| **Create Pull Request** | Open a PR from this worktree's branch                                      |
+| **Remove Worktree**     | Delete the worktree agent (see below)                                      |
 
 ### Creating Pull Requests
 
 When you're done with work in a worktree:
 
 1. **Right-click** the worktree agent → **Create Pull Request**, or
-2. Press `Cmd+K` / `Ctrl+K` with the worktree active → search "Create Pull Request"
+2. Hover the header **branch pill** → **Create Pull Request**, or
+3. Press `Cmd+K` / `Ctrl+K` with the worktree active → search "Create Pull Request"
+
+This isn't limited to worktrees: any agent sitting on a git branch can open a PR the same way. The entry is hidden only when Maestro can't determine a branch to open the PR from.
 
 The PR modal shows:
 

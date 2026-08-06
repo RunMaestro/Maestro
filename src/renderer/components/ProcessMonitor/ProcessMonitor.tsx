@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import type { ProcessDetailData, ProcessMonitorProps, ProcessNode } from './types';
 import { buildProcessTree } from './processTree';
@@ -11,10 +12,11 @@ import { useProcessKeyboardNav } from './hooks/useProcessKeyboardNav';
 import { ProcessListView } from './ProcessListView';
 import { ProcessDetailView } from './ProcessDetailView';
 import { KillConfirmDialog } from './KillConfirmDialog';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 // Hook composition order:
 //   1. useProcessMonitorData owns polling and exposes refresh.
-//   2. tree is memoised from raw inputs only — does NOT depend on expansion state,
+//   2. tree is memoised from raw inputs only - does NOT depend on expansion state,
 //      because the renderer reads expandedIds.has(node.id) directly rather than
 //      consulting the (formerly stamped) node.expanded field.
 //   3. useProcessExpansion receives tree for stepper depth math + initial-restore.
@@ -98,7 +100,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	// Escape: close detail view when open, otherwise close the modal. When a
 	// KillConfirmDialog is mounted it registers a higher-priority layer
 	// (MODAL_PRIORITIES.CONFIRM = 1000 > PROCESS_MONITOR = 550) so the dialog
-	// wins Escape automatically — no killConfirm guard needed here.
+	// wins Escape automatically - no killConfirm guard needed here.
 	useModalLayer(MODAL_PRIORITIES.PROCESS_MONITOR, 'System Processes', () => {
 		if (detailView) {
 			setDetailView(null);
@@ -123,6 +125,12 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	}, []);
 
 	const totalActiveProcesses = data.activeProcesses.length;
+	const resizableModal = useResizableModal({
+		resizeKey: 'process-monitor',
+		defaultSize: { width: 960, height: 680 },
+		minSize: { width: 700, height: 420 },
+		externalRef: containerRef,
+	});
 
 	return (
 		<div
@@ -135,17 +143,23 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				role="dialog"
 				aria-modal="true"
 				aria-label={detailView ? 'Process Details' : 'System Processes'}
-				className="max-h-[80vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
-					width: 'fit-content',
-					minWidth: '700px',
-					maxWidth: '90vw',
 				}}
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={detailView ? undefined : onKeyDown}
+				data-modal-resize-key="process-monitor"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{detailView ? (
 					<ProcessDetailView
 						theme={theme}
@@ -236,7 +250,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						</div>
 
 						{/* Process tree */}
-						<div className="overflow-y-auto flex-1 scrollbar-thin">
+						<div className="overflow-y-auto flex-1 scrollbar-thin select-text">
 							<ProcessListView
 								theme={theme}
 								tree={tree}

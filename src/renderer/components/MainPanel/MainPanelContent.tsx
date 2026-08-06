@@ -525,6 +525,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						<FilePreview
 							ref={filePreviewRef}
 							file={memoizedFilePreviewFile}
+							fileTabId={activeFileTabId}
 							onClose={handleFilePreviewClose}
 							isTabMode={true}
 							theme={theme}

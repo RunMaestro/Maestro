@@ -468,4 +468,12 @@ export class ProcessManager extends EventEmitter {
 		}
 		return this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
 	}
+
+	/**
+	 * Terminate an in-flight `runCommand()` for a sessionId (local or SSH).
+	 * Returns false when nothing is running under that id.
+	 */
+	cancelCommand(sessionId: string): boolean {
+		return this.localCommandRunner.cancel(sessionId) || this.sshCommandRunner.cancel(sessionId);
+	}
 }
