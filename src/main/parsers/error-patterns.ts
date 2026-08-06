@@ -375,6 +375,20 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 			message: 'Invalid session. Starting fresh conversation.',
 			recoverable: true,
 		},
+		{
+			// Google/Gemini answers with a bare 400 INVALID_ARGUMENT when the
+			// replayed conversation is malformed - most often a tool call left
+			// without its matching result after a turn was aborted mid-stream.
+			// OpenCode replays its whole stored session on every prompt, so once
+			// that lands in session storage the provider rejects every later
+			// prompt identically and the session is unusable (issue #307).
+			// Classify as session_not_found: the stored provider session is dead,
+			// and retrying it can never succeed - only a fresh session can.
+			pattern: /request contains an invalid argument|\bINVALID_ARGUMENT\b/i,
+			message:
+				'The provider rejected this conversation (400 INVALID_ARGUMENT). The stored session history is unusable - start a new session to continue.',
+			recoverable: true,
+		},
 	],
 };
 
