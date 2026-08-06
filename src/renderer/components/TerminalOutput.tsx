@@ -2213,7 +2213,10 @@ export const TerminalOutput = memo(
 				tabReadStateRef.current.set(activeTabId, currentCount);
 				setHasNewMessages(false);
 				setNewMessageCount(0);
-				setIsAtBottom(true);
+				// Do not redefine the restored scroll state here. TerminalOutput is keyed by
+				// agent and tab, so this local map is empty after every tab switch. Treating
+				// that remount as pinned overrides initialIsAtBottom and lets the mutation
+				// observer pull a restored middle position back to the bottom.
 			}
 
 			lastLogCountRef.current = currentCount;

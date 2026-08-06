@@ -2883,6 +2883,46 @@ describe('TerminalOutput', () => {
 			expect(scroll.getScrollTop()).toBe(500);
 		});
 
+		it('keeps a restored middle position unpinned across repeated agent remounts', async () => {
+			const firstSession = createDefaultSession({ id: 'session-1' });
+			const secondSession = createDefaultSession({ id: 'session-2' });
+			const renderAgent = (session: Session, scrollTop: number) => (
+				<TerminalOutput
+					key={`${session.id}-tab-1`}
+					{...createDefaultProps({
+						session,
+						initialScrollTop: scrollTop,
+						initialIsAtBottom: false,
+					})}
+				/>
+			);
+			const { container, rerender } = render(renderAgent(firstSession, 250));
+
+			for (const [session, savedPosition] of [
+				[secondSession, 500],
+				[firstSession, 250],
+				[secondSession, 500],
+				[firstSession, 250],
+			] as const) {
+				rerender(renderAgent(session, savedPosition));
+				const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+				const scroll = configureScrollableTranscript(scrollContainer, 0);
+				const scrollToSpy = vi.fn();
+				scrollContainer.scrollTo = scrollToSpy;
+
+				await act(async () => {
+					vi.advanceTimersByTime(20);
+				});
+				expect(scroll.getScrollTop()).toBe(savedPosition);
+
+				await act(async () => {
+					scrollContainer.appendChild(document.createElement('span'));
+					vi.advanceTimersByTime(20);
+				});
+				expect(scrollToSpy).not.toHaveBeenCalled();
+			}
+		});
+
 		it('still persists an intentional user scroll to the top after focus restoration settles', async () => {
 			const onScrollPositionChange = vi.fn();
 			const { container } = render(
