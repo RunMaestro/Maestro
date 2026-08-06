@@ -2089,6 +2089,7 @@ export const TerminalOutput = memo(
 			const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
 			// Consider "at bottom" if within 50px of the bottom
 			const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+			isAtBottomRef.current = atBottom;
 			setIsAtBottom(atBottom);
 
 			// Notify parent when isAtBottom changes (for hasUnread logic)
@@ -2102,6 +2103,7 @@ export const TerminalOutput = memo(
 				setHasNewMessages(false);
 				setNewMessageCount(0);
 				// Resume auto-scroll when user scrolls back to bottom
+				autoScrollPausedRef.current = false;
 				setAutoScrollPaused(false);
 				// Save read state for current tab
 				if (activeTabId) {
@@ -2116,6 +2118,7 @@ export const TerminalOutput = memo(
 					isProgrammaticScrollRef.current = false;
 				} else {
 					// Genuine user scroll away from bottom — pause auto-scroll
+					autoScrollPausedRef.current = true;
 					setAutoScrollPaused(true);
 				}
 			}

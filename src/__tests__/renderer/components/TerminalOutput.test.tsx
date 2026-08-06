@@ -2716,6 +2716,28 @@ describe('TerminalOutput', () => {
 			expect(onScrollPositionChange).not.toHaveBeenCalledWith(0);
 		});
 
+		it('snapshots a user scroll before an immediate blur without waiting for a rerender', async () => {
+			const onScrollPositionChange = vi.fn();
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ initialScrollTop: 600, onScrollPositionChange })}
+				/>
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scroll = configureScrollableTranscript(scrollContainer, 400);
+
+			fireEvent.scroll(scrollContainer);
+			fireEvent.blur(window);
+			scroll.setScrollTop(0);
+			fireEvent.focus(window);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scroll.getScrollTop()).toBe(400);
+			expect(onScrollPositionChange).toHaveBeenCalledWith(400);
+		});
+
 		it('keeps a bottom-pinned transcript pinned across window blur and focus', async () => {
 			const onScrollPositionChange = vi.fn();
 			const { container } = render(
