@@ -14,6 +14,7 @@ import {
 	Share2,
 	GitGraph,
 	ExternalLink,
+	FolderOpen,
 	WrapText,
 } from 'lucide-react';
 import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
@@ -21,6 +22,7 @@ import { Spinner } from '../ui/Spinner';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { getRevealLabel } from '../../utils/platformUtils';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
@@ -377,6 +379,19 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									style={{ color: theme.colors.textDim }}
 								>
 									<ExternalLink className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
+						{/* Reveal in Finder / Explorer / File Manager — local files only */}
+						{toolbarVisibility.revealInFolder && !sshRemoteId && (
+							<HoverTooltip theme={theme} label={getRevealLabel(window.maestro?.platform ?? '')}>
+								<button
+									onClick={() => window.maestro?.shell?.showItemInFolder(file.path)}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="reveal-in-folder-button"
+								>
+									<FolderOpen className={headerIconClass} />
 								</button>
 							</HoverTooltip>
 						)}

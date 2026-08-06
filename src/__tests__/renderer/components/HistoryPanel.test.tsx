@@ -28,6 +28,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 // Mock child components
 vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 	HistoryDetailModal: ({
@@ -136,6 +137,14 @@ describe('HistoryPanel', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+
+		// HistoryPanel persists its USER/AUTO/CUE filter selection to
+		// localStorage per agent (see historyFilterPersistence.ts). jsdom here
+		// has no working Storage, and a filter toggled in one test would
+		// otherwise leak into every test that follows, silently filtering out
+		// entries with no visible cause. Installing a fresh mock per test
+		// provides the API and doubles as the reset.
+		installLocalStorageMock();
 
 		// Reset uiStore state used by HistoryPanel
 		useUIStore.setState({ historySearchFilterOpen: false });

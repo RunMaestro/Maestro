@@ -10,11 +10,12 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
+import { isWebContentsAvailable } from '../../utils/safe-send';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 import {
@@ -52,6 +53,24 @@ function cliActivityChanged(
 		prev.playbookName !== curr.playbookName ||
 		prev.startedAt !== curr.startedAt
 	);
+}
+
+/**
+ * Tell every OTHER window that settings changed on disk.
+ *
+ * The settings file watcher deliberately ignores writes the app makes itself
+ * (see stores/write-tracker.ts): echoing a renderer's own write back to it
+ * triggers an async `loadAllSettings()` that overwrites whatever the user is
+ * typing, which is how the Conductor Profile textarea kept losing characters
+ * and snapping the caret to the end. Peer windows still have to hear about it,
+ * so route that here - immediately, and only to windows that did not write.
+ */
+function notifyPeerWindows(senderWebContentsId: number | undefined): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!isWebContentsAvailable(win)) continue;
+		if (win.webContents.id === senderWebContentsId) continue;
+		win.webContents.send('settings:externalChange');
+	}
 }
 
 /**
@@ -118,7 +137,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		return value;
 	});
 
-	ipcMain.handle('settings:set', async (_, key: string, value: any) => {
+	ipcMain.handle('settings:set', async (event, key: string, value: any) => {
 		try {
 			settingsStore.set(key, value);
 		} catch (err) {
@@ -132,6 +151,8 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			return false;
 		}
 		logger.info(`Settings updated: ${key}`, 'Settings', { key, value });
+
+		notifyPeerWindows(event?.sender?.id);
 
 		const webServer = getWebServer();
 		// Broadcast theme changes to connected web clients

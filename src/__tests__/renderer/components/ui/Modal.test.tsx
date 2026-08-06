@@ -10,6 +10,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 import { Modal, ModalFooter } from '../../../../renderer/components/ui/Modal';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
@@ -477,6 +478,105 @@ describe('Modal', () => {
 
 			// Modal should render successfully with options
 			expect(screen.getByRole('dialog')).toBeInTheDocument();
+		});
+	});
+
+	describe('resizing', () => {
+		const renderResizable = (props: Partial<React.ComponentProps<typeof Modal>> = {}) =>
+			render(
+				<Modal
+					theme={mockTheme}
+					title="Resizable"
+					priority={100}
+					onClose={vi.fn()}
+					resizeKey="test-modal"
+					testId="resizable-overlay"
+					{...props}
+				>
+					<p>Content</p>
+				</Modal>,
+				{ wrapper: TestWrapper }
+			);
+
+		beforeEach(() => {
+			useSettingsStore.setState({ modalSizes: {} });
+		});
+
+		it('should not render resize handles without a resizeKey', () => {
+			render(
+				<Modal theme={mockTheme} title="Fixed" priority={100} onClose={vi.fn()}>
+					<p>Content</p>
+				</Modal>,
+				{ wrapper: TestWrapper }
+			);
+
+			expect(screen.queryByTestId('modal-resize-handle-se')).not.toBeInTheDocument();
+			expect(document.querySelector('[data-modal-resize-key]')).not.toBeInTheDocument();
+		});
+
+		it('should render resize handles when a resizeKey is supplied', () => {
+			renderResizable();
+
+			expect(screen.getByTestId('modal-resize-handle-se')).toBeInTheDocument();
+			expect(document.querySelector('[data-modal-resize-key="test-modal"]')).toBeInTheDocument();
+		});
+
+		it('should apply a remembered size to the card', () => {
+			useSettingsStore.setState({ modalSizes: { 'test-modal': { width: 700, height: 500 } } });
+			renderResizable();
+
+			const card = screen.getByText('Content').closest('div.rounded-lg');
+			expect(card).toHaveStyle({ width: '700px', height: '500px' });
+		});
+	});
+
+	describe('portal', () => {
+		const renderInHost = (props: Partial<React.ComponentProps<typeof Modal>> = {}) =>
+			render(
+				<div data-testid="host">
+					<Modal
+						theme={mockTheme}
+						title="Portaled"
+						priority={100}
+						onClose={vi.fn()}
+						testId="portal-overlay"
+						{...props}
+					>
+						<p>Content</p>
+					</Modal>
+				</div>,
+				{ wrapper: TestWrapper }
+			);
+
+		it('should render in place by default', () => {
+			renderInHost();
+
+			const host = screen.getByTestId('host');
+			expect(host).toContainElement(screen.getByTestId('portal-overlay'));
+		});
+
+		it('should escape the host subtree when portal is set', () => {
+			// The Main Panel wraps the session view in `isolate`, a stacking
+			// context that traps the backdrop's z-index and lets the Left/Right
+			// panels paint over it. jsdom has no layout engine, so assert the
+			// overlay is NOT a descendant of its host rather than checking paint
+			// order - toBeInTheDocument() would pass either way.
+			renderInHost({ portal: true });
+
+			const overlay = screen.getByTestId('portal-overlay');
+			expect(screen.getByTestId('host')).not.toContainElement(overlay);
+			expect(overlay.parentElement).toBe(document.body);
+		});
+
+		it('should still close on Escape through the layer stack when portaled', async () => {
+			const onClose = vi.fn();
+			renderInHost({ portal: true, onClose });
+
+			// React context flows through portals, so useModalLayer registration
+			// is unaffected by the DOM relocation.
+			fireEvent.keyDown(document, { key: 'Escape' });
+
+			await waitFor(() => expect(onClose).toHaveBeenCalled());
 		});
 	});
 });

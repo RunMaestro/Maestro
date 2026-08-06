@@ -23,7 +23,26 @@ import { getDefaultShell } from '../../stores/defaults';
  * On Unix, uses a transient PTY so interactive shell aliases behave correctly.
  */
 export class LocalCommandRunner {
+	/**
+	 * In-flight commands keyed by the sessionId they were launched under, so a
+	 * caller can terminate one that never exits on its own (an interactive
+	 * program waiting on stdin, a `tail -f`, a runaway build). Entries are
+	 * removed on exit.
+	 */
+	private running = new Map<string, () => void>();
+
 	constructor(private emitter: EventEmitter) {}
+
+	/**
+	 * Terminate an in-flight command started by `run()`.
+	 * Returns false when nothing is running under that sessionId.
+	 */
+	cancel(sessionId: string): boolean {
+		const kill = this.running.get(sessionId);
+		if (!kill) return false;
+		kill();
+		return true;
+	}
 
 	private isRecoverablePtySpawnError(error: unknown): boolean {
 		const errorCode =
@@ -155,6 +174,14 @@ export class LocalCommandRunner {
 					return;
 				}
 
+				this.running.set(sessionId, () => {
+					try {
+						ptyProcess.kill();
+					} catch {
+						// Already gone - the onExit handler below still fires/has fired.
+					}
+				});
+
 				ptyProcess.onData((data) => {
 					const output = stripControlSequences(data, command, true);
 					logger.debug('[ProcessManager] runCommand PTY stdout FILTERED', 'ProcessManager', {
@@ -170,6 +197,7 @@ export class LocalCommandRunner {
 				});
 
 				ptyProcess.onExit(({ exitCode }) => {
+					this.running.delete(sessionId);
 					logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
 						sessionId,
 						exitCode,
@@ -195,6 +223,10 @@ export class LocalCommandRunner {
 				cwd,
 				env,
 				shell: shellPath,
+			});
+
+			this.running.set(sessionId, () => {
+				childProcess.kill();
 			});
 
 			// Handle stdout - emit data events for real-time streaming
@@ -246,6 +278,7 @@ export class LocalCommandRunner {
 
 			// Handle process exit
 			childProcess.on('exit', (code) => {
+				this.running.delete(sessionId);
 				logger.debug('[ProcessManager] runCommand exit', 'ProcessManager', {
 					sessionId,
 					exitCode: code,
@@ -256,6 +289,7 @@ export class LocalCommandRunner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				this.running.delete(sessionId);
 				logger.error('[ProcessManager] runCommand error', 'ProcessManager', {
 					sessionId,
 					error: error.message,

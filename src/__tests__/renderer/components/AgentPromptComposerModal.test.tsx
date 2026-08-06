@@ -351,8 +351,9 @@ describe('AgentPromptComposerModal', () => {
 				/>
 			);
 
-			// The modal container has w-[90vw] class
-			const modalContainer = document.querySelector('.w-\\[90vw\\]');
+			const modalContainer = document.querySelector(
+				'[data-modal-resize-key="agent-prompt-composer"]'
+			);
 			expect(modalContainer).toHaveStyle({ backgroundColor: theme.colors.bgMain });
 		});
 
@@ -1393,8 +1394,10 @@ describe('AgentPromptComposerModal', () => {
 				/>
 			);
 
-			const modalContent = screen.getByText('Agent Prompt Editor').closest('.w-\\[90vw\\]');
-			expect(modalContent).toHaveClass('h-[85vh]', 'max-w-5xl');
+			const modalContent = screen
+				.getByText('Agent Prompt Editor')
+				.closest('[data-modal-resize-key="agent-prompt-composer"]');
+			expect(modalContent).toHaveStyle({ maxWidth: '90vw', maxHeight: '90vh' });
 		});
 
 		it('has fixed position backdrop', () => {
