@@ -2716,10 +2716,24 @@ export const TerminalOutput = memo(
 					<button
 						onClick={() => {
 							// Jump to bottom and resume auto-scroll
+							autoScrollPausedRef.current = false;
 							setAutoScrollPaused(false);
+							isAtBottomRef.current = true;
+							setIsAtBottom(true);
+							prevIsAtBottomRef.current = true;
+							onAtBottomChange?.(true);
 							setHasNewMessages(false);
 							setNewMessageCount(0);
 							if (scrollContainerRef.current) {
+								if (scrollSaveTimerRef.current) {
+									clearTimeout(scrollSaveTimerRef.current);
+									scrollSaveTimerRef.current = null;
+								}
+								const maxScroll = Math.max(
+									0,
+									scrollContainerRef.current.scrollHeight - scrollContainerRef.current.clientHeight
+								);
+								onScrollPositionChange?.(maxScroll);
 								scrollContainerRef.current.scrollTo({
 									top: scrollContainerRef.current.scrollHeight,
 									behavior: 'smooth',

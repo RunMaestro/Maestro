@@ -2681,6 +2681,30 @@ describe('TerminalOutput', () => {
 			expect(onScrollPositionChange).toHaveBeenCalledWith(100);
 		});
 
+		it('persists a jump to bottom before an immediate agent switch unmounts the transcript', () => {
+			const onScrollPositionChange = vi.fn();
+			const onAtBottomChange = vi.fn();
+			const logs = [createLogEntry({ id: 'response-1', text: 'Long response' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+			});
+			const { container, unmount } = render(
+				<TerminalOutput
+					{...createDefaultProps({ session, onScrollPositionChange, onAtBottomChange })}
+				/>
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			configureScrollableTranscript(scrollContainer, 300);
+			scrollContainer.scrollTo = vi.fn();
+			fireEvent.scroll(scrollContainer);
+
+			fireEvent.click(screen.getByTitle('Scroll to bottom (click to pin)'));
+			unmount();
+
+			expect(onScrollPositionChange).toHaveBeenLastCalledWith(600);
+			expect(onAtBottomChange).toHaveBeenLastCalledWith(true);
+		});
+
 		it('restores scroll position from initialScrollTop', () => {
 			const props = createDefaultProps({ initialScrollTop: 500 });
 			const { container } = render(<TerminalOutput {...props} />);
