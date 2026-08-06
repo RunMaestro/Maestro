@@ -11,6 +11,8 @@ import type {
 } from '../types';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
@@ -21,6 +23,8 @@ import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
+import { ResizeHandles } from './ui/ResizeHandles';
+import { EscCloseButton } from './ui/EscCloseButton';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -251,10 +255,7 @@ export function TabSwitcherModal({
 	useModalLayer(MODAL_PRIORITIES.TAB_SWITCHER, 'Tab Switcher', () => onCloseRef.current());
 
 	// Focus input on mount
-	useEffect(() => {
-		const timer = setTimeout(() => inputRef.current?.focus(), 50);
-		return () => clearTimeout(timer);
-	}, []);
+	useFocusOnMount(inputRef);
 
 	// On mount: sync any named tabs to the origins store, then load named sessions
 	// This ensures tabs that were named before persistence was added get saved
@@ -593,17 +594,39 @@ export function TabSwitcherModal({
 		},
 		[listKeyDown, toggleViewMode]
 	);
+	const resizableModal = useResizableModal({
+		resizeKey: 'tab-switcher',
+		defaultSize: { width: 600, height: 700 },
+		minSize: { width: 420, height: 320 },
+	});
 
 	return (
-		<div className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100">
+		<div
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
+			onClick={onClose}
+		>
 			<div
+				ref={resizableModal.modalRef}
+				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Tab Switcher"
 				tabIndex={-1}
-				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[700px] outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="tab-switcher"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Search Header */}
 				<div
 					className="p-4 border-b flex items-center gap-3"
@@ -634,12 +657,7 @@ export function TabSwitcherModal({
 								{formatShortcutKeys(shortcut.keys)}
 							</span>
 						)}
-						<div
-							className="px-2 py-0.5 rounded text-xs font-bold"
-							style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-						>
-							ESC
-						</div>
+						<EscCloseButton theme={theme} onClose={onClose} />
 					</div>
 				</div>
 

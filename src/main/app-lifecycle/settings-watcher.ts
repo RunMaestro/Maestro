@@ -8,6 +8,7 @@ import fsSync from 'fs';
 import type { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
+import { hadRecentInternalWrite } from '../stores/write-tracker';
 
 /** Dependencies for settings watcher */
 export interface SettingsWatcherDependencies {
@@ -38,8 +39,8 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 	const { getMainWindow, getSettingsPath, getAgentConfigsPath } = deps;
 	const watchers: fsSync.FSWatcher[] = [];
 
-	// Debounce: ignore changes within 500ms of an IPC-driven write
-	// This prevents the watcher from firing when the app itself writes settings
+	// Debounce to coalesce rapid writes. Self-caused events are dropped up front
+	// via hadRecentInternalWrite() - see the comment in watchFile().
 	let settingsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let agentConfigsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -64,6 +65,17 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 		try {
 			const watcher = fsSync.watch(dirPath, (_eventType, changedFile) => {
 				if (changedFile === filename) {
+					// Our own writes land here too. Telling the renderer to reload
+					// because of a write it just made is not merely wasteful: the
+					// reload is async, so it can overwrite whatever the user typed
+					// while it was in flight (the Conductor Profile textarea saves
+					// on every keystroke, and the caret jumped to the end of the
+					// field every time this fired). Checked at event time rather
+					// than after the debounce so continuous typing stays suppressed.
+					if (hadRecentInternalWrite(filename)) {
+						return;
+					}
+
 					// Debounce to coalesce rapid writes
 					const existing = getDebounce();
 					if (existing) clearTimeout(existing);

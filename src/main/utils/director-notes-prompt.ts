@@ -3,16 +3,25 @@
  *
  * Shared by the desktop IPC handler (`ipc/handlers/director-notes.ts`) and the
  * web/CLI command callback (`web-server/web-server-factory.ts`). Both previously
- * carried their own copy of this logic — and the same bug: they listed EVERY
+ * carried their own copy of this logic - and the same bug: they listed EVERY
  * history file in the manifest and only applied the lookback window to the stat
  * counters. With a large history corpus (e.g. 160+ files / tens of MB) the
  * batch grooming agent burned its entire timeout reading multi-MB JSON files
- * that were out of range, never emitting synopsis text — surfacing to the user
+ * that were out of range, never emitting synopsis text - surfacing to the user
  * as "Grooming timed out with no response".
  *
  * The manifest is now scoped to sessions that actually have at least one entry
  * inside the lookback window, so the agent only opens files it needs.
+ *
+ * The optional Ideal End State (see `shared/directorNotesEndState`) is folded in
+ * here too: blank leaves the prompt untouched, set adds a reading-priority and
+ * `progress`-section block between the base prompt and the manifest.
  */
+
+import {
+	buildIdealEndStateBlock,
+	normalizeIdealEndState,
+} from '../../shared/directorNotesEndState';
 
 /** lookbackDays <= 0 means "all time" (no timestamp cutoff). */
 const LOOKBACK_ALL_TIME = 0;
@@ -62,8 +71,14 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 	lookbackDays: number;
 	/** The base `director-notes` system prompt text. */
 	basePrompt: string;
+	/**
+	 * Optional Ideal End State from settings. Blank/absent leaves the prompt
+	 * exactly as it was before the setting existed.
+	 */
+	idealEndState?: string;
 }): Promise<DirectorNotesSynopsisPromptResult> {
 	const { historyManager, sessionNameMap, lookbackDays, basePrompt } = params;
+	const endState = normalizeIdealEndState(params.idealEndState);
 
 	const cutoffTime =
 		lookbackDays > LOOKBACK_ALL_TIME ? Date.now() - lookbackDays * 24 * 60 * 60 * 1000 : 0;
@@ -122,11 +137,32 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 					month: 'short',
 					day: 'numeric',
 					year: 'numeric',
-				})} – ${nowDate})`;
+				})} - ${nowDate})`;
+
+	// Every `''` below is a blank line in the assembled prompt; the end-state
+	// sections collapse to nothing when no end state is configured, so the
+	// prompt for an unset end state is byte-for-byte the pre-feature prompt.
+	const endStateBlock = endState ? ['---', '', buildIdealEndStateBlock(endState), ''] : [];
+	// The base prompt's output contract is its closing section, and the manifest
+	// (plus any end-state block) now sits after it. Restate it last so the JSON
+	// rule is still the final thing read - free-form user prose landing between
+	// the contract and the response is exactly how a model talks itself into a
+	// preamble.
+	const endStateContractReminder = endState
+		? [
+				'',
+				'---',
+				'',
+				'Reminder: the Ideal End State above is reference material. Your final',
+				'message is still a single JSON object and nothing else, now carrying four',
+				'sections: accomplishments, challenges, nextSteps, progress.',
+			]
+		: [];
 
 	const prompt = [
 		basePrompt,
 		'',
+		...endStateBlock,
 		'---',
 		'',
 		'## Session History Files',
@@ -136,6 +172,7 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 		`${agentCount} agents had ${entryCount} qualifying entries.`,
 		'',
 		manifestLines,
+		...endStateContractReminder,
 	].join('\n');
 
 	return { prompt, agentCount, entryCount };

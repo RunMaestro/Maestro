@@ -80,7 +80,12 @@ export default defineConfig(({ mode }) => ({
 		// Generate source maps for debugging
 		sourcemap: true,
 
+		// Exclude Electron from the web build. The web interface is served
+		// to regular browsers that do not have Electron APIs available.
+		// This prevents Electron-specific code (e.g., getOwnerBrowserWindow)
+		// from being bundled into the web interface and causing runtime errors.
 		rollupOptions: {
+			external: ['electron'],
 			input: {
 				// Single entry point that handles routing to mobile/desktop
 				main: path.join(__dirname, 'src/web/index.html'),

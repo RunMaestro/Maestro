@@ -9,9 +9,11 @@ import { useEffect, useRef, useState } from 'react';
 import { RefreshCw, RotateCcw, FolderOpen, AlertTriangle, Bot } from 'lucide-react';
 import type { Theme, AgentConfig } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import type { SerializableWizardState, WizardStep } from './WizardContext';
 import { STEP_INDEX, WIZARD_TOTAL_STEPS } from './WizardContext';
+import { ResizeHandles } from '../ui/ResizeHandles';
 
 interface WizardResumeModalProps {
 	theme: Theme;
@@ -162,6 +164,11 @@ export function WizardResumeModal({
 
 	const progressPercentage = getProgressPercentage(resumeState.currentStep);
 	const stepDescription = getStepDescription(resumeState.currentStep);
+	const resizableModal = useResizableModal({
+		resizeKey: 'wizard-resume',
+		defaultSize: { width: 520, height: 620 },
+		minSize: { width: 340, height: 320 },
+	});
 
 	return (
 		<div
@@ -173,9 +180,22 @@ export function WizardResumeModal({
 			onKeyDown={handleKeyDown}
 		>
 			<div
-				className="modal-w-sm border rounded-xl shadow-2xl overflow-hidden"
-				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+				ref={resizableModal.modalRef}
+				className="relative border rounded-xl shadow-2xl overflow-hidden flex flex-col"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key="wizard-resume"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Header */}
 				<div className="p-5 border-b" style={{ borderColor: theme.colors.border }}>
 					<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
@@ -187,7 +207,7 @@ export function WizardResumeModal({
 				</div>
 
 				{/* Progress Summary */}
-				<div className="p-5 space-y-4">
+				<div className="p-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
 					{/* Progress bar */}
 					<div>
 						<div className="flex justify-between mb-2">
@@ -291,7 +311,7 @@ export function WizardResumeModal({
 												style={{ color: theme.colors.warning }}
 											/>
 											<p className="text-xs" style={{ color: theme.colors.warning }}>
-												Agent no longer available — you'll need to select a different agent
+												Agent no longer available - you'll need to select a different agent
 											</p>
 										</div>
 									)}
@@ -330,7 +350,7 @@ export function WizardResumeModal({
 												style={{ color: theme.colors.warning }}
 											/>
 											<p className="text-xs" style={{ color: theme.colors.warning }}>
-												Directory no longer exists — you'll need to select a new location
+												Directory no longer exists - you'll need to select a new location
 											</p>
 										</div>
 									)}

@@ -38,6 +38,19 @@ export interface QuickAction {
 	agentSortKey?: string;
 }
 
+/**
+ * Which section of the agents-mode list an entry belongs to, in display order.
+ * Derived rather than stored so the bucket, the section headers, and the sort
+ * can never disagree.
+ */
+export type AgentBucket = 'live' | 'idle';
+
+export function getAgentBucket(action: QuickAction): AgentBucket {
+	return action.isRunningAgent ? 'live' : 'idle';
+}
+
+export const AGENT_BUCKET_ORDER: readonly AgentBucket[] = ['live', 'idle'];
+
 export interface ActiveTabInfo {
 	isTerminalMode: boolean;
 	hasActiveTab: boolean;
@@ -87,8 +100,6 @@ export interface QuickActionsModalProps {
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
-	setGitDiffPreview: (diff: string | null) => void;
-	setGitLogOpen: (open: boolean) => void;
 	onRenameTab?: () => void;
 	onToggleReadOnlyMode?: () => void;
 	onToggleTabShowThinking?: () => void;

@@ -45,9 +45,11 @@ import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../
 import { captureException } from '../../utils/sentry';
 import {
 	snapshotStarredTranscript,
-	deleteStarredMirror,
+	releaseTranscriptMirror,
+	releaseSnoozedTranscriptMirror,
 	restoreStarredTranscript,
 	listMirroredStarredSessions,
+	type MirrorRetainReason,
 } from '../../storage/starred-transcript-mirror';
 import { getHistoryManager } from '../../history-manager';
 
@@ -896,13 +898,13 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					const sessionName = allOrigins[agentId]?.[projectPath]?.[sessionId]?.sessionName;
 					void snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
 				} else {
-					void deleteStarredMirror({ agentId, sessionId });
+					void releaseTranscriptMirror({ agentId, sessionId });
 				}
 			}
 		)
 	);
 
-	// ============ Snapshot Starred Transcript (mirror on tab close) ============
+	// ============ Snapshot Transcript (mirror on tab close / snooze) ============
 
 	ipcMain.handle(
 		'agentSessions:snapshotStarredTranscript',
@@ -912,9 +914,22 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				agentId: string,
 				projectPath: string,
 				sessionId: string,
-				sessionName?: string
+				sessionName?: string,
+				reason?: MirrorRetainReason
 			): Promise<void> => {
-				await snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
+				await snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName, reason });
+			}
+		)
+	);
+
+	// ============ Release Snoozed Transcript (mirror on wake / dismiss) ============
+
+	ipcMain.handle(
+		'agentSessions:releaseSnoozedTranscript',
+		withIpcErrorLogging(
+			handlerOpts('releaseSnoozedTranscript'),
+			async (agentId: string, projectPath: string, sessionId: string): Promise<void> => {
+				await releaseSnoozedTranscriptMirror({ agentId, projectPath, sessionId });
 			}
 		)
 	);

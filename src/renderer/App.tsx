@@ -87,6 +87,7 @@ import {
 	// Tab handlers
 	useTabHandlers,
 	useTerminalTabHandlers,
+	useSnoozeScheduler,
 	// Group chat handlers
 	useGroupChatHandlers,
 	// Modal handlers
@@ -167,6 +168,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
+import { MediaPlaybackHost } from './components/MediaPlayback';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
 // Import services
@@ -313,6 +315,7 @@ function MaestroConsoleInner() {
 		// Worktree Modals
 		createWorktreeSession,
 		createPRSession,
+		createPRSourceBranch,
 		setCreatePRSession,
 		deleteWorktreeSession,
 		// Tab Switcher Modal
@@ -876,6 +879,10 @@ function MaestroConsoleInner() {
 		handleDeleteLog,
 	} = useTabHandlers();
 
+	// Wakes snoozed tabs when their time arrives (and on launch, for wakes
+	// missed while Maestro was closed).
+	useSnoozeScheduler();
+
 	// --- TERMINAL TAB HANDLERS ---
 	const { handleOpenTerminalTab, handleSelectTerminalTab, handleCloseTerminalTab } =
 		useTerminalTabHandlers();
@@ -1020,6 +1027,7 @@ function MaestroConsoleInner() {
 		handleClearAgentError,
 		handleOpenQueueBrowser,
 		handleOpenTabSearch,
+		handleOpenCrossTabSearch,
 		handleOpenPromptComposer,
 		handleOpenFuzzySearch,
 		handleOpenCreatePR,
@@ -1039,6 +1047,7 @@ function MaestroConsoleInner() {
 		handleCloseAutoRunSetup,
 		handleCloseBatchRunner,
 		handleCloseTabSwitcher,
+		handleCloseCrossTabSearch,
 		handleCloseFileSearch,
 		handleClosePromptComposer,
 		handleCloseCreatePRModal,
@@ -1409,6 +1418,7 @@ function MaestroConsoleInner() {
 		handleJumpToStarredSession,
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
+		handleCrossTabSearchJump,
 	} = useSessionSwitchCallbacks({
 		setActiveSessionId,
 		handleResumeSession,
@@ -2340,6 +2350,7 @@ function MaestroConsoleInner() {
 		handleNavForward,
 		toggleUnreadFilter,
 		setTabSwitcherOpen,
+		handleOpenCrossTabSearch,
 		showUnreadOnly,
 		stagedImages,
 		handleSetLightboxImage,
@@ -2596,6 +2607,7 @@ function MaestroConsoleInner() {
 		toggleUnreadFilter,
 		handleOpenTabSearch,
 		handleOpenOutputSearch,
+		handleOpenCrossTabSearch,
 		handleCloseAllTabs,
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
@@ -2972,6 +2984,7 @@ function MaestroConsoleInner() {
 					onCloseCreateWorktreeModal={handleCloseCreateWorktreeModal}
 					onCreateWorktree={handleCreateWorktree}
 					createPRSession={createPRSession}
+					createPRSourceBranch={createPRSourceBranch}
 					onCloseCreatePRModal={handleCloseCreatePRModal}
 					onPRCreated={handlePRCreated}
 					deleteWorktreeSession={deleteWorktreeSession}
@@ -3006,8 +3019,6 @@ function MaestroConsoleInner() {
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}
 					setActiveAgentSessionId={setActiveAgentSessionId}
-					setGitDiffPreview={setGitDiffPreview}
-					setGitLogOpen={setGitLogOpen}
 					isAiMode={activeSession?.inputMode === 'ai'}
 					onQuickActionsRenameTab={handleQuickActionsRenameTab}
 					onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
@@ -3104,6 +3115,8 @@ function MaestroConsoleInner() {
 					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
 					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
+					onCloseCrossTabSearch={handleCloseCrossTabSearch}
+					onCrossTabSearchJump={handleCrossTabSearchJump}
 					onTabSelect={handleUtilityTabSelect}
 					onFileTabSelect={handleUtilityFileTabSelect}
 					onTerminalTabSelect={handleSelectTerminalTab}
@@ -3467,6 +3480,12 @@ function MaestroConsoleInner() {
 
 				{/* --- CENTER FLASH (single, app-wide; mounted via portal) --- */}
 				<CenterFlash theme={theme} />
+
+				{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
+				    Owns every <audio>/<video> element so playback survives switching
+				    tabs and agents. Each element is parked over the MediaViewportSlot
+				    its file preview tab renders. See MediaPlaybackHost. */}
+				<MediaPlaybackHost theme={theme} />
 			</div>
 		</>
 	);

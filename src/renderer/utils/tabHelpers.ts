@@ -1634,6 +1634,27 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 	};
 }
 
+/**
+ * Session patch that lands on a specific file preview tab.
+ *
+ * The file-tab counterpart to {@link aiTabFocusFields}: spread it into a session
+ * update (`{ ...s, ...fileTabFocusFields(tabId) }`) to make that file tab the
+ * visible one. Clears the terminal and browser selections and forces AI mode,
+ * because both of those outrank the file tab in the render precedence - leaving
+ * either set would keep the old view on screen and the focus would appear to do
+ * nothing.
+ *
+ * @param tabId - The file preview tab to activate.
+ */
+export function fileTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeFileTabId: tabId,
+		activeTerminalTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'ai',
+	};
+}
+
 export interface SetActiveTabResult {
 	tab: AITab; // The newly active tab
 	session: Session; // Updated session with activeTabId changed
