@@ -1377,6 +1377,7 @@ interface TerminalOutputProps {
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom
 	initialScrollTop?: number; // Initial scroll position to restore
+	initialIsAtBottom?: boolean; // Whether the restored transcript should remain pinned to bottom
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
@@ -1442,6 +1443,7 @@ export const TerminalOutput = memo(
 			onScrollPositionChange,
 			onAtBottomChange,
 			initialScrollTop,
+			initialIsAtBottom,
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
@@ -1509,21 +1511,21 @@ export const TerminalOutput = memo(
 		const [saveModalContent, setSaveModalContent] = useState<string | null>(null);
 
 		// New message indicator state
-		const [isAtBottom, setIsAtBottom] = useState(true);
+		const [isAtBottom, setIsAtBottom] = useState(initialIsAtBottom ?? true);
 		const [hasNewMessages, setHasNewMessages] = useState(false);
 		const [newMessageCount, setNewMessageCount] = useState(0);
 		const lastLogCountRef = useRef(0);
 		// Track previous isAtBottom to detect changes for callback
-		const prevIsAtBottomRef = useRef(true);
+		const prevIsAtBottomRef = useRef(initialIsAtBottom ?? true);
 		// Ref mirror of isAtBottom for MutationObserver closure (avoids stale state)
-		const isAtBottomRef = useRef(true);
+		const isAtBottomRef = useRef(initialIsAtBottom ?? true);
 		isAtBottomRef.current = isAtBottom;
 		// Track whether auto-scroll is paused because user scrolled up (state so button re-renders)
-		const [autoScrollPaused, setAutoScrollPaused] = useState(false);
+		const [autoScrollPaused, setAutoScrollPaused] = useState(initialIsAtBottom === false);
 		// Ref mirror of autoScrollPaused for the MutationObserver closure so a freshly
 		// restored scroll position can suppress auto-scroll synchronously, before the
 		// state-driven re-render re-runs the observer effect (avoids a one-frame yank).
-		const autoScrollPausedRef = useRef(false);
+		const autoScrollPausedRef = useRef(initialIsAtBottom === false);
 		autoScrollPausedRef.current = autoScrollPaused;
 		// Guard flag: prevents the scroll handler from pausing auto-scroll
 		// during programmatic scrollTo() calls from the MutationObserver effect.
@@ -2313,7 +2315,12 @@ export const TerminalOutput = memo(
 		// Uses requestAnimationFrame to ensure DOM is ready
 		useEffect(() => {
 			// Only restore if we have a saved position and haven't restored yet for this mount
-			if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
+			if (
+				initialIsAtBottom !== true &&
+				initialScrollTop !== undefined &&
+				initialScrollTop > 0 &&
+				!hasRestoredScrollRef.current
+			) {
 				hasRestoredScrollRef.current = true;
 				requestAnimationFrame(() => {
 					// A cross-tab search jump asked for a specific message in this tab.
@@ -2344,7 +2351,7 @@ export const TerminalOutput = memo(
 					}
 				});
 			}
-		}, [initialScrollTop]);
+		}, [initialScrollTop, initialIsAtBottom]);
 
 		// Reset restore flag when session/tab changes (handled by key prop on TerminalOutput)
 		useEffect(() => {

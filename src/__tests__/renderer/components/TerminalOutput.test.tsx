@@ -2713,6 +2713,34 @@ describe('TerminalOutput', () => {
 			// In tests this is mocked, so we just verify the prop is used
 		});
 
+		it('keeps a persisted bottom-pinned tab at the current bottom instead of restoring stale pixels', async () => {
+			const { container } = render(
+				<TerminalOutput
+					{...createDefaultProps({ initialScrollTop: 300, initialIsAtBottom: true })}
+				/>
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollTopWrites = vi.fn();
+			Object.defineProperties(scrollContainer, {
+				scrollTop: {
+					configurable: true,
+					get: () => 0,
+					set: scrollTopWrites,
+				},
+				scrollHeight: { configurable: true, value: 1000 },
+				clientHeight: { configurable: true, value: 400 },
+			});
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollTopWrites).not.toHaveBeenCalledWith(300);
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'auto' });
+		});
+
 		it('preserves a middle position across window blur and focus without persisting transient zero', async () => {
 			const onScrollPositionChange = vi.fn();
 			const { container } = render(

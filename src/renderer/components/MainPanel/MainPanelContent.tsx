@@ -668,6 +668,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								onScrollPositionChange={onScrollPositionChange}
 								onAtBottomChange={onAtBottomChange}
 								initialScrollTop={activeTab?.scrollTop}
+								initialIsAtBottom={activeTab?.isAtBottom}
 								markdownEditMode={chatRawTextMode}
 								setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 								onReplayMessage={onReplayMessage}
