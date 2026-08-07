@@ -79,6 +79,28 @@ describe('ShellCommandCard', () => {
 		expect(cancelShellCommand).toHaveBeenCalledWith('log-1');
 	});
 
+	it('acknowledges the press immediately instead of looking inert', () => {
+		// The kill is SIGTERM-then-SIGKILL, so a stubborn process can take up to
+		// the escalation window to die. An unchanged button in that gap reads as
+		// "my click did nothing" - which is exactly how the original bug felt.
+		renderCard(makeLog());
+
+		fireEvent.click(screen.getByText('Stop'));
+
+		expect(screen.getByText('Stopping')).toBeTruthy();
+		expect(screen.queryByText('Stop')).toBeNull();
+	});
+
+	it('does not fire a second kill while one is already in flight', () => {
+		renderCard(makeLog());
+
+		const button = screen.getByText('Stop').closest('button')!;
+		fireEvent.click(button);
+		fireEvent.click(button);
+
+		expect(cancelShellCommand).toHaveBeenCalledTimes(1);
+	});
+
 	it('renders output as terminal text', () => {
 		const { container } = renderCard(makeLog({ text: 'M  src/app.ts\n?? notes.md\n' }));
 

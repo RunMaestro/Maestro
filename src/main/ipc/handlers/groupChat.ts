@@ -145,13 +145,24 @@ export type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
  *   mid-summary (MAESTRO-JB).
  * - "Agent <id> is not available" - the participant's agent binary isn't
  *   installed or detected on this machine (MAESTRO-KA).
+ * - "Failed to spawn grooming process for <id>" - the binary cleared the
+ *   availability probe but wouldn't launch: gone from PATH by the time we
+ *   spawn, not executable, or an SSH remote that went away. Nothing we can fix
+ *   from here (MAESTRO-JS).
+ * - Revoked / unrefreshable provider credentials - the user has to sign back
+ *   in; grooming just happened to be the call that surfaced it (MAESTRO-K7).
  *
  * Anything else still reports, so a genuine fault in the grooming path keeps
  * surfacing.
  */
 export function isExpectedGroomingFailure(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error);
-	return /Session not found/i.test(message) || /Agent .* is not available/i.test(message);
+	return (
+		/Session not found/i.test(message) ||
+		/Agent .* is not available/i.test(message) ||
+		/Failed to spawn grooming process for /i.test(message) ||
+		/(access token could not be refreshed|refresh token was revoked)/i.test(message)
+	);
 }
 
 /**

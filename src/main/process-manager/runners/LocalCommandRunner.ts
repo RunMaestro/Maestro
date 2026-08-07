@@ -14,6 +14,7 @@ import {
 	buildWrappedCommand,
 } from '../utils/pathResolver';
 import { isWindows } from '../../../shared/platformDetection';
+import { terminateProcessTree } from '../utils/commandKill';
 import { captureException } from '../../utils/sentry';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { getDefaultShell } from '../../stores/defaults';
@@ -174,12 +175,16 @@ export class LocalCommandRunner {
 					return;
 				}
 
+				// Cancels the pending SIGKILL escalation. Set when Stop is pressed,
+				// cleared on exit so a late SIGKILL can't land on a recycled pid.
+				let cancelEscalation: (() => void) | null = null;
+
 				this.running.set(sessionId, () => {
-					try {
-						ptyProcess.kill();
-					} catch {
-						// Already gone - the onExit handler below still fires/has fired.
-					}
+					// NOT ptyProcess.kill(): its default signal is SIGHUP, which the
+					// interactive login shell these commands run under survives on macOS,
+					// so Stop appeared to do nothing. Signal the whole process group so
+					// the command (and any pager/child holding the pty open) dies too.
+					cancelEscalation = terminateProcessTree(ptyProcess.pid, { sessionId });
 				});
 
 				ptyProcess.onData((data) => {
@@ -197,6 +202,7 @@ export class LocalCommandRunner {
 				});
 
 				ptyProcess.onExit(({ exitCode }) => {
+					cancelEscalation?.();
 					this.running.delete(sessionId);
 					logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
 						sessionId,
@@ -225,8 +231,16 @@ export class LocalCommandRunner {
 				shell: shellPath,
 			});
 
+			// Windows path (this branch only runs when !isWindows() is false), where
+			// child.kill() terminates just the shell and leaves its children running.
+			// terminateProcessTree shells out to `taskkill /t /f` to take the tree.
+			let cancelChildEscalation: (() => void) | null = null;
 			this.running.set(sessionId, () => {
-				childProcess.kill();
+				if (!childProcess.pid) {
+					childProcess.kill('SIGKILL');
+					return;
+				}
+				cancelChildEscalation = terminateProcessTree(childProcess.pid, { sessionId });
 			});
 
 			// Handle stdout - emit data events for real-time streaming
@@ -278,6 +292,7 @@ export class LocalCommandRunner {
 
 			// Handle process exit
 			childProcess.on('exit', (code) => {
+				cancelChildEscalation?.();
 				this.running.delete(sessionId);
 				logger.debug('[ProcessManager] runCommand exit', 'ProcessManager', {
 					sessionId,
@@ -289,6 +304,7 @@ export class LocalCommandRunner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				cancelChildEscalation?.();
 				this.running.delete(sessionId);
 				logger.error('[ProcessManager] runCommand error', 'ProcessManager', {
 					sessionId,
