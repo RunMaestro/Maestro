@@ -21,13 +21,18 @@ type Handler = (event: unknown, ...args: unknown[]) => unknown;
 // `vi.hoisted` runs before the module factory so the map is initialized in
 // time for vi.mock - top-level consts would be in the temporal dead zone
 // at hoist time and the mock factory would throw.
-const { invokeHandlers } = vi.hoisted(() => ({
+const { invokeHandlers, windows } = vi.hoisted(() => ({
 	invokeHandlers: new Map<string, Handler>(),
+	// Stand-ins for live BrowserWindows; FAKE_EVENT.sender resolves through these.
+	windows: [] as { isDestroyed: () => boolean; webContents: unknown }[],
 }));
 
 vi.mock('electron', () => ({
 	ipcMain: {
 		_invokeHandlers: invokeHandlers,
+	},
+	BrowserWindow: {
+		getAllWindows: () => windows,
 	},
 }));
 
@@ -55,6 +60,7 @@ function lastSend(client: ReturnType<typeof makeClient>): Record<string, unknown
 
 beforeEach(() => {
 	invokeHandlers.clear();
+	windows.length = 0;
 });
 
 describe('handleBridgeInvoke', () => {
@@ -159,6 +165,60 @@ describe('handleBridgeInvoke', () => {
 		// First arg is the FAKE_EVENT object, then the user args.
 		const callArgs = spy.mock.calls[0];
 		expect(callArgs.slice(1)).toEqual(['session-123', 'echo hello']);
+	});
+
+	// Regression: FAKE_EVENT used to omit `sender` entirely, so handlers that
+	// resolve the calling window via BrowserWindow.fromWebContents(event.sender)
+	// saw no caller. windows:getState, which web-desktop calls during boot, is
+	// the one that matters: it returned null for every web client, leaving the
+	// remote page without the window state it mirrors.
+	it('passes a live window webContents as event.sender', async () => {
+		const webContents = { id: 7 };
+		windows.push({ isDestroyed: () => false, webContents });
+
+		const spy = vi.fn().mockResolvedValue(null);
+		invokeHandlers.set('windows:getState', spy);
+
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 1, channel: 'windows:getState' },
+			vi.fn()
+		);
+
+		const event = spy.mock.calls[0][0] as { sender?: unknown };
+		expect(event.sender).toBe(webContents);
+	});
+
+	it('skips destroyed windows when resolving event.sender', async () => {
+		const liveContents = { id: 2 };
+		windows.push({ isDestroyed: () => true, webContents: { id: 1 } });
+		windows.push({ isDestroyed: () => false, webContents: liveContents });
+
+		const spy = vi.fn().mockResolvedValue(null);
+		invokeHandlers.set('windows:getState', spy);
+
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 1, channel: 'windows:getState' },
+			vi.fn()
+		);
+
+		const event = spy.mock.calls[0][0] as { sender?: unknown };
+		expect(event.sender).toBe(liveContents);
+	});
+
+	it('leaves event.sender undefined when no window is open', async () => {
+		const spy = vi.fn().mockResolvedValue(null);
+		invokeHandlers.set('windows:getState', spy);
+
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 1, channel: 'windows:getState' },
+			vi.fn()
+		);
+
+		const event = spy.mock.calls[0][0] as { sender?: unknown };
+		expect(event.sender).toBeUndefined();
 	});
 
 	void lastSend; // helper kept available for future tests; tsc would warn if unused.
