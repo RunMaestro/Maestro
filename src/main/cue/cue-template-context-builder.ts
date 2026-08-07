@@ -127,6 +127,44 @@ enricherRegistry.set('time.once', (event) => ({
 	fireAt: String(event.payload.fire_at ?? ''),
 }));
 
+/** Cap on webhook body text injected into a prompt. Matches the
+ *  {{CUE_TASK_CONTENT}} budget - enough for a full PR/issue payload, small
+ *  enough that a chatty CI system can't blow out the agent's context. */
+const MAX_WEBHOOK_BODY_CHARS = 10_000;
+
+/**
+ * webhook.received enricher.
+ *
+ * `{{CUE_WEBHOOK_BODY}}` is the parsed JSON re-serialized with indentation
+ * rather than the raw body: webhook senders minify, and a single-line 8 KB
+ * JSON blob is materially harder for an agent to reason about than the same
+ * data pretty-printed. Non-JSON bodies fall back to the raw text.
+ */
+enricherRegistry.set('webhook.received', (event) => {
+	const body = event.payload.body;
+	const rendered =
+		body === null || body === undefined
+			? String(event.payload.raw_body ?? '')
+			: JSON.stringify(body, null, 2);
+	const headers =
+		event.payload.headers && typeof event.payload.headers === 'object'
+			? Object.entries(event.payload.headers as Record<string, string>)
+					.map(([key, value]) => `${key}: ${value}`)
+					.join('\n')
+			: '';
+
+	return {
+		webhookPath: String(event.payload.path ?? ''),
+		webhookEvent: String(event.payload.webhook_event ?? ''),
+		webhookDeliveryId: String(event.payload.delivery_id ?? ''),
+		webhookBody:
+			rendered.length > MAX_WEBHOOK_BODY_CHARS
+				? `${rendered.slice(0, MAX_WEBHOOK_BODY_CHARS)}\n... (truncated)`
+				: rendered,
+		webhookHeaders: headers,
+	};
+});
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
