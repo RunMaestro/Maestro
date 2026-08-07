@@ -271,6 +271,165 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('absoluteUsage occupancy snapshot (finding Q1)', () => {
+		// A fresh parser per test: the snapshot is per-turn state on the instance,
+		// and the shared `parser` above has been fed unrelated messages.
+		const assistantMessage = (usage: Record<string, number>, extra: Record<string, unknown> = {}) =>
+			JSON.stringify({
+				type: 'assistant',
+				session_id: 'sess-q1',
+				message: {
+					id: 'msg-1',
+					role: 'assistant',
+					content: [{ type: 'text', text: 'working' }],
+					usage,
+				},
+				...extra,
+			});
+
+		const resultMessage = (modelUsage: Record<string, unknown>) =>
+			JSON.stringify({
+				type: 'result',
+				result: 'done',
+				session_id: 'sess-q1',
+				modelUsage,
+				total_cost_usd: 0.5,
+			});
+
+		it('attaches the LAST assistant call usage, not the sum and not the first call', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 90,
+					cache_read_input_tokens: 15007,
+					cache_creation_input_tokens: 9468,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 3,
+					output_tokens: 40,
+					cache_read_input_tokens: 20000,
+					cache_creation_input_tokens: 100,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+
+			// The CLI's own per-model sum across all three calls - the quantity that
+			// overflows the window and pinned the gauge at 0%.
+			const event = p.parseJsonLine(
+				resultMessage({
+					'claude-opus-5': {
+						inputTokens: 7,
+						outputTokens: 142,
+						cacheReadInputTokens: 59482,
+						cacheCreationInputTokens: 9677,
+						contextWindow: 1000000,
+					},
+				})
+			);
+
+			const usage = p.extractUsage(event!);
+			// Top-level fields stay the CLI's turn totals (token spend).
+			expect(usage?.inputTokens).toBe(7);
+			expect(usage?.cacheReadTokens).toBe(59482);
+			// The snapshot is the third call only: 2 / 12 / 24475 / 109.
+			expect(usage?.absoluteUsage).toEqual({
+				inputTokens: 2,
+				outputTokens: 12,
+				cacheReadInputTokens: 24475,
+				cacheCreationInputTokens: 109,
+				reasoningTokens: 0,
+			});
+		});
+
+		it('is idempotent when stream-json emits an assistant message twice', () => {
+			const p = new ClaudeOutputParser();
+			const line = assistantMessage({
+				input_tokens: 2,
+				output_tokens: 12,
+				cache_read_input_tokens: 24475,
+				cache_creation_input_tokens: 109,
+			});
+
+			p.parseJsonLine(line);
+			p.parseJsonLine(line);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			expect(event?.usage?.absoluteUsage?.cacheReadInputTokens).toBe(24475);
+		});
+
+		it('ignores subagent assistant messages, which have their own context window', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage(
+					{
+						input_tokens: 5,
+						output_tokens: 20,
+						cache_read_input_tokens: 900,
+						cache_creation_input_tokens: 3,
+					},
+					{ parent_tool_use_id: 'toolu_subagent' }
+				)
+			);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			// The main-transcript call, not the subagent's much smaller one.
+			expect(event?.usage?.absoluteUsage?.cacheReadInputTokens).toBe(24475);
+		});
+
+		it('does not leak a snapshot across turns', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+			p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+
+			// Second turn: no assistant message carried usage this time.
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 9 } }));
+			expect(event?.usage).toBeDefined();
+			expect(event?.usage?.absoluteUsage).toBeUndefined();
+		});
+
+		it('omits the snapshot when assistant messages carry no usage', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+				})
+			);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			expect(event?.usage?.absoluteUsage).toBeUndefined();
+		});
+	});
+
 	describe('extractSlashCommands', () => {
 		it('should extract slash commands from init message', () => {
 			const event = parser.parseJsonLine(

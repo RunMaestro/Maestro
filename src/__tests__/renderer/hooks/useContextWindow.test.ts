@@ -146,6 +146,54 @@ describe('useContextWindow', () => {
 		expect(result.current.activeTabContextUsage).toBeLessThanOrEqual(100);
 	});
 
+	it('holds the last good values when an overflow frame has a zero contextUsage fallback', async () => {
+		// Finding Q1 / D3: a zero fallback used to be laundered into a
+		// trustworthy `0 tokens / 0%` result, which `lastGoodRef` then cached as
+		// last-known-good and re-latched on every later frame. With the `> 0`
+		// guard in calculateContextDisplay the overflow frame is untrustworthy,
+		// so the cache keeps the real reading from the in-window frame.
+		const session = makeSession({ customContextWindow: 200000, contextUsage: 30 });
+		const inWindowTab = {
+			id: 'tab-1',
+			usageStats: {
+				inputTokens: 50000,
+				outputTokens: 1000,
+				cacheCreationInputTokens: 0,
+				cacheReadInputTokens: 10000,
+			},
+		};
+
+		const { result, rerender } = renderHook(
+			({ s, t }: { s: Session; t: any }) => useContextWindow(s, t),
+			{ initialProps: { s: session, t: inWindowTab } }
+		);
+
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(200000);
+		});
+		// 60,000 of 200,000 = 30%
+		expect(result.current.activeTabContextTokens).toBe(60000);
+		expect(result.current.activeTabContextUsage).toBe(30);
+
+		// A tool-heavy turn reports accumulated tokens above the window while the
+		// session has no preserved percentage to fall back on.
+		const overflowSession = makeSession({ customContextWindow: 200000, contextUsage: 0 });
+		const overflowTab = {
+			id: 'tab-1',
+			usageStats: {
+				inputTokens: 2_400_000,
+				outputTokens: 5000,
+				cacheCreationInputTokens: 0,
+				cacheReadInputTokens: 0,
+			},
+		};
+
+		rerender({ s: overflowSession, t: overflowTab });
+
+		expect(result.current.activeTabContextTokens).toBe(60000);
+		expect(result.current.activeTabContextUsage).toBe(30);
+	});
+
 	it('returns zero tokens when no usage stats', async () => {
 		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
 		const session = makeSession();
