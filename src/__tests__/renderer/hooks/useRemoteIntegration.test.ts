@@ -559,6 +559,91 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
+		// The receipt is what `maestro-cli dispatch` reports as success, so a
+		// command this listener drops must say so rather than time out into a
+		// generic failure - and the accept ack belongs downstream, not here.
+		it('rejects the delivery receipt when the session is unknown', () => {
+			const deps = createDeps({ sessions: [] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'nonexistent',
+					'test command',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'receipt-1'
+				);
+			});
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-1',
+				false,
+				'session-not-found'
+			);
+		});
+
+		it('rejects the delivery receipt when the session is busy', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'test command',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'receipt-2'
+				);
+			});
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-2',
+				false,
+				'session-busy'
+			);
+		});
+
+		it('forwards the receipt channel to handleRemoteCommand without acking it here', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'test command',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					'receipt-3'
+				);
+			});
+
+			const event = dispatchEventSpy.mock.calls
+				.map(([e]) => e as CustomEvent)
+				.find((e) => e.type === 'maestro:remoteCommand');
+			expect(event?.detail).toEqual(
+				expect.objectContaining({ sessionId: 'session-1', receiptChannel: 'receipt-3' })
+			);
+			expect(window.maestro.process.sendRemoteCommandReceipt).not.toHaveBeenCalled();
+
+			dispatchEventSpy.mockRestore();
+		});
+
 		it('syncs input mode when web provides different mode', () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle', inputMode: 'ai' });
 			const deps = createDeps({ sessions: [session] });

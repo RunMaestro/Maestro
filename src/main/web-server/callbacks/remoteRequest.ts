@@ -9,6 +9,36 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
  * channel. Extracted verbatim out of web-server-factory.ts (Phase 6
  * refactoring), where it lived inline and was used by both domains.
  */
+/**
+ * One request/reply round-trip with a renderer over IPC: mint a fresh response
+ * channel, send it on `requestChannel`, and resolve with the renderer's reply
+ * (mapped by `parse`) or `fallback` if it doesn't answer within `timeoutMs`.
+ * Extracts the hand-rolled once-listener + timeout dance used by several
+ * `remote:*` reads. Caller must have already confirmed the window's webContents.
+ */
+export function requestFromRenderer<T>(
+	win: BrowserWindow,
+	requestChannel: string,
+	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number; args?: unknown[] }
+): Promise<T> {
+	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000, args = [] } = options;
+	return new Promise<T>((resolve) => {
+		const responseChannel = `${requestChannel}:response:${randomUUID()}`;
+		let settled = false;
+		const finish = (value: T) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeoutId);
+			ipcMain.removeListener(responseChannel, onReply);
+			resolve(value);
+		};
+		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
+		ipcMain.once(responseChannel, onReply);
+		win.webContents.send(requestChannel, ...args, responseChannel);
+		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
+	});
+}
+
 export function createRemoteRequest(getMainWindow: () => BrowserWindow | null) {
 	return function remoteRequest<T>(
 		operation: string,

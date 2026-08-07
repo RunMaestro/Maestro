@@ -149,6 +149,7 @@ beforeEach(() => {
 		process: {
 			spawn: vi.fn().mockResolvedValue(undefined),
 			runCommand: vi.fn().mockResolvedValue(undefined),
+			sendRemoteCommandReceipt: vi.fn(),
 		},
 		agents: {
 			get: vi.fn().mockResolvedValue({
@@ -1703,6 +1704,116 @@ describe('useRemoteHandlers', () => {
 
 			expect(result.current.sessionSshRemoteNames.size).toBe(2);
 			expect(result.current.sessionSshRemoteNames.get('Agent 2')).toBe('Server 2');
+		});
+	});
+
+	// ========================================================================
+	// Delivery receipts - what `maestro-cli dispatch` reports as success
+	// ========================================================================
+
+	describe('delivery receipts', () => {
+		const RECEIPT_CHANNEL = 'remote:executeCommand:response:test';
+
+		const dispatchWithReceipt = async (
+			session: Session,
+			detail: Record<string, unknown>
+		): Promise<void> => {
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { receiptChannel: RECEIPT_CHANNEL, ...detail },
+					})
+				);
+			});
+		};
+
+		const receipts = () =>
+			(window.maestro.process.sendRemoteCommandReceipt as any).mock.calls as unknown[][];
+
+		it('acks acceptance once the AI prompt reaches the spawn path', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+		});
+
+		// The V1 secondary defect in renderer form: this branch used to drop the
+		// command with the caller told `success: true`.
+		it('reports the capability drop as a rejection naming the toolType', async () => {
+			await dispatchWithReceipt(
+				createMockSession({ inputMode: 'ai', toolType: 'terminal' as any }),
+				{ sessionId: 'session-1', command: 'test', inputMode: 'ai' }
+			);
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(receipts()).toHaveLength(1);
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('terminal');
+		});
+
+		it('reports a requested tab that does not exist as a rejection', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				tabId: 'no-such-tab',
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('no-such-tab');
+		});
+
+		it('reports an unknown session as a rejection', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'ghost-session',
+				command: 'test',
+				inputMode: 'ai',
+			});
+
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-not-found']]);
+		});
+
+		it('reports a busy session as a rejection unless forced', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai', state: 'busy' }), {
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+			});
+
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-busy']]);
+		});
+
+		it('acks a terminal command when it is handed to runCommand', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'terminal' }), {
+				sessionId: 'session-1',
+				command: 'ls -la',
+				inputMode: 'terminal',
+			});
+
+			expect(window.maestro.process.runCommand).toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+		});
+
+		it('sends nothing when the command arrived without a receipt channel', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+				receiptChannel: undefined,
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			expect(receipts()).toHaveLength(0);
 		});
 	});
 

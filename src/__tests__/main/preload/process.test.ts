@@ -346,7 +346,8 @@ describe('Process Preload API', () => {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				receiptChannel?: string
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -357,7 +358,17 @@ describe('Process Preload API', () => {
 
 			api.onRemoteCommand(callback);
 			const images = ['data:image/png;base64,abc'];
-			registeredHandler!({}, 'session-123', 'test command', 'ai', 'tab-7', true, images, true);
+			registeredHandler!(
+				{},
+				'session-123',
+				'test command',
+				'ai',
+				'tab-7',
+				true,
+				images,
+				true,
+				'receipt-channel'
+			);
 
 			expect(callback).toHaveBeenCalledWith(
 				'session-123',
@@ -366,7 +377,8 @@ describe('Process Preload API', () => {
 				'tab-7',
 				true,
 				images,
-				true
+				true,
+				'receipt-channel'
 			);
 		});
 
@@ -380,7 +392,8 @@ describe('Process Preload API', () => {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				receiptChannel?: string
 			) => void;
 
 			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
@@ -399,8 +412,29 @@ describe('Process Preload API', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
+		});
+	});
+
+	describe('sendRemoteCommandReceipt', () => {
+		it('answers the receipt channel with the accept flag and reason', () => {
+			api.sendRemoteCommandReceipt('receipt-channel', false, 'tab-not-found:tab-9');
+
+			expect(mockSend).toHaveBeenCalledWith('receipt-channel', {
+				accepted: false,
+				reason: 'tab-not-found:tab-9',
+			});
+		});
+
+		it('omits the reason on acceptance', () => {
+			api.sendRemoteCommandReceipt('receipt-channel', true);
+
+			expect(mockSend).toHaveBeenCalledWith('receipt-channel', {
+				accepted: true,
+				reason: undefined,
+			});
 		});
 	});
 

@@ -240,6 +240,7 @@ const mockMaestro = {
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
 		onUserInput: vi.fn().mockReturnValue(() => {}),
+		sendRemoteCommandReceipt: vi.fn(),
 	},
 	debug: {
 		createPackage: vi.fn().mockResolvedValue({ success: true }),

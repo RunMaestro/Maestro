@@ -178,8 +178,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				receiptChannel?: string
 			) => {
+				// Delivery receipt for the web server's `executeCommand` promise.
+				// Every early return below must answer it, or the caller waits out
+				// the main-side timeout and reads the drop as a generic failure.
+				// The accept ack itself is sent further downstream, by
+				// handleRemoteCommand, once the prompt reaches the spawn logic.
+				const rejectDelivery = (reason: string) => {
+					if (receiptChannel) {
+						window.maestro.process.sendRemoteCommandReceipt(receiptChannel, false, reason);
+					}
+				};
 				// Log metadata only at info level - remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
 				// main process applies in web-server-factory; the truncated
@@ -207,6 +218,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				if (!targetSession) {
 					logger.warn('[useRemoteIntegration] Session not found, dropping command');
+					rejectDelivery('session-not-found');
 					return;
 				}
 
@@ -219,6 +231,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						undefined,
 						targetSession.state
 					);
+					rejectDelivery('session-busy');
 					return;
 				}
 				logger.info(
@@ -269,7 +282,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force, images },
+						detail: { sessionId, command, inputMode, tabId, force, images, receiptChannel },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');

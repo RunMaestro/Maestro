@@ -143,6 +143,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  Forwarded to the agent spawn so AI tabs can render and send
 				 *  them in the prompt, mirroring desktop staged-images. */
 				images?: string[];
+				/** Reply channel for the web server's delivery receipt. Set when the
+				 *  command arrived over `remote:executeCommand`; absent for
+				 *  in-renderer synthetic dispatches. */
+				receiptChannel?: string;
 			}>;
 			const {
 				sessionId,
@@ -151,7 +155,20 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				tabId: requestedTabId,
 				force,
 				images,
+				receiptChannel,
 			} = customEvent.detail;
+
+			// The CLI's `dispatch` success flag is this ack, not the fact that an
+			// IPC send happened. `accepted: true` means the command reached the
+			// spawn/queue logic - delivery, not execution - so it is sent as the
+			// prompt is handed over, never after the agent replies. Every drop
+			// branch below answers `false` with the reason it dropped.
+			let receiptSent = false;
+			const reportDelivery = (accepted: boolean, reason?: string) => {
+				if (!receiptChannel || receiptSent) return;
+				receiptSent = true;
+				window.maestro.process.sendRemoteCommandReceipt(receiptChannel, accepted, reason);
+			};
 
 			logger.info('[Remote] Processing remote command via event:', undefined, {
 				sessionId,
@@ -164,6 +181,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
 				logger.info('[Remote] ERROR: Session not found in sessionsRef:', undefined, sessionId);
+				reportDelivery(false, 'session-not-found');
 				return;
 			}
 
@@ -206,6 +224,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						};
 					})
 				);
+
+				// The command is committed to the shell path from here on, so ack
+				// delivery before awaiting the run - the receipt reports handover,
+				// not the command's exit status.
+				reportDelivery(true);
 
 				// Use runCommand for clean stdout/stderr capture (same as desktop)
 				// When SSH is enabled for the session, the command runs on the remote host
@@ -280,6 +303,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						undefined,
 						error
 					);
+					reportDelivery(false, `capability-lookup-failed:${session.toolType}`);
 					return;
 				}
 			}
@@ -288,6 +312,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					toolType: session.toolType,
 					supportsBatchMode,
 				});
+				reportDelivery(false, `not-a-batch-mode-agent:${session.toolType}`);
 				return;
 			}
 
@@ -297,6 +322,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// would be moot.
 			if (session.state === 'busy' && !force) {
 				logger.info('[Remote] Session is busy, cannot process command');
+				reportDelivery(false, 'session-busy');
 				return;
 			}
 
@@ -313,6 +339,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				logger.warn(
 					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} - dropping command (avoiding silent re-route to active tab)`
 				);
+				reportDelivery(false, `tab-not-found:${requestedTabId}`);
 				return;
 			}
 			const targetTab = requestedTab ?? getActiveTab(session);
@@ -412,6 +439,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						},
 						writeTabId
 					);
+					reportDelivery(false, `unknown-command:${commandText}`);
 					return;
 				}
 			}
@@ -429,6 +457,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
 					logger.info(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
+					reportDelivery(false, `agent-not-configured:${session.toolType}`);
 					return;
 				}
 
@@ -443,6 +472,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						logger.warn(
 							`[Remote] Target tab "${writeTabId}" was closed before spawn - dropping command`
 						);
+						reportDelivery(false, `tab-closed-before-spawn:${writeTabId}`);
 						return;
 					}
 				}
@@ -535,6 +565,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					})
 				);
 
+				// The prompt is committed - it is in the tab's logs and the tab is
+				// busy. Ack delivery BEFORE awaiting the spawn: the contract is
+				// handover, and a slow spawn must not push the caller past the
+				// main-side receipt timeout and turn a real dispatch into a
+				// reported failure.
+				reportDelivery(true);
+
 				// Spawn agent with the prompt
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
@@ -563,6 +600,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					extra: { sessionId, toolType: session.toolType, mode: 'ai', operation: 'remote-spawn' },
 				});
 				const errorMessage = error instanceof Error ? error.message : String(error);
+				// No-op once the prompt was handed to the spawn; only failures
+				// BEFORE handover (agent config lookup, prompt preparation) are
+				// still un-acked here.
+				reportDelivery(false, `remote-spawn-error:${errorMessage}`);
 				const errorLogEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
