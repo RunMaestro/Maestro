@@ -172,14 +172,18 @@ export function CrossTabSearchModal({
 	// Running index across the grouped render, so keyboard and mouse agree.
 	let rowIndex = -1;
 
+	// Overlay geometry mirrors TabSwitcherModal: centered with p-8 (the 32px
+	// MODAL_VIEWPORT_PADDING its resizable box clamps to) and the same 700px
+	// box height, so both search entry points in the popover open at the same
+	// top Y instead of one hugging the top of the window.
 	return (
-		<div className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100">
+		<div className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100">
 			<div
 				role="dialog"
 				aria-modal="true"
 				aria-label="Search Messages (All Agent Tabs)"
 				tabIndex={-1}
-				className="modal-w-lg rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[700px] outline-none select-none"
+				className="modal-w-lg rounded-xl shadow-2xl border overflow-hidden flex flex-col h-[700px] max-h-full outline-none select-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
 			>
 				{/* Search header */}
