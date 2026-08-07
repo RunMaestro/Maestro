@@ -241,9 +241,21 @@ export function calculateContextDisplay(
 		if (
 			fallbackPercentage != null &&
 			Number.isFinite(fallbackPercentage) &&
-			fallbackPercentage >= 0
+			fallbackPercentage > 0
 		) {
 			// Accumulated multi-tool turn: derive tokens from preserved percentage.
+			//
+			// The guard is `> 0`, not `>= 0`: a zero fallback is the ABSENCE of a
+			// prior measurement, not a measurement of zero. Accepting it computed
+			// `tokens = round(0/100 * window) = 0` and returned `trustworthy: true`,
+			// which latched the gauge (and the Context Details popover) at 0% for the
+			// whole life of any session whose first turn already overflowed the
+			// window (finding Q1).
+			//
+			// Accepted edge case: a session whose stored contextUsage legitimately
+			// rounded to 0 (real usage under 0.5%) now produces an untrustworthy
+			// overflow frame, so callers hold their previous values - which are also
+			// zero - and the rendered result is identical. Nothing is lost.
 			const boundedFallback = Math.min(100, fallbackPercentage);
 			tokens = Math.round((boundedFallback / 100) * contextWindow);
 		} else {

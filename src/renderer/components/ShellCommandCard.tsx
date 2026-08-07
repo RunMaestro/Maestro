@@ -54,7 +54,12 @@ export function ShellCommandCard({
 		window.setTimeout(() => setCopied(false), 1500);
 	}, [log.text]);
 
+	// Acknowledge the press immediately. The kill is SIGTERM first, so a process
+	// that traps it can take up to the SIGKILL escalation to actually die - and
+	// during that gap an unchanged "Stop" button reads as "the click did nothing".
+	const [stopping, setStopping] = useState(false);
 	const handleStop = useCallback(() => {
+		setStopping(true);
 		void cancelShellCommand(log.id);
 	}, [log.id]);
 
@@ -111,15 +116,16 @@ export function ShellCommandCard({
 							<button
 								type="button"
 								onClick={handleStop}
-								className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] hover:opacity-80 transition-opacity"
+								disabled={stopping}
+								className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] hover:opacity-80 transition-opacity disabled:opacity-50"
 								style={{
 									borderColor: theme.colors.border,
 									color: theme.colors.textMain,
 								}}
-								title="Stop this command"
+								title={stopping ? 'Stopping...' : 'Stop this command'}
 							>
 								<Square className="w-2.5 h-2.5" />
-								Stop
+								{stopping ? 'Stopping' : 'Stop'}
 							</button>
 						</>
 					) : (

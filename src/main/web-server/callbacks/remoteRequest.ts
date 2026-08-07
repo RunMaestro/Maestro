@@ -33,9 +33,13 @@ export function requestFromRenderer<T>(
 			resolve(value);
 		};
 		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
+		// Arm the timeout BEFORE listening/sending: a renderer that replies
+		// synchronously to `webContents.send` would otherwise run `finish()`
+		// while `timeoutId` is still in its temporal dead zone, and the
+		// `clearTimeout(timeoutId)` inside it would throw a ReferenceError.
+		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
 		ipcMain.once(responseChannel, onReply);
 		win.webContents.send(requestChannel, ...args, responseChannel);
-		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
 	});
 }
 

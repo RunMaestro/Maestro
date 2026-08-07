@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
@@ -40,7 +41,7 @@ export function registerTabCallbacks(
 
 		// Use invoke for synchronous response with tab ID
 		return new Promise((resolve) => {
-			const responseChannel = `remote:newTab:response:${Date.now()}`;
+			const responseChannel = `remote:newTab:response:${randomUUID()}`;
 			let resolved = false;
 
 			const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {

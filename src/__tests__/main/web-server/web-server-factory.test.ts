@@ -183,6 +183,7 @@ import {
 	type WebServerFactoryDependencies,
 } from '../../../main/web-server/web-server-factory';
 import { WebServer } from '../../../main/web-server/WebServer';
+import { buildWebSettingsSnapshot } from '../../../main/web-server/web-settings-snapshot';
 import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
@@ -2182,14 +2183,14 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('settingsCallbacks smoke', () => {
-		it('setGetSettingsCallback reads directly from settingsStore', () => {
+		it('setGetSettingsCallback returns exactly buildWebSettingsSnapshot(settingsStore), so the read and broadcast paths can never silently drift apart', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer() as any;
 			const callback = server.setGetSettingsCallback.mock.calls[0][0];
 
 			const settings = callback();
 
-			expect(settings).toMatchObject({ theme: 'dracula' });
+			expect(settings).toEqual(buildWebSettingsSnapshot(mockSettingsStore));
 		});
 
 		it('setSetSettingCallback broadcasts via the live server instance on success - the one callback in this file that closes over `server` at call time, not just registration time', async () => {
@@ -2243,6 +2244,24 @@ describe('web-server/web-server-factory', () => {
 
 			expect(groups).toEqual([expect.objectContaining({ id: 'group-1', name: 'Test Group' })]);
 			expect(Array.isArray(groups[0].sessionIds)).toBe(true);
+		});
+	});
+
+	describe('tabCallbacks smoke', () => {
+		it('setNewTabCallback mints a distinct response channel per call, so overlapping requests cannot collide', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setNewTabCallback.mock.calls[0][0];
+
+			void callback('session-1');
+			void callback('session-1');
+
+			const newTabSends = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.filter(
+				(call) => call[0] === 'remote:newTab'
+			);
+			expect(newTabSends).toHaveLength(2);
+			const [firstChannel, secondChannel] = newTabSends.map((call) => call[2] as string);
+			expect(firstChannel).not.toBe(secondChannel);
 		});
 	});
 });

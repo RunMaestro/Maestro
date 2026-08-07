@@ -7,6 +7,7 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { shellEscapeForDoubleQuotes } from '../../utils/shell-escape';
 import { getExpandedEnv, resolveSshPath } from '../../utils/cliDetection';
 import { expandTilde } from '../../../shared/pathUtils';
+import { terminateProcessTree } from '../utils/commandKill';
 import type { CommandResult } from '../types';
 import type { SshRemoteConfig } from '../../../shared/types';
 
@@ -130,8 +131,16 @@ export class SshCommandRunner {
 				},
 			});
 
+			// Killing the local ssh client drops the channel, which is what ends the
+			// remote command - we have no other handle on it. SIGTERM then SIGKILL so
+			// a client wedged mid-handshake still goes away promptly.
+			let cancelEscalation: (() => void) | null = null;
 			this.running.set(sessionId, () => {
-				childProcess.kill();
+				if (!childProcess.pid) {
+					childProcess.kill('SIGKILL');
+					return;
+				}
+				cancelEscalation = terminateProcessTree(childProcess.pid, { sessionId });
 			});
 
 			// Handle stdout
@@ -169,6 +178,7 @@ export class SshCommandRunner {
 
 			// Handle process exit
 			childProcess.on('exit', (code) => {
+				cancelEscalation?.();
 				this.running.delete(sessionId);
 				logger.debug('[ProcessManager] runCommandViaSsh exit', 'ProcessManager', {
 					sessionId,
@@ -180,6 +190,7 @@ export class SshCommandRunner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				cancelEscalation?.();
 				this.running.delete(sessionId);
 				logger.error('[ProcessManager] runCommandViaSsh error', 'ProcessManager', {
 					sessionId,

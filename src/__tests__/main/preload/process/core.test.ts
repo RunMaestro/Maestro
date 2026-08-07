@@ -1,5 +1,5 @@
 /**
- * Tests for process preload API
+ * Tests for process/core preload API
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -19,14 +19,14 @@ vi.mock('electron', () => ({
 	},
 }));
 
-import { createProcessApi, type ProcessConfig } from '../../../main/preload/process';
+import { createProcessCoreApi, type ProcessConfig } from '../../../../main/preload/process/core';
 
-describe('Process Preload API', () => {
-	let api: ReturnType<typeof createProcessApi>;
+describe('Process Core Preload API', () => {
+	let api: ReturnType<typeof createProcessCoreApi>;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		api = createProcessApi();
+		api = createProcessCoreApi();
 	});
 
 	describe('spawn', () => {
@@ -318,227 +318,6 @@ describe('Process Preload API', () => {
 			registeredHandler!({}, 'session-123', error);
 
 			expect(callback).toHaveBeenCalledWith('session-123', error);
-		});
-	});
-
-	describe('sendRemoteNewTabResponse', () => {
-		it('should send response via ipcRenderer.send', () => {
-			api.sendRemoteNewTabResponse('response-channel', { tabId: 'tab-123' });
-
-			expect(mockSend).toHaveBeenCalledWith('response-channel', { tabId: 'tab-123' });
-		});
-
-		it('should send null result', () => {
-			api.sendRemoteNewTabResponse('response-channel', null);
-
-			expect(mockSend).toHaveBeenCalledWith('response-channel', null);
-		});
-	});
-
-	describe('onRemoteCommand', () => {
-		it('should register listener and invoke callback with all parameters including tabId, force, images, and background', () => {
-			const callback = vi.fn();
-			let registeredHandler: (
-				event: unknown,
-				sessionId: string,
-				command: string,
-				inputMode?: 'ai' | 'terminal',
-				tabId?: string,
-				force?: boolean,
-				images?: string[],
-				background?: boolean,
-				receiptChannel?: string
-			) => void;
-
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:executeCommand') {
-					registeredHandler = handler;
-				}
-			});
-
-			api.onRemoteCommand(callback);
-			const images = ['data:image/png;base64,abc'];
-			registeredHandler!(
-				{},
-				'session-123',
-				'test command',
-				'ai',
-				'tab-7',
-				true,
-				images,
-				true,
-				'receipt-channel'
-			);
-
-			expect(callback).toHaveBeenCalledWith(
-				'session-123',
-				'test command',
-				'ai',
-				'tab-7',
-				true,
-				images,
-				true,
-				'receipt-channel'
-			);
-		});
-
-		it('forwards undefined tabId/force/images/background when the IPC sender omits them (legacy callers)', () => {
-			const callback = vi.fn();
-			let registeredHandler: (
-				event: unknown,
-				sessionId: string,
-				command: string,
-				inputMode?: 'ai' | 'terminal',
-				tabId?: string,
-				force?: boolean,
-				images?: string[],
-				background?: boolean,
-				receiptChannel?: string
-			) => void;
-
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:executeCommand') {
-					registeredHandler = handler;
-				}
-			});
-
-			api.onRemoteCommand(callback);
-			registeredHandler!({}, 'session-123', 'test command', 'ai');
-
-			expect(callback).toHaveBeenCalledWith(
-				'session-123',
-				'test command',
-				'ai',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined
-			);
-		});
-	});
-
-	describe('sendRemoteCommandReceipt', () => {
-		it('answers the receipt channel with the accept flag and reason', () => {
-			api.sendRemoteCommandReceipt('receipt-channel', false, 'tab-not-found:tab-9');
-
-			expect(mockSend).toHaveBeenCalledWith('receipt-channel', {
-				accepted: false,
-				reason: 'tab-not-found:tab-9',
-			});
-		});
-
-		it('omits the reason on acceptance', () => {
-			api.sendRemoteCommandReceipt('receipt-channel', true);
-
-			expect(mockSend).toHaveBeenCalledWith('receipt-channel', {
-				accepted: true,
-				reason: undefined,
-			});
-		});
-	});
-
-	describe('onRemoteCreateGroup', () => {
-		it('forwards a parent group ID in its fixed IPC argument position', () => {
-			const callback = vi.fn();
-			let registeredHandler: (
-				event: unknown,
-				name: string,
-				emoji: string | undefined,
-				parentGroupId: string | undefined,
-				responseChannel: string
-			) => void;
-
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:createGroup') {
-					registeredHandler = handler;
-				}
-			});
-
-			api.onRemoteCreateGroup(callback);
-			registeredHandler!({}, 'Project', '📁', 'company', 'response-channel');
-
-			expect(callback).toHaveBeenCalledWith('Project', '📁', 'company', 'response-channel');
-		});
-	});
-
-	describe('Concerto designer requests', () => {
-		it('forwards the movement response channel and sends the commit ack', () => {
-			const callback = vi.fn();
-			const payload = { op: 'add' as const, id: 'mockup', revision: 11 };
-			let registeredHandler: (
-				event: unknown,
-				params: typeof payload,
-				responseChannel: string
-			) => void;
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:movement') registeredHandler = handler;
-			});
-
-			api.onRemoteMovement(callback);
-			registeredHandler!({}, payload, 'movement-response');
-			api.sendMovementAppliedResponse('movement-response', true);
-
-			expect(callback).toHaveBeenCalledWith(payload, 'movement-response');
-			expect(mockSend).toHaveBeenCalledWith('movement-response', true);
-		});
-
-		it('releases a closed Concerto HTML document', () => {
-			api.releaseConcertoHtmlDocument('cadenza', 'mini-mockup');
-
-			expect(mockSend).toHaveBeenCalledWith('concerto-html:release', 'cadenza', 'mini-mockup');
-		});
-
-		it('restores a recently closed Concerto HTML document', async () => {
-			mockInvoke.mockResolvedValueOnce(23);
-
-			await expect(
-				api.restoreConcertoHtmlDocument('movement', 'mockup', '<button>Fresh</button>')
-			).resolves.toBe(23);
-			expect(mockInvoke).toHaveBeenCalledWith(
-				'concerto-html:restore',
-				'movement',
-				'mockup',
-				'<button>Fresh</button>'
-			);
-		});
-
-		it('forwards the expected revision with inspection requests', () => {
-			const callback = vi.fn();
-			let registeredHandler: (
-				event: unknown,
-				id: string,
-				expectedRevision: number,
-				responseChannel: string
-			) => void;
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:getMovementDesignerInspection') registeredHandler = handler;
-			});
-
-			api.onRequestMovementDesignerInspection(callback);
-			registeredHandler!({}, 'mockup', 12, 'inspection-response');
-
-			expect(callback).toHaveBeenCalledWith('mockup', 12, 'inspection-response');
-		});
-
-		it('forwards the expected revision with interaction requests', () => {
-			const callback = vi.fn();
-			const action = { kind: 'click' as const, selector: '#continue' };
-			let registeredHandler: (
-				event: unknown,
-				id: string,
-				action: typeof action,
-				expectedRevision: number,
-				responseChannel: string
-			) => void;
-			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
-				if (channel === 'remote:interactMovementDesigner') registeredHandler = handler;
-			});
-
-			api.onRequestMovementDesignerInteraction(callback);
-			registeredHandler!({}, 'mockup', action, 13, 'interaction-response');
-
-			expect(callback).toHaveBeenCalledWith('mockup', action, 13, 'interaction-response');
 		});
 	});
 });

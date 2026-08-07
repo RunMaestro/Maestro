@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockPtySpawn, mockResolveShellPath, mockBuildInteractiveShellArgs, mockBuildExpandedPath } =
 	vi.hoisted(() => ({
@@ -75,28 +75,69 @@ describe('LocalCommandRunner', () => {
 	});
 
 	describe('cancel', () => {
-		/** Minimal node-pty double whose exit is driven by the test. */
+		const PTY_PID = 4242;
+
+		/**
+		 * Minimal node-pty double. Note it does NOT trigger exit from kill() -
+		 * cancel no longer goes through ptyProcess.kill(), because its default
+		 * signal is SIGHUP and the interactive login shell these commands run
+		 * under survives that on macOS. The test drives exit explicitly instead.
+		 */
 		function stubPty() {
 			let exitHandler: ((e: { exitCode: number }) => void) | undefined;
-			const kill = vi.fn(() => exitHandler?.({ exitCode: 143 }));
+			const ptyKill = vi.fn();
 			mockPtySpawn.mockReturnValue({
+				pid: PTY_PID,
 				onData: vi.fn(),
 				onExit: (cb: (e: { exitCode: number }) => void) => {
 					exitHandler = cb;
 				},
-				kill,
+				kill: ptyKill,
 			});
-			return { kill };
+			return { ptyKill, exit: (exitCode = 143) => exitHandler?.({ exitCode }) };
 		}
 
-		it('kills an in-flight command and resolves the run', async () => {
-			const { kill } = stubPty();
+		let killSpy: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+		});
+
+		afterEach(() => {
+			killSpy.mockRestore();
+		});
+
+		it('SIGTERMs the process group rather than SIGHUPing the shell', async () => {
+			// The regression: SIGHUP (node-pty's default) left the shell alive, so
+			// Stop appeared to do nothing. A negative pid targets the whole group,
+			// which is what reaches the command and anything it spawned.
+			const { ptyKill, exit } = stubPty();
 			const runner = new LocalCommandRunner(new EventEmitter());
 
 			const run = runner.run('session-1', 'tail -f log', '/tmp');
 			expect(runner.cancel('session-1')).toBe(true);
-			expect(kill).toHaveBeenCalledTimes(1);
+
+			expect(killSpy).toHaveBeenCalledWith(-PTY_PID, 'SIGTERM');
+			expect(killSpy).not.toHaveBeenCalledWith(expect.anything(), 'SIGHUP');
+			expect(ptyKill).not.toHaveBeenCalled();
+
+			exit();
 			await expect(run).resolves.toEqual({ exitCode: 143 });
+		});
+
+		it('reports the cancelled run through command-exit so the UI can settle', async () => {
+			const { exit } = stubPty();
+			const emitter = new EventEmitter();
+			const exits: number[] = [];
+			emitter.on('command-exit', (_sessionId: string, code: number) => exits.push(code));
+			const runner = new LocalCommandRunner(emitter);
+
+			const run = runner.run('session-1', 'tail -f log', '/tmp');
+			runner.cancel('session-1');
+			exit(143);
+			await run;
+
+			expect(exits).toEqual([143]);
 		});
 
 		it('returns false when nothing is running under that id', () => {
@@ -105,14 +146,34 @@ describe('LocalCommandRunner', () => {
 		});
 
 		it('stops tracking a command once it exits', async () => {
-			stubPty();
+			const { exit } = stubPty();
 			const runner = new LocalCommandRunner(new EventEmitter());
 
 			const run = runner.run('session-1', 'ls', '/tmp');
 			runner.cancel('session-1');
+			exit();
 			await run;
 
 			expect(runner.cancel('session-1')).toBe(false);
+		});
+
+		it('does not SIGKILL after the process has already exited', async () => {
+			// A late escalation against a recycled pid would kill an unrelated
+			// process, so exiting must cancel the pending SIGKILL.
+			vi.useFakeTimers();
+			const { exit } = stubPty();
+			const runner = new LocalCommandRunner(new EventEmitter());
+
+			const run = runner.run('session-1', 'tail -f log', '/tmp');
+			runner.cancel('session-1');
+			exit();
+			await run;
+
+			killSpy.mockClear();
+			vi.advanceTimersByTime(10_000);
+
+			expect(killSpy).not.toHaveBeenCalled();
+			vi.useRealTimers();
 		});
 	});
 });
