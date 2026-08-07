@@ -389,6 +389,8 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		// Bulk capabilities used to prime the renderer capability cache
+		getAllCapabilities: vi.fn().mockResolvedValue({}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
