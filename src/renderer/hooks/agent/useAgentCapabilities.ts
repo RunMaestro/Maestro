@@ -139,8 +139,26 @@ export function hasCapabilityCached(agentId: string, capability: keyof AgentCapa
 }
 
 /**
+ * Read the cached capabilities for an agent, or `undefined` when the agent has
+ * never been looked up.
+ *
+ * Callers that must distinguish "never fetched" from "fetched and the answer is
+ * false" MUST use this instead of `hasCapabilityCached`, which collapses both
+ * onto `DEFAULT_CAPABILITIES` and so reports a cache miss as "unsupported".
+ * That conflation is what silently dropped CLI dispatches to agent types the
+ * user had not opened this renderer session.
+ */
+export function getCachedCapabilities(agentId: string): AgentCapabilities | undefined {
+	return capabilitiesCache.get(agentId);
+}
+
+/**
  * Clear the capabilities cache.
  * Useful after agent detection refresh.
+ *
+ * NOTE: anything that clears the cache must re-prime it (see
+ * `primeCapabilitiesCache`), or synchronous `hasCapabilityCached` callers fall
+ * back to the conservative defaults again.
  */
 export function clearCapabilitiesCache(): void {
 	capabilitiesCache.clear();
@@ -152,4 +170,32 @@ export function clearCapabilitiesCache(): void {
  */
 export function setCapabilitiesCache(agentId: string, capabilities: AgentCapabilities): void {
 	capabilitiesCache.set(agentId, capabilities);
+}
+
+/**
+ * Prime the cache for EVERY known agent type in one IPC round trip.
+ *
+ * `hasCapabilityCached` is synchronous and cannot fetch, so any caller running
+ * outside the active session's React tree (background dispatch, remote command
+ * handlers) previously read an empty cache as "capability unsupported". Priming
+ * at startup makes the cache reflect reality before those callers run.
+ *
+ * Never throws: a failure leaves the cache as-is, and the miss-aware call sites
+ * still fetch on demand.
+ *
+ * @returns the number of agent entries primed (0 on failure)
+ */
+export async function primeCapabilitiesCache(): Promise<number> {
+	try {
+		const all = await window.maestro.agents.getAllCapabilities();
+		let primed = 0;
+		for (const [agentId, capabilities] of Object.entries(all ?? {})) {
+			capabilitiesCache.set(agentId, { ...DEFAULT_CAPABILITIES, ...capabilities });
+			primed++;
+		}
+		return primed;
+	} catch (err) {
+		logger.error('Failed to prime agent capabilities cache', undefined, err);
+		return 0;
+	}
 }

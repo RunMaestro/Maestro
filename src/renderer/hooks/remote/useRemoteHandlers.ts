@@ -12,7 +12,12 @@
 
 import { useEffect, useMemo, useCallback } from 'react';
 import type { Session, SessionState, LogEntry, CustomAICommand } from '../../types';
-import { hasCapabilityCached } from '../agent/useAgentCapabilities';
+import {
+	getCachedCapabilities,
+	setCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+	type AgentCapabilities,
+} from '../agent/useAgentCapabilities';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -253,9 +258,36 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Handle AI mode for batch-mode agents
-			if (!hasCapabilityCached(session.toolType, 'supportsBatchMode')) {
-				logger.info('[Remote] Not a batch-mode agent, skipping');
+			// Handle AI mode for batch-mode agents.
+			//
+			// A cache MISS is not an answer. `hasCapabilityCached` reports one as
+			// the conservative default (`supportsBatchMode: false`), which is how
+			// dispatches to agent types the user had not opened this renderer
+			// session were silently dropped. Startup priming normally fills the
+			// cache, but resolve on demand here too so this path is structurally
+			// incapable of acting on a miss if priming races or fails. A cached
+			// `false` still drops - that is correct for `terminal`/`web`.
+			let supportsBatchMode = getCachedCapabilities(session.toolType)?.supportsBatchMode;
+			if (supportsBatchMode === undefined) {
+				try {
+					const resolved = await window.maestro.agents.getCapabilities(session.toolType);
+					const full: AgentCapabilities = { ...DEFAULT_CAPABILITIES, ...resolved };
+					setCapabilitiesCache(session.toolType, full);
+					supportsBatchMode = full.supportsBatchMode;
+				} catch (error: unknown) {
+					logger.warn(
+						`[Remote] Failed to resolve capabilities for toolType "${session.toolType}" - dropping command`,
+						undefined,
+						error
+					);
+					return;
+				}
+			}
+			if (!supportsBatchMode) {
+				logger.info('[Remote] Not a batch-mode agent, skipping', undefined, {
+					toolType: session.toolType,
+					supportsBatchMode,
+				});
 				return;
 			}
 

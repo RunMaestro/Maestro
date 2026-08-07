@@ -42,14 +42,12 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
-// Mock hasCapabilityCached - agents with batch mode support
-const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
-vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
-	hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
-		if (capability === 'supportsBatchMode') return BATCH_MODE_AGENTS.has(agentId);
-		return false;
-	}),
-}));
+// Agents with batch mode support. The real capability module is used (not
+// mocked) so the miss-vs-cached-false distinction the hook now depends on is
+// exercised for real; `seedCapabilitiesCache()` below stands in for the startup
+// priming that fills this cache in the app.
+const BATCH_MODE_AGENTS = ['claude-code', 'codex', 'opencode', 'factory-droid'];
+const NON_BATCH_MODE_AGENTS = ['terminal', 'web'];
 
 // ============================================================================
 // Now import the hook and stores
@@ -62,6 +60,24 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import {
+	clearCapabilitiesCache,
+	setCapabilitiesCache,
+	getCachedCapabilities,
+	DEFAULT_CAPABILITIES,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
+
+/** Stand-in for the startup priming: fills the capability cache so no lookup in
+ *  these tests hits the on-demand fetch path unless the test wants it to. */
+function seedCapabilitiesCache(): void {
+	clearCapabilitiesCache();
+	for (const agentId of BATCH_MODE_AGENTS) {
+		setCapabilitiesCache(agentId, { ...DEFAULT_CAPABILITIES, supportsBatchMode: true });
+	}
+	for (const agentId of NON_BATCH_MODE_AGENTS) {
+		setCapabilitiesCache(agentId, { ...DEFAULT_CAPABILITIES, supportsBatchMode: false });
+	}
+}
 
 // ============================================================================
 // Helpers
@@ -111,6 +127,7 @@ function createMockDeps(overrides: Partial<UseRemoteHandlersDeps> = {}): UseRemo
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	seedCapabilitiesCache();
 
 	// Reset stores
 	const session = createMockSession();
@@ -139,6 +156,12 @@ beforeEach(() => {
 				path: '/usr/local/bin/claude',
 				args: [],
 			}),
+			// On-demand capability resolution for the cache-miss path. Tests that
+			// care override this per case; by default the cache is pre-seeded so
+			// this is never reached.
+			getCapabilities: vi
+				.fn()
+				.mockResolvedValue({ ...DEFAULT_CAPABILITIES, supportsBatchMode: true }),
 		},
 		prompts: {
 			get: vi.fn().mockResolvedValue({
@@ -976,6 +999,107 @@ describe('useRemoteHandlers', () => {
 
 		it('rejects terminal agent type (no supportsBatchMode capability)', async () => {
 			const session = createMockSession({ inputMode: 'ai', toolType: 'terminal' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'test', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		// V1 regression: a cache MISS used to read as "unsupported" (the
+		// conservative DEFAULT_CAPABILITIES fallback), so any dispatch to an agent
+		// type the user had not opened this renderer session was silently dropped.
+		it('resolves capabilities on a cache miss instead of dropping the command', async () => {
+			clearCapabilitiesCache();
+			(window.maestro.agents.getCapabilities as any).mockResolvedValue({
+				...DEFAULT_CAPABILITIES,
+				supportsBatchMode: true,
+			});
+
+			const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.agents.getCapabilities).toHaveBeenCalledWith('opencode');
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ prompt: 'explain', toolType: 'opencode' })
+			);
+			// The resolved value is seeded into the cache, so the next dispatch is free.
+			expect(getCachedCapabilities('opencode')?.supportsBatchMode).toBe(true);
+		});
+
+		it('still drops the command when resolved capabilities say supportsBatchMode is false', async () => {
+			clearCapabilitiesCache();
+			(window.maestro.agents.getCapabilities as any).mockResolvedValue({
+				...DEFAULT_CAPABILITIES,
+				supportsBatchMode: false,
+			});
+
+			const session = createMockSession({ inputMode: 'ai', toolType: 'terminal' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'test', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.agents.getCapabilities).toHaveBeenCalledWith('terminal');
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('does not re-fetch when the cache already holds a false answer', async () => {
+			const session = createMockSession({ inputMode: 'ai', toolType: 'terminal' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'test', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.agents.getCapabilities).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('drops the command when capability resolution fails', async () => {
+			clearCapabilitiesCache();
+			(window.maestro.agents.getCapabilities as any).mockRejectedValue(new Error('IPC down'));
+
+			const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' as any });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
 			const deps = createMockDeps({ sessionsRef: { current: [session] } });
 

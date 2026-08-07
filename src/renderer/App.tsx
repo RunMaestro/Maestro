@@ -141,6 +141,7 @@ import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './ho
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
+import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
@@ -1654,6 +1655,12 @@ function MaestroConsoleInner() {
 	// the timer when autoResumeOnLimit is off. `resumeAutoRunAfterError` is the
 	// shared entry point that unblocks both spec- and goal-driven Auto Runs.
 	useAutoResumeCoordinator({ resumeAutoRunAfterError });
+
+	// --- AGENT CAPABILITY CACHE PRIMING ---
+	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
+	// run outside the active session's tree (CLI/web dispatch) see real values
+	// instead of the conservative defaults.
+	useCapabilitiesPriming();
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
 		updateSessionWith(activeSessionIdRef.current, (s) => ({
