@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentExitListener } from '../../../../../renderer/hooks/agent/internal/useAgentExitListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { DEFAULT_BATCH_STATE } from '../../../../../renderer/hooks/batch/batchReducer';
+import type { BatchRunState } from '../../../../../renderer/types';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
 
@@ -199,6 +201,85 @@ describe('useAgentExitListener', () => {
 		expect(updated.orphanedThinkingTabs).toBeUndefined();
 		expect(updated.state).toBe('idle');
 		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	// Desktop document/spec-mode Auto Run synopsizes each task from this exit path,
+	// which sets up the synopsis and dispatches it via runExitSynopsis (reaching
+	// spawnBackgroundSynopsisRef), so the run-scoped model override must reach the
+	// synopsis spawn config here for parity with the CLI batch processor.
+	function setupSynopsisRun(opts: { sessionCustomModel?: string; runModelOverride?: string }) {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			agentSessionId: 'asid-1',
+			// Auto Run tabs opt into the exit-path synopsis via saveToHistory.
+			saveToHistory: true,
+			// Thinking on -> tool logs are recorded, so the activity gate trusts the
+			// tool log below as evidence of meaningful work.
+			showThinking: 'on',
+			logs: [
+				{ id: 'l-user', timestamp: 1, source: 'user', text: 'do the task' },
+				{ id: 'l-tool', timestamp: 2, source: 'tool', text: 'Edit(file.ts)' },
+			],
+		} as any);
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			customModel: opts.sessionCustomModel,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const spawn = vi.fn().mockResolvedValue({ success: false });
+		const deps = makeDeps();
+		deps.spawnBackgroundSynopsisRef.current = spawn as any;
+		// runExitSynopsis bails before spawning unless a history-entry sink exists.
+		deps.addHistoryEntryRef.current = vi.fn() as any;
+		// The active run exposes its per-run model override via getBatchStateRef.
+		const batchState: BatchRunState = {
+			...DEFAULT_BATCH_STATE,
+			isRunning: true,
+			runModelOverride: opts.runModelOverride,
+		};
+		deps.getBatchStateRef.current = (() => batchState) as any;
+		return { deps, spawn };
+	}
+
+	it('spawns the exit-path synopsis under the run model override, not the session model', async () => {
+		const { deps, spawn } = setupSynopsisRun({
+			sessionCustomModel: 'session-sonnet',
+			runModelOverride: 'run-opus',
+		});
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(spawn).toHaveBeenCalledTimes(1);
+		// 6th arg is the synopsis sessionConfig.
+		const sessionConfig = spawn.mock.calls[0][5];
+		expect(sessionConfig.customModel).toBe('run-opus');
+	});
+
+	it('falls back to the session model when the run has no model override', async () => {
+		const { deps, spawn } = setupSynopsisRun({
+			sessionCustomModel: 'session-sonnet',
+			runModelOverride: undefined,
+		});
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(spawn).toHaveBeenCalledTimes(1);
+		const sessionConfig = spawn.mock.calls[0][5];
+		expect(sessionConfig.customModel).toBe('session-sonnet');
 	});
 
 	it('deletes activeHiddenToolRef entry on AI exit', async () => {

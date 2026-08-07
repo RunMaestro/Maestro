@@ -625,7 +625,9 @@ export const THEMES: Record<ThemeId, Theme> = {
 			bgSidebar: '#eee8d5',
 			bgActivity: '#e6dfc8',
 			border: '#d3cbb7',
-			textMain: '#5f737b',
+			// Solarized base02. The previous #5f737b sat at 4.61:1, which left dimmed
+			// secondary text below the 3:1 floor no matter how light the dimming.
+			textMain: '#073642',
 			textDim: '#606969',
 			accent: '#207c76',
 			accentDim: 'rgba(32, 124, 118, 0.1)',

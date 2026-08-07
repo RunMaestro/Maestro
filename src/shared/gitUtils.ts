@@ -12,6 +12,29 @@
  */
 
 /**
+ * Git operations that stream their output live to the renderer instead of
+ * returning only a buffered result (see `git:runCommand`).
+ */
+export type GitStreamingOperation = 'pull' | 'push' | 'fetch';
+
+/** One chunk of output from a streaming git command. */
+export interface GitCommandOutputChunk {
+	/** Correlates the chunk with the `runCommand` call that produced it. */
+	runId: string;
+	stream: 'stdout' | 'stderr';
+	chunk: string;
+}
+
+/** Final result of a streaming git command. */
+export interface GitRunCommandResult {
+	success: boolean;
+	exitCode: number | string;
+	/** True when the run ended because the user hit Cancel. */
+	cancelled: boolean;
+	error?: string;
+}
+
+/**
  * Represents a file change from git status output
  */
 interface GitFileStatus {

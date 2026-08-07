@@ -156,6 +156,8 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{detailView ? (
@@ -248,7 +250,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						</div>
 
 						{/* Process tree */}
-						<div className="overflow-y-auto flex-1 scrollbar-thin">
+						<div className="overflow-y-auto flex-1 scrollbar-thin select-text">
 							<ProcessListView
 								theme={theme}
 								tree={tree}

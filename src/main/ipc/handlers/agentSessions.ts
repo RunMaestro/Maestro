@@ -45,9 +45,11 @@ import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../
 import { captureException } from '../../utils/sentry';
 import {
 	snapshotStarredTranscript,
-	deleteStarredMirror,
+	releaseTranscriptMirror,
+	releaseSnoozedTranscriptMirror,
 	restoreStarredTranscript,
 	listMirroredStarredSessions,
+	type MirrorRetainReason,
 } from '../../storage/starred-transcript-mirror';
 import { getHistoryManager } from '../../history-manager';
 
@@ -55,6 +57,30 @@ import { getHistoryManager } from '../../history-manager';
 export type { GlobalAgentStats, ProviderStats };
 
 const LOG_CONTEXT = '[AgentSessions]';
+
+/**
+ * Node fs error codes we expect when reading a provider transcript we merely
+ * discovered on disk. The file belongs to the agent CLI, not to us: it can be
+ * unreadable (restrictive umask, a `~/.claude` tree owned by another user),
+ * deleted between the directory listing and the read, or briefly locked on
+ * Windows. These are environmental, never a Maestro bug, so we keep the local
+ * warn but skip Sentry to avoid telemetry noise (MAESTRO-W9). Same shape as the
+ * `RangeError` carve-out in the loops below: classify the expected boundary,
+ * log it locally, and let everything else report.
+ */
+const EXPECTED_SESSION_READ_ERROR_CODES = new Set([
+	'EACCES',
+	'EPERM',
+	'ENOENT',
+	'ENOTDIR',
+	'EISDIR',
+	'EBUSY',
+]);
+
+export function isExpectedSessionReadError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && EXPECTED_SESSION_READ_ERROR_CODES.has(code);
+}
 
 /**
  * Generic agent session origins data structure
@@ -873,13 +899,13 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					const sessionName = allOrigins[agentId]?.[projectPath]?.[sessionId]?.sessionName;
 					void snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
 				} else {
-					void deleteStarredMirror({ agentId, sessionId });
+					void releaseTranscriptMirror({ agentId, sessionId });
 				}
 			}
 		)
 	);
 
-	// ============ Snapshot Starred Transcript (mirror on tab close) ============
+	// ============ Snapshot Transcript (mirror on tab close / snooze) ============
 
 	ipcMain.handle(
 		'agentSessions:snapshotStarredTranscript',
@@ -889,9 +915,22 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				agentId: string,
 				projectPath: string,
 				sessionId: string,
-				sessionName?: string
+				sessionName?: string,
+				reason?: MirrorRetainReason
 			): Promise<void> => {
-				await snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
+				await snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName, reason });
+			}
+		)
+	);
+
+	// ============ Release Snoozed Transcript (mirror on wake / dismiss) ============
+
+	ipcMain.handle(
+		'agentSessions:releaseSnoozedTranscript',
+		withIpcErrorLogging(
+			handlerOpts('releaseSnoozedTranscript'),
+			async (agentId: string, projectPath: string, sessionId: string): Promise<void> => {
+				await releaseSnoozedTranscriptMirror({ agentId, projectPath, sessionId });
 			}
 		)
 	);
@@ -1072,6 +1111,12 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					// claude-/codex-session-storage.ts.
 					if (error instanceof RangeError) {
 						logger.warn(`Claude session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else if (isExpectedSessionReadError(error)) {
+						// Unreadable or vanished transcript - environmental, see
+						// EXPECTED_SESSION_READ_ERROR_CODES (MAESTRO-W9).
+						logger.warn(`Claude session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
 					} else {
 						void captureException(error);
 						logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, {
@@ -1106,6 +1151,11 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					// boundary we skip rather than report.
 					if (error instanceof RangeError) {
 						logger.warn(`Codex session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else if (isExpectedSessionReadError(error)) {
+						// See the Claude loop above (MAESTRO-W9).
+						logger.warn(`Codex session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
 					} else {
 						void captureException(error);
 						logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, {

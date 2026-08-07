@@ -16,6 +16,7 @@
 
 import { create } from 'zustand';
 import type { Session, SettingsTab, AgentError } from '../types';
+import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { logger } from '../utils/logger';
@@ -120,6 +121,12 @@ export interface RenameTabModalData {
 	initialName: string;
 }
 
+/** Snooze tab modal data - which AI tab is being snoozed, and how to label it */
+export interface SnoozeTabModalData {
+	tabId: string;
+	tabLabel: string;
+}
+
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
 	sessionId: string;
@@ -186,6 +193,12 @@ export interface CueYamlEditorData {
 /** Worktree modal data (create/delete/PR) */
 export interface WorktreeModalData {
 	session: Session;
+	/**
+	 * PR only: the branch to open the PR from. Worktree children carry it on the
+	 * session, but a plain git agent doesn't - the opener knows the live branch,
+	 * so it passes it rather than making the modal host re-derive it.
+	 */
+	sourceBranch?: string;
 }
 
 /** Group chat modal data (delete/rename/edit) */
@@ -196,6 +209,42 @@ export interface GroupChatModalData {
 /** Git diff preview data */
 export interface GitDiffModalData {
 	diff: string;
+	/**
+	 * Repo the diff was taken from, used to resolve files clicked inside the
+	 * viewer. Optional: opened without it (keyboard shortcut, command palette)
+	 * the viewer follows the active agent. The Left Bar's right-click menu passes
+	 * it so it can diff an agent that isn't active.
+	 */
+	cwd?: string;
+}
+
+/**
+ * Git log viewer data. Optional: opened without it (keyboard shortcut, command
+ * palette) the viewer follows the active agent. The Left Bar's right-click menu
+ * passes an explicit target so it can show the log of an agent that isn't active.
+ */
+export interface GitLogModalData {
+	cwd: string;
+	sshRemoteId?: string;
+}
+
+/** Git command runner data - which streaming operation the console modal runs */
+export interface GitCommandRunnerData {
+	sessionId: string;
+	operation: GitStreamingOperation;
+	/** Repo directory the command runs in (already resolved for terminal/worktree agents). */
+	cwd: string;
+	sshRemoteId?: string;
+	/** Current branch, shown in the modal title. */
+	branch?: string;
+}
+
+/** Branch switcher data - fuzzy branch picker for an agent's repo */
+export interface BranchSwitcherModalData {
+	sessionId: string;
+	cwd: string;
+	sshRemoteId?: string;
+	currentBranch?: string;
 }
 
 /** Tour modal data */
@@ -242,11 +291,14 @@ export type ModalId =
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
+	| 'crossTabSearch'
 	| 'fuzzyFileSearch'
 	| 'promptComposer'
 	// Tab Management
 	| 'renameTab'
 	| 'terminalStartupCommand'
+	| 'snoozeTab'
+	| 'snoozedTabs'
 	// Group Management
 	| 'renameGroup'
 	// Session Operations
@@ -273,6 +325,8 @@ export type ModalId =
 	// Git
 	| 'gitDiff'
 	| 'gitLog'
+	| 'gitCommandRunner'
+	| 'branchSwitcher'
 	// Wizard & Tour
 	| 'wizardResume'
 	| 'tour'
@@ -321,6 +375,7 @@ export interface ModalDataMap {
 	confirm: ConfirmModalData;
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
+	snoozeTab: SnoozeTabModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
@@ -335,6 +390,9 @@ export interface ModalDataMap {
 	renameGroupChat: GroupChatModalData;
 	editGroupChat: GroupChatModalData;
 	gitDiff: GitDiffModalData;
+	gitLog: GitLogModalData;
+	gitCommandRunner: GitCommandRunnerData;
+	branchSwitcher: BranchSwitcherModalData;
 	tour: TourModalData;
 	standingOvation: StandingOvationData;
 	firstRunCelebration: FirstRunCelebrationData;
@@ -883,6 +941,10 @@ export function getModalActions() {
 		setTabSwitcherOpen: (open: boolean) =>
 			open ? openModal('tabSwitcher') : closeModal('tabSwitcher'),
 
+		// Cross-Tab Message Search Modal
+		setCrossTabSearchOpen: (open: boolean) =>
+			open ? openModal('crossTabSearch') : closeModal('crossTabSearch'),
+
 		// Fuzzy File Search Modal
 		setFuzzyFileSearchOpen: (open: boolean) =>
 			open ? openModal('fuzzyFileSearch') : closeModal('fuzzyFileSearch'),
@@ -917,6 +979,14 @@ export function getModalActions() {
 
 		// Git Log Viewer
 		setGitLogOpen: (open: boolean) => (open ? openModal('gitLog') : closeModal('gitLog')),
+
+		// Git command runner (streaming pull/push/fetch console)
+		openGitCommandRunner: (data: GitCommandRunnerData) => openModal('gitCommandRunner', data),
+		closeGitCommandRunner: () => closeModal('gitCommandRunner'),
+
+		// Branch switcher (fuzzy branch picker)
+		openBranchSwitcher: (data: BranchSwitcherModalData) => openModal('branchSwitcher', data),
+		closeBranchSwitcher: () => closeModal('branchSwitcher'),
 
 		// Tour Overlay
 		setTourOpen: (open: boolean) =>
@@ -1028,6 +1098,7 @@ export function useModalActions() {
 	const deleteWorktreeModalOpen = useModalStore(selectModalOpen('deleteWorktree'));
 	const deleteWorktreeData = useModalStore(selectModalData('deleteWorktree'));
 	const tabSwitcherOpen = useModalStore(selectModalOpen('tabSwitcher'));
+	const crossTabSearchOpen = useModalStore(selectModalOpen('crossTabSearch'));
 	const fuzzyFileSearchOpen = useModalStore(selectModalOpen('fuzzyFileSearch'));
 	const promptComposerOpen = useModalStore(selectModalOpen('promptComposer'));
 	const mergeSessionModalOpen = useModalStore(selectModalOpen('mergeSession'));
@@ -1039,6 +1110,7 @@ export function useModalActions() {
 	const groupChatInfoOpen = useModalStore(selectModalOpen('groupChatInfo'));
 	const gitDiffData = useModalStore(selectModalData('gitDiff'));
 	const gitLogOpen = useModalStore(selectModalOpen('gitLog'));
+	const gitLogData = useModalStore(selectModalData('gitLog'));
 	const tourOpen = useModalStore(selectModalOpen('tour'));
 	const tourData = useModalStore(selectModalData('tour'));
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
@@ -1193,11 +1265,15 @@ export function useModalActions() {
 		createWorktreeSession: createWorktreeData?.session ?? null,
 		createPRModalOpen,
 		createPRSession: createPRData?.session ?? null,
+		createPRSourceBranch: createPRData?.sourceBranch,
 		deleteWorktreeModalOpen,
 		deleteWorktreeSession: deleteWorktreeData?.session ?? null,
 
 		// Tab Switcher Modal
 		tabSwitcherOpen,
+
+		// Cross-Tab Message Search Modal
+		crossTabSearchOpen,
 
 		// Fuzzy File Search Modal
 		fuzzyFileSearchOpen,
@@ -1218,11 +1294,15 @@ export function useModalActions() {
 		showEditGroupChatModal: editGroupChatData?.groupChatId ?? null,
 		showGroupChatInfo: groupChatInfoOpen,
 
-		// Git Diff Viewer
+		// Git Diff Viewer. `gitDiffCwd` is set only when the diff was taken for a
+		// specific agent (Left Bar menu); otherwise the viewer follows the active one.
 		gitDiffPreview: gitDiffData?.diff ?? null,
+		gitDiffCwd: gitDiffData?.cwd ?? null,
 
-		// Git Log Viewer
+		// Git Log Viewer. The target is set only when the log was opened for a
+		// specific agent (Left Bar menu); otherwise the viewer follows the active one.
 		gitLogOpen,
+		gitLogTarget: gitLogData ?? null,
 
 		// Tour Overlay
 		tourOpen,

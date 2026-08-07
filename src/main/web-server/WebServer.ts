@@ -469,6 +469,20 @@ export class WebServer {
 		this.callbackRegistry.setEnqueueCommandCallback(callback);
 	}
 
+	/**
+	 * Enqueue a prompt into a session's execution queue from inside the main
+	 * process (not from a web client). Used by dispatch callbacks to deliver a
+	 * wake-up turn into the caller's live tab: busy callers queue instead of
+	 * being rejected, which is exactly the `dispatch --queue` semantics.
+	 */
+	enqueueCommandFromMain(
+		sessionId: string,
+		command: string,
+		tabId?: string
+	): ReturnType<CallbackRegistry['enqueueCommand']> {
+		return this.callbackRegistry.enqueueCommand(sessionId, command, 'ai', tabId);
+	}
+
 	setListQueueCallback(callback: ListQueueCallback): void {
 		this.callbackRegistry.setListQueueCallback(callback);
 	}

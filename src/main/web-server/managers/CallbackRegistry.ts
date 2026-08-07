@@ -476,6 +476,9 @@ export class CallbackRegistry {
 			maxLoops?: number;
 			saveAsPlaybook?: string;
 			launch?: boolean;
+			/** Per-run model/effort override - wins over the session model for this run only. */
+			model?: string;
+			effort?: string;
 			worktree?: {
 				enabled: boolean;
 				path: string;

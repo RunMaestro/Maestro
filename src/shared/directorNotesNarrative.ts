@@ -16,8 +16,18 @@
  * imported from both the main process and the renderer.
  */
 
-/** The three fixed narrative section kinds, matching the prompt contract. */
-export type NarrativeSectionKind = 'accomplishments' | 'challenges' | 'nextSteps';
+/**
+ * The narrative section kinds, matching the prompt contract.
+ *
+ * `accomplishments` / `challenges` / `nextSteps` are always requested.
+ * `progress` is CONDITIONAL: the prompt only asks for it when the user has
+ * filled in the Ideal End State setting, so a report generated without one has
+ * exactly the three original sections. It is accepted unconditionally here -
+ * the parser's job is to validate shape, not to re-derive which sections the
+ * prompt asked for, and a cached report from a run that had an end state must
+ * still parse after the setting is cleared.
+ */
+export type NarrativeSectionKind = 'accomplishments' | 'challenges' | 'nextSteps' | 'progress';
 
 /** Optional per-item severity used to style bullet emphasis in Rich Mode. */
 export type NarrativeItemSeverity = 'info' | 'warn' | 'critical';
@@ -50,11 +60,31 @@ export type ParseNarrativeResult =
 	| { ok: true; narrative: DirectorNotesNarrative }
 	| { ok: false; error: string };
 
+/**
+ * Discriminated result of {@link recoverDirectorNotesNarrative}. `reason`
+ * explains what had to be salvaged so the UI can say so out loud.
+ */
+export type RecoverNarrativeResult =
+	| { ok: true; narrative: DirectorNotesNarrative; reason: string }
+	| { ok: false; error: string };
+
 const VALID_KINDS: ReadonlySet<string> = new Set<NarrativeSectionKind>([
 	'accomplishments',
 	'challenges',
 	'nextSteps',
+	'progress',
 ]);
+
+/** Human-readable kind list, kept in sync with {@link VALID_KINDS} for errors. */
+const VALID_KINDS_MESSAGE = [...VALID_KINDS].map((k) => `"${k}"`).join(', ');
+
+/** Fallback headings when a salvaged section is missing its `title`. */
+const DEFAULT_SECTION_TITLES: Record<NarrativeSectionKind, string> = {
+	accomplishments: 'Accomplishments',
+	challenges: 'Challenges',
+	nextSteps: 'Next Steps',
+	progress: 'Progress Toward Ideal End State',
+};
 
 const VALID_SEVERITIES: ReadonlySet<string> = new Set<NarrativeItemSeverity>([
 	'info',
@@ -121,7 +151,7 @@ function validateSection(
 	if (typeof raw.kind !== 'string' || !VALID_KINDS.has(raw.kind)) {
 		return {
 			ok: false,
-			error: `${where}.kind must be one of "accomplishments", "challenges", "nextSteps".`,
+			error: `${where}.kind must be one of ${VALID_KINDS_MESSAGE}.`,
 		};
 	}
 	if (typeof raw.title !== 'string') {
@@ -183,6 +213,53 @@ function extractFirstJsonObject(raw: string): string | null {
 }
 
 /**
+ * Shown when the output is JSON-shaped but no narrative reached the reading
+ * surface and no specific parse error came with it - the shape of a result
+ * cached before the narrative fields existed. Generic on purpose: we know the
+ * output is not a readable report, but not why.
+ */
+export const STRUCTURED_OUTPUT_UNPARSED_MESSAGE =
+	'This report was returned as structured output that could not be read back. Regenerate it to get a fresh report.';
+
+/**
+ * Does this raw output even CLAIM to be the structured narrative?
+ *
+ * The Director's Notes prompt is a user-customizable core prompt persisted to
+ * `userData/core-prompts-customizations.json`, so a profile can easily hold a
+ * prompt that asks for markdown while the running build's parser expects JSON,
+ * or the reverse. Neither is a malformed narrative - the agent did exactly what
+ * the prompt it was given asked for. Shape is the only honest discriminator.
+ *
+ * The rule is deliberately narrow: after an optional leading code fence, the
+ * output must START with `{`. The prompt says "return a single JSON object and
+ * nothing else", so a genuine structured response always does. A markdown
+ * report starts with a heading or prose - and critically, a markdown report
+ * that merely CONTAINS a fenced JSON example still starts with prose, so it is
+ * correctly treated as markdown. `extractFirstJsonObject` is intentionally not
+ * used here: it scans anywhere in the string and would misread that example as
+ * a botched narrative.
+ *
+ * Callers use this to decide what a parse failure MEANS: JSON-shaped means the
+ * narrative really is broken and the user should see the error; anything else
+ * is prose and should simply be rendered as markdown.
+ */
+export function looksLikeStructuredOutput(raw: string): boolean {
+	if (typeof raw !== 'string') return false;
+
+	let text = raw.trim();
+	if (text.length === 0) return false;
+
+	// Agents sometimes fence the object despite being told not to.
+	if (text.startsWith('```')) {
+		const newlineIndex = text.indexOf('\n');
+		if (newlineIndex === -1) return false;
+		text = text.slice(newlineIndex + 1).trimStart();
+	}
+
+	return text.startsWith('{');
+}
+
+/**
  * Tolerantly extract and strictly validate the structured narrative from the
  * agent's raw output.
  *
@@ -232,6 +309,219 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 	return { ok: true, narrative: { version: 1, sections } };
 }
 
+/**
+ * Rebuild a JSON object whose tail was cut off mid-stream.
+ *
+ * A synopsis run costs minutes of agent time and emits one very long single-line
+ * object, so a response that dies partway through is the difference between a
+ * readable report and nothing at all. Scan to the last COMPLETE nested container
+ * (an item or a section object), cut there, and close the containers that are
+ * still open. Cutting at a completed `}`/`]` is what makes this safe: it drops
+ * any half-written string, dangling key, or trailing comma along with it.
+ *
+ * Returns `null` when the input is not truncated (the top-level object closes on
+ * its own, so the strict path already had its shot) or when nothing completed.
+ */
+function closeTruncatedJsonObject(raw: string): string | null {
+	const start = raw.indexOf('{');
+	if (start === -1) return null;
+
+	const stack: string[] = [];
+	let inString = false;
+	let escaped = false;
+	// Index of the last `}`/`]` that closed a NESTED container, plus the frames
+	// still open at that point - the cut site and the closers it needs.
+	let cutIndex = -1;
+	let cutStack: string[] = [];
+
+	for (let i = start; i < raw.length; i++) {
+		const char = raw[i];
+
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+
+		if (char === '"') inString = true;
+		else if (char === '{' || char === '[') stack.push(char);
+		else if (char === '}' || char === ']') {
+			stack.pop();
+			// The top-level object closed: this response is not truncated.
+			if (stack.length === 0) return null;
+			cutIndex = i;
+			cutStack = [...stack];
+		}
+	}
+
+	if (cutIndex === -1) return null;
+
+	const closers = cutStack
+		.reverse()
+		.map((open) => (open === '{' ? '}' : ']'))
+		.join('');
+	return raw.slice(start, cutIndex + 1) + closers;
+}
+
+/**
+ * Escape raw control characters that appear INSIDE strings. A literal newline in
+ * a bullet is invalid JSON (the prompt forbids it, models do it anyway) and is
+ * otherwise a total loss for an entire report.
+ */
+function escapeControlCharsInStrings(jsonText: string): string {
+	const ESCAPES: Record<string, string> = {
+		'\n': '\\n',
+		'\r': '\\r',
+		'\t': '\\t',
+		'\b': '\\b',
+		'\f': '\\f',
+	};
+
+	let out = '';
+	let inString = false;
+	let escaped = false;
+
+	for (const char of jsonText) {
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+
+			if (!escaped && char < ' ') {
+				out += ESCAPES[char] ?? `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`;
+				continue;
+			}
+		} else if (char === '"') {
+			inString = true;
+		}
+
+		out += char;
+	}
+
+	return out;
+}
+
+/**
+ * Validate leniently: keep every item and section that is usable and DROP the
+ * rest, rather than failing the whole document the way
+ * {@link parseDirectorNotesNarrative} does. Returns `null` only when the value
+ * is not narrative-shaped at all.
+ */
+function validateNarrativeLenient(
+	parsed: unknown
+): { narrative: DirectorNotesNarrative; dropped: number } | null {
+	if (!isPlainObject(parsed) || !Array.isArray(parsed.sections)) return null;
+
+	let dropped = 0;
+	const sections: NarrativeSection[] = [];
+
+	for (const rawSection of parsed.sections) {
+		if (!isPlainObject(rawSection) || typeof rawSection.kind !== 'string') {
+			dropped++;
+			continue;
+		}
+		if (!VALID_KINDS.has(rawSection.kind)) {
+			dropped++;
+			continue;
+		}
+		const kind = rawSection.kind as NarrativeSectionKind;
+
+		const items: NarrativeItem[] = [];
+		for (const rawItem of Array.isArray(rawSection.items) ? rawSection.items : []) {
+			if (!isPlainObject(rawItem) || typeof rawItem.text !== 'string' || !rawItem.text.trim()) {
+				dropped++;
+				continue;
+			}
+			const item: NarrativeItem = { text: rawItem.text };
+			// A bad severity/agent only costs that field, never the bullet.
+			if (typeof rawItem.severity === 'string' && VALID_SEVERITIES.has(rawItem.severity)) {
+				item.severity = rawItem.severity as NarrativeItemSeverity;
+			}
+			if (typeof rawItem.agent === 'string') item.agent = rawItem.agent;
+			items.push(item);
+		}
+
+		sections.push({
+			kind,
+			title: typeof rawSection.title === 'string' ? rawSection.title : DEFAULT_SECTION_TITLES[kind],
+			items,
+		});
+	}
+
+	if (sections.length === 0) return null;
+	return { narrative: { version: 1, sections }, dropped };
+}
+
+/**
+ * Best-effort salvage of output the strict parser rejected.
+ *
+ * Call this ONLY after {@link parseDirectorNotesNarrative} returns `{ ok: false }`.
+ * It repairs the two failures that actually cost users a report - a response cut
+ * off mid-stream and raw control characters inside strings - then validates
+ * leniently, dropping individual malformed bullets instead of the document.
+ *
+ * Recovery is never silent: `reason` states what was salvaged so the surfaces
+ * can show it next to the narrative. When nothing usable survives, this returns
+ * `{ ok: false }` and the caller shows the strict parse error instead.
+ */
+export function recoverDirectorNotesNarrative(raw: string): RecoverNarrativeResult {
+	if (typeof raw !== 'string' || raw.trim().length === 0) {
+		return { ok: false, error: 'Response was empty.' };
+	}
+
+	// Ordered by fidelity: the untouched object first, then each repair. Each
+	// candidate remembers which repairs produced it so the reason we report is
+	// the one that actually applied.
+	const candidates: Array<{ text: string; wasTruncated: boolean; wasEscaped: boolean }> = [];
+	for (const [text, wasTruncated] of [
+		[extractFirstJsonObject(raw), false],
+		[closeTruncatedJsonObject(raw), true],
+	] as const) {
+		if (text === null) continue;
+		candidates.push({ text, wasTruncated, wasEscaped: false });
+		candidates.push({
+			text: escapeControlCharsInStrings(text),
+			wasTruncated,
+			wasEscaped: true,
+		});
+	}
+
+	for (const candidate of candidates) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(candidate.text);
+		} catch {
+			continue;
+		}
+
+		const lenient = validateNarrativeLenient(parsed);
+		if (!lenient) continue;
+
+		const reasons: string[] = [];
+		if (candidate.wasTruncated) {
+			reasons.push('the response was cut off before it finished');
+		}
+		if (candidate.wasEscaped) {
+			reasons.push('the response contained line breaks that are not valid inside JSON');
+		}
+		if (lenient.dropped > 0) {
+			reasons.push(
+				`${lenient.dropped} ${lenient.dropped === 1 ? 'bullet was' : 'bullets were'} malformed and dropped`
+			);
+		}
+		if (reasons.length === 0) reasons.push('the response did not match the expected shape exactly');
+
+		return {
+			ok: true,
+			narrative: lenient.narrative,
+			reason: `Recovered what could be read: ${reasons.join(', and ')}.`,
+		};
+	}
+
+	return { ok: false, error: 'No recoverable narrative content found in the response.' };
+}
+
 /** Render one bullet as Markdown, mirroring Rich Mode's emphasis without colors. */
 function narrativeItemToMarkdown(item: NarrativeItem): string {
 	// `critical` reads as bold (Rich Mode shows it red + bold); `warn`/`info`
@@ -250,8 +540,8 @@ function narrativeItemToMarkdown(item: NarrativeItem): string {
  * reading experience instead of dumping the JSON.
  *
  * Each section becomes a `##` heading followed by a bullet list. Empty sections
- * still render their heading plus a "Nothing to report." note so the three-part
- * Accomplishments / Challenges / Next Steps structure is always recognizable.
+ * still render their heading plus a "Nothing to report." note so the report's
+ * section structure is always recognizable.
  */
 export function narrativeToMarkdown(narrative: DirectorNotesNarrative): string {
 	const blocks = narrative.sections.map((section) => {

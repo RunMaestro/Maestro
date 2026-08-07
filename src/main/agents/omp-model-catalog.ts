@@ -177,6 +177,21 @@ export function getOmpModelContextWindow(
 	return windows.get(normalizeKey(bareId(model))) ?? null;
 }
 
+/** Options for {@link primeOmpModelCatalog}. */
+export interface PrimeOmpModelCatalogOptions {
+	/**
+	 * Ignore the {@link primeFailures} negative cache and attempt the prime
+	 * anyway. Set by the agent-spawn path: a user starting an omp agent is an
+	 * explicit, low-frequency action that must get a fresh attempt rather than
+	 * inheriting a pinned 200k fallback from an earlier failure (e.g. a cold
+	 * packaged start where the binary's runtime wasn't yet resolvable). The
+	 * in-flight dedupe and the fresh-catalog TTL still apply, so this never
+	 * causes duplicate or redundant work; `agents:detect`/reprobe keep the
+	 * anti-log-noise behavior by leaving the option unset.
+	 */
+	retryFailedPrime?: boolean;
+}
+
 /**
  * Fetch `omp models --json` with the given command/env and populate the catalog
  * under `catalogKey`. Best-effort and deduped per identity: concurrent callers
@@ -186,7 +201,8 @@ export function getOmpModelContextWindow(
 export function primeOmpModelCatalog(
 	command: string,
 	env: NodeJS.ProcessEnv | undefined,
-	catalogKey: string
+	catalogKey: string,
+	options?: PrimeOmpModelCatalogOptions
 ): Promise<void> {
 	const inFlight = primingPromises.get(catalogKey);
 	if (inFlight) return inFlight;
@@ -195,17 +211,32 @@ export function primeOmpModelCatalog(
 		return Promise.resolve();
 	}
 	// Honor the same TTL for a recent failure so a broken install isn't re-primed
-	// (and re-warned) on every detect/reprobe pass within the window.
+	// (and re-warned) on every detect/reprobe pass within the window. A spawn
+	// opts out via `retryFailedPrime` so a single early failure can't pin the
+	// fallback window for the next five minutes of respawns.
 	const lastFailure = primeFailures.get(catalogKey);
-	if (lastFailure !== undefined && Date.now() - lastFailure < PRIME_TTL_MS) {
+	if (
+		!options?.retryFailedPrime &&
+		lastFailure !== undefined &&
+		Date.now() - lastFailure < PRIME_TTL_MS
+	) {
 		return Promise.resolve();
 	}
+	// Log the PATH the prime actually ran with (PATH only - the full env can hold
+	// provider secrets). In a packaged app this is the difference between "omp is
+	// broken" and "the packaged PATH lost ~/.bun/bin", which is invisible from an
+	// exit code alone.
+	const envPath = env?.PATH ?? process.env.PATH;
+	const startedAt = Date.now();
 	const promise = (async () => {
 		try {
 			const result = await execFileNoThrow(command, ['models', '--json'], undefined, env);
 			if (result.exitCode !== 0) {
 				primeFailures.set(catalogKey, Date.now());
 				logger.warn('omp models --json failed while priming catalog', LOG_CONTEXT, {
+					command,
+					path: envPath,
+					elapsedMs: Date.now() - startedAt,
 					exitCode: result.exitCode,
 					stderr: result.stderr?.trim(),
 				});
@@ -223,12 +254,18 @@ export function primeOmpModelCatalog(
 				primeFailures.set(catalogKey, Date.now());
 				logger.warn(
 					'omp models --json returned no models array while priming catalog',
-					LOG_CONTEXT
+					LOG_CONTEXT,
+					{ command, path: envPath, elapsedMs: Date.now() - startedAt }
 				);
 			}
 		} catch (error) {
 			primeFailures.set(catalogKey, Date.now());
-			logger.warn('Failed to prime omp model catalog', LOG_CONTEXT, { error: String(error) });
+			logger.warn('Failed to prime omp model catalog', LOG_CONTEXT, {
+				command,
+				path: envPath,
+				elapsedMs: Date.now() - startedAt,
+				error: String(error),
+			});
 		} finally {
 			primingPromises.delete(catalogKey);
 		}

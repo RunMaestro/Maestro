@@ -1,7 +1,8 @@
 import React from 'react';
-import { Bot, User, Zap } from 'lucide-react';
+import { Bot, User, Zap, MessagesSquare } from 'lucide-react';
 import type { Theme, HistoryEntryType } from '../../types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 
 // Double checkmark SVG component for validated entries
 export const DoubleCheck = ({
@@ -47,6 +48,10 @@ export const LOOKBACK_OPTIONS: LookbackPeriod[] = [
 // CUE_COLOR is imported above from shared/cue-pipeline-types and re-exported for History consumers
 export { CUE_COLOR };
 
+// AGENT_COLOR is defined in shared/crossAgentTypes (so the shared widget library
+// can use it too) and re-exported here for History consumers, mirroring CUE_COLOR.
+export { AGENT_COLOR };
+
 /** Get pill color scheme based on entry type */
 export const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 	switch (type) {
@@ -68,6 +73,12 @@ export const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 				text: CUE_COLOR,
 				border: CUE_COLOR + '40',
 			};
+		case 'AGENT':
+			return {
+				bg: AGENT_COLOR + '20',
+				text: AGENT_COLOR,
+				border: AGENT_COLOR + '40',
+			};
 		default:
 			return {
 				bg: theme.colors.bgActivity,
@@ -86,10 +97,23 @@ export const getEntryIcon = (type: HistoryEntryType) => {
 			return User;
 		case 'CUE':
 			return Zap;
+		case 'AGENT':
+			return MessagesSquare;
 		default:
 			return Bot;
 	}
 };
+
+/**
+ * Does this entry type carry a pass/fail outcome worth showing an indicator for?
+ *
+ * USER turns have no notion of success (the user just talked), so their
+ * `success` field is meaningless. Everything the app DISPATCHES - an Auto Run
+ * task, a Cue trigger, a consult proxied in from another agent - either
+ * completed or it didn't, and a failed one must be visibly marked.
+ */
+export const hasRunOutcome = (type: HistoryEntryType): boolean =>
+	type === 'AUTO' || type === 'CUE' || type === 'AGENT';
 
 // Estimated row heights for virtualization. Used by the row virtualizer
 // before measureElement reports the actual rendered size. If these

@@ -25,7 +25,10 @@ import { captureException } from './sentry';
 const LOG_CONTEXT = '[HistoryBucketCache]';
 
 /** Bump to invalidate every existing cache entry on disk. */
-export const HISTORY_BUCKET_CACHE_VERSION = 2;
+// v3: added the `agent` series / `agentCount` (cross-agent consults split out of
+// `auto`). Cached v2 buckets tallied consults as AUTO, so they must be discarded
+// rather than merged - the read path drops any entry whose version differs.
+export const HISTORY_BUCKET_CACHE_VERSION = 3;
 
 /**
  * Single bucket of the activity graph - counts of each entry type within the
@@ -36,6 +39,7 @@ export interface CachedGraphBucket {
 	auto: number;
 	user: number;
 	cue: number;
+	agent: number;
 }
 
 /**
@@ -59,6 +63,7 @@ export interface CachedBucketData {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	/**
 	 * Per-host entry counts within the same window the buckets cover. Key
 	 * is the entry's `hostname`, or the synthetic `"__local__"` for entries

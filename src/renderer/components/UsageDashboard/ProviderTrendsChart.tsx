@@ -12,8 +12,9 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { buildNameMap } from './chartUtils';
+import { buildNameMap, computeAxisLabelIndices } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
 import { useTokenSeries } from './TokenSeriesContext';
 
@@ -159,6 +160,8 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 		};
 	}, [dates, perDayValues, providers, metricMode]);
 
+	const xLabelIndices = useMemo(() => computeAxisLabelIndices(dates.length), [dates.length]);
+
 	const barWidth = dates.length > 0 ? innerWidth / dates.length : 0;
 	const barInner = Math.max(1, barWidth * 0.7);
 	const barOffset = (barWidth - barInner) / 2;
@@ -208,6 +211,7 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 			</div>
 
 			<div className="relative">
+				<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 				{dates.length === 0 || providers.length === 0 ? (
 					<div
 						className="flex items-center justify-center"
@@ -297,9 +301,7 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 						})}
 
 						{dates.map((date, dayIdx) => {
-							const labelInterval =
-								dates.length > 14 ? Math.ceil(dates.length / 7) : dates.length > 7 ? 2 : 1;
-							if (dayIdx % labelInterval !== 0 && dayIdx !== dates.length - 1) return null;
+							if (!xLabelIndices.has(dayIdx)) return null;
 							return (
 								<text
 									key={`x-${dayIdx}`}

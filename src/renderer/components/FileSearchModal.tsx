@@ -5,12 +5,14 @@ import type { Theme, Shortcut } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { isAbsolutePath, getBasename } from '../../shared/formatters';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { EscCloseButton } from './ui/EscCloseButton';
 
 /** Flattened file item for the search list */
 export interface FlatFileItem {
@@ -293,10 +295,7 @@ export function FileSearchModal({
 	);
 
 	// Focus input on mount
-	useEffect(() => {
-		const timer = setTimeout(() => inputRef.current?.focus(), 50);
-		return () => clearTimeout(timer);
-	}, []);
+	useFocusOnMount(inputRef);
 
 	// Flatten the file tree to only previewable files
 	const allFiles = useMemo(() => {
@@ -458,6 +457,8 @@ export function FileSearchModal({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Search Header */}
@@ -484,12 +485,7 @@ export function FileSearchModal({
 								{formatShortcutKeys(shortcut.keys)}
 							</span>
 						)}
-						<div
-							className="px-2 py-0.5 rounded text-xs font-bold"
-							style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-						>
-							ESC
-						</div>
+						<EscCloseButton theme={theme} onClose={onClose} />
 					</div>
 				</div>
 

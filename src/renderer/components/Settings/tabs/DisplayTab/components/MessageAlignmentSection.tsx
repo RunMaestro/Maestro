@@ -28,7 +28,7 @@ export function MessageAlignmentSection({
 				onChange={setUserMessageAlignment}
 				theme={theme}
 			/>
-			<p className="text-xs opacity-50 mt-2">
+			<p className="text-xs opacity-70 mt-2">
 				Position your messages on the left or right side of the chat. AI responses appear on the
 				opposite side.
 			</p>

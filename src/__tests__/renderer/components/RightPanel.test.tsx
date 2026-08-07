@@ -1361,6 +1361,74 @@ describe('RightPanel', () => {
 
 			expect(screen.queryByText('View History')).not.toBeInTheDocument();
 		});
+
+		// Every control on the action row is whitespace-nowrap, so a non-wrapping
+		// row overflowed the card and pushed Stop past its right border once the
+		// Right Panel got narrow (issue #1333). jsdom has no layout engine, so
+		// assert on the classes that let the row reflow instead.
+		describe('Action row wrapping at narrow widths', () => {
+			const runningState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: true,
+				loopIteration: 0,
+				maxLoops: 5,
+			};
+
+			const getControlsGroup = () =>
+				screen.getByTitle('Stop auto-run after the current task finishes')
+					.parentElement as HTMLElement;
+
+			it('should let the action row wrap so controls stay inside the card', () => {
+				const props = createDefaultProps({ currentSessionBatchState: runningState });
+				render(<RightPanel {...props} />);
+
+				const actionRow = getControlsGroup().parentElement as HTMLElement;
+				expect(actionRow).toHaveClass('flex-wrap');
+				// justify-end (not justify-between) so a wrapped controls line still
+				// hugs the right edge instead of jumping to the left.
+				expect(actionRow).toHaveClass('justify-end');
+				expect(actionRow).not.toHaveClass('justify-between');
+			});
+
+			it('should push the follow-task toggle away from the controls with mr-auto', () => {
+				const props = createDefaultProps({ currentSessionBatchState: runningState });
+				render(<RightPanel {...props} />);
+
+				const toggle = screen.getByText('Follow active task').closest('label') as HTMLElement;
+				expect(toggle).toHaveClass('mr-auto');
+			});
+
+			it('should let the controls group wrap internally rather than overflow', () => {
+				const props = createDefaultProps({ currentSessionBatchState: runningState });
+				render(<RightPanel {...props} />);
+
+				const controls = getControlsGroup();
+				expect(controls).toHaveClass('flex-wrap');
+				expect(controls).toHaveClass('justify-end');
+				// shrink-0 would pin the group at its max-content width and re-introduce
+				// the overflow the wrapping is meant to prevent.
+				expect(controls).not.toHaveClass('shrink-0');
+			});
+
+			it('should keep controls right-aligned in goal mode where the toggle is hidden', () => {
+				const props = createDefaultProps({
+					currentSessionBatchState: { ...runningState, goalMode: true, goalProgress: 40 },
+				});
+				render(<RightPanel {...props} />);
+
+				expect(screen.queryByText('Follow active task')).not.toBeInTheDocument();
+				expect(getControlsGroup().parentElement).toHaveClass('justify-end');
+			});
+		});
 	});
 
 	describe('Imperative handle', () => {

@@ -49,6 +49,36 @@ describe('AchievementCard utils', () => {
 			expect(model.timeRemaining).toMatch(/remaining|Ready to unlock/);
 		});
 
+		it('splits cumulative time into Cue and Auto Run shares', () => {
+			const model = createAchievementCardViewModel(
+				makeAutoRunStats({ cumulativeTimeMs: 4 * HOUR, cueTimeMs: HOUR })
+			);
+
+			expect(model.cueTimeFormatted).toBe('1h 0m');
+			expect(model.autoRunTimeFormatted).toBe('3h 0m');
+			expect(model.cueSharePercent).toBe(25);
+		});
+
+		it('attributes stats without a Cue subtotal entirely to Auto Run', () => {
+			const model = createAchievementCardViewModel(
+				makeAutoRunStats({ cumulativeTimeMs: 4 * HOUR })
+			);
+
+			expect(model.cueTimeFormatted).toBe('0s');
+			expect(model.autoRunTimeFormatted).toBe('4h 0m');
+			expect(model.cueSharePercent).toBe(0);
+		});
+
+		it('never reports more Cue time than total time', () => {
+			const model = createAchievementCardViewModel(
+				makeAutoRunStats({ cumulativeTimeMs: HOUR, cueTimeMs: 5 * HOUR })
+			);
+
+			expect(model.cueTimeFormatted).toBe('1h 0m');
+			expect(model.autoRunTimeFormatted).toBe('0s');
+			expect(model.cueSharePercent).toBe(100);
+		});
+
 		it('derives a mid-level state', () => {
 			const model = createAchievementCardViewModel(level5Stats);
 

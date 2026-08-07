@@ -266,6 +266,14 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
@@ -280,6 +288,14 @@ program
 	.option('--no-history', 'Do not write history entries')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {
 		const { goalRun } = await import('./commands/goal-run');
 		return goalRun(agentId, goal, options);
@@ -307,6 +323,14 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (docs: string[], options: Record<string, unknown>) => {
 		const { runDoc } = await import('./commands/run-doc');
 		return runDoc(docs, options as never);
@@ -362,6 +386,22 @@ program
 		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab or --force. Returns the queue position.'
 	)
 	.option('--wait', 'Alias for --queue')
+	.option(
+		'--notify-on-complete <agent-id>',
+		'Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.'
+	)
+	.option(
+		'--callback-tab <id>',
+		'Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)'
+	)
+	.option(
+		'--callback-prompt <text>',
+		'Override the callback prompt body. {{DISPATCH_STATUS}}, {{DISPATCH_TAB_ID}}, {{DISPATCH_TARGET_ID}}, {{DISPATCH_OUTPUT}}, {{DISPATCH_DURATION}}, {{DISPATCH_TASKS_COMPLETED}}, {{DISPATCH_TASKS_TOTAL}}, {{DISPATCH_PROMPT}} and {{DISPATCH_CALLBACK_ID}} are substituted.'
+	)
+	.option(
+		'--callback-timeout <seconds>',
+		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
+	)
 	.action(dispatch);
 
 // Queue commands - inspect and manage the desktop execution queue populated by
@@ -483,6 +523,14 @@ program
 	.option(
 		'--pr-target-branch <branch>',
 		'Target branch for the PR (defaults to the repo default branch)'
+	)
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
 	.action(autoRun);
 
@@ -632,7 +680,7 @@ directorNotes
 	.description('Show unified history across all agents')
 	.option('-d, --days <n>', 'Lookback period in days (default: from app settings)')
 	.option('-f, --format <type>', 'Output format: json, markdown, text (default: text)')
-	.option('--filter <type>', 'Filter by entry type: auto, user, cue')
+	.option('--filter <type>', 'Filter by entry type: auto, user, cue, agent')
 	.option('-l, --limit <n>', 'Maximum entries to show (default: 100)')
 	.option('--json', 'Output as JSON (shorthand for --format json)')
 	.action(directorNotesHistory);

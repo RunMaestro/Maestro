@@ -134,6 +134,7 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 			documentGraph: true,
 			openInBrowser: true,
 			openInDefault: true,
+			revealInFolder: true,
 			copyPath: true,
 		},
 		setFilePreviewToolbarButtonVisibility: mockSetFilePreviewToolbarButtonVisibility,

@@ -2,6 +2,7 @@ import { Battery } from 'lucide-react';
 import { isLinux } from '../../../../../../shared/platformDetection';
 import type { Theme } from '../../../../../types';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface PowerSectionProps {
 	theme: Theme;
@@ -16,10 +17,7 @@ export function PowerSection({
 }: PowerSectionProps) {
 	return (
 		<div data-setting-id="general-power">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Battery className="w-3 h-3" />
-				Power
-			</div>
+			<SettingsSectionHeading icon={Battery}>Power</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -40,7 +38,7 @@ export function PowerSection({
 						<div className="font-medium" style={{ color: theme.colors.textMain }}>
 							Prevent sleep while working
 						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs opacity-70 mt-0.5">
 							Keeps your computer awake when AI agents are busy, Auto Run is active, or Cue
 							pipelines are scheduled
 						</div>

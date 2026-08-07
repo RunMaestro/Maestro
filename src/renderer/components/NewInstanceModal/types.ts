@@ -114,6 +114,8 @@ export interface NudgeMessageFieldProps {
 	labelSuffix?: string;
 	description?: React.ReactNode;
 	placeholder?: string;
+	/** Key the user's dragged textarea height is remembered under. */
+	sizeKey?: string;
 }
 
 export interface RemotePathStatusProps {

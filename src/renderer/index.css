@@ -250,13 +250,17 @@ textarea::placeholder {
 	}
 }
 
-@keyframes settings-search-flash {
+/* Jump-target flash - shared by every "navigate somewhere and show the user
+   where they landed" surface (Settings search, cross-tab message search). Drive
+   it with flashJumpTarget() in utils/jumpHighlight.ts; durations there must stay
+   in sync with the 3s animations below. */
+@keyframes jump-flash-outline {
 	0% {
-		outline-color: var(--settings-search-jump-color, rgba(99, 102, 241, 0.8));
+		outline-color: var(--jump-flash-color, rgba(99, 102, 241, 0.8));
 		outline-width: 2px;
 	}
 	85% {
-		outline-color: var(--settings-search-jump-color, rgba(99, 102, 241, 0.8));
+		outline-color: var(--jump-flash-color, rgba(99, 102, 241, 0.8));
 		outline-width: 2px;
 	}
 	100% {
@@ -265,7 +269,7 @@ textarea::placeholder {
 	}
 }
 
-@keyframes settings-search-arrow {
+@keyframes jump-flash-arrow {
 	0% {
 		opacity: 0;
 		transform: translate(-12px, -50%);
@@ -291,15 +295,17 @@ textarea::placeholder {
 	}
 }
 
-.settings-search-highlight {
+.jump-flash {
 	position: relative;
-	animation: settings-search-flash 3s ease-out;
+	animation: jump-flash-outline 3s ease-out;
 	outline: 2px solid transparent;
 	outline-offset: 4px;
 	border-radius: 8px;
 }
 
-.settings-search-highlight::before {
+/* Optional pointing arrow in the left margin. Only for surfaces with room for
+   it (Settings rows); transcript entries already have a timestamp gutter. */
+.jump-flash--arrow::before {
 	content: '';
 	position: absolute;
 	left: -22px;
@@ -308,11 +314,11 @@ textarea::placeholder {
 	height: 0;
 	border-top: 9px solid transparent;
 	border-bottom: 9px solid transparent;
-	border-left: 12px solid var(--settings-search-jump-color, #6366f1);
-	filter: drop-shadow(0 0 6px var(--settings-search-jump-color, #6366f1));
+	border-left: 12px solid var(--jump-flash-color, #6366f1);
+	filter: drop-shadow(0 0 6px var(--jump-flash-color, #6366f1));
 	transform: translate(-12px, -50%);
 	opacity: 0;
-	animation: settings-search-arrow 3s ease-out;
+	animation: jump-flash-arrow 3s ease-out;
 	pointer-events: none;
 }
 

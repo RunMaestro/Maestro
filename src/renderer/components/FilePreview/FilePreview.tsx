@@ -54,6 +54,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { isImageFile } from '../../../shared/gitUtils';
+import { getFileTabMediaKind } from '../../utils/mediaTabs';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
 	getLanguageFromFilename,
@@ -76,10 +77,12 @@ import { useFilePreviewSearch } from '../../hooks/file';
 import type { FilePreviewSearchAdapter } from './search/types';
 import { FilePreviewHeader } from './FilePreviewHeader';
 import { ImageViewer } from './ImageViewer';
+import { MediaViewportSlot } from '../MediaPlayback';
 import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
+import { computeTocWidth } from '../Toc';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
 import {
@@ -110,6 +113,7 @@ export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
 		{
 			file,
+			fileTabId,
 			onClose,
 			theme,
 			markdownEditMode,
@@ -345,13 +349,27 @@ export const FilePreview = React.memo(
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
+		// Playable audio/video. Shares one predicate with MediaPlaybackHost and the
+		// Command palette so all three agree on what counts as media.
+		// `file.name` already carries the extension (tab name + extension, joined
+		// upstream), which is what getFileTabMediaKind needs.
+		const mediaKind = useMemo(
+			() => (file ? getFileTabMediaKind(file.name, file.content) : null),
+			[file]
+		);
+		const isMedia = mediaKind !== null;
+
 		// Check for binary files - either by extension or by content analysis
 		// Memoize to avoid recalculating on every render (content analysis can be expensive)
+		// Media counts as binary so every "text-only" guard below (edit mode,
+		// preview tiers, TOC, search) excludes it; the render branch picks the
+		// media slot off mediaKind before it ever reaches the binary fallback.
 		const isBinary = useMemo(() => {
 			if (!file) return false;
 			if (isImage) return false;
+			if (isMedia) return true;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
-		}, [isImage, file]);
+		}, [isImage, isMedia, file]);
 
 		// Any non-binary, non-image file can be edited as text
 		const isEditableText = !isImage && !isBinary;
@@ -560,23 +578,9 @@ export const FilePreview = React.memo(
 			return extractHeadings(file.content);
 		}, [isMarkdown, file?.content]);
 
-		// Compute dynamic ToC overlay width based on longest heading text
-		const tocWidth = useMemo(() => {
-			if (tocEntries.length === 0) return 200;
-			const MIN_WIDTH = 200;
-			const MAX_WIDTH = 500;
-			const CHAR_WIDTH = 7.5; // approximate px per character at ~0.8rem
-			const BASE_PADDING = 24; // px padding inside buttons
-			const HEADER_EXTRA = 100; // "CONTENTS" header + headings count badge
-
-			let maxNeeded = HEADER_EXTRA;
-			for (const entry of tocEntries) {
-				const indent = (entry.level - 1) * 12 + 8;
-				const textWidth = entry.text.length * CHAR_WIDTH;
-				maxNeeded = Math.max(maxNeeded, indent + textWidth + BASE_PADDING);
-			}
-			return Math.min(Math.max(Math.ceil(maxNeeded), MIN_WIDTH), MAX_WIDTH);
-		}, [tocEntries]);
+		// Dynamic ToC overlay width - shared with Director's Notes so an equally
+		// long heading yields an equally wide panel on both surfaces.
+		const tocWidth = useMemo(() => computeTocWidth(tocEntries), [tocEntries]);
 
 		const scrollMarkdownToBoundary = useCallback((direction: 'top' | 'bottom') => {
 			// Use contentRef which is the actual scrollable container
@@ -1289,6 +1293,15 @@ export const FilePreview = React.memo(
 				} else {
 					failClipboardToast('Failed to Copy Image');
 				}
+			} else if (isMedia) {
+				// The "content" of a media tab is an internal stream URL, which is
+				// useless on the clipboard. Copy the file path instead.
+				const ok = await safeClipboardWrite(file.path);
+				if (ok) {
+					flashCopiedToClipboard(undefined, 'Path Copied');
+				} else {
+					failClipboardToast('Failed to Copy Path');
+				}
 			} else {
 				const ok = await safeClipboardWrite(file.content);
 				if (ok) {
@@ -1914,6 +1927,11 @@ export const FilePreview = React.memo(
 					)}
 					{isImage ? (
 						<ImageViewer src={file.content} alt={file.name} theme={theme} />
+					) : mediaKind && fileTabId ? (
+						// The player itself lives in MediaPlaybackHost so playback survives
+						// this component unmounting on every tab switch; the slot only
+						// reserves the area and reports where to park it.
+						<MediaViewportSlot tabId={fileTabId} />
 					) : isBinary ? (
 						<div className="flex flex-col items-center justify-center h-full gap-4">
 							<FileCode className="w-16 h-16" style={{ color: theme.colors.textDim }} />

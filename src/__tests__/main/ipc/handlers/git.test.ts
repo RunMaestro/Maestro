@@ -27,6 +27,12 @@ vi.mock('electron', () => ({
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 	execFileBufferNoThrow: vi.fn(),
+	execFileStreaming: vi.fn(),
+}));
+
+// Mock the SSH command builder (used by the streaming git:runCommand path)
+vi.mock('../../../../main/utils/ssh-command-builder', () => ({
+	buildSshCommand: vi.fn().mockResolvedValue({ command: 'ssh', args: ['host', 'git push'] }),
 }));
 
 // Mock the logger
@@ -204,6 +210,9 @@ describe('Git IPC handlers', () => {
 				'git:tags',
 				'git:info',
 				'git:log',
+				'git:runCommand',
+				'git:cancelCommand',
+				'git:checkoutBranch',
 				'git:commitCount',
 				'git:show',
 				'git:showFile',
@@ -1249,6 +1258,235 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			);
 			expect(result.entries).toHaveLength(2);
 			expect(result.entries[0].subject).toBe('Initial commit');
+		});
+	});
+
+	describe('git:runCommand', () => {
+		/** Fake streaming handle: emits chunks, then resolves with the result. */
+		function mockStreaming(
+			chunks: Array<[string, 'stdout' | 'stderr']>,
+			result: { stdout?: string; stderr?: string; exitCode: number | string }
+		) {
+			vi.mocked(execFile.execFileStreaming).mockImplementation((_cmd, _args, options) => {
+				for (const [chunk, stream] of chunks) {
+					options.onChunk(chunk, stream);
+				}
+				return {
+					result: Promise.resolve({
+						stdout: result.stdout ?? '',
+						stderr: result.stderr ?? '',
+						exitCode: result.exitCode,
+					}),
+					cancel: vi.fn(),
+				};
+			});
+		}
+
+		function mockEvent() {
+			return {
+				sender: { isDestroyed: () => false, send: vi.fn() },
+			} as any;
+		}
+
+		it('streams chunks to the requesting window and reports success', async () => {
+			mockStreaming(
+				[
+					['Fetching origin\n', 'stderr'],
+					['Already up to date.\n', 'stdout'],
+				],
+				{ exitCode: 0 }
+			);
+			const event = mockEvent();
+
+			const handler = handlers.get('git:runCommand');
+			const result = await handler!(event, {
+				runId: 'run-1',
+				operation: 'pull',
+				cwd: '/test/repo',
+			});
+
+			expect(execFile.execFileStreaming).toHaveBeenCalledWith(
+				'git',
+				['pull', '--progress'],
+				expect.objectContaining({ cwd: '/test/repo' })
+			);
+			expect(event.sender.send).toHaveBeenCalledWith('git:commandOutput', {
+				runId: 'run-1',
+				stream: 'stderr',
+				chunk: 'Fetching origin\n',
+			});
+			expect(event.sender.send).toHaveBeenCalledTimes(2);
+			expect(result).toEqual({
+				success: true,
+				exitCode: 0,
+				cancelled: false,
+				error: undefined,
+			});
+		});
+
+		it('surfaces stderr as the error on failure', async () => {
+			mockStreaming([], { stderr: 'fatal: could not read from remote\n', exitCode: 128 });
+
+			const handler = handlers.get('git:runCommand');
+			const result = await handler!(mockEvent(), {
+				runId: 'run-2',
+				operation: 'push',
+				cwd: '/test/repo',
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.cancelled).toBe(false);
+			expect(result.error).toBe('fatal: could not read from remote');
+		});
+
+		it('reports a SIGTERM exit as cancelled rather than failed', async () => {
+			mockStreaming([], { exitCode: 'SIGTERM' });
+
+			const handler = handlers.get('git:runCommand');
+			const result = await handler!(mockEvent(), {
+				runId: 'run-3',
+				operation: 'push',
+				cwd: '/test/repo',
+			});
+
+			expect(result).toEqual({
+				success: false,
+				exitCode: 'SIGTERM',
+				cancelled: true,
+				error: undefined,
+			});
+		});
+
+		it('resolves the branch name when pushing with setUpstream', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: 'feature/login\n',
+				stderr: '',
+				exitCode: 0,
+			});
+			mockStreaming([], { exitCode: 0 });
+
+			const handler = handlers.get('git:runCommand');
+			await handler!(mockEvent(), {
+				runId: 'run-4',
+				operation: 'push',
+				cwd: '/test/repo',
+				setUpstream: true,
+			});
+
+			expect(execFile.execFileStreaming).toHaveBeenCalledWith(
+				'git',
+				['push', '--progress', '--set-upstream', 'origin', 'feature/login'],
+				expect.anything()
+			);
+		});
+
+		it('fails loudly when the requested SSH remote cannot be resolved', async () => {
+			mockStreaming([], { exitCode: 0 });
+
+			const handler = handlers.get('git:runCommand');
+			const result = await handler!(mockEvent(), {
+				runId: 'run-5',
+				operation: 'pull',
+				cwd: '/test/repo',
+				sshRemoteId: 'missing-remote',
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('missing-remote');
+			// Never silently falls back to the local repo.
+			expect(execFile.execFileStreaming).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('git:cancelCommand', () => {
+		it('cancels a running command and reports whether it was found', async () => {
+			const cancel = vi.fn();
+			let resolveRun: (value: any) => void = () => {};
+			vi.mocked(execFile.execFileStreaming).mockImplementation(() => ({
+				result: new Promise((resolve) => {
+					resolveRun = resolve;
+				}),
+				cancel,
+			}));
+
+			const runPromise = handlers.get('git:runCommand')!(
+				{ sender: { isDestroyed: () => false, send: vi.fn() } } as any,
+				{ runId: 'run-cancel', operation: 'push', cwd: '/test/repo' }
+			);
+			// The run registers its cancel callback only after awaiting the shell
+			// PATH lookup, so let the microtask queue drain before cancelling.
+			await vi.waitFor(() => expect(execFile.execFileStreaming).toHaveBeenCalled());
+
+			const cancelHandler = handlers.get('git:cancelCommand');
+			expect(await cancelHandler!({} as any, 'run-cancel')).toEqual({ success: true });
+			expect(cancel).toHaveBeenCalled();
+
+			resolveRun({ stdout: '', stderr: '', exitCode: 'SIGTERM' });
+			await runPromise;
+
+			// Once finished the run is forgotten, so a late cancel is a no-op.
+			expect(await cancelHandler!({} as any, 'run-cancel')).toEqual({ success: false });
+		});
+	});
+
+	describe('git:checkoutBranch', () => {
+		it('checks out an existing branch', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: '',
+				stderr: "Switched to branch 'main'\n",
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:checkoutBranch');
+			const result = await handler!({} as any, '/test/repo', 'main');
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['checkout', 'main'],
+				'/test/repo'
+			);
+			expect(result).toEqual({ success: true, output: "Switched to branch 'main'" });
+		});
+
+		it('creates a tracking branch when createTracking is set', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:checkoutBranch');
+			await handler!({} as any, '/test/repo', 'feature/x', true);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['checkout', '-b', 'feature/x', '--track', 'origin/feature/x'],
+				'/test/repo'
+			);
+		});
+
+		it('returns the git error when the checkout fails', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: '',
+				stderr: 'error: Your local changes would be overwritten\n',
+				exitCode: 1,
+			});
+
+			const handler = handlers.get('git:checkoutBranch');
+			const result = await handler!({} as any, '/test/repo', 'main');
+
+			expect(result).toEqual({
+				success: false,
+				error: 'error: Your local changes would be overwritten',
+			});
+		});
+
+		it('fails loudly when the requested SSH remote cannot be resolved', async () => {
+			const handler = handlers.get('git:checkoutBranch');
+			const result = await handler!({} as any, '/test/repo', 'main', false, 'missing-remote');
+
+			expect(result).toEqual({ success: false, error: 'SSH remote not found: missing-remote' });
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 

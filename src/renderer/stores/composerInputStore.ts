@@ -34,15 +34,29 @@ interface ComposerInputState {
 	aiValue: string;
 	/** Live terminal command draft for the active session. */
 	terminalValue: string;
+	/**
+	 * Whether the active AI tab's composer is in command mode (`!`), where the
+	 * draft is a shell command rather than a message for the agent.
+	 *
+	 * Lives here, beside the text it qualifies, because the two must be read and
+	 * flushed together: the same string means "run this in a shell" or "say this
+	 * to the agent" depending on this flag, so any path that persists one has to
+	 * persist the other. Mirrored to `AITab.commandMode` on the same blur /
+	 * submit / tab-switch beats as `aiValue` -> `tab.inputValue`.
+	 */
+	aiCommandMode: boolean;
 	setAiValue: (value: Updater) => void;
 	setTerminalValue: (value: Updater) => void;
+	setAiCommandMode: (commandMode: boolean) => void;
 }
 
 export const useComposerInputStore = create<ComposerInputState>()((set) => ({
 	aiValue: '',
 	terminalValue: '',
+	aiCommandMode: false,
 	setAiValue: (value) => set((s) => ({ aiValue: resolve(value, s.aiValue) })),
 	setTerminalValue: (value) => set((s) => ({ terminalValue: resolve(value, s.terminalValue) })),
+	setAiCommandMode: (commandMode) => set({ aiCommandMode: commandMode }),
 }));
 
 /** Selector: the live AI draft. */
@@ -50,3 +64,6 @@ export const selectAiComposerValue = (s: ComposerInputState): string => s.aiValu
 
 /** Selector: the live terminal draft. */
 export const selectTerminalComposerValue = (s: ComposerInputState): string => s.terminalValue;
+
+/** Selector: whether the AI composer is in command mode. */
+export const selectAiCommandMode = (s: ComposerInputState): boolean => s.aiCommandMode;

@@ -142,6 +142,11 @@ export const DEFAULT_SHORTCUTS = {
 	focusActiveTab: {
 		id: 'focusActiveTab',
 		label: 'Focus Active Tab',
+		keys: ['Alt', 'Meta', 'ArrowUp'],
+	},
+	searchAllTabs: {
+		id: 'searchAllTabs',
+		label: 'Search Messages (All Agent Tabs)',
 		keys: ['Alt', 'Meta', 'f'],
 	},
 	editClipboardImage: {
@@ -293,6 +298,7 @@ export const TAB_SHORTCUTS = {
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },
+	snoozeTab: { id: 'snoozeTab', label: 'Snooze Tab', keys: ['Alt', 'Meta', 's'] },
 	closeTabsLeft: {
 		id: 'closeTabsLeft',
 		label: 'Close Tabs to Left',

@@ -173,6 +173,8 @@ export interface MainPanelProps {
 	onOpenTabSearch?: () => void;
 	/** Handler to open output/message search (Cmd+F) */
 	onOpenOutputSearch?: () => void;
+	/** Open cross-tab message search (Opt+Cmd+F) */
+	onOpenCrossTabSearch?: () => void;
 	// Bulk tab close operations
 	onCloseAllTabs?: () => void;
 	onCloseOtherTabs?: (pivotTabId?: string) => void;

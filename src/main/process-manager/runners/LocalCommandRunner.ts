@@ -14,6 +14,7 @@ import {
 	buildWrappedCommand,
 } from '../utils/pathResolver';
 import { isWindows } from '../../../shared/platformDetection';
+import { terminateProcessTree } from '../utils/commandKill';
 import { captureException } from '../../utils/sentry';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { getDefaultShell } from '../../stores/defaults';
@@ -23,7 +24,26 @@ import { getDefaultShell } from '../../stores/defaults';
  * On Unix, uses a transient PTY so interactive shell aliases behave correctly.
  */
 export class LocalCommandRunner {
+	/**
+	 * In-flight commands keyed by the sessionId they were launched under, so a
+	 * caller can terminate one that never exits on its own (an interactive
+	 * program waiting on stdin, a `tail -f`, a runaway build). Entries are
+	 * removed on exit.
+	 */
+	private running = new Map<string, () => void>();
+
 	constructor(private emitter: EventEmitter) {}
+
+	/**
+	 * Terminate an in-flight command started by `run()`.
+	 * Returns false when nothing is running under that sessionId.
+	 */
+	cancel(sessionId: string): boolean {
+		const kill = this.running.get(sessionId);
+		if (!kill) return false;
+		kill();
+		return true;
+	}
 
 	private isRecoverablePtySpawnError(error: unknown): boolean {
 		const errorCode =
@@ -155,6 +175,18 @@ export class LocalCommandRunner {
 					return;
 				}
 
+				// Cancels the pending SIGKILL escalation. Set when Stop is pressed,
+				// cleared on exit so a late SIGKILL can't land on a recycled pid.
+				let cancelEscalation: (() => void) | null = null;
+
+				this.running.set(sessionId, () => {
+					// NOT ptyProcess.kill(): its default signal is SIGHUP, which the
+					// interactive login shell these commands run under survives on macOS,
+					// so Stop appeared to do nothing. Signal the whole process group so
+					// the command (and any pager/child holding the pty open) dies too.
+					cancelEscalation = terminateProcessTree(ptyProcess.pid, { sessionId });
+				});
+
 				ptyProcess.onData((data) => {
 					const output = stripControlSequences(data, command, true);
 					logger.debug('[ProcessManager] runCommand PTY stdout FILTERED', 'ProcessManager', {
@@ -170,6 +202,8 @@ export class LocalCommandRunner {
 				});
 
 				ptyProcess.onExit(({ exitCode }) => {
+					cancelEscalation?.();
+					this.running.delete(sessionId);
 					logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
 						sessionId,
 						exitCode,
@@ -195,6 +229,18 @@ export class LocalCommandRunner {
 				cwd,
 				env,
 				shell: shellPath,
+			});
+
+			// Windows path (this branch only runs when !isWindows() is false), where
+			// child.kill() terminates just the shell and leaves its children running.
+			// terminateProcessTree shells out to `taskkill /t /f` to take the tree.
+			let cancelChildEscalation: (() => void) | null = null;
+			this.running.set(sessionId, () => {
+				if (!childProcess.pid) {
+					childProcess.kill('SIGKILL');
+					return;
+				}
+				cancelChildEscalation = terminateProcessTree(childProcess.pid, { sessionId });
 			});
 
 			// Handle stdout - emit data events for real-time streaming
@@ -246,6 +292,8 @@ export class LocalCommandRunner {
 
 			// Handle process exit
 			childProcess.on('exit', (code) => {
+				cancelChildEscalation?.();
+				this.running.delete(sessionId);
 				logger.debug('[ProcessManager] runCommand exit', 'ProcessManager', {
 					sessionId,
 					exitCode: code,
@@ -256,6 +304,8 @@ export class LocalCommandRunner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				cancelChildEscalation?.();
+				this.running.delete(sessionId);
 				logger.error('[ProcessManager] runCommand error', 'ProcessManager', {
 					sessionId,
 					error: error.message,

@@ -125,6 +125,7 @@ export interface UseSettingsReturn {
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
 	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;

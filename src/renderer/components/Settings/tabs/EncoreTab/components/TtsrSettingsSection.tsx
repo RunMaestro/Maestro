@@ -79,7 +79,7 @@ export function TtsrSettingsSection({
 						style={{ color: theme.colors.textDim }}
 					/>
 				</div>
-				<p className="text-[10px] mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
+				<p className="text-[10px] mt-1 opacity-70">
 					&quot;Keep&quot; sends an interrupt so the agent commits what it already wrote before the
 					corrective turn. &quot;Discard&quot; kills the process immediately to try to drop the
 					partial turn. Discard is best-effort: Maestro cannot edit an external provider&apos;s

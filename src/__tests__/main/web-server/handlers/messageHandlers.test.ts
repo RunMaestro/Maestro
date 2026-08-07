@@ -20,7 +20,7 @@
  * - Select session with focus (window foregrounding)
  */
 
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { WebSocket } from 'ws';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -36,6 +36,11 @@ import {
 	isPluginsFeatureEnabled,
 } from '../../../../main/plugins/plugin-manager-singleton';
 import type { PluginManager } from '../../../../main/plugins/plugin-manager';
+import {
+	initDispatchCallbacks,
+	getDispatchCallbackRegistry,
+	disposeDispatchCallbacks,
+} from '../../../../main/dispatch-callbacks';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -1407,6 +1412,195 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Dispatch Callbacks (dispatch --notify-on-complete)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		beforeEach(() => {
+			initDispatchCallbacks({ enqueue: vi.fn().mockResolvedValue({ success: true }) });
+		});
+
+		afterEach(() => {
+			disposeDispatchCallbacks();
+		});
+
+		it('arms a callback on new_ai_tab_with_prompt and echoes the callbackId', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'go',
+				notifyOnComplete: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('new_ai_tab_with_prompt_result');
+				expect(response.success).toBe(true);
+				expect(response.callbackId).toBeTruthy();
+			});
+			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-mock-123')).toBe(true);
+		});
+
+		it('arms a callback on send_command for an explicit tab', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('command_result');
+				expect(response.callbackId).toBeTruthy();
+			});
+			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-7')).toBe(true);
+		});
+
+		it('rejects send_command without an explicit target tab', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				notifyOnComplete: 'caller-1',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('error');
+			expect(String(response.message)).toContain('requires an explicit target tab');
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+		});
+
+		it('cancels the armed callback when the dispatch is rejected', async () => {
+			vi.mocked(callbacks.executeCommand!).mockResolvedValue(false);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+
+			await vi.waitFor(() => expect(lastSend().type).toBe('command_result'));
+			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-7')).toBe(false);
+		});
+
+		it('refuses a second callback on the same tab', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+			await vi.waitFor(() => expect(lastSend().type).toBe('command_result'));
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'again',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'caller-1',
+			});
+			expect(String(lastSend().message)).toContain('CALLBACK_ALREADY_ARMED');
+		});
+
+		it('refuses a callback that would wake the dispatch target itself', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'session-1',
+			});
+			expect(String(lastSend().message)).toContain('cannot be the dispatch target itself');
+		});
+
+		it('refuses an unknown callback agent', () => {
+			vi.mocked(callbacks.getSessionDetail!).mockImplementation((id: string) =>
+				id === 'session-1' ? ({ state: 'idle', inputMode: 'ai' } as never) : null
+			);
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-7',
+				notifyOnComplete: 'ghost',
+			});
+			expect(String(lastSend().message)).toContain('Callback agent not found');
+		});
+
+		it('arms a callback on enqueue_command for an explicit tab', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'go',
+				inputMode: 'ai',
+				tabId: 'tab-9',
+				notifyOnComplete: 'caller-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('enqueue_command_result');
+				expect(response.callbackId).toBeTruthy();
+			});
+			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-9')).toBe(true);
+		});
+
+		it('rejects an unknown callback agent BEFORE creating the new tab', async () => {
+			vi.mocked(callbacks.getSessionDetail!).mockImplementation((id: string) =>
+				id === 'session-1' ? ({ state: 'idle', inputMode: 'ai' } as never) : null
+			);
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'go',
+				notifyOnComplete: 'ghost',
+			});
+
+			const response = lastSend();
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(String(response.error)).toContain('Callback agent not found');
+			// The whole point: no orphaned tab running a prompt nobody is waiting on.
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+		});
+
+		it('rejects a self-targeting new-tab callback before creating the tab', () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'go',
+				notifyOnComplete: 'session-1',
+			});
+
+			expect(String(lastSend().error)).toContain('cannot be the dispatch target itself');
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+		});
+
+		it('leaves plain dispatches untouched', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'go',
+			});
+			await vi.waitFor(() => expect(lastSend().type).toBe('new_ai_tab_with_prompt_result'));
+			expect(lastSend().callbackId).toBeUndefined();
+			expect(getDispatchCallbackRegistry()!.list()).toHaveLength(0);
+		});
+	});
+
 	describe('Enqueue Command (dispatch --queue)', () => {
 		const lastSend = (): Record<string, unknown> => {
 			const calls = vi.mocked(client.socket.send).mock.calls;
@@ -1844,6 +2038,100 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
 			expect(response.message).toContain('worktree must be an object');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should forward per-run model and effort overrides', async () => {
+			(callbacks.configureAutoRun as any).mockResolvedValue({ success: true });
+
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+				model: 'opus',
+				effort: 'high',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ model: 'opus', effort: 'high' })
+				);
+			});
+		});
+
+		it('should leave model and effort undefined when not provided', async () => {
+			(callbacks.configureAutoRun as any).mockResolvedValue({ success: true });
+
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalled();
+			});
+			const config = (callbacks.configureAutoRun as any).mock.calls[0][1];
+			expect(config.model).toBeUndefined();
+			expect(config.effort).toBeUndefined();
+		});
+
+		it('should reject non-string model', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				model: 42,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('model must be a non-empty string');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should reject empty/whitespace model', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				model: '   ',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('model must be a non-empty string');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-string effort', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				effort: { level: 'high' },
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('effort must be a non-empty string');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should reject empty effort', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				effort: '',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('effort must be a non-empty string');
 			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
 		});
 

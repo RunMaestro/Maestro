@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -20,10 +21,10 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
-import { EscCloseHint } from './ui/EscCloseHint';
 import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { EscCloseButton } from './ui/EscCloseButton';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -254,10 +255,7 @@ export function TabSwitcherModal({
 	useModalLayer(MODAL_PRIORITIES.TAB_SWITCHER, 'Tab Switcher', () => onCloseRef.current());
 
 	// Focus input on mount
-	useEffect(() => {
-		const timer = setTimeout(() => inputRef.current?.focus(), 50);
-		return () => clearTimeout(timer);
-	}, []);
+	useFocusOnMount(inputRef);
 
 	// On mount: sync any named tabs to the origins store, then load named sessions
 	// This ensures tabs that were named before persistence was added get saved
@@ -625,6 +623,8 @@ export function TabSwitcherModal({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Search Header */}
@@ -657,7 +657,7 @@ export function TabSwitcherModal({
 								{formatShortcutKeys(shortcut.keys)}
 							</span>
 						)}
-						<EscCloseHint theme={theme} onClose={onClose} />
+						<EscCloseButton theme={theme} onClose={onClose} />
 					</div>
 				</div>
 

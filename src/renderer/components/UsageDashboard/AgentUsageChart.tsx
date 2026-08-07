@@ -20,8 +20,9 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
-import { buildNameMap } from './chartUtils';
+import { buildNameMap, computeAxisLabelIndices } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 import {
 	MetricModeToggle,
 	formatMetricValue,
@@ -274,6 +275,8 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			};
 		}, [data.bySessionByDay, sessions, tokenSeries]);
 
+	const xLabelIndices = useMemo(() => computeAxisLabelIndices(allDates.length), [allDates.length]);
+
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
 		if (allDates.length === 0) {
@@ -401,6 +404,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 
 			{/* Chart container */}
 			<div className="relative">
+				<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 				{allDates.length === 0 || agents.length === 0 ? (
 					<div
 						className="flex items-center justify-center"
@@ -451,10 +455,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 
 						{/* X-axis labels */}
 						{allDates.map((day, idx) => {
-							const labelInterval =
-								allDates.length > 14 ? Math.ceil(allDates.length / 7) : allDates.length > 7 ? 2 : 1;
-
-							if (idx % labelInterval !== 0 && idx !== allDates.length - 1) {
+							if (!xLabelIndices.has(idx)) {
 								return null;
 							}
 

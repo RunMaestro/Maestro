@@ -40,6 +40,7 @@ export type PluginCapability =
 	| 'sessions:read' // list sessions + read their metadata (NEVER raw transcript content)
 	| 'sessions:create' // create a new Maestro session/tab shell (no implicit dispatch)
 	| 'sessions:write' // update/remove session metadata/state
+	| 'sessions:focus' // move Maestro's focus to an existing session (never reads content, never mutates it)
 	| 'history:read' // read metadata-only history entries (never raw transcript content)
 	| 'transcripts:read' // read PROJECTED session content (consented, audited, egress-locked)
 	| 'transcripts:write' // append/update brokered transcript entries for a session
@@ -74,6 +75,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'sessions:read',
 	'sessions:create',
 	'sessions:write',
+	'sessions:focus',
 	'history:read',
 	'transcripts:read',
 	'transcripts:write',
@@ -107,6 +109,10 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'storage:write': 'low',
 	'settings:write': 'low',
 	'ui:command': 'low',
+	// Navigation only: it moves the user's view to a session that already exists.
+	// It cannot read, create, or modify anything, so it is deliberately cheaper
+	// than tabs:manage (which also carries tab creation and destruction).
+	'sessions:focus': 'low',
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
 	'net:fetch': 'medium',
@@ -166,6 +172,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'sessions:read': 'none',
 	'sessions:create': 'none',
 	'sessions:write': 'none',
+	'sessions:focus': 'none',
 	'storage:read': 'none',
 	'storage:write': 'none',
 	'storage:sql': 'none',
@@ -526,6 +533,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Create Maestro sessions';
 		case 'sessions:write':
 			return 'Modify Maestro sessions';
+		case 'sessions:focus':
+			return 'Switch Maestro to one of your existing sessions';
 		case 'history:read':
 			return 'Read metadata-only history entries';
 		case 'storage:read':

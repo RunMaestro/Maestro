@@ -568,6 +568,42 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 	}));
 }
 
+/**
+ * Total Conductor time that Cue runs recorded in this database would have
+ * credited, using the engine's live crediting rule (see cue-engine.ts): only
+ * naturally-completed runs count, and each is floored to whole minutes.
+ *
+ * Used once, by the renderer's `cueTimeMs` backfill, to attribute the Cue share
+ * of Conductor time that accrued before the split was tracked separately. Two
+ * known imprecisions, both accepted because this is a one-shot estimate of an
+ * already-spent total rather than a live counter:
+ *
+ *   - Under-counts: `cue_events` is pruned on a retention window, so anything
+ *     older than the retained history is simply gone.
+ *   - Over-counts slightly: command nodes are excluded from live credit via the
+ *     in-memory event payload's `actionKind`, which is not persisted on the row,
+ *     so shell-only runs can't be filtered back out here.
+ *
+ * Returns 0 when the DB hasn't been initialized (same tolerance as the other
+ * read paths) so a failed backfill degrades to "no historical credit".
+ */
+export function getHistoricalConductorCreditMs(): number {
+	if (!db) return 0;
+	const row = db
+		.prepare(
+			`SELECT COALESCE(SUM((completed_at - created_at) / 60000), 0) AS whole_minutes
+			 FROM cue_events
+			 WHERE status = 'completed'
+			   AND completed_at IS NOT NULL
+			   AND completed_at >= created_at`
+		)
+		.get() as { whole_minutes: number } | undefined;
+	// Integer division in SQL already floors each run to whole minutes; scale the
+	// summed minutes back to ms here rather than summing ms and flooring once,
+	// which would credit sub-minute runs the live path drops.
+	return Math.max(0, Math.floor(row?.whole_minutes ?? 0)) * 60000;
+}
+
 // ============================================================================
 // Heartbeat
 // ============================================================================

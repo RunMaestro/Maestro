@@ -1,6 +1,8 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { Theme, Session } from '../../types';
 import type { PRDetails } from '../CreatePRModal';
+import { gitService } from '../../services/git';
+import { resolveGitCwd, resolveGitSshRemoteId } from '../../hooks/git/useGitAgentActions';
 
 // Worktree Modal Components
 import { WorktreeConfigModal } from '../WorktreeConfigModal';
@@ -31,6 +33,8 @@ export interface AppWorktreeModalsProps {
 	// CreatePRModal
 	createPRModalOpen: boolean;
 	createPRSession: Session | null;
+	/** Live branch supplied by the opener, for agents without a `worktreeBranch`. */
+	createPRSourceBranch?: string;
 	onCloseCreatePRModal: () => void;
 	onPRCreated: (prDetails: PRDetails) => void;
 
@@ -68,6 +72,7 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 	// CreatePRModal
 	createPRModalOpen,
 	createPRSession,
+	createPRSourceBranch,
 	onCloseCreatePRModal,
 	onPRCreated,
 	// DeleteWorktreeModal
@@ -79,6 +84,35 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 }: AppWorktreeModalsProps) {
 	// Determine session for PR modal - uses createPRSession if set, otherwise activeSession
 	const prSession = createPRSession || activeSession;
+
+	// Only worktree-spawned agents carry `worktreeBranch`/`gitBranches`. The PR
+	// modal is now also reachable for a plain git agent (header pill menu, Left
+	// Bar menu), which passes its live branch as `createPRSourceBranch`; the
+	// branch list still has to be fetched so the base-branch picker offers more
+	// than main/master.
+	const [fetchedBranches, setFetchedBranches] = useState<string[] | null>(null);
+
+	useEffect(() => {
+		if (!createPRModalOpen || !prSession || prSession.gitBranches?.length) {
+			setFetchedBranches(null);
+			return;
+		}
+		let cancelled = false;
+		void gitService
+			.getBranches(resolveGitCwd(prSession), resolveGitSshRemoteId(prSession))
+			.then((branches) => {
+				if (!cancelled) setFetchedBranches(branches);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [createPRModalOpen, prSession?.id, prSession?.gitBranches?.length]);
+
+	const prSourceBranch =
+		prSession?.worktreeBranch || createPRSourceBranch || prSession?.gitBranches?.[0] || 'main';
+	const prAvailableBranches = prSession?.gitBranches?.length
+		? prSession.gitBranches
+		: (fetchedBranches ?? ['main', 'master']);
 
 	return (
 		<>
@@ -113,8 +147,8 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 					onClose={onCloseCreatePRModal}
 					theme={theme}
 					worktreePath={prSession.cwd}
-					worktreeBranch={prSession.worktreeBranch || prSession.gitBranches?.[0] || 'main'}
-					availableBranches={prSession.gitBranches || ['main', 'master']}
+					worktreeBranch={prSourceBranch}
+					availableBranches={prAvailableBranches}
 					onPRCreated={onPRCreated}
 				/>
 			)}

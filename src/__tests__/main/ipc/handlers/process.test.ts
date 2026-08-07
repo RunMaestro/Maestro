@@ -400,6 +400,7 @@ describe('process IPC handlers', () => {
 				'process:spawnTerminalTab',
 				'process:runCommand',
 				'permission:respond',
+				'process:cancelCommand',
 			];
 
 			for (const channel of expectedChannels) {

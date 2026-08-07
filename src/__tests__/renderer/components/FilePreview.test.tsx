@@ -29,6 +29,7 @@ vi.mock('lucide-react', () => ({
 	GitGraph: () => <span data-testid="gitgraph-icon">GitGraph</span>,
 	List: () => <span data-testid="list-icon">List</span>,
 	ExternalLink: () => <span data-testid="external-link-icon">ExternalLink</span>,
+	FolderOpen: () => <span data-testid="folder-open-icon">FolderOpen</span>,
 	RefreshCw: () => <span data-testid="refresh-icon">RefreshCw</span>,
 	X: () => <span data-testid="x-icon">X</span>,
 	ZoomIn: () => <span data-testid="zoom-in-icon">ZoomIn</span>,
@@ -373,6 +374,39 @@ describe('FilePreview', () => {
 			expect(button).toBeEnabled();
 			fireEvent.click(button);
 			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/lib.dll');
+		});
+	});
+
+	describe('Reveal in file manager button', () => {
+		it('shows the reveal button with its own FolderOpen icon', () => {
+			render(<FilePreview {...defaultProps} />);
+
+			const icon = screen.getByTestId('folder-open-icon');
+			expect(icon).toBeInTheDocument();
+			// Distinct icon from Open in Default App so the two actions read differently
+			expect(icon.closest('button')).not.toBe(
+				screen.getByTestId('external-link-icon').closest('button')
+			);
+		});
+
+		it('calls shell.showItemInFolder with the file path when clicked', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+				/>
+			);
+
+			const button = screen.getByTestId('folder-open-icon').closest('button')!;
+			fireEvent.click(button);
+
+			expect(window.maestro?.shell?.showItemInFolder).toHaveBeenCalledWith('/test/readme.md');
+		});
+
+		it('hides the reveal button for SSH remote sessions', () => {
+			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
+
+			expect(screen.queryByTestId('folder-open-icon')).not.toBeInTheDocument();
 		});
 	});
 

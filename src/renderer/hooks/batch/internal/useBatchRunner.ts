@@ -10,7 +10,7 @@ import type {
 	AutoRunStats,
 	AgentError,
 } from '../../../types';
-import type { AgentSpawnErrorKind } from '../../agent/useAgentExecution';
+import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
 import { gitService } from '../../../services/git';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -45,7 +45,9 @@ type UpdateBatchStateFn = (
 type SpawnAgentFn = (
 	sessionId: string,
 	prompt: string,
-	cwdOverride?: string
+	cwdOverride?: string,
+	/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
+	options?: SpawnAgentRunOverrides
 ) => Promise<{
 	success: boolean;
 	response?: string;
@@ -192,6 +194,18 @@ export function useBatchRunner({
 
 			const { documents, prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
 
+			// Run-scoped model/effort override, built only when the run picked one so
+			// default runs pass no spawn options at all. An absent override means the
+			// spawn uses the session's configured model, then the agent default.
+			// Nothing here is written back to the session.
+			const runOverrides: SpawnAgentRunOverrides | undefined =
+				config.model || config.effort
+					? {
+							...(config.model && { modelOverride: config.model }),
+							...(config.effort && { effortOverride: config.effort }),
+						}
+					: undefined;
+
 			if (documents.length === 0) {
 				window.maestro.logger.log(
 					'warn',
@@ -314,6 +328,12 @@ export function useBatchRunner({
 					worktreePath,
 					worktreeBranch,
 					customPrompt: prompt !== '' ? prompt : undefined,
+					// Persist the run-scoped model override so useAgentExitListener can read
+					// it back (via getBatchStateRef) and build each per-task exit-path
+					// synopsis under the run's model instead of the session default, for
+					// parity with the CLI batch processor. Only the model is stored:
+					// SynopsisData.sessionConfig has no effort field.
+					runModelOverride: config.model || undefined,
 					startTime: batchStartTime,
 					// Time tracking
 					cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)
@@ -784,6 +804,7 @@ export function useBatchRunner({
 									customPrompt: prompt,
 									taskSelectionMode,
 									sshRemoteId,
+									runOverrides,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
 								docCheckedCount,

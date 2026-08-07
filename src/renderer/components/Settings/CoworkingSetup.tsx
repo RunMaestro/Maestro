@@ -312,11 +312,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 										>
 											{getAgentDisplayName(s.agentId as AgentId)}
 										</div>
-										<div
-											className="text-[10px] font-mono truncate opacity-60"
-											title={s.configPath}
-											style={{ color: theme.colors.textDim }}
-										>
+										<div className="text-[10px] font-mono truncate opacity-55" title={s.configPath}>
 											{s.configPath}
 										</div>
 									</div>
@@ -356,10 +352,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 											<p className="text-sm" style={{ color: theme.colors.textMain }}>
 												Browser interaction
 											</p>
-											<p
-												className="text-xs opacity-60 mt-0.5"
-												style={{ color: theme.colors.textDim }}
-											>
+											<p className="text-xs opacity-70 mt-0.5">
 												Let this agent drive browser tabs: navigate, click, type, run JavaScript,
 												screenshot, open and close tabs. Reading tabs works without this.
 											</p>
@@ -387,10 +380,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 												<p className="text-sm" style={{ color: theme.colors.textMain }}>
 													Ask before actions
 												</p>
-												<p
-													className="text-xs opacity-60 mt-0.5"
-													style={{ color: theme.colors.textDim }}
-												>
+												<p className="text-xs opacity-70 mt-0.5">
 													{CONFIRM_POLICY_DESCRIPTIONS[confirmPolicy]}
 												</p>
 											</div>

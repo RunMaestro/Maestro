@@ -17,7 +17,9 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	looksLikeStructuredOutput,
 	parseDirectorNotesNarrative,
+	recoverDirectorNotesNarrative,
 	narrativeToMarkdown,
 	type DirectorNotesNarrative,
 } from '../../shared/directorNotesNarrative';
@@ -150,6 +152,56 @@ describe('parseDirectorNotesNarrative', () => {
 		});
 	});
 
+	describe('the optional progress section', () => {
+		// Emitted only when the conductor has configured an Ideal End State, so
+		// the parser must accept a four-section report without requiring one.
+		const WITH_PROGRESS = {
+			version: 1,
+			sections: [
+				{ kind: 'accomplishments', title: 'Accomplishments', items: [{ text: 'Shipped it.' }] },
+				{ kind: 'challenges', title: 'Challenges', items: [] },
+				{ kind: 'nextSteps', title: 'Next Steps', items: [] },
+				{
+					kind: 'progress',
+					title: 'Progress Toward Ideal End State',
+					items: [
+						{ text: 'Ingest pipeline is 3 of 5 milestones in.', agent: 'parser-a' },
+						{ text: 'No activity on the docs rewrite this window.', severity: 'warn' },
+					],
+				},
+			],
+		};
+
+		it('accepts a four-section report', () => {
+			const result = parseDirectorNotesNarrative(JSON.stringify(WITH_PROGRESS));
+			if (!result.ok) throw new Error(`expected success, got: ${result.error}`);
+
+			expect(result.narrative.sections).toHaveLength(4);
+			expect(result.narrative.sections[3].kind).toBe('progress');
+			expect(result.narrative.sections[3].items[1]).toEqual({
+				text: 'No activity on the docs rewrite this window.',
+				severity: 'warn',
+			});
+		});
+
+		it('still accepts a three-section report (end state unset)', () => {
+			const result = parseDirectorNotesNarrative(JSON.stringify(WELL_FORMED));
+			if (!result.ok) throw new Error('expected success');
+
+			expect(result.narrative.sections).toHaveLength(3);
+			expect(result.narrative.sections.some((s) => s.kind === 'progress')).toBe(false);
+		});
+
+		it('renders the progress section in markdown', () => {
+			const result = parseDirectorNotesNarrative(JSON.stringify(WITH_PROGRESS));
+			if (!result.ok) throw new Error('expected success');
+
+			const markdown = narrativeToMarkdown(result.narrative);
+			expect(markdown).toContain('## Progress Toward Ideal End State');
+			expect(markdown).toContain('- Ingest pipeline is 3 of 5 milestones in. _(parser-a)_');
+		});
+	});
+
 	describe('empty input (ok: false)', () => {
 		it('rejects an empty string', () => {
 			expectParseError('', 'Response was empty.');
@@ -221,7 +273,7 @@ describe('parseDirectorNotesNarrative', () => {
 		it('rejects an unknown section kind', () => {
 			expectParseError(
 				'{ "version": 1, "sections": [{ "kind": "misc", "title": "x", "items": [] }] }',
-				'sections[0].kind must be one of "accomplishments", "challenges", "nextSteps".'
+				'sections[0].kind must be one of "accomplishments", "challenges", "nextSteps", "progress".'
 			);
 		});
 
@@ -389,5 +441,203 @@ describe('parseDirectorNotesNarrative', () => {
 			expect(md).not.toContain('"kind"');
 			expect(md).not.toContain('"items"');
 		});
+	});
+});
+
+/**
+ * `recoverDirectorNotesNarrative` is the salvage path taken ONLY after the
+ * strict parser rejects the output. A synopsis run costs minutes of agent time,
+ * so the failures that actually happen in the field (a response cut off
+ * mid-stream, a raw line break inside a bullet, one malformed item) must not
+ * cost the whole report. The contract these tests pin down:
+ *   - it recovers the readable portion of a truncated response,
+ *   - it drops individual bad items instead of the document,
+ *   - it always explains what it salvaged (never silently partial),
+ *   - it still refuses output with no narrative content in it.
+ */
+describe('recoverDirectorNotesNarrative', () => {
+	/** Build a full narrative response, then cut it at `chars` to simulate truncation. */
+	const fullResponse = JSON.stringify({
+		version: 1,
+		sections: [
+			{
+				kind: 'accomplishments',
+				title: 'Accomplishments',
+				items: [
+					{ text: 'Shipped the tab-tiling restore', severity: 'info', agent: 'rc' },
+					{ text: 'Fixed the platform detection bug', severity: 'info', agent: 'Maestro' },
+				],
+			},
+			{
+				kind: 'challenges',
+				title: 'Challenges',
+				items: [{ text: 'CI stayed red all week', severity: 'critical', agent: 'rc' }],
+			},
+		],
+	});
+
+	it('recovers the readable sections when the response is cut off mid-string', () => {
+		const truncated = fullResponse.slice(0, fullResponse.indexOf('Fixed the platform') + 8);
+		// Precondition: the strict parser must have failed for recovery to matter.
+		expect(parseDirectorNotesNarrative(truncated).ok).toBe(false);
+
+		const result = recoverDirectorNotesNarrative(truncated);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.narrative.sections).toHaveLength(1);
+		expect(result.narrative.sections[0].items).toEqual([
+			{ text: 'Shipped the tab-tiling restore', severity: 'info', agent: 'rc' },
+		]);
+		expect(result.reason).toContain('cut off');
+	});
+
+	it('recovers a response cut off between two complete items', () => {
+		const truncated = fullResponse.slice(0, fullResponse.indexOf('},{', 40) + 1);
+		const result = recoverDirectorNotesNarrative(truncated);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.narrative.sections[0].items[0].text).toBe('Shipped the tab-tiling restore');
+	});
+
+	it('recovers bullets containing a raw line break (invalid JSON the prompt forbids)', () => {
+		const raw =
+			'{"version":1,"sections":[{"kind":"accomplishments","title":"Accomplishments",' +
+			'"items":[{"text":"First line\nsecond line"}]}]}';
+		expect(parseDirectorNotesNarrative(raw).ok).toBe(false);
+
+		const result = recoverDirectorNotesNarrative(raw);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.narrative.sections[0].items[0].text).toBe('First line\nsecond line');
+		expect(result.reason).toContain('line breaks');
+	});
+
+	it('drops a malformed bullet and keeps the rest of the section', () => {
+		const raw = JSON.stringify({
+			version: 1,
+			sections: [
+				{
+					kind: 'accomplishments',
+					title: 'Accomplishments',
+					items: [{ text: 'Kept this one' }, { agent: 'no text field' }, { text: '   ' }],
+				},
+			],
+		});
+		const result = recoverDirectorNotesNarrative(raw);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.narrative.sections[0].items).toEqual([{ text: 'Kept this one' }]);
+		expect(result.reason).toContain('2 bullets were malformed and dropped');
+	});
+
+	it('keeps a bullet whose severity is invalid, dropping only that field', () => {
+		const raw = JSON.stringify({
+			version: 1,
+			sections: [
+				{
+					kind: 'accomplishments',
+					title: 'Accomplishments',
+					items: [{ text: 'Still readable', severity: 'catastrophic', agent: 'rc' }],
+				},
+			],
+		});
+		const result = recoverDirectorNotesNarrative(raw);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.narrative.sections[0].items[0]).toEqual({
+			text: 'Still readable',
+			agent: 'rc',
+		});
+	});
+
+	it('drops a section with an unknown kind rather than the whole document', () => {
+		const raw = JSON.stringify({
+			version: 1,
+			sections: [
+				{ kind: 'vibes', title: 'Vibes', items: [{ text: 'Not a real section' }] },
+				{ kind: 'nextSteps', title: 'Next Steps', items: [{ text: 'Keep going' }] },
+			],
+		});
+		const result = recoverDirectorNotesNarrative(raw);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.narrative.sections).toHaveLength(1);
+		expect(result.narrative.sections[0].kind).toBe('nextSteps');
+	});
+
+	it('falls back to the canonical title when a salvaged section has none', () => {
+		const raw = '{"version":1,"sections":[{"kind":"challenges","items":[{"text":"A blocker"}]}';
+		const result = recoverDirectorNotesNarrative(raw);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.narrative.sections[0].title).toBe('Challenges');
+	});
+
+	it('converts a recovered narrative to prose with no JSON left in it', () => {
+		const truncated = fullResponse.slice(0, fullResponse.indexOf('Fixed the platform') + 8);
+		const result = recoverDirectorNotesNarrative(truncated);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		const md = narrativeToMarkdown(result.narrative);
+		expect(md).toContain('## Accomplishments');
+		expect(md).not.toContain('"version"');
+		expect(md).not.toContain('"sections"');
+	});
+
+	it('refuses output with no narrative content in it', () => {
+		for (const raw of [
+			'',
+			'   ',
+			'Sorry, I could not read the history files.',
+			'{"version":1,"sections":[]}',
+			'{"unrelated":{"nested":true}}',
+		]) {
+			const result = recoverDirectorNotesNarrative(raw);
+			expect(result.ok).toBe(false);
+		}
+	});
+
+	it('never throws, whatever the input', () => {
+		for (const raw of ['{', '{{{{', '[]', 'null', '{"sections":"nope"}', '{"sections":[{']) {
+			expect(() => recoverDirectorNotesNarrative(raw)).not.toThrow();
+		}
+	});
+});
+
+describe('looksLikeStructuredOutput', () => {
+	// This predicate decides what a FAILED parse means. The Director's Notes
+	// prompt is a user-editable setting persisted to userData, so a profile can
+	// hold a markdown-contract prompt while the build expects JSON, or the
+	// reverse. JSON-shaped means the narrative is genuinely broken; anything
+	// else is prose that should simply be rendered.
+	it('accepts a bare structured object', () => {
+		expect(looksLikeStructuredOutput('{"version":1,"sections":[]}')).toBe(true);
+		expect(looksLikeStructuredOutput('\n\n  {"version":1}  ')).toBe(true);
+	});
+
+	it('accepts an object wrapped in a code fence', () => {
+		// The agent fences it sometimes despite being told not to.
+		expect(looksLikeStructuredOutput('```json\n{"version":1}\n```')).toBe(true);
+		expect(looksLikeStructuredOutput('```\n{"version":1}\n```')).toBe(true);
+	});
+
+	it('rejects markdown prose', () => {
+		expect(looksLikeStructuredOutput('# Synopsis\n\nWe shipped things.')).toBe(false);
+		expect(looksLikeStructuredOutput('## Accomplishments\n\n- Did the thing')).toBe(false);
+	});
+
+	it('rejects markdown that merely CONTAINS a JSON example', () => {
+		// Why this is a starts-with check and not a scan: a report quoting a JSON
+		// snippet is still a report, and treating it as a botched narrative would
+		// replace it with a parse error.
+		const raw = '# Synopsis\n\nThe config looked like:\n\n```json\n{"a":1}\n```\n';
+		expect(looksLikeStructuredOutput(raw)).toBe(false);
+	});
+
+	it('rejects empty and non-string input without throwing', () => {
+		expect(looksLikeStructuredOutput('')).toBe(false);
+		expect(looksLikeStructuredOutput('   \n  ')).toBe(false);
+		expect(looksLikeStructuredOutput(undefined as unknown as string)).toBe(false);
+		expect(looksLikeStructuredOutput('```json')).toBe(false);
 	});
 });

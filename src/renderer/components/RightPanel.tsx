@@ -839,16 +839,18 @@ export const RightPanel = memo(
 
 						{/* Action row - left: the (spec-only) follow-task toggle; right: the
 						    action links + Stop, all on one plane to keep the card compact.
-						    Kept off the status-line row so a long rationale can't clip it. */}
-						<div className="mt-1.5 flex items-center justify-between gap-2">
+						    Kept off the status-line row so a long rationale can't clip it.
+						    Every control here is whitespace-nowrap and must stay legible, so
+						    the row wraps instead of overflowing when the Right Panel is
+						    narrow: `justify-end` + `mr-auto` on the toggle keeps the controls
+						    hard against the right edge on one line, and drops them onto their
+						    own right-aligned line once they no longer fit beside the toggle. */}
+						<div className="mt-1.5 flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5">
 							{/* "Follow active task" only applies to task-based runs that step
 							    through a document. Goal mode iterates a single goal with no
-							    discrete task list to follow, so hide the checkbox there (empty
-							    spacer keeps the controls right-aligned). */}
-							{currentSessionBatchState.goalMode ? (
-								<div />
-							) : (
-								<label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+							    discrete task list to follow, so hide the checkbox there. */}
+							{!currentSessionBatchState.goalMode && (
+								<label className="flex items-center gap-1.5 cursor-pointer shrink-0 mr-auto">
 									<input
 										type="checkbox"
 										checked={autoFollowEnabled}
@@ -861,7 +863,9 @@ export const RightPanel = memo(
 									</span>
 								</label>
 							)}
-							<div className="flex items-center gap-2 shrink-0">
+							{/* Wraps internally too, so the links/Stop stay inside the card even
+							    at the narrowest panel width where they alone can't fit a line. */}
+							<div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5 min-w-0">
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (
 									<span

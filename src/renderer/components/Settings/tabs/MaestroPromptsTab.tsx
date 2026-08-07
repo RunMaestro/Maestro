@@ -798,7 +798,7 @@ export function MaestroPromptsTab({
 			<div className="prompts-tab-header">
 				<div className="prompts-tab-header-text">
 					<div className="text-xs font-bold opacity-70 uppercase mb-1">Core System Prompts</div>
-					<p className="text-xs opacity-50">
+					<p className="text-xs opacity-70">
 						Customize the system prompts used by Maestro features. Changes take effect immediately.
 						Use <code className="text-xs opacity-70">{'{{INCLUDE:name}}'}</code> to reference other
 						prompt files.
