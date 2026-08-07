@@ -2198,7 +2198,7 @@ interface MaestroAPI {
 			sharedContext?: { sshRemoteId: string; remoteCwd: string },
 			projectPath?: string
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number; agent: number }>;
+			buckets: Array<import('../shared/history').GraphBucket>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
@@ -3818,13 +3818,13 @@ interface MaestroAPI {
 				agentEntryCount: number;
 				totalCount: number;
 			};
-			graphBuckets?: Array<{ auto: number; user: number; cue: number; agent: number }>;
+			graphBuckets?: Array<import('../shared/history').GraphBucket>;
 		}>;
 		getGraphData: (
 			bucketCount: number,
 			lookbackHours: number | null
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number; agent: number }>;
+			buckets: Array<import('../shared/history').GraphBucket>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
