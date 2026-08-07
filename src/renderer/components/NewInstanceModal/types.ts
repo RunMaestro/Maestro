@@ -68,6 +68,7 @@ export interface NewInstanceModalProps {
 	existingSessions: Session[];
 	sourceSession?: Session; // Optional session to duplicate from
 	presetGroupId?: string | null; // Group to place the new agent in (ignored when duplicating - duplicate inherits source's group)
+	presetWorkingDir?: string | null; // Working directory to seed, plus a default name from its basename (ignored when duplicating - duplicate inherits source's cwd)
 }
 
 export interface EditAgentModalProps {

@@ -13,6 +13,7 @@ import {
 	FolderOpen,
 	Files,
 	Download,
+	Bot,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
@@ -37,6 +38,7 @@ interface FileTreeContextMenuProps {
 	onOpenInExplorer: () => void;
 	onOpenNewFile: () => void;
 	onOpenNewFolder: () => void;
+	onNewAgentHere: () => void;
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
 	onPreviewMulti: () => void;
@@ -65,6 +67,7 @@ export function FileTreeContextMenu({
 	onOpenInExplorer,
 	onOpenNewFile,
 	onOpenNewFolder,
+	onNewAgentHere,
 	onPreviewFile,
 	onPreviewAllInFolder,
 	onPreviewMulti,
@@ -167,6 +170,21 @@ export function FileTreeContextMenu({
 									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 									<span>New Folder</span>
 								</button>
+								{/* New Agent Here - opens the New Agent modal with this folder
+								    pre-filled as the working directory. Hidden over SSH: the
+								    path is remote, and a fresh agent starts out local, so
+								    seeding it would point the new agent at a local path that
+								    doesn't exist. */}
+								{!sshRemoteId && (
+									<button
+										onClick={onNewAgentHere}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Bot className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>New Agent Here</span>
+									</button>
+								)}
 								{previewableCount > 0 && (
 									<button
 										onClick={onPreviewAllInFolder}
