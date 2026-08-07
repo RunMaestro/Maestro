@@ -45,6 +45,7 @@ function normalizeUsageToDelta(
 		totalCostUsd: number;
 		contextWindow: number;
 		reasoningTokens?: number;
+		absoluteUsage?: UsageStats['absoluteUsage'];
 	}
 ): typeof usageStats & { absoluteUsage?: UsageStats['absoluteUsage'] } {
 	const totals: UsageTotals = {
@@ -94,10 +95,19 @@ function normalizeUsageToDelta(
 	// Preserve the pre-normalization cumulative totals as `absoluteUsage`, but ONLY
 	// for combined-context providers (Codex) whose cumulative total IS the current
 	// window occupancy. This function also runs for Claude Code, which can look
-	// monotonic for the first turns of a session; Claude's per-call values are NOT
-	// cumulative occupancy, so attaching an absolute snapshot there would let the
-	// timeline plot cumulative token spend as context fill. The first event of a
+	// monotonic for the first turns of a session; Claude's TURN TOTALS here are the
+	// CLI's own sum across the turn's internal API calls (token spend), so attaching
+	// them would let the timeline plot spend as context fill. The first event of a
 	// session returns raw above (no `last` yet) and is already absolute.
+	//
+	// Claude Code still gets an `absoluteUsage`, just not from here: its parser
+	// attaches the LAST internal call's usage, which is a genuine occupancy
+	// snapshot (a single call's input cannot exceed the window) and a different
+	// quantity from the cumulative totals this branch rejects. Every path in this
+	// function preserves an incoming `absoluteUsage` - the three early returns pass
+	// `usageStats` through verbatim, and the spread below re-attaches only for
+	// COMBINED_CONTEXT_AGENTS, which claude-code is not - so it can never be
+	// overwritten or double-attached.
 	const attachesAbsolute = COMBINED_CONTEXT_AGENTS.has(managedProcess.toolType as never);
 	return {
 		...usageStats,
@@ -828,6 +838,7 @@ export class StdoutHandler {
 			contextWindow?: number;
 			reasoningTokens?: number;
 			model?: string;
+			absoluteUsage?: UsageStats['absoluteUsage'];
 		}
 	): UsageStats {
 		const stats: UsageStats = {
@@ -836,6 +847,10 @@ export class StdoutHandler {
 			cacheReadInputTokens: usage.cacheReadTokens || 0,
 			cacheCreationInputTokens: usage.cacheCreationTokens || 0,
 			totalCostUsd: usage.costUsd || 0,
+			// Occupancy snapshot the parser attached (claude-code's last-call usage).
+			// This object is CONSTRUCTED rather than spread, so anything the parser
+			// adds has to be copied here explicitly or it is silently dropped.
+			absoluteUsage: usage.absoluteUsage,
 			// Prioritize Claude Code's reported contextWindow over spawn config
 			// This ensures we use the actual model's context limit, not a stale config value
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
