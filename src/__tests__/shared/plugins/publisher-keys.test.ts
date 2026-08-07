@@ -4,10 +4,11 @@ import { MAESTRO_PUBLISHER_KEYS, resolveTrustedKeys } from '../../../shared/plug
 
 describe('MAESTRO_PUBLISHER_KEYS', () => {
 	it('bakes only well-formed base64 SPKI public keys as the trust anchor', () => {
-		// Guarded so this asserts nothing until a real publisher key is baked
-		// (MAESTRO_PUBLISHER_KEYS is empty pre-key-mint). Once populated it proves
-		// every anchor entry is a non-empty, valid SPKI key crypto can load - never
-		// hard-coding the real key value here.
+		// The anchor must stay populated: an accidental future emptying would
+		// silently revert to pre-A1 behavior (no bundled plugin ever seeds).
+		expect(MAESTRO_PUBLISHER_KEYS.length).toBeGreaterThan(0);
+		// Proves every anchor entry is a non-empty, valid SPKI key crypto can
+		// load - never hard-coding the real key value here.
 		for (const key of MAESTRO_PUBLISHER_KEYS) {
 			expect(typeof key).toBe('string');
 			expect(key.trim().length).toBeGreaterThan(0);
