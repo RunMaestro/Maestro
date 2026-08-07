@@ -349,6 +349,10 @@ const mockMaestro = {
 		}),
 		homeDir: vi.fn().mockResolvedValue('/home/testuser'),
 	},
+	// Tab lifecycle notifications (renderer -> main); fire-and-forget
+	tabs: {
+		notifyAiTabClosed: vi.fn(),
+	},
 	agents: {
 		detect: vi.fn().mockResolvedValue([]),
 		get: vi.fn().mockResolvedValue(null),
