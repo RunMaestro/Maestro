@@ -669,26 +669,30 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					queueLength?: number;
 					itemId?: string;
 					error?: string;
+					reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
 
 				try {
 					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 					if (!session) {
-						reply({ success: false, error: 'Session not found' });
+						reply({ success: false, error: 'Session not found', reason: 'session-not-found' });
 						return;
 					}
 
 					// Resolve the target tab. An explicit --tab that no longer exists is
 					// an error - never silently reroute to the active tab, which would
 					// mislead callers chaining the returned tabId. No --tab -> active tab.
+					// The `tab-not-found` reason is what lets a dispatch callback (which
+					// has no caller listening for the error) fall back to agent-level
+					// delivery instead of dropping the wake; see deliverCallback.
 					const requestedTab = tabId ? session.aiTabs?.find((t) => t.id === tabId) : undefined;
 					if (tabId && !requestedTab) {
-						reply({ success: false, error: `Tab not found: ${tabId}` });
+						reply({ success: false, error: `Tab not found: ${tabId}`, reason: 'tab-not-found' });
 						return;
 					}
 					const targetTab = requestedTab ?? getActiveTab(session);
 					if (!targetTab) {
-						reply({ success: false, error: 'Session has no AI tabs' });
+						reply({ success: false, error: 'Session has no AI tabs', reason: 'no-ai-tabs' });
 						return;
 					}
 					const resolvedTabId = targetTab.id;

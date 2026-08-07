@@ -1057,6 +1057,71 @@ describe('web-server/web-server-factory', () => {
 		});
 	});
 
+	describe('enqueueCommandCallback behavior', () => {
+		/**
+		 * Reply to the response channel the factory minted for the most recent
+		 * `remote:enqueueCommand` send, standing in for the renderer.
+		 */
+		const answerEnqueue = (result: unknown): void => {
+			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
+			const call = [...send.mock.calls]
+				.reverse()
+				.find((c: unknown[]) => c[0] === 'remote:enqueueCommand');
+			if (!call) throw new Error('no remote:enqueueCommand send was issued');
+			// Send args: (channel, sessionId, command, responseChannel, ...)
+			const responseChannel = call[3] as string;
+			const listener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((c) => c[0] === responseChannel)?.[1];
+			listener?.({} as never, result);
+		};
+
+		const invokeEnqueue = (server: ReturnType<ReturnType<typeof createWebServerFactory>>) => {
+			const setEnqueue = server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>;
+			return setEnqueue.mock.calls[0][0]('session-1', 'wake up', 'ai', 'ghost-tab');
+		};
+
+		// Task 7b: the reason is what lets a dispatch callback tell "the caller's
+		// --callback-tab is gone" apart from every other failure, so it has to
+		// survive the renderer -> main hop rather than being parsed away.
+		it('forwards a machine-readable failure reason from the renderer', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: false, error: 'Tab not found: ghost-tab', reason: 'tab-not-found' });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: false,
+					error: 'Tab not found: ghost-tab',
+					reason: 'tab-not-found',
+				})
+			);
+		});
+
+		it('drops an unrecognised reason instead of passing it through', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: false, error: 'boom', reason: 'something-new' });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({ success: false, reason: undefined })
+			);
+		});
+
+		it('leaves the reason undefined on a successful enqueue', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: true, tabId: 'tab-1', queued: true, queuePosition: 2 });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({ success: true, tabId: 'tab-1', queued: true, reason: undefined })
+			);
+		});
+	});
+
 	describe('interruptSessionCallback behavior', () => {
 		it('should return false when mainWindow is null', async () => {
 			deps.getMainWindow = vi.fn().mockReturnValue(null);

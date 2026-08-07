@@ -25,7 +25,7 @@ export interface DispatchCallbackServiceDeps {
 		agentId: string,
 		prompt: string,
 		tabId?: string
-	) => Promise<{ success: boolean; error?: string }>;
+	) => Promise<{ success: boolean; error?: string; reason?: string }>;
 	/** Best-effort result text for the finished dispatch. */
 	getTargetOutput?: (
 		agentId: string,
@@ -112,7 +112,22 @@ async function deliverCallback(
 	const prompt = renderCallbackPrompt({ fire, output });
 
 	try {
-		const result = await deps.enqueue(entry.callerAgentId, prompt, entry.callerTabId);
+		let result = await deps.enqueue(entry.callerAgentId, prompt, entry.callerTabId);
+
+		// The caller closed its `--callback-tab` while the dispatch was running, so
+		// the wake has nowhere specific to land. Rather than drop it (the whole
+		// class of failure V1/W1 document), retry once at agent level - the exact
+		// path a `--notify-on-complete` without `--callback-tab` already takes, so
+		// the notification lands in the caller's active tab where the user sees it.
+		// Only this cause is retried: dropping the tab id fixes none of the others.
+		if (!result.success && entry.callerTabId && result.reason === 'tab-not-found') {
+			deps.logger?.info(
+				`Callback ${entry.callbackId}: caller tab ${entry.callerTabId} no longer exists, delivering to ${entry.callerAgentId} at agent level instead`,
+				LOG_CONTEXT
+			);
+			result = await deps.enqueue(entry.callerAgentId, prompt);
+		}
+
 		if (!result.success) {
 			deps.logger?.warn(
 				`Callback ${entry.callbackId} could not be delivered to ${entry.callerAgentId}: ${result.error ?? 'unknown error'}`,

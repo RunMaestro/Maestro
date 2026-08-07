@@ -1169,6 +1169,9 @@ describe('useRemoteIntegration', () => {
 				expect.objectContaining({
 					success: false,
 					error: expect.stringContaining('ghost-tab'),
+					// Machine-readable cause: this is what lets a dispatch callback
+					// fall back to agent-level delivery instead of dropping the wake.
+					reason: 'tab-not-found',
 				})
 			);
 		});
@@ -1185,7 +1188,33 @@ describe('useRemoteIntegration', () => {
 			expect(deps.setSessions).not.toHaveBeenCalled();
 			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
 				'chan-nosession',
-				expect.objectContaining({ success: false, error: 'Session not found' })
+				expect.objectContaining({
+					success: false,
+					error: 'Session not found',
+					reason: 'session-not-found',
+				})
+			);
+		});
+
+		it('acks a distinct reason when the session has no AI tabs at all', () => {
+			const session = createMockSession({ id: 'session-1', aiTabs: [], activeTabId: undefined });
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.('session-1', 'x', 'chan-notabs');
+			});
+
+			expect(deps.setSessions).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+				'chan-notabs',
+				expect.objectContaining({
+					success: false,
+					error: 'Session has no AI tabs',
+					reason: 'no-ai-tabs',
+				})
 			);
 		});
 	});

@@ -583,6 +583,9 @@ interface MaestroAPI {
 				queueLength?: number;
 				itemId?: string;
 				error?: string;
+				/** Machine-readable failure cause, so main can react to a specific one
+				 *  (dispatch callbacks retry agent-level on `tab-not-found`). */
+				reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 			}
 		) => void;
 		onRemoteListQueue: (
