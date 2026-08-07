@@ -18,6 +18,7 @@ import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { formatDurationCompact as formatDuration } from '../../../shared/formatters';
 import { MetricModeToggle, type ChartMetricMode } from './MetricModeToggle';
 import { useTokenSeries } from './TokenSeriesContext';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 
 type MetricMode = ChartMetricMode;
 
@@ -134,6 +135,7 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 				</div>
 			) : (
 				<div className="relative">
+					<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 					{/* Bars */}
 					<div className="flex items-end gap-px" style={{ height: chartHeight }}>
 						{hourlyData.map((h) => {

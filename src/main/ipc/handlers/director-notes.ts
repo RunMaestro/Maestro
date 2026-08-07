@@ -13,11 +13,11 @@
 import { ipcMain, type BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
-import { HistoryEntry, ToolType } from '../../../shared/types';
+import { HistoryEntry, HistoryEntryType, ToolType } from '../../../shared/types';
 import { paginateEntries } from '../../../shared/history';
 import type { PaginatedResult } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
-import { getSessionsStore } from '../../stores';
+import { getSessionsStore, getSettingsStore } from '../../stores';
 import {
 	withIpcErrorLogging,
 	requireDependency,
@@ -26,7 +26,9 @@ import {
 import { groomContext } from '../../utils/context-groomer';
 import { buildDirectorNotesSynopsisPrompt } from '../../utils/director-notes-prompt';
 import {
+	looksLikeStructuredOutput,
 	parseDirectorNotesNarrative,
+	recoverDirectorNotesNarrative,
 	type DirectorNotesNarrative,
 } from '../../../shared/directorNotesNarrative';
 import { getPrompt } from '../../prompt-manager';
@@ -47,12 +49,12 @@ const LOG_CONTEXT = '[DirectorNotes]';
 /** Filter accepted by the unified-history IPCs: a single type, an array of
  *  types to include, or null/undefined for "all types". An empty array means
  *  "no types selected" and therefore matches nothing. */
-type UnifiedHistoryFilter = 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+type UnifiedHistoryFilter = HistoryEntryType | HistoryEntryType[] | null;
 
 /** Whether an entry's type passes the given filter. */
 function entryPassesFilter(type: HistoryEntry['type'], filter: UnifiedHistoryFilter): boolean {
 	if (filter == null) return true;
-	if (Array.isArray(filter)) return filter.includes(type as 'AUTO' | 'USER' | 'CUE');
+	if (Array.isArray(filter)) return filter.includes(type);
 	return type === filter;
 }
 
@@ -106,6 +108,19 @@ function buildSessionNameMap(): Map<string, string> {
 }
 
 /**
+ * Read the conductor's Ideal End State from settings, or '' when unset.
+ *
+ * Read at generation time rather than passed in from the renderer so the
+ * web/CLI synopsis paths - which have no renderer to read settings for them -
+ * get the same behavior from the same source.
+ */
+function getConfiguredIdealEndState(): string {
+	const settingsStore = getSettingsStore();
+	const dn = (settingsStore.get('directorNotesSettings') ?? {}) as Record<string, unknown>;
+	return typeof dn.idealEndState === 'string' ? dn.idealEndState : '';
+}
+
+/**
  * Dependencies required for Director's Notes handler registration
  */
 export interface DirectorNotesHandlerDependencies {
@@ -138,6 +153,7 @@ export interface GraphBucket {
 	auto: number;
 	user: number;
 	cue: number;
+	agent: number;
 }
 
 export interface UnifiedHistoryEntry extends HistoryEntry {
@@ -152,7 +168,13 @@ export interface UnifiedHistoryStats {
 	autoCount: number; // Total AUTO entries
 	userCount: number; // Total USER entries
 	cueCount: number; // Total CUE entries
-	totalCount: number; // Total entries (autoCount + userCount + cueCount)
+	/**
+	 * Total AGENT entries (messages proxied in from another agent). Named
+	 * `agentEntryCount`, not `agentCount`, because `agentCount` above already
+	 * means "distinct Maestro agents" on this interface.
+	 */
+	agentEntryCount: number;
+	totalCount: number; // Total entries (sum of the four type counts)
 }
 
 /** Options for the deterministic Rich Overview stats IPC */
@@ -169,6 +191,7 @@ export interface RichTimelineBucket {
 	auto: number;
 	user: number;
 	cue: number;
+	agent: number;
 }
 
 /** Per-agent activity rollup for the Rich Overview, sorted by entryCount desc. */
@@ -193,6 +216,8 @@ export interface RichOverviewStats {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	/** Total AGENT entries; `agentCount` above already means "distinct agents". */
+	agentEntryCount: number;
 	successCount: number; // Entries with success === true
 	failureCount: number; // Entries with success === false (missing success is neither)
 	successRate: number; // successCount / (successCount + failureCount); 0 when no outcomes
@@ -218,6 +243,58 @@ export interface SynopsisStats {
 	durationMs: number; // Time taken for AI generation
 }
 
+/** Options for the deterministic Rich Overview stats IPC */
+export interface RichOverviewStatsOptions {
+	/** Lookback window in days; <= 0 means "all time" (mirrors getUnifiedHistory). */
+	lookbackDays: number;
+	/** Number of timeline buckets to compute (default 24). */
+	bucketCount?: number;
+}
+
+/** One activity time-slice in the Rich Overview timeline, with its start time. */
+export interface RichTimelineBucket {
+	startTime: number;
+	auto: number;
+	user: number;
+	cue: number;
+	agent: number;
+}
+
+/** Per-agent activity rollup for the Rich Overview, sorted by entryCount desc. */
+export interface RichAgentStat {
+	sessionId: string;
+	agentName: string;
+	entryCount: number;
+	successCount: number;
+	failureCount: number;
+}
+
+/**
+ * Fully deterministic stats for Director's Notes Rich Mode. Every field is
+ * computed in the main process from history entries so the Rich widgets never
+ * depend on the AI synopsis for a number. Additive: separate from SynopsisStats
+ * and UnifiedHistoryStats, which keep their existing shapes.
+ */
+export interface RichOverviewStats {
+	totalEntries: number;
+	agentCount: number; // Distinct Maestro agents with entries in the window
+	sessionCount: number; // Distinct provider sessions across all agents
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	/** Total AGENT entries; `agentCount` above already means "distinct agents". */
+	agentEntryCount: number;
+	successCount: number; // Entries with success === true
+	failureCount: number; // Entries with success === false (missing success is neither)
+	successRate: number; // successCount / (successCount + failureCount); 0 when no outcomes
+	totalElapsedMs: number; // Summed entry elapsedTimeMs across the window
+	avgElapsedMs: number; // totalElapsedMs / entries-with-timing; 0 when none
+	timelineBuckets: RichTimelineBucket[];
+	perAgent: RichAgentStat[];
+	lookbackDays: number;
+	generatedAt: number; // Unix ms timestamp of computation
+}
+
 export interface SynopsisResult {
 	success: boolean;
 	synopsis: string;
@@ -225,18 +302,30 @@ export interface SynopsisResult {
 	stats?: SynopsisStats;
 	error?: string;
 	/**
-	 * Parsed structured narrative for Rich Mode. Present only when the raw
-	 * `synopsis` parsed cleanly. Plain Mode and copy/save never read this - they
-	 * use `synopsis` verbatim.
+	 * Parsed structured narrative. Rich Mode renders it as section cards and
+	 * Plain Mode renders it as markdown prose, so this is what every reading
+	 * surface consumes; `synopsis` stays the verbatim raw output. Present on a
+	 * clean parse AND on a successful salvage (see `narrativeRecovery`).
 	 */
 	narrative?: DirectorNotesNarrative;
 	/**
-	 * Set when the raw `synopsis` could NOT be parsed into a structured
-	 * narrative. The synopsis call still succeeds (raw output is preserved) so
-	 * the renderer can show an overt failure banner while keeping the raw text
-	 * reachable. Never a reason to fail the whole call.
+	 * Set when the output was JSON-shaped but yielded no usable narrative. The
+	 * synopsis call still succeeds (raw output is preserved) so the renderer can
+	 * show an overt failure banner while keeping the raw text reachable. Never a
+	 * reason to fail the whole call.
+	 *
+	 * Deliberately unset for prose output: the prompt is a user-editable
+	 * setting, so a profile holding a markdown-contract prompt makes the agent
+	 * return a report rather than a narrative. That is not a parse failure.
 	 */
 	narrativeError?: string;
+	/**
+	 * Set when `narrative` came from a salvage of output the strict parser
+	 * rejected (a cut-off response, stray control characters, malformed bullets).
+	 * Explains what was recovered so the UI can say so rather than passing a
+	 * partial report off as a complete one.
+	 */
+	narrativeRecovery?: string;
 }
 
 /**
@@ -282,6 +371,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				let autoCount = 0;
 				let userCount = 0;
 				let cueCount = 0;
+				let agentEntryCount = 0;
 
 				// Pre-compute graph bucketing parameters if requested
 				// For "all time" (cutoffTime=0), we do a two-pass: first find earliest, then bucket
@@ -294,7 +384,12 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 
 				if (bucketCount > 0 && cutoffTime > 0) {
 					msPerBucket = (bucketEndTime - bucketStartTime) / bucketCount;
-					graphBuckets = Array.from({ length: bucketCount }, () => ({ auto: 0, user: 0, cue: 0 }));
+					graphBuckets = Array.from({ length: bucketCount }, () => ({
+						auto: 0,
+						user: 0,
+						cue: 0,
+						agent: 0,
+					}));
 				}
 
 				for (const sessionId of sessionIds) {
@@ -309,6 +404,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						if (entry.type === 'AUTO') autoCount++;
 						else if (entry.type === 'USER') userCount++;
 						else if (entry.type === 'CUE') cueCount++;
+						else if (entry.type === 'AGENT') agentEntryCount++;
 						if (entry.agentSessionId) uniqueAgentSessions.add(entry.agentSessionId);
 
 						// Track earliest for "all time" bucketing
@@ -326,6 +422,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 								if (entry.type === 'AUTO') graphBuckets[idx].auto++;
 								else if (entry.type === 'USER') graphBuckets[idx].user++;
 								else if (entry.type === 'CUE') graphBuckets[idx].cue++;
+								else if (entry.type === 'AGENT') graphBuckets[idx].agent++;
 							}
 						}
 
@@ -345,7 +442,12 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					if (earliestTimestamp === Infinity) earliestTimestamp = now - 24 * 60 * 60 * 1000;
 					bucketStartTime = earliestTimestamp;
 					msPerBucket = (bucketEndTime - bucketStartTime) / bucketCount;
-					graphBuckets = Array.from({ length: bucketCount }, () => ({ auto: 0, user: 0, cue: 0 }));
+					graphBuckets = Array.from({ length: bucketCount }, () => ({
+						auto: 0,
+						user: 0,
+						cue: 0,
+						agent: 0,
+					}));
 
 					if (msPerBucket > 0) {
 						for (const entry of allEntries) {
@@ -357,6 +459,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 								if (entry.type === 'AUTO') graphBuckets[idx].auto++;
 								else if (entry.type === 'USER') graphBuckets[idx].user++;
 								else if (entry.type === 'CUE') graphBuckets[idx].cue++;
+								else if (entry.type === 'AGENT') graphBuckets[idx].agent++;
 							}
 						}
 					}
@@ -375,7 +478,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					autoCount,
 					userCount,
 					cueCount,
-					totalCount: autoCount + userCount + cueCount,
+					agentEntryCount,
+					totalCount: autoCount + userCount + cueCount + agentEntryCount,
 				};
 
 				logger.debug(
@@ -435,6 +539,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						autoCount: hit.autoCount,
 						userCount: hit.userCount,
 						cueCount: hit.cueCount,
+						agentCount: hit.agentCount,
 						hostCounts: hit.hostCounts,
 						cached: true,
 						stats: {
@@ -443,7 +548,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							autoCount: hit.autoCount,
 							userCount: hit.userCount,
 							cueCount: hit.cueCount,
-							totalCount: hit.autoCount + hit.userCount + hit.cueCount,
+							agentEntryCount: hit.agentCount,
+							totalCount: hit.autoCount + hit.userCount + hit.cueCount + hit.agentCount,
 						},
 					};
 				}
@@ -480,6 +586,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					autoCount: agg.autoCount,
 					userCount: agg.userCount,
 					cueCount: agg.cueCount,
+					agentCount: agg.agentCount,
 					hostCounts: agg.hostCounts,
 					computedAt: Date.now(),
 				});
@@ -493,6 +600,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					autoCount: agg.autoCount,
 					userCount: agg.userCount,
 					cueCount: agg.cueCount,
+					agentCount: agg.agentCount,
 					hostCounts: agg.hostCounts,
 					cached: false,
 					stats: {
@@ -501,7 +609,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
 						cueCount: agg.cueCount,
-						totalCount: agg.autoCount + agg.userCount + agg.cueCount,
+						agentEntryCount: agg.agentCount,
+						totalCount: agg.autoCount + agg.userCount + agg.cueCount + agg.agentCount,
 					},
 				};
 			}
@@ -578,6 +687,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				let autoCount = 0;
 				let userCount = 0;
 				let cueCount = 0;
+				let agentEntryCount = 0;
 				let successCount = 0;
 				let failureCount = 0;
 				let totalElapsedMs = 0;
@@ -597,6 +707,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						if (entry.type === 'AUTO') autoCount++;
 						else if (entry.type === 'USER') userCount++;
 						else if (entry.type === 'CUE') cueCount++;
+						else if (entry.type === 'AGENT') agentEntryCount++;
 
 						// Only explicit booleans count; a missing success is neither.
 						if (entry.success === true) successCount++;
@@ -638,6 +749,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					auto: b.auto,
 					user: b.user,
 					cue: b.cue,
+					agent: b.agent,
 				}));
 
 				const perAgent = Array.from(perAgentMap.values()).sort(
@@ -660,6 +772,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					autoCount,
 					userCount,
 					cueCount,
+					agentEntryCount,
 					successCount,
 					failureCount,
 					successRate,
@@ -705,6 +818,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					sessionNameMap: buildSessionNameMap(),
 					lookbackDays: options.lookbackDays,
 					basePrompt: getPrompt('director-notes'),
+					idealEndState: getConfiguredIdealEndState(),
 				});
 
 				if (!prompt) {
@@ -766,17 +880,42 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						completionReason: result.completionReason,
 					});
 
-					// Parse the raw output into the structured narrative for Rich Mode.
-					// `synopsis` stays the verbatim raw string (Plain Mode + copy/save
-					// depend on that). A parse failure is NOT a synopsis failure: we
-					// still return success with the raw text and a populated
-					// `narrativeError` so the renderer can show an overt error while
-					// keeping the raw output reachable.
+					// Parse the raw output into the structured narrative every reading
+					// surface renders. `synopsis` stays the verbatim raw string.
+					//
+					// Shape decides what a failed parse MEANS. The Director's Notes prompt
+					// is a user-editable setting persisted to userData, so a profile can
+					// hold a prompt written against the markdown contract while this build
+					// expects JSON. Prose is not a broken narrative - the agent obeyed the
+					// prompt it was given - so it ships with neither field and the reading
+					// surfaces render it as markdown. Only JSON-shaped output that yields
+					// nothing usable is reported as an error, and even then a best-effort
+					// salvage runs first: a run costs minutes, so a cut-off response should
+					// still be readable.
 					const parsed = parseDirectorNotesNarrative(synopsis);
-					if (!parsed.ok) {
+					let narrativeFields: Partial<SynopsisResult>;
+					if (parsed.ok) {
+						narrativeFields = { narrative: parsed.narrative };
+					} else if (!looksLikeStructuredOutput(synopsis)) {
+						// Not a broken narrative - prose. See the shape note above.
+						logger.info('Synopsis is prose, not a structured narrative', LOG_CONTEXT, {
+							responseLength: synopsis.length,
+						});
+						narrativeFields = {};
+					} else {
+						const recovered = recoverDirectorNotesNarrative(synopsis);
 						logger.warn('Synopsis narrative parse failed', LOG_CONTEXT, {
 							narrativeError: parsed.error,
+							recovered: recovered.ok,
+							recoveryReason: recovered.ok ? recovered.reason : undefined,
 						});
+						narrativeFields = recovered.ok
+							? {
+									narrative: recovered.narrative,
+									narrativeError: parsed.error,
+									narrativeRecovery: recovered.reason,
+								}
+							: { narrativeError: parsed.error };
 					}
 
 					return {
@@ -788,7 +927,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							entryCount,
 							durationMs: result.durationMs,
 						},
-						...(parsed.ok ? { narrative: parsed.narrative } : { narrativeError: parsed.error }),
+						...narrativeFields,
 					};
 				} catch (err) {
 					const errorMsg = err instanceof Error ? err.message : String(err);

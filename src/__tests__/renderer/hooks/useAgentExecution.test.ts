@@ -253,6 +253,131 @@ describe('useAgentExecution', () => {
 		await spawnPromise;
 	});
 
+	describe('per-run model/effort overrides', () => {
+		// The Auto Run spawn path has no active tab, so a run-scoped override
+		// simply has to win over the session's configured model/effort. Nothing
+		// is written back to the session: the override dies with the run.
+		const renderExecution = (session: Session) => {
+			const sessionsRef = { current: [session] };
+			return renderHook(() =>
+				useAgentExecution({
+					activeSessionId: session.id,
+					sessionsRef,
+					setSessions: vi.fn(),
+					processQueuedItemRef: { current: null },
+					setFlashNotification: vi.fn(),
+					setSuccessFlashNotification: vi.fn(),
+				})
+			);
+		};
+
+		it('lets modelOverride/effortOverride win over the session values', async () => {
+			const session = createMockSession({
+				state: 'busy',
+				customModel: 'session-model',
+				customEffort: 'low',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+					modelOverride: 'run-model',
+					effortOverride: 'high',
+				}
+			);
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+			expect(spawnConfig.sessionCustomModel).toBe('run-model');
+			expect(spawnConfig.sessionCustomEffort).toBe('high');
+
+			act(() => {
+				onExitHandler?.(spawnConfig.sessionId as string);
+			});
+			await spawnPromise;
+
+			// The override is spawn-scoped only, never persisted back.
+			expect(session.customModel).toBe('session-model');
+			expect(session.customEffort).toBe('low');
+		});
+
+		it('keeps the session values when no overrides are supplied', async () => {
+			const session = createMockSession({
+				state: 'busy',
+				customModel: 'session-model',
+				customEffort: 'low',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+			expect(spawnConfig.sessionCustomModel).toBe('session-model');
+			expect(spawnConfig.sessionCustomEffort).toBe('low');
+
+			act(() => {
+				onExitHandler?.(spawnConfig.sessionId as string);
+			});
+			await spawnPromise;
+		});
+
+		it('falls back per-field when only one override is set', async () => {
+			const session = createMockSession({
+				state: 'busy',
+				customModel: 'session-model',
+				customEffort: 'low',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+					modelOverride: 'run-model',
+				}
+			);
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+			expect(spawnConfig.sessionCustomModel).toBe('run-model');
+			expect(spawnConfig.sessionCustomEffort).toBe('low');
+
+			act(() => {
+				onExitHandler?.(spawnConfig.sessionId as string);
+			});
+			await spawnPromise;
+		});
+	});
+
 	it('queues the next item and logs queued messages', async () => {
 		const queuedItem: QueuedItem = {
 			id: 'queued-1',

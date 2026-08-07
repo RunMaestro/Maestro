@@ -76,6 +76,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetSettingsCallback = vi.fn();
 			setSetSettingCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();
+			broadcastSettingsChanged = vi.fn();
 			setCreateGroupCallback = vi.fn();
 			setRenameGroupCallback = vi.fn();
 			setDeleteGroupCallback = vi.fn();
@@ -182,6 +183,7 @@ import {
 	type WebServerFactoryDependencies,
 } from '../../../main/web-server/web-server-factory';
 import { WebServer } from '../../../main/web-server/WebServer';
+import { buildWebSettingsSnapshot } from '../../../main/web-server/web-settings-snapshot';
 import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
@@ -1610,6 +1612,506 @@ describe('web-server/web-server-factory', () => {
 				expect.stringContaining('getCueActivityLog dependency not available'),
 				'WebServer'
 			);
+		});
+	});
+
+	// Smoke tests added during the web-server-factory.ts -> callbacks/*.ts
+	// decomposition (Phase 6 refactoring). These domains had zero behavior
+	// coverage before the split - only the vi.fn() mock stub above kept
+	// createWebServer() from throwing. Each test proves the registered
+	// callback is the REAL implementation (calls webContents.send with the
+	// right channel), not a silently-dropped no-op - the one failure mode
+	// tsc and the completeness diff can't catch on their own.
+	describe('queueCallbacks smoke', () => {
+		it('setEnqueueCommandCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setEnqueueCommandCallback.mock.calls[0][0];
+
+			void callback('session-1', 'do the thing', 'ai', 'tab-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:enqueueCommand',
+				'session-1',
+				'do the thing',
+				expect.any(String),
+				'ai',
+				'tab-1',
+				undefined,
+				undefined
+			);
+		});
+
+		it('setListQueueCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setListQueueCallback.mock.calls[0][0];
+
+			void callback('session-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:listQueue',
+				'session-1',
+				expect.any(String)
+			);
+		});
+
+		it('setRemoveQueueItemCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setRemoveQueueItemCallback.mock.calls[0][0];
+
+			void callback('session-1', 'item-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:removeQueueItem',
+				'session-1',
+				'item-1',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('gistCallbacks smoke', () => {
+		it('setCreateGistCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateGistCallback.mock.calls[0][0];
+
+			void callback('session-1', 'a description', true);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createGist',
+				'session-1',
+				'a description',
+				true,
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('contextOpsCallbacks smoke', () => {
+		it('setMergeContextCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setMergeContextCallback.mock.calls[0][0];
+
+			void callback('source-1', 'target-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:mergeContext',
+				'source-1',
+				'target-1',
+				expect.any(String)
+			);
+		});
+
+		it('setTransferContextCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setTransferContextCallback.mock.calls[0][0];
+
+			void callback('source-1', 'target-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:transferContext',
+				'source-1',
+				'target-1',
+				expect.any(String)
+			);
+		});
+
+		it('setSummarizeContextCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSummarizeContextCallback.mock.calls[0][0];
+
+			void callback('session-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:summarizeContext',
+				'session-1',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('usageAchievementsCallbacks smoke', () => {
+		it('setGetUsageDashboardCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetUsageDashboardCallback.mock.calls[0][0];
+
+			void callback('week');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:getUsageDashboard',
+				'week',
+				expect.any(String)
+			);
+		});
+
+		it('setGetAchievementsCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetAchievementsCallback.mock.calls[0][0];
+
+			void callback();
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:getAchievements',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('autoRunConfigCallbacks smoke', () => {
+		it('setConfigureAutoRunCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setConfigureAutoRunCallback.mock.calls[0][0];
+
+			void callback('session-1', { enabled: true });
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:configureAutoRun',
+				'session-1',
+				{ enabled: true },
+				expect.any(String)
+			);
+		});
+
+		it('setGetAutoRunDocsCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetAutoRunDocsCallback.mock.calls[0][0];
+
+			void callback('session-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:getAutoRunDocs',
+				'session-1',
+				expect.any(String)
+			);
+		});
+
+		it('setSaveAutoRunDocCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSaveAutoRunDocCallback.mock.calls[0][0];
+
+			void callback('session-1', 'doc.md', 'content');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:saveAutoRunDoc',
+				'session-1',
+				'doc.md',
+				'content',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('sessionCrudCallbacks smoke', () => {
+		it('setCreateSessionCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateSessionCallback.mock.calls[0][0];
+
+			void callback('name', 'claude-code', '/cwd', null, {});
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createSession',
+				'name',
+				'claude-code',
+				'/cwd',
+				null,
+				{},
+				expect.any(String)
+			);
+		});
+
+		it('setUpdateSessionConfigCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setUpdateSessionConfigCallback.mock.calls[0][0];
+
+			void callback('session-1', { nudge: 'be careful' });
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:updateSessionConfig',
+				'session-1',
+				{ nudge: 'be careful' },
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('groupCrudCallbacks smoke', () => {
+		it('setCreateGroupCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateGroupCallback.mock.calls[0][0];
+
+			void callback('My Group', '🚀', null);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createGroup',
+				'My Group',
+				'🚀',
+				null,
+				expect.any(String)
+			);
+		});
+
+		it('setMoveSessionToGroupCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setMoveSessionToGroupCallback.mock.calls[0][0];
+
+			void callback('session-1', 'group-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:moveSessionToGroup',
+				'session-1',
+				'group-1',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('gitCallbacks smoke', () => {
+		it('setGetGitStatusCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetGitStatusCallback.mock.calls[0][0];
+
+			void callback('session-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:getGitStatus',
+				'session-1',
+				expect.any(String)
+			);
+		});
+
+		it('setGetGitDiffCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetGitDiffCallback.mock.calls[0][0];
+
+			void callback('session-1', 'file.ts');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:getGitDiff',
+				'session-1',
+				'file.ts',
+				expect.any(String)
+			);
+		});
+
+		it('setGetGitBranchesForSessionCallback throws when the session is not found', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetGitBranchesForSessionCallback.mock.calls[0][0];
+
+			// Proves the real (not silently-dropped) implementation runs: the
+			// registered callback does a real sessionsStore lookup and throws
+			// its own specific error, rather than the CallbackRegistry's
+			// generic empty-default fallback.
+			await expect(callback('no-such-session')).rejects.toThrow('Session not found');
+		});
+	});
+
+	describe('groupChatCallbacks smoke', () => {
+		it('setStartGroupChatCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setStartGroupChatCallback.mock.calls[0][0];
+
+			void callback('topic', ['agent-1', 'agent-2']);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:startGroupChat',
+				'topic',
+				['agent-1', 'agent-2'],
+				expect.any(String)
+			);
+		});
+
+		it('setSendGroupChatMessageCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSendGroupChatMessageCallback.mock.calls[0][0];
+
+			void callback('chat-1', 'hello');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:sendGroupChatMessage',
+				'chat-1',
+				'hello',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('directorNotesCallbacks smoke', () => {
+		it('setGenerateDirectorNotesSynopsisCallback runs the real implementation', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getProcessManager: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setGenerateDirectorNotesSynopsisCallback.mock.calls[0][0];
+
+			// Proves the real implementation runs (checks processManager and
+			// returns its own specific error shape) rather than silently
+			// never having been registered at all.
+			const result = await callback(7, 'claude-code');
+
+			expect(result).toEqual({
+				success: false,
+				synopsis: '',
+				error: 'Process manager not available',
+			});
+		});
+	});
+
+	describe('autoRunControlCallbacks smoke', () => {
+		it('setStopAutoRunCallback forwards to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setStopAutoRunCallback.mock.calls[0][0];
+
+			void callback('session-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith('remote:stopAutoRun', 'session-1');
+		});
+
+		it('setResetAutoRunDocTasksCallback forwards to the renderer via the shared remoteRequest', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setResetAutoRunDocTasksCallback.mock.calls[0][0];
+
+			void callback('session-1', 'doc.md');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:resetAutoRunDocTasks',
+				'session-1',
+				'doc.md',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('playbookCallbacks smoke', () => {
+		it('setListPlaybooksCallback forwards to the renderer via the shared remoteRequest', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setListPlaybooksCallback.mock.calls[0][0];
+
+			void callback('session-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:listPlaybooks',
+				'session-1',
+				expect.any(String)
+			);
+		});
+
+		it('setDeletePlaybookCallback forwards to the renderer via the shared remoteRequest', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDeletePlaybookCallback.mock.calls[0][0];
+
+			void callback('session-1', 'playbook-1');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:deletePlaybook',
+				'session-1',
+				'playbook-1',
+				expect.any(String)
+			);
+		});
+	});
+
+	describe('settingsCallbacks smoke', () => {
+		it('setGetSettingsCallback returns exactly buildWebSettingsSnapshot(settingsStore), so the read and broadcast paths can never silently drift apart', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetSettingsCallback.mock.calls[0][0];
+
+			const settings = callback();
+
+			expect(settings).toEqual(buildWebSettingsSnapshot(mockSettingsStore));
+		});
+
+		it('setSetSettingCallback broadcasts via the live server instance on success - the one callback in this file that closes over `server` at call time, not just registration time', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSetSettingCallback.mock.calls[0][0];
+
+			const resultPromise = callback('fontSize', 16);
+
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:setSetting'
+			);
+			expect(request).toEqual(['remote:setSetting', 'fontSize', 16, expect.any(String)]);
+			const responseChannel = request?.[3] as string;
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+			responseListener?.({} as never, true);
+
+			await expect(resultPromise).resolves.toBe(true);
+			expect(server.broadcastSettingsChanged).toHaveBeenCalledWith(
+				expect.objectContaining({ theme: 'dracula' })
+			);
+		});
+
+		it('setSetSettingCallback does NOT broadcast when the renderer reports failure', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setSetSettingCallback.mock.calls[0][0];
+
+			const resultPromise = callback('fontSize', 16);
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:setSetting'
+			);
+			const responseChannel = request?.[3] as string;
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === responseChannel)?.[1];
+			responseListener?.({} as never, false);
+
+			await expect(resultPromise).resolves.toBe(false);
+			expect(server.broadcastSettingsChanged).not.toHaveBeenCalled();
+		});
+
+		it('setGetGroupsCallback derives sessionIds from the sessions store', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGetGroupsCallback.mock.calls[0][0];
+
+			const groups = callback();
+
+			expect(groups).toEqual([expect.objectContaining({ id: 'group-1', name: 'Test Group' })]);
+			expect(Array.isArray(groups[0].sessionIds)).toBe(true);
+		});
+	});
+
+	describe('tabCallbacks smoke', () => {
+		it('setNewTabCallback mints a distinct response channel per call, so overlapping requests cannot collide', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setNewTabCallback.mock.calls[0][0];
+
+			void callback('session-1');
+			void callback('session-1');
+
+			const newTabSends = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.filter(
+				(call) => call[0] === 'remote:newTab'
+			);
+			expect(newTabSends).toHaveLength(2);
+			const [firstChannel, secondChannel] = newTabSends.map((call) => call[2] as string);
+			expect(firstChannel).not.toBe(secondChannel);
 		});
 	});
 });

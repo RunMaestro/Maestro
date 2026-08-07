@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { LogEntry, Session, ToolType } from '../../types';
+import type { HistoryEntry, LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
@@ -283,6 +283,69 @@ interface TrackedRequest {
 }
 
 /**
+ * Pure: build the History entry for a finished consult. Exported for unit
+ * testing; `recordConsultHistory` resolves the store state and hands the pieces
+ * in, so every derivation rule below is verifiable without IPC or a store.
+ */
+export function buildConsultHistoryEntry(opts: {
+	entryId: string;
+	timestamp: number;
+	/** Display name of the agent that did the consulting. */
+	sourceAgentName: string;
+	/** Short subject derived from the question; may be empty. */
+	subject: string;
+	/** Accumulated response text (empty on a consult that failed before answering). */
+	accumulated: string;
+	/** Failure reason, when the consult errored. */
+	error?: string;
+	/** The target agent's provider session id, when one was captured. */
+	agentSessionId?: string;
+	/** Fallback label when there is no subject. */
+	consultTabName?: string | null;
+	targetName?: string | null;
+	historySessionId: string;
+	projectPath: string;
+}): HistoryEntry {
+	// Summary names WHO consulted and ABOUT WHAT; the pill carries the subject so
+	// multiple consults from the same agent are distinguishable at a glance. The
+	// consult TAB stays named after the source agent (it's the reused container
+	// for every consult from that tab) - only this per-consult entry gets the subject.
+	const summary = opts.subject
+		? `Consulted by ${opts.sourceAgentName}: ${opts.subject}`
+		: `Consulted by ${opts.sourceAgentName}`;
+	const sessionName = opts.subject
+		? `↩ ${opts.subject}`
+		: (opts.consultTabName ?? opts.targetName ?? undefined) || undefined;
+
+	// A failed consult accumulates nothing, so the raw text alone would leave the
+	// detail view blank behind a red X. `error` is the only record of WHY, and it
+	// lives on the chunk - not in `accumulated` - so fold it in here the same way
+	// the inline bubble does (partial text first, then the reason).
+	const failureNote = opts.error ? `⚠️ Consult failed: ${opts.error}` : '';
+	const detailFallback = [opts.accumulated, failureNote].filter(Boolean).join('\n\n');
+
+	return {
+		id: opts.entryId,
+		// A consult is an ordinary message that happened to be proxied in from
+		// another agent - NOT automation. Logging it as AUTO made it render as an
+		// Auto Run task and inflated the Auto Run counts.
+		type: 'AGENT',
+		timestamp: opts.timestamp,
+		summary,
+		// Raw response (or the failure reason) is the immediate fallback for the
+		// detail view; replaced with a condensed summary by enrichConsultDetail
+		// once it returns.
+		fullResponse: detailFallback || undefined,
+		agentSessionId: opts.agentSessionId,
+		sessionId: opts.historySessionId,
+		sessionName,
+		projectPath: opts.projectPath,
+		sourceAgentName: opts.sourceAgentName,
+		success: !opts.error,
+	};
+}
+
+/**
  * Record a durable History entry on the TARGET agent for a finished consult,
  * attributed to the calling agent (so the target's History shows who consulted
  * it) AND what it was consulted about. Best-effort: a failure here never
@@ -309,37 +372,26 @@ function recordConsultHistory(
 		state.sessions.find((s) => s.id === chunk.sourceSessionId)?.name ??
 		'another agent';
 	const consultTab = target.aiTabs.find((t) => t.id === tracked.targetTabId);
-	const subject = tracked.subject?.trim() || '';
-
-	// List body names WHO consulted and ABOUT WHAT; the pill carries the subject
-	// so multiple consults from the same agent are distinguishable at a glance.
-	// The actual consult TAB stays named after the source agent (it's the reused
-	// container for every consult from that tab) - only this per-consult entry
-	// gets the subject.
-	const summary = subject
-		? `Consulted by ${sourceAgentName}: ${subject}`
-		: `Consulted by ${sourceAgentName}`;
-	const sessionName = subject ? `↩ ${subject}` : (consultTab?.name ?? target.name ?? undefined);
 
 	const entryId = generateId();
 	const historySessionId = chunk.targetSessionId;
 
 	void window.maestro.history
-		.add({
-			id: entryId,
-			type: 'AUTO',
-			timestamp: Date.now(),
-			summary,
-			// Raw response is the immediate fallback for the detail view; replaced
-			// with a condensed summary by enrichConsultDetail once it returns.
-			fullResponse: tracked.accumulated || undefined,
-			agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
-			sessionId: historySessionId,
-			sessionName,
-			projectPath: target.cwd,
-			sourceAgentName,
-			success: !chunk.error,
-		})
+		.add(
+			buildConsultHistoryEntry({
+				entryId,
+				timestamp: Date.now(),
+				sourceAgentName,
+				subject: tracked.subject?.trim() || '',
+				accumulated: tracked.accumulated,
+				error: chunk.error,
+				agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
+				consultTabName: consultTab?.name,
+				targetName: target.name,
+				historySessionId,
+				projectPath: target.cwd,
+			})
+		)
 		.catch((err) => {
 			logger.warn('[useCrossAgentDispatch] Failed to record consult history', undefined, err);
 		});

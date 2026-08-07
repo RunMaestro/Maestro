@@ -37,6 +37,7 @@ function panel(over: Partial<PanelContribution> = {}): PanelContribution {
 		title: 'Acme Board',
 		entry: 'board.html',
 		placement: 'left',
+		size: 'default',
 		...over,
 	};
 }

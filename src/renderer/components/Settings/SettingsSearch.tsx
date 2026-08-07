@@ -170,7 +170,7 @@ export function SettingsSearchInput({
 						<span style={{ color: 'transparent' }}>Search settings...</span>
 						<kbd
 							className="text-[10px] px-1.5 py-0.5 rounded font-mono opacity-40"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							{formatShortcutKeys(['Meta', 'f'])}
 						</kbd>
@@ -274,10 +274,7 @@ export function SettingsSearchResults({
 												{highlightMatch(setting.label, query, theme)}
 											</div>
 											{setting.description && (
-												<div
-													className="text-xs mt-0.5 opacity-60"
-													style={{ color: theme.colors.textDim }}
-												>
+												<div className="text-xs mt-0.5 opacity-70">
 													{highlightMatch(setting.description, query, theme)}
 												</div>
 											)}

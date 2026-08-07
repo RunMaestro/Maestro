@@ -257,6 +257,69 @@ function resetOversizedCopilotJsonBuffer(sessionId: string, managedProcess: Mana
 }
 
 /**
+ * Push a corrected context window for a local omp process whose catalog prime
+ * landed AFTER its first usage event was already emitted with the fallback
+ * window.
+ *
+ * Without this the gauge stays at `FALLBACK_CONTEXT_WINDOW` until the next turn
+ * produces a usage event, which on a slow (packaged, cold) prime is the whole
+ * first turn. Called from the spawn handler once the background prime settles.
+ *
+ * No-ops (returning false) when the process has exited, was replaced by a
+ * respawn with a different catalog identity, has nothing pending, or the model
+ * still does not resolve. The pending payload is cleared on a successful push,
+ * so a second call can never emit twice.
+ *
+ * @returns true when a corrected `usage` event was emitted.
+ */
+export function pushResolvedOmpContextWindow(
+	processes: Map<string, ManagedProcess>,
+	emitter: EventEmitter,
+	sessionId: string,
+	catalogKey: string
+): boolean {
+	const managedProcess = processes.get(sessionId);
+	if (!managedProcess || managedProcess.toolType !== 'omp' || managedProcess.sshRemoteId) {
+		return false;
+	}
+	// Guard against a respawn having taken over this sessionId with a different
+	// binary/env identity while the prime was still running.
+	if (managedProcess.ompModelCatalogKey !== catalogKey) {
+		return false;
+	}
+	const pending = managedProcess.pendingOmpUsagePush;
+	if (!pending) {
+		return false;
+	}
+	const resolved = getOmpModelContextWindow(pending.model, catalogKey);
+	if (!resolved || resolved <= 0) {
+		return false;
+	}
+
+	managedProcess.pendingOmpUsagePush = undefined;
+	// Correction-only: the token/cost fields carried in pending.stats were already
+	// counted when the fallback usage event fired for this turn. This correction
+	// re-emits through the ProcessManager EventEmitter, so EVERY on('usage')
+	// consumer sees it - not just the renderer. Zero every token/cost field at the
+	// source so no present or future accumulating consumer can re-add this turn.
+	// Only the context-window fields carry meaning on a correction; the model tag
+	// rides along from pending.stats so same-model window merges still match.
+	emitter.emit('usage', sessionId, {
+		...pending.stats,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0,
+		reasoningTokens: 0,
+		contextWindow: resolved,
+		contextWindowResolved: true,
+		contextWindowCorrectionOnly: true,
+	});
+	return true;
+}
+
+/**
  * Handles stdout data processing for child processes.
  * Extracts session IDs, usage stats, and result data from agent output.
  */
@@ -784,16 +847,23 @@ export class StdoutHandler {
 		// per-agent fallback/config (e.g. so opus's 1M isn't masked by the 200k
 		// default). Local runs only; remotes have their own catalog and keep the
 		// configured/fallback window.
-		if (
-			managedProcess.toolType === 'omp' &&
-			!managedProcess.sshRemoteId &&
-			usage.model &&
-			managedProcess.ompModelCatalogKey
-		) {
-			const resolved = getOmpModelContextWindow(usage.model, managedProcess.ompModelCatalogKey);
+		if (managedProcess.toolType === 'omp' && !managedProcess.sshRemoteId && usage.model) {
+			// Stamp the model this window belongs to so a downstream resolved-window
+			// preservation can't survive a switch to a different omp model.
+			stats.contextWindowModel = usage.model;
+			const resolved = managedProcess.ompModelCatalogKey
+				? getOmpModelContextWindow(usage.model, managedProcess.ompModelCatalogKey)
+				: undefined;
 			if (resolved && resolved > 0) {
 				stats.contextWindow = resolved;
 				stats.contextWindowResolved = true;
+				managedProcess.pendingOmpUsagePush = undefined;
+			} else {
+				// Catalog not primed (or this model missing from it): the stats above
+				// carry the static fallback. Remember them so a prime landing after
+				// the spawn cap can push a corrected window without waiting for the
+				// next turn (see pushResolvedOmpContextWindow).
+				managedProcess.pendingOmpUsagePush = { model: usage.model, stats };
 			}
 		}
 		return stats;

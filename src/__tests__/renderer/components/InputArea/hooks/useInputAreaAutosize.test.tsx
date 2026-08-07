@@ -52,20 +52,35 @@ describe('useInputAreaAutosize', () => {
 		});
 	});
 
-	it('leaves the scroll position untouched when the caret is before the end of the value', async () => {
+	it('leaves the scroll position untouched when the caret is on an earlier line', async () => {
 		const { getByLabelText } = render(
-			<Harness value="hello world" selectionEnd={2} initialScrollTop={42} />
+			<Harness value={'hello\nworld'} selectionEnd={2} initialScrollTop={42} />
 		);
 
 		await waitFor(() => {
 			expect((getByLabelText('input') as HTMLTextAreaElement).style.height).toBe('176px');
 		});
-		// Exercises scrollTextareaToCaretEnd's contract directly: with selectionEnd
-		// before value.length it is a no-op, so the prior scroll position survives the
-		// resize. NOTE: this harness pins selectionEnd via Object.defineProperty. The
+		// Exercises scrollTextareaToCaretEnd's contract directly: with selectionEnd on a
+		// line before the final one it is a no-op, so the prior scroll position survives
+		// the resize. NOTE: this harness pins selectionEnd via Object.defineProperty. The
 		// real deferred @-mention / template flows place their caret in a later rAF, so
 		// they do NOT reach the helper in this mid-text state during the commit-phase
 		// effect (see PR #1294 discussion) - this only documents the helper itself.
+		expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(42);
+	});
+
+	it('leaves the scroll untouched when the caret is mid-way through the final line', async () => {
+		// A final logical line can soft-wrap past the height cap, so a caret before its
+		// trailing characters is not guaranteed to be on the bottom visual row. Snapping
+		// to scrollHeight would scroll that row out of view, so the gate keys off the
+		// true end of the value and this mid-line caret is a no-op.
+		const { getByLabelText } = render(
+			<Harness value={'hello\nworld'} selectionEnd={8} initialScrollTop={42} />
+		);
+
+		await waitFor(() => {
+			expect((getByLabelText('input') as HTMLTextAreaElement).style.height).toBe('176px');
+		});
 		expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(42);
 	});
 

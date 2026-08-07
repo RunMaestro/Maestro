@@ -454,11 +454,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// helper writes the resolved values back into config.worktree when
 				// createPROnCompletion is true; we mirror that result onto batchConfig
 				// below so PR creation downstream sees the correct path/branch.
+				// Per-run model/effort override (CLI `--model` / `--effort`). Spread
+				// only when set so an omitted flag never serializes as an empty string,
+				// which would pin the run to a nonexistent model instead of falling
+				// through to the agent default.
 				const batchConfig: BatchRunConfig = {
 					documents,
 					prompt: config.prompt || DEFAULT_BATCH_PROMPT,
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
+					...(config.model && { model: config.model }),
+					...(config.effort && { effort: config.effort }),
 				};
 
 				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,

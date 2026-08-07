@@ -24,6 +24,8 @@ import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { aiTabFocusFields, focusAiTabInSession } from '../../utils/tabHelpers';
+import { outputSearchKeyFor } from '../../utils/outputSearch';
+import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
 
@@ -101,6 +103,8 @@ export interface UseSessionSwitchCallbacksReturn {
 	handleUtilityFileTabSelect: (tabId: string) => void;
 	/** Preview a file selected from fuzzy file search */
 	handleFileSearchSelect: (file: FlatFileItem) => void;
+	/** Jump to one message in one AI tab, from cross-tab message search */
+	handleCrossTabSearchJump: (target: CrossTabSearchJumpTarget) => void;
 }
 
 // ============================================================================
@@ -298,6 +302,27 @@ export function useSessionSwitchCallbacks(
 		updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
 	}, []);
 
+	// Jump to a specific message from cross-tab search: land on the tab, seed that
+	// tab's Find bar with the same query (so every hit stays highlighted and
+	// next/prev works), and leave a jump request the transcript consumes to scroll
+	// + flash the entry.
+	const handleCrossTabSearchJump = useCallback(
+		({ tabId, logId, query, regex }: CrossTabSearchJumpTarget) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			if (!activeSession) return;
+			updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+
+			const ui = useUIStore.getState();
+			const searchKey = outputSearchKeyFor(activeSession.id, tabId);
+			ui.setOutputSearchQuery(searchKey, query);
+			ui.setOutputSearchRegex(searchKey, regex);
+			ui.setOutputSearchOpen(searchKey, true);
+			ui.setPendingLogJump({ sessionId: activeSession.id, tabId, logId });
+			setActiveFocus('main');
+		},
+		[setActiveFocus]
+	);
+
 	// Switch to a file tab from utility modals
 	const handleUtilityFileTabSelect = useCallback((tabId: string) => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
@@ -329,5 +354,6 @@ export function useSessionSwitchCallbacks(
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
 		handleFileSearchSelect,
+		handleCrossTabSearchJump,
 	};
 }

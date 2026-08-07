@@ -33,8 +33,14 @@ vi.mock('../../../../main/shared-history-manager', () => ({}));
 const mockGetSessionsStore = vi.fn().mockReturnValue({
 	get: vi.fn().mockReturnValue([]),
 });
+// Settings are read at synopsis time for the optional Ideal End State. Default
+// to an empty store so the unmodified prompt is what these tests assert against.
+const mockGetSettingsStore = vi.fn().mockReturnValue({
+	get: vi.fn().mockReturnValue(undefined),
+});
 vi.mock('../../../../main/stores', () => ({
 	getSessionsStore: (...args: any[]) => mockGetSessionsStore(...args),
+	getSettingsStore: (...args: any[]) => mockGetSettingsStore(...args),
 }));
 
 // Mock the logger
@@ -658,6 +664,74 @@ describe('director-notes IPC handlers', () => {
 			expect(groomCall.prompt).not.toContain('"Fixed a bug"');
 		});
 
+		// The Ideal End State is read from settings at generation time rather than
+		// passed down from the renderer, so the web/CLI synopsis paths get it too.
+		// These two specs pin that wiring: the OFF case is the one that matters most,
+		// since every other synopsis test asserts against the unmodified prompt.
+		describe('ideal end state from settings', () => {
+			// `vi.clearAllMocks()` in the outer beforeEach clears call records but NOT
+			// implementations, so a store stubbed here would leak an end state into
+			// every later synopsis spec. Put the empty default back explicitly.
+			afterEach(() => {
+				mockGetSettingsStore.mockReturnValue({ get: vi.fn().mockReturnValue(undefined) });
+			});
+
+			async function promptForSettings(directorNotesSettings: unknown): Promise<string> {
+				const { groomContext } = await import('../../../../main/utils/context-groomer');
+				vi.mocked(groomContext).mockResolvedValue({
+					response: '# Synopsis',
+					durationMs: 1000,
+					completionReason: 'process exited with code 0',
+				});
+				mockGetSettingsStore.mockReturnValue({
+					get: vi.fn((key: string) =>
+						key === 'directorNotesSettings' ? directorNotesSettings : undefined
+					),
+				});
+
+				vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+				vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+					'/data/history/session-1.json'
+				);
+
+				const handler = handlers.get('director-notes:generateSynopsis');
+				await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+				// Last call, not first: a single spec may build more than one prompt.
+				const calls = vi.mocked(groomContext).mock.calls;
+				return calls[calls.length - 1][0].prompt;
+			}
+
+			it('injects the configured end state into the synopsis prompt', async () => {
+				const prompt = await promptForSettings({
+					idealEndState: 'Ship v2 of the ingest pipeline.',
+				});
+
+				expect(prompt).toContain('Ship v2 of the ingest pipeline.');
+				expect(prompt).toContain('## Ideal End State');
+				expect(prompt).toContain('`kind` set to `"progress"`');
+				// The manifest is still there: the end state prioritizes, never filters.
+				expect(prompt).toContain('/data/history/session-1.json');
+			});
+
+			// The prompt embeds a `Date.now()`-derived cutoff, so two builds a
+			// millisecond apart differ on that one line. Drop it: this comparison is
+			// about the end state, not about the clock.
+			const withoutCutoff = (prompt: string) =>
+				prompt
+					.split('\n')
+					.filter((line) => !line.startsWith('Timestamp cutoff:'))
+					.join('\n');
+
+			it('leaves the prompt untouched when the setting is absent or blank', async () => {
+				const absent = await promptForSettings(undefined);
+				const blank = await promptForSettings({ idealEndState: '   \n  ' });
+
+				expect(withoutCutoff(blank)).toBe(withoutCutoff(absent));
+				expect(absent).not.toContain('Ideal End State');
+			});
+		});
+
 		it('should include all sessions with history files in the prompt manifest', async () => {
 			const { groomContext } = await import('../../../../main/utils/context-groomer');
 			vi.mocked(groomContext).mockResolvedValue({
@@ -908,7 +982,10 @@ describe('director-notes IPC handlers', () => {
 			expect(result.narrative.sections[0].items[0].agent).toBe('alpha');
 		});
 
-		it('returns success with narrativeError (raw preserved) when output is not valid narrative JSON', async () => {
+		it('treats prose output as markdown, with no narrativeError', async () => {
+			// The prompt is a user setting: a profile holding a markdown-contract
+			// prompt makes the agent return prose. That is not a broken narrative,
+			// and flagging it would show a parse error where a report should be.
 			const { groomContext } = await import('../../../../main/utils/context-groomer');
 			vi.mocked(groomContext).mockResolvedValue({
 				response: '# Synopsis\n\nThis is markdown, not JSON.',
@@ -924,9 +1001,31 @@ describe('director-notes IPC handlers', () => {
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
 
-			// A parse failure is NOT a synopsis failure: still success, raw kept.
 			expect(result.success).toBe(true);
 			expect(result.synopsis).toBe('# Synopsis\n\nThis is markdown, not JSON.');
+			expect(result.narrative).toBeUndefined();
+			expect(result.narrativeError).toBeUndefined();
+		});
+
+		it('returns narrativeError when JSON-shaped output fails the schema', async () => {
+			// Shaped like the narrative but wrong: the agent really did botch it,
+			// so the user should see the failure rather than a wall of JSON.
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '{ "version": 99, "sections": "nope" }',
+				durationMs: 1000,
+				completionReason: 'process exited with code 0',
+			});
+
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(true);
 			expect(result.narrative).toBeUndefined();
 			expect(result.narrativeError).toBeTypeOf('string');
 			expect(result.narrativeError.length).toBeGreaterThan(0);

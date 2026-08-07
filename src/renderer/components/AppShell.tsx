@@ -18,6 +18,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
+import { MediaPlaybackHost } from './MediaPlayback';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
@@ -311,6 +312,11 @@ export function AppShell({
 
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
+			{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
+			    Owns every <audio>/<video> element so playback survives switching
+			    tabs and agents. Each element is parked over the MediaViewportSlot
+			    its file preview tab renders. See MediaPlaybackHost. */}
+			<MediaPlaybackHost theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
 			{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}
 			<ContextTimelinePanel theme={theme} />

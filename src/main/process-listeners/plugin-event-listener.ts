@@ -153,23 +153,31 @@ export function setupPluginEventListener(
 	// Token/cost usage - counts only. Also accumulated per session for the
 	// terminal agent.completed payload (cleared on exit).
 	processManager.on('usage', (sessionId: string, usage: UsageStats) => {
-		const totals = usageBySession.get(sessionId) ?? {
-			inputTokens: 0,
-			outputTokens: 0,
-			cacheReadInputTokens: 0,
-			cacheCreationInputTokens: 0,
-			reasoningTokens: 0,
-			costSum: 0,
-			lastCost: 0,
-		};
-		totals.inputTokens += usage.inputTokens;
-		totals.outputTokens += usage.outputTokens;
-		totals.cacheReadInputTokens += usage.cacheReadInputTokens;
-		totals.cacheCreationInputTokens += usage.cacheCreationInputTokens;
-		totals.reasoningTokens += usage.reasoningTokens ?? 0;
-		totals.costSum += usage.totalCostUsd;
-		totals.lastCost = usage.totalCostUsd;
-		usageBySession.set(sessionId, totals);
+		// A context-window correction replays an already-counted turn's tokens/cost
+		// purely to refresh the resolved window. The source
+		// (pushResolvedOmpContextWindow) already zeroes those fields; this guard is
+		// belt-and-braces so an accumulating consumer here never double-counts even if
+		// a future emitter forgets to zero. Skip the totals accumulation but still
+		// surface the corrected window on usage.updated below.
+		if (!usage.contextWindowCorrectionOnly) {
+			const totals = usageBySession.get(sessionId) ?? {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+				costSum: 0,
+				lastCost: 0,
+			};
+			totals.inputTokens += usage.inputTokens;
+			totals.outputTokens += usage.outputTokens;
+			totals.cacheReadInputTokens += usage.cacheReadInputTokens;
+			totals.cacheCreationInputTokens += usage.cacheCreationInputTokens;
+			totals.reasoningTokens += usage.reasoningTokens ?? 0;
+			totals.costSum += usage.totalCostUsd;
+			totals.lastCost = usage.totalCostUsd;
+			usageBySession.set(sessionId, totals);
+		}
 
 		emit({
 			topic: 'usage.updated',

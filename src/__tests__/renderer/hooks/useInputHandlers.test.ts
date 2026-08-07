@@ -465,7 +465,9 @@ describe('useInputHandlers', () => {
 			});
 
 			expect(renderCount).toBeGreaterThan(initialRenderCount);
-			expect(mockGetTabCompletionSuggestions).toHaveBeenCalledWith('git status', 'all');
+			// Terminal mode: commandMode=false, so completion resolves against
+			// shellCwd and the shell history rather than the agent's cwd.
+			expect(mockGetTabCompletionSuggestions).toHaveBeenCalledWith('git status', 'all', false);
 		});
 	});
 

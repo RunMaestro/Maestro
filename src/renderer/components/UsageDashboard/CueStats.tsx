@@ -45,6 +45,7 @@ import {
 } from './ChartSkeletons';
 import { MetricCard } from './SummaryCards';
 import { PercentilesCard } from './PercentilesCard';
+import { computeAxisLabelIndices } from './chartUtils';
 
 interface CueStatsProps {
 	timeRange: StatsTimeRange;
@@ -187,6 +188,8 @@ const TimeSeriesChart = memo(function TimeSeriesChart({
 	theme: Theme;
 	colorBlindMode: boolean;
 }) {
+	const xLabelIndices = useMemo(() => computeAxisLabelIndices(buckets.length), [buckets.length]);
+
 	const chartWidth = 600;
 	const chartHeight = 220;
 	const padding = { top: 20, right: 50, bottom: 40, left: 50 };
@@ -381,9 +384,7 @@ const TimeSeriesChart = memo(function TimeSeriesChart({
 
 					{/* X-axis labels (every Nth bucket) */}
 					{buckets.map((b, idx) => {
-						const interval =
-							buckets.length > 14 ? Math.ceil(buckets.length / 7) : buckets.length > 7 ? 2 : 1;
-						if (idx % interval !== 0 && idx !== buckets.length - 1) return null;
+						if (!xLabelIndices.has(idx)) return null;
 						return (
 							<text
 								key={`x-${b.bucketStartMs}`}

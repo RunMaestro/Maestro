@@ -50,6 +50,13 @@ describe('P0 host RPC contract additions', () => {
 		}
 	});
 
+	it('maps sessions.focus to its own narrow navigation capability', () => {
+		// Deliberately NOT tabs:manage: focusing must not require the power to
+		// create or destroy the user's tabs.
+		expect(HOST_METHOD_CAPABILITY['sessions.focus']).toBe('sessions:focus');
+		expect(HOST_METHODS).toContain('sessions.focus');
+	});
+
 	it('maps the net:connect methods to the net:connect capability', () => {
 		expect(HOST_METHOD_CAPABILITY['net.connect']).toBe('net:connect');
 		expect(HOST_METHOD_CAPABILITY['net.send']).toBe('net:connect');

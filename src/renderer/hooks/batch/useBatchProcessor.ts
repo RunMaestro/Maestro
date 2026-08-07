@@ -16,7 +16,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
-import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
+import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 // Decomposed internal hooks (see ./internal/)
 import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
@@ -61,7 +61,9 @@ export interface UseBatchProcessorProps {
 	onSpawnAgent: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
+		options?: SpawnAgentRunOverrides
 	) => Promise<{
 		success: boolean;
 		response?: string;

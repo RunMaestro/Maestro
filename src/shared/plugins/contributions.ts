@@ -181,6 +181,15 @@ export interface CommandContribution {
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /**
+ * How much room a `modal`-placement panel takes. `default` is the historic fixed
+ * dialog chrome; `full` renders edge-to-edge (a summonable full-window overlay).
+ * Presentation only - it never changes WHERE a panel routes, which is why it is
+ * a separate optional field rather than a sixth `PanelPlacement` value that every
+ * routing switch would have to grow a case for. Ignored by docked placements.
+ */
+export type PanelSize = 'default' | 'full';
+
+/**
  * A UI panel a (tier-1) plugin contributes. Rendered in a locked-down sandboxed
  * iframe (no same-origin, no top navigation) in the reserved plugin modal band,
  * or docked into a UI slot when `placement` is set.
@@ -195,6 +204,8 @@ export interface PanelContribution {
 	entry: string;
 	/** Where the panel docks. Defaults to `modal`. */
 	placement: PanelPlacement;
+	/** Chrome size for `modal` panels. Defaults to `default`. */
+	size: PanelSize;
 }
 
 /**
@@ -1423,6 +1434,26 @@ function parsePanelPlacement(
 	return 'modal';
 }
 
+const PANEL_SIZES: readonly PanelSize[] = ['default', 'full'];
+
+/** Parse an optional panel size, defaulting to `default`; an invalid value is an
+ * error but never drops the panel (it renders at the safe default size). Absent
+ * is NOT an error, so every manifest written before this field behaves exactly
+ * as it did - which matters because bundled plugins are signature-pinned. */
+function parsePanelSize(
+	pluginId: string,
+	localId: string,
+	raw: unknown,
+	errors: string[]
+): PanelSize {
+	if (raw === undefined) return 'default';
+	if (typeof raw === 'string' && (PANEL_SIZES as readonly string[]).includes(raw)) {
+		return raw as PanelSize;
+	}
+	errors.push(`[${pluginId}] panel "${localId}" has an invalid size; defaulting to default`);
+	return 'default';
+}
+
 function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelContribution | null {
 	if (!isPlainObject(raw)) {
 		errors.push(`[${pluginId}] a panel contribution is not an object`);
@@ -1439,6 +1470,7 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		return null;
 	}
 	const placement = parsePanelPlacement(pluginId, localId, raw.placement, errors);
+	const size = parsePanelSize(pluginId, localId, raw.size, errors);
 	return {
 		id: namespaced(pluginId, localId),
 		localId,
@@ -1446,6 +1478,7 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		title: raw.title.trim(),
 		entry: raw.entry.trim(),
 		placement,
+		size,
 	};
 }
 

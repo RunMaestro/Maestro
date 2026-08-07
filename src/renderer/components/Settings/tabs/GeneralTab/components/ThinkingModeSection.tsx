@@ -2,6 +2,7 @@ import { Brain } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface ThinkingModeSectionProps {
 	theme: Theme;
@@ -26,10 +27,7 @@ export function ThinkingModeSection({
 
 	return (
 		<div data-setting-id="general-thinking-mode">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Brain className="w-3 h-3" />
-				Default Thinking Mode
-			</div>
+			<SettingsSectionHeading icon={Brain}>Default Thinking Mode</SettingsSectionHeading>
 			<div
 				className="mb-4 p-3 rounded border"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -37,7 +35,7 @@ export function ThinkingModeSection({
 				<div className="font-medium mb-1" style={{ color: theme.colors.textMain }}>
 					Show AI thinking/reasoning content for new tabs
 				</div>
-				<div className="text-sm opacity-60 mb-3" style={{ color: theme.colors.textDim }}>
+				<div className="text-sm opacity-70 mb-3">
 					{defaultShowThinking === 'off' && 'Thinking hidden, only final responses shown'}
 					{defaultShowThinking === 'on' && 'Thinking streams live, clears on completion'}
 					{defaultShowThinking === 'sticky' && 'Thinking streams live and stays visible'}
@@ -89,7 +87,7 @@ export function ThinkingModeSection({
 						<div className="font-medium" style={{ color: theme.colors.textMain }}>
 							Show tool calls in responses
 						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs opacity-70 mt-0.5">
 							{thinkingOff
 								? 'Tool calls follow the thinking setting. With thinking Off they stay hidden; agents still run tools normally.'
 								: 'Display tool-call activity (tool badges and their input/output) in AI responses. Turn off to hide tool calls from the transcript; agents still run tools normally.'}

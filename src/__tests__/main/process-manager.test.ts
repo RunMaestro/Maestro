@@ -43,6 +43,19 @@ vi.mock('../../shared/platformDetection', () => ({
 	isWindows: () => mockIsWindows(),
 }));
 
+// Mock the PID liveness probe so the stale-entry reconciliation can be driven
+// deterministically on any host (a hardcoded "dead" PID would otherwise be a
+// coin flip). Defaults to "alive" so unrelated tests keep the old semantics.
+const { mockIsPidAlive } = vi.hoisted(() => ({
+	mockIsPidAlive: vi.fn<(pid: number | undefined) => boolean>().mockReturnValue(true),
+}));
+
+vi.mock('../../main/process-manager/utils/childProcessInfo', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../main/process-manager/utils/childProcessInfo')>();
+	return { ...actual, isPidAlive: (pid?: number) => mockIsPidAlive(pid) };
+});
+
 import * as fs from 'fs';
 import { logger } from '../../main/utils/logger';
 
@@ -700,8 +713,13 @@ describe('process-manager.ts', () => {
 		});
 
 		describe('spawn() existing process guard', () => {
+			beforeEach(() => {
+				mockIsPidAlive.mockReturnValue(true);
+			});
+
 			afterEach(() => {
 				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+				mockIsPidAlive.mockReturnValue(true);
 			});
 
 			it('should kill existing process before spawning with same sessionId', () => {
@@ -777,6 +795,11 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should retain an exited agent until close cleanup drains its output', () => {
+				// The PID is already gone here: node saw the child exit, so `close` is
+				// still draining trailing stdout microseconds later. Reclaiming on
+				// liveness alone would drop that final response (issue #1249), so the
+				// drain window must stay refused even though the process is dead.
+				mockIsPidAlive.mockReturnValue(false);
 				const processes = (processManager as any).processes as Map<string, any>;
 				const exitingChildProcess = {
 					pid: 32829,
@@ -807,6 +830,83 @@ describe('process-manager.ts', () => {
 				).toThrow('Agent process already running for session draining-agent-session');
 				expect(exitingChildProcess.kill).not.toHaveBeenCalled();
 				expect(processManager.get('draining-agent-session')).toBe(exitingProcess);
+			});
+
+			it('should reclaim an agent entry whose OS process no longer exists', () => {
+				// Issue #1339: after a long idle the child died without node ever
+				// seeing `close`, so the entry (still "running" as far as node knows)
+				// owned the session id forever and every later turn threw.
+				mockIsPidAlive.mockReturnValue(false);
+				const processes = (processManager as any).processes as Map<string, any>;
+				const staleChildProcess = {
+					pid: 32830,
+					exitCode: null,
+					signalCode: null,
+					kill: vi.fn(),
+				};
+				const staleProcess = {
+					sessionId: 'stale-agent-session',
+					toolType: 'codex',
+					isTerminal: false,
+					pid: 32830,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					childProcess: staleChildProcess,
+				};
+				processes.set('stale-agent-session', staleProcess);
+
+				let thrown: unknown;
+				try {
+					processManager.spawn({
+						sessionId: 'stale-agent-session',
+						toolType: 'codex',
+						cwd: '/tmp',
+						command: 'codex',
+						args: ['exec', '--json'],
+						prompt: 'turn after idle',
+					});
+				} catch (err) {
+					// The spawn itself may still fail against the mocked child_process;
+					// what matters is that it was no longer blocked by the guard.
+					thrown = err;
+				}
+
+				expect(String((thrown as Error | undefined)?.message ?? '')).not.toContain(
+					'Agent process already running'
+				);
+				// The dead entry is dropped, and never signalled - there is no process
+				// left to kill, and a kill() would emit a spurious exit.
+				expect(processManager.get('stale-agent-session')).not.toBe(staleProcess);
+				expect(staleChildProcess.kill).not.toHaveBeenCalled();
+			});
+
+			it('should refuse to replace an SDK-backed agent turn even when no OS pid is alive', () => {
+				// SDK turns have no OS child of their own, so a liveness probe proves
+				// nothing and could match an unrelated recycled PID.
+				mockIsPidAlive.mockReturnValue(false);
+				const processes = (processManager as any).processes as Map<string, any>;
+				const sdkProcess = {
+					sessionId: 'sdk-agent-session',
+					toolType: 'opencode',
+					isTerminal: false,
+					pid: 32831,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					sdkController: { interrupt: vi.fn(), kill: vi.fn() },
+				};
+				processes.set('sdk-agent-session', sdkProcess);
+
+				expect(() =>
+					processManager.spawn({
+						sessionId: 'sdk-agent-session',
+						toolType: 'opencode',
+						cwd: '/tmp',
+						command: 'opencode',
+						args: ['run'],
+						prompt: 'second turn',
+					})
+				).toThrow('Agent process already running for session sdk-agent-session');
+				expect(processManager.get('sdk-agent-session')).toBe(sdkProcess);
 			});
 		});
 

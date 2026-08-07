@@ -29,6 +29,7 @@ export const PLUGIN_EVENT_TOPICS = [
 	'board.cardCompleted', // a board card finished successfully (ids only, no summary)
 	'board.cardBlocked', // a board card needs a human (ids + run outcome, no reason text)
 	'board.decomposed', // an auto-decompose pass expanded triage cards (counts only)
+	'session.activated', // the focused agent changed (ids only, no titles or content)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -180,6 +181,9 @@ export interface PluginEventPayloads {
 		triageCardCount: number;
 		projectPath?: string;
 	};
+	/** The focused agent changed. Opaque ids ONLY - no title, no project path,
+	 * nothing derived from the session's content. */
+	'session.activated': { sessionId: string; tabId?: string };
 }
 
 /** A typed host event. */

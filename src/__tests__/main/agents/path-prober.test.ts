@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 // Mock dependencies before importing the module
@@ -58,13 +59,23 @@ describe('path-prober', () => {
 
 		it('should include common Unix paths on non-Windows', () => {
 			const originalPlatform = process.platform;
+			const originalPath = process.env.PATH;
 			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			// Pin the inherited PATH: on a dev machine the real PATH already carries
+			// these dirs, which would make the assertions pass even if getExpandedEnv
+			// stopped adding them.
+			process.env.PATH = '/inherited/only';
 
 			try {
 				const env = getExpandedEnv();
 				expect(env.PATH).toContain('/opt/homebrew/bin');
 				expect(env.PATH).toContain('/usr/local/bin');
+				// ~/.bun/bin is where the bun-based omp binary installs; without it
+				// consumers of getExpandedEnv() cannot resolve omp even though the
+				// detection probe finds it there.
+				expect(env.PATH).toContain(`${os.homedir()}/.bun/bin`);
 			} finally {
+				process.env.PATH = originalPath;
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}
 		});

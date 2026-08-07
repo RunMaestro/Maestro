@@ -187,7 +187,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 								}}
 							>
 								<span
-									className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
+									className="absolute left-0 top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
 									style={{ transform: onlyInstalled ? 'translateX(18px)' : 'translateX(2px)' }}
 								/>
 							</span>

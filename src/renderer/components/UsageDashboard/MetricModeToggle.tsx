@@ -10,6 +10,7 @@
 
 import { memo } from 'react';
 import type { Theme } from '../../types';
+import { Spinner } from '../ui/Spinner';
 import { formatDurationHuman, formatNumber, formatTokensCompact } from '../../../shared/formatters';
 
 /** Measures a dashboard chart can plot. Not every chart supports every mode. */
@@ -98,7 +99,14 @@ export const MetricModeToggle = memo(function MetricModeToggle({
 							aria-label={ARIA_LABELS[m]}
 							data-testid={`metric-mode-${m}`}
 						>
-							{busy ? `${label}…` : label}
+							{busy ? (
+								<span className="inline-flex items-center gap-1">
+									<Spinner size={10} color={activeFg} ariaLabel="Deriving token usage" />
+									{label}
+								</span>
+							) : (
+								label
+							)}
 						</button>
 					);
 				})}

@@ -8,6 +8,11 @@ export interface FileStats {
 
 export interface FilePreviewProps {
 	file: { name: string; content: string; path: string } | null;
+	/**
+	 * ID of the file preview tab rendering this content. Required for media
+	 * files, whose player is hosted app-level and matched to the tab by this ID.
+	 */
+	fileTabId?: string;
 	onClose: () => void;
 	theme: any;
 	markdownEditMode: boolean;
@@ -107,8 +112,9 @@ export interface FilePreviewHandle {
 	focus: () => void;
 }
 
-export interface TocEntry {
-	level: number; // 1-6 for h1-h6
-	text: string;
-	slug: string;
-}
+/**
+ * Re-exported from the shared TOC library so existing File Preview imports keep
+ * working. The canonical definition lives in `components/Toc/types` because
+ * Director's Notes builds entries of the same shape.
+ */
+export type { TocEntry } from '../Toc/types';

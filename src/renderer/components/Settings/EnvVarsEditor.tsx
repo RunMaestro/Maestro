@@ -243,7 +243,7 @@ export function EnvVarsEditor({
 					Add Variable
 				</button>
 			</div>
-			{description !== null && <p className="text-xs opacity-50 mt-2">{description}</p>}
+			{description !== null && <p className="text-xs opacity-70 mt-2">{description}</p>}
 		</div>
 	);
 }

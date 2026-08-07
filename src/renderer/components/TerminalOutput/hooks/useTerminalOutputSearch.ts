@@ -9,8 +9,22 @@ interface UseTerminalOutputSearchOptions {
 	outputSearchRegex: boolean;
 	debouncedSearchQuery: string;
 	filteredLogsLength: number;
+	/**
+	 * Start offset of the progressive render window (see useProgressiveRenderWindow).
+	 * Idle backfill adds entries to the DOM after the initial pass without changing
+	 * filteredLogsLength, so this must be a dependency too - otherwise matches in
+	 * freshly hydrated history are never highlighted or counted.
+	 */
+	logStartIndex: number;
 	setOutputSearchOpen: (open: boolean) => void;
 	setOutputSearchQuery: (query: string) => void;
+	/**
+	 * Rendered log id a cross-tab search jump landed on, as a mutable ref the
+	 * transcript sets before this hook's pass runs. When set, the "current" match
+	 * becomes the hit inside that row rather than the first hit in the tab, so
+	 * next/prev continues from where the user clicked.
+	 */
+	pendingJumpMatchIdRef?: React.MutableRefObject<string | null>;
 }
 
 export function useTerminalOutputSearch({
@@ -20,8 +34,10 @@ export function useTerminalOutputSearch({
 	outputSearchRegex,
 	debouncedSearchQuery,
 	filteredLogsLength,
+	logStartIndex,
 	setOutputSearchOpen,
 	setOutputSearchQuery,
+	pendingJumpMatchIdRef,
 }: UseTerminalOutputSearchOptions) {
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
@@ -88,6 +104,9 @@ export function useTerminalOutputSearch({
 			setTotalMatches(0);
 			setCurrentMatchIndex(0);
 			setRegexError(null);
+			// A closed/cleared search cancels any queued jump-to-match request so
+			// it can't hijack the user's next search in this tab.
+			if (pendingJumpMatchIdRef) pendingJumpMatchIdRef.current = null;
 			return;
 		}
 
@@ -138,6 +157,27 @@ export function useTerminalOutputSearch({
 		setTotalMatches(ranges.length);
 		setCurrentMatchIndex((prev) => (ranges.length === 0 ? 0 : Math.min(prev, ranges.length - 1)));
 
+		// A cross-tab search jump pre-fills this query, so the "current" match
+		// should be the entry the user clicked, not the first hit in the tab.
+		const jumpTargetId = pendingJumpMatchIdRef?.current;
+		if (jumpTargetId) {
+			const idx = ranges.findIndex((r) => {
+				const el = (
+					r.startContainer.nodeType === Node.ELEMENT_NODE
+						? (r.startContainer as Element)
+						: r.startContainer.parentElement
+				)?.closest('[data-log-id]');
+				return el?.getAttribute('data-log-id') === jumpTargetId;
+			});
+			// Keep the request pending if this pass ran against a stale debounced
+			// query (no range inside the target row yet) - the next pass, with the
+			// jump's own query, will land it.
+			if (idx >= 0) {
+				pendingJumpMatchIdRef.current = null;
+				setCurrentMatchIndex(idx);
+			}
+		}
+
 		if (!('highlights' in CSS) || ranges.length === 0) {
 			clearHighlights();
 			return;
@@ -153,7 +193,9 @@ export function useTerminalOutputSearch({
 		outputSearchRegex,
 		outputSearchOpen,
 		filteredLogsLength,
+		logStartIndex,
 		scrollContainerRef,
+		pendingJumpMatchIdRef,
 	]);
 
 	useEffect(() => {
@@ -199,5 +241,8 @@ export function useTerminalOutputSearch({
 		regexError,
 		goToNextMatch,
 		goToPrevMatch,
+		// Exposed so the find bar's ESC pill runs the exact same dismissal the
+		// Escape layer does - a pointer-only user gets identical behavior.
+		closeSearch,
 	};
 }

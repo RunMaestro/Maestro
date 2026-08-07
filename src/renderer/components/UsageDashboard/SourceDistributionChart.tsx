@@ -29,6 +29,7 @@ import {
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
 import { useTokenSeries } from './TokenSeriesContext';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 
 // Metric display mode
 type MetricMode = ChartMetricMode;
@@ -319,6 +320,7 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 					<>
 						{/* Donut chart */}
 						<div className="relative">
+							<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 							<svg
 								width={size}
 								height={size}

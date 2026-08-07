@@ -121,6 +121,12 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `stripJsonBom`     | `(value: string) => string`       | Remove a leading UTF-8 BOM from JSON text before parsing.                 |
 | `parseJsonWithBom` | `<T = unknown>(value: string): T` | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text. |
 
+### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
+
+| Function                                     | Signature                               | Purpose                                                                                                                          |
+| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal. |
+
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
 | Function         | Signature            | Purpose                                                                            |
@@ -179,6 +185,46 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `sanitizeGitBranchName(input)`     | `(string, options?) => string` | Sanitize user input into a git branch name. Use `{ allowIncomplete: true }` for controlled inputs before final validation. |
 | `isImageFile(filePath)`            | `(string) => boolean`          | Check extension against known image types.                                                                                 |
 | `getImageMimeType(ext)`            | `(string) => string`           | Get MIME type for image extension.                                                                                         |
+
+---
+
+## Media Types (`src/shared/mediaTypes.ts` - Both)
+
+Audio/video detection plus the `maestro-media://` stream URL format used by the
+file preview's `MediaViewer`. Unlike images (which `fs:readFile` inlines as a
+base64 data URL), media is streamed: the main process returns a short stream URL
+and `src/main/media/media-stream.ts` serves range requests off disk, so a
+multi-GB recording never crosses IPC or lands in the renderer heap.
+
+| Function / Constant                       | Signature                                  | Purpose                                                                                              |
+| ----------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `getMediaKind(filePath)`                  | `(string) => 'audio' \| 'video' \| null`   | Classify a path. Only formats Chromium can decode; mkv/avi stay null so they keep the binary path.   |
+| `isMediaFile(filePath)`                   | `(string) => boolean`                      | Whether the path names playable media.                                                               |
+| `getMediaMimeType(filePath)`              | `(string) => string \| null`               | MIME type for the `content-type` header.                                                             |
+| `buildMediaStreamUrl(token, absPath)`     | `(string, string) => string`               | Build a stream URL. Main process only - use `buildLocalMediaStreamUrl()` so the boot token is right. |
+| `parseMediaStreamUrl(url, expectedToken)` | `(string, string) => string \| null`       | Validate token/host/extension and recover the path.                                                  |
+| `isMediaStreamUrl(value)`                 | `(string \| null \| undefined) => boolean` | Cheap check for "is this `fs:readFile` result a stream URL".                                         |
+| `MEDIA_PLAYBACK_RATES`                    | `readonly number[]`                        | Speed ladder shown in the transport.                                                                 |
+| `normalizePlaybackRate(value)`            | `(unknown) => number`                      | Clamp a persisted/CLI-supplied rate to 0.25-4, falling back to 1.                                    |
+
+### Media File Tabs (`src/renderer/utils/mediaTabs.ts` - Renderer)
+
+| Function                              | Signature                                                        | Purpose                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `getFileTabMediaKind(name, content)`  | `(string, string) => MediaKind \| null`                          | The one predicate for "is this previewed file playable media".              |
+| `collectMediaTabs(sessions)`          | `(Session[]) => MediaTabRef[]`                                   | Every media tab across **all** agents, for the app-level playback host.     |
+| `getMediaTabLabel(ref)`               | `(MediaTabRef) => string`                                        | Display filename, extension included.                                       |
+| `stepMediaTab(refs, activeId, steps)` | `(MediaTabRef[], string \| null, number) => MediaTabRef \| null` | Prev/next target for the player. Open order, no wrapping; null at the ends. |
+
+`getFileTabMediaKind` takes the filename and content as separate scalars on
+purpose: a `FilePreviewTab` splits `name` from `extension` (`'song'` + `'.mp3'`)
+while the object handed to `FilePreview` joins them back. Passing either record
+shape directly classifies everything as non-media, which silently kills playback
+outright. Callers must pass a filename that still has its extension.
+
+Floating-widget geometry math lives in `src/renderer/utils/mediaFloatGeometry.ts`
+(`clampMediaFloatRect`, `initialMediaFloatRect`), split out of the component so
+the off-screen-recovery cases are testable without a DOM.
 
 ---
 
@@ -244,16 +290,35 @@ UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - d
 
 ---
 
+## Director's Notes Narrative (`src/shared/directorNotesNarrative.ts` - Both)
+
+The Director's Notes synopsis agent emits a structured JSON narrative. This module is the ONLY place that turns that raw string into a `DirectorNotesNarrative` or back into prose. Do not hand-roll JSON extraction, repair, or markdown conversion at a call site.
+
+| Function / Constant                  | Signature                            | Purpose                                                                                                                                                                         |
+| ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parseDirectorNotesNarrative(raw)`   | `(string) => ParseNarrativeResult`   | Strict parse. Tolerates a code fence or stray prose around the object; rejects any structural deviation with a precise error. Never throws.                                     |
+| `recoverDirectorNotesNarrative(raw)` | `(string) => RecoverNarrativeResult` | Best-effort salvage, called ONLY after a strict failure: repairs a cut-off response and raw control characters, drops malformed items, and returns a `reason` the UI must show. |
+| `narrativeToMarkdown(narrative)`     | `(DirectorNotesNarrative) => string` | Render the narrative as markdown prose (`##` section headings + bullets). Used by Plain Mode, Copy, Save, and the CLI's markdown/text output.                                   |
+
+Rendering rule: no surface may display the raw structured output as if it were the report. Show the narrative (or the salvaged one plus `NarrativeParseError`'s recovery banner); on total failure show the banner with the raw text behind its disclosure.
+
+---
+
 ## History Utilities (`src/shared/history.ts` - Both)
 
-| Function / Constant                  | Signature                                            | Purpose                                                      |
-| ------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------ |
-| `HISTORY_VERSION`                    | `number` (1)                                         | Current history file format version.                         |
-| `MAX_ENTRIES_PER_SESSION`            | `number` (5000)                                      | Max history entries per session file.                        |
-| `ORPHANED_SESSION_ID`                | `string` (`'_orphaned'`)                             | Session ID for entries without associated sessions.          |
-| `sanitizeSessionId(sessionId)`       | `(string) => string`                                 | Replace non-safe chars with underscore for filesystem.       |
-| `paginateEntries(entries, options?)` | `<T>(T[], PaginationOptions?) => PaginatedResult<T>` | Apply limit/offset pagination. Default: limit 100, offset 0. |
-| `sortEntriesByTimestamp(entries)`    | `(HistoryEntry[]) => HistoryEntry[]`                 | Immutable sort by descending timestamp.                      |
+| Function / Constant                  | Signature                                            | Purpose                                                                                                                                                         |
+| ------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HISTORY_VERSION`                    | `number` (1)                                         | Current history file format version.                                                                                                                            |
+| `MAX_ENTRIES_PER_SESSION`            | `number` (5000)                                      | Max history entries per session file.                                                                                                                           |
+| `ORPHANED_SESSION_ID`                | `string` (`'_orphaned'`)                             | Session ID for entries without associated sessions.                                                                                                             |
+| `sanitizeSessionId(sessionId)`       | `(string) => string`                                 | Replace non-safe chars with underscore for filesystem.                                                                                                          |
+| `paginateEntries(entries, options?)` | `<T>(T[], PaginationOptions?) => PaginatedResult<T>` | Apply limit/offset pagination. Default: limit 100, offset 0.                                                                                                    |
+| `sortEntriesByTimestamp(entries)`    | `(HistoryEntry[]) => HistoryEntry[]`                 | Immutable sort by descending timestamp.                                                                                                                         |
+| `ALL_HISTORY_ENTRY_TYPES`            | `readonly HistoryEntryType[]`                        | The ONE list of entry types (`USER`, `AGENT`, `AUTO`, `CUE`), in filter-display order. Iterate it - never re-declare a local copy.                              |
+| `isHistoryEntryType(value)`          | `(unknown) => value is HistoryEntryType`             | Type guard for IPC/CLI/plugin payload validation.                                                                                                               |
+| `visibleHistoryEntryTypes(cueOn)`    | `(boolean) => HistoryEntryType[]`                    | Types a filter UI should offer; drops `CUE` when the Cue Encore Feature is off.                                                                                 |
+| `normalizeHistoryEntryType(entry)`   | `(HistoryEntry) => HistoryEntryType`                 | Re-maps legacy cross-agent consults (`AUTO` + `sourceAgentName`) to `AGENT`.                                                                                    |
+| `normalizeHistoryEntries(entries)`   | `(HistoryEntry[]) => HistoryEntry[]`                 | Batch form of the above; returns the same array when nothing changed. Applied at both read chokepoints (`HistoryManager.getEntries`, CLI `readSessionHistory`). |
 
 ---
 
@@ -340,10 +405,11 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ### execFile (`src/main/utils/execFile.ts`)
 
-| Function                                          | Signature                                                                              | Purpose                                                                                                                                                    |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `execFileNoThrow(command, args?, cwd?, options?)` | `(string, string[], string?, ExecOptions \| NodeJS.ProcessEnv) => Promise<ExecResult>` | Safe command execution. No shell injection. Returns `{ stdout, stderr, exitCode }` - never throws. Handles Windows batch files, stdin input, and timeouts. |
-| `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                             |
+| Function                                          | Signature                                                                              | Purpose                                                                                                                                                                                                                                            |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `execFileNoThrow(command, args?, cwd?, options?)` | `(string, string[], string?, ExecOptions \| NodeJS.ProcessEnv) => Promise<ExecResult>` | Safe command execution. No shell injection. Returns `{ stdout, stderr, exitCode }` - never throws. Handles Windows batch files, stdin input, and timeouts.                                                                                         |
+| `execFileStreaming(command, args, options)`       | `(string, string[], ExecStreamingOptions) => ExecStreamingHandle`                      | Streaming sibling of `execFileNoThrow`: calls `onChunk(chunk, 'stdout' \| 'stderr')` as output arrives, plus `{ result, cancel }`. Use for long commands the user watches live (`git pull`/`git push`). Cancel resolves with exitCode `'SIGTERM'`. |
+| `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                                                                                                                     |
 
 ### Safe IPC Send (`src/main/utils/safe-send.ts`)
 
@@ -519,3 +585,23 @@ The desktop renderer also runs on phones (web-desktop build). These are the cano
 | `THEMES`                      | `Record<ThemeId, Theme>` - All 17 theme definitions. |
 | `DEFAULT_CUSTOM_THEME_COLORS` | Dracula colors as default for custom theme.          |
 | `getThemeById(themeId)`       | Look up a theme, returns null if not found.          |
+
+### Color Math & Contrast (`src/shared/colorContrast.ts` - Both)
+
+Use these instead of hand-rolling hex math. **Any time you compute a foreground
+color for a themed surface, run it through `readableTextOn()`** - a theme whose
+accent sits close to its text color will otherwise paint near-identical colors
+on top of each other (this is exactly how Mermaid ER attribute rows became
+unreadable).
+
+| Export                                               | Purpose                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `readableTextOn(preferred, backgrounds, threshold?)` | Returns `preferred` when it clears WCAG AA on **every** background; otherwise nudges it toward white/black until it does. |
+| `isReadableOn(fg, backgrounds, threshold?)`          | Boolean form - assert contrast in tests without recomputing ratios.                                                       |
+| `contrastRatio(a, b)`                                | WCAG 2.1 ratio (1-21). Returns 21 for unparseable colors so exotic custom-theme values are left alone.                    |
+| `relativeLuminance(hex)`                             | WCAG relative luminance, or null if unparseable.                                                                          |
+| `hexToRgb(hex)`                                      | `#rrggbb` -> `{r,g,b}` or null (3-digit, `rgb()`, and named colors return null).                                          |
+| `adjustBrightness(hex, percent)`                     | Shift toward white (+) or black (-), hue broadly preserved.                                                               |
+| `blendColors(c1, c2, ratio)`                         | Mix two colors; `ratio` is how much of `c2` lands in the result.                                                          |
+| `transparentize(color, bg, alpha)`                   | Flatten a tint into an opaque color, for renderers that only accept solid fills (SVG/canvas).                             |
+| `AA_CONTRAST` / `AA_LARGE_CONTRAST`                  | 4.5 (normal text) and 3 (large text) thresholds.                                                                          |

@@ -937,6 +937,35 @@ describe('BatchRunnerModal', () => {
 			});
 		});
 
+		// The playbook actions used to be two edge-anchored clusters
+		// (justify-between). They now sit in one centered, wrapping row so the
+		// set re-centers as buttons appear and disappear with playbook state.
+		it('centers the playbook action buttons in a single flex row', async () => {
+			(window.maestro as Record<string, unknown>).playbooks = {
+				list: vi.fn().mockResolvedValue({ success: true, playbooks: [createMockPlaybook()] }),
+				create: vi.fn(),
+				update: vi.fn(),
+				delete: vi.fn(),
+				export: vi.fn(),
+				import: vi.fn(),
+			};
+
+			render(<BatchRunnerModal {...createDefaultProps()} onOpenMarketplace={vi.fn()} />);
+
+			const importBtn = await screen.findByRole('button', { name: 'Import Playbook' });
+			const row = importBtn.closest('div.flex-wrap');
+
+			expect(row).not.toBeNull();
+			expect(row).toHaveClass('justify-center');
+			// Every action is a flex item of that one row - the group wrappers are
+			// `contents`, so no button is anchored to an edge by a sub-flex parent.
+			for (const name of ['Load Playbook', 'Import Playbook', 'Playbook Exchange']) {
+				const btn = screen.getByRole('button', { name });
+				expect(row).toContainElement(btn);
+				expect(btn.parentElement?.closest('div.flex')).toBe(row);
+			}
+		});
+
 		it('marks missing documents when loading playbook', async () => {
 			const mockPlaybook = createMockPlaybook({
 				documents: [
@@ -3141,5 +3170,150 @@ describe('Auto Run Fresh-Context Mode Auto-Selection', () => {
 				'A new agent session is spawned for each unchecked task, clean context per work in the document.'
 			)
 		).toBeInTheDocument();
+	});
+});
+
+describe('BatchRunnerModal - per-run model/effort override', () => {
+	// The pickers are ephemeral by design: they open on "Use agent default" every
+	// time and only reach the launched config when the user picks something.
+	const setupSession = async (toolType = 'claude-code') => {
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		const session = {
+			id: 'session-123',
+			name: 'Test Agent',
+			toolType,
+			cwd: '/project',
+			fullPath: '/project',
+			projectRoot: '/project',
+			state: 'idle',
+			tabs: [],
+			aiTabs: [],
+			activeTabIndex: 0,
+			isGitRepo: true,
+			isLive: false,
+			changedFiles: [],
+			fileTree: [],
+			fileExplorerExpanded: [],
+			fileExplorerScrollPos: 0,
+		};
+		useSessionStore.setState({ sessions: [session as never], activeSessionId: 'session-123' });
+	};
+
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		await setupSession();
+		(window.maestro as Record<string, unknown>).playbooks = {
+			list: vi.fn().mockResolvedValue({ success: true, playbooks: [] }),
+			create: vi.fn().mockResolvedValue({ success: true, playbook: createMockPlaybook() }),
+			update: vi.fn().mockResolvedValue({ success: true, playbook: createMockPlaybook() }),
+			delete: vi.fn().mockResolvedValue({ success: true }),
+			export: vi.fn().mockResolvedValue({ success: true }),
+			import: vi.fn().mockResolvedValue({ success: true, playbook: createMockPlaybook() }),
+		};
+		window.maestro.agents.getModels = vi.fn().mockResolvedValue(['sonnet', 'opus']);
+		window.maestro.agents.getConfigOptions = vi
+			.fn()
+			.mockImplementation(async (_agentId: string, key: string) =>
+				key === 'effort' ? ['low', 'high'] : []
+			);
+	});
+
+	afterEach(async () => {
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		vi.restoreAllMocks();
+	});
+
+	it('omits model and effort from the launched config when both pickers are untouched', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toHaveValue('');
+		});
+		expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue('');
+
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(config).not.toHaveProperty('model');
+		expect(config).not.toHaveProperty('effort');
+	});
+
+	it('includes the picked model and effort in the launched config', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
+		});
+
+		fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: 'opus' } });
+		fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
+			target: { value: 'high' },
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		expect(props.onGo).toHaveBeenCalledWith(
+			expect.objectContaining({ model: 'opus', effort: 'high' })
+		);
+	});
+
+	it('includes only the field the user picked', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
+		});
+
+		fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: 'opus' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+		const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(config.model).toBe('opus');
+		expect(config).not.toHaveProperty('effort');
+	});
+
+	it('hides the whole section when the provider exposes no models or efforts', async () => {
+		window.maestro.agents.getModels = vi.fn().mockResolvedValue([]);
+		window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue([]);
+
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(window.maestro.agents.getModels).toHaveBeenCalled();
+		});
+		expect(screen.queryByLabelText('Model for this run')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Reasoning effort for this run')).not.toBeInTheDocument();
+	});
+
+	it('renders the section last in both Spec-Driven and Goal-Driven mode', async () => {
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		await waitFor(() => {
+			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
+		});
+
+		// Spec-Driven: below the Agent Prompt editor, the last block in that mode.
+		const promptEditor = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+		expect(
+			promptEditor.compareDocumentPosition(screen.getByLabelText('Model for this run')) &
+				Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+
+		// Goal-Driven: below the goal config, same as before.
+		fireEvent.click(screen.getByRole('button', { name: 'Goal-Driven' }));
+		await waitFor(() => {
+			expect(screen.getByText('Iteration Limit')).toBeInTheDocument();
+		});
+		expect(
+			screen
+				.getByText('Iteration Limit')
+				.compareDocumentPosition(screen.getByLabelText('Model for this run')) &
+				Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
 	});
 });

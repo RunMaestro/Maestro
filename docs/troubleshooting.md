@@ -54,16 +54,17 @@ The **Process Monitor** displays a hierarchical tree view:
 - **Wizard processes** - Active wizard conversations and playbook generation
 
 **Process types shown:**
-| Type | Description |
-|------|-------------|
-| AI Agent | Main Claude Code (or other agent) process |
-| Terminal | Shell process for the session |
-| Batch | Auto Run document processing agent |
-| Synopsis | Context compaction synopsis generation |
-| Moderator | Group chat moderator process |
-| Participant | Group chat participant agent |
-| Wizard | Wizard conversation process |
-| Wizard Gen | Playbook document generation process |
+
+| Type        | Description                               |
+| ----------- | ----------------------------------------- |
+| AI Agent    | Main Claude Code (or other agent) process |
+| Terminal    | Shell process for the session             |
+| Batch       | Auto Run document processing agent        |
+| Synopsis    | Context compaction synopsis generation    |
+| Moderator   | Group chat moderator process              |
+| Participant | Group chat participant agent              |
+| Wizard      | Wizard conversation process               |
+| Wizard Gen  | Playbook document generation process      |
 
 **Features:**
 
@@ -120,38 +121,44 @@ The debug package collects metadata and configuration - never your conversations
 | `agents.json`              | Agent configurations, availability, and capability flags  |
 | `external-tools.json`      | Shell, git, GitHub CLI, and cloudflared availability      |
 | `windows-diagnostics.json` | Windows-specific diagnostics (minimal on other platforms) |
-| `groups.json`              | Session group configurations                              |
+| `groups.json`              | Group structure (no group names)                          |
 | `processes.json`           | Active process information                                |
 | `web-server.json`          | Web server and Cloudflare tunnel status                   |
-| `storage-info.json`        | Storage paths and sizes                                   |
+| `storage-info.json`        | Storage locations and sizes                               |
 
 **Optional (toggleable in UI):**
 
-| File               | Contents                                                        |
-| ------------------ | --------------------------------------------------------------- |
-| `sessions.json`    | Session metadata (names, states, tab counts - no conversations) |
-| `logs.json`        | Recent system log entries                                       |
-| `errors.json`      | Current error states and recent error events                    |
-| `group-chats.json` | Group chat metadata (participant lists, routing - no messages)  |
-| `batch-state.json` | Auto Run state and document queue                               |
+| File               | Contents                                                           |
+| ------------------ | ------------------------------------------------------------------ |
+| `sessions.json`    | Session metadata (states, tab counts - no names, no conversations) |
+| `logs.json`        | Recent system log entries                                          |
+| `errors.json`      | Current error states and recent error events                       |
+| `group-chats.json` | Group chat metadata (participant lists, routing - no messages)     |
+| `batch-state.json` | Auto Run state and document queue                                  |
 
 ### Privacy Protections
 
-The debug package is designed to be **safe to share publicly**:
+Support packages usually end up attached to a public GitHub issue, so the debug package is designed to be **safe to share publicly** - nothing in one identifies you or your work:
 
 - **API keys and tokens** - Replaced with `[REDACTED]`
 - **Passwords and secrets** - Never included
 - **Conversation content** - Excluded entirely (no AI responses, no user messages)
 - **File contents** - Not included from your projects
 - **Custom prompts** - Not included (may contain sensitive context)
-- **File paths** - Sanitized to replace your username with `~`
+- **Your username and computer name** - Replaced with `[user]` and `[host]` wherever they appear
+- **File paths** - Replaced with an opaque descriptor, so no folder, project, or repository names survive
+- **Agent, session, and group names** - Not included
+- **SSH remote identities** - Hosts and usernames replaced with `[REDACTED]`
+- **URLs** - Reduced to scheme and domain, so tunnel URLs cannot be reused
 - **Environment variables** - Only counts shown, not values (may contain secrets)
 - **Custom agent arguments** - Only `[SET]` or `[NOT SET]` shown, not actual values
 
-**Example path sanitization:**
+**Example path redaction:**
 
-- Before: `/Users/johndoe/Projects/MyApp`
-- After: `~/Projects/MyApp`
+- Before: `/Users/johndoe/Projects/MyApp/config.json`
+- After: `[path#3f9a1c04 root=home depth=3 ext=.json]`
+
+The descriptor keeps only what is useful for debugging: where the path starts (`root`), how deep it is (`depth`), the file extension, and flags for spaces or non-ASCII characters (a common cause of process spawn failures). The `path#` fingerprint is stable within a single package, so identical paths still line up, and it is salted per package so it cannot be reversed or matched against another package.
 
 ## WSL2 Issues (Windows)
 

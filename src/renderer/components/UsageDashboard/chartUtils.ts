@@ -166,3 +166,39 @@ export function buildNameMap(
 
 	return result;
 }
+
+/**
+ * Pick which x-axis tick indices should carry a label.
+ *
+ * Every time-series chart on the dashboard wants roughly seven labels and always
+ * wants the final one, so the axis ends on the real end date. Naively forcing
+ * that last label is what caused overlapping text at the right edge: when the
+ * series length isn't a multiple of the interval, the forced label lands one or
+ * two slots after the previous one and the two strings collide (e.g. "Jul 25"
+ * printed on top of "Jul 26").
+ *
+ * Here the last label still always wins, but the preceding label is dropped when
+ * it would sit closer than a full interval - so labels are never spaced tighter
+ * than the interval the chart already deemed readable.
+ *
+ * @param count - number of ticks on the axis
+ * @returns the set of indices to label
+ */
+export function computeAxisLabelIndices(count: number): Set<number> {
+	if (count <= 0) return new Set();
+
+	// Same density heuristic the charts used individually: ~7 labels max.
+	const interval = count > 14 ? Math.ceil(count / 7) : count > 7 ? 2 : 1;
+
+	const indices: number[] = [];
+	for (let i = 0; i < count; i += interval) indices.push(i);
+
+	const last = count - 1;
+	const previous = indices[indices.length - 1];
+	if (previous !== last) {
+		if (last - previous < interval) indices.pop();
+		indices.push(last);
+	}
+
+	return new Set(indices);
+}

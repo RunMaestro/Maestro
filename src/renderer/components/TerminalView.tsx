@@ -34,6 +34,13 @@ import { logger } from '../utils/logger';
 export interface TerminalViewHandle {
 	clearActiveTerminal(): void;
 	focusActiveTerminal(): void;
+	/**
+	 * Focus a SPECIFIC terminal tab's xterm instance. Needed by tiling: a tiled
+	 * terminal pane does not set `activeTerminalTabId` (focusing a pane only syncs
+	 * `activeTabId`, and only for AI panes), so `focusActiveTerminal` would land on
+	 * the wrong terminal - or none at all - when a group owns the panel.
+	 */
+	focusTerminal(tabId: string): void;
 	searchActiveTerminal(query: string): boolean;
 	searchNext(): boolean;
 	searchPrevious(): boolean;
@@ -242,6 +249,9 @@ export const TerminalView = memo(
 					if (activeTab) {
 						terminalRefs.current.get(activeTab.id)?.focus();
 					}
+				},
+				focusTerminal(tabId: string) {
+					terminalRefs.current.get(tabId)?.focus();
 				},
 				searchActiveTerminal(query: string): boolean {
 					if (!activeTab) return false;

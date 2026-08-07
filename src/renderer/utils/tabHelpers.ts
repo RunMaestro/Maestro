@@ -1812,6 +1812,13 @@ export function reopenClosedAiTabById(
  *   }
  * }
  */
+/**
+ * Reopen the most recently closed tab into the standalone tab strip.
+ *
+ * Tiling-aware callers should use `reopenClosedTabWithTiling` in panelLayout.ts,
+ * which layers the tile restore on top of this (the dependency only works that
+ * way round - panelLayout imports from this module, never the reverse).
+ */
 export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTabResult | null {
 	// Check if there's anything in the unified history
 	if (!session.unifiedClosedTabHistory || session.unifiedClosedTabHistory.length === 0) {
@@ -2094,6 +2101,27 @@ export function isSoleAiTabReplacement(
 		session.aiTabs.length === 1 &&
 		session.aiTabs[0].id !== prevAiTabIds[0]
 	);
+}
+
+/**
+ * Session patch that lands on a specific file preview tab.
+ *
+ * The file-tab counterpart to {@link aiTabFocusFields}: spread it into a session
+ * update (`{ ...s, ...fileTabFocusFields(tabId) }`) to make that file tab the
+ * visible one. Clears the terminal and browser selections and forces AI mode,
+ * because both of those outrank the file tab in the render precedence - leaving
+ * either set would keep the old view on screen and the focus would appear to do
+ * nothing.
+ *
+ * @param tabId - The file preview tab to activate.
+ */
+export function fileTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeFileTabId: tabId,
+		activeTerminalTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'ai',
+	};
 }
 
 export interface SetActiveTabResult {

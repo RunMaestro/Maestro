@@ -185,7 +185,21 @@ function harness(
 	// The router keys its listeners on `cross-agent-<requestId>`; request() uses 'r1'.
 	const emitData = (text: string) => processManager.emit('data', 'cross-agent-r1', text);
 	const emitExit = (code: number) => processManager.emit('exit', 'cross-agent-r1', code);
-	return { processManager, chunks, dispatch, emitData, emitExit };
+	// A `--print` claude run signals progress through these, NOT through `data`.
+	const emitThinking = (text: string) =>
+		processManager.emit('thinking-chunk', 'cross-agent-r1', text);
+	const emitTool = () => processManager.emit('tool-execution', 'cross-agent-r1', { name: 'Read' });
+	const emitUsage = () => processManager.emit('usage', 'cross-agent-r1', { inputTokens: 1 });
+	return {
+		processManager,
+		chunks,
+		dispatch,
+		emitData,
+		emitExit,
+		emitThinking,
+		emitTool,
+		emitUsage,
+	};
 }
 
 describe('startCrossAgentRequest dispatch lifecycle', () => {
@@ -228,6 +242,86 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		vi.advanceTimersByTime(IDLE_MS - 60_000);
 
 		expect(chunks).toHaveLength(0);
+	});
+
+	// Regression: a `--print` stream-json consult emits `data` ONLY at the terminal
+	// result message - intermediate progress goes to thinking-chunk /
+	// tool-execution / usage. Arming the silence budget on `data` alone made it a
+	// hard N-minute deadline that killed agents which were working perfectly.
+	it('does not kill a target that is thinking but has emitted no data', async () => {
+		const { chunks, dispatch, emitThinking } = harness();
+		await dispatch();
+
+		for (let elapsed = 0; elapsed < HARD_MS - IDLE_MS; elapsed += IDLE_MS - 60_000) {
+			vi.advanceTimersByTime(IDLE_MS - 60_000);
+			emitThinking('reasoning...');
+		}
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('does not kill a target that is running tools but has emitted no data', async () => {
+		const { chunks, dispatch, emitTool } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		emitTool();
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('treats a usage report as proof of life', async () => {
+		const { chunks, dispatch, emitUsage } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		emitUsage();
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('ignores liveness signals belonging to a different session', async () => {
+		// The ProcessManager emitter is shared app-wide; another agent's activity
+		// must not keep a genuinely wedged consult alive forever.
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		processManager.emit('thinking-chunk', 'some-other-session', 'not ours');
+		vi.advanceTimersByTime(60_000);
+
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].error).toContain('went silent');
+	});
+
+	it('still stops a target that is truly wedged on every channel', async () => {
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS);
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		expect(chunks[0].error).toContain('went silent');
+	});
+
+	it('removes every liveness listener once the consult settles', async () => {
+		// These attach to the shared ProcessManager; leaking one per consult would
+		// accumulate for the life of the app.
+		const { dispatch, emitExit, processManager } = harness();
+		await dispatch();
+
+		const before = ['data', 'thinking-chunk', 'tool-execution', 'usage', 'exit'].map((e) =>
+			processManager.listenerCount(e)
+		);
+		expect(before.every((n) => n > 0)).toBe(true);
+
+		emitExit(0);
+
+		for (const evt of ['data', 'thinking-chunk', 'tool-execution', 'usage', 'exit']) {
+			expect(processManager.listenerCount(evt)).toBe(0);
+		}
 	});
 
 	it('kills the target and flushes partial output once it goes silent', async () => {

@@ -303,6 +303,8 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						<ResizeHandles
 							onResizeStart={resizableModal.onResizeStart}
 							accentColor={theme.colors.accent}
+							onResetSize={resizableModal.onResetSize}
+							canReset={resizableModal.canReset}
 						/>
 
 						<CueModalHeader

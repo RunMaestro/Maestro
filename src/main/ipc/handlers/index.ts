@@ -255,7 +255,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
-		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 	});
 	registerSystemHandlers({
 		getMainWindow: deps.getMainWindow,

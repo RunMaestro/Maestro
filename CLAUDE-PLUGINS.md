@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.15.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.16.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -102,12 +102,14 @@ HostResponse { id, ok, result?, error? } <---postMessage---
   - `settings.get`: denies secret-looking keys (`SECRET_KEY_PATTERN`), the `encoreFeatures` gate, and any `plugins.<other>.*` namespace that is not the caller's own.
   - `settings.set`: only `plugins.<id>.*` keys; same secret/proto/gate guards; value must be JSON-storable and `<= MAX_SETTINGS_VALUE_BYTES = 64 * 1024`.
   - `sessions.list` / `sessions.get`: projected through `toSessionMetadata` - metadata only, never transcript/prompt text.
+  - `sessions.focus`: navigation only, gated by the narrow `sessions:focus` capability (NOT `tabs:manage`, which also carries create/close). Closed `{ sessionId, tabId? }` schema, `assertBrokerAllowed`, unknown sessionId throws. Implemented main-side like `pluginTabsFocus`: both verbs share `pluginAiFocusFields()` (`index.ts`), the main-side mirror of the renderer's `aiTabFocusFields()`, so the jump lands on the AI tab and nulls `activeGroupId` (a focused tiled group would otherwise keep owning the panel). No `tabId` -> the session's current AI tab, else its first; an explicit `tabId` that is not one of THAT session's AI tabs is rejected.
   - `transcripts.read`: PROJECTED session content - the caller declares which fields it needs and only allowlisted fields are returned (projection, not redaction). Resolves the session's REAL `projectPath` and RE-authorizes against it (the caller-claimed path is only a broker hint), refuses an untrusted plugin that also holds `net:fetch`/`net:connect`/`process:spawn` (the exfiltration combination), runs under the `ActionGuard` (high-risk rate/concurrency cap), and writes a per-read audit line. The metadata-only event bus is untouched.
   - `storage.*`: per-plugin KV via `kvStore` (values are strings).
-  - `events.subscribe` / `unsubscribe`: filtered to the fixed `PLUGIN_EVENT_TOPICS` catalog. Includes `tool.executed`, a metadata-only tool-lifecycle event (tool name + timing, never arguments or results).
+  - `events.subscribe` / `unsubscribe`: filtered to the fixed `PLUGIN_EVENT_TOPICS` catalog. Includes `tool.executed`, a metadata-only tool-lifecycle event (tool name + timing, never arguments or results), and `session.activated` `{ sessionId, tabId? }`, emitted from the `sessions:setActiveSessionId` handler with its own 100ms trailing debounce (separate from that handler's 400ms disk-write debounce) and skipped when the focused session did not actually change.
   - `agents.dispatch` and `process.spawn`: LIVE but fully gated. Each registers only when `deps.dispatch` / `deps.spawn` are injected (both are wired in `index.ts`). Every call runs the gate stack: allowlist-scope grant (`assertBrokerAllowed`), trusted signature (`assertTrustedActVerb`), Pianola risk ceiling (`assertLowOrMediumRisk`), a closed input schema, and the `ActionGuard` rate/concurrency cap. `agents.dispatch` ADDITIONALLY requires the separate unattended consent (see below) because plugin-initiated dispatch is never user-present.
   - `net.connect` / `net.send` / `net.close`: LIVE, trusted-only persistent outbound WebSocket. Registers only when `deps.netConnect` is injected. `wss:` only; the connect is pinned through the same `EgressGuard` lookup as `net.fetch` (loopback / RFC1918 / link-local / metadata blocked); caps at `MAX_SOCKETS_PER_PLUGIN = 4` per plugin and `MAX_FRAME_BYTES = 64 KB` per frame in both directions; `send`/`close` re-authorize the still-held host grant on every call so a mid-stream revoke denies the next call. The host owns the real socket; the plugin gets a `socketId` handle and receives frames as `net.connect:<socketId>` topic events (via `pushEvent`, not the `PLUGIN_EVENT_TOPICS` catalog). Sockets are force-closed on disable / crash / uninstall.
   - `ui.panelPost`: requires `ui:panel` and targets ONLY one of the plugin's own declared panels (own-panels-only); JSON-only payload capped at `MAX_PANEL_POST_BYTES = 64 KB`; delivered to the panel page as a `maestro:panelData` window message. One-way push - there is no reply channel back to the sandbox.
+  - `ui.openPanel` / `ui.closePanel` / `ui.togglePanel`: requires `ui:panel` (no new consent); built by one shared factory and resolved through the SAME `deps.getPanel` lookup `ui.panelPost` uses, so a plugin can only summon its OWN panels. Non-`modal` placements are REJECTED (docked panels are always mounted, so open/close would be an untellable no-op). Registered only when `deps.panelVisibility` is wired (fail closed). Main broadcasts `plugins:panel-visibility` `{ pluginId, panelId, action }`; the renderer's App-level `PluginModalPanelMount` drives the `uiStore.openPluginPanelId` field (transient, namespaced `<pluginId>/<panelId>`), and `close` only closes when that exact panel is the open one.
 
   **Direct dispatch requires unattended consent.** The `agents.dispatch` handler additionally calls the injected `dispatchUnattendedAllowed(pluginId, agentId)` predicate (wired in `index.ts` to `isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId)`) and denies the call unless the plugin holds the separate, revocable UNATTENDED grant on top of the interactive `agents:dispatch` allowlist grant. The time-based scheduler (`PluginSchedulerHost`) enforces the same unattended check independently and calls the dispatch SINK directly, so it is unaffected by this handler.
 
@@ -127,6 +129,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 | `settings:read`       | low    | none  | non-secret app settings; not the feature gate, not a peer plugin's namespace                                                                                                                                                           |
 | `settings:write`      | low    | none  | ONLY `plugins.<id>.*` keys                                                                                                                                                                                                             |
 | `sessions:read`       | medium | none  | METADATA only, never transcript text                                                                                                                                                                                                   |
+| `sessions:focus`      | low    | none  | navigation only: switch to an EXISTING session and land on its AI tab; no tab create/close power (deliberately not `tabs:manage`)                                                                                                      |
 | `transcripts:read`    | high   | path  | PROJECTED session content; project-scoped, re-authorized on the resolved path; refused with egress unless trusted; ActionGuard-bounded; audited                                                                                        |
 | `storage:read`        | low    | none  | own KV                                                                                                                                                                                                                                 |
 | `storage:write`       | low    | none  | own KV                                                                                                                                                                                                                                 |
@@ -147,7 +150,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
 - Every contributed id is namespaced `<pluginId>/<localId>`. The manifest author writes the bare local `id`; the loader stores both `localId` and the namespaced `id`.
 - Invalid individual items are dropped with a recorded error rather than failing the whole plugin (a typo in one theme must not hide good prompts).
 - On a namespaced-id collision the first wins (defended even though ids are plugin-scoped). For runtime agents, built-in agents always win, so a plugin can never shadow a first-party agent.
-- Contribution types: `themes`, `iconPacks`, `prompts`, `settings`, `commandMacros`, `cueTriggers` (tier 0); `commands`, `panels`, `agents`, `tools`, `keybindings` (tier 1). `cueTriggers` with `action: 'notify'` run on tier 0; `action: 'dispatch'` is risk-gated (the Pianola risk engine) and surfaced to the user, never auto-fired when high-risk. A `tools` contribution is invokable with a result via the brokered `plugins:invoke-tool` round-trip, and (when `plugins` is on) is exposed to a spawned agent's model over MCP via `maestro-cli mcp serve` (claude/codex auto-injected, others best-guess), each model call risk-gated. A `keybindings` contribution's `command` must be a plugin-local id. Registering `agents`/`keybindings` does NOT by itself wire spawning / chord-binding - each is a separate step.
+- Contribution types: `themes`, `iconPacks`, `prompts`, `settings`, `commandMacros`, `cueTriggers` (tier 0); `commands`, `panels`, `agents`, `tools`, `keybindings` (tier 1). `cueTriggers` with `action: 'notify'` run on tier 0; `action: 'dispatch'` is risk-gated (the Pianola risk engine) and surfaced to the user, never auto-fired when high-risk. A `tools` contribution is invokable with a result via the brokered `plugins:invoke-tool` round-trip, and (when `plugins` is on) is exposed to a spawned agent's model over MCP via `maestro-cli mcp serve` (claude/codex auto-injected, others best-guess), each model call risk-gated. A `panels` contribution carries an optional `size?: 'default' | 'full'` (`modal` placement only, parsed leniently: absent -> `default` silently, invalid -> manifest error plus `default`, panel never dropped), where `full` renders edge-to-edge overlay chrome. A `keybindings` contribution's `command` must be a plugin-local id. Registering `agents`/`keybindings` does NOT by itself wire spawning / chord-binding - each is a separate step.
 - `iconPacks` is a tier-0 contribution: the host validates SVG path data and hex colors, namespaces pack entries, and renders paths only through host-owned SVG markup in the group appearance picker.
 
 - `hostViews` are data-only contributions available to tier-0 and tier-1 plugins: `{ id, surface: 'movement' | 'cadenza', title, description?, blocks? }`. `blocks` is an optional BlockView block array, serialized UTF-8 is capped at 1,000,000 bytes, and the host renderer - not plugin code - draws it. Tier-1 runtime update/remove RPCs require `ui:hostView`, resolve only an already-declared local id, retain its title/surface, and reject cadenza decision/options or agent-routing payloads.
@@ -191,16 +194,19 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.15.0`; it adds the four metadata-only Board event topics
+The current host is `1.16.0`; it added the metadata-only `session.activated`
+event topic, the `sessions.focus` method plus its narrow `sessions:focus`
+capability, and the `ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods
+plus the optional panel manifest field `size?: 'default' | 'full'`. Earlier:
+`1.15.0` added the four metadata-only Board event topics
 (`board.cardStatusChanged` / `board.cardCompleted` / `board.cardBlocked` /
-`board.decomposed`). Earlier: `1.14.0` added the `tool.executed` event topic and
-the `ui.panelPost` host-to-panel push method; `1.13.0` added the host-mediated
-`PluginUiSurface` registry and trusted-chrome guard; `1.12.0` added the
-`net:connect` capability and the `net.connect` / `net.send` / `net.close`
-methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added `iconPacks`;
-`1.9.0` added `hostViews`, `ui:hostView`, and the `ui.hostViewUpdate` /
-`ui.hostViewRemove` methods. Plugins declare the `maestro.minHostApi` matching
-the lowest version whose surface they use.
+`board.decomposed`); `1.14.0` added the `tool.executed` event topic and the
+`ui.panelPost` host-to-panel push method; `1.13.0` added the host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
+added the `net:connect` capability and the `net.connect` / `net.send` /
+`net.close` methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added
+`iconPacks`; `1.9.0` added `hostViews`, `ui:hostView`, and the
+`ui.hostViewUpdate` / `ui.hostViewRemove` methods. Plugins declare the
+`maestro.minHostApi` matching the lowest version whose surface they use.
 
 ## Key invariants and gotchas (read before editing)
 

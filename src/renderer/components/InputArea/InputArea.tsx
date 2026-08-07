@@ -3,6 +3,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	useComposerInputStore,
 	selectAiComposerValue,
+	selectAiCommandMode,
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
@@ -33,6 +34,8 @@ import { SlashCommandPopover } from './overlays/SlashCommandPopover';
 import { TabCompletionPopover } from './overlays/TabCompletionPopover';
 import type { InputAreaProps } from './types';
 import { filterCommandHistory, getCurrentCommandHistory } from './utils/commandHistory';
+import { resolveCommandCwd } from '../../services/shellCommand';
+import { CommandModeBar } from './components/CommandModeBar';
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -198,7 +201,21 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode ? selectTerminalComposerValue : selectAiComposerValue
 	);
 
+	// Command mode: the AI composer is holding a shell command line, so it picks
+	// up the terminal's CLI affordances (the `$` prefix, the mode bar, and Tab
+	// completion over files, dirs, branches, tags, and prior commands). Read from
+	// the store rather than sniffed from the text - the `!` is consumed on entry,
+	// so the draft looks like any other string.
+	const commandMode = useComposerInputStore(selectAiCommandMode);
+	const isCommandModeDraft = !isTerminalMode && commandMode;
+	const isShellInput = isTerminalMode || isCommandModeDraft;
+
 	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
+	// Non-reactive store handles for the change handler below.
+	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
+	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
+
+	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 
 	const currentCommandHistory = useMemo(
 		() => getCurrentCommandHistory(session, isTerminalMode),
@@ -279,6 +296,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode,
 		slashCommandOpen,
 		atMentionOpen,
+		isCommandMode: commandMode,
+		setCommandMode: setAiCommandMode,
+		// Read at call time, not from the `inputValue` closure: onChange fires
+		// before setInputValue lands, so the store still holds the pre-edit text -
+		// which is exactly what "was the composer empty?" needs to test.
+		getPreviousValue: getAiValueAtCallTime,
 		keystrokeResizeScheduledRef,
 		setInputValue,
 		setSlashCommandOpen,
@@ -461,7 +484,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 			<TabCompletionPopover
 				isOpen={tabCompletionOpen}
-				isTerminalMode={isTerminalMode}
+				isShellInput={isShellInput}
 				isGitRepo={session.isGitRepo}
 				suggestions={tabCompletionSuggestions}
 				selectedIndex={selectedTabCompletionIndex}
@@ -507,10 +530,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								: theme.colors.bgMain,
 						}}
 					>
+						{isCommandModeDraft && (
+							<CommandModeBar
+								theme={theme}
+								cwd={resolveCommandCwd(session)}
+								remoteName={session.sshRemote?.name}
+								isGitRepo={session.isGitRepo}
+							/>
+						)}
+
 						<InputTextarea
 							session={session}
 							theme={theme}
 							isTerminalMode={isTerminalMode}
+							isCommandModeDraft={isCommandModeDraft}
 							inputValue={inputValue}
 							spellCheckEnabled={spellCheckEnabled}
 							inputRef={inputRef}

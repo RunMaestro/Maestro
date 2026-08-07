@@ -291,6 +291,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// keystroke. The store setters are stable; grab them once.
 	const setAiValue = useMemo(() => useComposerInputStore.getState().setAiValue, []);
 	const setTerminalValue = useMemo(() => useComposerInputStore.getState().setTerminalValue, []);
+	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
 
 	// Ref-mirror of activeTab.id so the live-draft mirror attributes text to the
 	// correct tab, and the tab-switch effect can flush the OLD tab's text without
@@ -325,6 +326,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		const s = useComposerInputStore.getState();
 		return isAiModeRef.current ? s.aiValue : s.terminalValue;
 	}, []);
+
+	// Command mode only exists for the AI composer; the terminal is already a
+	// shell, so it reports false there rather than double-routing.
+	const getCommandMode = useCallback(
+		() => isAiModeRef.current && useComposerInputStore.getState().aiCommandMode,
+		[]
+	);
 
 	// Memoized setter that dispatches to the correct slice based on current mode.
 	const setInputValue = useCallback(
@@ -394,8 +402,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		const session = selectActiveSession(useSessionStore.getState());
 		const tab = session ? getActiveTab(session) : null;
 		setAiValue(tab?.inputValue ?? '');
+		// Restore the mode alongside the text: the same string routes as a shell
+		// command or a chat message depending on this flag.
+		setAiCommandMode(tab?.commandMode === true);
 		didHydrateAiInputRef.current = true;
-	}, [activeTabId, setAiValue]);
+	}, [activeTabId, setAiValue, setAiCommandMode]);
 
 	useEffect(() => {
 		if (!activeSessionId || didHydrateTerminalInputRef.current) return;
@@ -409,23 +420,29 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		if (activeTabId && activeTabId !== prevActiveTabIdRef.current) {
 			const prevTabId = prevActiveTabIdRef.current;
 
-			// Save current AI input to the PREVIOUS tab
+			// Save current AI input to the PREVIOUS tab. Command mode rides along
+			// with the text - a command draft that came back as a plain message
+			// would be sent to the agent instead of the shell.
 			if (prevTabId) {
-				const currentAiValue = useComposerInputStore.getState().aiValue;
+				const { aiValue: currentAiValue, aiCommandMode: currentCommandMode } =
+					useComposerInputStore.getState();
 				setSessions((prev) =>
 					prev.map((s) => ({
 						...s,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === prevTabId ? { ...tab, inputValue: currentAiValue } : tab
+							tab.id === prevTabId
+								? { ...tab, inputValue: currentAiValue, commandMode: currentCommandMode }
+								: tab
 						),
 					}))
 				);
 			}
 
-			// Load new tab's persisted input value
+			// Load new tab's persisted input value + mode
 			const session = selectActiveSession(useSessionStore.getState());
 			const activeTab = session ? getActiveTab(session) : null;
 			setAiValue(activeTab?.inputValue ?? '');
+			setAiCommandMode(activeTab?.commandMode === true);
 			prevActiveTabIdRef.current = activeTabId;
 
 			// Clear hasUnread indicator on newly active tab
@@ -471,22 +488,38 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// ====================================================================
 
 	// Gated store subscription: returns '' (a stable primitive) unless the
-	// terminal tab-completion dropdown is open, so zustand's Object.is bail-out
-	// means normal typing does NOT re-render this hook. Only while the dropdown
-	// is open do we track the live text to refresh suggestions.
-	const tabCompletionInput = useComposerInputStore((s) =>
-		tabCompletionOpen ? s.terminalValue : ''
+	// tab-completion dropdown is open, so zustand's Object.is bail-out means
+	// normal typing does NOT re-render this hook. Only while the dropdown is
+	// open do we track the live text to refresh suggestions.
+	//
+	// Reads the AI draft in AI mode: completion also serves command mode, where
+	// the shell draft lives in `aiValue`, not `terminalValue`.
+	const tabCompletionInput = useComposerInputStore((s) => {
+		if (!tabCompletionOpen) return '';
+		return activeSessionInputMode === 'terminal' ? s.terminalValue : s.aiValue;
+	});
+	// Same gating trick for the mode flag: a stable `false` unless the dropdown
+	// is open, so toggling command mode doesn't re-render this hook either.
+	const tabCompletionCommandMode = useComposerInputStore((s) =>
+		tabCompletionOpen ? s.aiCommandMode : false
 	);
 	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionInput, 50);
 	const tabCompletionSuggestions = useMemo(() => {
-		if (!tabCompletionOpen || !activeSessionId || activeSessionInputMode !== 'terminal') {
-			return [];
-		}
-		return getTabCompletionSuggestions(debouncedInputForTabCompletion, tabCompletionFilter);
+		if (!tabCompletionOpen || !activeSessionId) return [];
+		const isTerminal = activeSessionInputMode === 'terminal';
+		// AI mode only gets completions in command mode; an ordinary message has
+		// nothing shell-shaped to complete against.
+		if (!isTerminal && !tabCompletionCommandMode) return [];
+		return getTabCompletionSuggestions(
+			debouncedInputForTabCompletion,
+			tabCompletionFilter,
+			!isTerminal
+		);
 	}, [
 		tabCompletionOpen,
 		activeSessionId,
 		activeSessionInputMode,
+		tabCompletionCommandMode,
 		debouncedInputForTabCompletion,
 		tabCompletionFilter,
 		getTabCompletionSuggestions,
@@ -530,7 +563,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			if (!suggestion || suggestion.type === 'history' || flatFileList.length === 0) return;
 
 			const targetPath = suggestion.value.replace(/\/$/, '');
-			const pathOnly = targetPath.split(/\s+/).pop() || targetPath;
+			// Strip the command-mode bang so a single-token completion (`!src/`)
+			// still resolves to a real path in the file tree.
+			const pathOnly = (targetPath.split(/\s+/).pop() || targetPath).replace(/^!/, '');
 			const matchIndex = flatFileList.findIndex((item) => item.fullPath === pathOnly);
 
 			if (matchIndex >= 0) {
@@ -600,6 +635,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		activeSessionId,
 		setSessions,
 		getInputValue,
+		isCommandMode: getCommandMode,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -648,6 +684,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		syncFileTreeToTabCompletion,
 		processInput,
 		getTabCompletionSuggestions,
+		getCommandMode,
+		setCommandMode: setAiCommandMode,
 		inputRef,
 		terminalOutputRef,
 	});

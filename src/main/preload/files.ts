@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { HistoryEntryType } from '../../shared/types';
 
 /**
  * Single bucket in the activity-graph aggregate.
@@ -16,6 +17,7 @@ export interface GraphBucket {
 	auto: number;
 	user: number;
 	cue: number;
+	agent: number;
 }
 
 /**
@@ -41,7 +43,7 @@ export interface HistoryGraphData {
  */
 export interface HistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -99,7 +101,7 @@ export function createHistoryApi() {
 			pagination?: { limit?: number; offset?: number };
 			lookbackHours?: number | null;
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
-			types?: ('AUTO' | 'USER' | 'CUE')[];
+			types?: HistoryEntryType[];
 			hostKey?: string | null;
 		}) => ipcRenderer.invoke('history:getAllPaginated', options),
 
@@ -149,7 +151,7 @@ export function createHistoryApi() {
 			sessionId: string,
 			timestamp: number,
 			lookbackHours?: number | null,
-			types?: ('AUTO' | 'USER' | 'CUE')[]
+			types?: HistoryEntryType[]
 		): Promise<number> =>
 			ipcRenderer.invoke(
 				'history:getOffsetForTimestamp',

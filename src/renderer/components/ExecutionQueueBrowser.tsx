@@ -137,7 +137,7 @@ export function ExecutionQueueBrowser({
 			{/* Modal */}
 			<div
 				ref={modalRef}
-				className="relative rounded-lg border shadow-2xl flex flex-col"
+				className="relative rounded-lg border shadow-2xl flex flex-col select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
@@ -152,6 +152,8 @@ export function ExecutionQueueBrowser({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}

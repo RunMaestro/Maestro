@@ -1369,7 +1369,10 @@ export function FeedbackChatView({
 
 				{/* Support package + performance trace + error */}
 				<div className="pb-2 flex items-center gap-3 flex-wrap">
-					<label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+					<label
+						className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
+						title="Attaches diagnostics to the public issue. No conversations, secrets, file paths, project names, username, or computer name are included."
+					>
 						<input
 							type="checkbox"
 							checked={includeDebugPackage}

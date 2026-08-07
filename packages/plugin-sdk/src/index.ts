@@ -80,6 +80,7 @@ export type PluginCapability =
 	| 'sessions:read' // list sessions + read their metadata (NEVER raw transcript content)
 	| 'sessions:create' // create a new Maestro session/tab shell (no implicit dispatch)
 	| 'sessions:write' // update/remove session metadata/state
+	| 'sessions:focus' // move Maestro's focus to an existing session (never reads content, never mutates it)
 	| 'history:read' // read metadata-only history entries (never raw transcript content)
 	| 'transcripts:read' // read PROJECTED session content (consented, audited, egress-locked)
 	| 'transcripts:write' // append/update brokered transcript entries for a session
@@ -114,6 +115,7 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'sessions:read',
 	'sessions:create',
 	'sessions:write',
+	'sessions:focus',
 	'history:read',
 	'transcripts:read',
 	'transcripts:write',
@@ -147,6 +149,10 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'storage:write': 'low',
 	'settings:write': 'low',
 	'ui:command': 'low',
+	// Navigation only: it moves the user's view to a session that already exists.
+	// It cannot read, create, or modify anything, so it is deliberately cheaper
+	// than tabs:manage (which also carries tab creation and destruction).
+	'sessions:focus': 'low',
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
 	'net:fetch': 'medium',
@@ -205,6 +211,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'sessions:read': 'none',
 	'sessions:create': 'none',
 	'sessions:write': 'none',
+	'sessions:focus': 'none',
 	'storage:read': 'none',
 	'storage:write': 'none',
 	'storage:sql': 'none',
@@ -364,6 +371,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Create Maestro sessions';
 		case 'sessions:write':
 			return 'Modify Maestro sessions';
+		case 'sessions:focus':
+			return 'Switch Maestro to one of your existing sessions';
 		case 'history:read':
 			return 'Read metadata-only history entries';
 		case 'storage:read':
@@ -410,22 +419,30 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.15.0 for the
- * additive Board event topics `board.cardStatusChanged` / `board.cardCompleted`
- * / `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
+ * The host API version this Maestro build implements. Bumped to 1.16.0 for three
+ * backward-compatible additions: the metadata-only `session.activated` event
+ * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
+ * changes), the `sessions.focus` method plus its narrow `sessions:focus`
+ * capability (navigate to an existing session's AI tab; no tab create/close
+ * power), and the summonable-panel trio `ui.openPanel` / `ui.closePanel` /
+ * `ui.togglePanel` under the existing `ui:panel` capability alongside the
+ * optional panel manifest field `size?: 'default' | 'full'` (absent or invalid
+ * => `default`, so older manifests are untouched). 1.15.0 added the additive
+ * Board event topics `board.cardStatusChanged` / `board.cardCompleted` /
+ * `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
  * the card title; never prompts, run output, summaries, or block reasons).
- * 1.14.0 added the backward-compatible additive `tool.executed` event topic
- * (metadata-only tool lifecycle: name + timing, never arguments or results)
- * plus the `ui.panelPost` host-to-panel push method (own-panels-only,
- * JSON-only, MAX_PANEL_POST_BYTES cap). 1.13.0 added the additive
- * host-mediated `PluginUiSurface` registry and trusted-chrome guard. 1.12.0
- * added the backward-compatible additive `net:connect` capability plus its
- * `net.connect` / `net.send` / `net.close` host methods (hold an outbound
- * persistent websocket to a host scope, e.g. a Discord/Slack gateway;
- * egress-classified). 1.11.0 added virtual `groupings` contributions and the
- * presentation-only `ui:grouping` publish/clear methods; 1.10.0 added the
- * backward-compatible, data-only `iconPacks` contribution; 1.9.0 added
- * host-rendered `hostViews`, their `ui:hostView` capability, and the
+ * 1.14.0 added the
+ * backward-compatible additive `tool.executed` event topic (metadata-only tool
+ * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
+ * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES
+ * cap). 1.13.0 added the additive host-mediated `PluginUiSurface` registry and
+ * trusted-chrome guard. 1.12.0 added the backward-compatible additive
+ * `net:connect` capability plus its `net.connect` / `net.send` / `net.close`
+ * host methods (hold an outbound persistent websocket to a host scope, e.g. a
+ * Discord/Slack gateway; egress-classified). 1.11.0 added virtual `groupings`
+ * contributions and the presentation-only `ui:grouping` publish/clear methods;
+ * 1.10.0 added the backward-compatible, data-only `iconPacks` contribution;
+ * 1.9.0 added host-rendered `hostViews`, their `ui:hostView` capability, and the
  * `ui.hostViewUpdate` / `ui.hostViewRemove` RPC methods; 1.8.0 added
  * `background.list`; 1.7.0 added history/session/tab/transcript
  * write/decision/shell/storage SQL/fs watch/power/background capabilities plus
@@ -436,7 +453,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.15.0';
+export const HOST_API_VERSION = '1.16.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -880,6 +897,11 @@ export interface CommandContribution {
 /** Where a contributed panel docks. `modal` (default) keeps today's behavior. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
+/** Chrome size for a `modal` panel. `full` renders edge-to-edge (a summonable
+ * full-window overlay); absent/invalid parses to `default`. Presentation only -
+ * it never changes where a panel routes. Ignored by docked placements. */
+export type PanelSize = 'default' | 'full';
+
 /** A UI panel a (tier-1) plugin contributes, rendered in a locked-down sandboxed
  * iframe. `entry` is a plugin-relative HTML file (traversal-checked). */
 export interface PanelContribution {
@@ -889,6 +911,7 @@ export interface PanelContribution {
 	title: string;
 	entry: string;
 	placement: PanelPlacement;
+	size: PanelSize;
 }
 
 /** A runtime agent a (tier-1) plugin registers - a Left Bar entry backed by a
@@ -1168,6 +1191,7 @@ export const PLUGIN_EVENT_TOPICS = [
 	'board.cardCompleted', // a board card finished successfully (ids only, no summary)
 	'board.cardBlocked', // a board card needs a human (ids + run outcome, no reason text)
 	'board.decomposed', // an auto-decompose pass expanded triage cards (counts only)
+	'session.activated', // the focused agent changed (ids only, no titles or content)
 ] as const;
 
 export type PluginEventTopic = (typeof PLUGIN_EVENT_TOPICS)[number];
@@ -1315,6 +1339,9 @@ export interface PluginEventPayloads {
 		triageCardCount: number;
 		projectPath?: string;
 	};
+	/** The focused agent changed. Opaque ids ONLY - no title, no project path,
+	 * nothing derived from the session's content. */
+	'session.activated': { sessionId: string; tabId?: string };
 }
 
 /** A typed host event. */
@@ -1348,6 +1375,7 @@ export const HOST_API = {
 	'sessions.create': { capability: 'sessions:create' },
 	'sessions.update': { capability: 'sessions:write' },
 	'sessions.delete': { capability: 'sessions:write' },
+	'sessions.focus': { capability: 'sessions:focus' },
 	'history.list': { capability: 'history:read' },
 	'history.get': { capability: 'history:read' },
 	'transcripts.read': { capability: 'transcripts:read' },
@@ -1362,6 +1390,9 @@ export const HOST_API = {
 	'ui.hostViewUpdate': { capability: 'ui:hostView' },
 	'ui.hostViewRemove': { capability: 'ui:hostView' },
 	'ui.panelPost': { capability: 'ui:panel' },
+	'ui.openPanel': { capability: 'ui:panel' },
+	'ui.closePanel': { capability: 'ui:panel' },
+	'ui.togglePanel': { capability: 'ui:panel' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -1540,6 +1571,10 @@ export interface MaestroSessionsApi {
 		}
 	): Promise<MaestroSessionMetadata>;
 	delete(sessionId: string): Promise<void>;
+	/** Move the user's focus to an existing session (`sessions:focus`), landing on
+	 * its AI tab. Omit `tabId` to keep whichever AI tab that session already had
+	 * active. Navigation only - it neither reads nor modifies the session. */
+	focus(sessionId: string, tabId?: string): Promise<void>;
 }
 
 /** Read PROJECTED, consented, audited session content (`transcripts:read`) or
@@ -1598,6 +1633,15 @@ export interface MaestroUiApi {
 	 * (`ui:panel`). Delivered to the panel page as a `maestro:panelData` window
 	 * message; JSON-only, capped at MAX_PANEL_POST_BYTES, no reply channel. */
 	panelPost(panelId: string, data: unknown): Promise<void>;
+	/** Show one of this plugin's OWN `modal` panels as a host-drawn overlay
+	 * (`ui:panel`). Own-panels-only: a foreign or namespaced id never resolves,
+	 * and a docked panel is rejected. */
+	openPanel(panelId: string): Promise<void>;
+	/** Hide one of this plugin's own modal panels, if it is the open one. */
+	closePanel(panelId: string): Promise<void>;
+	/** Open the panel, or close it if it is already the open one - the
+	 * press-again-to-dismiss half of a hotkey-summoned overlay. */
+	togglePanel(panelId: string): Promise<void>;
 }
 
 /** Manage Maestro tabs (`tabs:manage`). */

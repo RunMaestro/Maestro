@@ -34,10 +34,39 @@ Centralizes git status polling for all sessions. Splits data into three focused 
 
 - `useGitFileStatus` - 3 consumers (GitStatusWidget, MainPanel, SessionList)
 - `useGitDetail` - 2 consumers (GitStatusWidget, MainPanel)
-- `useGitBranch` - 1 consumer (MainPanel)
+- `useGitBranch` - 2 consumers (MainPanel, `useGitAgentActions`)
 - `useGitStatus` (legacy) - 0 external consumers (deprecated, safe to remove)
 
 The underlying data comes from `useGitStatusPolling` hook which polls via IPC.
+
+### useGitAgentActions (`src/renderer/hooks/git/useGitAgentActions.ts`)
+
+The per-agent git action set (View Git Log, View Git Diff, Git Pull, Git Push,
+Change Branch, Create Pull Request, Configure Worktrees), shared by the three
+surfaces that offer it: the header branch pill dropdown (`GitPillMenu`), the Left
+Bar right-click menu (`SessionContextMenu`), and the command palette
+(`buildGitWorktreeCommands`). **Do not re-derive these actions anywhere else** -
+add to this hook, then surface the new action in all three so mouse and keyboard
+stay at parity.
+
+```ts
+const git = useGitAgentActions(session);
+if (!git.isGitRepo) return null;
+git.pull(); // opens the streaming runner for THIS session's repo
+```
+
+Returns `{ isGitRepo, branch, ahead, behind, canCreatePR, canConfigureWorktrees, viewLog, viewDiff, pull, push, switchBranch, createPR, configureWorktrees }`.
+Every action opens its modal through the modal store directly, so callers need
+no prop drilling and can act on an agent that isn't the active one. Branch and
+ahead/behind come from `useGitBranch()`, falling back to `session.worktreeBranch`.
+`viewDiff` is the only async one - it has to read the diff before there is
+anything to show, and flashes "No diff to examine" (re-syncing stale polling
+stats) rather than opening an empty viewer.
+
+Two exported helpers resolve the git target and are reused elsewhere:
+`resolveGitCwd(session)` (terminal agents' live `shellCwd` wins over `cwd`) and
+`resolveGitSshRemoteId(session)` (top-level id, then the per-session config when
+enabled).
 
 ### InlineWizardContext.tsx (177 lines)
 

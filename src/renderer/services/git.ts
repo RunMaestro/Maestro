@@ -8,6 +8,11 @@ import {
 	parseGitStatusPorcelain,
 	parseGitNumstat,
 } from '../../shared/gitUtils';
+import type {
+	GitCommandOutputChunk,
+	GitRunCommandResult,
+	GitStreamingOperation,
+} from '../../shared/gitUtils';
 import { createIpcMethod } from './ipcWrapper';
 
 export interface GitStatus {
@@ -191,6 +196,67 @@ export const gitService = {
 			},
 			errorContext: 'Git branches',
 			defaultValue: [],
+		});
+	},
+
+	/**
+	 * Run a network git operation (pull/push/fetch), streaming its output.
+	 *
+	 * Subscribe with `onCommandOutput` BEFORE awaiting this: chunks start
+	 * arriving as soon as git writes them.
+	 */
+	async runCommand(options: {
+		runId: string;
+		operation: GitStreamingOperation;
+		cwd: string;
+		sshRemoteId?: string;
+		remoteCwd?: string;
+		setUpstream?: boolean;
+	}): Promise<GitRunCommandResult> {
+		return createIpcMethod({
+			call: () => window.maestro.git.runCommand(options),
+			errorContext: `Git ${options.operation}`,
+			defaultValue: {
+				success: false,
+				exitCode: 1,
+				cancelled: false,
+				error: `git ${options.operation} failed`,
+			},
+		});
+	},
+
+	/**
+	 * Subscribe to output streamed by `runCommand`. Returns an unsubscribe.
+	 */
+	onCommandOutput(callback: (data: GitCommandOutputChunk) => void): () => void {
+		return window.maestro.git.onCommandOutput(callback);
+	},
+
+	/**
+	 * Terminate an in-flight `runCommand`.
+	 */
+	async cancelCommand(runId: string): Promise<void> {
+		await createIpcMethod({
+			call: () => window.maestro.git.cancelCommand(runId),
+			errorContext: 'Git cancelCommand',
+			defaultValue: { success: false },
+		});
+	},
+
+	/**
+	 * Check out a branch in the working tree.
+	 * @param createTracking Check out a branch that only exists on origin
+	 */
+	async checkoutBranch(
+		cwd: string,
+		branch: string,
+		createTracking?: boolean,
+		sshRemoteId?: string
+	): Promise<{ success: boolean; output?: string; error?: string }> {
+		return createIpcMethod({
+			call: () => window.maestro.git.checkoutBranch(cwd, branch, createTracking, sshRemoteId),
+			errorContext: 'Git checkoutBranch',
+			defaultValue: { success: false, error: 'git checkout failed' },
 		});
 	},
 

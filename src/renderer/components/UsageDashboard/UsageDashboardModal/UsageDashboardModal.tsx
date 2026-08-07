@@ -30,7 +30,10 @@ import { useCodexUsageStore } from '../../../stores/codexUsageStore';
 import { useGlobalAgentStats } from '../../../hooks/stats/useGlobalAgentStats';
 import type { UsageDashboardModalProps } from './types';
 import { getSectionsForViewMode, type SectionId } from './sections';
-import { hasUsefulAnthropicQuotaDetails, hasUsefulCodexQuotaDetails } from './quotaDetails';
+import {
+	hasUsefulAnthropicQuotaDetails,
+	hasUsefulCodexQuotaDetails,
+} from '../../../../shared/usageQuota';
 import {
 	useQuotaTabDiscovery,
 	useUsageDashboardData,
@@ -374,6 +377,8 @@ export function UsageDashboardModal({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				<UsageDashboardHeader

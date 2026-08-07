@@ -1576,6 +1576,55 @@ describe('agent-detector', () => {
 			expect(models).toEqual(['anthropic/claude-opus-4-8', 'openai-codex/gpt-5.2']);
 		});
 
+		it('runs omp model discovery with the prime env, not the shared expanded env', async () => {
+			// The `omp models --json` that feeds setOmpModelCatalog must run with the
+			// same env as the two prime sites (detection warm-up and spawn), i.e.
+			// buildOmpPrimeEnv: the binary's own dir first (co-located bun runtime)
+			// plus ~/.bun/bin. getExpandedEnv() omits ~/.bun/bin, so discovery could
+			// fail where the primes succeed and the catalogs would drift apart.
+			Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+			// Pin the inherited PATH so a dev machine that already has ~/.bun/bin
+			// exported cannot make the assertion below pass spuriously.
+			const originalPath = process.env.PATH;
+			process.env.PATH = '/inherited/only';
+
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/omp' && args[0] === 'models' && args[1] === '--json') {
+					return {
+						stdout: JSON.stringify({ models: [{ selector: 'anthropic/claude-opus-4-8' }] }),
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			let discoveryEnv: NodeJS.ProcessEnv | undefined;
+			try {
+				detector.clearCache();
+				detector.clearModelCache();
+				await detector.detectAgents();
+				await detector.discoverModels('omp');
+
+				const discoveryCall = mockExecFileNoThrow.mock.calls.find(
+					(call) => call[0] === '/usr/bin/omp' && call[1][0] === 'models' && call[1][1] === '--json'
+				);
+				expect(discoveryCall).toBeDefined();
+				discoveryEnv = discoveryCall![3] as NodeJS.ProcessEnv | undefined;
+			} finally {
+				process.env.PATH = originalPath;
+			}
+
+			const pathEntries = (discoveryEnv?.PATH ?? '').split(path.delimiter);
+			// Binary's own dir first, so a co-located runtime resolves...
+			expect(pathEntries[0]).toBe(path.dirname('/usr/bin/omp'));
+			// ...and the bun install dir is on PATH (getExpandedEnv would not have it).
+			expect(pathEntries).toContain(`${os.homedir()}/.bun/bin`);
+		});
+
 		it('does not cache a transient empty omp discovery failure', async () => {
 			let attempt = 0;
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {

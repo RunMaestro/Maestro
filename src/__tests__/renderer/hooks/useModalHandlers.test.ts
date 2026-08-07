@@ -1327,6 +1327,47 @@ describe('useModalHandlers', () => {
 			expect(renameData?.initialName).toBe('');
 		});
 
+		it('handleQuickActionsRenameTab targets the focused pane of an active tiled group', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				activeTabId: 'tab-1',
+				aiTabs: [createMockAITab({ id: 'tab-1', name: 'My Tab' })],
+				terminalTabs: [{ id: 'term-1', name: null } as any],
+				activeGroupId: 'group-1',
+				tabGroups: [
+					{
+						id: 'group-1',
+						name: 'Group: Terminal 1',
+						focusedPaneId: 'leaf-term',
+						createdAt: 0,
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-ai', tab: { type: 'ai', id: 'tab-1' } },
+								{ kind: 'leaf', id: 'leaf-term', tab: { type: 'terminal', id: 'term-1' } },
+							],
+						},
+					} as any,
+				],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleQuickActionsRenameTab();
+			});
+
+			const renameData = useModalStore.getState().getData('renameTab');
+			expect(renameData?.tabId).toBe('term-1');
+			expect(renameData?.initialName).toBe('');
+		});
+
 		it('handleQuickActionsOpenTabSwitcher opens tab switcher when session has aiTabs', () => {
 			const tab = createMockAITab({ id: 'tab-1' });
 			const session = createMockSession({
