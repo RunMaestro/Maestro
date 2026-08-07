@@ -3000,6 +3000,11 @@ describe('TerminalOutput', () => {
 				tabs: [
 					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
 				],
+				// TerminalOutput's activeTab memo keys off the real `aiTabs` field (this
+				// suite's `tabs` fixture only feeds the mocked getActiveTab), so a rerender
+				// that only changes `tabs` never busts the memo. Give it a real reference to
+				// depend on; content is irrelevant since getActiveTab still reads `tabs`.
+				aiTabs: [] as any,
 				activeTabId: 'tab-1',
 			});
 
@@ -3059,6 +3064,8 @@ describe('TerminalOutput', () => {
 						isUnread: false,
 					},
 				],
+				// New reference so the activeTab memo (keyed on aiTabs) actually recomputes.
+				aiTabs: [{}] as any,
 			};
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 			await act(async () => {
