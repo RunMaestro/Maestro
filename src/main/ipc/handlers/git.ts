@@ -24,9 +24,9 @@ import {
 	countUncommittedChanges,
 	isImageFile,
 	getImageMimeType,
-	isWorktreeAlreadyUsedError,
-	parseWorktreePathForBranch,
 } from '../../../shared/gitUtils';
+import { setupWorktreeLocal } from '../../utils/git-worktree';
+import { createPullRequest, resolveDefaultBranch } from '../../utils/pr-creator';
 import type { GitRunCommandResult, GitStreamingOperation } from '../../../shared/gitUtils';
 import {
 	worktreeInfoRemote,
@@ -83,36 +83,6 @@ const handlerOpts = (operation: string, logSuccess = false): CreateHandlerOption
 	operation,
 	logSuccess,
 });
-
-/**
- * Look up the worktree path currently checked out on the given branch
- * by running `git worktree list --porcelain` against the local repo.
- *
- * Used to recover from `git worktree add` failures with the "already used /
- * already checked out" error: instead of bubbling up an opaque error, we
- * return the existing worktree path so callers can open it as a session.
- *
- * Stale registrations (where the directory was deleted manually without
- * `git worktree prune`) are filtered out by an `fs.access` check so callers
- * never get a path that points at nothing.
- *
- * @returns Absolute worktree path, or null if not found / stale
- */
-async function findLocalWorktreeForBranch(
-	mainRepoCwd: string,
-	branchName: string
-): Promise<string | null> {
-	const result = await execFileNoThrow('git', ['worktree', 'list', '--porcelain'], mainRepoCwd);
-	if (result.exitCode !== 0) return null;
-	const existingPath = parseWorktreePathForBranch(result.stdout, branchName);
-	if (!existingPath) return null;
-	try {
-		await fs.access(existingPath);
-		return existingPath;
-	} catch {
-		return null;
-	}
-}
 
 // Cancel callbacks for in-flight streaming git commands, keyed by runId.
 const streamingGitRuns = new Map<string, () => void>();
@@ -1026,177 +996,16 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					return result.data;
 				}
 
-				// Local execution (existing code)
+				// Local execution: delegated to the single shared implementation in
+				// `utils/git-worktree` so the Board's per-card provisioning and this
+				// handler cannot drift apart.
 				logger.debug(
 					`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName, baseBranch })}`,
 					LOG_CONTEXT
 				);
-
-				// Resolve paths to absolute for proper comparison
-				const resolvedMainRepo = path.resolve(mainRepoCwd);
-				const resolvedWorktree = path.resolve(worktreePath);
-				logger.debug(
-					`Resolved paths: ${JSON.stringify({ resolvedMainRepo, resolvedWorktree })}`,
-					LOG_CONTEXT
+				return setupWorktreeLocal(mainRepoCwd, worktreePath, branchName, baseBranch, (msg) =>
+					logger.debug(msg, LOG_CONTEXT)
 				);
-
-				// Check if worktree path is inside the main repo (nested worktree)
-				// This can cause issues because git and Claude Code search upward for .git
-				// and may resolve to the parent repo instead of the worktree
-				if (resolvedWorktree.startsWith(resolvedMainRepo + path.sep)) {
-					return {
-						success: false,
-						error:
-							'Worktree path cannot be inside the main repository. Please use a sibling directory (e.g., ../my-worktree) instead.',
-					};
-				}
-
-				// First check if the worktree path already exists
-				let pathExists = true;
-				try {
-					await fs.access(resolvedWorktree);
-					logger.debug(`Path exists: ${resolvedWorktree}`, LOG_CONTEXT);
-				} catch {
-					pathExists = false;
-					logger.debug(`Path does not exist: ${resolvedWorktree}`, LOG_CONTEXT);
-				}
-
-				if (pathExists) {
-					// Check if it's already a worktree of this repo
-					const worktreeInfoResult = await execFileNoThrow(
-						'git',
-						['rev-parse', '--is-inside-work-tree'],
-						resolvedWorktree
-					);
-					logger.debug(
-						`is-inside-work-tree result: ${JSON.stringify(worktreeInfoResult)}`,
-						LOG_CONTEXT
-					);
-					if (worktreeInfoResult.exitCode !== 0) {
-						// Path exists but isn't a git repo - check if it's empty and can be removed
-						const dirContents = await fs.readdir(resolvedWorktree);
-						logger.debug(`Directory contents: ${JSON.stringify(dirContents)}`, LOG_CONTEXT);
-						if (dirContents.length === 0) {
-							// Empty directory - remove it so we can create the worktree
-							logger.debug(`Removing empty directory`, LOG_CONTEXT);
-							await fs.rmdir(resolvedWorktree);
-							pathExists = false;
-						} else {
-							logger.debug(`Directory not empty, returning error`, LOG_CONTEXT);
-							return {
-								success: false,
-								error: 'Path exists but is not a git worktree or repository (and is not empty)',
-							};
-						}
-					}
-				}
-
-				if (pathExists) {
-					// Get the common dir to check if it's the same repo (parallel)
-					const [gitCommonDirResult, mainGitDirResult] = await Promise.all([
-						execFileNoThrow('git', ['rev-parse', '--git-common-dir'], resolvedWorktree),
-						execFileNoThrow('git', ['rev-parse', '--git-dir'], resolvedMainRepo),
-					]);
-
-					if (gitCommonDirResult.exitCode === 0 && mainGitDirResult.exitCode === 0) {
-						const worktreeCommonDir = path.resolve(
-							resolvedWorktree,
-							gitCommonDirResult.stdout.trim()
-						);
-						const mainGitDir = path.resolve(resolvedMainRepo, mainGitDirResult.stdout.trim());
-
-						// Normalize paths for comparison
-						const normalizedWorktreeCommon = path.normalize(worktreeCommonDir);
-						const normalizedMainGit = path.normalize(mainGitDir);
-
-						if (normalizedWorktreeCommon !== normalizedMainGit) {
-							return { success: false, error: 'Worktree path belongs to a different repository' };
-						}
-					}
-
-					// Get current branch in the existing worktree
-					const currentBranchResult = await execFileNoThrow(
-						'git',
-						['rev-parse', '--abbrev-ref', 'HEAD'],
-						worktreePath
-					);
-					const currentBranch =
-						currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
-
-					return {
-						success: true,
-						created: false,
-						currentBranch,
-						requestedBranch: branchName,
-						branchMismatch: currentBranch !== branchName && branchName !== '',
-					};
-				}
-
-				// Worktree doesn't exist, create it
-				// First check if the branch exists
-				const branchExistsResult = await execFileNoThrow(
-					'git',
-					['rev-parse', '--verify', branchName],
-					mainRepoCwd
-				);
-				const branchExists = branchExistsResult.exitCode === 0;
-
-				let createResult;
-				if (branchExists) {
-					// Branch exists, just add worktree pointing to it. baseBranch is
-					// ignored here because the existing branch already has its own commit.
-					createResult = await execFileNoThrow(
-						'git',
-						['worktree', 'add', worktreePath, branchName],
-						mainRepoCwd
-					);
-				} else if (baseBranch) {
-					// Branch doesn't exist; create it from the requested base branch.
-					// `git worktree add -b <new> <path> <base>` is the explicit form.
-					createResult = await execFileNoThrow(
-						'git',
-						['worktree', 'add', '-b', branchName, worktreePath, baseBranch],
-						mainRepoCwd
-					);
-				} else {
-					// Branch doesn't exist and no base specified; defaults to current HEAD
-					// of the main repo (preserves pre-baseBranch behavior).
-					createResult = await execFileNoThrow(
-						'git',
-						['worktree', 'add', '-b', branchName, worktreePath],
-						mainRepoCwd
-					);
-				}
-
-				if (createResult.exitCode !== 0) {
-					// Recover from "already used / already checked out" - the branch is
-					// already registered with another worktree on disk. Resolve that path
-					// from `git worktree list --porcelain` so the caller can open it.
-					const errMsg = createResult.stderr || '';
-					if (isWorktreeAlreadyUsedError(errMsg)) {
-						const existingPath = await findLocalWorktreeForBranch(mainRepoCwd, branchName);
-						if (existingPath) {
-							return {
-								success: true,
-								created: false,
-								alreadyExisted: true,
-								existingPath,
-								currentBranch: branchName,
-								requestedBranch: branchName,
-								branchMismatch: false,
-							};
-						}
-					}
-					return { success: false, error: createResult.stderr || 'Failed to create worktree' };
-				}
-
-				return {
-					success: true,
-					created: true,
-					currentBranch: branchName,
-					requestedBranch: branchName,
-					branchMismatch: false,
-				};
 			}
 		)
 	);
@@ -1306,61 +1115,22 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				body: string,
 				ghPath?: string
 			) => {
-				// Resolve gh CLI path (uses cached detection or custom path)
-				const ghCommand = await resolveGhPath(ghPath);
-				logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);
-
-				// Build env with the user's full shell PATH so git hooks
-				// (e.g. Husky pre-push running npm) can find Node/npm binaries
-				let shellEnv: NodeJS.ProcessEnv | undefined;
-				try {
-					const shellPath = await getShellPath();
-					if (shellPath) {
-						shellEnv = { ...process.env, PATH: shellPath };
-					}
-				} catch (error) {
-					captureMessage(
-						`git:createPR falling back to default PATH: ${error instanceof Error ? error.message : String(error)}`,
-						'warning'
-					);
-				}
-
-				// First, push the current branch to origin
-				const pushResult = await execFileNoThrow(
-					'git',
-					['push', '-u', 'origin', 'HEAD'],
+				// The shared helper owns the push + `gh pr create` chain; the base
+				// branch stays a required argument here (the renderer resolves it).
+				const result = await createPullRequest({
 					worktreePath,
-					shellEnv
-				);
-				if (pushResult.exitCode !== 0) {
-					return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
-				}
-
-				// Create the PR using gh CLI
-				const prResult = await execFileNoThrow(
-					ghCommand,
-					['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
-					worktreePath,
-					shellEnv
-				);
-
-				if (prResult.exitCode !== 0) {
-					// Check if gh CLI is not installed
-					if (
-						prResult.stderr.includes('command not found') ||
-						prResult.stderr.includes('not recognized')
-					) {
-						return {
-							success: false,
-							error: 'GitHub CLI (gh) is not installed. Please install it to create PRs.',
-						};
-					}
-					return { success: false, error: prResult.stderr || 'Failed to create PR' };
-				}
-
-				// The PR URL is typically in stdout
-				const prUrl = prResult.stdout.trim();
-				return { success: true, prUrl };
+					targetBranch: baseBranch,
+					title,
+					body,
+					ghPath,
+					log: (msg) => logger.debug(msg, LOG_CONTEXT),
+					warn: (msg) => captureMessage(msg, 'warning'),
+				});
+				// Reply shape is unchanged for renderer callers: the helper's
+				// resolved `targetBranch` is redundant here (it is `baseBranch`).
+				return result.success
+					? { success: true, prUrl: result.prUrl }
+					: { success: false, error: result.error };
 			}
 		)
 	);
@@ -1421,28 +1191,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	ipcMain.handle(
 		'git:getDefaultBranch',
 		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string) => {
-			// First try to get the default branch from remote
-			const remoteResult = await execFileNoThrow('git', ['remote', 'show', 'origin'], cwd);
-			if (remoteResult.exitCode === 0) {
-				// Parse "HEAD branch: main" from the output
-				const match = remoteResult.stdout.match(/HEAD branch:\s*(\S+)/);
-				if (match) {
-					return { branch: match[1] };
-				}
+			// Shared with pr-creator.ts, which needs the same resolution when a
+			// caller opens a PR without an explicit base branch.
+			const branch = await resolveDefaultBranch(cwd);
+			if (!branch) {
+				throw new Error('Could not determine default branch');
 			}
-
-			// Fallback: check if main or master exists locally
-			const mainResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'main'], cwd);
-			if (mainResult.exitCode === 0) {
-				return { branch: 'main' };
-			}
-
-			const masterResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'master'], cwd);
-			if (masterResult.exitCode === 0) {
-				return { branch: 'master' };
-			}
-
-			throw new Error('Could not determine default branch');
+			return { branch };
 		})
 	);
 

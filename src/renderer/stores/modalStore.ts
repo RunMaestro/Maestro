@@ -361,7 +361,11 @@ export type ModalId =
 	| 'cueModal'
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
-	| 'pianolaModal';
+	| 'pianolaModal'
+	// Board (task DAG kanban; depends on Maestro Cue)
+	| 'boardModal'
+	// Agent Profiles (the assignees a board card names; ships with Board)
+	| 'profilesModal';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -1019,6 +1023,14 @@ export function getModalActions() {
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
 
+		// Board Modal (task DAG kanban; gated on Board + Maestro Cue Encore flags)
+		setBoardModalOpen: (open: boolean) =>
+			open ? openModal('boardModal') : closeModal('boardModal'),
+
+		// Agent Profiles Modal (board card assignees; same Encore gate as Board)
+		setProfilesModalOpen: (open: boolean) =>
+			open ? openModal('profilesModal') : closeModal('profilesModal'),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -1120,6 +1132,8 @@ export function useModalActions() {
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
 	const pianolaModalOpen = useModalStore(selectModalOpen('pianolaModal'));
+	const boardModalOpen = useModalStore(selectModalOpen('boardModal'));
+	const profilesModalOpen = useModalStore(selectModalOpen('profilesModal'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1327,6 +1341,12 @@ export function useModalActions() {
 
 		// Pianola Modal (autonomous manager)
 		pianolaModalOpen,
+
+		// Board Modal (task DAG kanban)
+		boardModalOpen,
+
+		// Agent Profiles Modal (board card assignees)
+		profilesModalOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

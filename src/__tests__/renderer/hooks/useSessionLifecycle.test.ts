@@ -236,6 +236,46 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customPath).toBeUndefined();
 		});
 
+		it('preserves an existing boardWorker opt-in when the argument is omitted', () => {
+			const session = createMockSession({ id: 'session-1', boardWorker: true } as any);
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			// A caller that does not pass boardWorker (unlike EditAgentModal, which
+			// always sends a boolean) must not clear the opt-in as a side effect.
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'Renamed');
+			});
+			expect((useSessionStore.getState().sessions[0] as any).boardWorker).toBe(true);
+
+			// An explicit false still clears it.
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Renamed',
+					undefined, // toolType
+					undefined, // nudgeMessage
+					undefined, // newSessionMessage
+					undefined, // customPath
+					undefined, // customArgs
+					undefined, // customEnvVars
+					undefined, // customModel
+					undefined, // customEffort
+					undefined, // customContextWindow
+					undefined, // sessionSshRemoteConfig
+					undefined, // enableMaestroP
+					undefined, // maestroPPath
+					undefined, // maestroPMode
+					undefined, // retryOnAvailabilityErrors
+					undefined, // retryOnTokenExhaustion
+					undefined, // additionalDirectories
+					false // boardWorker
+				);
+			});
+			expect((useSessionStore.getState().sessions[0] as any).boardWorker).toBe(false);
+		});
+
 		it('resets tabs and provider-specific config when toolType changes', () => {
 			const tab = createMockAITab({ id: 'old-tab', agentSessionId: 'old-session' });
 			const session = createMockSession({

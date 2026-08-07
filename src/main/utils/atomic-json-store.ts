@@ -28,6 +28,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 
 /**
  * Guard a serialized JSON payload before it can replace an on-disk file.
@@ -96,6 +97,51 @@ export async function atomicWriteFile(
 			}
 			throw err;
 		}
+	}
+}
+
+/**
+ * Synchronous twin of {@link atomicWriteFile}: write `contents` to a sibling
+ * `.tmp` file, then `renameSync` over the target. A crash (or a concurrent
+ * reader) mid-write sees either the whole old file or the whole new file, never
+ * a truncated one. On failure the temp file is removed on a best-effort basis
+ * and the error is rethrown so the caller can surface it - the original file is
+ * left intact either way.
+ *
+ * Exists because several stores (`.maestro/cue.yaml`, `.maestro/board.yaml`,
+ * `.maestro/profiles.yaml`) are read and written synchronously by the CLI, the
+ * dispatcher, and IPC alike; making them async would cascade through those
+ * call chains for no correctness gain.
+ */
+export function atomicWriteFileSync(filePath: string, contents: string): void {
+	const tmpPath = `${filePath}.tmp`;
+	try {
+		fsSync.writeFileSync(tmpPath, contents, 'utf-8');
+		// Same EPERM/EBUSY retry as atomicWriteFile (transient Windows locks from
+		// OneDrive/antivirus), with a synchronous backoff since this path has no
+		// event loop to yield to. Atomics.wait on a throwaway buffer is the only
+		// dependency-free sync sleep that does not spin a core.
+		const maxRetries = 3;
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			try {
+				fsSync.renameSync(tmpPath, filePath);
+				return;
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				if ((code === 'EPERM' || code === 'EBUSY') && attempt < maxRetries) {
+					Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100 * Math.pow(2, attempt));
+					continue;
+				}
+				throw err;
+			}
+		}
+	} catch (err) {
+		try {
+			fsSync.unlinkSync(tmpPath);
+		} catch {
+			// ignore - the original file is still intact
+		}
+		throw err;
 	}
 }
 

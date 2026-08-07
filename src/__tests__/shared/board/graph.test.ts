@@ -1,0 +1,301 @@
+/**
+ * @file graph.test.ts
+ * @description Tests for the Board DAG helpers: eligibility, blockers, and
+ * cycle detection. These are the functions the Phase 3 dispatcher relies on,
+ * so they are exercised thoroughly here.
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+	getEligibleCards,
+	getBlockers,
+	hasCycle,
+	countActiveCards,
+} from '../../../shared/board/graph';
+import type { Board, BoardCard, CardStatus } from '../../../shared/board/types';
+
+function card(overrides: Partial<BoardCard> & { id: string }): BoardCard {
+	return {
+		title: `Card ${overrides.id}`,
+		body: '',
+		assigneeProfileId: 'p1',
+		parents: [],
+		status: 'todo' as CardStatus,
+		createdAt: '2026-07-10T00:00:00.000Z',
+		updatedAt: '2026-07-10T00:00:00.000Z',
+		...overrides,
+	};
+}
+
+function board(cards: BoardCard[]): Board {
+	return { id: 'b1', name: 'Test board', cards };
+}
+
+describe('getEligibleCards', () => {
+	it('returns todo cards with no parents', () => {
+		const b = board([card({ id: 'a' }), card({ id: 'b' })]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['a', 'b']);
+	});
+
+	it('excludes a card whose parent is not done', () => {
+		const b = board([card({ id: 'a', status: 'todo' }), card({ id: 'c', parents: ['a'] })]);
+		// a is eligible (no parents), c is not (a not done).
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['a']);
+	});
+
+	it('includes a card once every parent is done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'b', status: 'done' }),
+			card({ id: 'c', parents: ['a', 'b'] }),
+		]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['c']);
+	});
+
+	it('excludes a card when only some parents are done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'b', status: 'running' }),
+			card({ id: 'c', parents: ['a', 'b'] }),
+		]);
+		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('only considers todo cards, not ready/running/review/blocked/done/triage', () => {
+		const statuses: CardStatus[] = ['ready', 'running', 'review', 'blocked', 'done', 'triage'];
+		const b = board(statuses.map((s, i) => card({ id: `x${i}`, status: s })));
+		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('excludes a todo card the user is holding, even with no parents', () => {
+		// AB1 Decision 3: a stopped card stays `todo` (the work really is still
+		// waiting) but must never be re-promoted until a person resumes it. This
+		// is the single source of truth for "Stop actually stops".
+		const b = board([card({ id: 'a', status: 'todo', heldByUser: true }), card({ id: 'b' })]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['b']);
+	});
+
+	it('excludes a held card whose parents are all done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'c', parents: ['a'], heldByUser: true }),
+		]);
+		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('does not unblock children when a parent is held by the user', () => {
+		// AB1 Decision 3, other half: holding a parent must not let its children
+		// run. The card is not `done`, so `getBlockers` gates the child exactly
+		// as it would for any other unfinished parent.
+		const b = board([
+			card({ id: 'a', status: 'todo', heldByUser: true }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getEligibleCards(b)).toEqual([]);
+		expect(getBlockers(b.cards[1], b)).toEqual(['a']);
+	});
+
+	it('does not unblock children when a parent is only in review', () => {
+		// A review parent finished its run but is waiting on a human, so its
+		// children must stay gated until someone approves it into `done`. This is
+		// the whole point of a status distinct from `done`.
+		const b = board([
+			card({ id: 'a', status: 'review' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getEligibleCards(b)).toEqual([]);
+		expect(getBlockers(b.cards[1], b)).toEqual(['a']);
+	});
+
+	it('unblocks the child once the human approves the review parent into done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['c']);
+		expect(getBlockers(b.cards[1], b)).toEqual([]);
+	});
+
+	it('treats a missing parent id as a blocker (not eligible)', () => {
+		const b = board([card({ id: 'c', parents: ['ghost'] })]);
+		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('preserves board card order in the result', () => {
+		const b = board([card({ id: 'z' }), card({ id: 'a' }), card({ id: 'm' })]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['z', 'a', 'm']);
+	});
+});
+
+describe('getBlockers', () => {
+	it('returns an empty array when all parents are done', () => {
+		const b = board([card({ id: 'a', status: 'done' }), card({ id: 'c', parents: ['a'] })]);
+		const c = b.cards.find((x) => x.id === 'c')!;
+		expect(getBlockers(c, b)).toEqual([]);
+	});
+
+	it('returns only the not-done parents, in order', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'b', status: 'todo' }),
+			card({ id: 'c', parents: ['a', 'b'] }),
+		]);
+		const c = b.cards.find((x) => x.id === 'c')!;
+		expect(getBlockers(c, b)).toEqual(['b']);
+	});
+
+	it('counts a triage parent as a blocker', () => {
+		// A triage parent has not been groomed, let alone run, so it gates its
+		// children the same way any other non-done parent does.
+		const b = board([card({ id: 'a', status: 'triage' }), card({ id: 'c', parents: ['a'] })]);
+		const c = b.cards.find((x) => x.id === 'c')!;
+		expect(getBlockers(c, b)).toEqual(['a']);
+	});
+
+	it('counts a held todo parent as a blocker', () => {
+		const b = board([
+			card({ id: 'a', status: 'todo', heldByUser: true }),
+			card({ id: 'c', parents: ['a'] }),
+		]);
+		const c = b.cards.find((x) => x.id === 'c')!;
+		expect(getBlockers(c, b)).toEqual(['a']);
+	});
+
+	it('counts a missing parent id as a blocker', () => {
+		const b = board([
+			card({ id: 'c', parents: ['ghost', 'a'] }),
+			card({ id: 'a', status: 'done' }),
+		]);
+		const c = b.cards.find((x) => x.id === 'c')!;
+		expect(getBlockers(c, b)).toEqual(['ghost']);
+	});
+});
+
+describe('hasCycle', () => {
+	it('returns false for an acyclic DAG', () => {
+		const b = board([
+			card({ id: 'a' }),
+			card({ id: 'b' }),
+			card({ id: 'c', parents: ['a', 'b'] }),
+			card({ id: 'd', parents: ['c'] }),
+		]);
+		expect(hasCycle(b)).toBe(false);
+	});
+
+	it('detects a direct two-node cycle', () => {
+		const b = board([card({ id: 'a', parents: ['b'] }), card({ id: 'b', parents: ['a'] })]);
+		expect(hasCycle(b)).toBe(true);
+	});
+
+	it('detects a longer cycle', () => {
+		const b = board([
+			card({ id: 'a', parents: ['c'] }),
+			card({ id: 'b', parents: ['a'] }),
+			card({ id: 'c', parents: ['b'] }),
+		]);
+		expect(hasCycle(b)).toBe(true);
+	});
+
+	it('detects a self-parent as a cycle', () => {
+		const b = board([card({ id: 'a', parents: ['a'] })]);
+		expect(hasCycle(b)).toBe(true);
+	});
+
+	it('ignores dangling parent ids (missing dependency, not a cycle)', () => {
+		const b = board([card({ id: 'a', parents: ['ghost'] })]);
+		expect(hasCycle(b)).toBe(false);
+	});
+
+	it('returns false for an empty board', () => {
+		expect(hasCycle(board([]))).toBe(false);
+	});
+
+	it('detects a cycle in a diamond graph with a back-edge', () => {
+		const b = board([
+			card({ id: 'a', parents: ['d'] }), // back-edge creating the cycle
+			card({ id: 'b', parents: ['a'] }),
+			card({ id: 'c', parents: ['a'] }),
+			card({ id: 'd', parents: ['b', 'c'] }),
+		]);
+		expect(hasCycle(b)).toBe(true);
+	});
+
+	it('handles a diamond DAG without false positives', () => {
+		const b = board([
+			card({ id: 'a' }),
+			card({ id: 'b', parents: ['a'] }),
+			card({ id: 'c', parents: ['a'] }),
+			card({ id: 'd', parents: ['b', 'c'] }),
+		]);
+		expect(hasCycle(b)).toBe(false);
+	});
+});
+
+describe('eligibility after a parent is deleted', () => {
+	it('a dangling parent id permanently blocks the child (why deleteCard must detach)', () => {
+		// This is the failure mode `deleteCard`'s referential integrity prevents:
+		// if the deleted id is left in `parents`, the child is never eligible and
+		// nothing in the UI explains why.
+		const b = board([card({ id: 'child', status: 'todo', parents: ['deleted'] })]);
+		expect(getBlockers(b.cards[0], b)).toEqual(['deleted']);
+		expect(getEligibleCards(b)).toEqual([]);
+	});
+
+	it('becomes eligible once the dangling parent is spliced out', () => {
+		const b = board([card({ id: 'child', status: 'todo', parents: [] })]);
+		expect(getBlockers(b.cards[0], b)).toEqual([]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['child']);
+	});
+
+	it('stays blocked by an adopted grandparent that is not done yet', () => {
+		// A -> (B deleted, C adopts A). C must still wait for A.
+		const b = board([
+			card({ id: 'a', status: 'todo' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getBlockers(b.cards[1], b)).toEqual(['a']);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['a']);
+	});
+
+	it('runs once the adopted grandparent is done', () => {
+		const b = board([
+			card({ id: 'a', status: 'done' }),
+			card({ id: 'c', status: 'todo', parents: ['a'] }),
+		]);
+		expect(getBlockers(b.cards[1], b)).toEqual([]);
+		expect(getEligibleCards(b).map((c) => c.id)).toEqual(['c']);
+	});
+});
+
+describe('countActiveCards', () => {
+	it('counts running and ready cards across every board', () => {
+		const counts = countActiveCards([
+			board([
+				card({ id: 'a', status: 'running' }),
+				card({ id: 'b', status: 'ready' }),
+				card({ id: 'c', status: 'done' }),
+			]),
+			{ id: 'b2', name: 'Second', cards: [card({ id: 'd', status: 'running' })] },
+		]);
+		expect(counts).toEqual({ running: 2, ready: 1 });
+	});
+
+	it('ignores todo, done, review, blocked, and triage cards', () => {
+		// `review` is a resting state waiting on a person, not in-flight work, so
+		// it must not hold a slot against the board's concurrency cap.
+		const counts = countActiveCards([
+			board([
+				card({ id: 'a', status: 'todo' }),
+				card({ id: 'b', status: 'done' }),
+				card({ id: 'c', status: 'blocked' }),
+				card({ id: 'd', status: 'triage' }),
+				card({ id: 'e', status: 'review' }),
+			]),
+		]);
+		expect(counts).toEqual({ running: 0, ready: 0 });
+	});
+
+	it('is zero for no boards (the indicator hides on a zero total)', () => {
+		expect(countActiveCards([])).toEqual({ running: 0, ready: 0 });
+	});
+});

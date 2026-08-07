@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ChevronLeft, Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
-import type { Theme } from '../../../types';
+import type { EncoreFeatureFlags, Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { PermissionList, RISK_COLOR } from './PermissionList';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
@@ -24,6 +24,7 @@ import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
 	STATE_LABELS,
+	isDependencyMet,
 	type ExtensionState,
 	type UnifiedExtension,
 } from './extensionModel';
@@ -33,6 +34,10 @@ import { getModalActions } from '../../../stores/modalStore';
 interface ExtensionDetailsProps {
 	theme: Theme;
 	ext: UnifiedExtension;
+	/** Current Encore flags, used to gate features with an unmet dependency
+	 * (e.g. Board requires Maestro Cue). Optional: when omitted, dependencies are
+	 * treated as met (the production ExtensionsView always supplies it). */
+	encoreFeatures?: EncoreFeatureFlags;
 	contributions: AggregatedContributions | null;
 	busy: boolean;
 	onBack: () => void;
@@ -68,6 +73,7 @@ const CONTRIB_BUCKETS: ReadonlyArray<{
 export function ExtensionDetails({
 	theme,
 	ext,
+	encoreFeatures,
 	contributions,
 	busy,
 	onBack,
@@ -118,6 +124,7 @@ export function ExtensionDetails({
 	}, [isPlugin, ext.id, getGrants]);
 
 	const isPianola = !isPlugin && ext.flag === 'pianola';
+	const isBoard = !isPlugin && ext.flag === 'board';
 
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
@@ -126,7 +133,7 @@ export function ExtensionDetails({
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
-	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola;
+	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola || isBoard;
 
 	// Reset transient editor + sub-tab when switching extensions. Default to
 	// Settings when it exists, else Permissions.
@@ -179,6 +186,16 @@ export function ExtensionDetails({
 
 	const grantedCaps = new Set((grants?.granted ?? []).map((g) => g.capability));
 	const toggleLabel = ext.state === 'enabled' ? 'Disable' : 'Enable';
+
+	// Dependency gate (e.g. Board requires Maestro Cue): block ENABLING until the
+	// required flag is on. Disabling stays allowed so a feature can always be
+	// turned off. Mirrors the main-process dispatcher's dual-gate.
+	const dependencyMet = encoreFeatures ? isDependencyMet(ext, encoreFeatures) : true;
+	const dependencyName =
+		ext.dependsOn && ext.dependsOn in FIRST_PARTY_PLUGINS
+			? FIRST_PARTY_PLUGINS[ext.dependsOn as keyof typeof FIRST_PARTY_PLUGINS].name
+			: ext.dependsOn;
+	const enableBlockedByDependency = !isPlugin && !dependencyMet && ext.state !== 'enabled';
 
 	// First-party tiles surface their supervised background services; status
 	// derives from the definition + the bridge-written flag state (enable
@@ -280,8 +297,10 @@ export function ExtensionDetails({
 				<button
 					type="button"
 					data-testid="extension-enable-toggle"
-					disabled={busy || (isPlugin && ext.loadStatus !== 'ok')}
+					disabled={busy || (isPlugin && ext.loadStatus !== 'ok') || enableBlockedByDependency}
+					title={enableBlockedByDependency ? `Requires ${dependencyName}` : undefined}
 					onClick={() => {
+						if (enableBlockedByDependency) return;
 						if (isPlugin && record) onTogglePlugin(record);
 						else if (ext.flag) onToggleBuiltin(ext.flag);
 					}}
@@ -290,6 +309,16 @@ export function ExtensionDetails({
 				>
 					<Power className="w-4 h-4" /> {toggleLabel}
 				</button>
+
+				{enableBlockedByDependency && (
+					<span
+						data-testid="extension-dependency-hint"
+						className="text-xs"
+						style={{ color: theme.colors.textDim }}
+					>
+						Requires {dependencyName}. Enable it first.
+					</span>
+				)}
 
 				{isPlugin && isCodeTier && (
 					<button
@@ -568,6 +597,32 @@ export function ExtensionDetails({
 								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 							>
 								Enable Pianola to open its manager and rules.
+							</div>
+						))}
+
+					{/* Board: the kanban surface lives in its own modal. The open action
+					    also requires the Cue dependency: with Cue off the modal will not
+					    mount (AppStandaloneModals), so an active button would be a no-op. */}
+					{isBoard &&
+						(ext.state === 'enabled' && dependencyMet ? (
+							<button
+								type="button"
+								data-testid="extension-open-board"
+								onClick={() => getModalActions().setBoardModalOpen(true)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								<SettingsIcon className="w-4 h-4" /> Open Board
+							</button>
+						) : (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								{ext.state === 'enabled'
+									? `Enable ${dependencyName ?? 'Maestro Cue'} to open the Board.`
+									: 'Enable Board to open its kanban surface.'}
 							</div>
 						))}
 

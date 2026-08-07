@@ -330,7 +330,8 @@ describe('EditAgentModal', () => {
 				undefined,
 				true,
 				true,
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // boardWorker (defaults off, checkbox untouched)
 			);
 		});
 
@@ -425,7 +426,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -657,7 +659,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 
@@ -729,7 +732,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 
@@ -807,7 +811,8 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 

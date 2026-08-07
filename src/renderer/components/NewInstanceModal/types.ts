@@ -91,7 +91,8 @@ export interface EditAgentModalProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[]
+		additionalDirectories?: AdditionalDirectory[],
+		boardWorker?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;

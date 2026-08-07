@@ -44,6 +44,8 @@ import {
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
 	registerCueHandlers,
+	registerProfileHandlers,
+	registerBoardHandlers,
 	registerCueBackupHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
@@ -157,6 +159,19 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Cue - event-driven automation engine
 	registerCueHandlers({
 		getCueEngine: deps.getCueEngine,
+	});
+
+	// Agent Profiles - named model/effort/role bundles layered on a base agent
+	registerProfileHandlers();
+
+	// Board - persistent task DAG stored in .maestro/board.yaml. The engine is
+	// needed for `board:cancelCard`, which routes through the live dispatcher.
+	registerBoardHandlers({
+		getCueEngine: deps.getCueEngine,
+		// Board F3: a manual move into Done opens the card's PR out of band, so the
+		// handler needs the same toast relay and log sink the dispatcher path uses.
+		notifyToast: (payload) => deps.safeSend('remote:notifyToast', payload),
+		onLog: (_level, message) => logger.cue(message, 'Board'),
 	});
 
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
