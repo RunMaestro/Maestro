@@ -226,6 +226,39 @@ describe('agent-flow plugin main.js', () => {
 			expect(shown[0].title).toBe('Renamed');
 		});
 
+		// CodeRabbit/Greptile on PR #1354: event handlers are registered before
+		// sessions.list() resolves, so an event landing in that window carries
+		// NEWER metadata than the list snapshot. The seed used to overwrite it.
+		it('does not let the startup seed clobber metadata an event already set', async () => {
+			plugin.deactivate();
+			stub = makeStub(SEED);
+			plugin.activate(stub.sdk);
+			// Fires BEFORE the sessions.list() promise settles.
+			stub.emit('session.updated', { sessionId: 's1', title: 'Renamed mid-flight' });
+			await Promise.resolve();
+			await Promise.resolve();
+
+			stub.emit('tool.executed', { sessionId: 's1', toolName: 'Read', timestamp: 1000 });
+			const shown = lanes();
+			expect(shown).toHaveLength(1);
+			// The stale list entry says "One"; the event said "Renamed mid-flight".
+			expect(shown[0].title).toBe('Renamed mid-flight');
+			// A field the event did NOT carry still comes from the seed.
+			expect(shown[0].agentId).toBe('a1');
+		});
+
+		// CodeRabbit on PR #1354: session.created recorded the status into the meta
+		// map but never copied it onto an already-live lane, so the lane displayed a
+		// stale status until some later session.updated happened to arrive.
+		it('copies status onto an existing lane on session.created', async () => {
+			await activateWithSessions(SEED);
+			stub.emit('tool.executed', { sessionId: 's1', toolName: 'Read', timestamp: 1000 });
+			expect(lanes()[0].status).toBe('idle');
+
+			stub.emit('session.created', { sessionId: 's1', title: 'One', status: 'busy' });
+			expect(lanes()[0].status).toBe('busy');
+		});
+
 		it('gives the focused session a lane so the highlight has a target', async () => {
 			await activateWithSessions(SEED);
 			stub.emit('session.activated', { sessionId: 's3' });

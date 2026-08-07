@@ -110,6 +110,37 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * keybindings. Call once, near the top of the App tree, after
  * useMainKeyboardHandler().
  */
+/**
+ * Native editing and navigation chords a plugin must never claim while the user
+ * is typing, even though they carry a hard modifier.
+ *
+ * Narrowing the input-focus skip to bare keys (AA1) made contributed chords
+ * usable from the composer, but it also handed plugins every Ctrl/Cmd and Alt
+ * combination the app itself does not bind - including undo, select-all, and
+ * word-wise motion. Since a match calls `preventDefault()`, a plugin binding
+ * `Ctrl+Z` would silently break undo mid-edit. The browser owns these; keep
+ * them off the table.
+ *
+ * Matched on `e.key`, lower-cased, so layout-independent. Shift is ignored:
+ * `Ctrl+Shift+Z` is redo and must be reserved for the same reason as `Ctrl+Z`.
+ */
+function isReservedEditingChord(e: KeyboardEvent): boolean {
+	const key = e.key.toLowerCase();
+	if (e.ctrlKey || e.metaKey) {
+		// Clipboard, undo/redo, select-all, and the common text-entry verbs.
+		if (['a', 'c', 'v', 'x', 'z', 'y', 'backspace', 'delete', 'insert'].includes(key)) return true;
+		// Word-wise and document-wise motion.
+		if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'home', 'end'].includes(key)) {
+			return true;
+		}
+	}
+	if (e.altKey) {
+		// Word-wise motion and delete on macOS, and the Linux/Windows equivalents.
+		if (['arrowleft', 'arrowright', 'backspace', 'delete'].includes(key)) return true;
+	}
+	return false;
+}
+
 export function usePluginKeybindings(): void {
 	const { keybindings } = usePluginContributions();
 
@@ -131,8 +162,10 @@ export function usePluginKeybindings(): void {
 			if (e.defaultPrevented) return;
 			// Never hijack typing: while a text surface has focus only chords that
 			// carry Alt or Ctrl/Cmd may fire. Shift alone is typing, not a chord.
+			// Reserved native editing chords are excluded even then - see
+			// isReservedEditingChord. (AA1 review)
 			const hasHardModifier = e.altKey || e.ctrlKey || e.metaKey;
-			if (!hasHardModifier && isEditableTarget(e.target)) return;
+			if (isEditableTarget(e.target) && (!hasHardModifier || isReservedEditingChord(e))) return;
 			for (const chord of chordsRef.current) {
 				if (!matches(e, chord)) continue;
 				e.preventDefault();

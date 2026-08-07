@@ -105,16 +105,27 @@ function touch(lane, at) {
 // `fields` is a partial { title, agentId, status }; only string members are
 // taken, so a payload missing a field never clobbers a known one. Returns the
 // stored record.
-function recordMeta(sessionId, fields) {
+function recordMeta(sessionId, fields, onlyIfUnset) {
 	var meta = sessionMeta.get(sessionId);
 	if (!meta) {
 		meta = { title: '', agentId: '', status: '' };
 		sessionMeta.set(sessionId, meta);
 	}
 	if (fields) {
-		if (typeof fields.title === 'string') meta.title = fields.title;
-		if (typeof fields.agentId === 'string') meta.agentId = fields.agentId;
-		if (typeof fields.status === 'string') meta.status = fields.status;
+		// `onlyIfUnset` is the startup seed: `sessions.list()` resolves
+		// asynchronously, and event handlers are registered before it does, so a
+		// `session.created` / `session.updated` that lands in between carries
+		// NEWER data than the list snapshot. Filling only blank fields keeps the
+		// seed from overwriting it. Live events pass this falsy and always win.
+		// (review)
+		var take = function (key, value) {
+			if (typeof value !== 'string') return;
+			if (onlyIfUnset && meta[key]) return;
+			meta[key] = value;
+		};
+		take('title', fields.title);
+		take('agentId', fields.agentId);
+		take('status', fields.status);
 	}
 	return meta;
 }
@@ -380,6 +391,10 @@ var HANDLERS = {
 		if (!lane) return;
 		if (typeof payload.title === 'string') lane.title = payload.title;
 		if (typeof payload.agentId === 'string') lane.agentId = payload.agentId;
+		// `recordMeta` above already stored the status; copy it onto the live lane
+		// too, otherwise the lane shows a stale status until the next
+		// `session.updated` happens to arrive. (review)
+		if (typeof payload.status === 'string') lane.status = payload.status;
 		touch(lane, at);
 	},
 	// Metadata only, same rule as session.created: a rename or a status change on
@@ -591,11 +606,18 @@ function seedFromSessions() {
 				for (var i = 0; i < list.length; i++) {
 					var s = list[i];
 					if (!s || typeof s.id !== 'string') continue;
-					var meta = recordMeta(s.id, {
-						title: s.title,
-						agentId: s.agentId,
-						status: s.status,
-					});
+					// `true` = seed mode: only fill fields no event has set yet. A
+					// `session.created`/`updated` that arrived while this list was in
+					// flight carries newer data and must not be clobbered. (review)
+					var meta = recordMeta(
+						s.id,
+						{
+							title: s.title,
+							agentId: s.agentId,
+							status: s.status,
+						},
+						true
+					);
 					// sessions.list() resolves asynchronously, so an event may already
 					// have created a lane for this session; label it now that we know.
 					var lane = existingLane(s.id);
