@@ -32,6 +32,16 @@ export type {
 
 // Re-export Symphony types for session metadata
 export type { SymphonySessionMetadata } from '../../shared/symphony-types';
+export type {
+	TtsrContextMode,
+	TtsrProjectSettings,
+	TtsrRule,
+	TtsrRuleListEntry,
+	TtsrRuleListResult,
+	TtsrRulesChangedPayload,
+	TtsrRuleValidation,
+	TtsrScope,
+} from '../../shared/ttsr-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 
@@ -62,7 +72,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'autorun';
+export type RightPanelTab = 'files' | 'history' | 'autorun' | 'rules';
 /**
  * Tabs in the Usage Dashboard modal. Shared so the in-memory uiStore can
  * remember the last-selected tab across dashboard opens (resets on restart).
@@ -225,6 +235,12 @@ export interface LogEntry {
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
+	// For the corrective turn TTSR respawns after a mid-turn abort: marks this
+	// user entry as the TTSR injection boundary. `rules` are the rule name(s) that
+	// fired (rendered as a badge); `mode` is how the turn was continued (`resume`
+	// re-attached to the aborted conversation, `fresh` restarted it). The entry's
+	// `text` holds the `<system-interrupt>` block, collapsed by default in LogItem.
+	ttsr?: { rules: string[]; mode: 'resume' | 'fresh' };
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
@@ -1267,6 +1283,10 @@ export interface ProcessConfig {
 	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
 	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
 	// neither of which a renderer (possibly a browser on another OS) can know.
+	// Set only on a TTSR corrective respawn: the id from `ttsr:triggered`, echoed
+	// back so main recognises its own corrective turn by correlation rather than
+	// by inspecting the prompt.
+	ttsrCorrelationId?: string;
 }
 
 // DirectoryEntry and ShellInfo re-exported from shared/types above
@@ -1414,6 +1434,11 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// TTSR (Time-Traveling Stream Rules) - watch agent output streams and
+	// interrupt a turn that violates a project rule. Off by default. Optional so
+	// existing literals (older test fixtures, persisted settings without the
+	// key) continue to type-check.
+	ttsr?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

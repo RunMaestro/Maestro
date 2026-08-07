@@ -893,6 +893,203 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('stream_event token deltas (--include-partial-messages)', () => {
+		// The parser is stateful (sawStreamedProseDelta), so each stateful test
+		// uses its own instance to avoid leaking the marker across cases.
+		const streamEvent = (event: unknown, extra: Record<string, unknown> = {}) =>
+			JSON.stringify({
+				type: 'stream_event',
+				session_id: 'sess-stream',
+				parent_tool_use_id: null,
+				event,
+				...extra,
+			});
+
+		it('should map text_delta stream_events to partial text events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				streamEvent({
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'text_delta', text: 'Hello' },
+				})
+			);
+			expect(event).not.toBeNull();
+			expect(event?.type).toBe('text');
+			expect(event?.text).toBe('Hello');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBeUndefined();
+			expect(event?.sessionId).toBe('sess-stream');
+			expect(event?.textAlreadyStreamed).toBeUndefined();
+		});
+
+		it('should map thinking_delta stream_events to partial reasoning text events', () => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				streamEvent({
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'thinking_delta', thinking: 'Let me think' },
+				})
+			);
+			expect(event).not.toBeNull();
+			expect(event?.type).toBe('text');
+			expect(event?.text).toBe('Let me think');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBe(true);
+		});
+
+		it.each([
+			['message_start', { type: 'message_start', message: { id: 'msg_1' } }],
+			['content_block_start', { type: 'content_block_start', index: 0, content_block: {} }],
+			[
+				'input_json_delta',
+				{
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'input_json_delta', partial_json: '{"a":' },
+				},
+			],
+			['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' } }],
+			['message_stop', { type: 'message_stop' }],
+			['content_block_stop', { type: 'content_block_stop', index: 0 }],
+		])('should return null for %s stream_events', (_label, rawEvent) => {
+			const p = new ClaudeOutputParser();
+			expect(p.parseJsonLine(streamEvent(rawEvent))).toBeNull();
+		});
+
+		it('should return null for a content_block_delta with an empty text_delta', () => {
+			const p = new ClaudeOutputParser();
+			expect(
+				p.parseJsonLine(
+					streamEvent({
+						type: 'content_block_delta',
+						index: 0,
+						delta: { type: 'text_delta', text: '' },
+					})
+				)
+			).toBeNull();
+		});
+
+		it('should stamp the closing assistant event with textAlreadyStreamed after prose deltas', () => {
+			const p = new ClaudeOutputParser();
+			// Simulate token deltas arriving first...
+			p.parseJsonLine(
+				streamEvent({
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'text_delta', text: 'The ' },
+				})
+			);
+			p.parseJsonLine(
+				streamEvent({
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'text_delta', text: 'answer.' },
+				})
+			);
+
+			// ...then the complete assistant message for that turn.
+			const assistant = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					session_id: 'sess-stream',
+					message: { role: 'assistant', content: 'The answer.' },
+				})
+			);
+			expect(assistant?.type).toBe('text');
+			// text stays populated for display consumers
+			expect(assistant?.text).toBe('The answer.');
+			expect(assistant?.textAlreadyStreamed).toBe(true);
+		});
+
+		it('should reset the streamed marker so the next message is not flagged', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(
+				streamEvent({
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'text_delta', text: 'First' },
+				})
+			);
+			const first = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: 'First' },
+				})
+			);
+			expect(first?.textAlreadyStreamed).toBe(true);
+
+			// A second assistant message with no preceding deltas must NOT be flagged.
+			const second = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: 'Second' },
+				})
+			);
+			expect(second?.text).toBe('Second');
+			expect(second?.textAlreadyStreamed).toBeUndefined();
+		});
+
+		it('should stamp textAlreadyStreamed when the deltas were thinking-only', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(
+				streamEvent({
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'thinking_delta', thinking: 'reasoning...' },
+				})
+			);
+			const assistant = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'thinking', thinking: 'reasoning...' }],
+					},
+				})
+			);
+			expect(assistant?.textAlreadyStreamed).toBe(true);
+		});
+
+		it('should NOT flag the assistant event when no deltas were seen (old CLI / flag absent)', () => {
+			const p = new ClaudeOutputParser();
+			const assistant = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					session_id: 'sess-abc123',
+					message: { role: 'assistant', content: 'Full response, no streaming.' },
+				})
+			);
+			expect(assistant?.type).toBe('text');
+			expect(assistant?.text).toBe('Full response, no streaming.');
+			expect(assistant?.isPartial).toBe(true);
+			expect(assistant?.textAlreadyStreamed).toBeUndefined();
+		});
+
+		it('should not let input_json_delta deltas flag the assistant event', () => {
+			const p = new ClaudeOutputParser();
+			// Tool-input framing must not set the prose marker.
+			p.parseJsonLine(
+				streamEvent({
+					type: 'content_block_delta',
+					index: 0,
+					delta: { type: 'input_json_delta', partial_json: '{"file":' },
+				})
+			);
+			const assistant = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file: 'x.ts' } }],
+					},
+				})
+			);
+			expect(assistant?.toolUseBlocks).toHaveLength(1);
+			expect(assistant?.textAlreadyStreamed).toBeUndefined();
+		});
+	});
+
 	describe('edge cases', () => {
 		it('should handle empty result string', () => {
 			const event = parser.parseJsonLine(

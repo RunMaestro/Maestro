@@ -2732,4 +2732,105 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			mockedMatchSsh.mockReset();
 		});
 	});
+
+	// ── claude-code stream_event double-count guard ────────────────────────
+	//
+	// With --include-partial-messages the claude parser emits token-level `text`
+	// deltas from stream_event objects, then a complete `assistant` event stamped
+	// textAlreadyStreamed:true once those deltas have been delivered. StdoutHandler
+	// must count the streamed prose exactly once: the deltas feed streamedText and
+	// the thinking panel, and the flagged closing event is skipped entirely.
+	describe('claude-code stream_event double-count guard', () => {
+		// A raw content_block_delta stream_event as the CLI emits it.
+		function textDelta(text: string) {
+			return {
+				type: 'stream_event',
+				session_id: 'prov-1',
+				event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
+			};
+		}
+		function thinkingDelta(thinking: string) {
+			return {
+				type: 'stream_event',
+				session_id: 'prov-1',
+				event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking } },
+			};
+		}
+		// The complete assistant message the CLI sends after the deltas.
+		function assistantMessage(text: string) {
+			return {
+				type: 'assistant',
+				session_id: 'prov-1',
+				message: { role: 'assistant', content: [{ type: 'text', text }] },
+			};
+		}
+
+		it('accumulates streamed prose exactly once and never double-counts the flagged assistant event', () => {
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: new ClaudeOutputParser(),
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			// Prose streams token by token. Per #1289 claude-code forwards every
+			// partial to the thinking panel as the live preview, so each delta
+			// fires thinking-chunk while also accumulating into streamedText.
+			sendJsonLine(handler, sessionId, textDelta('Hello '));
+			sendJsonLine(handler, sessionId, textDelta('world'));
+			expect(proc.streamedText).toBe('Hello world');
+			expect(thinkingSpy.mock.calls.map((c) => c[1])).toEqual(['Hello ', 'world']);
+
+			// The closing assistant event carries the same prose but is flagged
+			// textAlreadyStreamed:true - it must not append a second copy or
+			// re-emit a thinking-chunk.
+			sendJsonLine(handler, sessionId, assistantMessage('Hello world'));
+			expect(proc.streamedText).toBe('Hello world');
+			expect(thinkingSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('routes thinking deltas to the thinking panel exactly once, skipping the flagged event', () => {
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: new ClaudeOutputParser(),
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			sendJsonLine(handler, sessionId, thinkingDelta('Let me '));
+			sendJsonLine(handler, sessionId, thinkingDelta('reason.'));
+			sendJsonLine(handler, sessionId, textDelta('Answer.'));
+
+			// Both the thinking deltas and the prose delta drive the live thinking
+			// preview (#1289), but reasoning content never enters streamedText.
+			expect(thinkingSpy.mock.calls.map((c) => c[1])).toEqual(['Let me ', 'reason.', 'Answer.']);
+			expect(proc.streamedText).toBe('Answer.');
+
+			// The flagged assistant event (deltas were seen) is skipped: no extra
+			// thinking-chunk, no extra streamedText.
+			sendJsonLine(handler, sessionId, assistantMessage('Answer.'));
+			expect(thinkingSpy).toHaveBeenCalledTimes(3);
+			expect(proc.streamedText).toBe('Answer.');
+		});
+
+		it('appends the assistant text normally when no deltas preceded it (old CLI / flag absent)', () => {
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: new ClaudeOutputParser(),
+			});
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			// Without any stream_event deltas the assistant event is unflagged and
+			// still supplies streamedText. Its single partial also drives the live
+			// preview (#1289), firing one thinking-chunk with the full prose.
+			sendJsonLine(handler, sessionId, assistantMessage('Complete answer.'));
+			expect(proc.streamedText).toBe('Complete answer.');
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Complete answer.');
+		});
+	});
 });

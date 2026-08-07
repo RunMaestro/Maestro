@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
+import type { TtsrContextMode } from '../../../shared/ttsr-types';
 import type {
 	LLMProvider,
 	ThemeId,
@@ -386,6 +387,14 @@ export interface UseSettingsReturn {
 	// Symphony registry URLs (additional user-configured registries)
 	symphonyRegistryUrls: string[];
 	setSymphonyRegistryUrls: (value: string[]) => void;
+
+	// TTSR (Time-Traveling Stream Rules)
+	ttsrEnabled: boolean;
+	setTtsrEnabled: (value: boolean) => void;
+	ttsrDisabledRules: string[];
+	setTtsrDisabledRules: (value: string[]) => void;
+	ttsrContextMode: TtsrContextMode;
+	setTtsrContextMode: (value: TtsrContextMode) => void;
 
 	// Coworking browser interaction (agent ids allowed to use browser tools)
 	coworkingBrowserInteraction: string[];
