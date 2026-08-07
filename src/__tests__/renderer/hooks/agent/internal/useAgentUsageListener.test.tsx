@@ -367,6 +367,46 @@ describe('useAgentUsageListener', () => {
 			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 24);
 		});
 
+		// CodeRabbit on PR #1351: the gauge percentage was computed BEFORE
+		// `resolvedWindow`, so it divided by the event's reported window while the
+		// timeline point divided by the configured one. A session with a
+		// per-agent override therefore saw two different denominators on two
+		// surfaces - the gauge/timeline disagreement PR #1221 fixed.
+		//
+		// This case deliberately has NO absoluteUsage: the D1 bootstrap branch
+		// below already divides by `resolvedWindow`, so a snapshot-bearing event
+		// masks the defect. A plain in-window turn goes through
+		// `estimateContextUsage` directly, which is the path that was using the
+		// wrong denominator.
+		it('sizes the gauge against the configured window, not the reported one', () => {
+			const session = createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				contextUsage: 0,
+				// The user configured 1M; the provider reports a 200k default.
+				customContextWindow: 1_000_000,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+			);
+
+			handler!('sess-1', {
+				inputTokens: 2_000,
+				outputTokens: 500,
+				cacheReadInputTokens: 200_000,
+				cacheCreationInputTokens: 38_000,
+				contextWindow: 200_000,
+			});
+
+			// 240000 occupancy. Against the configured 1M that is 24%; against the
+			// reported 200k it overflows, yields null, and (with no prior baseline
+			// and no snapshot) the gauge is never updated at all.
+			expect(batched.updateContextUsage).toHaveBeenCalledWith('sess-1', 24);
+		});
+
 		it('is not capped to the yellow-warning gap - a snapshot is a measurement', () => {
 			const session = createMockSession({
 				id: 'sess-1',

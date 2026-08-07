@@ -80,11 +80,6 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 			const occupancyStats = usageStats.absoluteUsage
 				? { ...usageStats.absoluteUsage, contextWindow: usageStats.contextWindow }
 				: usageStats;
-			const contextPercentage = estimateContextUsage(
-				occupancyStats,
-				agentToolType,
-				sessionRemoteId
-			);
 
 			// Resolve the effective context window ONCE, matching the header gauge's
 			// precedence (resolveConfiguredContextWindow): a per-agent custom window,
@@ -130,6 +125,21 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 											useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
 										)
 									: 0;
+
+			// Gauge percentage, computed AFTER `resolvedWindow` so it divides by the
+			// same denominator the timeline point stores. Computing it earlier used
+			// the event's reported window, so a session with a configured or
+			// model-marker window could update the gauge against one denominator
+			// while the timeline recorded another - the exact gauge/timeline
+			// disagreement PR #1221 fixed. `estimateContextUsage` prefers
+			// `stats.contextWindow` when it is positive and otherwise falls back to
+			// the capability snapshot and the static table, so handing it
+			// `resolvedWindow` makes the precedence identical on both surfaces.
+			const contextPercentage = estimateContextUsage(
+				resolvedWindow > 0 ? { ...occupancyStats, contextWindow: resolvedWindow } : occupancyStats,
+				agentToolType,
+				sessionRemoteId
+			);
 
 			// A context-window correction (omp's catalog primed after the first turn's
 			// fallback usage already emitted) replays an already-counted turn purely to
