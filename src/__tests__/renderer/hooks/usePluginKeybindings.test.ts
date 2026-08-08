@@ -123,15 +123,79 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
 	});
 
-	it('never hijacks typing in an input', async () => {
-		await mountWithChords();
+	it('never hijacks typing in a textarea (bare chord)', async () => {
+		// A plugin that bound a bare letter must stay inert while the user types.
+		await mountWithChords([{ ...OVERLAY_CHORD, key: 'F' }]);
 
-		const input = document.createElement('input');
-		document.body.appendChild(input);
-		press({ key: 'F', altKey: true, shiftKey: true, target: input });
-		input.remove();
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const bare = press({ key: 'F', target: textarea });
+		const shifted = press({ key: 'F', shiftKey: true, target: textarea }); // Shift+letter is typing too
+		textarea.remove();
 
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+		// Not calling the command is only half of it: a preventDefault() would
+		// swallow the keystroke and the character would never reach the textarea.
+		expect(bare.defaultPrevented).toBe(false);
+		expect(shifted.defaultPrevented).toBe(false);
+	});
+
+	// Greptile P1 on PR #1354: narrowing the input-focus skip to bare keys made
+	// contributed chords usable from the composer, but it also handed plugins
+	// every Ctrl/Cmd and Alt combination the app does not bind. Since a match
+	// calls preventDefault(), a plugin binding Ctrl+Z would silently break undo
+	// while the user is editing.
+	it.each([
+		['ctrl+z (undo)', { key: 'z', ctrlKey: true }],
+		['meta+z (undo, mac)', { key: 'z', metaKey: true }],
+		['ctrl+shift+z (redo)', { key: 'z', ctrlKey: true, shiftKey: true }],
+		['ctrl+a (select all)', { key: 'a', ctrlKey: true }],
+		['ctrl+v (paste)', { key: 'v', ctrlKey: true }],
+		['ctrl+arrowleft (word motion)', { key: 'ArrowLeft', ctrlKey: true }],
+		['alt+backspace (delete word)', { key: 'Backspace', altKey: true }],
+	])('leaves the reserved native editing chord %s alone in a textarea', async (_label, init) => {
+		// Bind the plugin to exactly that chord, so only the reserved-chord guard
+		// can stop it from firing.
+		await mountWithChords([
+			{
+				...OVERLAY_CHORD,
+				key: `${init.ctrlKey || init.metaKey ? 'Ctrl+' : ''}${init.altKey ? 'Alt+' : ''}${init.shiftKey ? 'Shift+' : ''}${init.key}`,
+			},
+		]);
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const event = press({ ...init, target: textarea });
+		textarea.remove();
+
+		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it('still fires a reserved-looking chord when NO text surface has focus', async () => {
+		// The guard is scoped to editable targets. Outside one, Ctrl+Z is fair game.
+		await mountWithChords([{ ...OVERLAY_CHORD, key: 'Ctrl+z' }]);
+
+		press({ key: 'z', ctrlKey: true });
+
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith(
+			`${OVERLAY_CHORD.pluginId}/${OVERLAY_CHORD.command}`
+		);
+	});
+
+	it('still fires a modifier-bearing chord while a textarea has focus', async () => {
+		// The composer textarea is Maestro's resting focus state, so Alt+Shift+F
+		// must work there or the chord is inert in the default state (finding AA1).
+		await mountWithChords();
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const event = press({ key: 'F', altKey: true, shiftKey: true, target: textarea });
+		textarea.remove();
+
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledTimes(1);
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.flow/overlay');
+		expect(event.defaultPrevented).toBe(true);
 	});
 
 	it('stops matching once the chord is unmounted', async () => {
