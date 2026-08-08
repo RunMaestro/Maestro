@@ -223,6 +223,24 @@ export const MainPanel = React.memo(
 		);
 		const activeTabError = activeTab?.agentError;
 
+		// Whether the agent has any tab at all. An agent is allowed to have zero AI
+		// tabs as long as some other tab kind is still open, so the tab strip has to
+		// key off the union rather than aiTabs alone.
+		const hasAnyTab = useMemo(
+			() =>
+				(activeSession?.aiTabs?.length ?? 0) +
+					(activeSession?.filePreviewTabs?.length ?? 0) +
+					(activeSession?.terminalTabs?.length ?? 0) +
+					(activeSession?.browserTabs?.length ?? 0) >
+				0,
+			[
+				activeSession?.aiTabs,
+				activeSession?.filePreviewTabs,
+				activeSession?.terminalTabs,
+				activeSession?.browserTabs,
+			]
+		);
+
 		// SSH remote name for header display
 		const sshRemoteName = useSshRemoteName(
 			activeSession?.sessionSshRemoteConfig?.enabled,
@@ -832,80 +850,79 @@ export const MainPanel = React.memo(
 							/>
 						)}
 
-						{/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */}
-						{activeSession.aiTabs &&
-							activeSession.aiTabs.length > 0 &&
-							onTabSelect &&
-							onTabClose &&
-							onNewTab && (
-								<TabBar
-									tabs={activeSession.aiTabs}
-									activeTabId={activeSession.activeTabId}
-									theme={theme}
-									sessionId={activeSession.id}
-									sessionAgentSessionId={activeSession.agentSessionId}
-									onTabSelect={onTabSelect}
-									onTabClose={onTabClose}
-									onNewTab={onNewTab}
-									onRequestRename={onRequestTabRename}
-									onTabReorder={onTabReorder}
-									onUnifiedTabReorder={onUnifiedTabReorder}
-									onTabStar={onTabStar}
-									onTabMarkUnread={onTabMarkUnread}
-									onMergeWith={onMergeWith}
-									onSendToAgent={onSendToAgent}
-									onSummarizeAndContinue={onSummarizeAndContinue}
-									onCopyContext={onCopyContext}
-									onExportHtml={onExportHtml}
-									onSnooze={handleOpenSnooze}
-									onPublishGist={props.onPublishTabGist}
-									ghCliAvailable={props.ghCliAvailable}
-									showUnreadOnly={showUnreadOnly}
-									onToggleUnreadFilter={onToggleUnreadFilter}
-									onOpenTabSearch={onOpenTabSearch}
-									onOpenOutputSearch={onOpenOutputSearch}
-									onOpenCrossTabSearch={onOpenCrossTabSearch}
-									onCloseAllTabs={onCloseAllTabs}
-									onCloseOtherTabs={onCloseOtherTabs}
-									onCloseTabsLeft={onCloseTabsLeft}
-									onCloseTabsRight={onCloseTabsRight}
-									// Unified tab system props (Phase 4)
-									unifiedTabs={unifiedTabs}
-									activeFileTabId={activeFileTabId}
-									activeBrowserTabId={activeBrowserTabId}
-									onFileTabSelect={onFileTabSelect}
-									onFileTabClose={onFileTabClose}
-									onNewFileTab={onNewFileTab}
-									onNewBrowserTab={onNewBrowserTab}
-									onBrowserTabSelect={onBrowserTabSelect}
-									onBrowserTabClose={onBrowserTabClose}
-									onBrowserTabRename={onBrowserTabRename}
-									onBrowserTabResetName={onBrowserTabResetName}
-									// Terminal tab props (Phase 8)
-									onNewTerminalTab={onNewTerminalTab}
-									activeTerminalTabId={activeSession.activeTerminalTabId}
-									inputMode={activeSession.inputMode}
-									onTerminalTabSelect={onTerminalTabSelect}
-									onTerminalTabClose={onTerminalTabClose}
-									onTerminalTabRename={onTerminalTabRename}
-									onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
-									onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
-									onPublishTerminalBufferGist={
-										props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
-									}
-									onSendTerminalBufferToAgent={
-										props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
-									}
-									onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
-									onSendBrowserContentToAgent={
-										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
-									}
-									// Accessibility
-									colorBlindMode={colorBlindMode}
-									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
-									sshRemote={Boolean(filePreviewSshRemoteId)}
-								/>
-							)}
+						{/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
+						    An agent can sit at zero AI tabs while terminal/file/browser tabs are
+						    open, so gating this on aiTabs alone would hide the whole strip (and
+						    the "+" button) and strand the user in whatever view was last active. */}
+						{hasAnyTab && onTabSelect && onTabClose && onNewTab && (
+							<TabBar
+								tabs={activeSession.aiTabs}
+								activeTabId={activeSession.activeTabId}
+								theme={theme}
+								sessionId={activeSession.id}
+								sessionAgentSessionId={activeSession.agentSessionId}
+								onTabSelect={onTabSelect}
+								onTabClose={onTabClose}
+								onNewTab={onNewTab}
+								onRequestRename={onRequestTabRename}
+								onTabReorder={onTabReorder}
+								onUnifiedTabReorder={onUnifiedTabReorder}
+								onTabStar={onTabStar}
+								onTabMarkUnread={onTabMarkUnread}
+								onMergeWith={onMergeWith}
+								onSendToAgent={onSendToAgent}
+								onSummarizeAndContinue={onSummarizeAndContinue}
+								onCopyContext={onCopyContext}
+								onExportHtml={onExportHtml}
+								onSnooze={handleOpenSnooze}
+								onPublishGist={props.onPublishTabGist}
+								ghCliAvailable={props.ghCliAvailable}
+								showUnreadOnly={showUnreadOnly}
+								onToggleUnreadFilter={onToggleUnreadFilter}
+								onOpenTabSearch={onOpenTabSearch}
+								onOpenOutputSearch={onOpenOutputSearch}
+								onOpenCrossTabSearch={onOpenCrossTabSearch}
+								onCloseAllTabs={onCloseAllTabs}
+								onCloseOtherTabs={onCloseOtherTabs}
+								onCloseTabsLeft={onCloseTabsLeft}
+								onCloseTabsRight={onCloseTabsRight}
+								// Unified tab system props (Phase 4)
+								unifiedTabs={unifiedTabs}
+								activeFileTabId={activeFileTabId}
+								activeBrowserTabId={activeBrowserTabId}
+								onFileTabSelect={onFileTabSelect}
+								onFileTabClose={onFileTabClose}
+								onNewFileTab={onNewFileTab}
+								onNewBrowserTab={onNewBrowserTab}
+								onBrowserTabSelect={onBrowserTabSelect}
+								onBrowserTabClose={onBrowserTabClose}
+								onBrowserTabRename={onBrowserTabRename}
+								onBrowserTabResetName={onBrowserTabResetName}
+								// Terminal tab props (Phase 8)
+								onNewTerminalTab={onNewTerminalTab}
+								activeTerminalTabId={activeSession.activeTerminalTabId}
+								inputMode={activeSession.inputMode}
+								onTerminalTabSelect={onTerminalTabSelect}
+								onTerminalTabClose={onTerminalTabClose}
+								onTerminalTabRename={onTerminalTabRename}
+								onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
+								onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
+								onPublishTerminalBufferGist={
+									props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
+								}
+								onSendTerminalBufferToAgent={
+									props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
+								}
+								onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
+								onSendBrowserContentToAgent={
+									props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
+								}
+								// Accessibility
+								colorBlindMode={colorBlindMode}
+								// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
+								sshRemote={Boolean(filePreviewSshRemoteId)}
+							/>
+						)}
 
 						{/* Agent Error Banner */}
 						{activeTabError && (

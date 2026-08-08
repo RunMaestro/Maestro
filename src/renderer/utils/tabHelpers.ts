@@ -664,7 +664,8 @@ export interface CloseTabResult {
  * unless skipHistory is true (e.g., for wizard tabs which should not be restorable).
  * If the closed tab was active, the next tab (or previous if at end) becomes active.
  * When showUnreadOnly is true, prioritizes switching to the next unread tab.
- * If closing the last tab, a fresh new tab is created to replace it.
+ * Closing the last AI tab creates a fresh replacement only when the agent has no
+ * other tabs (terminal/file/browser) left, so an agent can sit at zero AI tabs.
  *
  * @param session - The Maestro session containing the tab
  * @param tabId - The ID of the tab to close
@@ -711,11 +712,22 @@ export function closeTab(
 	// Remove tab from aiTabs
 	let updatedTabs = session.aiTabs.filter((tab) => tab.id !== tabId);
 
-	// If we just closed the last tab, create a fresh new tab to replace it
+	// Tabs of other kinds that survive this close. Closing the last AI tab only
+	// forces a fresh replacement when the agent would otherwise be left with no
+	// tabs at all, so a brand new agent still always has a chat to type into.
+	// Once the user has opened terminal/file/browser tabs, the agent is allowed to
+	// sit at zero AI tabs instead of keeping a dead one around - the "+" menu is
+	// still on screen to open whatever they want next.
+	const otherTabCount =
+		(session.filePreviewTabs?.length ?? 0) +
+		(session.terminalTabs?.length ?? 0) +
+		(session.browserTabs?.length ?? 0);
+
 	let newActiveTabId = session.activeTabId;
 	// Fallback unified tab ref when the closed tab was active — may be terminal or file
 	let fallbackRef: UnifiedTabRef | null = null;
-	if (updatedTabs.length === 0) {
+	let createdFreshTab = false;
+	if (updatedTabs.length === 0 && otherTabCount === 0) {
 		const freshTab: AITab = {
 			id: generateId(),
 			agentSessionId: null,
@@ -729,11 +741,12 @@ export function closeTab(
 		};
 		updatedTabs = [freshTab];
 		newActiveTabId = freshTab.id;
+		createdFreshTab = true;
 	} else if (session.activeTabId === tabId) {
 		// If we closed the active tab, select the tab to the left (previous tab)
 		// If closing the first tab, select the new first tab (was previously to the right)
 
-		if (showUnreadOnly) {
+		if (showUnreadOnly && updatedTabs.length > 0) {
 			// When filtering unread tabs, find the previous unread tab to switch to
 			// Build a temporary session with the updated tabs to use getNavigableTabs
 			const tempSession = { ...session, aiTabs: updatedTabs };
@@ -767,12 +780,18 @@ export function closeTab(
 			if (closedUnifiedIndex !== -1 && remainingUnified.length > 0) {
 				const fallbackIndex = Math.max(0, closedUnifiedIndex - 1);
 				fallbackRef = remainingUnified[Math.min(fallbackIndex, remainingUnified.length - 1)];
-			} else {
+			} else if (updatedTabs.length > 0) {
 				// unifiedTabOrder out of sync — fall back to aiTabs position
 				const newIndex = Math.max(0, tabIndex - 1);
 				newActiveTabId = updatedTabs[newIndex].id;
 			}
 		}
+	}
+
+	// No AI tab survives, so there is nothing for activeTabId to point at. Covers
+	// every path above, including closing a non-active sole AI tab.
+	if (updatedTabs.length === 0) {
+		newActiveTabId = '';
 	}
 
 	// Add to closed tab history unless skipHistory is set (e.g., for wizard tabs)
@@ -788,11 +807,16 @@ export function closeTab(
 
 	// If we created a fresh tab, add it to unifiedTabOrder at the end
 	let finalUnifiedTabOrder = updatedUnifiedTabOrder;
-	if (session.aiTabs.length === 1 && updatedTabs.length === 1 && updatedTabs[0].id !== tabId) {
-		// A fresh tab was created to replace the closed one
+	if (createdFreshTab) {
 		const freshTabRef: UnifiedTabRef = { type: 'ai', id: updatedTabs[0].id };
 		finalUnifiedTabOrder = [...updatedUnifiedTabOrder, freshTabRef];
 	}
+
+	// With no AI tabs left, activeTabId must stop pointing at the tab we just
+	// removed. A dangling id makes a later switch back to AI mode render an input
+	// area bound to a tab that no longer exists. Non-AI fallbacks otherwise keep
+	// activeTabId so returning to AI mode lands on the same tab as before.
+	const survivingActiveTabId = updatedTabs.length === 0 ? '' : session.activeTabId;
 
 	// Create updated session.
 	// When the fallback is a non-AI tab (terminal or file), we must update the corresponding
@@ -802,7 +826,8 @@ export function closeTab(
 			? {
 					...session,
 					aiTabs: updatedTabs,
-					// Keep activeTabId as-is; the terminal tab is now active
+					// Keep activeTabId unless no AI tab survives; the terminal tab is now active
+					activeTabId: survivingActiveTabId,
 					activeTerminalTabId: fallbackRef.id,
 					activeFileTabId: null,
 					inputMode: 'terminal',
@@ -813,6 +838,7 @@ export function closeTab(
 				? {
 						...session,
 						aiTabs: updatedTabs,
+						activeTabId: survivingActiveTabId,
 						activeFileTabId: fallbackRef.id,
 						activeBrowserTabId: null,
 						activeTerminalTabId: null,
@@ -824,6 +850,7 @@ export function closeTab(
 					? {
 							...session,
 							aiTabs: updatedTabs,
+							activeTabId: survivingActiveTabId,
 							activeFileTabId: null,
 							activeBrowserTabId: fallbackRef.id,
 							activeTerminalTabId: null,

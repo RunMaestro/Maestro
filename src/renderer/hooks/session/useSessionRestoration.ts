@@ -203,11 +203,18 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				session = { ...session, createdAt: backfill };
 			}
 
-			// Sessions must have aiTabs - if missing, this is a data corruption issue
-			// Create a default tab to prevent crashes when code calls .find() on aiTabs
-			if (!session.aiTabs || session.aiTabs.length === 0) {
+			// An agent may legitimately have zero AI tabs as long as some other tab kind
+			// is still open (the user closed the last chat but kept a terminal around).
+			// Only a session with no tabs whatsoever is treated as data corruption -
+			// recovering the zero-AI-tab case would wipe the tabs the user still has.
+			const restoredTabCount =
+				(session.aiTabs?.length ?? 0) +
+				(session.filePreviewTabs?.length ?? 0) +
+				(session.terminalTabs?.length ?? 0) +
+				(session.browserTabs?.length ?? 0);
+			if (restoredTabCount === 0) {
 				logger.error(
-					'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+					'[restoreSession] Session has no tabs of any kind - data corruption, creating default tab:',
 					undefined,
 					session.id
 				);
@@ -247,6 +254,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
 					unifiedClosedTabHistory: [],
 				};
+			}
+
+			// Normalize a missing aiTabs array so the rest of the app can keep calling
+			// .find()/.map() on it. Zero AI tabs is a valid state; undefined is not.
+			if (!session.aiTabs) {
+				session = { ...session, aiTabs: [] };
 			}
 
 			// Fix inconsistency: activeFileTabId should only be set in AI mode.
