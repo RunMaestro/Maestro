@@ -30,6 +30,7 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
+	EnqueueCommandResult,
 } from '../../types';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -129,15 +130,7 @@ export interface MessageHandlerCallbacks {
 		tabId?: string,
 		images?: string[],
 		background?: boolean
-	) => Promise<{
-		success: boolean;
-		tabId?: string;
-		queued?: boolean;
-		queuePosition?: number;
-		queueLength?: number;
-		itemId?: string;
-		error?: string;
-	}>;
+	) => Promise<EnqueueCommandResult>;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
 		queues: unknown[];

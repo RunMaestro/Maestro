@@ -79,7 +79,12 @@ export function snoozeTab(
 		(ref) => ref.type === 'ai' && ref.id === tabId
 	);
 
-	const closed = closeTab(session, tabId, showUnreadOnly, { skipHistory: true });
+	// preserveTabScopedWork: a snoozed tab is hidden, not gone - it must not
+	// cancel anything main is holding against it (e.g. an armed dispatch callback).
+	const closed = closeTab(session, tabId, showUnreadOnly, {
+		skipHistory: true,
+		preserveTabScopedWork: true,
+	});
 	if (!closed) return null;
 
 	const trimmedNote = note?.trim();

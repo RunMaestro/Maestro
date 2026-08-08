@@ -844,6 +844,24 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('executeCommandCallback behavior', () => {
+		/**
+		 * Answer the delivery-receipt channel the factory minted for the most
+		 * recent `remote:executeCommand` send, standing in for the renderer.
+		 * Returns the send args with the receipt channel stripped, so tests can
+		 * assert the forwarded payload exactly as before receipts existed.
+		 */
+		const answerReceipt = (accepted: boolean, reason?: string): unknown[] => {
+			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
+			const call = [...send.mock.calls]
+				.reverse()
+				.find((c: unknown[]) => c[0] === 'remote:executeCommand');
+			if (!call) throw new Error('no remote:executeCommand send was issued');
+			const receiptChannel = call[call.length - 1] as string;
+			const listener = vi.mocked(ipcMain.once).mock.calls.find((c) => c[0] === receiptChannel)?.[1];
+			listener?.({} as never, { accepted, reason });
+			return call.slice(0, -1);
+		};
+
 		it('should return false when mainWindow is null', async () => {
 			deps.getMainWindow = vi.fn().mockReturnValue(null);
 			const createWebServer = createWebServerFactory(deps);
@@ -865,10 +883,9 @@ describe('web-server/web-server-factory', () => {
 			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
 			const callback = setExecuteCallback.mock.calls[0][0];
 
-			const result = await callback('session-1', 'test command', 'ai');
+			const resultPromise = callback('session-1', 'test command', 'ai');
 
-			expect(result).toBe(true);
-			expect(mockWebContents.send).toHaveBeenCalledWith(
+			expect(answerReceipt(true)).toEqual([
 				'remote:executeCommand',
 				'session-1',
 				'test command',
@@ -876,8 +893,9 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				undefined,
 				undefined,
-				undefined
-			);
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
 		});
 
 		it('forwards tabId to the renderer so `dispatch --session <tabId>` writes into the requested tab', async () => {
@@ -887,10 +905,9 @@ describe('web-server/web-server-factory', () => {
 			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
 			const callback = setExecuteCallback.mock.calls[0][0];
 
-			const result = await callback('session-1', 'follow up', 'ai', 'tab-7');
+			const resultPromise = callback('session-1', 'follow up', 'ai', 'tab-7');
 
-			expect(result).toBe(true);
-			expect(mockWebContents.send).toHaveBeenCalledWith(
+			expect(answerReceipt(true)).toEqual([
 				'remote:executeCommand',
 				'session-1',
 				'follow up',
@@ -898,8 +915,9 @@ describe('web-server/web-server-factory', () => {
 				'tab-7',
 				undefined,
 				undefined,
-				undefined
-			);
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
 		});
 
 		it('forwards force=true to the renderer so `dispatch --force` bypasses the renderer busy guard', async () => {
@@ -909,10 +927,9 @@ describe('web-server/web-server-factory', () => {
 			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
 			const callback = setExecuteCallback.mock.calls[0][0];
 
-			const result = await callback('session-1', 'concurrent write', 'ai', undefined, true);
+			const resultPromise = callback('session-1', 'concurrent write', 'ai', undefined, true);
 
-			expect(result).toBe(true);
-			expect(mockWebContents.send).toHaveBeenCalledWith(
+			expect(answerReceipt(true)).toEqual([
 				'remote:executeCommand',
 				'session-1',
 				'concurrent write',
@@ -920,8 +937,9 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				true,
 				undefined,
-				undefined
-			);
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
 		});
 
 		it('forwards images so pasted attachments reach the renderer alongside the prompt', async () => {
@@ -932,7 +950,7 @@ describe('web-server/web-server-factory', () => {
 			const callback = setExecuteCallback.mock.calls[0][0];
 
 			const images = ['data:image/png;base64,abc', 'data:image/png;base64,def'];
-			const result = await callback(
+			const resultPromise = callback(
 				'session-1',
 				'look at this',
 				'ai',
@@ -941,8 +959,7 @@ describe('web-server/web-server-factory', () => {
 				images
 			);
 
-			expect(result).toBe(true);
-			expect(mockWebContents.send).toHaveBeenCalledWith(
+			expect(answerReceipt(true)).toEqual([
 				'remote:executeCommand',
 				'session-1',
 				'look at this',
@@ -950,8 +967,74 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				undefined,
 				images,
-				undefined
+				undefined,
+			]);
+			await expect(resultPromise).resolves.toBe(true);
+		});
+
+		// V1 secondary defect: `success` used to mean "an IPC send was issued", so
+		// a dispatch to a tab that does not exist was acknowledged as success.
+		// `success` now means the renderer accepted the command for execution.
+		it('resolves false when the renderer rejects the command (nonexistent target)', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'test command', 'ai', 'no-such-tab');
+			answerReceipt(false, 'tab-not-found:no-such-tab');
+
+			await expect(resultPromise).resolves.toBe(false);
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('tab-not-found:no-such-tab'),
+				'WebServer'
 			);
+		});
+
+		it('resolves false when no receipt arrives within the window', async () => {
+			vi.useFakeTimers();
+			try {
+				const createWebServer = createWebServerFactory(deps);
+				const server = createWebServer();
+
+				const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+				const callback = setExecuteCallback.mock.calls[0][0];
+
+				const resultPromise = callback('session-1', 'test command', 'ai');
+				// No renderer answer at all - an old build that ignores the receipt
+				// channel, or a wedged one. Must not hang the CLI, must not lie.
+				await vi.advanceTimersByTimeAsync(3000);
+
+				await expect(resultPromise).resolves.toBe(false);
+				expect(logger.warn).toHaveBeenCalledWith(
+					expect.stringContaining('No delivery receipt'),
+					'WebServer'
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('resolves false when the renderer answers with a malformed receipt', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'test command', 'ai');
+			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
+			const call = [...send.mock.calls]
+				.reverse()
+				.find((c: unknown[]) => c[0] === 'remote:executeCommand');
+			const receiptChannel = call?.[call.length - 1] as string;
+			vi.mocked(ipcMain.once).mock.calls.find((c) => c[0] === receiptChannel)?.[1]?.(
+				{} as never,
+				'sure thing'
+			);
+
+			await expect(resultPromise).resolves.toBe(false);
 		});
 
 		it('does not log raw command text at info level (info shows length only)', async () => {
@@ -961,7 +1044,9 @@ describe('web-server/web-server-factory', () => {
 			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
 			const callback = setExecuteCallback.mock.calls[0][0];
 
-			await callback('session-1', 'super-secret-token-do-not-leak', 'ai');
+			const resultPromise = callback('session-1', 'super-secret-token-do-not-leak', 'ai');
+			answerReceipt(true);
+			await resultPromise;
 
 			const infoCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls;
 			const forwardingInfoCall = infoCalls.find(
@@ -970,6 +1055,71 @@ describe('web-server/web-server-factory', () => {
 			expect(forwardingInfoCall).toBeDefined();
 			expect(forwardingInfoCall?.[0]).not.toContain('super-secret-token-do-not-leak');
 			expect(forwardingInfoCall?.[0]).toContain('CommandLength: 30');
+		});
+	});
+
+	describe('enqueueCommandCallback behavior', () => {
+		/**
+		 * Reply to the response channel the factory minted for the most recent
+		 * `remote:enqueueCommand` send, standing in for the renderer.
+		 */
+		const answerEnqueue = (result: unknown): void => {
+			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
+			const call = [...send.mock.calls]
+				.reverse()
+				.find((c: unknown[]) => c[0] === 'remote:enqueueCommand');
+			if (!call) throw new Error('no remote:enqueueCommand send was issued');
+			// Send args: (channel, sessionId, command, responseChannel, ...)
+			const responseChannel = call[3] as string;
+			const listener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((c) => c[0] === responseChannel)?.[1];
+			listener?.({} as never, result);
+		};
+
+		const invokeEnqueue = (server: ReturnType<ReturnType<typeof createWebServerFactory>>) => {
+			const setEnqueue = server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>;
+			return setEnqueue.mock.calls[0][0]('session-1', 'wake up', 'ai', 'ghost-tab');
+		};
+
+		// Task 7b: the reason is what lets a dispatch callback tell "the caller's
+		// --callback-tab is gone" apart from every other failure, so it has to
+		// survive the renderer -> main hop rather than being parsed away.
+		it('forwards a machine-readable failure reason from the renderer', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: false, error: 'Tab not found: ghost-tab', reason: 'tab-not-found' });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: false,
+					error: 'Tab not found: ghost-tab',
+					reason: 'tab-not-found',
+				})
+			);
+		});
+
+		it('drops an unrecognised reason instead of passing it through', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: false, error: 'boom', reason: 'something-new' });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({ success: false, reason: undefined })
+			);
+		});
+
+		it('leaves the reason undefined on a successful enqueue', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: true, tabId: 'tab-1', queued: true, queuePosition: 2 });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({ success: true, tabId: 'tab-1', queued: true, reason: undefined })
+			);
 		});
 	});
 

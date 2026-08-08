@@ -27,6 +27,7 @@ import {
 import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
+import type { AgentCapabilities } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { parseJsonWithBom } from '../../../shared/jsonUtils';
@@ -1178,6 +1179,26 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			logger.debug(`Getting capabilities for agent: ${agentId}`, LOG_CONTEXT);
 			return getAgentCapabilities(agentId);
 		})
+	);
+
+	// Get capabilities for EVERY known agent type in one round trip.
+	// The renderer capability cache is otherwise only populated for the agent
+	// types the user has actually opened, which makes "never looked it up"
+	// indistinguishable from "unsupported" for background work such as CLI
+	// dispatch. The lookup is a synchronous static map, so this is cheap.
+	ipcMain.handle(
+		'agents:getAllCapabilities',
+		withIpcErrorLogging(
+			handlerOpts('getAllCapabilities'),
+			async (): Promise<Record<string, AgentCapabilities>> => {
+				const all: Record<string, AgentCapabilities> = {};
+				for (const agentDef of AGENT_DEFINITIONS) {
+					all[agentDef.id] = getAgentCapabilities(agentDef.id);
+				}
+				logger.debug(`Getting capabilities for all ${Object.keys(all).length} agents`, LOG_CONTEXT);
+				return all;
+			}
+		)
 	);
 
 	// Get all configuration for an agent

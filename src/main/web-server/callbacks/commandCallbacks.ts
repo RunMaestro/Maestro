@@ -3,6 +3,36 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import type { StoredSession } from '../../stores/types';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { requestFromRenderer } from './remoteRequest';
+
+/**
+ * The renderer's answer to a `remote:executeCommand` send: did it accept the
+ * command for execution? `timedOut` distinguishes "the renderer said no" from
+ * "the renderer never answered" (a renderer too old to send a receipt, or a
+ * wedged one) so the two can be logged apart.
+ */
+interface RemoteCommandReceipt {
+	accepted: boolean;
+	reason?: string;
+	timedOut?: boolean;
+}
+
+/** How long to wait for the renderer's delivery receipt before giving up.
+ *  Bounded so a hung renderer cannot wedge a CLI `dispatch` call. */
+const REMOTE_COMMAND_RECEIPT_TIMEOUT_MS = 3000;
+
+function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
+	if (typeof raw === 'object' && raw !== null && 'accepted' in raw) {
+		const receipt = raw as { accepted: unknown; reason?: unknown };
+		if (typeof receipt.accepted === 'boolean') {
+			return {
+				accepted: receipt.accepted,
+				reason: typeof receipt.reason === 'string' ? receipt.reason : undefined,
+			};
+		}
+	}
+	return { accepted: false, reason: 'malformed-receipt' };
+}
 
 export function registerCommandCallbacks(
 	server: WebServer,
@@ -50,17 +80,33 @@ export function registerCommandCallbacks(
 				logger.warn('webContents is not available for executeCommand', 'WebServer');
 				return false;
 			}
-			mainWindow.webContents.send(
+			// Wait for the renderer's delivery receipt instead of reporting
+			// success for the mere fact that an IPC send was issued. `success`
+			// means "the renderer accepted the command for execution" - a
+			// dropped, not-found or busy command must not read as success.
+			// This is delivery, not execution: the renderer acks as soon as it
+			// hands the prompt to the spawn/queue logic. An old renderer build
+			// simply ignores the extra response channel and falls through to
+			// the timeout below, which is why the fallback resolves `false`.
+			const receipt = await requestFromRenderer<RemoteCommandReceipt>(
+				mainWindow,
 				'remote:executeCommand',
-				sessionId,
-				command,
-				inputMode,
-				tabId,
-				force,
-				images,
-				background
+				{
+					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
+					timeoutMs: REMOTE_COMMAND_RECEIPT_TIMEOUT_MS,
+					parse: parseRemoteCommandReceipt,
+					args: [sessionId, command, inputMode, tabId, force, images, background],
+				}
 			);
-			return true;
+			if (!receipt.accepted) {
+				logger.warn(
+					receipt.timedOut
+						? `[Web → Renderer] No delivery receipt within ${REMOTE_COMMAND_RECEIPT_TIMEOUT_MS}ms for session ${sessionId} - reporting dispatch as failed`
+						: `[Web → Renderer] Renderer rejected command for session ${sessionId}: ${receipt.reason ?? 'no reason given'}`,
+					'WebServer'
+				);
+			}
+			return receipt.accepted;
 		}
 	);
 
