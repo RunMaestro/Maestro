@@ -165,6 +165,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					const agentConfigValues = allConfigs[config.agentType] || {};
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 						agentConfigValues,
+						readOnlyMode: true,
 					});
 					finalArgs = configResolution.args;
 

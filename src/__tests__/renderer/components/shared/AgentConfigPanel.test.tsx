@@ -128,6 +128,76 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
+	describe('OpenCode Agent field', () => {
+		const openCodeAgent = createMockAgent({
+			id: 'opencode',
+			name: 'OpenCode',
+			binaryName: 'opencode',
+			path: '/usr/local/bin/opencode',
+		});
+
+		it('is hidden for non-OpenCode providers', () => {
+			render(<AgentConfigPanel {...createDefaultProps()} />);
+
+			expect(screen.queryByText('OpenCode Agent (optional)')).not.toBeInTheDocument();
+		});
+
+		it('renders for OpenCode', () => {
+			render(<AgentConfigPanel {...createDefaultProps({ agent: openCodeAgent })} />);
+
+			expect(screen.getByText('OpenCode Agent (optional)')).toBeInTheDocument();
+		});
+
+		it('shows the agent name parsed out of the existing custom args', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: openCodeAgent,
+						customArgs: '--verbose --agent prometheus',
+					})}
+				/>
+			);
+
+			expect(screen.getByDisplayValue('prometheus')).toBeInTheDocument();
+		});
+
+		it('writes the name into custom args, preserving the other args', () => {
+			const onCustomArgsChange = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: openCodeAgent,
+						customArgs: '--verbose',
+						onCustomArgsChange,
+					})}
+				/>
+			);
+
+			fireEvent.change(screen.getByPlaceholderText('build'), {
+				target: { value: 'sisyphus' },
+			});
+
+			expect(onCustomArgsChange).toHaveBeenCalledWith('--verbose --agent sisyphus');
+		});
+
+		it('removes the flag when the field is cleared', () => {
+			const onCustomArgsChange = vi.fn();
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: openCodeAgent,
+						customArgs: '--agent prometheus --verbose',
+						onCustomArgsChange,
+					})}
+				/>
+			);
+
+			fireEvent.change(screen.getByPlaceholderText('build'), { target: { value: '' } });
+
+			expect(onCustomArgsChange).toHaveBeenCalledWith('--verbose');
+		});
+	});
+
 	describe('Custom environment variables', () => {
 		it('should render custom env vars', () => {
 			const customEnvVars = {

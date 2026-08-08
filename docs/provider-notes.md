@@ -97,9 +97,11 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 | Slash commands     | ❌ Not supported               |
 | Cost tracking      | ✅ Per-step costs              |
 | Model selection    | ✅ `--model provider/model`    |
+| Agent selection    | ✅ `--agent <name>`            |
 | Context operations | ✅ Merge, export, and transfer |
 | Thinking display   | ✅ Streaming text chunks       |
 
 **Notes**:
 
 - OpenCode uses the `run` subcommand which auto-approves all permissions (similar to Codex's YOLO mode). Maestro enables this via the `OPENCODE_CONFIG_CONTENT` environment variable.
+- **OpenCode Agent** (in an agent's settings) picks the primary OpenCode agent for that Maestro agent, running it as `opencode run --agent <name>`. Use it to keep an agent pinned to a specific persona, model, and instruction set: point one Maestro agent at `build`, another at a plugin-provided agent, then group chat across them. Plugin agents (for example the ones oh-my-opencode registers) work even though `opencode agent list` doesn't print them, since OpenCode resolves the name at run time. The value is stored in that agent's Custom Arguments, so it is per-agent rather than shared across every OpenCode agent. Plan mode still forces `--agent plan` and ignores the selection for that turn.
