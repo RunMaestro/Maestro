@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { AlertTriangle, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
+import { AgentFailoverSection } from './AgentFailoverSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
-import type { AgentConfig, ToolType } from '../../types';
+import type { AgentConfig, ToolType, FailoverConfig } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
@@ -61,6 +62,7 @@ export function EditAgentModal({
 	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	// Agent Resilience (auto-retry) toggles. Both default ON; read with `?? true`.
 	const [retryOnAvailabilityErrors, setRetryOnAvailabilityErrors] = useState(true);
+	const [failoverConfig, setFailoverConfig] = useState<FailoverConfig | undefined>(undefined);
 	const [retryOnTokenExhaustion, setRetryOnTokenExhaustion] = useState(true);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
@@ -252,6 +254,9 @@ export function EditAgentModal({
 			setMaestroPPath('');
 			setRetryOnAvailabilityErrors(true);
 			setRetryOnTokenExhaustion(true);
+			// Endpoint env/tokens are provider-specific credentials; carrying them to a
+			// different provider would point the new agent at the wrong API.
+			setFailoverConfig(undefined);
 		} else {
 			setCustomPath(session.customPath ?? '');
 			setCustomArgs(session.customArgs ?? '');
@@ -264,6 +269,7 @@ export function EditAgentModal({
 			// Both default ON; `undefined` (never configured) reads as enabled.
 			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
+			setFailoverConfig(session.failoverConfig);
 		}
 
 		return () => {
@@ -371,7 +377,8 @@ export function EditAgentModal({
 			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
 			enableMaestroP ? maestroPMode : undefined,
 			retryOnAvailabilityErrors,
-			retryOnTokenExhaustion
+			retryOnTokenExhaustion,
+			failoverConfig
 		);
 		onClose();
 	}, [
@@ -387,6 +394,7 @@ export function EditAgentModal({
 		maestroPPath,
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
+		failoverConfig,
 		agentConfig,
 		sshRemoteConfig,
 		selectedToolType,
@@ -563,6 +571,9 @@ export function EditAgentModal({
 					onChangeAvailability={setRetryOnAvailabilityErrors}
 					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
 				/>
+
+				{/* Provider Failover: backup Anthropic-compatible endpoints for this agent. */}
+				<AgentFailoverSection theme={theme} config={failoverConfig} onChange={setFailoverConfig} />
 
 				{/* Working Directory (read-only) */}
 				<div>
