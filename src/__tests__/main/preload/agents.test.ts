@@ -141,6 +141,22 @@ describe('Agents Preload API', () => {
 		});
 	});
 
+	describe('getAllCapabilities', () => {
+		it('should invoke agents:getAllCapabilities with no arguments', async () => {
+			const mockAll = {
+				'claude-code': { supportsBatchMode: true },
+				opencode: { supportsBatchMode: true },
+				terminal: { supportsBatchMode: false },
+			};
+			mockInvoke.mockResolvedValue(mockAll);
+
+			const result = await api.getAllCapabilities();
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getAllCapabilities');
+			expect(result).toEqual(mockAll);
+		});
+	});
+
 	describe('getConfig', () => {
 		it('should invoke agents:getConfig with agentId', async () => {
 			const mockConfig = { theme: 'dark', autoSave: true };

@@ -50,6 +50,7 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerTabsHandlers,
 	registerPianolaHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
@@ -281,6 +282,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register tab lifecycle handlers (renderer -> main tab-close notification)
+	registerTabsHandlers();
 
 	// Register Pianola handlers (autonomous manager: rules, decisions, and the
 	// supervised daemon). The supervisor is constructed during core-service init

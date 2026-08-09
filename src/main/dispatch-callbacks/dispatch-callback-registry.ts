@@ -276,15 +276,27 @@ export class DispatchCallbackRegistry {
 	}
 
 	/**
-	 * Cancel everything targeting a tab that just went away. Without this a
-	 * closed target tab leaves an entry armed until its timeout.
+	 * Cancel everything targeting a tab that just went away, waking each caller
+	 * with a `cancelled` status. Without this a closed target tab leaves an entry
+	 * armed until its timeout, so the caller hears about it up to an hour later as
+	 * a bogus `timeout`.
+	 *
+	 * Deliberately louder than plain `cancel()`, which stays silent: that path is
+	 * used for dispatches the caller already knows failed (it got `success: false`
+	 * back from the CLI), while a target tab closed mid-flight is invisible to the
+	 * caller.
 	 */
 	cancelForTab(agentId: string, tabId: string): number {
 		const key = buildProcessSessionId(agentId, tabId);
 		let cancelled = 0;
 		for (const entry of [...this.entries.values()]) {
 			if (entry.processSessionId !== key) continue;
-			if (this.cancel(entry.callbackId)) cancelled += 1;
+			if (this.isTerminal(entry)) continue;
+			this.deps.logger?.info(
+				`[DispatchCallback] ${entry.callbackId} cancelled - target tab ${tabId} closed`
+			);
+			this.fire(entry, 'cancelled');
+			cancelled += 1;
 		}
 		return cancelled;
 	}
