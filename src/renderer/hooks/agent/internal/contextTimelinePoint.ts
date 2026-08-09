@@ -94,16 +94,17 @@ export function buildContextTimelinePoint(
 	// Resolve the effective context window ONCE, shared by the timeline point and
 	// the caller's accumulated-growth fallback so they can never disagree.
 	//
-	// Precedence (finding P1). Ranks 1-3 and 5 are POSITIONALLY IDENTICAL to
-	// useContextWindow's, or the header gauge and the Context Timeline disagree
-	// again (the bug PR #1221 fixed). Ranks 4 and 6 are timeline-only extras and
-	// sit below the shared ranks:
+	// Precedence (findings P1 and AD1). Ranks 1-4 and 6 are POSITIONALLY
+	// IDENTICAL to useContextWindow's, or the header gauge and the Context
+	// Timeline disagree again (the bug PR #1221 fixed). Ranks 5 and 7 are
+	// timeline-only extras and sit below the shared ranks:
 	//   1. `[1m]` model marker
-	//   2. resolved reported window
-	//   3. `customContextWindow` override
-	//   4. cached provider-configured window (timeline-only)
-	//   5. raw reported window
-	//   6. static per-agent table (timeline-only)
+	//   2. user-edited `customContextWindow`
+	//   3. resolved reported window
+	//   4. `customContextWindow` of unknown/materialized provenance
+	//   5. cached provider-configured window (timeline-only)
+	//   6. raw reported window
+	//   7. static per-agent table (timeline-only)
 	//
 	// The provider-config source lives behind an async `getConfig` call that must
 	// NOT run on this hot per-turn path, so we read it from a synchronous cache
@@ -119,33 +120,39 @@ export function buildContextTimelinePoint(
 	// truth, so it outranks the stored override below.
 	const resolvedReportedWindow =
 		usageStats.contextWindowResolved && usageStats.contextWindow > 0 ? usageStats.contextWindow : 0;
-	// `customContextWindow` is NOT reliably something the user chose: the agent
-	// definition's `contextWindow` default is materialized into every new session
-	// at creation time (see P1), which is how a fresh omp agent plotted against
-	// 200k instead of the provider's real 1M. Treat it as a fallback that applies
-	// until the provider reports an authoritative window.
+	// Without recorded provenance `customContextWindow` is NOT reliably something
+	// the user chose: the agent definition's `contextWindow` default is
+	// materialized into every new session at creation time (see P1), which is how
+	// a fresh omp agent plotted against 200k instead of the provider's real 1M.
+	// Treat it as a fallback that applies until the provider reports an
+	// authoritative window.
 	const sessionOverride =
 		typeof session.customContextWindow === 'number' && session.customContextWindow > 0
 			? session.customContextWindow
 			: 0;
+	// ...unless the user deliberately set it, which is intent rather than a stale
+	// default and outranks even the provider's report (finding AD1).
+	const userEditedWindow = session.contextWindowSource === 'user-edited' ? sessionOverride : 0;
 	const cachedConfiguredWindow = getCachedConfiguredContextWindow(session);
 	const resolvedWindow =
 		modelMarker > 0
 			? modelMarker
-			: resolvedReportedWindow > 0
-				? resolvedReportedWindow
-				: sessionOverride > 0
-					? sessionOverride
-					: cachedConfiguredWindow > 0
-						? cachedConfiguredWindow
-						: usageStats.contextWindow > 0
-							? usageStats.contextWindow
-							: agentToolType && agentToolType !== 'terminal'
-								? getContextWindowForAgent(
-										agentToolType,
-										useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
-									)
-								: 0;
+			: userEditedWindow > 0
+				? userEditedWindow
+				: resolvedReportedWindow > 0
+					? resolvedReportedWindow
+					: sessionOverride > 0
+						? sessionOverride
+						: cachedConfiguredWindow > 0
+							? cachedConfiguredWindow
+							: usageStats.contextWindow > 0
+								? usageStats.contextWindow
+								: agentToolType && agentToolType !== 'terminal'
+									? getContextWindowForAgent(
+											agentToolType,
+											useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
+										)
+									: 0;
 
 	// A context-window correction (omp's catalog primed after the first turn's
 	// fallback usage already emitted) replays an already-counted turn purely to

@@ -330,7 +330,9 @@ describe('EditAgentModal', () => {
 				undefined,
 				true,
 				true,
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				undefined // contextWindowSource: the window was not touched, so no
+				// provenance is recorded and P1 precedence stands (finding AD1)
 			);
 		});
 
@@ -425,7 +427,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -657,7 +661,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 	});
 
@@ -729,7 +735,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 	});
 
@@ -807,7 +815,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 	});
 
@@ -839,6 +849,93 @@ describe('EditAgentModal', () => {
 		// SSH selector should appear after SSH configs load
 		await waitFor(() => {
 			expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
+		});
+	});
+
+	// Finding AD1: provenance for `customContextWindow`.
+	describe('context window provenance (finding AD1)', () => {
+		const agentWithWindow = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			available: true,
+			path: '/usr/local/bin/claude',
+			binaryName: 'claude',
+			hidden: false,
+			configOptions: [
+				{ key: 'model', type: 'text', label: 'Model', default: '' },
+				{
+					key: 'contextWindow',
+					type: 'number',
+					label: 'Context Window Size',
+					default: 200000,
+				},
+			],
+		} as unknown as AgentConfig;
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([agentWithWindow]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				model: 'claude-sonnet',
+				contextWindow: 200000,
+			});
+		});
+
+		// Finding AD1. This modal is HOW the agent-level default gets materialized
+		// into a per-session override (finding P1): with no stored value the panel
+		// seeds from `globalConfig.contextWindow`, and pressing Save writes that
+		// number to the session. If that write were recorded as 'user-edited' it
+		// would outrank the provider's own report and reinstate the exact bug P1
+		// removed - so the seed comparison, not the presence of a value, is what
+		// decides provenance.
+		it('does not mark an untouched seeded context window as user-edited', async () => {
+			const { customContextWindow: _drop, ...withoutWindow } = createSession() as Record<
+				string,
+				unknown
+			>;
+
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={withoutWindow as unknown as Session}
+					existingSessions={[]}
+				/>
+			);
+
+			// Seeded from the agent-level config because the session has none.
+			expect(await screen.findByDisplayValue('200000')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			// The value still materializes onto the session, exactly as before...
+			expect(args[10]).toBe(200000);
+			// ...but carries no provenance, so P1's precedence still applies to it.
+			expect(args[18]).toBeUndefined();
+		});
+
+		it('marks a context window the user actually changed as user-edited', async () => {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession()}
+					existingSessions={[]}
+				/>
+			);
+
+			const input = await screen.findByDisplayValue('100000');
+			fireEvent.change(input, { target: { value: '120000' } });
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			expect(args[10]).toBe(120000);
+			expect(args[18]).toBe('user-edited');
 		});
 	});
 });

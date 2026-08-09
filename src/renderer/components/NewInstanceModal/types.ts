@@ -91,7 +91,9 @@ export interface EditAgentModalProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[]
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited' | 'materialized'
 	) => void;
 	theme: Theme;
 	session: Session | null;

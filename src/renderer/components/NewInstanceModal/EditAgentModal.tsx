@@ -50,6 +50,13 @@ export function EditAgentModal({
 	const homeDir = useHomeDir();
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
+	/**
+	 * The context window the config panel was SEEDED with, so save can tell a
+	 * deliberate edit from an untouched round-trip (finding AD1). A ref, not
+	 * state: nothing renders from it and it must not retrigger the seeding
+	 * effect that writes it.
+	 */
+	const seededContextWindowRef = useRef<number | undefined>(undefined);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [customPath, setCustomPath] = useState('');
@@ -204,12 +211,23 @@ export function EditAgentModal({
 				if (isProviderSwitch) {
 					// When provider changed, use agent-level defaults for the new provider
 					setAgentConfig(globalConfig);
+					// The new provider's default is the seed, so leaving it alone is not
+					// an edit. The provider switch clears the old override anyway.
+					seededContextWindowRef.current = globalConfig.contextWindow;
 				} else {
 					// Empty string means explicitly cleared, undefined means never set (use agent-level default)
 					const effortKey = getEffortConfigKey(foundAgent);
 					const modelValue =
 						session.customModel !== undefined ? session.customModel : (globalConfig.model ?? '');
 					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
+					// Remember what the control was SEEDED with so save can tell an
+					// actual edit from an untouched round-trip. Seeding from
+					// `globalConfig.contextWindow` when the session has no override is
+					// exactly how the agent-level default gets materialized into a
+					// per-session value just by opening this modal and pressing Save
+					// (finding P1); without this the write would be indistinguishable
+					// from a deliberate choice (finding AD1).
+					seededContextWindowRef.current = contextWindowValue;
 					const effortValue =
 						session.customEffort !== undefined
 							? session.customEffort
@@ -356,6 +374,14 @@ export function EditAgentModal({
 			typeof agentConfig.contextWindow === 'number' && agentConfig.contextWindow > 0
 				? agentConfig.contextWindow
 				: undefined;
+		// Provenance for that number (finding AD1). Only a value the user actually
+		// moved off the seed counts as intent; an untouched round-trip keeps
+		// whatever provenance the session already had, which for everything stored
+		// before AD1 is none - so P1's "provider report wins" stands for it.
+		const contextWindowSource =
+			contextWindowValue !== seededContextWindowRef.current
+				? ('user-edited' as const)
+				: session.contextWindowSource;
 		const effortValue = agentConfig[getEffortConfigKey(agent)]?.trim() ?? undefined;
 
 		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.
@@ -401,7 +427,8 @@ export function EditAgentModal({
 			enableMaestroP ? maestroPMode : undefined,
 			retryOnAvailabilityErrors,
 			retryOnTokenExhaustion,
-			normalizeAdditionalDirectories(additionalDirectories, homeDir)
+			normalizeAdditionalDirectories(additionalDirectories, homeDir),
+			contextWindowSource
 		);
 		onClose();
 	}, [

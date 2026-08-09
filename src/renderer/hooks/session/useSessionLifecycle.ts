@@ -181,7 +181,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
-			additionalDirectories?: AdditionalDirectory[]
+			additionalDirectories?: AdditionalDirectory[],
+			/** Provenance of `customContextWindow` (finding AD1). */
+			contextWindowSource?: 'user-edited' | 'materialized'
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -200,6 +202,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customModel,
 						customEffort,
 						customContextWindow,
+						contextWindowSource,
 						sessionSshRemoteConfig,
 						enableMaestroP,
 						maestroPPath,
@@ -238,6 +241,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customModel: undefined,
 							customEffort: undefined,
 							customContextWindow: undefined,
+							// Provenance describes the value cleared above, so it must not
+							// outlive it: a stale 'user-edited' would make the new
+							// provider's window look deliberate (finding AD1).
+							contextWindowSource: undefined,
 							enableMaestroP: undefined,
 							maestroPPath: undefined,
 							maestroPMode: undefined,

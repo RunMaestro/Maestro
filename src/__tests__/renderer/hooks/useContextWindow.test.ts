@@ -135,6 +135,69 @@ describe('useContextWindow', () => {
 		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(200000));
 	});
 
+	// Finding AD1. P1 ranks a provider report above every stored value, which is
+	// right for the materialized defaults that dominate the store but silently
+	// discards the intent of someone who deliberately lowered their window to
+	// force earlier compaction. Provenance is what tells the two apart.
+	it('keeps a user-edited window above a resolved runtime window', async () => {
+		const session = makeSession({
+			toolType: 'omp',
+			customContextWindow: 120000,
+			contextWindowSource: 'user-edited',
+		});
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(120000));
+	});
+
+	it('lets a resolved window beat a stored value explicitly marked materialized', async () => {
+		// The explicit counterpart of the legacy case below: provenance recorded,
+		// and it says this number was never a choice.
+		const session = makeSession({
+			toolType: 'omp',
+			customContextWindow: 200000,
+			contextWindowSource: 'materialized',
+		});
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+	});
+
+	it('keeps a [1m] custom-model marker above a user-edited window', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
+		// Both are deliberate choices, but the model marker is the more specific
+		// one: picking `[1m]` selects a model variant, and a stale window typed
+		// before that switch must not shrink it back.
+		const session = makeSession({
+			customModel: 'opus[1m]',
+			customContextWindow: 120000,
+			contextWindowSource: 'user-edited',
+		});
+		const tab = { usageStats: { contextWindow: 200000, inputTokens: 10, outputTokens: 5 } };
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+	});
+
 	it('keeps a [1m] custom-model marker above a resolved window', async () => {
 		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
 		// An explicit [1m] model choice is authoritative and must outrank a

@@ -80,7 +80,9 @@ export interface AppSessionModalsProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[]
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited' | 'materialized'
 	) => void;
 	editAgentSession: Session | null;
 
