@@ -29,6 +29,7 @@ import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { setLiveDraft } from '../../utils/liveDraftStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
@@ -787,6 +788,20 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
+			// Command mode is a shell prompt: the draft is piped to `sh`, never to
+			// the agent, so a staged image has nothing that could consume it. Say so
+			// rather than silently swallowing the paste - an image that vanishes with
+			// no feedback reads as a broken paste.
+			if (!isGroupChatActive && getCommandMode()) {
+				e.preventDefault();
+				notifyCenterFlash({
+					message: 'Images are not supported in command mode',
+					color: 'yellow',
+					detail: 'Press Esc to go back to the agent',
+				});
+				return;
+			}
+
 			for (let i = 0; i < items.length; i++) {
 				if (items[i].type.indexOf('image') !== -1) {
 					e.preventDefault();
@@ -822,7 +837,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setInputValue, setStagedImages]
+		[setInputValue, setStagedImages, getCommandMode]
 	);
 
 	const appendMentionsToAiInput = useCallback(
@@ -868,6 +883,17 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			const isGroupChatActive = !!useGroupChatStore.getState().activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
+
+			// Command mode has no agent to hand attachments (or @mentions) to - the
+			// draft goes straight to a shell. Drop is a no-op there.
+			if (!isGroupChatActive && getCommandMode()) {
+				notifyCenterFlash({
+					message: 'Attachments are not supported in command mode',
+					color: 'yellow',
+					detail: 'Press Esc to go back to the agent',
+				});
+				return;
+			}
 
 			// Files-panel drag: image files are staged as image attachments;
 			// other files/folders are inserted as @<path> in the AI input.
@@ -995,7 +1021,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setStagedImages, appendMentionsToAiInput, appendMentionsToGroupChatDraft]
+		[setStagedImages, appendMentionsToAiInput, appendMentionsToGroupChatDraft, getCommandMode]
 	);
 
 	// ====================================================================
