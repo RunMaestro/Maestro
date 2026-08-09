@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'fs/promises';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
+import { captureException } from '../../../main/utils/sentry';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
@@ -69,6 +70,12 @@ vi.mock('../../../main/utils/statsCache', () => ({
 // Mock pricing
 vi.mock('../../../main/utils/pricing', () => ({
 	calculateClaudeCost: vi.fn(() => 0.05),
+}));
+
+// Mock Sentry so transcript-read noise assertions can inspect the reporter
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
 }));
 
 describe('ClaudeSessionStorage', () => {
@@ -621,6 +628,48 @@ describe('ClaudeSessionStorage', () => {
 
 			expect(result.messages[0].images).toBeUndefined();
 			expect(result.messages[0].content).toBe('with a url image');
+		});
+	});
+
+	// MAESTRO-YH: transcripts under ~/.claude/projects belong to the Claude CLI.
+	// A tree we can't read (restrictive umask, another user's home) paged one
+	// Sentry event per file per listing. Environmental, so it must stay local.
+	describe('unreadable transcripts are not reported to Sentry', () => {
+		const listOneSessionFile = () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as never);
+			vi.mocked(fs.readdir).mockResolvedValue(['session-1.jsonl'] as never);
+			vi.mocked(fs.stat).mockResolvedValue({
+				size: 1024,
+				mtime: new Date('2026-08-06T02:00:00.000Z'),
+				mtimeMs: Date.parse('2026-08-06T02:00:00.000Z'),
+			} as never);
+		};
+
+		it.each(['EACCES', 'EPERM', 'ENOENT'])(
+			'skips captureException when the read fails with %s',
+			async (code) => {
+				listOneSessionFile();
+				vi.mocked(fs.readFile).mockRejectedValue(
+					Object.assign(new Error(`${code}: permission denied, open 'session-1.jsonl'`), { code })
+				);
+
+				const result = await storage.listSessionsPaginated('/project/path');
+
+				expect(result.sessions).toEqual([]);
+				expect(vi.mocked(captureException)).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected read failure', async () => {
+			listOneSessionFile();
+			vi.mocked(fs.readFile).mockRejectedValue(
+				Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' })
+			);
+
+			const result = await storage.listSessionsPaginated('/project/path');
+
+			expect(result.sessions).toEqual([]);
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
 		});
 	});
 });

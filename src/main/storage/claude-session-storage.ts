@@ -17,6 +17,7 @@ import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
 import { computeClaudeUsageCost } from '../utils/pricing';
 import { claudeModelUsage } from '../../shared/modelUsage';
@@ -232,6 +233,12 @@ async function parseSessionFile(
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
 			return null;
 		}
+		if (isExpectedSessionReadError(error)) {
+			// The transcript belongs to the Claude CLI, not to us - an unreadable
+			// or vanished file is environmental, not a Maestro fault (MAESTRO-YH).
+			logger.warn('Session file not readable', LOG_CONTEXT, { filePath, error });
+			return null;
+		}
 		logger.error(`Error reading session file: ${filePath}`, LOG_CONTEXT, error);
 		captureException(error, { operation: 'claudeStorage:readSessionFile', filePath });
 		return null;
@@ -403,6 +410,13 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 						mtimeMs: stats.mtimeMs,
 					});
 				} catch (error) {
+					// Outer half of the same boundary `parseSessionFile` guards: the
+					// `fs.stat` above races directory listing, so the entry can be gone
+					// or unreadable by now (MAESTRO-YH).
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Session file not readable: ${filename}`, LOG_CONTEXT, { error });
+						return null;
+					}
 					logger.error(`Error processing session file: ${filename}`, LOG_CONTEXT, error);
 					captureException(error, { operation: 'claudeStorage:processSessionFile', filename });
 					return null;

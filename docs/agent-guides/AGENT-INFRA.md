@@ -596,6 +596,39 @@ getSshErrorPatterns(): AgentErrorPatterns
 
 Per-agent session storage for reading historical conversations.
 
+### Expected transcript-read failures (`src/main/utils/session-read-errors.ts`)
+
+Provider transcripts under `~/.claude/projects`, `~/.codex/sessions`, etc. belong
+to the agent CLI, not to Maestro. Any code that reads a transcript it merely
+_discovered_ on disk must classify environmental failures instead of reporting
+them, or one unreadable tree pages a Sentry event per file per refresh
+(MAESTRO-W9, MAESTRO-YG/YH/YJ):
+
+```typescript
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
+
+try {
+	const content = await fs.readFile(filePath, 'utf-8');
+	// ...
+} catch (error) {
+	if (error instanceof RangeError) {
+		logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
+	} else if (isExpectedSessionReadError(error)) {
+		logger.warn('Session file not readable', LOG_CONTEXT, { filePath, error });
+	} else {
+		captureException(error); // genuine fault, keep reporting
+	}
+	return null;
+}
+```
+
+Covers `EACCES`, `EPERM`, `ENOENT`, `ENOTDIR`, `EISDIR`, `EBUSY`. Do NOT widen it
+to codes that indicate a Maestro bug (`EMFILE` means we leaked descriptors).
+Pair it with the `RangeError` carve-out for oversized files - they are separate
+boundaries. When quieting one call site, grep the whole file for other
+`captureException` calls on the same failure path (an outer `fs.stat` catch
+usually needs the same guard).
+
 ### Storage Interface (`src/main/agents/session-storage.ts`)
 
 ```typescript
