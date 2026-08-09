@@ -731,6 +731,44 @@ describe('CodexOutputParser', () => {
 			expect(usageEvent?.usage?.contextWindowReported).toBe(false);
 		});
 
+		// Review of PR #1356 (item 2). `turn_context` cached the reported window on
+		// the instance but `token_count` did not, so when Codex carried
+		// `model_context_window` in `token_count` only, a single turn produced two
+		// different denominators: token_count reported the real window with the
+		// flag set (renderer rank 2), then turn.completed fell back to the
+		// constructor seed with the flag clear (rank 3, stored override wins). The
+		// gauge changed denominator mid-turn.
+		it('should cache a context window reported by token_count, not just turn_context', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context at all - the window arrives only on token_count.
+			const tokenCountEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							model_context_window: 272000,
+							total_token_usage: { input_tokens: 100, output_tokens: 50 },
+						},
+					},
+				})
+			);
+			expect(tokenCountEvent?.usage?.contextWindow).toBe(272000);
+			expect(tokenCountEvent?.usage?.contextWindowReported).toBe(true);
+
+			// The very next event of the same turn must agree. Before the fix this
+			// returned the seed with contextWindowReported false.
+			const completedEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(completedEvent?.usage?.contextWindow).toBe(272000);
+			expect(completedEvent?.usage?.contextWindowReported).toBe(true);
+		});
+
 		it('should handle turn_context without payload', () => {
 			const line = JSON.stringify({ type: 'turn_context' });
 			const event = parser.parseJsonLine(line);

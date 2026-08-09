@@ -513,6 +513,19 @@ export class CodexOutputParser implements AgentOutputParser {
 			const reasoningOutputTokens = tokenUsage.reasoning_output_tokens || 0;
 			const totalOutputTokens = outputTokens + reasoningOutputTokens;
 
+			// Cache the window the same way `turn_context` does. Without this the
+			// denominator flaps inside a single turn whenever Codex carries
+			// `model_context_window` in `token_count` but not in an earlier
+			// `turn_context`: this event reports the real window with the flag set
+			// (renderer rank 2), then `turn.completed` falls back through
+			// `extractUsageFromRaw` to the constructor's config or lookup-table seed
+			// with the flag clear (rank 3, the stored override wins). The value-level
+			// flap predates the flag, but the flag makes it cross a precedence tier.
+			if (payload.info.model_context_window) {
+				this.contextWindow = payload.info.model_context_window;
+				this.contextWindowReported = true;
+			}
+
 			return {
 				type: 'usage',
 				usage: {
@@ -852,8 +865,11 @@ export class CodexOutputParser implements AgentOutputParser {
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
 			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			// Context window from Codex config (~/.codex/config.toml) or model lookup table,
-			// unless a turn_context / token_count already replaced it with Codex's own value
+			// Context window from Codex config (~/.codex/config.toml) or model lookup
+			// table, unless a turn_context or token_count already replaced it with
+			// Codex's own value. Both cache it now, so once either has reported a
+			// window this reads the real one for the rest of the session instead of
+			// dropping back to the seed mid-turn.
 			contextWindow: this.contextWindow,
 			contextWindowReported: this.contextWindowReported,
 			// Store reasoning tokens separately for UI display

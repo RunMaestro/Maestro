@@ -217,7 +217,7 @@ export function aggregateModelUsage(
 		totalCostUsd,
 		contextWindow,
 		// Only set when the window above came from the provider's own modelUsage,
-		// so consumers can rank it above a stored per-session fallback.
+		// so consumers can rank it above a stored customContextWindow fallback.
 		...(contextWindowReported ? { contextWindowResolved: true } : {}),
 	};
 }
