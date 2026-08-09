@@ -21,6 +21,23 @@ interface RemoteCommandReceipt {
  *  Bounded so a hung renderer cannot wedge a CLI `dispatch` call. */
 const REMOTE_COMMAND_RECEIPT_TIMEOUT_MS = 3000;
 
+/**
+ * Reduce a receipt reason to its leading code for logging.
+ *
+ * Reasons are shaped `code` or `code:detail`, and the detail half can carry
+ * remote input or an error string with paths in it. This log line is persisted
+ * at warn level, so only the code - a fixed vocabulary the renderer chooses
+ * from - is written (CWE-532, review of PR #1357). The detail is dropped
+ * rather than truncated: half a secret is still a secret.
+ */
+function receiptReasonCode(reason: string | undefined): string {
+	if (!reason) return 'no reason given';
+	const code = reason.split(':', 1)[0].trim();
+	// Guard against a reason that is entirely detail (leading colon) or that
+	// smuggles whitespace/punctuation in place of a code.
+	return /^[a-z0-9-]+$/i.test(code) ? code : 'unrecognized-reason';
+}
+
 function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
 	if (typeof raw === 'object' && raw !== null && 'accepted' in raw) {
 		const receipt = raw as { accepted: unknown; reason?: unknown };
@@ -102,7 +119,7 @@ export function registerCommandCallbacks(
 				logger.warn(
 					receipt.timedOut
 						? `[Web → Renderer] No delivery receipt within ${REMOTE_COMMAND_RECEIPT_TIMEOUT_MS}ms for session ${sessionId} - reporting dispatch as failed`
-						: `[Web → Renderer] Renderer rejected command for session ${sessionId}: ${receipt.reason ?? 'no reason given'}`,
+						: `[Web → Renderer] Renderer rejected command for session ${sessionId}: ${receiptReasonCode(receipt.reason)}`,
 					'WebServer'
 				);
 			}

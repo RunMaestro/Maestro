@@ -55,6 +55,17 @@ export interface UseRemoteHandlersDeps {
 	sshRemoteConfigs: Array<{ id: string; name: string }>;
 }
 
+/**
+ * How long the remote AI spawn may run before delivery is acked anyway.
+ *
+ * Kept comfortably inside the main side's `REMOTE_COMMAND_RECEIPT_TIMEOUT_MS`
+ * (3000ms, `src/main/web-server/callbacks/commandCallbacks.ts`) so a slow spawn
+ * is acked as handover rather than timing the caller out, while a spawn that
+ * rejects quickly - a missing or misconfigured agent binary, typically inside a
+ * few milliseconds - still reports the failure honestly.
+ */
+const REMOTE_SPAWN_ACK_GRACE_MS = 1500;
+
 // ============================================================================
 // Return type
 // ============================================================================
@@ -439,7 +450,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						},
 						writeTabId
 					);
-					reportDelivery(false, `unknown-command:${commandText}`);
+					// Stable code with no command text: the reason string is sent
+					// over the receipt channel and the main process logs it at warn
+					// level, so interpolating remote input here would persist
+					// whatever the caller typed - potentially a secret - into the
+					// app log (review of PR #1357). The text is still shown in the
+					// tab above and logged renderer-side for the operator.
+					reportDelivery(false, 'unknown-command');
 					return;
 				}
 			}
@@ -565,44 +582,64 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					})
 				);
 
-				// The prompt is committed - it is in the tab's logs and the tab is
-				// busy. Ack delivery BEFORE awaiting the spawn: the contract is
-				// handover, and a slow spawn must not push the caller past the
-				// main-side receipt timeout and turn a real dispatch into a
-				// reported failure.
+				// Ack delivery on whichever comes first: the spawn settling, or a
+				// timer set inside the main-side receipt timeout.
+				//
+				// Acking unconditionally before the await (the first cut of this
+				// fix) made the catch below dead code - `receiptSent` was already
+				// true - so a spawn that rejected immediately, the usual shape of a
+				// missing or misconfigured agent binary, still reported
+				// `accepted: true`. That is the very "accepted but never runs"
+				// failure this PR exists to remove, reintroduced one layer down
+				// (review of PR #1357).
+				//
+				// Awaiting the spawn outright is not the answer either: the caller
+				// gives up after REMOTE_COMMAND_RECEIPT_TIMEOUT_MS and would turn a
+				// merely slow dispatch into a reported failure. So the timer keeps
+				// the handover contract for slow spawns while fast failures - which
+				// settle in milliseconds, far inside the window - report honestly.
+				const ackTimer = setTimeout(() => reportDelivery(true), REMOTE_SPAWN_ACK_GRACE_MS);
+
+				try {
+					// Spawn agent with the prompt
+					await window.maestro.process.spawn({
+						sessionId: targetSessionId,
+						toolType: session.toolType,
+						cwd: session.cwd,
+						command: commandToUse,
+						args: spawnArgs,
+						prompt: promptToSend,
+						images: remoteImages,
+						appendSystemPrompt,
+						agentSessionId: tabAgentSessionId ?? undefined,
+						readOnlyMode: isReadOnly,
+						permissionMode: effectivePermissionMode,
+						sessionCustomPath: session.customPath,
+						sessionCustomArgs: session.customArgs,
+						sessionAdditionalDirectories: session.additionalDirectories,
+						sessionCustomEnvVars: session.customEnvVars,
+						sessionCustomModel: session.customModel,
+						sessionCustomContextWindow: session.customContextWindow,
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					});
+				} finally {
+					clearTimeout(ackTimer);
+				}
+
+				// Reached only when the spawn resolved, so this is a real accept.
+				// A no-op if the grace timer already acked.
 				reportDelivery(true);
-
-				// Spawn agent with the prompt
-				await window.maestro.process.spawn({
-					sessionId: targetSessionId,
-					toolType: session.toolType,
-					cwd: session.cwd,
-					command: commandToUse,
-					args: spawnArgs,
-					prompt: promptToSend,
-					images: remoteImages,
-					appendSystemPrompt,
-					agentSessionId: tabAgentSessionId ?? undefined,
-					readOnlyMode: isReadOnly,
-					permissionMode: effectivePermissionMode,
-					sessionCustomPath: session.customPath,
-					sessionCustomArgs: session.customArgs,
-					sessionAdditionalDirectories: session.additionalDirectories,
-					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: session.customModel,
-					sessionCustomContextWindow: session.customContextWindow,
-					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-				});
-
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
 			} catch (error: unknown) {
 				captureException(error, {
 					extra: { sessionId, toolType: session.toolType, mode: 'ai', operation: 'remote-spawn' },
 				});
 				const errorMessage = error instanceof Error ? error.message : String(error);
-				// No-op once the prompt was handed to the spawn; only failures
-				// BEFORE handover (agent config lookup, prompt preparation) are
-				// still un-acked here.
+				// Reports the failure honestly for everything that fails before the
+				// grace timer fires - the pre-handover failures (agent config
+				// lookup, prompt preparation) and now also a spawn that rejects
+				// fast, which is the common missing-binary case. Still a no-op if a
+				// slow spawn already acked; nothing can un-say a sent receipt.
 				reportDelivery(false, `remote-spawn-error:${errorMessage}`);
 				const errorLogEntry: LogEntry = {
 					id: generateId(),

@@ -1804,6 +1804,96 @@ describe('useRemoteHandlers', () => {
 			expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
 		});
 
+		// Review of PR #1357 (Greptile P1): the ack used to be sent
+		// unconditionally BEFORE awaiting the spawn, which made the catch block's
+		// corrective `reportDelivery(false, ...)` dead code - `receiptSent` was
+		// already true. A spawn that rejects immediately, the usual shape of a
+		// missing or misconfigured agent binary, therefore still reported
+		// `accepted: true`: the exact "accepted but never runs" defect this PR
+		// exists to remove.
+		it('reports a spawn that rejects immediately as a rejection', async () => {
+			(window.maestro.process.spawn as any).mockRejectedValueOnce(
+				new Error('spawn ENOENT: claude')
+			);
+
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(receipts()).toHaveLength(1);
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('remote-spawn-error');
+		});
+
+		// The other half of the same fix: the grace timer must still ack a spawn
+		// that is merely SLOW, or the caller times out and a real dispatch is
+		// reported as a failure.
+		it('acks a slow spawn before the caller can time out', async () => {
+			vi.useFakeTimers();
+			try {
+				let releaseSpawn: (() => void) | undefined;
+				(window.maestro.process.spawn as any).mockReturnValueOnce(
+					new Promise<void>((resolve) => {
+						releaseSpawn = resolve;
+					})
+				);
+
+				const deps = createMockDeps({
+					sessionsRef: { current: [createMockSession({ inputMode: 'ai' })] },
+				});
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+
+				const pending = handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							receiptChannel: RECEIPT_CHANNEL,
+							sessionId: 'session-1',
+							command: 'explain this code',
+							inputMode: 'ai',
+						},
+					})
+				);
+
+				// Nothing acked yet: the spawn has not settled and the grace timer
+				// has not fired.
+				await act(async () => {});
+				expect(receipts()).toHaveLength(0);
+
+				await act(async () => {
+					vi.advanceTimersByTime(1500);
+				});
+				expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+
+				// The later success must not double-send.
+				releaseSpawn?.();
+				await act(async () => {
+					await pending;
+				});
+				expect(receipts()).toHaveLength(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// CodeRabbit on PR #1357: the reason string is logged at warn level in the
+		// main process, so remote command text must not ride along in it.
+		it('rejects an unknown slash command without echoing the command text', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: '/nope sk-secret-token-value',
+				inputMode: 'ai',
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'unknown-command']]);
+			expect(JSON.stringify(receipts())).not.toContain('sk-secret-token-value');
+		});
+
 		it('sends nothing when the command arrived without a receipt channel', async () => {
 			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
 				sessionId: 'session-1',

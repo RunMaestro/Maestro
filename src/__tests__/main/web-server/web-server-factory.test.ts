@@ -986,8 +986,15 @@ describe('web-server/web-server-factory', () => {
 			answerReceipt(false, 'tab-not-found:no-such-tab');
 
 			await expect(resultPromise).resolves.toBe(false);
+			// Only the reason CODE is logged. The detail half is dropped because
+			// this line is persisted at warn level and a reason can carry remote
+			// input or a path-bearing error string (CWE-532, review of PR #1357).
 			expect(logger.warn).toHaveBeenCalledWith(
-				expect.stringContaining('tab-not-found:no-such-tab'),
+				expect.stringContaining('tab-not-found'),
+				'WebServer'
+			);
+			expect(logger.warn).not.toHaveBeenCalledWith(
+				expect.stringContaining('no-such-tab'),
 				'WebServer'
 			);
 		});
