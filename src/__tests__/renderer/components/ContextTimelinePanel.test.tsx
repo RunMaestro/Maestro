@@ -13,7 +13,7 @@
 
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ContextTimelinePanel } from '../../../renderer/components/ContextTimelinePanel';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import {
@@ -28,6 +28,8 @@ vi.mock('lucide-react', () => ({
 	Minus: () => <svg data-testid="minus-icon" />,
 	X: () => <svg data-testid="x-icon" />,
 	Trash2: () => <svg data-testid="trash-icon" />,
+	BarChart3: () => <svg data-testid="bar-icon" />,
+	LineChart: () => <svg data-testid="line-icon" />,
 }));
 
 const testTheme: Theme = {
@@ -72,6 +74,7 @@ function reset() {
 	useContextTimelineStore.setState({
 		panelSessionId: null,
 		minimized: false,
+		view: 'bar',
 		anchorRect: null,
 		buffers: {},
 	});
@@ -244,5 +247,122 @@ describe('ContextTimelinePanel over-limit rendering', () => {
 		renderPanel();
 
 		expect(screen.getByTitle('Latest context fill')).toHaveTextContent('155%');
+	});
+});
+
+/**
+ * Task 5 / 5b: the empty-state copy is held back until the backfill has
+ * answered, and the bar/graph toggle switches views without either view
+ * recomputing its own percentages.
+ */
+describe('ContextTimelinePanel view toggle and empty state', () => {
+	beforeEach(reset);
+
+	it('shows a loading line, not the empty copy, before hydration has answered', () => {
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.getByText(/Loading recorded history/)).toBeInTheDocument();
+		expect(screen.queryByText(/No usage recorded yet for this agent/)).not.toBeInTheDocument();
+	});
+
+	it('shows the approved empty copy once hydration returned nothing', () => {
+		useContextTimelineStore.getState().openPanel(SID);
+		useContextTimelineStore.getState().hydrateSession(SID, [], false);
+		renderPanel();
+
+		expect(
+			screen.getByText(
+				'No usage recorded yet for this agent. The timeline fills as the agent takes turns, and it does not survive an app restart.'
+			)
+		).toBeInTheDocument();
+	});
+
+	it('defaults to the bar list', () => {
+		seed([pt()]);
+		renderPanel();
+
+		expect(screen.getAllByTestId('timeline-bar-fill').length).toBe(1);
+		expect(screen.queryByTestId('timeline-graph')).not.toBeInTheDocument();
+		expect(screen.getByTestId('timeline-view-bar')).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('switches to the graph and back, and the choice persists in the store', () => {
+		seed([pt(), pt({ contextTokens: 150_000, percentage: 75 })]);
+		const { unmount } = renderPanel();
+
+		fireEvent.click(screen.getByTestId('timeline-view-graph'));
+		expect(screen.getByTestId('timeline-graph')).toBeInTheDocument();
+		expect(screen.queryAllByTestId('timeline-bar-fill')).toHaveLength(0);
+		expect(useContextTimelineStore.getState().view).toBe('graph');
+
+		// Closing and reopening the panel keeps the chosen view.
+		unmount();
+		renderPanel();
+		expect(screen.getByTestId('timeline-graph')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('timeline-view-bar'));
+		expect(screen.queryByTestId('timeline-graph')).not.toBeInTheDocument();
+		expect(useContextTimelineStore.getState().view).toBe('bar');
+	});
+
+	it('plots the graph from the same per-point value as the bars, over-limit included', () => {
+		// Peak 310K against a 200K window, so the shared scale is 310K.
+		seed([
+			pt({ contextTokens: 100_000, percentage: 50 }),
+			pt({ contextTokens: 310_000, percentage: null }),
+		]);
+		renderPanel();
+		fireEvent.click(screen.getByTestId('timeline-view-graph'));
+
+		const segments = screen.getAllByTestId('timeline-graph-segment');
+		expect(segments).toHaveLength(1);
+		const scaleMax = 310_000;
+		const expected = [100_000, 310_000]
+			.map((tokens) => computeOverLimitDisplay(tokens, WINDOW, scaleMax).fillFraction)
+			.map((f, i) => `${i === 0 ? 0 : 100},${100 - f * 100}`)
+			.join(' ');
+		expect(segments[0].getAttribute('points')).toBe(expected);
+		// And the readout carries the same figures the bar row's label would.
+		expect(screen.getByTestId('timeline-graph-readout')).toHaveTextContent(
+			'155% · 310.0K / 200.0K'
+		);
+	});
+
+	it('breaks the line at a turn with no window instead of plotting it as zero', () => {
+		seed([
+			pt({ contextTokens: 100_000, percentage: 50 }),
+			pt({ contextTokens: 12_000, contextWindow: 0, percentage: null }),
+			pt({ contextTokens: 150_000, percentage: 75 }),
+		]);
+		renderPanel();
+		fireEvent.click(screen.getByTestId('timeline-view-graph'));
+
+		// Two one-point runs either side of the gap, never a single line through it.
+		const segments = screen.getAllByTestId('timeline-graph-segment');
+		expect(segments).toHaveLength(2);
+		expect(segments[0].getAttribute('points')?.split(' ')).toHaveLength(1);
+		expect(segments[1].getAttribute('points')?.split(' ')).toHaveLength(1);
+	});
+
+	it('draws the 100% reference line in the graph', () => {
+		seed([pt()]);
+		renderPanel();
+		fireEvent.click(screen.getByTestId('timeline-view-graph'));
+
+		expect(screen.getByTestId('timeline-graph-limit-line')).toBeInTheDocument();
+	});
+
+	it('shows a hovered turn figures instead of the latest', () => {
+		seed([
+			pt({ contextTokens: 100_000, percentage: 50 }),
+			pt({ contextTokens: 150_000, percentage: 75 }),
+		]);
+		renderPanel();
+		fireEvent.click(screen.getByTestId('timeline-view-graph'));
+
+		expect(screen.getByTestId('timeline-graph-readout')).toHaveTextContent('75% · 150.0K / 200.0K');
+		fireEvent.mouseEnter(screen.getAllByTestId('timeline-graph-hit')[0]);
+		expect(screen.getByTestId('timeline-graph-readout')).toHaveTextContent('50% · 100.0K / 200.0K');
 	});
 });

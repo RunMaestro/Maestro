@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Gauge, Minus, X, Trash2 } from 'lucide-react';
+import { Gauge, Minus, X, Trash2, BarChart3, LineChart } from 'lucide-react';
 import type { Theme } from '../types';
 import {
 	useContextTimelineStore,
@@ -36,6 +36,11 @@ import { getContextColor } from '../utils/theme';
 import { computeOverLimitDisplay } from '../utils/contextUsage';
 import { formatTokensCompact, formatCost } from '../../shared/formatters';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import {
+	hydrateContextTimeline,
+	forgetContextTimelineCaptures,
+} from '../services/contextTimelineHydration';
+import { ContextTimelineGraph } from './ContextTimelineGraph';
 
 interface ContextTimelinePanelProps {
 	theme: Theme;
@@ -100,6 +105,8 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const panelSessionId = useContextTimelineStore((s) => s.panelSessionId);
 	const anchorRect = useContextTimelineStore((s) => s.anchorRect);
 	const minimized = useContextTimelineStore((s) => s.minimized);
+	const view = useContextTimelineStore((s) => s.view);
+	const setView = useContextTimelineStore((s) => s.setView);
 	const points = useContextTimelineStore(selectPoints(panelSessionId));
 	const buffer = useContextTimelineStore((s) =>
 		panelSessionId ? s.buffers[panelSessionId] : undefined
@@ -114,15 +121,30 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	const [, bumpResizeTick] = useState(0);
 	useEventListener('resize', () => bumpResizeTick((n) => n + 1));
 
-	const sessionName = useSessionStore((s) =>
-		panelSessionId ? s.sessions.find((sess) => sess.id === panelSessionId)?.name : undefined
+	const session = useSessionStore((s) =>
+		panelSessionId ? s.sessions.find((sess) => sess.id === panelSessionId) : undefined
 	);
+	const sessionName = session?.name;
+
+	// Backfill from main's capture log (finding S1). Without this a web-desktop
+	// client, a reloaded window or a second desktop window opens at zero turns
+	// even when the agent has a long history in another renderer. The store's
+	// `hydrated` flag makes a reopen a no-op, and hydration merges by `seq` so a
+	// live turn arriving mid-fetch is neither lost nor duplicated.
+	useEffect(() => {
+		if (!panelSessionId || !session) return;
+		void hydrateContextTimeline(panelSessionId, session);
+	}, [panelSessionId, session]);
 
 	const scrollRef = useRef<HTMLDivElement>(null);
 	// Newest turn renders on top, so "following" means staying pinned to the TOP.
 	const stickToTopRef = useRef(true);
 
 	const trimmed = buffer?.trimmed ?? false;
+	// Until the backfill has answered, "no points" means "not asked yet" - showing
+	// the empty-state copy here would flash it at a web-desktop client that does
+	// have history.
+	const hydrated = buffer?.hydrated ?? false;
 
 	// Newest-first for display (the latest turn sits at the top).
 	const ordered = useMemo(() => [...points].reverse(), [points]);
@@ -222,8 +244,49 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 						{Math.round(latestPercent)}%
 					</span>
 				)}
+				{/* Bar / graph toggle. Defaults to the bar list, so nothing changes for
+				    existing users until they opt in; the choice lives in the store so
+				    it survives closing and reopening the panel. */}
+				<div
+					className="flex items-center rounded overflow-hidden mr-1 shrink-0"
+					style={{ border: `1px solid ${theme.colors.border}` }}
+					role="group"
+					aria-label="Timeline view"
+				>
+					<button
+						onClick={() => setView('bar')}
+						title="Bar view (one row per turn)"
+						aria-pressed={view === 'bar'}
+						data-testid="timeline-view-bar"
+						className="p-1 transition-colors"
+						style={{
+							backgroundColor: view === 'bar' ? theme.colors.bgActivity : 'transparent',
+							color: view === 'bar' ? theme.colors.accent : theme.colors.textDim,
+						}}
+					>
+						<BarChart3 className="w-3.5 h-3.5" />
+					</button>
+					<button
+						onClick={() => setView('graph')}
+						title="Graph view (trend across turns)"
+						aria-pressed={view === 'graph'}
+						data-testid="timeline-view-graph"
+						className="p-1 transition-colors"
+						style={{
+							backgroundColor: view === 'graph' ? theme.colors.bgActivity : 'transparent',
+							color: view === 'graph' ? theme.colors.accent : theme.colors.textDim,
+						}}
+					>
+						<LineChart className="w-3.5 h-3.5" />
+					</button>
+				</div>
 				<button
-					onClick={() => clearSession(panelSessionId)}
+					onClick={() => {
+						clearSession(panelSessionId);
+						// Also wipe main's capture log, or the next open hydrates the
+						// history the user just cleared straight back in.
+						forgetContextTimelineCaptures(panelSessionId);
+					}}
 					title="Clear recorded history"
 					className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
 				>
@@ -266,8 +329,19 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 			>
 				{ordered.length === 0 ? (
 					<p className="text-xs italic mt-2" style={{ color: theme.colors.textDim }}>
-						No usage recorded yet. The timeline fills as the agent takes turns.
+						{hydrated
+							? 'No usage recorded yet for this agent. The timeline fills as the agent takes turns, and it does not survive an app restart.'
+							: 'Loading recorded history...'}
 					</p>
+				) : view === 'graph' ? (
+					<ContextTimelineGraph
+						// Oldest to newest: `points` is the store's natural order, NOT the
+						// reversed list the bar rows below render from.
+						points={points}
+						scaleMax={scaleMax}
+						contextWindow={latestWindow}
+						theme={theme}
+					/>
 				) : (
 					<div className="flex flex-col gap-2.5">
 						{ordered.map((p) => {

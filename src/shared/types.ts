@@ -314,6 +314,15 @@ export interface UsageStats {
 	 */
 	contextWindowCorrectionOnly?: boolean;
 	/**
+	 * Monotonic sequence number stamped by main's context-timeline capture log
+	 * (`src/main/process-listeners/context-timeline-log.ts`) as the event goes
+	 * out on `process:usage`. The renderer records it on the Context Timeline
+	 * point it builds, so a renderer that later hydrates from the main-side log
+	 * can dedup hydrated captures against live ones exactly. Undefined for usage
+	 * events that never passed through that listener (unit tests, replays).
+	 */
+	captureSeq?: number;
+	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
 	 * These are already included in outputTokens but tracked separately for UI display.
