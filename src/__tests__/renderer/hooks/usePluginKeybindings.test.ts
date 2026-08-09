@@ -172,6 +172,49 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		expect(event.defaultPrevented).toBe(false);
 	});
 
+	// CodeRabbit on PR #1354: AltGr is text entry, not a chord. On the layouts
+	// that have it the browser sets ctrlKey AND altKey, so `AltGr+Q` - the `@` on
+	// a German keyboard - is indistinguishable from a `Ctrl+Alt+Q` plugin chord
+	// unless getModifierState('AltGraph') is consulted. Swallowing it would make
+	// the composer unable to type `@` or `€`.
+	it.each([
+		['@ (AltGr+Q on a German layout)', { key: '@', code: 'KeyQ' }],
+		['€ (AltGr+E on a German layout)', { key: '€', code: 'KeyE' }],
+	])('lets AltGr text entry %s through to a textarea', async (_label, init) => {
+		await mountWithChords([{ ...OVERLAY_CHORD, key: `Ctrl+Alt+${init.code.replace('Key', '')}` }]);
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const event = press({
+			...init,
+			// Exactly what a browser reports for AltGr on Windows/Linux.
+			ctrlKey: true,
+			altKey: true,
+			modifierAltGraph: true,
+			target: textarea,
+		});
+		textarea.remove();
+
+		// Guard the premise: if jsdom ever stops honouring modifierAltGraph this
+		// test would pass for the wrong reason.
+		expect(event.getModifierState('AltGraph')).toBe(true);
+		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it('still fires an AltGr-looking chord when NO text surface has focus', async () => {
+		// The AltGr skip is scoped to editable targets for the same reason the
+		// reserved-chord skip is: outside a text surface there is no character to
+		// swallow, so the chord stays usable.
+		await mountWithChords([{ ...OVERLAY_CHORD, key: 'Ctrl+Alt+Q' }]);
+
+		press({ key: '@', code: 'KeyQ', ctrlKey: true, altKey: true, modifierAltGraph: true });
+
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith(
+			`${OVERLAY_CHORD.pluginId}/${OVERLAY_CHORD.command}`
+		);
+	});
+
 	it('still fires a reserved-looking chord when NO text surface has focus', async () => {
 		// The guard is scoped to editable targets. Outside one, Ctrl+Z is fair game.
 		await mountWithChords([{ ...OVERLAY_CHORD, key: 'Ctrl+z' }]);

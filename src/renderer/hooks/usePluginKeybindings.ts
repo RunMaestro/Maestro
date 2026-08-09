@@ -165,7 +165,19 @@ export function usePluginKeybindings(): void {
 			// Reserved native editing chords are excluded even then - see
 			// isReservedEditingChord. (AA1 review)
 			const hasHardModifier = e.altKey || e.ctrlKey || e.metaKey;
-			if (isEditableTarget(e.target) && (!hasHardModifier || isReservedEditingChord(e))) return;
+			// AltGr is text entry, not a chord. On the Windows/Linux layouts that
+			// have it (German, Polish, Brazilian and friends) the browser reports
+			// AltGr as ctrlKey AND altKey, so `AltGr+Q` - which types `@` on a
+			// German keyboard - looks exactly like a `Ctrl+Alt+Q` plugin chord and
+			// would be swallowed by the preventDefault below. getModifierState is
+			// the only way to tell the two apart. (Review of PR #1354)
+			const isAltGraph = e.getModifierState?.('AltGraph') === true;
+			if (
+				isEditableTarget(e.target) &&
+				(isAltGraph || !hasHardModifier || isReservedEditingChord(e))
+			) {
+				return;
+			}
 			for (const chord of chordsRef.current) {
 				if (!matches(e, chord)) continue;
 				e.preventDefault();
