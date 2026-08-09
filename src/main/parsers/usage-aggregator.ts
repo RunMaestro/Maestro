@@ -184,9 +184,17 @@ export function aggregateModelUsage(
 				maxCacheCreationTokens,
 				modelStats.cacheCreationInputTokens || 0
 			);
-			// Use the highest context window from any model
-			if (modelStats.contextWindow && modelStats.contextWindow > contextWindow) {
-				contextWindow = modelStats.contextWindow;
+			// Use the highest context window any model REPORTED. The max is taken
+			// against the other reported windows, never against the injected
+			// fallback: comparing to the fallback made a provider window at or
+			// below it (a 128k model, say) fail the test, leaving the frame marked
+			// unreported so the renderer let a stored customContextWindow outrank
+			// provider truth - the exact inversion P1 exists to fix. The first
+			// reported window therefore replaces the fallback outright.
+			if (modelStats.contextWindow && modelStats.contextWindow > 0) {
+				contextWindow = contextWindowReported
+					? Math.max(contextWindow, modelStats.contextWindow)
+					: modelStats.contextWindow;
 				contextWindowReported = true;
 			}
 		}

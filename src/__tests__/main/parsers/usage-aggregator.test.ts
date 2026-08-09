@@ -69,16 +69,34 @@ describe('aggregateModelUsage', () => {
 		expect(result.contextWindowResolved).toBeUndefined();
 	});
 
-	it('should not flag a fallback-sized window as resolved', () => {
-		// The model reports a window no larger than the fallback, so the returned
-		// 200000 is still the injected default rather than an aggregated value.
+	it('should treat a below-fallback provider window as authoritative', () => {
+		// Review of PR #1356: a model reporting a window SMALLER than the 200000
+		// fallback is still provider truth, and must both replace the fallback and
+		// be flagged resolved. Comparing against the fallback instead of against
+		// the other reported windows left a 128k-class model unreported, so the
+		// renderer let a stored customContextWindow outrank the provider and drew
+		// the gauge and timeline against the wrong denominator.
 		const modelUsage: Record<string, ModelStats> = {
 			model1: { inputTokens: 100, contextWindow: 150000 },
 		};
 
 		const result = aggregateModelUsage(modelUsage, {}, 0);
-		expect(result.contextWindow).toBe(200000);
-		expect(result.contextWindowResolved).toBeUndefined();
+		expect(result.contextWindow).toBe(150000);
+		expect(result.contextWindowResolved).toBe(true);
+	});
+
+	it('should keep the highest window when reports straddle the fallback', () => {
+		// The max is taken across REPORTED windows only, so a small model reporting
+		// after a large one cannot drag the window down, and the fallback never
+		// wins over a real report.
+		const modelUsage: Record<string, ModelStats> = {
+			model1: { inputTokens: 100, contextWindow: 150000 },
+			model2: { inputTokens: 100, contextWindow: 180000 },
+		};
+
+		const result = aggregateModelUsage(modelUsage, {}, 0);
+		expect(result.contextWindow).toBe(180000);
+		expect(result.contextWindowResolved).toBe(true);
 	});
 
 	it('should use highest context window from models', () => {

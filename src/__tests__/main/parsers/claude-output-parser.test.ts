@@ -218,9 +218,12 @@ describe('ClaudeOutputParser', () => {
 			expect(usage?.cacheCreationTokens).toBe(10);
 			expect(usage?.contextWindow).toBe(200000);
 			expect(usage?.costUsd).toBe(0.01);
-			// 200000 here is the aggregator's untouched fallback seed (the model's
-			// own 200000 is not LARGER than it), so it carries no provider authority.
-			expect(usage?.contextWindowReported).toBeUndefined();
+			// The model reported 200000 itself. That it happens to equal the
+			// fallback seed does not make it less of a provider report, so it is
+			// flagged authoritative (review of PR #1356). Before that fix the
+			// "is it LARGER than the fallback" test silently demoted every
+			// 200k-and-under model to unreported.
+			expect(usage?.contextWindowReported).toBe(true);
 		});
 
 		it('flags a genuinely reported context window as provider-reported', () => {
