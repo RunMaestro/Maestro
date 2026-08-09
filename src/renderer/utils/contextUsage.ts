@@ -267,7 +267,22 @@ export function calculateContextDisplay(
 		}
 	}
 
-	const percentage = tokens <= 0 ? 0 : Math.min(100, Math.round((tokens / contextWindow) * 100));
+	// NOT clamped to 100 (finding R1, Decision 2). A `Math.min(100, ...)` here
+	// laundered a genuine over-limit measurement into a flat, indistinguishable
+	// `100%` on the header pill and the Context Window popover, which is the same
+	// symptom the Context Timeline had. The header now reports whatever it
+	// actually measured, matching `computeOverLimitDisplay`'s `truePercentage`
+	// for the same tokens/window pair.
+	//
+	// The two paths above keep their own bounds and are deliberately unchanged:
+	// the untrustworthy-zeros branch (#762) still returns zeros, and the
+	// accumulated-turn fallback is still bounded by `Math.min(100, ...)` at the
+	// FALLBACK, because a stored `contextUsage` is 0-100 by construction and a
+	// percentage recovered from it is not an over-limit measurement. So today
+	// this expression only exceeds 100 if a caller supplies a numerator above
+	// its own window directly; it is the laundering that is removed, not a new
+	// number that is invented.
+	const percentage = tokens <= 0 ? 0 : Math.round((tokens / contextWindow) * 100);
 
 	return { tokens, percentage, contextWindow, trustworthy };
 }
