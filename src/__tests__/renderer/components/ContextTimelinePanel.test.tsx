@@ -171,6 +171,42 @@ describe('ContextTimelinePanel over-limit rendering', () => {
 		expect((ticks[0] as HTMLElement).style.left).toBe(`${(200_000 / 310_000) * 100}%`);
 	});
 
+	// Review of PR #1364, flagged independently by both bots. The scale was
+	// seeded from the LATEST window only, and one shared tick was drawn from it,
+	// while each row divides by its OWN stored window. A mid-session window
+	// change therefore contradicted the labels - exactly what Decision 3 says
+	// must not happen.
+	describe('mixed windows across turns', () => {
+		// An older, roomier turn (800k of 1M) followed by a turn recorded after
+		// the window shrank to 200k.
+		const OLD_BIG = pt({ id: 'old', contextTokens: 800_000, contextWindow: 1_000_000 });
+		const NEW_SMALL = pt({ id: 'new', contextTokens: 100_000, contextWindow: 200_000 });
+
+		it('does not draw an under-limit row at full width', () => {
+			seed([OLD_BIG, NEW_SMALL]);
+			renderPanel();
+
+			// Scale is max over tokens AND windows = 1M, so the 800k row fills 80%.
+			// Seeding from the latest window alone made the scale 800k and drew this
+			// 80% row as a full bar.
+			expect(labelTexts()).toEqual(['50% · 100.0K / 200.0K', '80% · 800.0K / 1.0M']);
+			expect(fillWidths()).toEqual(['10%', '80%']);
+		});
+
+		it('places each row 100% tick at that row own window', () => {
+			seed([OLD_BIG, NEW_SMALL]);
+			renderPanel();
+
+			// Only ONE tick: the 1M row's limit IS the scale maximum, so it has no
+			// headroom beyond it and correctly draws none. The 200k row does.
+			const ticks = screen.getAllByTestId('timeline-limit-tick');
+			expect(ticks).toHaveLength(1);
+			// 200k/1M = 20%. The old shared tick used the latest window over a
+			// latest-seeded scale and would have put it at 100%.
+			expect((ticks[0] as HTMLElement).style.left).toBe(`${(200_000 / 1_000_000) * 100}%`);
+		});
+	});
+
 	it('colors an over-limit row with the error color and an under-limit row with success', () => {
 		seed([UNDER, OVER]);
 		renderPanel();

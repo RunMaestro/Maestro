@@ -343,10 +343,15 @@ export function computeOverLimitDisplay(
 	const truePercentage = Math.round((tokens / contextWindow) * 100);
 	const overLimit = tokens > contextWindow;
 
-	// A scaleMax below the window would push in-window points past the track,
-	// so an unusable value falls back to the window itself.
+	// A scaleMax below the window would push in-window points past the track, so
+	// an unusable value falls back to the window itself. The bound is
+	// `>= contextWindow`, not `> 0`: a positive-but-too-small scale is exactly
+	// the case the comment warns about, and merely checking positivity let it
+	// through - `(100k, 200k, 100k)` returned a full bar for a half-full window.
 	const effectiveScale =
-		scaleMax != null && Number.isFinite(scaleMax) && scaleMax > 0 ? scaleMax : contextWindow;
+		scaleMax != null && Number.isFinite(scaleMax) && scaleMax >= contextWindow
+			? scaleMax
+			: contextWindow;
 	const fillFraction = Math.min(1, Math.max(0, tokens / effectiveScale));
 
 	return { truePercentage, fillFraction, overLimit };

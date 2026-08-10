@@ -143,14 +143,15 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 	// row's percentage still divides by its OWN stored window - a mid-session
 	// window change must not retroactively distort older rows. When nothing
 	// exceeds the window this equals the window and the track behaves as before.
+	// Every row's OWN window counts toward the track maximum, not just the latest
+	// one. Seeding from `latestWindow` alone broke the geometry the moment the
+	// window changed mid-session: an older 800k/1M row against a latest 200k
+	// window made `scaleMax` 800k, so that row filled the whole track while its
+	// label read 80% - an under-limit row drawn as if it were at the limit.
 	const scaleMax = useMemo(
-		() => points.reduce((max, p) => Math.max(max, p.contextTokens), latestWindow),
-		[points, latestWindow]
+		() => points.reduce((max, p) => Math.max(max, p.contextTokens, p.contextWindow), 0),
+		[points]
 	);
-	// The 100% boundary inside the track, drawn only when there IS headroom
-	// beyond it (i.e. some turn went over the limit).
-	const tickPercent =
-		scaleMax > latestWindow && latestWindow > 0 ? (latestWindow / scaleMax) * 100 : null;
 
 	// This is a PASSIVE inspector, so it deliberately does NOT register a layer:
 	// any layer (modal or overlay) trips hasOpenLayers()/hasOpenModal() and
@@ -278,6 +279,13 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 							const hasWindow = p.contextWindow > 0;
 							const display = computeOverLimitDisplay(p.contextTokens, p.contextWindow, scaleMax);
 							const barColor = getContextColor(display.truePercentage, theme);
+							// The 100% boundary is per row, because each row's limit is its
+							// OWN stored window. A single shared tick drawn from the latest
+							// window would sit at the wrong place on every row recorded
+							// under a different one. Drawn only when there is headroom
+							// beyond that row's limit within the shared track.
+							const tickPercent =
+								hasWindow && scaleMax > p.contextWindow ? (p.contextWindow / scaleMax) * 100 : null;
 							return (
 								<div key={p.id} className="flex flex-col gap-1">
 									<div className="flex items-center justify-between gap-2">

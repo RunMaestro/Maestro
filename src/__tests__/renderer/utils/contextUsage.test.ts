@@ -536,6 +536,20 @@ describe('calculateContextDisplay', () => {
 });
 
 describe('computeOverLimitDisplay', () => {
+	// Review of PR #1364 (CodeRabbit). The guard checked `scaleMax > 0`, so a
+	// positive-but-too-small scale slipped through and pushed an in-window point
+	// past the track - the exact case the code comment warned about.
+	it('ignores a scaleMax smaller than the window', () => {
+		const result = computeOverLimitDisplay(100_000, 200_000, 100_000);
+		expect(result.fillFraction).toBe(0.5);
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+	});
+
+	it('uses a scaleMax equal to the window unchanged', () => {
+		expect(computeOverLimitDisplay(100_000, 200_000, 200_000).fillFraction).toBe(0.5);
+	});
+
 	const WINDOW = 200000;
 
 	it('reports an under-limit point with its true percentage and proportional fill', () => {
