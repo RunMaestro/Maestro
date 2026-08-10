@@ -44,6 +44,7 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { ShellCommandCard } from './ShellCommandCard';
+import { isSelfContainedCard } from '../utils/logEntries';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { linkifyNode } from '../utils/linkify';
@@ -1761,12 +1762,22 @@ export const TerminalOutput = memo(
 					log.source === 'tool' ||
 					log.source === 'thinking' ||
 					log.source === 'error' ||
-					log.retryOutageId
+					isSelfContainedCard(log)
 				) {
-					// Flush response group before tool/thinking/error and Agent
-					// Resilience outage markers, then add them standalone. The outage
-					// marker must not merge into a text group - it renders as a live
-					// status card.
+					// Flush response group before tool/thinking/error entries and any
+					// self-contained card, then add them standalone.
+					//
+					// A card MUST NOT be merged into a text group. Grouping concatenates
+					// `text` and renders the result with the FIRST entry's props, so a
+					// card swallowed by a group loses its marker (`shellCommand`,
+					// `retryOutageId`, ...) and its body gets pasted onto the preceding
+					// agent reply as plain markdown - which is how `!ls` output ended up
+					// inside a chat bubble with its ANSI codes showing as literal text.
+					//
+					// This used to name `retryOutageId` alone; every new card kind hit
+					// the same bug until it was added here too. isSelfContainedCard is
+					// the shared rule (see utils/logEntries.ts), so new kinds are
+					// standalone by construction.
 					flushResponseGroup();
 					renderedIds.set(log.id, log.id);
 					result.push(log);

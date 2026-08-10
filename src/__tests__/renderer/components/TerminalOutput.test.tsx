@@ -362,6 +362,102 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('command-mode cards are never merged into a response group', () => {
+		const lsOutput = '\u001b[1m\u001b[36mnode_modules\u001b[0m tailwind.config.mjs\n';
+
+		function commandCard(overrides: Partial<LogEntry> = {}): LogEntry {
+			return createLogEntry({
+				id: 'card-1',
+				// `source: 'stdout'` is correct - the body really is terminal output.
+				// That is precisely why grouping used to swallow it.
+				source: 'stdout',
+				text: lsOutput,
+				shellCommand: {
+					command: 'ls',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+				},
+				...overrides,
+			});
+		}
+
+		function renderLogs(logs: LogEntry[]) {
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		}
+
+		it('gives the command its own row instead of appending it to the agent reply', () => {
+			// The reported bug: `!ls` output was concatenated onto the tail of the
+			// preceding agent message and rendered as markdown, ANSI codes and all.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'rather than guess now.', source: 'stdout' }),
+				commandCard(),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(2);
+
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('guess now.node_modules');
+			expect(markdown).not.toContain('node_modules');
+		});
+
+		it('renders the card chrome rather than a markdown bubble', () => {
+			// NOTE: this file stubs ansi-to-html to a passthrough, so the ANSI ->
+			// colour conversion itself is asserted in ShellCommandCard.test.tsx
+			// (which uses the real converter). What matters here is that the entry
+			// reaches the card at all, instead of being flattened into markdown.
+			renderLogs([commandCard()]);
+
+			// Card-only chrome: the command in the header and its exit status.
+			expect(screen.getByText('ls')).toBeInTheDocument();
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			// The output must NOT have gone through the markdown renderer.
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('node_modules');
+		});
+
+		it('keeps a card between two replies from stitching them together', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'Before.', source: 'stdout' }),
+				commandCard(),
+				createLogEntry({ id: 'resp-2', text: 'After.', source: 'stdout' }),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('Before.After.');
+		});
+
+		it('gives each of several commands its own row', () => {
+			const logs: LogEntry[] = [
+				commandCard({ id: 'card-1' }),
+				commandCard({ id: 'card-2' }),
+				commandCard({ id: 'card-3' }),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+		});
+	});
+
 	describe('cross-tab search jump anchors', () => {
 		it('tags every rendered row with its entry id', () => {
 			const logs: LogEntry[] = [

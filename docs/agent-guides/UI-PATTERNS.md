@@ -600,6 +600,23 @@ Existing in-app callers using `type:` continue to work without changes.
 
 ---
 
+## Above-Modal Layering (`Z_LAYERS`)
+
+Ordinary modals use plain Tailwind classes: `z-[9999]` for the backdrop, `z-[10000]`/`z-[10001]` for menus and tooltips anchored inside one. Those numbers only ever compete with each other, so they stay inline.
+
+The handful of overlays that deliberately outrank a modal read their value from `Z_LAYERS` in `src/renderer/constants/zLayers.ts`. Their relative order is a product decision, so it lives in one file instead of being rediscovered as a magic number per component:
+
+| Layer                    | Surface                                                         |
+| ------------------------ | --------------------------------------------------------------- |
+| `Z_LAYERS.CONFETTI`      | Celebration particles - decorative, sits under real UI          |
+| `Z_LAYERS.TOAST`         | `ToastContainer` - visible over modals so results aren't missed |
+| `Z_LAYERS.QUICK_ACTIONS` | Command palette - owns the screen, including over toasts        |
+| `Z_LAYERS.CENTER_FLASH`  | Momentary ack - always the top-most pixel                       |
+
+Do NOT add a new hard-coded five-digit z-index. If a surface needs to sit above a modal, give it an entry here so the ordering stays reviewable. Note that a z-index only ranks within its stacking context: a portal to `document.body` (toasts, center flash) always compares against the root, while an inline overlay compares against its nearest ancestor that establishes a context.
+
+---
+
 ## Center Flash System (rapid temporary notifications)
 
 **Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system - they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.

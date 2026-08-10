@@ -150,11 +150,27 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Leaving command mode. The composer holds no `!` to delete (the gesture
 			// consumed it), so the mode needs its own way out: Escape on an empty
 			// command line, and Backspace past the start of one - the same keys that
-			// would have removed the bang back when it was a character. Both are
-			// gated on an empty line so neither can strand a half-typed command.
-			if (isCommandMode && !inputValue && (e.key === 'Escape' || e.key === 'Backspace')) {
+			// would have removed the bang back when it was a character.
+			//
+			// Escape uses trim(): a line of spaces LOOKS empty, so Escape has to mean
+			// "get me out" there too. Without that it fell through to the generic
+			// Escape branch below, which blurs the composer - so a stray space turned
+			// the exit gesture into "lose command mode AND lose focus".
+			//
+			// Backspace stays on a strictly empty line: it is an editing key, and on
+			// "   " the user is deleting a space, not asking to leave.
+			if (
+				isCommandMode &&
+				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
+			) {
 				e.preventDefault();
 				setCommandMode(false);
+				// Keep the caret in the composer. Exiting command mode hands the input
+				// back to the agent, so the user is still typing - dropping focus would
+				// make the next keystroke go nowhere. Explicit rather than relying on
+				// React not remounting the textarea when the mode bar and `$` prefix
+				// unmount around it.
+				inputRef.current?.focus();
 				return;
 			}
 
