@@ -19,6 +19,7 @@ import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
+import { isPidAlive } from './utils/childProcessInfo';
 import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -119,16 +120,57 @@ export class ProcessManager extends EventEmitter {
 				existing.sdkController !== undefined;
 
 			if (!existing.isTerminal) {
-				logger.warn('[ProcessManager] Refusing to replace owned agent process', 'ProcessManager', {
-					sessionId: config.sessionId,
-					existingPid: existing.pid,
-					existingToolType: existing.toolType,
-					requestedToolType: config.toolType,
-				});
-				throw new Error(`Agent process already running for session ${config.sessionId}`);
-			}
+				// An agent entry is only ever removed by the exit handler, so an entry
+				// that is still here while its OS process is gone means `close` never
+				// arrived and never will (reported after the machine idled for hours:
+				// the child died without us seeing the event). Left alone, that entry
+				// owns the session id forever and every later turn throws, with no way
+				// back short of restarting the app. See issue #1339.
+				//
+				// The reconciliation is deliberately narrow so it cannot reopen the
+				// lost-response race from #1249. There, node HAD seen the child exit
+				// (`exitCode` is set) while `close` was still draining trailing stdout
+				// microseconds later, so anything node knows has exited stays refused.
+				// We only reclaim the opposite state: node still believes the child is
+				// running, yet the OS says the PID is gone. The two are disjoint, so
+				// the drain window keeps its protection.
+				//
+				// SDK-backed turns have no OS child of their own, so a liveness probe
+				// would be meaningless (and could match an unrelated recycled PID);
+				// they keep the strict refusal.
+				const nodeObservedExit = existing.childProcess !== undefined && !childProcessRunning;
+				const isStaleEntry =
+					!nodeObservedExit && existing.sdkController === undefined && !isPidAlive(existing.pid);
 
-			if (existingProcessRunning) {
+				if (!isStaleEntry) {
+					logger.warn(
+						'[ProcessManager] Refusing to replace owned agent process',
+						'ProcessManager',
+						{
+							sessionId: config.sessionId,
+							existingPid: existing.pid,
+							existingToolType: existing.toolType,
+							requestedToolType: config.toolType,
+						}
+					);
+					throw new Error(`Agent process already running for session ${config.sessionId}`);
+				}
+
+				logger.warn(
+					'[ProcessManager] Reclaiming stale agent process entry (PID no longer exists)',
+					'ProcessManager',
+					{
+						sessionId: config.sessionId,
+						stalePid: existing.pid,
+						existingToolType: existing.toolType,
+						requestedToolType: config.toolType,
+					}
+				);
+				// Drop the dead entry and let the spawn below take the session id. No
+				// kill() here: there is no process left to signal, and kill() would
+				// emit a spurious exit for a turn that ended long ago.
+				this.processes.delete(config.sessionId);
+			} else if (existingProcessRunning) {
 				logger.warn('[ProcessManager] Restarting existing terminal process', 'ProcessManager', {
 					sessionId: config.sessionId,
 					existingPid: existing.pid,

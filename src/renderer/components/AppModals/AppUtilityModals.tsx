@@ -96,8 +96,6 @@ export interface AppUtilityModalsProps {
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
-	setGitDiffPreview: (diff: string | null) => void;
-	setGitLogOpen: (open: boolean) => void;
 	isAiMode: boolean;
 	onRenameTab: () => void;
 	onToggleReadOnlyMode: () => void;
@@ -196,6 +194,8 @@ export interface AppUtilityModalsProps {
 
 	// GitDiffViewer
 	gitDiffPreview: string | null;
+	/** Repo the diff came from, when taken for a non-active agent. */
+	gitDiffCwd?: string | null;
 	gitViewerCwd: string;
 	onCloseGitDiff: () => void;
 
@@ -366,8 +366,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setAgentSessionsOpen,
 	setMemoryViewerOpen,
 	setActiveAgentSessionId,
-	setGitDiffPreview,
-	setGitLogOpen,
 	isAiMode,
 	onRenameTab,
 	onToggleReadOnlyMode,
@@ -450,6 +448,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onDeleteLightboxImage,
 	// GitDiffViewer
 	gitDiffPreview,
+	gitDiffCwd,
 	gitViewerCwd,
 	onCloseGitDiff,
 	// GitLogViewer
@@ -607,8 +606,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setMemoryViewerOpen={setMemoryViewerOpen}
 					setActiveAgentSessionId={setActiveAgentSessionId}
-					setGitDiffPreview={setGitDiffPreview}
-					setGitLogOpen={setGitLogOpen}
 					isAiMode={isAiMode}
 					tabShortcuts={tabShortcuts}
 					onRenameTab={onRenameTab}
@@ -698,12 +695,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				/>
 			)}
 
-			{/* --- GIT DIFF VIEWER (lazy-loaded) --- */}
-			{gitDiffPreview && activeSession && (
+			{/* --- GIT DIFF VIEWER (lazy-loaded) ---
+			    `gitDiffCwd` is set when the diff was taken for a specific agent
+			    (Left Bar right-click); otherwise it follows the active agent. */}
+			{gitDiffPreview && (gitDiffCwd || activeSession) && (
 				<Suspense fallback={null}>
 					<GitDiffViewer
 						diffText={gitDiffPreview}
-						cwd={gitViewerCwd}
+						cwd={gitDiffCwd ?? gitViewerCwd}
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}

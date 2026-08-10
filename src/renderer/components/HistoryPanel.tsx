@@ -30,7 +30,7 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from './History';
-import type { GraphBucket } from './History/ActivityGraph';
+import type { PrecomputedGraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -38,6 +38,7 @@ import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 import { logger } from '../utils/logger';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 import { visibleHistoryEntryTypes } from '../../shared/history';
+import { EscCloseButton } from './ui/EscCloseButton';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -127,7 +128,9 @@ export const HistoryPanel = React.memo(
 		// so flipping between windows is cheap once each has been computed.
 		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
 		// Server-cached graph buckets for the current lookback.
-		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphBuckets, setGraphBuckets] = useState<PrecomputedGraphBucket[] | undefined>(
+			undefined
+		);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
 			undefined
 		);
@@ -761,15 +764,16 @@ export const HistoryPanel = React.memo(
 									className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 									style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 								/>
-								<div
-									className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-									style={{
-										backgroundColor: theme.colors.bgMain,
-										color: theme.colors.textDim,
+								<EscCloseButton
+									theme={theme}
+									variant="adornment"
+									label="Close filter (Esc)"
+									onClose={() => {
+										setSearchFilterOpen(false);
+										setSearchFilter('');
+										listRef.current?.focus();
 									}}
-								>
-									ESC
-								</div>
+								/>
 							</div>
 							{searchFilter && (
 								<div

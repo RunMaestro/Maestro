@@ -567,6 +567,11 @@ export interface AITab {
 	logs: LogEntry[]; // Conversation history
 	agentError?: AgentError; // Tab-specific agent error (shown in banner)
 	inputValue: string; // Pending input text for this tab
+	// When true, this tab's composer is in command mode (`!`) and `inputValue`
+	// is a shell command, not a message for the agent. Persisted alongside
+	// inputValue so a draft restored after a tab switch or restart is still
+	// routed the way the user intended - the text alone can't say which.
+	commandMode?: boolean;
 	stagedImages: string[]; // Staged images (base64) for this tab
 	usageStats?: UsageStats; // Token usage for this tab
 	createdAt: number; // Timestamp for ordering
@@ -1168,6 +1173,20 @@ export interface Session {
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
 	customContextWindow?: number; // Custom context window size (overrides agent-level)
+	/**
+	 * Provenance of `customContextWindow` (finding AD1).
+	 *
+	 * `'user-edited'` means a human deliberately set this number and it outranks
+	 * a provider-reported window. Anything else - including ABSENT, which is
+	 * every value stored before AD1 shipped - means the value cannot be
+	 * distinguished from a materialized creation-time default, so P1's
+	 * precedence stands and the provider's own report wins.
+	 *
+	 * Deliberately NOT inferred from the value: an orphaned `400000` looks
+	 * nothing like an agent default yet is not a choice either, so any
+	 * value-comparison heuristic gets exactly the codex case wrong.
+	 */
+	contextWindowSource?: 'user-edited';
 	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally
@@ -1419,6 +1438,16 @@ export interface DirectorNotesSettings {
 	defaultLookbackDays: number;
 	/** Default AI Overview reading mode (Rich widget dashboard vs Plain markdown). Defaults to 'rich'. */
 	defaultMode?: 'rich' | 'plain';
+	/**
+	 * Free-form description of where the fleet is trying to get to: the active
+	 * projects, which agents belong to each, and what "done" looks like.
+	 *
+	 * Optional and empty by default. When blank the synopsis prompt is byte-for-byte
+	 * what it has always been. When filled it is injected into the prompt, which
+	 * prioritizes the named projects when reading history and asks for an extra
+	 * `progress` narrative section measuring distance to the target.
+	 */
+	idealEndState?: string;
 	/** Custom path to the agent binary */
 	customPath?: string;
 	/** Custom arguments for the agent */

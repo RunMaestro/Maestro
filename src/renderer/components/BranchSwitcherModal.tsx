@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, GitBranch, Search } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
+import { EscCloseButton } from './ui/EscCloseButton';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { gitService } from '../services/git';
 import { fuzzyMatchWithScore } from '../utils/search';
@@ -140,12 +141,7 @@ export function BranchSwitcherModal({ theme, data, onClose }: BranchSwitcherModa
 						onKeyDown={handleKeyDown}
 						data-testid="branch-switcher-input"
 					/>
-					<div
-						className="px-2 py-0.5 rounded text-xs font-bold"
-						style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-					>
-						ESC
-					</div>
+					<EscCloseButton theme={theme} onClose={onClose} />
 				</div>
 			}
 		>

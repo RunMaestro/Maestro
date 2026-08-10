@@ -21,10 +21,10 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
-import { EscCloseHint } from './ui/EscCloseHint';
 import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { EscCloseButton } from './ui/EscCloseButton';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -152,7 +152,11 @@ function ContextGauge({
 	const strokeWidth = 3;
 	const radius = (size - strokeWidth) / 2;
 	const circumference = 2 * Math.PI * radius;
-	const strokeDashoffset = circumference - (percentage / 100) * circumference;
+	// The arc fill clamps at a full circle while the readout below stays true:
+	// `calculateContextDisplay` can now return a percentage above 100 (finding
+	// R1), and an unclamped fraction would drive `strokeDashoffset` negative,
+	// wrapping the dash pattern instead of reading as "full".
+	const strokeDashoffset = circumference - Math.min(1, percentage / 100) * circumference;
 	const color = getContextColor(percentage, theme);
 
 	return (
@@ -657,7 +661,7 @@ export function TabSwitcherModal({
 								{formatShortcutKeys(shortcut.keys)}
 							</span>
 						)}
-						<EscCloseHint theme={theme} onClose={onClose} />
+						<EscCloseButton theme={theme} onClose={onClose} />
 					</div>
 				</div>
 

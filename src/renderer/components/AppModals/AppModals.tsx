@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
-import type { GitLogModalData } from '../../stores/modalStore';
+import type { GitDiffModalData, GitLogModalData } from '../../stores/modalStore';
 import type {
 	Theme,
 	Session,
@@ -22,6 +22,7 @@ import type {
 	ToolType,
 	LeaderboardRegistration,
 	ThinkingMode,
+	AdditionalDirectory,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { WizardStep } from '../Wizard/WizardContext';
@@ -121,6 +122,7 @@ export interface AppModalsProps {
 	) => void;
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
+	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -141,7 +143,12 @@ export interface AppModalsProps {
 		},
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited'
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -219,8 +226,6 @@ export interface AppModalsProps {
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
-	setGitDiffPreview: (diff: string | null) => void;
-	setGitLogOpen: (open: boolean) => void;
 	isAiMode: boolean;
 	onQuickActionsRenameTab: () => void;
 	onQuickActionsToggleReadOnlyMode: () => void;
@@ -521,6 +526,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		batchRunnerModalOpen,
 		gitLogOpen,
 		gitLogTarget,
+		gitDiffCwd,
 		showNewGroupChatModal,
 		showGroupChatInfo,
 		leaderboardRegistrationOpen,
@@ -598,6 +604,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 			batchRunnerModalOpen: s.modals.get('batchRunner')?.open ?? false,
 			gitLogOpen: s.modals.get('gitLog')?.open ?? false,
 			gitLogTarget: (s.modals.get('gitLog')?.data as GitLogModalData | undefined) ?? null,
+			gitDiffCwd: (s.modals.get('gitDiff')?.data as GitDiffModalData | undefined)?.cwd ?? null,
 			showNewGroupChatModal: s.modals.get('newGroupChat')?.open ?? false,
 			showGroupChatInfo: s.modals.get('groupChatInfo')?.open ?? false,
 			leaderboardRegistrationOpen: s.modals.get('leaderboard')?.open ?? false,
@@ -648,6 +655,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCreateSession,
 		duplicatingSessionId,
 		newInstancePresetGroupId,
+		newInstancePresetWorkingDir,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -723,8 +731,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setAgentSessionsOpen,
 		setMemoryViewerOpen,
 		setActiveAgentSessionId,
-		setGitDiffPreview,
-		setGitLogOpen,
 		isAiMode,
 		onQuickActionsRenameTab,
 		onQuickActionsToggleReadOnlyMode,
@@ -980,6 +986,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				existingSessions={sessions}
 				sourceSession={sourceSession}
 				newInstancePresetGroupId={newInstancePresetGroupId}
+				newInstancePresetWorkingDir={newInstancePresetWorkingDir}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}
@@ -1093,8 +1100,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setAgentSessionsOpen={setAgentSessionsOpen}
 				setMemoryViewerOpen={setMemoryViewerOpen}
 				setActiveAgentSessionId={setActiveAgentSessionId}
-				setGitDiffPreview={setGitDiffPreview}
-				setGitLogOpen={setGitLogOpen}
 				isAiMode={isAiMode}
 				onRenameTab={onQuickActionsRenameTab}
 				onToggleReadOnlyMode={onQuickActionsToggleReadOnlyMode}
@@ -1166,6 +1171,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onDeleteLightboxImage={onDeleteLightboxImage}
 				onUpdateLightboxImage={onUpdateLightboxImage}
 				gitDiffPreview={gitDiffPreview}
+				gitDiffCwd={gitDiffCwd}
 				gitViewerCwd={gitViewerCwd}
 				onCloseGitDiff={onCloseGitDiff}
 				gitLogOpen={gitLogOpen}

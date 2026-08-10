@@ -3,6 +3,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	useComposerInputStore,
 	selectAiComposerValue,
+	selectAiCommandMode,
 	selectTerminalComposerValue,
 } from '../../stores/composerInputStore';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
@@ -33,7 +34,6 @@ import { SlashCommandPopover } from './overlays/SlashCommandPopover';
 import { TabCompletionPopover } from './overlays/TabCompletionPopover';
 import type { InputAreaProps } from './types';
 import { filterCommandHistory, getCurrentCommandHistory } from './utils/commandHistory';
-import { isShellCommandDraft } from '../../utils/shellCommandInput';
 import { resolveCommandCwd } from '../../services/shellCommand';
 import { CommandModeBar } from './components/CommandModeBar';
 
@@ -165,13 +165,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// PERF: Memoize derived state to avoid recalculation on every render
 	const isResumingSession = !!activeTab?.agentSessionId;
+	const commandMode = useComposerInputStore(selectAiCommandMode);
 	const canAttachImages = useMemo(() => {
+		// Command mode pipes the draft to a shell, which has nothing to do with an
+		// image. Hide the affordance rather than leaving a button that stages an
+		// attachment the send path will drop on the floor.
+		if (commandMode) return false;
 		// Check if images are supported - depends on whether we're resuming an existing session
 		// If the active tab has an agentSessionId, we're resuming and need to check supportsImageInputOnResume
 		return isResumingSession
 			? hasCapability('supportsImageInputOnResume')
 			: hasCapability('supportsImageInput');
-	}, [isResumingSession, hasCapability]);
+	}, [isResumingSession, hasCapability, commandMode]);
 
 	// PERF: Memoize mode-related derived state
 	const { showQueueingBorder } = useMemo(() => {
@@ -201,13 +206,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode ? selectTerminalComposerValue : selectAiComposerValue
 	);
 
-	// Command mode: an AI draft starting with `!` is a shell command line, so the
-	// composer picks up the terminal's CLI affordances (the `$` prefix and Tab
-	// completion over files, dirs, branches, tags, and prior commands).
-	const isCommandModeDraft = !isTerminalMode && isShellCommandDraft(inputValue);
+	// Command mode: the AI composer is holding a shell command line, so it picks
+	// up the terminal's CLI affordances (the `$` prefix, the mode bar, and Tab
+	// completion over files, dirs, branches, tags, and prior commands). Read from
+	// the store rather than sniffed from the text - the `!` is consumed on entry,
+	// so the draft looks like any other string.
+	const isCommandModeDraft = !isTerminalMode && commandMode;
 	const isShellInput = isTerminalMode || isCommandModeDraft;
 
 	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
+	// Non-reactive store handles for the change handler below.
+	const setAiCommandMode = useMemo(() => useComposerInputStore.getState().setAiCommandMode, []);
+	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
+
+	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 
 	const currentCommandHistory = useMemo(
 		() => getCurrentCommandHistory(session, isTerminalMode),
@@ -288,6 +300,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		isTerminalMode,
 		slashCommandOpen,
 		atMentionOpen,
+		isCommandMode: commandMode,
+		setCommandMode: setAiCommandMode,
+		// Read at call time, not from the `inputValue` closure: onChange fires
+		// before setInputValue lands, so the store still holds the pre-edit text -
+		// which is exactly what "was the composer empty?" needs to test.
+		getPreviousValue: getAiValueAtCallTime,
 		keystrokeResizeScheduledRef,
 		setInputValue,
 		setSlashCommandOpen,

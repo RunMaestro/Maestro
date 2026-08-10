@@ -380,17 +380,18 @@ Tracks which sessions are visible in the web interface:
 
 Centralizes all web-server callback types. Core categories include: session/tab operations (`getSessions`, `getSessionDetail`, `writeToSession`, `executeCommand`, `interruptSession`, `switchMode`, `selectSession`, `selectTab`, `newTab`, `closeTab`, `renameTab`, `starTab`, `reorderTab`, `toggleBookmark`, `renameSession`), UI/config (`getTheme`, `getCustomCommands`, `getSettings`, `setSetting`), history/autorun (`getHistory`, `getAutoRunDocs`, `getAutoRunDocContent`), groups/group chat (`getGroups`, `renameGroup`, `getGroupChats`, `startGroupChat`, `getGroupChatState`), git (`getGitStatus`, `getGitDiff`), and cue/usage (`getCueSubscriptions`, `toggleCueSubscription`, `getCueActivity`, `getUsageDashboard`, `getAchievements`).
 
-### Web Server Factory (`web-server-factory.ts`)
+### Web Server Factory (`web-server-factory.ts` + `callbacks/`)
 
-Factory function that creates and configures the WebServer with all callbacks wired up. Handles:
+`web-server-factory.ts` is a thin orchestrator: it resolves the port (custom or random), resolves the security token (persistent or ephemeral), constructs the `WebServer`, and calls one `registerXCallbacks(server, deps)` per domain to wire up all `server.setXCallback(...)` registrations. It also owns the exported `WebServerFactoryDependencies` interface, which every domain module's `deps` parameter is a `Pick<...>` of.
 
-- Port selection (custom or random)
-- Security token (persistent or ephemeral)
-- Session callbacks (maps stored sessions to web-safe format, strips logs)
-- Command execution (forwards to renderer via IPC for single source of truth)
-- Tab operations (all forwarded to renderer via `mainWindow.webContents.send()`)
+The actual callback implementations live one directory down, in `web-server/callbacks/`, one file per domain (`sessionCallbacks.ts`, `terminalCallbacks.ts`, `tabCallbacks.ts`, `gitCallbacks.ts`, `cadenzaMovementCallbacks.ts`, `settingsCallbacks.ts`, `marketplaceCallbacks.ts`, etc. - 23 files in total). Each exports `registerXCallbacks(server: WebServer, deps: Pick<WebServerFactoryDependencies, ...>): void`. The `*Callbacks.ts` suffix is deliberate: `handlers/messageHandlers/` has same-named files (`sessions.ts`, `git.ts`, `cadenza.ts`) for a completely different `(ctx, client, message)` dispatch pattern, and the suffix keeps the two from being confused.
 
-The factory pattern with `isWebContentsAvailable()` guards ensures safe forwarding even when the renderer window is closing.
+Two cross-domain details worth knowing before touching this code:
+
+- `createRemoteRequest(getMainWindow)` (`callbacks/remoteRequest.ts`) is a shared IPC round-trip helper used by both `autoRunControlCallbacks.ts` and `playbookCallbacks.ts`.
+- `cadenzaMovementCallbacks.ts` owns the only genuine cross-callback mutable state in the module: a `pendingMovementRendererOperation` promise chain that serializes movement updates against designer inspections so a renderer HTML update can't land mid-inspection. It's declared inside `registerCadenzaMovementCallbacks`'s function scope (one instance per `createWebServer()` call), not at module top level.
+
+All callback bodies still forward to the renderer via `mainWindow.webContents.send()` (or the request/reply variant, `requestFromRenderer()`) guarded by `isWebContentsAvailable()`, so forwarding stays safe even while the renderer window is closing.
 
 ### Types (`types.ts`)
 

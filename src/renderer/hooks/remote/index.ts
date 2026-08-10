@@ -30,6 +30,9 @@ export type {
 export { useSshRemotes } from './useSshRemotes';
 export type { UseSshRemotesReturn } from './useSshRemotes';
 
+// SSH remote id -> display name lookup (for list surfaces labelling many agents)
+export { useSshRemoteNames } from './useSshRemoteNames';
+
 // Remote command handling & SSH name mapping (Phase 2K)
 export { useRemoteHandlers } from './useRemoteHandlers';
 export type { UseRemoteHandlersDeps, UseRemoteHandlersReturn } from './useRemoteHandlers';

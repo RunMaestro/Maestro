@@ -6,16 +6,24 @@ import { useInputAreaTextChange } from '../../../../../renderer/components/Input
 function Harness({
 	isTerminalMode = false,
 	slashCommandOpen = false,
+	isCommandMode = false,
+	previousValue = '',
 	handlers,
 }: {
 	isTerminalMode?: boolean;
 	slashCommandOpen?: boolean;
+	isCommandMode?: boolean;
+	/** What the composer held before the edit under test. */
+	previousValue?: string;
 	handlers: Record<string, ReturnType<typeof vi.fn>>;
 }) {
 	const keystrokeResizeScheduledRef = useRef(false);
 	const onChange = useInputAreaTextChange({
 		isTerminalMode,
 		slashCommandOpen,
+		isCommandMode,
+		setCommandMode: handlers.setCommandMode,
+		getPreviousValue: () => previousValue,
 		keystrokeResizeScheduledRef,
 		setInputValue: handlers.setInputValue,
 		setSlashCommandOpen: handlers.setSlashCommandOpen,
@@ -43,6 +51,7 @@ describe('useInputAreaTextChange', () => {
 			setAtMentionFilter: vi.fn(),
 			setAtMentionStartIndex: vi.fn(),
 			setSelectedAtMentionIndex: vi.fn(),
+			setCommandMode: vi.fn(),
 		};
 	}
 
@@ -170,5 +179,92 @@ describe('useInputAreaTextChange', () => {
 		});
 
 		expect(textarea.scrollTop).toBe(42);
+	});
+
+	describe('command mode entry (the ! gesture)', () => {
+		it('enters command mode and swallows the bang', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '!', selectionStart: 1 },
+			});
+
+			expect(handlers.setCommandMode).toHaveBeenCalledWith(true);
+			// The bang never reaches the text - that is the whole point.
+			expect(handlers.setInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('keeps the rest of a pasted command', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '!git status', selectionStart: 11 },
+			});
+
+			expect(handlers.setCommandMode).toHaveBeenCalledWith(true);
+			expect(handlers.setInputValue).toHaveBeenCalledWith('git status');
+		});
+
+		it('does not enter when the composer already held a message', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} previousValue="deploy the site" />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '!deploy the site', selectionStart: 1 },
+			});
+
+			expect(handlers.setCommandMode).not.toHaveBeenCalled();
+			expect(handlers.setInputValue).toHaveBeenCalledWith('!deploy the site');
+		});
+
+		it('does not re-enter once already in command mode - the bang is plain text', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} isCommandMode />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '!', selectionStart: 1 },
+			});
+
+			expect(handlers.setCommandMode).not.toHaveBeenCalled();
+			expect(handlers.setInputValue).toHaveBeenCalledWith('!');
+		});
+
+		it('does not enter in terminal mode, which is already a shell', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} isTerminalMode />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '!ls', selectionStart: 3 },
+			});
+
+			expect(handlers.setCommandMode).not.toHaveBeenCalled();
+			expect(handlers.setInputValue).toHaveBeenCalledWith('!ls');
+		});
+
+		it('suppresses the slash menu in command mode so /usr/bin is a path', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} isCommandMode />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: '/usr', selectionStart: 4 },
+			});
+
+			expect(handlers.setSlashCommandOpen).toHaveBeenCalledWith(false);
+			expect(handlers.setSlashCommandOpen).not.toHaveBeenCalledWith(true);
+		});
+
+		it('suppresses @ mentions in command mode', () => {
+			const handlers = createHandlers();
+			render(<Harness handlers={handlers} isCommandMode />);
+
+			fireEvent.change(screen.getByLabelText('input'), {
+				target: { value: 'scp file user@host', selectionStart: 18 },
+			});
+
+			expect(handlers.setAtMentionOpen).toHaveBeenCalledWith(false);
+			expect(handlers.setAtMentionOpen).not.toHaveBeenCalledWith(true);
+		});
 	});
 });

@@ -15,9 +15,9 @@ import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, HistoryEntryType, ToolType } from '../../../shared/types';
 import { paginateEntries } from '../../../shared/history';
-import type { PaginatedResult } from '../../../shared/history';
+import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
-import { getSessionsStore } from '../../stores';
+import { getSessionsStore, getSettingsStore } from '../../stores';
 import {
 	withIpcErrorLogging,
 	requireDependency,
@@ -108,6 +108,19 @@ function buildSessionNameMap(): Map<string, string> {
 }
 
 /**
+ * Read the conductor's Ideal End State from settings, or '' when unset.
+ *
+ * Read at generation time rather than passed in from the renderer so the
+ * web/CLI synopsis paths - which have no renderer to read settings for them -
+ * get the same behavior from the same source.
+ */
+function getConfiguredIdealEndState(): string {
+	const settingsStore = getSettingsStore();
+	const dn = (settingsStore.get('directorNotesSettings') ?? {}) as Record<string, unknown>;
+	return typeof dn.idealEndState === 'string' ? dn.idealEndState : '';
+}
+
+/**
  * Dependencies required for Director's Notes handler registration
  */
 export interface DirectorNotesHandlerDependencies {
@@ -133,14 +146,6 @@ export interface UnifiedHistoryOptions {
 	offset?: number;
 	/** Number of buckets for the activity graph (passed from frontend lookback config) */
 	graphBucketCount?: number;
-}
-
-/** Pre-computed activity graph bucket for a time slice */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-	agent: number;
 }
 
 export interface UnifiedHistoryEntry extends HistoryEntry {
@@ -774,6 +779,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 		)
 	);
 
+	// Generate AI synopsis via batch-mode agent
 	ipcMain.handle(
 		'director-notes:generateSynopsis',
 		withIpcErrorLogging(
@@ -804,6 +810,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					sessionNameMap: buildSessionNameMap(),
 					lookbackDays: options.lookbackDays,
 					basePrompt: getPrompt('director-notes'),
+					idealEndState: getConfiguredIdealEndState(),
 				});
 
 				if (!prompt) {

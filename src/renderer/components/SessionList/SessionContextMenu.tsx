@@ -10,6 +10,7 @@ import {
 	Bookmark,
 	FolderInput,
 	FolderPlus,
+	FileDiff,
 	Folder,
 	GitBranch,
 	GitPullRequest,
@@ -584,6 +585,21 @@ export function SessionContextMenu({
 					>
 						<History className="w-3.5 h-3.5" />
 						View Git Log
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							// Fire-and-forget: the diff is fetched asynchronously and
+							// opens its own viewer, so the menu closes right away.
+							void gitActions.viewDiff();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-git-diff"
+					>
+						<FileDiff className="w-3.5 h-3.5" />
+						View Git Diff
 					</button>
 					<button
 						type="button"

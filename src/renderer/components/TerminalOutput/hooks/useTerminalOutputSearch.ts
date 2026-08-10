@@ -9,6 +9,13 @@ interface UseTerminalOutputSearchOptions {
 	outputSearchRegex: boolean;
 	debouncedSearchQuery: string;
 	filteredLogsLength: number;
+	/**
+	 * Start offset of the progressive render window (see useProgressiveRenderWindow).
+	 * Idle backfill adds entries to the DOM after the initial pass without changing
+	 * filteredLogsLength, so this must be a dependency too - otherwise matches in
+	 * freshly hydrated history are never highlighted or counted.
+	 */
+	logStartIndex: number;
 	setOutputSearchOpen: (open: boolean) => void;
 	setOutputSearchQuery: (query: string) => void;
 	/**
@@ -27,6 +34,7 @@ export function useTerminalOutputSearch({
 	outputSearchRegex,
 	debouncedSearchQuery,
 	filteredLogsLength,
+	logStartIndex,
 	setOutputSearchOpen,
 	setOutputSearchQuery,
 	pendingJumpMatchIdRef,
@@ -185,6 +193,7 @@ export function useTerminalOutputSearch({
 		outputSearchRegex,
 		outputSearchOpen,
 		filteredLogsLength,
+		logStartIndex,
 		scrollContainerRef,
 		pendingJumpMatchIdRef,
 	]);
@@ -232,5 +241,8 @@ export function useTerminalOutputSearch({
 		regexError,
 		goToNextMatch,
 		goToPrevMatch,
+		// Exposed so the find bar's ESC pill runs the exact same dismissal the
+		// Escape layer does - a pointer-only user gets identical behavior.
+		closeSearch,
 	};
 }

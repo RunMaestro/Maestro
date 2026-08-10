@@ -13,7 +13,10 @@
 
 import { useCallback, useMemo } from 'react';
 import { useModalStore } from '../../stores/modalStore';
-import { useGitBranch } from '../../contexts/GitStatusContext';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useGitBranch, useGitDetail } from '../../contexts/GitStatusContext';
+import { gitService } from '../../services/git';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import type { GitStreamingOperation } from '../../../shared/gitUtils';
 import type { Session } from '../../types';
 
@@ -29,10 +32,26 @@ export interface GitAgentActions {
 	/** Whether opening a PR makes sense for this agent (needs a branch). */
 	canCreatePR: boolean;
 	viewLog: () => void;
+	/**
+	 * Fetch the working-tree diff and open the viewer. Async because the diff has
+	 * to be read before there's anything to show; resolves once the modal is open
+	 * (or once the "nothing to diff" flash has fired).
+	 */
+	viewDiff: () => Promise<void>;
 	pull: () => void;
 	push: () => void;
 	switchBranch: () => void;
 	createPR: () => void;
+	/**
+	 * Open the worktree configuration modal for this agent. Activates the agent
+	 * first, because the modal reads the active session.
+	 */
+	configureWorktrees: () => void;
+	/**
+	 * Whether worktree config applies. False for worktree children, which can't
+	 * own a config of their own.
+	 */
+	canConfigureWorktrees: boolean;
 }
 
 /**
@@ -59,6 +78,7 @@ export function resolveGitSshRemoteId(session: Session): string | undefined {
 
 export function useGitAgentActions(session: Session | null | undefined): GitAgentActions {
 	const { getBranchInfo } = useGitBranch();
+	const { refreshGitStatus } = useGitDetail();
 	const branchInfo = session ? getBranchInfo(session.id) : undefined;
 
 	const target = useMemo(() => {
@@ -89,6 +109,22 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 			sshRemoteId: target.sshRemoteId,
 		});
 	}, [target]);
+
+	const viewDiff = useCallback(async () => {
+		if (!target) return;
+		const { diff } = await gitService.getDiff(target.cwd, undefined, target.sshRemoteId);
+		if (diff) {
+			// Pass the repo path so the viewer opens clicked files against THIS
+			// agent's tree, not whichever agent happens to be active.
+			useModalStore.getState().openModal('gitDiff', { diff, cwd: target.cwd });
+			return;
+		}
+		// Same wording as the Cmd+Shift+D path and the command palette.
+		notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
+		// Polling said there were changes but `git diff` came back empty, so the
+		// cached stats are stale - re-sync rather than leave the widget lying.
+		void refreshGitStatus();
+	}, [target, refreshGitStatus]);
 
 	const runCommand = useCallback(
 		(operation: GitStreamingOperation) => {
@@ -124,6 +160,14 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		useModalStore.getState().openModal('createPR', { session, sourceBranch: branch });
 	}, [session, branch]);
 
+	const configureWorktrees = useCallback(() => {
+		if (!session) return;
+		// The config modal renders against the active session, so activating is
+		// part of targeting it - same order handleOpenWorktreeConfigSession uses.
+		useSessionStore.getState().setActiveSessionId(session.id);
+		useModalStore.getState().openModal('worktreeConfig');
+	}, [session]);
+
 	return {
 		isGitRepo: Boolean(session?.isGitRepo),
 		branch,
@@ -133,9 +177,13 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		// plain git agents get theirs from status polling.
 		canCreatePR: Boolean(session?.isGitRepo && branch),
 		viewLog,
+		viewDiff,
 		pull,
 		push,
 		switchBranch,
 		createPR,
+		configureWorktrees,
+		// Worktree children can't own a worktree config of their own.
+		canConfigureWorktrees: Boolean(session?.isGitRepo && !session.parentSessionId),
 	};
 }

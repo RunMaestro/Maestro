@@ -31,8 +31,12 @@ import { formatSnoozeTarget, formatSnoozeCountdown } from '../../shared/snooze';
 export interface SnoozedTabsModalProps {
 	theme: Theme;
 	onClose: () => void;
-	/** Focus an agent + tab after unsnoozing, so the restored tab is shown. */
-	onJumpToTab?: (sessionId: string, tabId: string) => void;
+	/**
+	 * Focus an agent + tab after unsnoozing, so the restored tab is shown. Also
+	 * used by the history list, where `tabId` is omitted when the agent is still
+	 * around but that tab no longer is.
+	 */
+	onJumpToTab?: (sessionId: string, tabId?: string) => void;
 }
 
 export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsModalProps) {
@@ -96,6 +100,18 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 			});
 		},
 		[sessions, dismissSnoozedTab]
+	);
+
+	// Jumping from the history list has to dismiss BOTH modals: the history sits
+	// on top of this one, so closing only itself would leave the user staring at
+	// the snoozed-tabs list instead of the tab they asked for.
+	const handleHistoryJump = useCallback(
+		(sessionId: string, tabId?: string) => {
+			onJumpToTab?.(sessionId, tabId);
+			setHistoryOpen(false);
+			onClose();
+		},
+		[onJumpToTab, onClose]
 	);
 
 	const handleReschedule = useCallback(
@@ -241,7 +257,13 @@ export function SnoozedTabsModal({ theme, onClose, onJumpToTab }: SnoozedTabsMod
 				</div>
 			</Modal>
 
-			{historyOpen && <SnoozeHistoryModal theme={theme} onClose={() => setHistoryOpen(false)} />}
+			{historyOpen && (
+				<SnoozeHistoryModal
+					theme={theme}
+					onClose={() => setHistoryOpen(false)}
+					onJumpToTab={handleHistoryJump}
+				/>
+			)}
 
 			{editingItem && (
 				<SnoozeTabModal

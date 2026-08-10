@@ -24,7 +24,6 @@ import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
-import { isShellCommandDraft } from '../../utils/shellCommandInput';
 
 // ============================================================================
 // Dependencies interface
@@ -51,7 +50,15 @@ export interface InputKeyDownDeps {
 	/** Process and send the current input */
 	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => void;
 	/** Get tab completion suggestions for a given input */
-	getTabCompletionSuggestions: (input: string) => TabCompletionSuggestion[];
+	getTabCompletionSuggestions: (
+		input: string,
+		filter?: TabCompletionFilter,
+		commandMode?: boolean
+	) => TabCompletionSuggestion[];
+	/** Whether the AI composer is in command mode, read at call time. */
+	getCommandMode: () => boolean;
+	/** Enter/leave command mode (Escape / Backspace on an empty command line). */
+	setCommandMode: (commandMode: boolean) => void;
 	/** Ref to the input textarea */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	/** Ref to the terminal output container */
@@ -80,6 +87,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		syncFileTreeToTabCompletion,
 		processInput,
 		getTabCompletionSuggestions,
+		getCommandMode,
+		setCommandMode,
 		inputRef,
 		terminalOutputRef,
 	} = deps;
@@ -139,11 +148,37 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			}
 
 			// Tab completion serves both shell surfaces: the terminal composer, and
-			// an AI-composer draft in command mode (`!cmd`), which is a shell line
+			// the AI composer while it is in command mode, which is a shell line
 			// even though the tab is in AI mode.
-			const isShellInput =
-				activeSession?.inputMode === 'terminal' ||
-				(activeSession?.inputMode === 'ai' && isShellCommandDraft(inputValue));
+			const isCommandMode = activeSession?.inputMode === 'ai' && getCommandMode();
+			const isShellInput = activeSession?.inputMode === 'terminal' || isCommandMode;
+
+			// Leaving command mode. The composer holds no `!` to delete (the gesture
+			// consumed it), so the mode needs its own way out: Escape on an empty
+			// command line, and Backspace past the start of one - the same keys that
+			// would have removed the bang back when it was a character.
+			//
+			// Escape uses trim(): a line of spaces LOOKS empty, so Escape has to mean
+			// "get me out" there too. Without that it fell through to the generic
+			// Escape branch below, which blurs the composer - so a stray space turned
+			// the exit gesture into "lose command mode AND lose focus".
+			//
+			// Backspace stays on a strictly empty line: it is an editing key, and on
+			// "   " the user is deleting a space, not asking to leave.
+			if (
+				isCommandMode &&
+				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
+			) {
+				e.preventDefault();
+				setCommandMode(false);
+				// Keep the caret in the composer. Exiting command mode hands the input
+				// back to the agent, so the user is still typing - dropping focus would
+				// make the next keystroke go nowhere. Explicit rather than relying on
+				// React not remounting the textarea when the mode bar and `$` prefix
+				// unmount around it.
+				inputRef.current?.focus();
+				return;
+			}
 
 			// Handle tab completion dropdown
 			if (tabCompletionOpen && isShellInput) {
@@ -375,10 +410,10 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				e.preventDefault();
 
 				if (isShellInput && !slashCommandOpen) {
-					// A bare `!` is a valid trigger - it means "what have I run before".
-					// Everywhere else there must be something to complete against.
-					if (inputValue.trim()) {
-						const suggestions = getTabCompletionSuggestions(inputValue);
+					// An empty command line is a valid trigger - it means "what have I
+					// run before". A terminal needs something to complete against.
+					if (inputValue.trim() || isCommandMode) {
+						const suggestions = getTabCompletionSuggestions(inputValue, 'all', isCommandMode);
 						if (suggestions.length > 0) {
 							if (suggestions.length === 1) {
 								setInputValue(suggestions[0].value);
@@ -401,6 +436,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			syncFileTreeToTabCompletion,
 			processInput,
 			getTabCompletionSuggestions,
+			getCommandMode,
+			setCommandMode,
 			inputRef,
 			terminalOutputRef,
 			// InputContext values

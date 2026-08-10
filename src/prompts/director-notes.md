@@ -74,7 +74,7 @@ Return a single JSON object (and nothing else) that matches this exact shape:
 Shape rules:
 
 - `version` must be the number `1`.
-- Include the three sections in this order, with `kind` values `"accomplishments"`, `"challenges"`, and `"nextSteps"`.
+- Include the three sections in this order, with `kind` values `"accomplishments"`, `"challenges"`, and `"nextSteps"`. If a later section of this prompt explicitly asks for an additional section, include that one too, after these three.
 - Each `items` entry needs a `text` string. `severity` is optional and must be one of `"info"`, `"warn"`, or `"critical"`. `agent` is optional and names the agent/session the bullet relates to.
 - Use `"critical"` for failed tasks and hard blockers, `"warn"` for risks or repeated attempts, and `"info"` (or omit `severity`) for routine items.
 

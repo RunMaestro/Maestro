@@ -129,18 +129,33 @@ let warnedAboutMalformedSshRemotes = false;
  * the Right Bar's git:status/git:numstat polls on agents that use no SSH remote
  * at all (MAESTRO-YB/YC). Treat an unusable value as "no remotes configured"
  * and warn once so the bad file is still diagnosable.
+ *
+ * The same corruption that yields a non-array yields an array with junk in it
+ * (`[null, {...}]`, `["remote-1"]`), so the elements are checked too: reading
+ * `.id` off a null entry throws exactly the same way the missing `.find` did.
  */
 export function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
 	const sshRemotes = getSettingsStore().get('sshRemotes', []);
 	if (!Array.isArray(sshRemotes)) {
-		if (!warnedAboutMalformedSshRemotes) {
-			warnedAboutMalformedSshRemotes = true;
-			logger.warn(
-				`Ignoring malformed 'sshRemotes' setting (expected an array, got ${typeof sshRemotes})`,
-				'Settings'
-			);
-		}
+		warnAboutMalformedSshRemotes(`expected an array, got ${typeof sshRemotes}`);
 		return undefined;
 	}
-	return sshRemotes.find((r) => r.id === sshRemoteId);
+	let sawMalformedEntry = false;
+	const match = sshRemotes.find((remote) => {
+		if (!remote || typeof remote !== 'object') {
+			sawMalformedEntry = true;
+			return false;
+		}
+		return remote.id === sshRemoteId;
+	});
+	if (sawMalformedEntry) {
+		warnAboutMalformedSshRemotes('one or more entries are not objects');
+	}
+	return match;
+}
+
+function warnAboutMalformedSshRemotes(detail: string): void {
+	if (warnedAboutMalformedSshRemotes) return;
+	warnedAboutMalformedSshRemotes = true;
+	logger.warn(`Ignoring malformed 'sshRemotes' setting (${detail})`, 'Settings');
 }

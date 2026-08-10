@@ -282,6 +282,34 @@ describe('DispatchCallbackRegistry', () => {
 			expect(h.registry.cancelForTab(TARGET, TAB)).toBe(1);
 			expect(h.registry.list()).toHaveLength(0);
 		});
+
+		it('cancelForTab() wakes the caller with a cancelled status', () => {
+			register(h.registry);
+			expect(h.registry.cancelForTab(TARGET, TAB)).toBe(1);
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('cancelled');
+
+			// Terminal: a second close (or a later exit) must not double-fire.
+			expect(h.registry.cancelForTab(TARGET, TAB)).toBe(0);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires).toHaveLength(1);
+		});
+
+		it('cancelForTab() leaves callbacks bound to other tabs armed', () => {
+			register(h.registry);
+			register(h.registry, { targetTabId: 'tab-2' });
+			expect(h.registry.cancelForTab(TARGET, 'tab-2')).toBe(1);
+			expect(h.fires).toHaveLength(1);
+			expect(h.registry.hasArmedFor(TARGET, TAB)).toBe(true);
+		});
+
+		it('cancel() stays silent while cancelForTab() notifies', () => {
+			const entry = register(h.registry);
+			expect(h.registry.cancel(entry.callbackId)).toBe(true);
+			expect(h.fires).toHaveLength(0);
+		});
 	});
 
 	it('hasArmedFor() reports an existing arming on the same tab', () => {

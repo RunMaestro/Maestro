@@ -8,10 +8,16 @@
  *
  * Includes a field/value filter and prev/next navigation through the rows
  * currently displayed by the table (i.e. after its own sort and search).
+ *
+ * Keyboard model: Left/Right step between rows, Up/Down (plus PageUp/PageDown
+ * and Home/End) scroll the field list, and `/` jumps to the filter. Focus
+ * starts on the field list rather than the filter input so every one of those
+ * works on open without a click - inside a text input the arrows have to stay
+ * caret movement, so parking focus there would swallow the whole scheme.
  */
 
 import { useMemo, useRef, useState } from 'react';
-import { ChevronUp, ChevronDown, Copy, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react';
 import type { Theme } from '../types';
 import { Modal } from './ui/Modal';
 import { GhostIconButton } from './ui/GhostIconButton';
@@ -19,6 +25,13 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { highlightMatches } from '../utils/highlightMatches';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+
+const KEY_HINTS: { keys: string[]; label: string }[] = [
+	{ keys: ['←', '→'], label: 'Row' },
+	{ keys: ['↑', '↓'], label: 'Scroll' },
+	{ keys: ['/'], label: 'Filter' },
+	{ keys: ['Esc'], label: 'Close' },
+];
 
 interface CsvRowDetailModalProps {
 	/** Header cells from the first CSV row, used as field names */
@@ -49,6 +62,7 @@ export function CsvRowDetailModal({
 }: CsvRowDetailModalProps) {
 	const [filter, setFilter] = useState('');
 	const searchRef = useRef<HTMLInputElement>(null);
+	const scrollRef = useRef<HTMLDivElement>(null);
 	const query = filter.trim().slice(0, 200);
 
 	const fields = useMemo(
@@ -88,20 +102,20 @@ export function CsvRowDetailModal({
 				<GhostIconButton
 					onClick={() => canPrev && onNavigate(index - 1)}
 					disabled={!canPrev}
-					title="Previous row (Up arrow)"
+					title="Previous row (Left arrow)"
 					ariaLabel="Previous row"
 					color={theme.colors.textDim}
 				>
-					<ChevronUp className="w-4 h-4" />
+					<ChevronLeft className="w-4 h-4" />
 				</GhostIconButton>
 				<GhostIconButton
 					onClick={() => canNext && onNavigate(index + 1)}
 					disabled={!canNext}
-					title="Next row (Down arrow)"
+					title="Next row (Right arrow)"
 					ariaLabel="Next row"
 					color={theme.colors.textDim}
 				>
-					<ChevronDown className="w-4 h-4" />
+					<ChevronRight className="w-4 h-4" />
 				</GhostIconButton>
 				<GhostIconButton onClick={onClose} ariaLabel="Close modal" color={theme.colors.textDim}>
 					<X className="w-4 h-4" />
@@ -110,17 +124,73 @@ export function CsvRowDetailModal({
 		</div>
 	);
 
-	// Arrow keys step through rows, but only when the caret isn't in the filter
-	// input (where Up/Down move within the text) and no modifier is held.
+	/** Scroll the field list without moving focus off it. */
+	const scrollBy = (delta: number) => {
+		scrollRef.current?.scrollBy({ top: delta });
+	};
+
+	const SCROLL_LINE_PX = 48;
+
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.target === searchRef.current) return;
+		// Inside the filter input the arrows belong to the caret, so only Enter
+		// is intercepted there, to hand focus back to the list. Escape is left
+		// alone: the layer stack listens on window in the CAPTURE phase, so it
+		// has already closed the modal by the time this bubble-phase handler
+		// runs - "Escape clears the filter first" is not implementable here, and
+		// Escape closing every modal outright is the app-wide contract anyway.
+		if (e.target === searchRef.current) {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				scrollRef.current?.focus();
+			}
+			return;
+		}
+
+		// Modified arrows belong to the OS/browser (word jumps, history nav).
 		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-		if (e.key === 'ArrowUp' && canPrev) {
-			e.preventDefault();
-			onNavigate(index - 1);
-		} else if (e.key === 'ArrowDown' && canNext) {
-			e.preventDefault();
-			onNavigate(index + 1);
+
+		switch (e.key) {
+			case 'ArrowLeft':
+				if (!canPrev) return;
+				e.preventDefault();
+				onNavigate(index - 1);
+				break;
+			case 'ArrowRight':
+				if (!canNext) return;
+				e.preventDefault();
+				onNavigate(index + 1);
+				break;
+			case 'ArrowUp':
+				e.preventDefault();
+				scrollBy(-SCROLL_LINE_PX);
+				break;
+			case 'ArrowDown':
+				e.preventDefault();
+				scrollBy(SCROLL_LINE_PX);
+				break;
+			case 'PageUp':
+				e.preventDefault();
+				scrollBy(-(scrollRef.current?.clientHeight ?? 0) * 0.9);
+				break;
+			case 'PageDown':
+				e.preventDefault();
+				scrollBy((scrollRef.current?.clientHeight ?? 0) * 0.9);
+				break;
+			case 'Home':
+				e.preventDefault();
+				scrollRef.current?.scrollTo({ top: 0 });
+				break;
+			case 'End':
+				e.preventDefault();
+				scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+				break;
+			case '/':
+				// Jump to the filter without typing the slash into it.
+				e.preventDefault();
+				searchRef.current?.focus();
+				break;
+			default:
+				break;
 		}
 	};
 
@@ -132,10 +202,17 @@ export function CsvRowDetailModal({
 			onClose={onClose}
 			customHeader={customHeader}
 			closeOnBackdropClick
+			// The table renders inside the Main Panel, whose `isolate` wrapper is a
+			// stacking context - without the portal the backdrop dims only the
+			// center and the Left/Right panels stay lit on top of it.
+			portal
 			resizeKey="csv-row-detail"
-			defaultSize={{ width: 720, height: 560 }}
+			defaultSize={{ width: 900, height: 640 }}
 			minSize={{ width: 380, height: 260 }}
-			initialFocusRef={searchRef}
+			// Focus the field list, not the filter: arrows have to mean navigate
+			// and scroll the moment the modal opens, and they can't while a text
+			// input owns the caret. `/` moves focus to the filter.
+			initialFocusRef={scrollRef}
 			contentClassName="flex flex-col flex-1 min-h-0"
 			testId="csv-row-detail-modal"
 		>
@@ -172,8 +249,14 @@ export function CsvRowDetailModal({
 					)}
 				</div>
 
-				{/* Field / value pairs */}
-				<div className="flex-1 min-h-0 overflow-y-auto select-text">
+				{/* Field / value pairs. tabIndex makes this the keyboard target so
+				    Up/Down scroll it and Left/Right reach the handler above. */}
+				<div
+					ref={scrollRef}
+					tabIndex={-1}
+					className="flex-1 min-h-0 overflow-y-auto select-text outline-none"
+					data-testid="csv-row-detail-fields"
+				>
 					{visibleFields.length === 0 ? (
 						<div className="p-6 text-sm text-center" style={{ color: theme.colors.textDim }}>
 							No fields match "{query}"
@@ -242,6 +325,31 @@ export function CsvRowDetailModal({
 							</tbody>
 						</table>
 					)}
+				</div>
+
+				{/* Keyboard legend */}
+				<div
+					className="px-4 py-2 border-t shrink-0 flex items-center gap-4"
+					style={{ borderColor: theme.colors.border }}
+				>
+					{KEY_HINTS.map(({ keys, label }) => (
+						<span
+							key={label}
+							className="text-xs flex items-center gap-1"
+							style={{ color: theme.colors.textDim }}
+						>
+							{keys.map((key) => (
+								<kbd
+									key={key}
+									className="px-1.5 py-0.5 rounded text-xs"
+									style={{ backgroundColor: theme.colors.border }}
+								>
+									{key}
+								</kbd>
+							))}
+							{label}
+						</span>
+					))}
 				</div>
 			</div>
 		</Modal>

@@ -29,24 +29,28 @@ Each agent shows a color-coded status indicator:
 
 ## Git Actions
 
-For agents whose working directory is a git repository, the same set of git actions is reachable two ways:
+For agents whose working directory is a git repository, the same set of git actions is reachable three ways:
 
-- **Header branch pill** - click the pill showing the current branch name.
+- **Header branch pill** - hover the pill showing the current branch name (clicking works too).
 - **Left Bar right-click** - right-click the agent in the agent list.
+- **Command palette** (`Cmd+K` / `Ctrl+K`) - search for the action by name, no mouse required.
 
 | Action                  | What it does                                                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
 | **View Git Log**        | Opens the commit history viewer.                                                                              |
+| **View Git Diff**       | Opens the working-tree diff. Flashes "No diff to examine" when the tree is clean.                             |
 | **Git Pull**            | Runs `git pull` and shows the live command output in a dismissible modal. Badged with how far behind you are. |
 | **Git Push**            | Runs `git push` the same way. Badged with how many commits you're ahead.                                      |
 | **Change Branch**       | Opens a fuzzy branch picker. Type to filter, Enter to check out.                                              |
 | **Create Pull Request** | Opens the PR composer for the current branch (needs the GitHub CLI).                                          |
 
-The header pill always acts on the agent you're looking at. The right-click menu acts on the agent you right-clicked, so you can pull or check the log of a background agent without switching to it first.
+The header menu also shows the current **branch** and **origin** at the top. Each has a copy button, and clicking the origin opens the repository in your browser. Below the actions it offers **Configure Worktrees**.
+
+The header pill and the command palette act on the agent you're looking at. The right-click menu acts on the agent you right-clicked, so you can pull or check the log of a background agent without switching to it first.
 
 Pull and push stream their output as it happens, so you can watch the transfer and read git's error message if it fails. Dismissing the modal leaves the command running; **Cancel** stops it. When a push fails because the branch has no upstream, the modal offers a one-click **Push and Set Upstream** retry.
 
-Hovering the pill (instead of clicking) still shows the branch, origin, and working-tree summary, along with worktree actions.
+Working-tree changes are shown by the **git status widget** beside the pill (`+` additions, `−` deletions, `~` modified). Hover it for a list of changed files with diff bars, plus shortcuts to the full diff and the log.
 
 ## File Explorer and Preview
 
@@ -79,12 +83,20 @@ and each value has a copy button on hover.
 
 Inside that view:
 
-- The **filter box** narrows to fields whose name or value matches what you type.
-- **Up and Down arrows**, or the chevrons in the header, step through rows
+- **Left and Right arrows**, or the chevrons in the header, step through rows
   without closing the modal. Navigation follows whatever the table is currently
   showing, so it respects your active sort and search.
+- **Up and Down arrows** scroll the field list, with `PageUp` / `PageDown` for
+  whole screens and `Home` / `End` to jump to the top or bottom. Handy when a
+  row has more fields than fit at once.
+- `/` jumps to the **filter box**, which narrows to fields whose name or value
+  matches what you type. `Enter` hands focus back to the field list so the
+  arrows resume stepping through rows.
 - Drag any edge or corner to resize. The size is remembered for next time.
 - `Esc` closes the row view and leaves the file open.
+
+The field list takes focus the moment the view opens, so every one of those
+keys works without clicking first.
 
 ### Audio and Video Playback
 
@@ -231,39 +243,49 @@ The same `@` picker can also reference **other agents**. Alongside files, it has
 
 ## Command Mode (`!`)
 
-Start a message with `!` and Maestro runs the rest as a shell command instead of sending it to the agent. It is a way to check something without leaving the chat: `!git pull`, `!ls`, `!npm test`.
+Press `!` in an empty chat composer and it turns into a command line: what you type next runs as a shell command in the agent's working directory instead of being sent to the agent. It is a way to check something without leaving the chat.
+
+The `!` is a gesture, not part of the command - it disappears the moment it switches modes, and you just type the command:
 
 ```
-!git status
+$ git status
 ```
 
-The moment you type `!` the composer switches into command mode: a `$` appears at the left of the input and a **COMMAND MODE** strip above it names the directory the command will run in, so you can see which way the message is going before you press Enter.
+You will know you are in command mode: a `$` appears at the left of the input, and a **COMMAND MODE** strip above it names the directory the command will run in.
+
+**Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
 **How it behaves:**
 
 - **The agent is bypassed entirely.** It is never spawned, never written to, and never sees the command or its output. Nothing you run this way enters the agent's context - if you want the agent to see the result, copy it into a message.
-- **It runs immediately, even while the agent is working.** Command mode does not queue and does not interrupt the turn in progress, so you can check `!git log` while the agent is mid-edit.
-- **It runs in the agent's working directory** (on the agent's SSH remote, if it has one). Each command is independent - there is no persistent shell, so `!cd src` on its own does nothing. Chain instead: `!cd src && ls`.
-- **Output streams into the transcript** as a card showing the command, where it ran, and a live spinner while it works. When it finishes, the card shows the exit code and how long it took, with a button to copy the output.
+- **It runs immediately, even while the agent is working.** Command mode does not queue and does not interrupt the turn in progress, so you can check `git log` while the agent is mid-edit.
+- **It runs in the agent's working directory** (on the agent's SSH remote, if it has one). Each command is independent - there is no persistent shell, so `cd src` on its own does nothing. Chain instead: `cd src && ls`.
+- **Every command gets its own card**, never merged into the surrounding conversation. The card shows the command, where it ran, and a live spinner while it works; when it finishes, the exit code and how long it took.
+- **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
+- **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
 ### Tab Completion in Command Mode
 
 Command mode gets the same `Tab` completion the [Command Terminal](#command-terminal) has, so you are not typing paths from memory:
 
-| Press `Tab` after... | You get                                                       |
-| -------------------- | ------------------------------------------------------------- |
-| `!` (nothing else)   | The bang commands you have run before in this agent           |
-| `!cat pack`          | Matching files - `!cat package.json`                          |
-| `!ls sr`             | Matching directories, with a trailing slash - `!ls src/`      |
-| `!cat src/comp`      | Files inside that directory, one level at a time              |
-| `!git checkout ma`   | Matching git branches - `!git checkout main` (git repos only) |
-| `!git checkout v2`   | Matching git tags (git repos only)                            |
+| Press `Tab` after... | You get                                                      |
+| -------------------- | ------------------------------------------------------------ |
+| nothing              | The commands you have run before in this agent               |
+| `cat pack`           | Matching files - `cat package.json`                          |
+| `ls sr`              | Matching directories, with a trailing slash - `ls src/`      |
+| `cat src/comp`       | Files inside that directory, one level at a time             |
+| `git checkout ma`    | Matching git branches - `git checkout main` (git repos only) |
+| `git checkout v2`    | Matching git tags (git repos only)                           |
 
 One match completes in place. Several open a picker: `↑` / `↓` to move, `Enter` to accept, `Esc` to dismiss. In a git repo, `Tab` inside the picker cycles the category filter (All, History, Branches, Tags, Files) and `Shift+Tab` cycles back.
 
-Completion resolves from the **agent's working directory**, which is where the command will actually run. This is deliberately not the Command Terminal's directory - `cd`-ing in a terminal tab does not move where your bang commands run, so it must not move where completion looks either.
+Completion resolves from the **agent's working directory**, which is where the command will actually run. This is deliberately not the Command Terminal's directory - `cd`-ing in a terminal tab does not move where your commands run, so it must not move where completion looks either.
 
-`@` file mentions are suppressed in command mode. An `@` in a shell line is ordinary text (an `scp` target, an email in a commit message), not a file reference for the agent.
+Chat affordances stand down in command mode, because a shell line means different things by the same characters:
+
+- **`@` file mentions** - an `@` here is an `scp` target or an email in a commit message, not a file reference for the agent.
+- **Slash commands** - a leading `/` here is an absolute path (`/usr/bin/env`), not `/history`.
+- **Image attachments** - pasting or dropping an image is ignored, and the attach button is hidden. A shell command has nothing to do with an image, and the agent (which is the thing that reads them) never sees this input.
 
 **Stopping a command:** a running command's card has a **Stop** button. Reach for it if you start something long or something that waits for input.
 
@@ -273,9 +295,9 @@ Command mode has no keyboard - nothing is connected to the command's stdin. Prog
 
 Very large output is capped so a runaway command cannot bloat your transcript; the card says so when it truncates.
 
-**Sending a literal `!` to the agent:** prefix the message with a backslash. `\!important` reaches the agent as `!important`.
+**Sending a message that starts with `!`:** typing `!` first only enters command mode when the composer is empty, so a bang inside a sentence is safe. To start a message with one, prefix it with a backslash: `\!important` reaches the agent as `!important`.
 
-Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you are already at a shell, so `!` is passed through untouched.
+Command mode is AI-chat only. In a terminal tab or the legacy terminal mode you are already at a shell, so `!` is an ordinary character.
 
 ## Prompt Composer
 
@@ -612,7 +634,7 @@ Right-click any agent for quick actions:
 - **Add/Remove Bookmark** - Toggle bookmark status
 - **Move to Group** - Organize into groups
 - **Move to Window** - Send the agent to another Maestro window
-- **View Git Log / Git Pull / Git Push / Change Branch / Create Pull Request** - the full [git menu](#git-actions), for git repositories only
+- **View Git Log / View Git Diff / Git Pull / Git Push / Change Branch / Create Pull Request** - the full [git menu](#git-actions), for git repositories only
 - **Create Worktree** - Create a git worktree sub-agent (if configured)
 - **Configure Worktrees** - Set up worktree configuration
 - **Configure Maestro Cue** - Set up event-driven automation for this agent
@@ -729,6 +751,8 @@ Open the list from the search icon in the tab bar → **See All Snoozed Tabs**, 
 **Snooze history**
 
 Click **View History** in the Snoozed Tabs header to see snoozes that have already finished. It is one chronological list across every agent, newest first, and each entry keeps the note you left yourself along with when it was due and when it actually came back. Entries are marked by how they ended: came back on schedule, brought back early, or dismissed.
+
+Click any entry to jump back to it. If the tab is still open you land directly on it; if only the agent is still around you land there instead. Entries whose agent has since been deleted are shown but not clickable.
 
 The log keeps the most recent 100 entries; older ones drop off as new ones arrive.
 

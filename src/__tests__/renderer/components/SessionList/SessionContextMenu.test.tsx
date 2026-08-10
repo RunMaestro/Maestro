@@ -7,15 +7,25 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SessionContextMenu } from '../../../../renderer/components/SessionList/SessionContextMenu';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 2, behind: 3 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
+const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({ getBranchInfo: mockGetBranchInfo }),
+	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
+}));
+
+vi.mock('../../../../renderer/services/git', () => ({
+	gitService: { getDiff: vi.fn().mockResolvedValue({ diff: 'diff --git a/x b/x' }) },
+}));
+
+vi.mock('../../../../renderer/stores/centerFlashStore', () => ({
+	notifyCenterFlash: vi.fn(),
 }));
 
 const mockOpenModal = vi.fn();
@@ -72,6 +82,7 @@ describe('SessionContextMenu', () => {
 	it('renders the git actions for a git agent', () => {
 		renderMenu();
 		expect(screen.getByTestId('session-context-git-log')).toBeInTheDocument();
+		expect(screen.getByTestId('session-context-git-diff')).toBeInTheDocument();
 		expect(screen.getByTestId('session-context-git-pull')).toBeInTheDocument();
 		expect(screen.getByTestId('session-context-git-push')).toBeInTheDocument();
 		expect(screen.getByTestId('session-context-change-branch')).toBeInTheDocument();
@@ -81,6 +92,7 @@ describe('SessionContextMenu', () => {
 	it('hides the git actions for a non-git agent', () => {
 		renderMenu({ session: makeSession({ isGitRepo: false }) });
 		expect(screen.queryByTestId('session-context-git-log')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('session-context-git-diff')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('session-context-git-pull')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('session-context-create-pr')).not.toBeInTheDocument();
 		// Non-git entries still render.
@@ -193,5 +205,22 @@ describe('SessionContextMenu', () => {
 
 		fireEvent.click(screen.getByText('Remove Worktree'));
 		expect(onDeleteWorktree).toHaveBeenCalled();
+	});
+
+	it('opens the diff for the right-clicked agent and dismisses the menu', async () => {
+		const props = renderMenu({
+			session: makeSession({ id: 'other-agent', cwd: '/other/repo' }),
+		});
+
+		fireEvent.click(screen.getByTestId('session-context-git-diff'));
+
+		// The diff is fetched asynchronously, but the menu closes immediately.
+		expect(props.onDismiss).toHaveBeenCalled();
+		await waitFor(() =>
+			expect(mockOpenModal).toHaveBeenCalledWith(
+				'gitDiff',
+				expect.objectContaining({ cwd: '/other/repo' })
+			)
+		);
 	});
 });

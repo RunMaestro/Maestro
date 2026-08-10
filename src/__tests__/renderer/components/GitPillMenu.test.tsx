@@ -4,9 +4,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GitPillMenu } from '../../../renderer/components/GitPillMenu';
 import { mockTheme } from '../../helpers/mockTheme';
+
+const mockOpenUrl = vi.fn();
+vi.mock('../../../renderer/utils/openUrl', () => ({
+	openUrl: (url: string) => mockOpenUrl(url),
+}));
 
 // Mock the LayerStackContext (Escape handling is covered by its own tests)
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
@@ -24,10 +29,14 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof GitPillMenu>>
 		ahead: 0,
 		behind: 0,
 		onViewLog: vi.fn(),
+		onViewDiff: vi.fn(),
 		onPull: vi.fn(),
 		onPush: vi.fn(),
 		onSwitchBranch: vi.fn(),
 		onCreatePR: vi.fn(),
+		onConfigureWorktrees: vi.fn(),
+		branch: 'feature/login',
+		remote: 'https://github.com/user/repo.git',
 		onClose: vi.fn(),
 		...overrides,
 	};
@@ -40,13 +49,78 @@ describe('GitPillMenu', () => {
 		vi.clearAllMocks();
 	});
 
-	it('renders all five actions', () => {
+	it('renders all seven actions', () => {
 		renderMenu();
 		expect(screen.getByText('View Git Log')).toBeInTheDocument();
+		expect(screen.getByText('View Git Diff')).toBeInTheDocument();
 		expect(screen.getByText('Git Pull')).toBeInTheDocument();
 		expect(screen.getByText('Git Push')).toBeInTheDocument();
 		expect(screen.getByText('Change Branch')).toBeInTheDocument();
 		expect(screen.getByText('Create Pull Request')).toBeInTheDocument();
+		expect(screen.getByText('Configure Worktrees')).toBeInTheDocument();
+	});
+
+	// The branch/origin rows below came from the pill's retired hover card.
+	describe('branch / origin detail', () => {
+		it('shows the branch and origin inherited from the hover card', () => {
+			renderMenu();
+			expect(screen.getByTestId('git-pill-menu-detail')).toBeInTheDocument();
+			expect(screen.getByText('feature/login')).toBeInTheDocument();
+			// Scheme and .git suffix are trimmed for display.
+			expect(screen.getByText('github.com/user/repo')).toBeInTheDocument();
+		});
+
+		it('omits the detail block entirely when neither is known', () => {
+			renderMenu({ branch: undefined, remote: undefined });
+			expect(screen.queryByTestId('git-pill-menu-detail')).not.toBeInTheDocument();
+			// Actions still render.
+			expect(screen.getByText('View Git Log')).toBeInTheDocument();
+		});
+
+		it('shows the branch alone when the repo has no origin', () => {
+			renderMenu({ remote: undefined });
+			expect(screen.getByText('feature/login')).toBeInTheDocument();
+			expect(screen.queryByText('Origin')).not.toBeInTheDocument();
+		});
+
+		it('copies the branch name', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.assign(navigator, { clipboard: { writeText } });
+			renderMenu();
+
+			fireEvent.click(screen.getByTitle('Copy branch name'));
+
+			await waitFor(() => expect(writeText).toHaveBeenCalledWith('feature/login'));
+		});
+
+		it('copies the full remote URL, not the trimmed display text', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.assign(navigator, { clipboard: { writeText } });
+			renderMenu();
+
+			fireEvent.click(screen.getByTitle('Copy remote URL'));
+
+			await waitFor(() =>
+				expect(writeText).toHaveBeenCalledWith('https://github.com/user/repo.git')
+			);
+		});
+
+		it('opens the repository in a browser', () => {
+			renderMenu();
+			fireEvent.click(screen.getByTestId('git-pill-menu-open-remote'));
+			expect(mockOpenUrl).toHaveBeenCalledWith('https://github.com/user/repo');
+		});
+
+		it('disables the origin link for a remote with no browsable URL', () => {
+			renderMenu({ remote: 'not-a-url' });
+			fireEvent.click(screen.getByTestId('git-pill-menu-open-remote'));
+			expect(mockOpenUrl).not.toHaveBeenCalled();
+		});
+	});
+
+	it('omits Configure Worktrees when no handler is supplied', () => {
+		renderMenu({ onConfigureWorktrees: undefined });
+		expect(screen.queryByTestId('git-pill-menu-configure-worktrees')).not.toBeInTheDocument();
 	});
 
 	it('omits Create Pull Request when no handler is supplied', () => {
@@ -61,6 +135,9 @@ describe('GitPillMenu', () => {
 
 		fireEvent.click(screen.getByTestId('git-pill-menu-log'));
 		expect(props.onViewLog).toHaveBeenCalled();
+
+		fireEvent.click(screen.getByTestId('git-pill-menu-diff'));
+		expect(props.onViewDiff).toHaveBeenCalled();
 
 		fireEvent.click(screen.getByTestId('git-pill-menu-pull'));
 		expect(props.onPull).toHaveBeenCalled();

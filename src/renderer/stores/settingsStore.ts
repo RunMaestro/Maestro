@@ -19,9 +19,6 @@ import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import type {
 	LLMProvider,
-	ThemeId,
-	ThemeColors,
-	Shortcut,
 	CustomAICommand,
 	AchievementTimeSource,
 	AutoRunStats,
@@ -34,14 +31,9 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../types';
-import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { getLevelIndex } from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
-import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
-import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
-import type { ToastWidth } from '../../shared/toastWidth';
-import { isToastWidth } from '../../shared/toastWidth';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import { useMediaPlaybackStore, type MediaFloatRect } from './mediaPlaybackStore';
 import { logger } from '../utils/logger';
@@ -53,6 +45,44 @@ import {
 } from './snoozeHistoryStore';
 import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
 import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice';
+import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
+import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
+import { createWakatimeSlice, hydrateWakatimeSettings } from './settingsWakatimeSlice';
+import type { FileExplorerState, FileExplorerActions } from './settingsFileExplorerSlice';
+import { createFileExplorerSlice, hydrateFileExplorerSettings } from './settingsFileExplorerSlice';
+import type { NotificationsState, NotificationsActions } from './settingsNotificationsSlice';
+import {
+	createNotificationsSlice,
+	hydrateNotificationsSettings,
+} from './settingsNotificationsSlice';
+import type {
+	LeftPanelDisplayState,
+	LeftPanelDisplayActions,
+} from './settingsLeftPanelDisplaySlice';
+import {
+	createLeftPanelDisplaySlice,
+	hydrateLeftPanelDisplaySettings,
+} from './settingsLeftPanelDisplaySlice';
+import type { BrowserTabsState, BrowserTabsActions } from './settingsBrowserTabsSlice';
+import { createBrowserTabsSlice, hydrateBrowserTabsSettings } from './settingsBrowserTabsSlice';
+import type { ShortcutsState, ShortcutsActions } from './settingsShortcutsSlice';
+import { createShortcutsSlice, hydrateShortcutsSettings } from './settingsShortcutsSlice';
+import type { ThemeState, ThemeActions } from './settingsThemeSlice';
+import { createThemeSlice, hydrateThemeSettings } from './settingsThemeSlice';
+export {
+	DEFAULT_LOCAL_IGNORE_PATTERNS,
+	DEFAULT_FILE_EXPLORER_MAX_DEPTH,
+	FILE_EXPLORER_MIN_DEPTH,
+	FILE_EXPLORER_MAX_DEPTH_CAP,
+	DEFAULT_FILE_EXPLORER_MAX_ENTRIES,
+	FILE_EXPLORER_MIN_ENTRIES,
+	FILE_EXPLORER_MAX_ENTRIES_CAP,
+	DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
+	SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
+	SSH_REDUCE_ENTRY_CAP_MAX_FRACTION,
+	SSH_REDUCE_ENTRY_CAP_STEP,
+} from './settingsFileExplorerSlice';
 import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
 import { sanitizeTextareaHeights } from '../utils/textareaSizing';
 
@@ -122,44 +152,6 @@ const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
 	'hierarchical',
 	'force',
 ];
-
-// ============================================================================
-// Default Constants
-// ============================================================================
-
-/** Default local ignore patterns for new installations (includes .git, node_modules, __pycache__) */
-export const DEFAULT_LOCAL_IGNORE_PATTERNS = ['.git', 'node_modules', '__pycache__'];
-
-/**
- * Default maximum recursion depth when indexing the file tree. The entry cap
- * (not this) is the memory guard - once it's hit, the walk stops recursing - so
- * this can be generous. At depth 5 a normal repo layout
- * (`src/renderer/components/Settings/tabs/...`) already falls off the tree.
- */
-export const DEFAULT_FILE_EXPLORER_MAX_DEPTH = 10;
-/** Minimum allowed maximum recursion depth. */
-export const FILE_EXPLORER_MIN_DEPTH = 1;
-/** Maximum allowed maximum recursion depth. */
-export const FILE_EXPLORER_MAX_DEPTH_CAP = 20;
-
-/** Default cap on number of file entries loaded into the file tree. */
-export const DEFAULT_FILE_EXPLORER_MAX_ENTRIES = 100_000;
-/** Minimum allowed file-entry cap. */
-export const FILE_EXPLORER_MIN_ENTRIES = 1_000;
-/** Maximum allowed file-entry cap (soft ceiling; "Load all" bypasses this). */
-export const FILE_EXPLORER_MAX_ENTRIES_CAP = 1_000_000;
-
-/**
- * Default fraction applied to {@link DEFAULT_FILE_EXPLORER_MAX_ENTRIES} when
- * "Reduce entry cap on SSH remotes" is enabled. 0.10 → 10% of the local cap.
- */
-export const DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION = 0.1;
-/** Minimum allowed SSH cap fraction (5%). */
-export const SSH_REDUCE_ENTRY_CAP_MIN_FRACTION = 0.05;
-/** Maximum allowed SSH cap fraction (100% - no reduction). */
-export const SSH_REDUCE_ENTRY_CAP_MAX_FRACTION = 1.0;
-/** Slider step for the SSH cap fraction (5 percentage points). */
-export const SSH_REDUCE_ENTRY_CAP_STEP = 0.05;
 
 const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 	autoGroomContexts: true,
@@ -324,7 +316,16 @@ function getBadgeLevelForTime(cumulativeTimeMs: number): number {
 // Store Types
 // ============================================================================
 
-export interface SettingsStoreState {
+export interface SettingsStoreState
+	extends
+		AnnotatorState,
+		WakatimeState,
+		FileExplorerState,
+		NotificationsState,
+		LeftPanelDisplayState,
+		BrowserTabsState,
+		ShortcutsState,
+		ThemeState {
 	settingsLoaded: boolean;
 	conductorProfile: string;
 	globalShowHotkey: string[];
@@ -336,14 +337,8 @@ export interface SettingsStoreState {
 	shellArgs: string;
 	shellEnvVars: Record<string, string>;
 	ghPath: string;
-	fontFamily: string;
-	terminalFontFamily: string;
-	fontSize: number;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	mediaPlaybackRate: number;
-	activeThemeId: ThemeId;
-	customThemeColors: ThemeColors;
-	customThemeBaseId: ThemeId;
 	enterToSendAI: boolean;
 	enterToSendAIExpanded: boolean;
 	forcedParallelExecution: boolean;
@@ -366,19 +361,10 @@ export interface SettingsStoreState {
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
-	showHiddenFiles: boolean;
-	fileExplorerIconTheme: FileExplorerIconTheme;
-	toastWidth: ToastWidth;
 	terminalWidth: number;
 	logLevel: string;
 	maxLogBuffer: number;
 	maxOutputLines: number;
-	osNotificationsEnabled: boolean;
-	audioFeedbackEnabled: boolean;
-	audioFeedbackCommand: string;
-	toastDuration: number;
-	idleNotificationEnabled: boolean;
-	idleNotificationCommand: string;
 	checkForUpdatesOnStartup: boolean;
 	autoResumeOnLimit: boolean;
 	autoResumeCheckIntervalHours: number;
@@ -386,8 +372,6 @@ export interface SettingsStoreState {
 	enableBetaUpdates: boolean;
 	crashReportingEnabled: boolean;
 	logViewerSelectedLevels: string[];
-	shortcuts: Record<string, Shortcut>;
-	tabShortcuts: Record<string, Shortcut>;
 	customAICommands: CustomAICommand[];
 	totalActiveTimeMs: number;
 	autoRunStats: AutoRunStats;
@@ -405,12 +389,9 @@ export interface SettingsStoreState {
 	webInterfaceCustomPort: number;
 	contextManagementSettings: ContextManagementSettings;
 	keyboardMasteryStats: KeyboardMasteryStats;
-	colorBlindMode: boolean;
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
-	showBrowserTabDomain: boolean;
-	tabBarWheelScroll: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -420,25 +401,6 @@ export interface SettingsStoreState {
 	preventSleepEnabled: boolean;
 	disableGpuAcceleration: boolean;
 	disableConfetti: boolean;
-	localIgnorePatterns: string[];
-	localHonorGitignore: boolean;
-	fileExplorerMaxDepth: number;
-	fileExplorerMaxEntries: number;
-	sshReduceEntryCapEnabled: boolean;
-	sshReduceEntryCapFraction: number;
-	sshRemoteIgnorePatterns: string[];
-	sshRemoteHonorGitignore: boolean;
-	useSystemBrowser: boolean;
-	browserHomeUrl: string;
-	htmlDoubleClickOpensInBrowser: boolean;
-	browserTabKeepAlive: 'off' | 'recent' | 'all';
-	browserTabKeepAliveLimit: number;
-	automaticTabNamingEnabled: boolean;
-	newTabPlacement: 'end' | 'after-current';
-	newBrowserTabPlacement: 'end' | 'after-current';
-	newTerminalPlacement: 'end' | 'after-current';
-	openedFilePlacement: 'end' | 'after-current';
-	fileTabAutoRefreshEnabled: boolean;
 	suppressWindowsWarning: boolean;
 	userMessageAlignment: 'left' | 'right';
 	encoreFeatures: EncoreFeatureFlags;
@@ -448,25 +410,8 @@ export interface SettingsStoreState {
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
-	wakatimeApiKey: string;
-	wakatimeEnabled: boolean;
-	wakatimeDetailedTracking: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
-	showAgentName: boolean;
-	showSessionIdPill: boolean;
-	showSessionCostPill: boolean;
-	showWorktreePill: boolean;
-	showWorktreeBranchName: boolean;
-	showStarredSessionsSection: boolean;
-	showLeftPanelGroupMemberCount: boolean;
-	leftPanelCollapsedPillsPerRow: number;
-	showLeftPanelLocationPills: boolean;
-	showLeftPanelGitIndicator: boolean;
-	showLeftPanelCueIndicator: boolean;
-	showLeftPanelStartupCommandIndicator: boolean;
-	showGroupLabelInBookmarks: boolean;
-	showFullGroupLabelInBookmarks: boolean;
 	// File Edit & Preview
 	fileEditWordWrap: boolean;
 	fileEditShowLineNumbers: boolean;
@@ -481,20 +426,18 @@ export interface SettingsStoreState {
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
-	annotatorPenColor: string;
-	annotatorPenSize: number;
-	annotatorThinning: number;
-	annotatorSmoothing: number;
-	annotatorStreamline: number;
-	annotatorTaperStart: number;
-	annotatorTaperEnd: number;
-	annotatorTextColor: string;
-	annotatorTextSize: number;
-	annotatorTextFont: string;
-	annotatorTextBgColor: string;
 }
 
-export interface SettingsStoreActions {
+export interface SettingsStoreActions
+	extends
+		AnnotatorActions,
+		WakatimeActions,
+		FileExplorerActions,
+		NotificationsActions,
+		LeftPanelDisplayActions,
+		BrowserTabsActions,
+		ShortcutsActions,
+		ThemeActions {
 	// Simple setters
 	setConductorProfile: (value: string) => void;
 	setGlobalShowHotkey: (value: string[]) => void;
@@ -506,13 +449,7 @@ export interface SettingsStoreActions {
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
-	setFontFamily: (value: string) => void;
-	setTerminalFontFamily: (value: string) => void;
-	setFontSize: (value: number) => void;
 	setMediaPlaybackRate: (value: number) => void;
-	setActiveThemeId: (value: ThemeId) => void;
-	setCustomThemeColors: (value: ThemeColors) => void;
-	setCustomThemeBaseId: (value: ThemeId) => void;
 	setEnterToSendAI: (value: boolean) => void;
 	setEnterToSendAIExpanded: (value: boolean) => void;
 	setForcedParallelExecution: (value: boolean) => void;
@@ -537,17 +474,8 @@ export interface SettingsStoreActions {
 	setBionifyReadingMode: (value: boolean) => void;
 	setBionifyIntensity: (value: number) => void;
 	setBionifyAlgorithm: (value: string) => void;
-	setShowHiddenFiles: (value: boolean) => void;
-	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
-	setToastWidth: (value: ToastWidth) => void;
 	setTerminalWidth: (value: number) => void;
 	setMaxOutputLines: (value: number) => void;
-	setOsNotificationsEnabled: (value: boolean) => void;
-	setAudioFeedbackEnabled: (value: boolean) => void;
-	setAudioFeedbackCommand: (value: string) => void;
-	setToastDuration: (value: number) => void;
-	setIdleNotificationEnabled: (value: boolean) => void;
-	setIdleNotificationCommand: (value: string) => void;
 	setCheckForUpdatesOnStartup: (value: boolean) => void;
 	setAutoResumeOnLimit: (value: boolean) => void;
 	setAutoResumeCheckIntervalHours: (value: number) => void;
@@ -555,8 +483,6 @@ export interface SettingsStoreActions {
 	setEnableBetaUpdates: (value: boolean) => void;
 	setCrashReportingEnabled: (value: boolean) => void;
 	setLogViewerSelectedLevels: (value: string[]) => void;
-	setShortcuts: (value: Record<string, Shortcut>) => void;
-	setTabShortcuts: (value: Record<string, Shortcut>) => void;
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
@@ -568,12 +494,9 @@ export interface SettingsStoreActions {
 	setPersistentWebLink: (value: boolean) => Promise<void>;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	setWebInterfaceCustomPort: (value: number) => void;
-	setColorBlindMode: (value: boolean) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
-	setShowBrowserTabDomain: (value: boolean) => void;
-	setTabBarWheelScroll: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -582,25 +505,6 @@ export interface SettingsStoreActions {
 	setDefaultStatsTimeRange: (value: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => void;
 	setDisableGpuAcceleration: (value: boolean) => void;
 	setDisableConfetti: (value: boolean) => void;
-	setLocalIgnorePatterns: (value: string[]) => void;
-	setLocalHonorGitignore: (value: boolean) => void;
-	setFileExplorerMaxDepth: (value: number) => void;
-	setFileExplorerMaxEntries: (value: number) => void;
-	setSshReduceEntryCapEnabled: (value: boolean) => void;
-	setSshReduceEntryCapFraction: (value: number) => void;
-	setSshRemoteIgnorePatterns: (value: string[]) => void;
-	setSshRemoteHonorGitignore: (value: boolean) => void;
-	setUseSystemBrowser: (value: boolean) => void;
-	setBrowserHomeUrl: (value: string) => void;
-	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
-	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
-	setBrowserTabKeepAliveLimit: (value: number) => void;
-	setAutomaticTabNamingEnabled: (value: boolean) => void;
-	setNewTabPlacement: (value: 'end' | 'after-current') => void;
-	setNewBrowserTabPlacement: (value: 'end' | 'after-current') => void;
-	setNewTerminalPlacement: (value: 'end' | 'after-current') => void;
-	setOpenedFilePlacement: (value: 'end' | 'after-current') => void;
-	setFileTabAutoRefreshEnabled: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
@@ -610,25 +514,8 @@ export interface SettingsStoreActions {
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
-	setWakatimeApiKey: (value: string) => void;
-	setWakatimeEnabled: (value: boolean) => void;
-	setWakatimeDetailedTracking: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
-	setShowAgentName: (value: boolean) => void;
-	setShowSessionIdPill: (value: boolean) => void;
-	setShowSessionCostPill: (value: boolean) => void;
-	setShowWorktreePill: (value: boolean) => void;
-	setShowWorktreeBranchName: (value: boolean) => void;
-	setShowStarredSessionsSection: (value: boolean) => void;
-	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
-	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
-	setShowLeftPanelLocationPills: (value: boolean) => void;
-	setShowLeftPanelGitIndicator: (value: boolean) => void;
-	setShowLeftPanelCueIndicator: (value: boolean) => void;
-	setShowLeftPanelStartupCommandIndicator: (value: boolean) => void;
-	setShowGroupLabelInBookmarks: (value: boolean) => void;
-	setShowFullGroupLabelInBookmarks: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
 	setFileEditShowLineNumbers: (value: boolean) => void;
 	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
@@ -642,17 +529,6 @@ export interface SettingsStoreActions {
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
-	setAnnotatorPenColor: (value: string) => void;
-	setAnnotatorPenSize: (value: number) => void;
-	setAnnotatorThinning: (value: number) => void;
-	setAnnotatorSmoothing: (value: number) => void;
-	setAnnotatorStreamline: (value: number) => void;
-	setAnnotatorTaperStart: (value: number) => void;
-	setAnnotatorTaperEnd: (value: number) => void;
-	setAnnotatorTextColor: (value: string) => void;
-	setAnnotatorTextSize: (value: number) => void;
-	setAnnotatorTextFont: (value: string) => void;
-	setAnnotatorTextBgColor: (value: string) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -779,7 +655,7 @@ export function resolveForceParallel(optionForce?: boolean): boolean {
 	return optionForce === true || s.forcedParallelAlways;
 }
 
-export const useSettingsStore = create<SettingsStore>()((set, get) => {
+export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
 
@@ -799,13 +675,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
-		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
-		terminalFontFamily: '',
-		fontSize: 14,
 		mediaPlaybackRate: 1,
-		activeThemeId: 'dracula',
-		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
-		customThemeBaseId: 'dracula',
 		enterToSendAI: true,
 		enterToSendAIExpanded: false,
 		forcedParallelExecution: false,
@@ -826,19 +696,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bionifyReadingMode: false,
 		bionifyIntensity: 1,
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
-		showHiddenFiles: true,
-		fileExplorerIconTheme: 'default',
-		toastWidth: 'dynamic',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
 		maxOutputLines: Infinity,
-		osNotificationsEnabled: true,
-		audioFeedbackEnabled: false,
-		audioFeedbackCommand: 'say',
-		toastDuration: 20,
-		idleNotificationEnabled: false,
-		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
 		autoResumeOnLimit: true,
 		autoResumeCheckIntervalHours: 2,
@@ -846,8 +707,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		enableBetaUpdates: false,
 		crashReportingEnabled: true,
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
-		shortcuts: DEFAULT_SHORTCUTS,
-		tabShortcuts: TAB_SHORTCUTS,
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
@@ -865,12 +724,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
 		keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
-		colorBlindMode: false,
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
-		showBrowserTabDomain: true,
-		tabBarWheelScroll: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -880,25 +736,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		preventSleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
-		localIgnorePatterns: [...DEFAULT_LOCAL_IGNORE_PATTERNS],
-		localHonorGitignore: true,
-		fileExplorerMaxDepth: DEFAULT_FILE_EXPLORER_MAX_DEPTH,
-		fileExplorerMaxEntries: DEFAULT_FILE_EXPLORER_MAX_ENTRIES,
-		sshReduceEntryCapEnabled: false,
-		sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
-		sshRemoteIgnorePatterns: ['.git', '*cache*'],
-		sshRemoteHonorGitignore: true,
-		useSystemBrowser: false,
-		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
-		htmlDoubleClickOpensInBrowser: false,
-		browserTabKeepAlive: 'off',
-		browserTabKeepAliveLimit: 10,
-		automaticTabNamingEnabled: true,
-		newTabPlacement: 'end',
-		newBrowserTabPlacement: 'after-current',
-		newTerminalPlacement: 'after-current',
-		openedFilePlacement: 'after-current',
-		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
 		userMessageAlignment: 'right',
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
@@ -908,25 +745,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
-		wakatimeApiKey: '',
-		wakatimeEnabled: false,
-		wakatimeDetailedTracking: false,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
-		showAgentName: true,
-		showSessionIdPill: false,
-		showSessionCostPill: true,
-		showWorktreePill: false,
-		showWorktreeBranchName: false,
-		showStarredSessionsSection: true,
-		showLeftPanelGroupMemberCount: false,
-		leftPanelCollapsedPillsPerRow: 20,
-		showLeftPanelLocationPills: true,
-		showLeftPanelGitIndicator: true,
-		showLeftPanelCueIndicator: true,
-		showLeftPanelStartupCommandIndicator: true,
-		showGroupLabelInBookmarks: true,
-		showFullGroupLabelInBookmarks: false,
 		fileEditWordWrap: true,
 		fileEditShowLineNumbers: true,
 		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
@@ -940,17 +760,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
-		annotatorPenColor: '#9146FF',
-		annotatorPenSize: 10,
-		annotatorThinning: 0.5,
-		annotatorSmoothing: 0.5,
-		annotatorStreamline: 0.5,
-		annotatorTaperStart: 0,
-		annotatorTaperEnd: 0,
-		annotatorTextColor: '#9146FF',
-		annotatorTextSize: 24,
-		annotatorTextFont: 'sans-serif',
-		annotatorTextBgColor: '',
+
+		...createAnnotatorSlice(set, get, api),
+		...createWakatimeSlice(set, get, api),
+		...createFileExplorerSlice(set, get, api),
+		...createNotificationsSlice(set, get, api),
+		...createLeftPanelDisplaySlice(set, get, api),
+		...createBrowserTabsSlice(set, get, api),
+		...createShortcutsSlice(set, get, api),
+		...createThemeSlice(set, get, api),
 
 		// ============================================================================
 		// Simple Setters
@@ -1007,40 +825,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('ghPath', value);
 		},
 
-		setFontFamily: (value) => {
-			set({ fontFamily: value });
-			window.maestro.settings.set('fontFamily', value);
-		},
-
-		setTerminalFontFamily: (value) => {
-			set({ terminalFontFamily: value });
-			window.maestro.settings.set('terminalFontFamily', value);
-		},
-
-		setFontSize: (value) => {
-			set({ fontSize: value });
-			window.maestro.settings.set('fontSize', value);
-		},
-
 		setMediaPlaybackRate: (value) => {
 			const rate = normalizePlaybackRate(value);
 			set({ mediaPlaybackRate: rate });
 			window.maestro.settings.set('mediaPlaybackRate', rate);
-		},
-
-		setActiveThemeId: (value) => {
-			set({ activeThemeId: value });
-			window.maestro.settings.set('activeThemeId', value);
-		},
-
-		setCustomThemeColors: (value) => {
-			set({ customThemeColors: value });
-			window.maestro.settings.set('customThemeColors', value);
-		},
-
-		setCustomThemeBaseId: (value) => {
-			set({ customThemeBaseId: value });
-			window.maestro.settings.set('customThemeBaseId', value);
 		},
 
 		setEnterToSendAI: (value) => {
@@ -1179,21 +967,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('bionifyAlgorithm', value);
 		},
 
-		setShowHiddenFiles: (value) => {
-			set({ showHiddenFiles: value });
-			window.maestro.settings.set('showHiddenFiles', value);
-		},
-
-		setFileExplorerIconTheme: (value) => {
-			set({ fileExplorerIconTheme: value });
-			window.maestro.settings.set('fileExplorerIconTheme', value);
-		},
-
-		setToastWidth: (value) => {
-			set({ toastWidth: value });
-			window.maestro.settings.set('toastWidth', value);
-		},
-
 		setTerminalWidth: (value) => {
 			set({ terminalWidth: value });
 			window.maestro.settings.set('terminalWidth', value);
@@ -1202,36 +975,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setMaxOutputLines: (value) => {
 			set({ maxOutputLines: value });
 			window.maestro.settings.set('maxOutputLines', value);
-		},
-
-		setOsNotificationsEnabled: (value) => {
-			set({ osNotificationsEnabled: value });
-			window.maestro.settings.set('osNotificationsEnabled', value);
-		},
-
-		setAudioFeedbackEnabled: (value) => {
-			set({ audioFeedbackEnabled: value });
-			window.maestro.settings.set('audioFeedbackEnabled', value);
-		},
-
-		setAudioFeedbackCommand: (value) => {
-			set({ audioFeedbackCommand: value });
-			window.maestro.settings.set('audioFeedbackCommand', value);
-		},
-
-		setToastDuration: (value) => {
-			set({ toastDuration: value });
-			window.maestro.settings.set('toastDuration', value);
-		},
-
-		setIdleNotificationEnabled: (value) => {
-			set({ idleNotificationEnabled: value });
-			window.maestro.settings.set('idleNotificationEnabled', value);
-		},
-
-		setIdleNotificationCommand: (value) => {
-			set({ idleNotificationCommand: value });
-			window.maestro.settings.set('idleNotificationCommand', value);
 		},
 
 		setCheckForUpdatesOnStartup: (value) => {
@@ -1273,16 +1016,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setLogViewerSelectedLevels: (value) => {
 			set({ logViewerSelectedLevels: value });
 			window.maestro.settings.set('logViewerSelectedLevels', value);
-		},
-
-		setShortcuts: (value) => {
-			set({ shortcuts: value });
-			window.maestro.settings.set('shortcuts', value);
-		},
-
-		setTabShortcuts: (value) => {
-			set({ tabShortcuts: value });
-			window.maestro.settings.set('tabShortcuts', value);
 		},
 
 		setCustomAICommands: (value) => {
@@ -1410,11 +1143,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			}
 		},
 
-		setColorBlindMode: (value) => {
-			set({ colorBlindMode: value });
-			window.maestro.settings.set('colorBlindMode', value);
-		},
-
 		setShowStarredInUnreadFilter: (value) => {
 			set({ showStarredInUnreadFilter: value });
 			window.maestro.settings.set('showStarredInUnreadFilter', value);
@@ -1428,16 +1156,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setUseCmd0AsLastTab: (value) => {
 			set({ useCmd0AsLastTab: value });
 			window.maestro.settings.set('useCmd0AsLastTab', value);
-		},
-
-		setTabBarWheelScroll: (value) => {
-			set({ tabBarWheelScroll: value });
-			window.maestro.settings.set('tabBarWheelScroll', value);
-		},
-
-		setShowBrowserTabDomain: (value) => {
-			set({ showBrowserTabDomain: value });
-			window.maestro.settings.set('showBrowserTabDomain', value);
 		},
 
 		setDocumentGraphShowExternalLinks: (value) => {
@@ -1481,118 +1199,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setDisableConfetti: (value) => {
 			set({ disableConfetti: value });
 			window.maestro.settings.set('disableConfetti', value);
-		},
-
-		setLocalIgnorePatterns: (value) => {
-			set({ localIgnorePatterns: value });
-			window.maestro.settings.set('localIgnorePatterns', value);
-		},
-
-		setLocalHonorGitignore: (value) => {
-			set({ localHonorGitignore: value });
-			window.maestro.settings.set('localHonorGitignore', value);
-		},
-
-		setFileExplorerMaxDepth: (value) => {
-			const clamped = Math.max(
-				FILE_EXPLORER_MIN_DEPTH,
-				Math.min(FILE_EXPLORER_MAX_DEPTH_CAP, Math.floor(value))
-			);
-			set({ fileExplorerMaxDepth: clamped });
-			window.maestro.settings.set('fileExplorerMaxDepth', clamped);
-		},
-
-		setFileExplorerMaxEntries: (value) => {
-			const clamped = Math.max(
-				FILE_EXPLORER_MIN_ENTRIES,
-				Math.min(FILE_EXPLORER_MAX_ENTRIES_CAP, Math.floor(value))
-			);
-			set({ fileExplorerMaxEntries: clamped });
-			window.maestro.settings.set('fileExplorerMaxEntries', clamped);
-		},
-
-		setSshReduceEntryCapEnabled: (value) => {
-			set({ sshReduceEntryCapEnabled: value });
-			window.maestro.settings.set('sshReduceEntryCapEnabled', value);
-		},
-
-		setSshReduceEntryCapFraction: (value) => {
-			// Snap to the slider step so persisted values stay on-grid even if the
-			// caller passes a high-precision float (e.g. from a range input).
-			const steps = Math.round(value / SSH_REDUCE_ENTRY_CAP_STEP);
-			const snapped = steps * SSH_REDUCE_ENTRY_CAP_STEP;
-			const clamped = Math.max(
-				SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
-				Math.min(SSH_REDUCE_ENTRY_CAP_MAX_FRACTION, snapped)
-			);
-			set({ sshReduceEntryCapFraction: clamped });
-			window.maestro.settings.set('sshReduceEntryCapFraction', clamped);
-		},
-
-		setSshRemoteIgnorePatterns: (value) => {
-			set({ sshRemoteIgnorePatterns: value });
-			window.maestro.settings.set('sshRemoteIgnorePatterns', value);
-		},
-
-		setSshRemoteHonorGitignore: (value) => {
-			set({ sshRemoteHonorGitignore: value });
-			window.maestro.settings.set('sshRemoteHonorGitignore', value);
-		},
-
-		setUseSystemBrowser: (value) => {
-			set({ useSystemBrowser: value });
-			window.maestro.settings.set('useSystemBrowser', value);
-		},
-
-		setBrowserHomeUrl: (value) => {
-			set({ browserHomeUrl: value });
-			window.maestro.settings.set('browserHomeUrl', value);
-		},
-
-		setHtmlDoubleClickOpensInBrowser: (value) => {
-			set({ htmlDoubleClickOpensInBrowser: value });
-			window.maestro.settings.set('htmlDoubleClickOpensInBrowser', value);
-		},
-
-		setBrowserTabKeepAlive: (value) => {
-			set({ browserTabKeepAlive: value });
-			window.maestro.settings.set('browserTabKeepAlive', value);
-		},
-
-		setBrowserTabKeepAliveLimit: (value) => {
-			const clamped = Math.max(1, Math.floor(value) || 1);
-			set({ browserTabKeepAliveLimit: clamped });
-			window.maestro.settings.set('browserTabKeepAliveLimit', clamped);
-		},
-
-		setAutomaticTabNamingEnabled: (value) => {
-			set({ automaticTabNamingEnabled: value });
-			window.maestro.settings.set('automaticTabNamingEnabled', value);
-		},
-
-		setNewTabPlacement: (value) => {
-			set({ newTabPlacement: value });
-			window.maestro.settings.set('newTabPlacement', value);
-		},
-
-		setNewBrowserTabPlacement: (value) => {
-			set({ newBrowserTabPlacement: value });
-			window.maestro.settings.set('newBrowserTabPlacement', value);
-		},
-
-		setNewTerminalPlacement: (value) => {
-			set({ newTerminalPlacement: value });
-			window.maestro.settings.set('newTerminalPlacement', value);
-		},
-
-		setOpenedFilePlacement: (value) => {
-			set({ openedFilePlacement: value });
-			window.maestro.settings.set('openedFilePlacement', value);
-		},
-
-		setFileTabAutoRefreshEnabled: (value) => {
-			set({ fileTabAutoRefreshEnabled: value });
-			window.maestro.settings.set('fileTabAutoRefreshEnabled', value);
 		},
 
 		setSuppressWindowsWarning: (value) => {
@@ -1640,21 +1246,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('directorNotesSettings', value);
 		},
 
-		setWakatimeApiKey: (value) => {
-			set({ wakatimeApiKey: value });
-			window.maestro.settings.set('wakatimeApiKey', value);
-		},
-
-		setWakatimeEnabled: (value) => {
-			set({ wakatimeEnabled: value });
-			window.maestro.settings.set('wakatimeEnabled', value);
-		},
-
-		setWakatimeDetailedTracking: (value) => {
-			set({ wakatimeDetailedTracking: value });
-			window.maestro.settings.set('wakatimeDetailedTracking', value);
-		},
-
 		setUseNativeTitleBar: (value) => {
 			set({ useNativeTitleBar: value });
 			window.maestro.settings.set('useNativeTitleBar', value);
@@ -1663,77 +1254,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAutoHideMenuBar: (value) => {
 			set({ autoHideMenuBar: value });
 			window.maestro.settings.set('autoHideMenuBar', value);
-		},
-
-		setShowAgentName: (value) => {
-			set({ showAgentName: value });
-			window.maestro.settings.set('showAgentName', value);
-		},
-
-		setShowSessionIdPill: (value) => {
-			set({ showSessionIdPill: value });
-			window.maestro.settings.set('showSessionIdPill', value);
-		},
-
-		setShowSessionCostPill: (value) => {
-			set({ showSessionCostPill: value });
-			window.maestro.settings.set('showSessionCostPill', value);
-		},
-
-		setShowWorktreePill: (value) => {
-			set({ showWorktreePill: value });
-			window.maestro.settings.set('showWorktreePill', value);
-		},
-
-		setShowWorktreeBranchName: (value) => {
-			set({ showWorktreeBranchName: value });
-			window.maestro.settings.set('showWorktreeBranchName', value);
-		},
-
-		setShowStarredSessionsSection: (value) => {
-			set({ showStarredSessionsSection: value });
-			window.maestro.settings.set('showStarredSessionsSection', value);
-		},
-
-		setShowLeftPanelGroupMemberCount: (value) => {
-			set({ showLeftPanelGroupMemberCount: value });
-			window.maestro.settings.set('showLeftPanelGroupMemberCount', value);
-		},
-
-		setLeftPanelCollapsedPillsPerRow: (value) => {
-			const clamped = Math.max(5, Math.min(50, Math.round(value)));
-			set({ leftPanelCollapsedPillsPerRow: clamped });
-			window.maestro.settings.set('leftPanelCollapsedPillsPerRow', clamped);
-		},
-
-		setShowLeftPanelLocationPills: (value) => {
-			set({ showLeftPanelLocationPills: value });
-			window.maestro.settings.set('showLeftPanelLocationPills', value);
-		},
-
-		setShowLeftPanelGitIndicator: (value) => {
-			set({ showLeftPanelGitIndicator: value });
-			window.maestro.settings.set('showLeftPanelGitIndicator', value);
-		},
-
-		setShowLeftPanelCueIndicator: (value) => {
-			set({ showLeftPanelCueIndicator: value });
-			window.maestro.settings.set('showLeftPanelCueIndicator', value);
-		},
-
-		setShowLeftPanelStartupCommandIndicator: (value) => {
-			set({ showLeftPanelStartupCommandIndicator: value });
-			window.maestro.settings.set('showLeftPanelStartupCommandIndicator', value);
-		},
-
-		setShowGroupLabelInBookmarks: (value) => {
-			set({ showGroupLabelInBookmarks: value });
-			window.maestro.settings.set('showGroupLabelInBookmarks', value);
-		},
-
-		setShowFullGroupLabelInBookmarks: (value) => {
-			set({ showFullGroupLabelInBookmarks: value });
-			window.maestro.settings.set('showFullGroupLabelInBookmarks', value);
 		},
 
 		setFileEditWordWrap: (value) => {
@@ -1809,61 +1329,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setSpellCheck: (value) => {
 			set({ spellCheck: value });
 			window.maestro.settings.set('spellCheck', value);
-		},
-
-		setAnnotatorPenColor: (value) => {
-			set({ annotatorPenColor: value });
-			window.maestro.settings.set('annotatorPenColor', value);
-		},
-
-		setAnnotatorPenSize: (value) => {
-			set({ annotatorPenSize: value });
-			window.maestro.settings.set('annotatorPenSize', value);
-		},
-
-		setAnnotatorThinning: (value) => {
-			set({ annotatorThinning: value });
-			window.maestro.settings.set('annotatorThinning', value);
-		},
-
-		setAnnotatorSmoothing: (value) => {
-			set({ annotatorSmoothing: value });
-			window.maestro.settings.set('annotatorSmoothing', value);
-		},
-
-		setAnnotatorStreamline: (value) => {
-			set({ annotatorStreamline: value });
-			window.maestro.settings.set('annotatorStreamline', value);
-		},
-
-		setAnnotatorTaperStart: (value) => {
-			set({ annotatorTaperStart: value });
-			window.maestro.settings.set('annotatorTaperStart', value);
-		},
-
-		setAnnotatorTaperEnd: (value) => {
-			set({ annotatorTaperEnd: value });
-			window.maestro.settings.set('annotatorTaperEnd', value);
-		},
-
-		setAnnotatorTextColor: (value) => {
-			set({ annotatorTextColor: value });
-			window.maestro.settings.set('annotatorTextColor', value);
-		},
-
-		setAnnotatorTextSize: (value) => {
-			set({ annotatorTextSize: value });
-			window.maestro.settings.set('annotatorTextSize', value);
-		},
-
-		setAnnotatorTextFont: (value) => {
-			set({ annotatorTextFont: value });
-			window.maestro.settings.set('annotatorTextFont', value);
-		},
-
-		setAnnotatorTextBgColor: (value) => {
-			set({ annotatorTextBgColor: value });
-			window.maestro.settings.set('annotatorTextBgColor', value);
 		},
 
 		// ============================================================================
@@ -2308,121 +1773,6 @@ export function selectIsLeaderboardRegistered(s: SettingsStoreState): boolean {
 // Load All Settings
 // ============================================================================
 
-/** macOS Alt+key special character to normal key mapping for shortcut migration */
-const MAC_ALT_CHAR_MAP: Record<string, string> = {
-	'¬': 'l',
-	π: 'p',
-	'†': 't',
-	'∫': 'b',
-	'∂': 'd',
-	ƒ: 'f',
-	'©': 'g',
-	'˙': 'h',
-	ˆ: 'i',
-	'∆': 'j',
-	'˚': 'k',
-	'¯': 'm',
-	'˜': 'n',
-	ø: 'o',
-	'®': 'r',
-	ß: 's',
-	'√': 'v',
-	'∑': 'w',
-	'≈': 'x',
-	'¥': 'y',
-	Ω: 'z',
-};
-
-/**
- * One-time default remaps: when we change a bundled DEFAULT_SHORTCUTS binding,
- * users who still had the OLD default bound get migrated to the NEW default. If
- * they had customized the binding themselves (any other key combo), we leave it
- * alone.
- *
- * Each entry: `shortcut id` → `{ old keys we consider "the old default", new default keys }`.
- */
-const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[]; toKeys: string[] }> = {
-	// moveToGroup moved off Cmd+Shift+M to free that combo for openMemoryViewer.
-	moveToGroup: {
-		fromKeys: ['Meta', 'Shift', 'm'],
-		toKeys: ['Alt', 'Meta', 'm'],
-	},
-	// toggleAutoRunExpanded moved off Cmd+Shift+2 to free that combo for openBatchRunner.
-	toggleAutoRunExpanded: {
-		fromKeys: ['Meta', 'Shift', '2'],
-		toKeys: ['Meta', 'Shift', 'e'],
-	},
-	// focusActiveTab moved off Opt+Cmd+F to free that combo for searchAllTabs
-	// (cross-tab message search), which reads as an escalation of Cmd+F.
-	focusActiveTab: {
-		fromKeys: ['Alt', 'Meta', 'f'],
-		toKeys: ['Alt', 'Meta', 'ArrowUp'],
-	},
-};
-
-function keysEqual(a: string[], b: string[]): boolean {
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) return false;
-	}
-	return true;
-}
-
-/**
- * Migrate shortcuts: fix macOS Alt+key special characters, apply one-time
- * default remaps, and merge with current defaults. Returns the merged shortcuts
- * (for store state), the raw migrated map (for persistence write-back), and
- * whether a migration write is needed.
- *
- * `migratedRaw` applies BOTH migrations so writing it back makes `needsMigration`
- * false on the next load. Writing only a partially-migrated map caused an
- * infinite re-persist loop via the settings file watcher.
- */
-function migrateShortcuts(
-	saved: Record<string, Shortcut>,
-	defaults: Record<string, Shortcut>
-): {
-	shortcuts: Record<string, Shortcut>;
-	migratedRaw: Record<string, Shortcut>;
-	needsMigration: boolean;
-} {
-	const migrated: Record<string, Shortcut> = {};
-	let needsMigration = false;
-
-	for (const [id, shortcut] of Object.entries(saved)) {
-		const migratedKeys = shortcut.keys.map((key) => {
-			if (MAC_ALT_CHAR_MAP[key]) {
-				needsMigration = true;
-				return MAC_ALT_CHAR_MAP[key];
-			}
-			return key;
-		});
-		migrated[id] = { ...shortcut, keys: migratedKeys };
-	}
-
-	// Apply one-time default remaps: if the user still has the OLD default keys
-	// for a remapped shortcut, bump them to the NEW default. Preserve custom bindings.
-	for (const [id, remap] of Object.entries(SHORTCUT_DEFAULT_REMAPS)) {
-		const current = migrated[id];
-		if (current && keysEqual(current.keys, remap.fromKeys)) {
-			migrated[id] = { ...current, keys: remap.toKeys };
-			needsMigration = true;
-		}
-	}
-
-	// Merge: use default labels (in case they changed) but preserve user's custom keys
-	const merged: Record<string, Shortcut> = {};
-	for (const [id, defaultShortcut] of Object.entries(defaults)) {
-		const savedShortcut = migrated[id];
-		merged[id] = {
-			...defaultShortcut,
-			keys: savedShortcut?.keys ?? defaultShortcut.keys,
-		};
-	}
-
-	return { shortcuts: merged, migratedRaw: migrated, needsMigration };
-}
-
 /**
  * Batch-load all settings from electron-store and apply them to the Zustand store.
  * Called once on app startup and again on system resume from sleep.
@@ -2473,25 +1823,10 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
-		if (allSettings['fontFamily'] !== undefined)
-			patch.fontFamily = allSettings['fontFamily'] as string;
-
-		if (allSettings['terminalFontFamily'] !== undefined)
-			patch.terminalFontFamily = allSettings['terminalFontFamily'] as string;
-
-		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
+		hydrateThemeSettings(allSettings, patch);
 
 		if (allSettings['mediaPlaybackRate'] !== undefined)
 			patch.mediaPlaybackRate = normalizePlaybackRate(allSettings['mediaPlaybackRate']);
-
-		if (allSettings['activeThemeId'] !== undefined)
-			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
-
-		if (allSettings['customThemeColors'] !== undefined)
-			patch.customThemeColors = allSettings['customThemeColors'] as ThemeColors;
-
-		if (allSettings['customThemeBaseId'] !== undefined)
-			patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
 
 		if (allSettings['enterToSendAI'] !== undefined)
 			patch.enterToSendAI = allSettings['enterToSendAI'] as boolean;
@@ -2565,20 +1900,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['bionifyAlgorithm'] !== undefined)
 			patch.bionifyAlgorithm = allSettings['bionifyAlgorithm'] as string;
 
-		if (allSettings['showHiddenFiles'] !== undefined)
-			patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;
+		hydrateFileExplorerSettings(allSettings, patch);
 
-		if (allSettings['fileExplorerIconTheme'] !== undefined) {
-			patch.fileExplorerIconTheme = isFileExplorerIconTheme(allSettings['fileExplorerIconTheme'])
-				? allSettings['fileExplorerIconTheme']
-				: 'default';
-		}
-
-		if (allSettings['toastWidth'] !== undefined) {
-			patch.toastWidth = isToastWidth(allSettings['toastWidth'])
-				? allSettings['toastWidth']
-				: 'small';
-		}
+		hydrateNotificationsSettings(allSettings, patch);
 
 		if (allSettings['terminalWidth'] !== undefined)
 			patch.terminalWidth = allSettings['terminalWidth'] as number;
@@ -2594,24 +1918,6 @@ export async function loadAllSettings(): Promise<void> {
 					? Infinity
 					: (allSettings['maxOutputLines'] as number);
 		}
-
-		if (allSettings['osNotificationsEnabled'] !== undefined)
-			patch.osNotificationsEnabled = allSettings['osNotificationsEnabled'] as boolean;
-
-		if (allSettings['audioFeedbackEnabled'] !== undefined)
-			patch.audioFeedbackEnabled = allSettings['audioFeedbackEnabled'] as boolean;
-
-		if (allSettings['audioFeedbackCommand'] !== undefined)
-			patch.audioFeedbackCommand = allSettings['audioFeedbackCommand'] as string;
-
-		if (allSettings['toastDuration'] !== undefined)
-			patch.toastDuration = allSettings['toastDuration'] as number;
-
-		if (allSettings['idleNotificationEnabled'] !== undefined)
-			patch.idleNotificationEnabled = allSettings['idleNotificationEnabled'] as boolean;
-
-		if (allSettings['idleNotificationCommand'] !== undefined)
-			patch.idleNotificationCommand = allSettings['idleNotificationCommand'] as string;
 
 		if (allSettings['checkForUpdatesOnStartup'] !== undefined)
 			patch.checkForUpdatesOnStartup = allSettings['checkForUpdatesOnStartup'] as boolean;
@@ -2640,29 +1946,7 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['logViewerSelectedLevels'] !== undefined)
 			patch.logViewerSelectedLevels = allSettings['logViewerSelectedLevels'] as string[];
 
-		// --- Shortcuts (with Alt-key migration + merge) ---
-
-		if (allSettings['shortcuts'] !== undefined) {
-			const result = migrateShortcuts(
-				allSettings['shortcuts'] as Record<string, Shortcut>,
-				DEFAULT_SHORTCUTS
-			);
-			patch.shortcuts = result.shortcuts;
-			if (result.needsMigration) {
-				window.maestro.settings.set('shortcuts', result.migratedRaw);
-			}
-		}
-
-		if (allSettings['tabShortcuts'] !== undefined) {
-			const result = migrateShortcuts(
-				allSettings['tabShortcuts'] as Record<string, Shortcut>,
-				TAB_SHORTCUTS
-			);
-			patch.tabShortcuts = result.shortcuts;
-			if (result.needsMigration) {
-				window.maestro.settings.set('tabShortcuts', result.migratedRaw);
-			}
-		}
+		hydrateShortcutsSettings(allSettings, patch);
 
 		// --- Custom AI Commands (merge with defaults, skip /synopsis migration) ---
 
@@ -2849,20 +2133,6 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['webInterfaceCustomPort'] !== undefined)
 			patch.webInterfaceCustomPort = allSettings['webInterfaceCustomPort'] as number;
 
-		if (allSettings['colorBlindMode'] !== undefined) {
-			// Legacy installs and the mobile/web client persist this as a
-			// string ('none', 'enabled', 'deuteranopia', 'protanopia',
-			// 'tritanopia', or the literal 'false'). A bare `as boolean` cast
-			// leaves any non-empty string truthy, so 'none' silently forced
-			// every Usage Dashboard chart onto the colorblind palette and
-			// hid the active theme's accent. Coerce explicitly: any string
-			// other than 'none'/'false'/'' is treated as "on".
-			const raw = allSettings['colorBlindMode'];
-			patch.colorBlindMode =
-				raw === true ||
-				(typeof raw === 'string' && raw !== 'none' && raw !== 'false' && raw !== '');
-		}
-
 		if (allSettings['showStarredInUnreadFilter'] !== undefined)
 			patch.showStarredInUnreadFilter = allSettings['showStarredInUnreadFilter'] as boolean;
 
@@ -2873,12 +2143,6 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['useCmd0AsLastTab'] !== undefined)
 			patch.useCmd0AsLastTab = allSettings['useCmd0AsLastTab'] as boolean;
-
-		if (allSettings['showBrowserTabDomain'] !== undefined)
-			patch.showBrowserTabDomain = allSettings['showBrowserTabDomain'] as boolean;
-
-		if (typeof allSettings['tabBarWheelScroll'] === 'boolean')
-			patch.tabBarWheelScroll = allSettings['tabBarWheelScroll'];
 
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)
@@ -2933,118 +2197,7 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['disableConfetti'] !== undefined)
 			patch.disableConfetti = allSettings['disableConfetti'] as boolean;
 
-		// Local file indexing ignore patterns (with array validation)
-		if (
-			allSettings['localIgnorePatterns'] !== undefined &&
-			Array.isArray(allSettings['localIgnorePatterns'])
-		) {
-			patch.localIgnorePatterns = allSettings['localIgnorePatterns'] as string[];
-		}
-
-		if (allSettings['localHonorGitignore'] !== undefined)
-			patch.localHonorGitignore = allSettings['localHonorGitignore'] as boolean;
-
-		if (
-			allSettings['fileExplorerMaxDepth'] !== undefined &&
-			typeof allSettings['fileExplorerMaxDepth'] === 'number' &&
-			Number.isFinite(allSettings['fileExplorerMaxDepth'])
-		) {
-			const raw = allSettings['fileExplorerMaxDepth'] as number;
-			patch.fileExplorerMaxDepth = Math.max(
-				FILE_EXPLORER_MIN_DEPTH,
-				Math.min(FILE_EXPLORER_MAX_DEPTH_CAP, Math.floor(raw))
-			);
-		}
-
-		if (
-			allSettings['fileExplorerMaxEntries'] !== undefined &&
-			typeof allSettings['fileExplorerMaxEntries'] === 'number' &&
-			Number.isFinite(allSettings['fileExplorerMaxEntries'])
-		) {
-			const raw = allSettings['fileExplorerMaxEntries'] as number;
-			patch.fileExplorerMaxEntries = Math.max(
-				FILE_EXPLORER_MIN_ENTRIES,
-				Math.min(FILE_EXPLORER_MAX_ENTRIES_CAP, Math.floor(raw))
-			);
-		}
-
-		if (typeof allSettings['sshReduceEntryCapEnabled'] === 'boolean') {
-			patch.sshReduceEntryCapEnabled = allSettings['sshReduceEntryCapEnabled'] as boolean;
-		}
-
-		if (
-			allSettings['sshReduceEntryCapFraction'] !== undefined &&
-			typeof allSettings['sshReduceEntryCapFraction'] === 'number' &&
-			Number.isFinite(allSettings['sshReduceEntryCapFraction'])
-		) {
-			const raw = allSettings['sshReduceEntryCapFraction'] as number;
-			const steps = Math.round(raw / SSH_REDUCE_ENTRY_CAP_STEP);
-			const snapped = steps * SSH_REDUCE_ENTRY_CAP_STEP;
-			patch.sshReduceEntryCapFraction = Math.max(
-				SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
-				Math.min(SSH_REDUCE_ENTRY_CAP_MAX_FRACTION, snapped)
-			);
-		}
-
-		// SSH Remote settings (with array validation)
-		if (
-			allSettings['sshRemoteIgnorePatterns'] !== undefined &&
-			Array.isArray(allSettings['sshRemoteIgnorePatterns'])
-		) {
-			patch.sshRemoteIgnorePatterns = allSettings['sshRemoteIgnorePatterns'] as string[];
-		}
-
-		if (allSettings['sshRemoteHonorGitignore'] !== undefined)
-			patch.sshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'] as boolean;
-
-		if (allSettings['useSystemBrowser'] !== undefined)
-			patch.useSystemBrowser = allSettings['useSystemBrowser'] as boolean;
-
-		if (allSettings['browserHomeUrl'] !== undefined)
-			patch.browserHomeUrl = allSettings['browserHomeUrl'] as string;
-
-		if (allSettings['htmlDoubleClickOpensInBrowser'] !== undefined)
-			patch.htmlDoubleClickOpensInBrowser = allSettings['htmlDoubleClickOpensInBrowser'] as boolean;
-
-		if (allSettings['browserTabKeepAlive'] !== undefined)
-			patch.browserTabKeepAlive = allSettings['browserTabKeepAlive'] as 'off' | 'recent' | 'all';
-
-		if (allSettings['browserTabKeepAliveLimit'] !== undefined)
-			patch.browserTabKeepAliveLimit = allSettings['browserTabKeepAliveLimit'] as number;
-
-		if (allSettings['automaticTabNamingEnabled'] !== undefined)
-			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;
-
-		if (allSettings['newTabPlacement'] !== undefined) {
-			const placement = allSettings['newTabPlacement'];
-			if (placement === 'end' || placement === 'after-current') {
-				patch.newTabPlacement = placement;
-			}
-		}
-
-		if (allSettings['newBrowserTabPlacement'] !== undefined) {
-			const placement = allSettings['newBrowserTabPlacement'];
-			if (placement === 'end' || placement === 'after-current') {
-				patch.newBrowserTabPlacement = placement;
-			}
-		}
-
-		if (allSettings['newTerminalPlacement'] !== undefined) {
-			const placement = allSettings['newTerminalPlacement'];
-			if (placement === 'end' || placement === 'after-current') {
-				patch.newTerminalPlacement = placement;
-			}
-		}
-
-		if (allSettings['openedFilePlacement'] !== undefined) {
-			const placement = allSettings['openedFilePlacement'];
-			if (placement === 'end' || placement === 'after-current') {
-				patch.openedFilePlacement = placement;
-			}
-		}
-
-		if (allSettings['fileTabAutoRefreshEnabled'] !== undefined)
-			patch.fileTabAutoRefreshEnabled = allSettings['fileTabAutoRefreshEnabled'] as boolean;
+		hydrateBrowserTabsSettings(allSettings, patch);
 
 		if (allSettings['suppressWindowsWarning'] !== undefined)
 			patch.suppressWindowsWarning = allSettings['suppressWindowsWarning'] as boolean;
@@ -3107,14 +2260,7 @@ export async function loadAllSettings(): Promise<void> {
 			};
 		}
 
-		if (allSettings['wakatimeApiKey'] !== undefined)
-			patch.wakatimeApiKey = allSettings['wakatimeApiKey'] as string;
-
-		if (allSettings['wakatimeEnabled'] !== undefined)
-			patch.wakatimeEnabled = allSettings['wakatimeEnabled'] as boolean;
-
-		if (allSettings['wakatimeDetailedTracking'] !== undefined)
-			patch.wakatimeDetailedTracking = allSettings['wakatimeDetailedTracking'] as boolean;
+		hydrateWakatimeSettings(allSettings, patch);
 
 		if (allSettings['useNativeTitleBar'] !== undefined)
 			patch.useNativeTitleBar = allSettings['useNativeTitleBar'] as boolean;
@@ -3122,53 +2268,7 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
-		if (allSettings['showAgentName'] !== undefined)
-			patch.showAgentName = allSettings['showAgentName'] as boolean;
-
-		if (allSettings['showSessionIdPill'] !== undefined)
-			patch.showSessionIdPill = allSettings['showSessionIdPill'] as boolean;
-
-		if (allSettings['showSessionCostPill'] !== undefined)
-			patch.showSessionCostPill = allSettings['showSessionCostPill'] as boolean;
-
-		if (allSettings['showWorktreePill'] !== undefined)
-			patch.showWorktreePill = allSettings['showWorktreePill'] as boolean;
-
-		if (allSettings['showWorktreeBranchName'] !== undefined)
-			patch.showWorktreeBranchName = allSettings['showWorktreeBranchName'] as boolean;
-
-		if (allSettings['showStarredSessionsSection'] !== undefined)
-			patch.showStarredSessionsSection = allSettings['showStarredSessionsSection'] as boolean;
-
-		if (allSettings['showLeftPanelGroupMemberCount'] !== undefined)
-			patch.showLeftPanelGroupMemberCount = allSettings['showLeftPanelGroupMemberCount'] as boolean;
-
-		if (allSettings['leftPanelCollapsedPillsPerRow'] !== undefined) {
-			const perRow = allSettings['leftPanelCollapsedPillsPerRow'] as number;
-			if (typeof perRow === 'number' && perRow >= 5 && perRow <= 50) {
-				patch.leftPanelCollapsedPillsPerRow = perRow;
-			}
-		}
-
-		if (allSettings['showLeftPanelLocationPills'] !== undefined)
-			patch.showLeftPanelLocationPills = allSettings['showLeftPanelLocationPills'] as boolean;
-
-		if (allSettings['showLeftPanelGitIndicator'] !== undefined)
-			patch.showLeftPanelGitIndicator = allSettings['showLeftPanelGitIndicator'] as boolean;
-
-		if (allSettings['showLeftPanelCueIndicator'] !== undefined)
-			patch.showLeftPanelCueIndicator = allSettings['showLeftPanelCueIndicator'] as boolean;
-
-		if (allSettings['showLeftPanelStartupCommandIndicator'] !== undefined)
-			patch.showLeftPanelStartupCommandIndicator = allSettings[
-				'showLeftPanelStartupCommandIndicator'
-			] as boolean;
-
-		if (allSettings['showGroupLabelInBookmarks'] !== undefined)
-			patch.showGroupLabelInBookmarks = allSettings['showGroupLabelInBookmarks'] as boolean;
-
-		if (allSettings['showFullGroupLabelInBookmarks'] !== undefined)
-			patch.showFullGroupLabelInBookmarks = allSettings['showFullGroupLabelInBookmarks'] as boolean;
+		hydrateLeftPanelDisplaySettings(allSettings, patch);
 
 		if (allSettings['fileEditWordWrap'] !== undefined)
 			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
@@ -3233,38 +2333,7 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
 
-		if (allSettings['annotatorPenColor'] !== undefined)
-			patch.annotatorPenColor = allSettings['annotatorPenColor'] as string;
-
-		if (allSettings['annotatorPenSize'] !== undefined)
-			patch.annotatorPenSize = allSettings['annotatorPenSize'] as number;
-
-		if (allSettings['annotatorThinning'] !== undefined)
-			patch.annotatorThinning = allSettings['annotatorThinning'] as number;
-
-		if (allSettings['annotatorSmoothing'] !== undefined)
-			patch.annotatorSmoothing = allSettings['annotatorSmoothing'] as number;
-
-		if (allSettings['annotatorStreamline'] !== undefined)
-			patch.annotatorStreamline = allSettings['annotatorStreamline'] as number;
-
-		if (allSettings['annotatorTaperStart'] !== undefined)
-			patch.annotatorTaperStart = allSettings['annotatorTaperStart'] as number;
-
-		if (allSettings['annotatorTaperEnd'] !== undefined)
-			patch.annotatorTaperEnd = allSettings['annotatorTaperEnd'] as number;
-
-		if (allSettings['annotatorTextColor'] !== undefined)
-			patch.annotatorTextColor = allSettings['annotatorTextColor'] as string;
-
-		if (allSettings['annotatorTextSize'] !== undefined)
-			patch.annotatorTextSize = allSettings['annotatorTextSize'] as number;
-
-		if (allSettings['annotatorTextFont'] !== undefined)
-			patch.annotatorTextFont = allSettings['annotatorTextFont'] as string;
-
-		if (allSettings['annotatorTextBgColor'] !== undefined)
-			patch.annotatorTextBgColor = allSettings['annotatorTextBgColor'] as string;
+		hydrateAnnotatorSettings(allSettings, patch);
 
 		// On a RELOAD (system resume, another window's write), drop any key the user
 		// changed while the reads above were in flight. This load is several IPC

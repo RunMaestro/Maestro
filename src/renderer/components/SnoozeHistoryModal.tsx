@@ -8,11 +8,12 @@
  * Reached from the "View History" link in the Snoozed Tabs modal.
  */
 
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { History, StickyNote, RotateCcw, BellRing, X } from 'lucide-react';
 import type { Theme, SnoozeHistoryEntry, SnoozeResolution } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui';
+import { useSessionStore } from '../stores/sessionStore';
 import { useSnoozeHistoryStore, MAX_SNOOZE_HISTORY } from '../stores/snoozeHistoryStore';
 import { formatSnoozeTarget } from '../../shared/snooze';
 import { formatRelativeTime } from '../../shared/formatters';
@@ -20,6 +21,11 @@ import { formatRelativeTime } from '../../shared/formatters';
 export interface SnoozeHistoryModalProps {
 	theme: Theme;
 	onClose: () => void;
+	/**
+	 * Focus an agent (and its tab, when the tab is still open). Omitted `tabId`
+	 * means "just switch to the agent".
+	 */
+	onJumpToTab?: (sessionId: string, tabId?: string) => void;
 }
 
 /** Icon and wording per resolution, so the three outcomes read distinctly. */
@@ -44,14 +50,37 @@ const RESOLUTION_META: Record<
 	},
 };
 
-export function SnoozeHistoryModal({ theme, onClose }: SnoozeHistoryModalProps) {
+export function SnoozeHistoryModal({ theme, onClose, onJumpToTab }: SnoozeHistoryModalProps) {
 	const entries = useSnoozeHistoryStore((state) => state.entries);
+	const sessions = useSessionStore((state) => state.sessions);
 
 	// The store keeps entries newest-first, but sort defensively so the view is
 	// chronological regardless of how the log was written or hydrated.
 	const ordered = useMemo(
 		() => [...entries].sort((a, b) => b.resolvedAt - a.resolvedAt),
 		[entries]
+	);
+
+	/**
+	 * Where a history row can actually take you, resolved against LIVE state.
+	 *
+	 * A history entry is a snapshot of a past resolution, so its ids go stale:
+	 * the agent may have been deleted, the tab closed since it woke, and a
+	 * `dismissed` entry never had its tab restored at all. Resolving here (rather
+	 * than trusting the stored ids) is what keeps a row from promising a jump it
+	 * can't make.
+	 *
+	 * Returns null when the agent is gone, and a target with no `tabId` when the
+	 * agent is still around but that particular tab isn't.
+	 */
+	const resolveJumpTarget = useCallback(
+		(entry: SnoozeHistoryEntry): { sessionName: string; tabId?: string } | null => {
+			const session = sessions.find((s) => s.id === entry.sessionId);
+			if (!session) return null;
+			const tabIsOpen = !!entry.tabId && session.aiTabs?.some((t) => t.id === entry.tabId);
+			return { sessionName: session.name, tabId: tabIsOpen ? entry.tabId : undefined };
+		},
+		[sessions]
 	);
 
 	return (
@@ -85,11 +114,38 @@ export function SnoozeHistoryModal({ theme, onClose }: SnoozeHistoryModalProps) 
 								const meta = RESOLUTION_META[entry.resolution];
 								const Icon = meta.icon;
 								const dismissed = entry.resolution === 'dismissed';
+								const target = onJumpToTab ? resolveJumpTarget(entry) : null;
+								// Say up front what the click will do, including when the tab
+								// is gone and only the agent is left to open.
+								const jumpTitle = !target
+									? `${entry.sessionName || 'That agent'} is no longer available`
+									: target.tabId
+										? `Jump to this tab in ${target.sessionName}`
+										: `Open ${target.sessionName} - that tab is no longer open`;
 
 								return (
 									<div
 										key={entry.id}
-										className="rounded px-3 py-2.5"
+										role={target ? 'button' : undefined}
+										tabIndex={target ? 0 : undefined}
+										title={jumpTitle}
+										aria-label={target ? `${entry.label}. ${jumpTitle}` : undefined}
+										onClick={
+											target ? () => onJumpToTab?.(entry.sessionId, target.tabId) : undefined
+										}
+										onKeyDown={
+											target
+												? (e) => {
+														if (e.key === 'Enter' || e.key === ' ') {
+															e.preventDefault();
+															onJumpToTab?.(entry.sessionId, target.tabId);
+														}
+													}
+												: undefined
+										}
+										className={`rounded px-3 py-2.5 outline-none ${
+											target ? 'cursor-pointer hover:bg-white/5 transition-colors' : ''
+										}`}
 										style={{
 											backgroundColor: theme.colors.bgActivity,
 											border: `1px solid ${theme.colors.border}`,

@@ -16,8 +16,18 @@
  * imported from both the main process and the renderer.
  */
 
-/** The three fixed narrative section kinds, matching the prompt contract. */
-export type NarrativeSectionKind = 'accomplishments' | 'challenges' | 'nextSteps';
+/**
+ * The narrative section kinds, matching the prompt contract.
+ *
+ * `accomplishments` / `challenges` / `nextSteps` are always requested.
+ * `progress` is CONDITIONAL: the prompt only asks for it when the user has
+ * filled in the Ideal End State setting, so a report generated without one has
+ * exactly the three original sections. It is accepted unconditionally here -
+ * the parser's job is to validate shape, not to re-derive which sections the
+ * prompt asked for, and a cached report from a run that had an end state must
+ * still parse after the setting is cleared.
+ */
+export type NarrativeSectionKind = 'accomplishments' | 'challenges' | 'nextSteps' | 'progress';
 
 /** Optional per-item severity used to style bullet emphasis in Rich Mode. */
 export type NarrativeItemSeverity = 'info' | 'warn' | 'critical';
@@ -62,13 +72,18 @@ const VALID_KINDS: ReadonlySet<string> = new Set<NarrativeSectionKind>([
 	'accomplishments',
 	'challenges',
 	'nextSteps',
+	'progress',
 ]);
+
+/** Human-readable kind list, kept in sync with {@link VALID_KINDS} for errors. */
+const VALID_KINDS_MESSAGE = [...VALID_KINDS].map((k) => `"${k}"`).join(', ');
 
 /** Fallback headings when a salvaged section is missing its `title`. */
 const DEFAULT_SECTION_TITLES: Record<NarrativeSectionKind, string> = {
 	accomplishments: 'Accomplishments',
 	challenges: 'Challenges',
 	nextSteps: 'Next Steps',
+	progress: 'Progress Toward Ideal End State',
 };
 
 const VALID_SEVERITIES: ReadonlySet<string> = new Set<NarrativeItemSeverity>([
@@ -136,7 +151,7 @@ function validateSection(
 	if (typeof raw.kind !== 'string' || !VALID_KINDS.has(raw.kind)) {
 		return {
 			ok: false,
-			error: `${where}.kind must be one of "accomplishments", "challenges", "nextSteps".`,
+			error: `${where}.kind must be one of ${VALID_KINDS_MESSAGE}.`,
 		};
 	}
 	if (typeof raw.title !== 'string') {
@@ -525,8 +540,8 @@ function narrativeItemToMarkdown(item: NarrativeItem): string {
  * reading experience instead of dumping the JSON.
  *
  * Each section becomes a `##` heading followed by a bullet list. Empty sections
- * still render their heading plus a "Nothing to report." note so the three-part
- * Accomplishments / Challenges / Next Steps structure is always recognizable.
+ * still render their heading plus a "Nothing to report." note so the report's
+ * section structure is always recognizable.
  */
 export function narrativeToMarkdown(narrative: DirectorNotesNarrative): string {
 	const blocks = narrative.sections.map((section) => {

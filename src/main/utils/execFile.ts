@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { isWindows } from '../../shared/platformDetection';
@@ -261,20 +261,33 @@ export function execFileStreaming(
 	child.stderr?.on('data', collect('stderr'));
 
 	const result = new Promise<ExecResult>((resolve) => {
-		child.on('close', (code) => {
-			resolve({
-				stdout,
-				stderr,
-				exitCode: cancelled ? 'SIGTERM' : (code ?? 1),
-			});
-		});
+		// Spawn failures emit both 'error' and 'close'. Prefer the errno from
+		// 'error' (ENOENT, EACCES, ...) over close's platform-specific sentinel
+		// (null / -2 / 1), which would otherwise win the Promise race.
+		let spawnErr: NodeJS.ErrnoException | undefined;
+		let settled = false;
+
+		const settle = (payload: ExecResult) => {
+			if (settled) return;
+			settled = true;
+			resolve(payload);
+		};
 
 		child.on('error', (err) => {
-			resolve({
+			spawnErr = err as NodeJS.ErrnoException;
+			settle({
 				stdout,
 				stderr: stderr || err.message,
 				// Node stamps spawn failures with a string code (ENOENT, EACCES, ...).
-				exitCode: (err as NodeJS.ErrnoException).code ?? 1,
+				exitCode: spawnErr.code ?? 1,
+			});
+		});
+
+		child.on('close', (code) => {
+			settle({
+				stdout,
+				stderr: stderr || spawnErr?.message || '',
+				exitCode: cancelled ? 'SIGTERM' : (spawnErr?.code ?? code ?? 1),
 			});
 		});
 	});
@@ -353,4 +366,22 @@ async function execFileWithInput(
 			child.stdin.end();
 		}
 	});
+}
+
+/**
+ * Synchronous, never-throwing variant. Returns '' on any failure.
+ *
+ * Blocking the main thread is normally the wrong call, so this exists for one
+ * narrow case: reading state that becomes UNAVAILABLE if you wait. Killing a
+ * process tree is the motivating example - once the parent dies its children
+ * are re-parented to launchd/init, so a ppid snapshot taken asynchronously
+ * (even a few ms later) can no longer find them. The read has to complete
+ * before the kill, and it is only ever triggered by an explicit user action.
+ */
+export function execFileSyncNoThrow(command: string, args: string[] = [], timeout = 2000): string {
+	try {
+		return execFileSync(command, args, { timeout, encoding: 'utf-8' }).toString();
+	} catch {
+		return '';
+	}
 }

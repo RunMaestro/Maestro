@@ -62,6 +62,7 @@ const defaultProps = {
 	onOpenInExplorer: vi.fn(),
 	onOpenNewFile: vi.fn(),
 	onOpenNewFolder: vi.fn(),
+	onNewAgentHere: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
 	onPreviewMulti: vi.fn(),
@@ -102,6 +103,45 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Preview All 2 Files in Folder')).toBeTruthy();
 		expect(screen.getByText('Copy Path')).toBeTruthy();
 		expect(screen.queryByText('Preview')).toBeNull();
+	});
+
+	it('shows New Agent Here for a folder and fires the callback', () => {
+		const onNewAgentHere = vi.fn();
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				onNewAgentHere={onNewAgentHere}
+				contextMenu={makeContextMenu(folderNode)}
+			/>
+		);
+		fireEvent.click(screen.getByText('New Agent Here'));
+		expect(onNewAgentHere).toHaveBeenCalledTimes(1);
+	});
+
+	it('hides New Agent Here for files and for the empty-space root menu', () => {
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+		unmount();
+
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={{ x: 1, y: 2, node: null, path: '' }} />
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+	});
+
+	it('hides New Agent Here over SSH, where the folder path is remote', () => {
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				sshRemoteId="remote-1"
+				contextMenu={makeContextMenu(folderNode)}
+			/>
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+		// The rest of the folder menu is unaffected.
+		expect(screen.getByText('New Folder')).toBeTruthy();
 	});
 
 	it('pluralizes the preview-all label to singular for one previewable file', () => {

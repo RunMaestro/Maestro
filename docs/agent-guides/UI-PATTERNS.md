@@ -142,6 +142,40 @@ The shared `<Modal>` component wires this up automatically via `resizable`/`resi
 
 When two toggleable states of the same modal need independent footprints (e.g. Prompt Composer's compact vs. fullscreen), use two distinct `resizeKey`s (`prompt-composer-compact` / `prompt-composer-fullscreen`) rather than one shared key with a mode-dependent `defaultSize` - `defaultSize` is only consulted before the first saved size exists, so a single key would let one mode's manual resize silently pin the other mode's size too.
 
+### Modals Opened From Inside the Main Panel
+
+A modal rendered from a component that lives inside the Main Panel (file
+preview renderers, terminal views, chat surfaces) MUST pass `portal` to
+`<Modal>`:
+
+```tsx
+<Modal theme={theme} title="Row 1" priority={MODAL_PRIORITIES.CSV_ROW_DETAIL} portal>
+```
+
+`MainPanel.tsx` wraps the session view in `isolate` (`isolation: isolate`),
+which creates a stacking context. A `fixed inset-0` backdrop rendered inside
+that subtree is still full-viewport in size, but its `z-index: 9999` only ranks
+it _within_ MainPanel's context. The Left Bar (`SessionList.tsx`, `relative
+z-20`) and the Right Panel (later in DOM order) are siblings of that context, so
+they paint on top: the center dims while both side panels stay fully lit, and
+the modal looks clipped to the middle of the window.
+
+No z-index fixes this - ranking never crosses a stacking context. Rendering into
+`document.body` is the only escape, which is what `portal` does. Most modals
+mount at the App root already and don't need it, which is why it is opt-in.
+
+Because jsdom has no layout engine, a test asserting `toBeInTheDocument()`
+passes whether or not the modal escaped. Assert it is **not** a descendant of
+its host subtree instead:
+
+```tsx
+expect(container.querySelector('.csv-table-renderer')).not.toContainElement(modal);
+expect(modal.parentElement).toBe(document.body);
+```
+
+React context flows through portals, so `useModalLayer` registration, Escape
+handling, and theming are unaffected by the relocation.
+
 ### Resizable Textareas
 
 Any textarea with a native `resize-y` grip should remember the height the user drags it to. A size someone picked by hand is a preference, so snapping back to the default on the next open (or the next app launch) is a bug, not a reset.
@@ -202,6 +236,29 @@ In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
 - `top()` - log the topmost layer
 - `simulate.escape()` - dispatch an Escape event
 - `simulate.closeAll()` - clear the entire stack
+
+### Every Modal Needs a Graphical Exit (`<EscCloseButton>`)
+
+**Rule:** a modal, palette, or find bar must always be dismissable with the pointer alone. Escape is not enough: remote desktop sessions swallow it, tablets driving the web interface have no key to send, and a keyboard-only exit reads as "stuck" to the user.
+
+The `ESC` pill is that exit. Use `<EscCloseButton>` (`src/renderer/components/ui/EscCloseButton.tsx`) - do NOT hand-roll the `px-2 py-0.5 rounded text-xs font-bold` pill again. It was previously copy-pasted as an inert `<div>` (three of them with `pointer-events-none`) in nine places, so every one of those surfaces advertised an exit that did nothing on click.
+
+```tsx
+// Header pill, sitting in the search row
+<EscCloseButton theme={theme} onClose={onClose} />
+
+// Adornment pill, absolutely positioned inside a `relative` input wrapper
+<EscCloseButton
+	theme={theme}
+	variant="adornment"
+	label="Close filter (Esc)"
+	onClose={handleFilterEscape}
+/>
+```
+
+`onClose` must do **exactly** what pressing Escape does. When the Escape path lives in a `useModalLayer` / `registerLayer` callback, extract it into a named `useCallback` and pass the same function to both, rather than duplicating the body (see `TerminalOutput`'s `closeOutputSearch` and `QuickActionsModal`'s `handleEscape`).
+
+Tests: query the pill by role, not by index. It is a real `<button>` now, so `getAllByRole('button')[n]` in a modal test counts it - scope list assertions to the rows themselves (e.g. `[data-action-label]`).
 
 ### Text Selection in Modals
 
@@ -531,6 +588,23 @@ The original API used `type: 'success' | 'info' | 'warning' | 'error'`. It is st
 | `error`     | `red`         |
 
 Existing in-app callers using `type:` continue to work without changes.
+
+---
+
+## Above-Modal Layering (`Z_LAYERS`)
+
+Ordinary modals use plain Tailwind classes: `z-[9999]` for the backdrop, `z-[10000]`/`z-[10001]` for menus and tooltips anchored inside one. Those numbers only ever compete with each other, so they stay inline.
+
+The handful of overlays that deliberately outrank a modal read their value from `Z_LAYERS` in `src/renderer/constants/zLayers.ts`. Their relative order is a product decision, so it lives in one file instead of being rediscovered as a magic number per component:
+
+| Layer                    | Surface                                                         |
+| ------------------------ | --------------------------------------------------------------- |
+| `Z_LAYERS.CONFETTI`      | Celebration particles - decorative, sits under real UI          |
+| `Z_LAYERS.TOAST`         | `ToastContainer` - visible over modals so results aren't missed |
+| `Z_LAYERS.QUICK_ACTIONS` | Command palette - owns the screen, including over toasts        |
+| `Z_LAYERS.CENTER_FLASH`  | Momentary ack - always the top-most pixel                       |
+
+Do NOT add a new hard-coded five-digit z-index. If a surface needs to sit above a modal, give it an entry here so the ordering stays reviewable. Note that a z-index only ranks within its stacking context: a portal to `document.body` (toasts, center flash) always compares against the root, while an inline overlay compares against its nearest ancestor that establishes a context.
 
 ---
 

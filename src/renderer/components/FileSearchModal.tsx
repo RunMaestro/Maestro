@@ -12,6 +12,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { isAbsolutePath, getBasename } from '../../shared/formatters';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { EscCloseButton } from './ui/EscCloseButton';
 
 /** Flattened file item for the search list */
 export interface FlatFileItem {
@@ -484,12 +485,7 @@ export function FileSearchModal({
 								{formatShortcutKeys(shortcut.keys)}
 							</span>
 						)}
-						<div
-							className="px-2 py-0.5 rounded text-xs font-bold"
-							style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
-						>
-							ESC
-						</div>
+						<EscCloseButton theme={theme} onClose={onClose} />
 					</div>
 				</div>
 

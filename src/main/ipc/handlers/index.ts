@@ -73,6 +73,8 @@ import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
+import { registerTabsHandlers } from './tabs';
+import { registerContextTimelineHandlers } from './context-timeline';
 import { registerAgentRunHandlers } from './agent-run';
 import {
 	registerWindowsHandlers,
@@ -151,6 +153,7 @@ export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
+export { registerTabsHandlers };
 export { registerAgentRunHandlers };
 export { registerWindowsHandlers };
 export { wireWindowRegistryBroadcast };
@@ -366,6 +369,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPromptsHandlers();
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+	// Register tab lifecycle handlers (renderer -> main tab-close notification)
+	registerTabsHandlers();
+	// Register Context Timeline capture handlers (per-agent turn history backfill)
+	registerContextTimelineHandlers();
 	// Register AgentRun control-plane handlers (neutral run/campaign ledger)
 	registerAgentRunHandlers({
 		getProcessManager: deps.getProcessManager,

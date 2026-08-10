@@ -82,6 +82,16 @@ export function handleCreateSession(
 	if (message.customEffort) config.customEffort = message.customEffort as string;
 	if (message.customContextWindow)
 		config.customContextWindow = message.customContextWindow as number;
+	// Provenance for the key above. This allowlist is explicit, so omitting it
+	// would silently drop the CLI's `--context-window` intent - the same failure
+	// mode as the EDITABLE_KEYS allowlist in the remote patch applier (AD1).
+	// Gated on the window actually being accepted: provenance describes a value,
+	// so a source-only payload would leave a marker with nothing to describe, and
+	// that orphan would then outrank a provider report for whatever window is set
+	// later (review of PR #1362).
+	if (config.customContextWindow !== undefined && message.contextWindowSource === 'user-edited') {
+		config.contextWindowSource = 'user-edited';
+	}
 	if (message.customProviderPath) config.customProviderPath = message.customProviderPath as string;
 	if (message.sessionSshRemoteConfig) {
 		config.sessionSshRemoteConfig =

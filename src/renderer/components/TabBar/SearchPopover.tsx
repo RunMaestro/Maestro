@@ -25,6 +25,37 @@ interface SearchPopoverProps {
 }
 
 /**
+ * Count badge for a popover row (open tabs, snoozed tabs).
+ *
+ * Deliberately rendered inline, right after the row's label, and never with
+ * `ml-auto`: the right edge of every row belongs to the keyboard shortcut, so a
+ * right-aligned number reads as a keybind rather than a count.
+ */
+function CountPill({
+	theme,
+	count,
+	ariaLabel,
+}: {
+	theme: Theme;
+	count: number;
+	ariaLabel: string;
+}) {
+	return (
+		<span
+			className="px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-none"
+			style={{
+				backgroundColor: `${theme.colors.accent}20`,
+				color: theme.colors.accent,
+				border: `1px solid ${theme.colors.accent}40`,
+			}}
+			aria-label={ariaLabel}
+		>
+			{count}
+		</span>
+	);
+}
+
+/**
  * The search button and its popover menu.
  * Shows options for searching tabs or searching message history.
  */
@@ -136,17 +167,11 @@ export const SearchPopover = memo(function SearchPopover({
 							<Search className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							Search Tabs
 							{typeof openTabCount === 'number' && (
-								<span
-									className="px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-none"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
-									aria-label={`${openTabCount} open tabs`}
-								>
-									{openTabCount}
-								</span>
+								<CountPill
+									theme={theme}
+									count={openTabCount}
+									ariaLabel={`${openTabCount} open tabs`}
+								/>
 							)}
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
 								{formatShortcutKeys(tabSwitcherKeys)}
@@ -189,12 +214,11 @@ export const SearchPopover = memo(function SearchPopover({
 							<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							See All Snoozed Tabs
 							{snoozedTabCount != null && snoozedTabCount > 0 && (
-								<span
-									className="ml-auto text-[10px] px-1.5 py-0.5 rounded"
-									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-								>
-									{snoozedTabCount}
-								</span>
+								<CountPill
+									theme={theme}
+									count={snoozedTabCount}
+									ariaLabel={`${snoozedTabCount} snoozed tabs`}
+								/>
 							)}
 						</button>
 					</div>,

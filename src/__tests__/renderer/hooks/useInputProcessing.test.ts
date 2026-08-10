@@ -183,9 +183,14 @@ describe('useInputProcessing', () => {
 		});
 	});
 
-	describe('command mode (!)', () => {
-		it('runs a bang message as a shell command instead of sending it to the agent', async () => {
-			const deps = createDeps({ inputValue: '!git status' });
+	describe('command mode', () => {
+		// Command mode is composer state now, so routing is driven by the
+		// isCommandMode dep - NOT by a `!` in the text (the gesture consumes it).
+		const commandModeDeps = (overrides: Parameters<typeof createDeps>[0] = {}) =>
+			createDeps({ isCommandMode: () => true, ...overrides });
+
+		it('runs the draft as a shell command instead of sending it to the agent', async () => {
+			const deps = commandModeDeps({ inputValue: 'git status' });
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {
@@ -201,10 +206,39 @@ describe('useInputProcessing', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		});
 
+		it('runs a command containing bangs verbatim', async () => {
+			// The bang is no longer a sentinel, so it is ordinary shell text here.
+			const deps = commandModeDeps({ inputValue: "find . -name '*!*'" });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(vi.mocked(runShellCommand).mock.calls[0][0]).toMatchObject({
+				command: "find . -name '*!*'",
+			});
+		});
+
+		it('records history bang-prefixed so it can be told from agent messages', async () => {
+			const deps = commandModeDeps({ inputValue: 'npm test' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			let sessions = [deps.activeSession!];
+			for (const [updater] of mockSetSessions.mock.calls) {
+				sessions = typeof updater === 'function' ? updater(sessions) : updater;
+			}
+			expect(sessions[0].aiCommandHistory).toContain('!npm test');
+		});
+
 		it('runs immediately even while the agent is busy', async () => {
 			const session = createMockSession({ state: 'busy' });
 			session.aiTabs[0].state = 'busy';
-			const deps = createDeps({ activeSession: session, inputValue: '!ls' });
+			const deps = commandModeDeps({ activeSession: session, inputValue: 'ls' });
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {
@@ -214,11 +248,25 @@ describe('useInputProcessing', () => {
 			expect(runShellCommand).toHaveBeenCalledTimes(1);
 		});
 
+		it('does nothing at all on an empty command line', async () => {
+			// Must not fall through to the agent: the user is sitting at a shell
+			// prompt, not composing a message.
+			const deps = commandModeDeps({ inputValue: '   ' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
 		it('does not intercept in terminal mode', async () => {
 			const session = createMockSession({ inputMode: 'terminal' });
-			const deps = createDeps({
+			const deps = commandModeDeps({
 				activeSession: session,
-				inputValue: '!ls',
+				inputValue: 'ls',
 				isAiMode: false,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
@@ -231,7 +279,7 @@ describe('useInputProcessing', () => {
 		});
 
 		it('does not intercept while the wizard is active', async () => {
-			const deps = createDeps({ inputValue: '!ls', isWizardActive: true });
+			const deps = commandModeDeps({ inputValue: 'ls', isWizardActive: true });
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {
@@ -241,8 +289,20 @@ describe('useInputProcessing', () => {
 			expect(runShellCommand).not.toHaveBeenCalled();
 		});
 
-		it('leaves ordinary messages alone', async () => {
+		it('leaves ordinary messages alone when not in command mode', async () => {
 			const deps = createDeps({ inputValue: 'fix the bug' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+		});
+
+		it('sends a bare bang message to the agent when NOT in command mode', async () => {
+			// Without the mode flag a leading `!` is just text - nothing runs.
+			const deps = createDeps({ inputValue: '!not a command' });
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {

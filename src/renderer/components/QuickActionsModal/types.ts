@@ -103,8 +103,6 @@ export interface QuickActionsModalProps {
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
-	setGitDiffPreview: (diff: string | null) => void;
-	setGitLogOpen: (open: boolean) => void;
 	onRenameTab?: () => void;
 	onToggleReadOnlyMode?: () => void;
 	onToggleTabShowThinking?: () => void;

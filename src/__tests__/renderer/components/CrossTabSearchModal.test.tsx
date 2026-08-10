@@ -166,6 +166,30 @@ describe('CrossTabSearchModal', () => {
 		expect(screen.getByText(/Invalid regex:/)).toBeInTheDocument();
 	});
 
+	// Remote desktop and tablet users have no Escape key to reach for.
+	it('closes when the ESC pill is clicked', () => {
+		const { onClose } = renderModal();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	// jsdom has no layout engine, so this pins the geometry by class: the overlay
+	// must center its box the way TabSwitcherModal does (p-8 == the 32px
+	// MODAL_VIEWPORT_PADDING) with the same 700px height, so both search entry
+	// points in the search popover open at the same top Y.
+	it('centers its box like the tab switcher instead of hugging the top', () => {
+		renderModal();
+		const dialog = screen.getByRole('dialog');
+		const overlay = dialog.parentElement as HTMLElement;
+
+		expect(overlay.className).toContain('items-center');
+		expect(overlay.className).toContain('p-8');
+		expect(overlay.className).not.toContain('items-start');
+		expect(dialog.className).toContain('h-[700px]');
+	});
+
 	it('shows a match-count pill when an entry contains several hits', () => {
 		renderModal({
 			tabs: [

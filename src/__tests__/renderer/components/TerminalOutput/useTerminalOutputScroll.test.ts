@@ -469,3 +469,256 @@ describe('useTerminalOutputScroll content-resize re-pin (O1)', () => {
 		expect(resizeObservers).toHaveLength(0);
 	});
 });
+
+/**
+ * Y1: a deliberately scrolled-up position used to be lost when the user swapped
+ * agents within the 200ms scroll-save debounce.
+ *
+ * The two halves of the saved scroll state are persisted on different
+ * schedules inside handleScrollInner: the at-bottom flag goes out
+ * SYNCHRONOUSLY (but only on a transition), while the absolute offset is
+ * debounced by 200ms. The unmount cleanup DROPS the pending debounced save
+ * rather than flushing it (deliberately - see the cleanup comment and #1323:
+ * onScrollPositionChange resolves its target tab at call time, and during an
+ * agent swap the store already points at the incoming session).
+ *
+ * A fast swap therefore persisted `isAtBottom: false` with no matching
+ * scrollTop, the remount restore gate (which requires initialScrollTop > 0)
+ * skipped, and the mount-time bottom jump won.
+ *
+ * The fix writes the offset alongside the flag inside the transition block, so
+ * the saved pair can never disagree. These tests are the post-fix contract.
+ */
+describe('scrolled-up persistence across unmount (Y1)', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	function mountWithSpies(container: HTMLDivElement) {
+		const ref = { current: container };
+		const onScrollPositionChange = vi.fn();
+		const onAtBottomChange = vi.fn();
+
+		const hook = renderHook(() =>
+			useTerminalOutputScroll({
+				scrollContainerRef: ref,
+				sessionId: 's1',
+				activeTabId: 't1',
+				filteredLogsLength: 3,
+				onScrollPositionChange,
+				onAtBottomChange,
+			})
+		);
+
+		return { ref, hook, onScrollPositionChange, onAtBottomChange };
+	}
+
+	it('persists the offset with the flag when the swap beats the 200ms debounce', () => {
+		// 10000 - 5000 - 200 = 4800px from the bottom: well past the 50px
+		// at-bottom threshold, so this is a deliberate scroll-up.
+		const { hook, onScrollPositionChange, onAtBottomChange } = mountWithSpies(
+			makeContainer(10000, 200, 5000)
+		);
+
+		// The throttle runs on the leading edge, so this first call reaches
+		// handleScrollInner without any timer advance.
+		act(() => {
+			hook.result.current.handleScroll();
+		});
+
+		// Both halves go out synchronously, in the same transition flush.
+		expect(onAtBottomChange).toHaveBeenCalledWith(false);
+		expect(onScrollPositionChange).toHaveBeenCalledWith(5000);
+		expect(hook.result.current.isAtBottom).toBe(false);
+
+		// The user swaps agents before the 200ms debounce would have fired. The
+		// pending save is still dropped, but the position is already persisted.
+		act(() => {
+			vi.advanceTimersByTime(100);
+		});
+		hook.unmount();
+		act(() => {
+			vi.advanceTimersByTime(500);
+		});
+
+		expect(onScrollPositionChange).toHaveBeenCalledTimes(1);
+		expect(onScrollPositionChange).toHaveBeenLastCalledWith(5000);
+	});
+
+	it('persists the offset again on the transition back to the bottom', () => {
+		const { ref, hook, onScrollPositionChange, onAtBottomChange } = mountWithSpies(
+			makeContainer(10000, 200, 5000)
+		);
+
+		act(() => {
+			hook.result.current.handleScroll();
+		});
+		expect(onAtBottomChange).toHaveBeenLastCalledWith(false);
+		expect(onScrollPositionChange).toHaveBeenLastCalledWith(5000);
+
+		// Back to the live bottom (10000 - 9800 - 200 = 0px from the bottom).
+		// Clear the throttle window first so this second call is not swallowed.
+		act(() => {
+			vi.advanceTimersByTime(20);
+		});
+		ref.current.scrollTop = 9800;
+		act(() => {
+			hook.result.current.handleScroll();
+		});
+
+		expect(onAtBottomChange).toHaveBeenLastCalledWith(true);
+		expect(onScrollPositionChange).toHaveBeenLastCalledWith(9800);
+	});
+
+	it('keeps refining the offset through the debounce while the user scrolls on', () => {
+		const { ref, hook, onScrollPositionChange } = mountWithSpies(makeContainer(10000, 200, 5000));
+
+		act(() => {
+			hook.result.current.handleScroll();
+		});
+		expect(onScrollPositionChange).toHaveBeenLastCalledWith(5000);
+
+		// Continued scrolling, no boundary transition this time: only the
+		// debounced save carries the refinement.
+		act(() => {
+			vi.advanceTimersByTime(20);
+		});
+		ref.current.scrollTop = 4200;
+		act(() => {
+			hook.result.current.handleScroll();
+		});
+		act(() => {
+			vi.advanceTimersByTime(200);
+		});
+
+		expect(onScrollPositionChange).toHaveBeenLastCalledWith(4200);
+	});
+
+	it('does not persist anything when the user never scrolls', () => {
+		const { hook, onScrollPositionChange, onAtBottomChange } = mountWithSpies(
+			makeContainer(10000, 200, 5000)
+		);
+
+		hook.unmount();
+		act(() => {
+			vi.advanceTimersByTime(500);
+		});
+
+		expect(onScrollPositionChange).not.toHaveBeenCalled();
+		expect(onAtBottomChange).not.toHaveBeenCalled();
+	});
+
+	describe('end-to-end restore of the persisted transition offset', () => {
+		let rafQueue: FrameRequestCallback[] = [];
+
+		beforeEach(() => {
+			rafQueue = [];
+			vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+				rafQueue.push(cb);
+				return rafQueue.length;
+			});
+		});
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		function flushRaf() {
+			act(() => {
+				let guard = 0;
+				while (rafQueue.length > 0 && guard++ < 20) {
+					const cbs = rafQueue.splice(0);
+					cbs.forEach((cb) => cb(0));
+				}
+			});
+		}
+
+		it('lands the remounted transcript on the offset the fast swap saved', () => {
+			// Leg 1: scroll up and swap away inside the debounce window.
+			const { hook, onScrollPositionChange, onAtBottomChange } = mountWithSpies(
+				makeContainer(10000, 200, 5000)
+			);
+
+			act(() => {
+				hook.result.current.handleScroll();
+			});
+			act(() => {
+				vi.advanceTimersByTime(100);
+			});
+			hook.unmount();
+
+			const savedScrollTop = onScrollPositionChange.mock.calls.at(-1)?.[0] as number;
+			const savedIsAtBottom = onAtBottomChange.mock.calls.at(-1)?.[0] as boolean;
+			expect(savedScrollTop).toBe(5000);
+			expect(savedIsAtBottom).toBe(false);
+
+			// Leg 2: swap back. The saved pair is what the tab hands the hook.
+			const restoreRef = { current: makeRestoreContainer(9000) };
+			const restored = renderHook(() =>
+				useTerminalOutputScroll({
+					scrollContainerRef: restoreRef,
+					initialScrollTop: savedScrollTop,
+					initialIsAtBottom: savedIsAtBottom,
+					sessionId: 's1',
+					activeTabId: 't1',
+					filteredLogsLength: 3,
+				})
+			);
+
+			flushRaf();
+
+			expect(restoreRef.current.scrollTop).toBe(5000);
+			expect(restored.result.current.isAtBottom).toBe(false);
+			expect(restored.result.current.autoScrollPaused).toBe(true);
+		});
+
+		// Review follow-up: the restore gate used to require a POSITIVE offset, so
+		// the one position a user reaches by scrolling all the way up - offset 0
+		// with `isAtBottom: false` - was unrestorable and snapped back to the live
+		// bottom. Zero is a real saved position, not a missing one.
+		it('restores a transcript left scrolled to the absolute top (offset 0)', () => {
+			const restoreRef = { current: makeRestoreContainer(9000) };
+			const restored = renderHook(() =>
+				useTerminalOutputScroll({
+					scrollContainerRef: restoreRef,
+					initialScrollTop: 0,
+					initialIsAtBottom: false,
+					sessionId: 's1',
+					activeTabId: 't1',
+					filteredLogsLength: 3,
+				})
+			);
+
+			flushRaf();
+
+			expect(restoreRef.current.scrollTop).toBe(0);
+			expect(restored.result.current.isAtBottom).toBe(false);
+			expect(restored.result.current.autoScrollPaused).toBe(true);
+		});
+
+		// Guard the other half of the gate: offset 0 with the flag ABSENT (a legacy
+		// tab that never persisted it) or true must still fall through to the
+		// mount-time bottom jump rather than pinning the view to the top.
+		it('does NOT restore offset 0 when the at-bottom flag is not false', () => {
+			const restoreRef = { current: makeRestoreContainer(9000) };
+			const restored = renderHook(() =>
+				useTerminalOutputScroll({
+					scrollContainerRef: restoreRef,
+					initialScrollTop: 0,
+					initialIsAtBottom: undefined,
+					sessionId: 's1',
+					activeTabId: 't1',
+					filteredLogsLength: 3,
+				})
+			);
+
+			flushRaf();
+
+			expect(restored.result.current.autoScrollPaused).toBe(false);
+		});
+	});
+});

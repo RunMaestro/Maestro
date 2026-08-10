@@ -465,6 +465,71 @@ describe('tabHelpers', () => {
 			expect(result!.session.aiTabs[0].id).toBe('tab-2');
 		});
 
+		// Main has no tab state of its own, so this notification is the ONLY way it
+		// learns a tab went away (W1: an armed dispatch callback bound to a closed
+		// tab used to sit armed until its hour-long timeout).
+		describe('main-process tab-close notification', () => {
+			const notify = () => window.maestro.tabs.notifyAiTabClosed as ReturnType<typeof vi.fn>;
+
+			it('notifies main when a tab is really closed', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).toHaveBeenCalledTimes(1);
+				expect(notify()).toHaveBeenCalledWith('agent-9', 'tab-1');
+			});
+
+			it('does not notify when the tab was not found', () => {
+				const session = createMockSession({ aiTabs: [createMockTab({ id: 'tab-1' })] });
+
+				closeTab(session, 'nope');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify for a busy tab - it survives as an orphan and stays a dispatch target', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify for a tab with queued items still to fire', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+					executionQueue: [{ id: 'q-1', tabId: 'tab-1' } as unknown as QueuedItem],
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify when the caller preserves tab-scoped work (snooze)', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1', false, { preserveTabScopedWork: true });
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+		});
+
 		it('selects previous tab (to the left) when active tab is closed', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });

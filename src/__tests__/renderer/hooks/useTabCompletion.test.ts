@@ -1092,7 +1092,11 @@ describe('useTabCompletion', () => {
 	// Command mode (`!cmd` typed in the AI composer)
 	// ========================================================================
 
-	describe('command mode (! prefix)', () => {
+	describe('command mode', () => {
+		// Command mode is passed as a flag, not sniffed from a `!` in the text -
+		// the gesture consumes the bang, so the input here is a bare command line.
+		const CMD = true;
+
 		const commandModeSession = (overrides: Partial<Session> = {}): Session =>
 			createMockSession({
 				cwd: '/project',
@@ -1100,31 +1104,30 @@ describe('useTabCompletion', () => {
 				...overrides,
 			});
 
-		it('completes files with the bang prefix preserved', () => {
+		it('completes files, with no bang added back', () => {
 			const { result } = renderHook(() => useTabCompletion(commandModeSession()));
 
-			const suggestions = result.current.getSuggestions('!cat pack', 'file');
+			const suggestions = result.current.getSuggestions('cat pack', 'file', CMD);
 
 			expect(suggestions.length).toBeGreaterThan(0);
-			expect(suggestions[0].value).toBe('!cat package.json');
-			// The label shows just the completion, not the whole line.
+			expect(suggestions[0].value).toBe('cat package.json');
 			expect(suggestions[0].displayText).toBe('package.json');
 		});
 
 		it('completes directories with a trailing slash', () => {
 			const { result } = renderHook(() => useTabCompletion(commandModeSession()));
 
-			const suggestions = result.current.getSuggestions('!ls sr', 'file');
+			const suggestions = result.current.getSuggestions('ls sr', 'file', CMD);
 
-			expect(suggestions.some((s) => s.value === '!ls src/' && s.type === 'folder')).toBe(true);
+			expect(suggestions.some((s) => s.value === 'ls src/' && s.type === 'folder')).toBe(true);
 		});
 
 		it('completes nested paths', () => {
 			const { result } = renderHook(() => useTabCompletion(commandModeSession()));
 
-			const suggestions = result.current.getSuggestions('!cat src/components/But', 'file');
+			const suggestions = result.current.getSuggestions('cat src/components/But', 'file', CMD);
 
-			expect(suggestions.some((s) => s.value === '!cat src/components/Button.tsx')).toBe(true);
+			expect(suggestions.some((s) => s.value === 'cat src/components/Button.tsx')).toBe(true);
 		});
 
 		it('completes git branches', () => {
@@ -1134,29 +1137,31 @@ describe('useTabCompletion', () => {
 			});
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const suggestions = result.current.getSuggestions('!git checkout fea', 'branch');
+			const suggestions = result.current.getSuggestions('git checkout fea', 'branch', CMD);
 
-			expect(suggestions.some((s) => s.value === '!git checkout feature/command-mode')).toBe(true);
+			expect(suggestions.some((s) => s.value === 'git checkout feature/command-mode')).toBe(true);
 		});
 
 		it('completes git tags', () => {
 			const session = commandModeSession({ isGitRepo: true, gitTags: ['v1.0.0', 'v2.0.0'] });
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const suggestions = result.current.getSuggestions('!git checkout v2', 'tag');
+			const suggestions = result.current.getSuggestions('git checkout v2', 'tag', CMD);
 
-			expect(suggestions.some((s) => s.value === '!git checkout v2.0.0')).toBe(true);
+			expect(suggestions.some((s) => s.value === 'git checkout v2.0.0')).toBe(true);
 		});
 
-		it('draws history from the bang entries in aiCommandHistory', () => {
+		it('draws history from the bang entries in aiCommandHistory, unprefixed', () => {
+			// aiCommandHistory mixes agent messages and shell commands; the stored
+			// `!` is what tells them apart, and it is stripped on the way out.
 			const session = commandModeSession({
 				aiCommandHistory: ['!git status', 'fix the login bug', '/history', '!npm test'],
 			});
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const suggestions = result.current.getSuggestions('!git', 'history');
+			const suggestions = result.current.getSuggestions('git', 'history', CMD);
 
-			expect(suggestions.map((s) => s.value)).toEqual(['!git status']);
+			expect(suggestions.map((s) => s.value)).toEqual(['git status']);
 		});
 
 		it('does not offer terminal shell history in command mode', () => {
@@ -1166,12 +1171,10 @@ describe('useTabCompletion', () => {
 			});
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const suggestions = result.current.getSuggestions('!terminal', 'history');
-
-			expect(suggestions).toEqual([]);
+			expect(result.current.getSuggestions('terminal', 'history', CMD)).toEqual([]);
 		});
 
-		it('does not offer bang history to terminal mode', () => {
+		it('does not offer command-mode history to a terminal', () => {
 			const session = commandModeSession({
 				shellCommandHistory: [],
 				aiCommandHistory: ['!npm test'],
@@ -1181,19 +1184,19 @@ describe('useTabCompletion', () => {
 			expect(result.current.getSuggestions('npm', 'history')).toEqual([]);
 		});
 
-		it('shows recent commands for a bare bang', () => {
+		it('shows recent commands for an empty command line', () => {
 			const session = commandModeSession({
 				aiCommandHistory: ['!git status', '!npm test'],
 			});
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const suggestions = result.current.getSuggestions('!');
+			const suggestions = result.current.getSuggestions('', 'all', CMD);
 
-			expect(suggestions.map((s) => s.value).sort()).toEqual(['!git status', '!npm test']);
+			expect(suggestions.map((s) => s.value).sort()).toEqual(['git status', 'npm test']);
 			expect(suggestions.every((s) => s.type === 'history')).toBe(true);
 		});
 
-		it('does not spray branches or files onto a bare bang', () => {
+		it('does not spray branches or files onto an empty command line', () => {
 			const session = commandModeSession({
 				isGitRepo: true,
 				gitBranches: ['main'],
@@ -1202,33 +1205,30 @@ describe('useTabCompletion', () => {
 			});
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			expect(result.current.getSuggestions('!')).toEqual([]);
+			expect(result.current.getSuggestions('', 'all', CMD)).toEqual([]);
+		});
+
+		it('still returns nothing for an empty TERMINAL line', () => {
+			const session = commandModeSession({ shellCommandHistory: ['ls'] });
+			const { result } = renderHook(() => useTabCompletion(session));
+
+			expect(result.current.getSuggestions('', 'all')).toEqual([]);
 		});
 
 		it('resolves from the project root, ignoring the terminal cwd', () => {
-			// Terminal mode has cd'd into src/hooks, but a bang command still runs
-			// at the agent's cwd, so completion must resolve from the root.
+			// Terminal mode has cd'd into src/hooks, but a command-mode command still
+			// runs at the agent's cwd, so completion must resolve from the root.
 			const session = commandModeSession({ shellCwd: '/project/src/hooks' });
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const commandMode = result.current.getSuggestions('!cat pack', 'file');
-			expect(commandMode.some((s) => s.value === '!cat package.json')).toBe(true);
+			expect(
+				result.current
+					.getSuggestions('cat pack', 'file', CMD)
+					.some((s) => s.value === 'cat package.json')
+			).toBe(true);
 
-			// Terminal mode from the same session sees only src/hooks.
-			const terminalMode = result.current.getSuggestions('cat pack', 'file');
-			expect(terminalMode).toEqual([]);
-		});
-
-		it('leaves ordinary AI messages alone', () => {
-			const session = commandModeSession({
-				aiCommandHistory: ['!git status'],
-				shellCommandHistory: [],
-			});
-			const { result } = renderHook(() => useTabCompletion(session));
-
-			// No bang: this is a normal message, and 'package' is just a word in it.
-			const suggestions = result.current.getSuggestions('update package', 'history');
-			expect(suggestions).toEqual([]);
+			// The same session in terminal mode sees only src/hooks.
+			expect(result.current.getSuggestions('cat pack', 'file')).toEqual([]);
 		});
 	});
 });

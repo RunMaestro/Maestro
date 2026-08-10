@@ -142,7 +142,10 @@ describe('execFile.ts', () => {
 		it('resolves with the spawn error code when the binary is missing', async () => {
 			const { execFileStreaming } = await import('../../../main/utils/execFile');
 
-			const handle = execFileStreaming('definitely-not-a-real-binary-xyz', [], {
+			// Use a .exe suffix so Windows does not route through cmd.exe
+			// (needsWindowsShell). Shell-spawned missing commands exit 1 instead
+			// of surfacing spawn ENOENT.
+			const handle = execFileStreaming('definitely-not-a-real-binary-xyz.exe', [], {
 				onChunk: () => {},
 			});
 			const result = await handle.result;

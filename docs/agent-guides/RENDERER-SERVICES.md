@@ -114,19 +114,31 @@ Command mode ("bang commands"): running a `!command` typed in the AI composer an
 
 Output is buffered and flushed on an animation frame (one store write per frame, not per chunk) and capped at `SHELL_COMMAND_OUTPUT_LIMIT` characters, because transcript logs are persisted to the sessions file.
 
-Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellCommand`. Input detection lives in `utils/shellCommandInput.ts`; routing happens at the top of `useInputProcessing.processInput`.
+Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellCommand`. Routing happens at the top of `useInputProcessing.processInput`.
 
-**The composer's CLI mode.** `utils/shellCommandInput.ts` exports three predicates that must be kept straight:
+### Command mode is STATE, not a text prefix
 
-| Function                    | True for  | Used by                                                                  |
-| --------------------------- | --------- | ------------------------------------------------------------------------ |
-| `isShellCommandDraft(v)`    | `!`, `!x` | UI affordances - the `$` prefix, `CommandModeBar`, Tab-completion gating |
-| `parseShellCommandInput(v)` | `!x` only | Execution - a bare `!` has no command to run                             |
-| `getShellCommandBody(v)`    | `!`, `!x` | Completion - strips the bang, preserving a trailing space                |
+The `!` is a _gesture_ that enters the mode and is consumed on entry - it never lands in the draft. Once in command mode the composer holds the bare command line. **Never infer the mode by testing the text for a leading `!`**: a real command can contain bangs (`find . -name '*!*'`), and the draft doesn't start with one anyway.
 
-The split matters: the composer enters CLI mode on the `!` keystroke (before there's a command), but Enter on a bare `!` must fall through as a normal message. Do not collapse these into one check.
+The flag lives in two places, and they must move together:
 
-Surfaces that gate on `isShellCommandDraft`: `InputArea` (derives `isCommandModeDraft` / `isShellInput` once and passes both down), `useInputKeyDown` (Tab trigger + dropdown navigation), `useInputHandlers` (which composer slice completion reads), and `useInputAreaTextChange` (suppresses `@` mentions - an `@` in a shell line is ordinary text).
+| Where                              | Scope              | Set by                                                     |
+| ---------------------------------- | ------------------ | ---------------------------------------------------------- |
+| `composerInputStore.aiCommandMode` | live, active tab   | the `!` gesture; Escape/Backspace on an empty command line |
+| `AITab.commandMode`                | persisted, per tab | flushed with `inputValue` on blur / submit / tab switch    |
+
+**The invariant:** the same string is a shell command or a message to the agent depending only on this flag. Any path that persists or restores `inputValue` MUST carry `commandMode` with it, or a restored draft routes the wrong way. `syncAiInputToSession` reads the mode from the store itself rather than taking it as an argument, precisely so a caller cannot forget it; the tab-switch save in `useInputHandlers` writes both in the same `setSessions`.
+
+`utils/shellCommandInput.ts` is down to two helpers:
+
+| Function                             | Job                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------- |
+| `detectCommandModeEntry(prev, next)` | Should this edit enter command mode? Returns the text to keep, bang eaten |
+| `stripShellCommandEscape(v)`         | Unwraps `\!foo` -> `!foo` for messages that really start with a bang      |
+
+Entry requires the composer to have been **empty** before the edit, so retrofitting a `!` onto an in-progress message doesn't silently turn a sentence into a shell command.
+
+Surfaces that consume the mode: `InputArea` (reads the store once, derives `isCommandModeDraft` / `isShellInput`, passes both down), `useInputKeyDown` (Tab trigger, dropdown navigation, and the Escape/Backspace exit), `useInputHandlers` (which composer slice completion reads, plus the `getCommandMode` dep threaded into `useInputProcessing`), and `useInputAreaTextChange` (the entry gesture, and suppressing `@` mentions and slash commands - in a shell line `@` is an scp target and `/` starts an absolute path).
 
 ---
 

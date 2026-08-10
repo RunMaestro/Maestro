@@ -152,6 +152,56 @@ describe('parseDirectorNotesNarrative', () => {
 		});
 	});
 
+	describe('the optional progress section', () => {
+		// Emitted only when the conductor has configured an Ideal End State, so
+		// the parser must accept a four-section report without requiring one.
+		const WITH_PROGRESS = {
+			version: 1,
+			sections: [
+				{ kind: 'accomplishments', title: 'Accomplishments', items: [{ text: 'Shipped it.' }] },
+				{ kind: 'challenges', title: 'Challenges', items: [] },
+				{ kind: 'nextSteps', title: 'Next Steps', items: [] },
+				{
+					kind: 'progress',
+					title: 'Progress Toward Ideal End State',
+					items: [
+						{ text: 'Ingest pipeline is 3 of 5 milestones in.', agent: 'parser-a' },
+						{ text: 'No activity on the docs rewrite this window.', severity: 'warn' },
+					],
+				},
+			],
+		};
+
+		it('accepts a four-section report', () => {
+			const result = parseDirectorNotesNarrative(JSON.stringify(WITH_PROGRESS));
+			if (!result.ok) throw new Error(`expected success, got: ${result.error}`);
+
+			expect(result.narrative.sections).toHaveLength(4);
+			expect(result.narrative.sections[3].kind).toBe('progress');
+			expect(result.narrative.sections[3].items[1]).toEqual({
+				text: 'No activity on the docs rewrite this window.',
+				severity: 'warn',
+			});
+		});
+
+		it('still accepts a three-section report (end state unset)', () => {
+			const result = parseDirectorNotesNarrative(JSON.stringify(WELL_FORMED));
+			if (!result.ok) throw new Error('expected success');
+
+			expect(result.narrative.sections).toHaveLength(3);
+			expect(result.narrative.sections.some((s) => s.kind === 'progress')).toBe(false);
+		});
+
+		it('renders the progress section in markdown', () => {
+			const result = parseDirectorNotesNarrative(JSON.stringify(WITH_PROGRESS));
+			if (!result.ok) throw new Error('expected success');
+
+			const markdown = narrativeToMarkdown(result.narrative);
+			expect(markdown).toContain('## Progress Toward Ideal End State');
+			expect(markdown).toContain('- Ingest pipeline is 3 of 5 milestones in. _(parser-a)_');
+		});
+	});
+
 	describe('empty input (ok: false)', () => {
 		it('rejects an empty string', () => {
 			expectParseError('', 'Response was empty.');
@@ -223,7 +273,7 @@ describe('parseDirectorNotesNarrative', () => {
 		it('rejects an unknown section kind', () => {
 			expectParseError(
 				'{ "version": 1, "sections": [{ "kind": "misc", "title": "x", "items": [] }] }',
-				'sections[0].kind must be one of "accomplishments", "challenges", "nextSteps".'
+				'sections[0].kind must be one of "accomplishments", "challenges", "nextSteps", "progress".'
 			);
 		});
 

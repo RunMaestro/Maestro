@@ -51,6 +51,7 @@ import { createFsApi } from './fs';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
+import { createTabsApi } from './tabs';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
@@ -60,6 +61,7 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createContextTimelineApi } from './contextTimeline';
 import { createAgentRunApi } from './agentRun';
 import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
@@ -228,6 +230,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Tab Naming API (automatic tab name generation)
 	tabNaming: createTabNamingApi(),
 
+	// Tab lifecycle API (renderer -> main tab-close notification)
+	tabs: createTabsApi(),
+
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
 
@@ -252,6 +257,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+	// Context Timeline capture log (backfills the per-agent turn history)
+	contextTimeline: createContextTimelineApi(),
 	// AgentRun control-plane API (neutral run/campaign ledger)
 	agentRun: createAgentRunApi(),
 	// Coworking API (per-agent MCP installer + terminal registry sync)
@@ -576,6 +583,10 @@ export type {
 	TabNamingApi,
 	TabNamingConfig,
 } from './tabNaming';
+export type {
+	// From tabs
+	TabsApi,
+} from './tabs';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

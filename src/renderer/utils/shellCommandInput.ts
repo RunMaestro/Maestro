@@ -1,58 +1,64 @@
 /**
- * Bang commands ("command mode") for the AI chat composer.
+ * Command mode ("bang commands") for the AI chat composer.
  *
- * A message that starts with `!` is not sent to the agent at all. Maestro
- * strips the bang and runs the rest as a shell command in the agent's working
- * directory, streaming the output back into the transcript. This is the
- * "check something without leaving the chat" escape hatch - `!git pull`,
- * `!ls`, `!npm test`.
+ * Typing `!` into an empty composer switches it into command mode: the bang
+ * itself is consumed (it never appears in the text) and what you type after it
+ * runs as a shell command in the agent's working directory instead of being
+ * sent to the agent. This is the "check something without leaving the chat"
+ * escape hatch - `git pull`, `ls`, `npm test`.
  *
- * Escaping: a message that starts with `\!` is a literal message for the agent
- * whose first character is `!`. The backslash is removed before sending.
+ * ## Command mode is state, not a text prefix
+ *
+ * The bang is a *gesture* that enters the mode, not a marker the text carries.
+ * Once in command mode the composer holds the bare command, and the mode lives
+ * in `composerInputStore.aiCommandMode` (mirrored to `AITab.commandMode` so it
+ * survives a tab switch and a restart). Consequences worth knowing:
+ *
+ *  - Do NOT infer the mode by testing the draft for a leading `!` - a command
+ *    like `find . -name '*!*'` has bangs in it, and the composer's text no
+ *    longer starts with one anyway.
+ *  - `!` typed *inside* command mode is ordinary shell text, not a re-entry.
+ *  - The mode is exited explicitly (Escape / Backspace on an empty line), not
+ *    by deleting a character.
+ *
+ * Escaping: `\!` at the start of a message is a literal `!` for the agent. It
+ * does not enter command mode, and the backslash is removed before sending.
+ * This is the only way to start an agent message with a bang.
  */
 
-/** The prefix that switches the AI composer into command mode. */
+/** The keystroke that switches the AI composer into command mode. */
 export const SHELL_COMMAND_PREFIX = '!';
 
 /** The escape that sends a literal leading `!` to the agent instead. */
 export const SHELL_COMMAND_ESCAPE = '\\!';
 
 /**
- * True while a draft is in command mode - it starts with `!` (and is not the
- * `\!` escape). Unlike `parseShellCommandInput`, this is true for a bare `!`
- * with nothing typed after it yet, because the composer switches into its
- * CLI affordances (the `$` prefix, Tab completion over files/dirs/branches)
- * the moment you type the bang, before there is a command to run.
- */
-export function isShellCommandDraft(raw: string): boolean {
-	return raw.trimStart().startsWith(SHELL_COMMAND_PREFIX);
-}
-
-/**
- * Strips the command-mode prefix from a draft, returning the command body as
- * typed (leading whitespace removed, but NOT trailing - a trailing space is
- * what tells completion the user has finished a word and wants the next one).
- * Returns null when the draft is not in command mode.
- */
-export function getShellCommandBody(raw: string): string | null {
-	const trimmed = raw.trimStart();
-	if (!trimmed.startsWith(SHELL_COMMAND_PREFIX)) return null;
-	return trimmed.slice(SHELL_COMMAND_PREFIX.length);
-}
-
-/**
- * Returns the shell command for a bang-prefixed input, or null when the input
- * is an ordinary message for the agent.
+ * Decides whether a composer edit should switch into command mode, and returns
+ * the text to keep if so (the bang is consumed). Returns null to leave the
+ * composer alone.
  *
- * Leading/trailing whitespace is trimmed first, so ` !ls ` is command mode.
- * A bare `!` with nothing after it is NOT command mode - there is no command
- * to run, so it falls through as a normal message.
+ * Entry requires the composer to have been **empty** before the edit, so the
+ * gesture is unambiguously "I am starting a command". That deliberately rules
+ * out retrofitting a bang onto a message already in progress: moving the caret
+ * to the start of `deploy the site` and typing `!` leaves it a message for the
+ * agent rather than silently turning a sentence into a shell command.
+ *
+ * Pasting `!git status` into an empty composer does enter command mode, with
+ * `git status` kept - the paste carries the same intent as typing it.
+ *
+ * @param previousValue - composer text before this edit
+ * @param nextValue     - composer text the edit produced
  */
-export function parseShellCommandInput(raw: string): string | null {
-	const trimmed = raw.trim();
-	if (!trimmed.startsWith(SHELL_COMMAND_PREFIX)) return null;
-	const command = trimmed.slice(SHELL_COMMAND_PREFIX.length).trim();
-	return command.length > 0 ? command : null;
+export function detectCommandModeEntry(previousValue: string, nextValue: string): string | null {
+	if (previousValue.trim() !== '') return null;
+
+	const leading = nextValue.slice(0, nextValue.length - nextValue.trimStart().length);
+	const rest = nextValue.trimStart();
+	if (!rest.startsWith(SHELL_COMMAND_PREFIX)) return null;
+
+	// Keep any leading whitespace the user had, minus the consumed bang, so a
+	// pasted command lands exactly as pasted.
+	return leading + rest.slice(SHELL_COMMAND_PREFIX.length);
 }
 
 /**

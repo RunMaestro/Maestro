@@ -62,6 +62,15 @@ export const CommandModeBar = memo(function CommandModeBar({
 				{completes}
 				<CornerDownLeft className="w-3 h-3 ml-1" />
 				runs it
+				{/* The way out. There is no `!` left in the text to delete, so without
+				    this the mode looks like a trap. */}
+				<kbd
+					className="px-1 rounded border font-mono ml-1"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+				>
+					Esc
+				</kbd>
+				exits
 			</span>
 		</div>
 	);

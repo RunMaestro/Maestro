@@ -517,7 +517,7 @@ const historyManager = getHistoryManager();
 
 ## IPC Handler Registration
 
-All IPC handlers are registered in `setupIpcHandlers()` within `src/main/index.ts`. Each handler module is a self-contained file in `src/main/ipc/handlers/`:
+All IPC handlers are registered in `setupIpcHandlers()` within `src/main/ipc/bootstrap/index.ts`, called once from `src/main/index.ts`'s `app.whenReady()` with a deps object of getter closures over its module-level state. Each handler module is a self-contained file in `src/main/ipc/handlers/`:
 
 | Registration Call                 | Handler Module      | Dependencies                                                         |
 | --------------------------------- | ------------------- | -------------------------------------------------------------------- |
@@ -566,7 +566,7 @@ Logger event forwarding is also set up to stream logs to the renderer.
 
 ## Process Listeners
 
-Set up in `setupProcessListeners()`, delegating to `src/main/process-listeners/index.ts`:
+Set up in `wireProcessListeners()` (`src/main/process-listeners-wiring/index.ts`), called once from `src/main/index.ts`'s `app.whenReady()`, delegating to `src/main/process-listeners/index.ts`:
 
 The process manager emits events for:
 
@@ -610,31 +610,37 @@ The `performCleanup()` function runs synchronously from `before-quit` (async ope
 
 ## Key Source Files
 
-| File                                         | Purpose                                                     |
-| -------------------------------------------- | ----------------------------------------------------------- |
-| `src/main/index.ts`                          | Entry point, startup sequence, IPC wiring                   |
-| `src/main/app-lifecycle/index.ts`            | Lifecycle module barrel                                     |
-| `src/main/app-lifecycle/window-manager.ts`   | BrowserWindow creation, crash detection, auto-updater init  |
-| `src/main/app-lifecycle/quit-handler.ts`     | Quit confirmation flow and cleanup                          |
-| `src/main/app-lifecycle/error-handlers.ts`   | Global uncaught exception handlers                          |
-| `src/main/app-lifecycle/cli-watcher.ts`      | CLI activity file watcher                                   |
-| `src/main/app-lifecycle/settings-watcher.ts` | External settings-file change detection                     |
-| `src/main/stores/write-tracker.ts`           | Stamps the app's own store writes so the watcher skips them |
-| `src/main/stores/index.ts`                   | Store module barrel                                         |
-| `src/main/stores/types.ts`                   | Store type definitions                                      |
-| `src/main/stores/instances.ts`               | Store initialization                                        |
-| `src/main/stores/getters.ts`                 | Store getter functions                                      |
-| `src/main/stores/defaults.ts`                | Store default values                                        |
-| `src/main/stores/utils.ts`                   | Store utilities (early settings, custom sync path)          |
-| `src/main/auto-updater.ts`                   | electron-updater integration                                |
-| `src/main/power-manager.ts`                  | System sleep prevention                                     |
-| `src/main/wakatime-manager.ts`               | WakaTime heartbeat integration                              |
-| `src/main/history-manager.ts`                | Per-session history storage and migration                   |
-| `src/main/process-manager/`                  | Process spawning (PTY + child_process)                      |
-| `src/main/process-listeners/`                | Process event routing                                       |
-| `src/main/ipc/handlers/`                     | All IPC handler modules                                     |
-| `src/main/utils/sentry.ts`                   | Sentry utilities and memory monitoring                      |
-| `src/main/utils/logger.ts`                   | Structured logging                                          |
+| File                                         | Purpose                                                                                                                            |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/index.ts`                          | Entry point, startup sequence, IPC wiring                                                                                          |
+| `src/main/app-lifecycle/index.ts`            | Lifecycle module barrel                                                                                                            |
+| `src/main/app-lifecycle/window-manager.ts`   | BrowserWindow creation, crash detection, auto-updater init                                                                         |
+| `src/main/app-lifecycle/quit-handler.ts`     | Quit confirmation flow and cleanup                                                                                                 |
+| `src/main/app-lifecycle/error-handlers.ts`   | Global uncaught exception handlers                                                                                                 |
+| `src/main/app-lifecycle/cli-watcher.ts`      | CLI activity file watcher                                                                                                          |
+| `src/main/app-lifecycle/settings-watcher.ts` | External settings-file change detection                                                                                            |
+| `src/main/stores/write-tracker.ts`           | Stamps the app's own store writes so the watcher skips them                                                                        |
+| `src/main/stores/index.ts`                   | Store module barrel                                                                                                                |
+| `src/main/stores/types.ts`                   | Store type definitions                                                                                                             |
+| `src/main/stores/instances.ts`               | Store initialization                                                                                                               |
+| `src/main/stores/getters.ts`                 | Store getter functions                                                                                                             |
+| `src/main/stores/defaults.ts`                | Store default values                                                                                                               |
+| `src/main/stores/utils.ts`                   | Store utilities (early settings, custom sync path)                                                                                 |
+| `src/main/auto-updater.ts`                   | electron-updater integration                                                                                                       |
+| `src/main/power-manager.ts`                  | System sleep prevention                                                                                                            |
+| `src/main/wakatime-manager.ts`               | WakaTime heartbeat integration                                                                                                     |
+| `src/main/history-manager.ts`                | Per-session history storage and migration                                                                                          |
+| `src/main/pianola/pianola-lifecycle.ts`      | Constructs the Pianola supervisor + relearn scheduler; owns the CLI-mining and existing-rules-read pure helpers                    |
+| `src/main/process-manager/`                  | Process spawning (PTY + child_process)                                                                                             |
+| `src/main/process-listeners/`                | Process event routing                                                                                                              |
+| `src/main/process-listeners-wiring/index.ts` | Builds the process-listener deps object from index.ts module state and wires WakaTime's listener                                   |
+| `src/main/ipc/handlers/`                     | All IPC handler modules                                                                                                            |
+| `src/main/ipc/bootstrap/index.ts`            | Single-entry orchestrator for all ~45 IPC handler registrations + inline group-chat/coworking/window-registry wiring               |
+| `src/main/agents/agent-config-lookup.ts`     | Per-agent config/custom-env-var lookup, shared by IPC bootstrap and Cue construction                                               |
+| `src/main/cadenza-bridge/index.ts`           | Routes cadenza payloads to the HUD window; registers the two module-eval-time `cadenza-hud:decision`/`cadenza:flash` IPC listeners |
+| `src/main/plugin-host-view-bridge/index.ts`  | Concerto/plugin host-view forwarding gate + `PluginHostViewRegistry` construction                                                  |
+| `src/main/utils/sentry.ts`                   | Sentry utilities and memory monitoring                                                                                             |
+| `src/main/utils/logger.ts`                   | Structured logging                                                                                                                 |
 
 ## Electron Major-Bump Smoke Test
 

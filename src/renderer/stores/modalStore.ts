@@ -89,6 +89,8 @@ export interface NewInstanceModalData {
 	duplicatingSessionId: string | null;
 	/** When set, the new agent is created inside this group (ignored if duplicatingSessionId is set - duplicates inherit the source's group). */
 	presetGroupId?: string | null;
+	/** When set, seeds the working directory (and a default name from its basename). Ignored if duplicatingSessionId is set - duplicates inherit the source's cwd. */
+	presetWorkingDir?: string | null;
 }
 
 /** Edit agent modal data */
@@ -209,6 +211,13 @@ export interface GroupChatModalData {
 /** Git diff preview data */
 export interface GitDiffModalData {
 	diff: string;
+	/**
+	 * Repo the diff was taken from, used to resolve files clicked inside the
+	 * viewer. Optional: opened without it (keyboard shortcut, command palette)
+	 * the viewer follows the active agent. The Left Bar's right-click menu passes
+	 * it so it can diff an agent that isn't active.
+	 */
+	cwd?: string;
 }
 
 /**
@@ -1130,6 +1139,7 @@ export function useModalActions() {
 		newInstanceModalOpen,
 		duplicatingSessionId: newInstanceData?.duplicatingSessionId ?? null,
 		newInstancePresetGroupId: newInstanceData?.presetGroupId ?? null,
+		newInstancePresetWorkingDir: newInstanceData?.presetWorkingDir ?? null,
 
 		// Edit Agent Modal
 		editAgentModalOpen,
@@ -1287,8 +1297,10 @@ export function useModalActions() {
 		showEditGroupChatModal: editGroupChatData?.groupChatId ?? null,
 		showGroupChatInfo: groupChatInfoOpen,
 
-		// Git Diff Viewer
+		// Git Diff Viewer. `gitDiffCwd` is set only when the diff was taken for a
+		// specific agent (Left Bar menu); otherwise the viewer follows the active one.
 		gitDiffPreview: gitDiffData?.diff ?? null,
+		gitDiffCwd: gitDiffData?.cwd ?? null,
 
 		// Git Log Viewer. The target is set only when the log was opened for a
 		// specific agent (Left Bar menu); otherwise the viewer follows the active one.

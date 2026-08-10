@@ -1489,6 +1489,12 @@ describe('WebSocketMessageHandler', () => {
 
 			await vi.waitFor(() => expect(lastSend().type).toBe('command_result'));
 			expect(getDispatchCallbackRegistry()!.hasArmedFor('session-1', 'tab-7')).toBe(false);
+			// A rejected dispatch must not read as success, and must not hand back
+			// a callbackId the caller would then wait on forever. This path was
+			// dead until `executeCommand` started reporting real delivery.
+			const response = lastSend();
+			expect(response.success).toBe(false);
+			expect(response.callbackId).toBeUndefined();
 		});
 
 		it('refuses a second callback on the same tab', async () => {

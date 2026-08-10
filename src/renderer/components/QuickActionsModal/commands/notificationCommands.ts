@@ -12,21 +12,28 @@ interface BuildNotificationCommandsArgs {
  *
  * Sticky (dismissible) toasts have no auto-dismiss timer, so a burst of them -
  * or a misbehaving integration firing them in a loop - leaves a wall of cards
- * that can only be cleared one close button at a time. Offered only when there
- * is something to clear so the palette does not carry a dead entry.
+ * that can only be cleared one close button at a time.
+ *
+ * Always offered, even with an empty queue. Unlike the media-player restore
+ * command (which is a recovery affordance you only reach for while something is
+ * playing), this is a command users go hunting for by name. Hiding it at zero
+ * makes the search that should find it come back empty, which reads as "the
+ * feature doesn't exist" rather than "there is nothing to clear". The count
+ * lives in the subtext instead, and clearing an empty queue is a harmless no-op.
  */
 export function buildNotificationCommands({
 	visibleToastCount,
 	clearToasts,
 	setQuickActionOpen,
 }: BuildNotificationCommandsArgs): QuickAction[] {
-	if (visibleToastCount <= 0) return [];
-
 	return [
 		{
 			id: 'clear-all-notifications',
 			label: 'Clear All Notifications',
-			subtext: `Dismiss ${visibleToastCount} visible toast${visibleToastCount === 1 ? '' : 's'}`,
+			subtext:
+				visibleToastCount > 0
+					? `Dismiss ${visibleToastCount} visible toast${visibleToastCount === 1 ? '' : 's'}`
+					: 'No notifications on screen',
 			action: () => {
 				clearToasts();
 				setQuickActionOpen(false);

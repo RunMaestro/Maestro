@@ -35,6 +35,7 @@
  */
 
 import React, { useRef, useEffect, ReactNode, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
@@ -114,6 +115,17 @@ export interface ModalProps {
 	allowOverflow?: boolean;
 	/** Ref to the inner modal card (used by callers that need to animate the card itself) */
 	cardRef?: React.Ref<HTMLDivElement>;
+	/**
+	 * Render into `document.body` instead of in place. Required for any modal
+	 * opened from inside the Main Panel: `MainPanel.tsx` wraps the session view
+	 * in `isolate` (`isolation: isolate`), which creates a stacking context, so
+	 * the backdrop's z-index is scoped to that subtree and the Left Bar
+	 * (`relative z-20`) and Right Panel (later in DOM order) paint over it -
+	 * the panels stay bright while only the center dims. No z-index can win
+	 * across a stacking context; escaping to the body is the fix. Defaults to
+	 * false since most modals already mount at the App root.
+	 */
+	portal?: boolean;
 	/** Enable persisted modal resizing. Defaults to true, but has no effect without `resizeKey` (see below). */
 	resizable?: boolean;
 	/**
@@ -159,6 +171,7 @@ export function Modal({
 	contentClassName,
 	allowOverflow = false,
 	cardRef,
+	portal = false,
 	resizable = true,
 	resizeKey,
 	defaultSize,
@@ -224,7 +237,7 @@ export function Modal({
 		[cardRef]
 	);
 
-	return (
+	const overlay = (
 		<div
 			ref={containerRef}
 			className="fixed inset-0 modal-overlay flex items-center justify-center animate-in fade-in duration-200 outline-none"
@@ -307,6 +320,8 @@ export function Modal({
 			</div>
 		</div>
 	);
+
+	return portal ? createPortal(overlay, document.body) : overlay;
 }
 
 /**

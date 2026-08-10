@@ -16,7 +16,7 @@
 import { useRef, useCallback, useEffect, useMemo } from 'react';
 import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
-import { logger } from '../../utils/logger';
+import { canAppendToLogEntry } from '../../utils/logEntries';
 
 // Default flush interval in milliseconds. 200ms is the sweet spot we landed on:
 // - 150ms collided with high-throughput streams (jitter from setInterval drift
@@ -278,26 +278,18 @@ export function useBatchedSessionUpdates(
 								// Determine the source based on stderr flag
 								const logSource = logData.isStderr ? 'stderr' : 'stdout';
 
-								// Defensive: never coalesce streamed output into a non-stream entry
-								// (error/system/tool/user/thinking). The source-equality check below already
-								// excludes these in theory, but a UI bug exists where assistant text gets
-								// concatenated into an error bubble's text. Belt-and-suspenders allowlist
-								// + a warn lets us catch the upstream cause if it ever fires.
-								const isCoalescableSource =
-									lastLog?.source === 'stdout' || lastLog?.source === 'stderr';
-								if (lastLog && !isCoalescableSource && lastLog.source === logSource) {
-									logger.warn(
-										'[useBatchedSessionUpdates] Refusing to coalesce streamed output into non-stream log entry',
-										undefined,
-										{ tabId: tab.id, lastLogSource: lastLog.source, logSource }
-									);
-								}
-
-								// Time-based grouping for AI output (500ms window) - only group same source types
+								// Time-based grouping for AI output (500ms window). canAppendToLogEntry
+								// answers both halves of "may this be appended to": same source, AND not
+								// a self-contained card. Source alone is not enough - a `!` command's
+								// output card is `source: 'stdout'` but owns its own text, so streamed
+								// agent output used to land inside it. See utils/logEntries.ts.
+								//
+								// (A `logger.warn` for "refusing to coalesce into a non-stream entry"
+								// used to sit here. It was unreachable: it required lastLog.source to
+								// equal logSource while NOT being stdout/stderr, but logSource is always
+								// one of those two. It never fired for the bug it was meant to catch.)
 								const shouldGroup =
-									lastLog &&
-									isCoalescableSource &&
-									lastLog.source === logSource &&
+									canAppendToLogEntry(lastLog, logSource) &&
 									logData.timestamp - lastLog.timestamp < 500;
 
 								const shouldTagInteractive = isInteractive && !logData.isStderr;
@@ -334,7 +326,7 @@ export function useBatchedSessionUpdates(
 						if (shellStdout) {
 							const lastLog = shellLogs[shellLogs.length - 1];
 							const shouldGroup =
-								lastLog && lastLog.source === 'stdout' && updatedSession.state === 'busy';
+								canAppendToLogEntry(lastLog, 'stdout') && updatedSession.state === 'busy';
 
 							if (shouldGroup) {
 								shellLogs[shellLogs.length - 1] = {
@@ -354,7 +346,7 @@ export function useBatchedSessionUpdates(
 						if (shellStderr) {
 							const lastLog = shellLogs[shellLogs.length - 1];
 							const shouldGroup =
-								lastLog && lastLog.source === 'stderr' && updatedSession.state === 'busy';
+								canAppendToLogEntry(lastLog, 'stderr') && updatedSession.state === 'busy';
 
 							if (shouldGroup) {
 								shellLogs[shellLogs.length - 1] = {

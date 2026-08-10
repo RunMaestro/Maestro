@@ -13,9 +13,17 @@ function harness(visibleToastCount: number) {
 }
 
 describe('buildNotificationCommands', () => {
-	it('offers nothing when no toasts are on screen', () => {
-		// Keeps the palette free of a dead entry when there is nothing to clear.
-		expect(harness(0).actions).toEqual([]);
+	it('still offers the command when no toasts are on screen', () => {
+		// Users search the palette for this by name before they know whether it
+		// applies. Hiding it at zero makes that search come back empty, which
+		// reads as "the feature does not exist".
+		const { actions } = harness(0);
+		expect(actions).toHaveLength(1);
+		expect(actions[0].id).toBe('clear-all-notifications');
+	});
+
+	it('says so in the subtext when there is nothing to clear', () => {
+		expect(harness(0).actions[0].subtext).toBe('No notifications on screen');
 	});
 
 	it('offers the clear command when toasts are stacked up', () => {

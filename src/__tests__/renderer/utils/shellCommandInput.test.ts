@@ -1,103 +1,53 @@
 /**
  * Tests for src/renderer/utils/shellCommandInput.ts
- * Command-mode (`!command`) detection and escaping for the AI composer.
+ *
+ * Command mode is explicit state, so this module is down to two jobs: deciding
+ * when the `!` gesture should switch the composer into it (consuming the bang),
+ * and unwrapping the `\!` escape for messages that really do start with a bang.
  */
 
 import { describe, test, expect } from 'vitest';
 import {
-	parseShellCommandInput,
+	detectCommandModeEntry,
 	stripShellCommandEscape,
-	isShellCommandDraft,
-	getShellCommandBody,
 } from '../../../renderer/utils/shellCommandInput';
 
-describe('parseShellCommandInput', () => {
-	test('returns the command for a bang-prefixed input', () => {
-		expect(parseShellCommandInput('!git status')).toBe('git status');
+describe('detectCommandModeEntry', () => {
+	test('enters on a bang typed into an empty composer, consuming the bang', () => {
+		expect(detectCommandModeEntry('', '!')).toBe('');
 	});
 
-	test('trims surrounding whitespace', () => {
-		expect(parseShellCommandInput('  !ls -la  ')).toBe('ls -la');
+	test('keeps whatever followed the bang in a paste', () => {
+		expect(detectCommandModeEntry('', '!git status')).toBe('git status');
 	});
 
-	test('keeps the command body intact, including pipes and quotes', () => {
-		expect(parseShellCommandInput('!grep -rn "foo bar" src | head -5')).toBe(
-			'grep -rn "foo bar" src | head -5'
-		);
+	test('treats a whitespace-only composer as empty', () => {
+		expect(detectCommandModeEntry('   ', '!ls')).toBe('ls');
+		expect(detectCommandModeEntry('\n', '!ls')).toBe('ls');
 	});
 
-	test('handles no space after the bang', () => {
-		expect(parseShellCommandInput('!ls')).toBe('ls');
+	test('preserves leading whitespace around the consumed bang', () => {
+		expect(detectCommandModeEntry('', '  !ls')).toBe('  ls');
 	});
 
-	test('returns null for an ordinary message', () => {
-		expect(parseShellCommandInput('fix the login bug')).toBeNull();
+	test('does not enter when the composer already had a message', () => {
+		// Caret moved to the start of an in-progress message and `!` typed: that
+		// must stay a message, not silently become a shell command.
+		expect(detectCommandModeEntry('deploy the site', '!deploy the site')).toBeNull();
 	});
 
-	test('returns null when the bang is not leading', () => {
-		expect(parseShellCommandInput('do it now! please')).toBeNull();
+	test('does not enter on a bang that is not leading', () => {
+		expect(detectCommandModeEntry('', 'do it now!')).toBeNull();
 	});
 
-	test('returns null for a bare bang with no command', () => {
-		expect(parseShellCommandInput('!')).toBeNull();
-		expect(parseShellCommandInput('!   ')).toBeNull();
+	test('does not enter for ordinary text', () => {
+		expect(detectCommandModeEntry('', 'fix the login bug')).toBeNull();
+		expect(detectCommandModeEntry('', '')).toBeNull();
 	});
 
-	test('returns null for the escape form', () => {
-		expect(parseShellCommandInput('\\!important message')).toBeNull();
-	});
-
-	test('returns null for empty input', () => {
-		expect(parseShellCommandInput('')).toBeNull();
-	});
-});
-
-describe('isShellCommandDraft', () => {
-	test('is true for a bare bang, before any command is typed', () => {
-		// The composer switches into CLI mode on the keystroke, not on the first
-		// complete command - this is what parseShellCommandInput does NOT cover.
-		expect(isShellCommandDraft('!')).toBe(true);
-		expect(parseShellCommandInput('!')).toBeNull();
-	});
-
-	test('is true for a bang command', () => {
-		expect(isShellCommandDraft('!git status')).toBe(true);
-	});
-
-	test('tolerates leading whitespace', () => {
-		expect(isShellCommandDraft('   !ls')).toBe(true);
-	});
-
-	test('is false for an ordinary message', () => {
-		expect(isShellCommandDraft('fix the login bug')).toBe(false);
-		expect(isShellCommandDraft('')).toBe(false);
-	});
-
-	test('is false for a non-leading bang', () => {
-		expect(isShellCommandDraft('do it now! please')).toBe(false);
-	});
-
-	test('is false for the escape form', () => {
-		expect(isShellCommandDraft('\\!important')).toBe(false);
-	});
-});
-
-describe('getShellCommandBody', () => {
-	test('returns the body after the bang', () => {
-		expect(getShellCommandBody('!git status')).toBe('git status');
-	});
-
-	test('returns an empty body for a bare bang', () => {
-		expect(getShellCommandBody('!')).toBe('');
-	});
-
-	test('preserves a trailing space, which marks a finished word', () => {
-		expect(getShellCommandBody('!git checkout ')).toBe('git checkout ');
-	});
-
-	test('returns null for a non-command draft', () => {
-		expect(getShellCommandBody('fix the bug')).toBeNull();
-		expect(getShellCommandBody('\\!important')).toBeNull();
+	test('does not enter for the escape form', () => {
+		// `\!` is how you send a literal leading bang to the agent.
+		expect(detectCommandModeEntry('', '\\!important')).toBeNull();
 	});
 });
 
@@ -112,10 +62,6 @@ describe('stripShellCommandEscape', () => {
 
 	test('leaves ordinary messages untouched', () => {
 		expect(stripShellCommandEscape('fix the login bug')).toBe('fix the login bug');
-	});
-
-	test('leaves a real bang command untouched', () => {
-		expect(stripShellCommandEscape('!git status')).toBe('!git status');
 	});
 
 	test('only strips the leading escape, not later ones', () => {

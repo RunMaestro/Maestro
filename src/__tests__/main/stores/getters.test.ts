@@ -233,5 +233,24 @@ describe('stores/getters', () => {
 			expect(() => getSshRemoteById('remote-1')).not.toThrow();
 			expect(getSshRemoteById('remote-1')).toBeUndefined();
 		});
+
+		// Same corruption, one level down: the value is an array but its entries
+		// are not objects, so reading `.id` off one throws the same way.
+		it.each([
+			['null entries', [null, { id: 'remote-1', name: 'Server 1' }]],
+			['string entries', ['remote-1', 'remote-2']],
+			['undefined entries', [undefined]],
+		])('should survive %s in sshRemotes', (_label, stored) => {
+			mockStores.settingsStore.get.mockReturnValue(stored);
+
+			expect(() => getSshRemoteById('remote-1')).not.toThrow();
+		});
+
+		it('should still find a valid remote alongside malformed entries', () => {
+			const valid = { id: 'remote-1', name: 'Server 1', host: 'server1.com', username: 'user1' };
+			mockStores.settingsStore.get.mockReturnValue([null, 'junk', valid]);
+
+			expect(getSshRemoteById('remote-1')).toEqual(valid);
+		});
 	});
 });

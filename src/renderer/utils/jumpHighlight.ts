@@ -27,6 +27,17 @@ export interface FlashJumpTargetOptions {
 	/** Scroll alignment, or false to skip scrolling entirely. Default 'center'. */
 	block?: ScrollLogicalPosition | false;
 	behavior?: ScrollBehavior;
+	/**
+	 * Re-assert the scroll position for this many animation frames after the
+	 * initial scroll. Default 0 (scroll once).
+	 *
+	 * Needed when the scroll container only estimates the height of off-screen
+	 * content - `content-visibility: auto` with `contain-intrinsic-size`, as the
+	 * chat transcript uses. The first scroll lands against those estimates, and
+	 * the target then drifts as rows near the viewport report their real
+	 * heights. Re-scrolling is a no-op once nothing is moving.
+	 */
+	stabilizeFrames?: number;
 }
 
 /**
@@ -34,19 +45,44 @@ export interface FlashJumpTargetOptions {
  * Returns a cleanup that removes the highlight early.
  */
 export function flashJumpTarget(el: HTMLElement, options: FlashJumpTargetOptions = {}): () => void {
-	const { color, arrow = false, block = 'center', behavior = 'smooth' } = options;
+	const {
+		color,
+		arrow = false,
+		block = 'center',
+		behavior = 'smooth',
+		stabilizeFrames = 0,
+	} = options;
+
+	let done = false;
+	let stabilizeRaf: number | null = null;
 
 	if (block !== false) {
 		el.scrollIntoView({ behavior, block });
+		if (stabilizeFrames > 0) {
+			let framesLeft = stabilizeFrames;
+			const restabilize = () => {
+				stabilizeRaf = null;
+				if (done) return;
+				// Always instant here: an animated correction would still be in
+				// flight when the next frame issues the one after it.
+				el.scrollIntoView({ behavior: 'auto', block });
+				if (--framesLeft > 0) stabilizeRaf = requestAnimationFrame(restabilize);
+			};
+			stabilizeRaf = requestAnimationFrame(restabilize);
+		}
 	}
+
 	if (color) el.style.setProperty('--jump-flash-color', color);
 	el.classList.add('jump-flash');
 	if (arrow) el.classList.add('jump-flash--arrow');
 
-	let done = false;
 	const clear = () => {
 		if (done) return;
 		done = true;
+		if (stabilizeRaf !== null) {
+			cancelAnimationFrame(stabilizeRaf);
+			stabilizeRaf = null;
+		}
 		el.classList.remove('jump-flash', 'jump-flash--arrow');
 		el.style.removeProperty('--jump-flash-color');
 	};

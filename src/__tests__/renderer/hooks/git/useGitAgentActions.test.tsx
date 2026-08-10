@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import {
 	useGitAgentActions,
 	resolveGitCwd,
@@ -14,8 +14,27 @@ import type { Session } from '../../../../renderer/types';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 4, behind: 1 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
+const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({ getBranchInfo: mockGetBranchInfo }),
+	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
+}));
+
+const mockGetDiff = vi.fn();
+vi.mock('../../../../renderer/services/git', () => ({
+	gitService: { getDiff: (...args: unknown[]) => mockGetDiff(...args) },
+}));
+
+const mockNotifyCenterFlash = vi.fn();
+vi.mock('../../../../renderer/stores/centerFlashStore', () => ({
+	notifyCenterFlash: (...args: unknown[]) => mockNotifyCenterFlash(...args),
+}));
+
+const mockSetActiveSessionId = vi.fn();
+vi.mock('../../../../renderer/stores/sessionStore', () => ({
+	useSessionStore: Object.assign(vi.fn(), {
+		getState: () => ({ setActiveSessionId: mockSetActiveSessionId }),
+	}),
 }));
 
 const mockOpenModal = vi.fn();
@@ -91,6 +110,7 @@ describe('useGitAgentActions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBranchInfo.mockReturnValue(DEFAULT_BRANCH_INFO);
+		mockGetDiff.mockResolvedValue({ diff: 'diff --git a/x b/x' });
 	});
 
 	it('surfaces the polled branch and ahead/behind counts', () => {
@@ -194,5 +214,103 @@ describe('useGitAgentActions', () => {
 		for (const call of mockOpenModal.mock.calls) {
 			expect(call[1]).toEqual(expect.objectContaining({ sshRemoteId: 'remote-1' }));
 		}
+	});
+
+	describe('viewDiff', () => {
+		it('fetches the diff for this agent and opens the viewer with its repo path', async () => {
+			const { result } = renderHook(() => useGitAgentActions(makeSession({ cwd: '/other/repo' })));
+			await act(async () => {
+				await result.current.viewDiff();
+			});
+
+			expect(mockGetDiff).toHaveBeenCalledWith('/other/repo', undefined, undefined);
+			// The cwd rides along so the viewer resolves clicked files against THIS
+			// agent's tree rather than whichever agent is active.
+			expect(mockOpenModal).toHaveBeenCalledWith('gitDiff', {
+				diff: 'diff --git a/x b/x',
+				cwd: '/other/repo',
+			});
+		});
+
+		it('uses the live shell cwd for a terminal-mode agent', async () => {
+			const { result } = renderHook(() =>
+				useGitAgentActions(makeSession({ inputMode: 'terminal', shellCwd: '/repo/packages/app' }))
+			);
+			await act(async () => {
+				await result.current.viewDiff();
+			});
+
+			expect(mockGetDiff).toHaveBeenCalledWith('/repo/packages/app', undefined, undefined);
+		});
+
+		it('passes the SSH remote through', async () => {
+			const { result } = renderHook(() =>
+				useGitAgentActions(
+					makeSession({
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					} as Partial<Session>)
+				)
+			);
+			await act(async () => {
+				await result.current.viewDiff();
+			});
+
+			expect(mockGetDiff).toHaveBeenCalledWith('/test/repo', undefined, 'remote-1');
+		});
+
+		it('flashes and re-syncs stale status instead of opening an empty viewer', async () => {
+			mockGetDiff.mockResolvedValue({ diff: '' });
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+			await act(async () => {
+				await result.current.viewDiff();
+			});
+
+			expect(mockOpenModal).not.toHaveBeenCalled();
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'No diff to examine' })
+			);
+			// The polling cache claimed changes that git doesn't see - refresh it.
+			expect(mockRefreshGitStatus).toHaveBeenCalled();
+		});
+
+		it('does nothing for a null session', async () => {
+			const { result } = renderHook(() => useGitAgentActions(null));
+			await act(async () => {
+				await result.current.viewDiff();
+			});
+
+			expect(mockGetDiff).not.toHaveBeenCalled();
+			expect(mockOpenModal).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('configureWorktrees', () => {
+		it('activates the agent before opening the config modal', () => {
+			// The modal renders against the active session, so activating IS how
+			// the right-clicked agent gets targeted.
+			const { result } = renderHook(() => useGitAgentActions(makeSession({ id: 'other-agent' })));
+			result.current.configureWorktrees();
+
+			expect(mockSetActiveSessionId).toHaveBeenCalledWith('other-agent');
+			expect(mockOpenModal).toHaveBeenCalledWith('worktreeConfig');
+		});
+
+		it('is unavailable for worktree children, which own no config', () => {
+			const { result } = renderHook(() =>
+				useGitAgentActions(makeSession({ parentSessionId: 'parent-1' }))
+			);
+
+			expect(result.current.canConfigureWorktrees).toBe(false);
+		});
+
+		it('is available for a plain git agent', () => {
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+			expect(result.current.canConfigureWorktrees).toBe(true);
+		});
+
+		it('is unavailable for a non-git agent', () => {
+			const { result } = renderHook(() => useGitAgentActions(makeSession({ isGitRepo: false })));
+			expect(result.current.canConfigureWorktrees).toBe(false);
+		});
 	});
 });

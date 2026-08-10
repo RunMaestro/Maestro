@@ -4,9 +4,9 @@
  * Renders the structured Director's Notes narrative (the qualitative half of
  * Rich Mode) as one styled `SectionCard` per section. Each section kind gets a
  * distinct accent + icon (accomplishments = green/check, challenges =
- * orange/alert, next steps = theme/arrow). Bullet items reflect their optional
- * `severity` (critical = red emphasis) and surface an `agent` tag as a small
- * pill when present.
+ * orange/alert, next steps = theme/arrow, progress = theme/target). Bullet items
+ * reflect their optional `severity` (critical = red emphasis) and surface an
+ * `agent` tag as a small pill when present.
  *
  * Presentational only: it takes the already-parsed `DirectorNotesNarrative` and
  * the active `theme` via props and reuses `SectionCard` from the shared widget
@@ -15,7 +15,7 @@
  */
 
 import { memo } from 'react';
-import { CheckCircle2, AlertTriangle, ArrowRight, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, ArrowRight, Target, type LucideIcon } from 'lucide-react';
 import type { Theme } from '../../types';
 import type {
 	DirectorNotesNarrative,
@@ -35,6 +35,7 @@ const KIND_ICON: Record<NarrativeSectionKind, LucideIcon> = {
 	accomplishments: CheckCircle2,
 	challenges: AlertTriangle,
 	nextSteps: ArrowRight,
+	progress: Target,
 };
 
 /** Resolve the accent color for a section kind from the live theme. */
@@ -44,6 +45,7 @@ function accentForKind(kind: NarrativeSectionKind, theme: Theme): string {
 			return theme.colors.success;
 		case 'challenges':
 			return theme.colors.warning;
+		case 'progress':
 		case 'nextSteps':
 		default:
 			return theme.colors.accent;

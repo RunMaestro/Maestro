@@ -16,7 +16,7 @@ import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
-import { parseShellCommandInput, stripShellCommandEscape } from '../../utils/shellCommandInput';
+import { SHELL_COMMAND_PREFIX, stripShellCommandEscape } from '../../utils/shellCommandInput';
 import { runShellCommand } from '../../services/shellCommand';
 import { gitService } from '../../services/git';
 import { resolveForceParallel } from '../../stores/settingsStore';
@@ -67,6 +67,13 @@ export interface UseInputProcessingDeps {
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Read the current input value at call time (non-reactive; reads the store) */
 	getInputValue: () => string;
+	/**
+	 * Whether the AI composer is in command mode, read at call time for the same
+	 * reason as getInputValue (no stale closure). Defaults to "not in command
+	 * mode" when omitted, so a caller that doesn't know about the mode can never
+	 * accidentally route a message into a shell.
+	 */
+	isCommandMode?: () => boolean;
 	/** Input value setter */
 	setInputValue: (value: string) => void;
 	/** Staged images for the current message */
@@ -171,6 +178,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		activeSessionId,
 		setSessions,
 		getInputValue,
+		isCommandMode = () => false,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -270,13 +278,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			// Handle command mode: `!<command>` runs a shell command instead of
-			// talking to the agent. Checked before everything else because the
-			// agent is bypassed entirely - no queueing, no busy state, no spawn.
-			// The command runs immediately even while the agent is working, which
-			// is the point: check something without interrupting the turn.
-			if (activeSession.inputMode === 'ai' && !isWizardActive) {
-				const shellCommand = parseShellCommandInput(effectiveInputValue);
+			// Handle command mode: the composer is in `!` mode, so the draft is a
+			// shell command rather than a message. Checked before everything else
+			// because the agent is bypassed entirely - no queueing, no busy state,
+			// no spawn. The command runs immediately even while the agent is
+			// working, which is the point: check something without interrupting
+			// the turn.
+			//
+			// Gated on the composer's mode flag, NOT on a leading `!` in the text:
+			// the bang is consumed on entry, so by here the draft is the bare
+			// command (and may legitimately contain bangs of its own).
+			const inCommandMode = activeSession.inputMode === 'ai' && isCommandMode();
+			if (inCommandMode && !isWizardActive) {
+				const shellCommand = effectiveInputValue.trim();
 				if (shellCommand) {
 					const targetTab = getActiveTab(activeSession);
 					if (!targetTab) {
@@ -284,21 +298,23 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						return;
 					}
 
-					const rawCommand = effectiveInputValue.trim();
 					setInputValue('');
 					setSlashCommandOpen(false);
 					syncAiInputToSession('');
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 
-					// Record the raw `!command` so up-arrow recalls it like any other input.
+					// Record it bang-prefixed. aiCommandHistory mixes agent messages and
+					// shell commands, and the `!` is what tells them apart on the way
+					// back out (up-arrow recall, and the command-mode completion source).
+					const historyEntry = `${SHELL_COMMAND_PREFIX}${shellCommand}`;
 					setSessions((prev) =>
 						prev.map((s) =>
 							s.id === activeSessionId
 								? {
 										...s,
 										aiCommandHistory: [
-											...(s.aiCommandHistory || []).filter((c) => c !== rawCommand),
-											rawCommand,
+											...(s.aiCommandHistory || []).filter((c) => c !== historyEntry),
+											historyEntry,
 										].slice(-50),
 									}
 								: s
@@ -314,13 +330,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					});
 					return;
 				}
+				// Empty command line: nothing to run, and it must not fall through to
+				// the agent - the user is sitting in a shell prompt, not composing.
+				return;
 			}
 
 			if (activeSession.inputMode === 'ai') {
 				// Not command mode, so unwrap the escape: `\!foo` was the user asking
-				// for a literal `!foo` message. Done after the check above so the
-				// escaped form never reaches the shell. AI mode only - in the shell,
-				// `\!` is the shell's own escape and must survive untouched.
+				// for a literal `!foo` message. AI mode only - in the shell, `\!` is
+				// the shell's own escape and must survive untouched.
 				effectiveInputValue = stripShellCommandEscape(effectiveInputValue);
 			}
 
@@ -1576,6 +1594,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			activeSessionProp,
 			activeSessionId,
 			getInputValue,
+			isCommandMode,
 			stagedImages,
 			customAICommands,
 			setInputValue,

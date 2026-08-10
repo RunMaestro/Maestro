@@ -292,7 +292,9 @@ export const InputTextarea = memo(function InputTextarea({
 				placeholder={
 					isTerminalMode
 						? 'Run shell command...'
-						: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
+						: isCommandModeDraft
+							? 'Run shell command... (Esc to go back to the agent)'
+							: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
 				}
 				value={inputValue}
 				spellCheck={spellCheckEnabled}

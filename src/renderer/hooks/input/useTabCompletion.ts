@@ -2,7 +2,7 @@ import { useMemo, useCallback } from 'react';
 import type { Session } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { SHELL_COMMAND_PREFIX, getShellCommandBody } from '../../utils/shellCommandInput';
+import { SHELL_COMMAND_PREFIX } from '../../utils/shellCommandInput';
 
 export interface TabCompletionSuggestion {
 	value: string;
@@ -23,7 +23,20 @@ const MAX_FILE_TREE_ENTRIES = 50_000;
 const EMPTY_FILE_TREE: FileNode[] = [];
 
 export interface UseTabCompletionReturn {
-	getSuggestions: (input: string, filter?: TabCompletionFilter) => TabCompletionSuggestion[];
+	/**
+	 * @param input       - the command line as typed (no `!` - command mode
+	 *                      consumes the bang on entry)
+	 * @param filter      - which suggestion category to draw from
+	 * @param commandMode - true when completing the AI composer's command mode
+	 *                      rather than a terminal tab. Passed explicitly because
+	 *                      the two surfaces resolve against different roots and
+	 *                      different histories, and the text no longer says which.
+	 */
+	getSuggestions: (
+		input: string,
+		filter?: TabCompletionFilter,
+		commandMode?: boolean
+	) => TabCompletionSuggestion[];
 }
 
 /**
@@ -90,14 +103,17 @@ function flattenFileTree(
  * 2. File tree (relative to shell CWD in terminal mode, project root in command mode)
  * 3. Git branches and tags (for git commands in git repos)
  *
- * Serves BOTH shell surfaces, distinguished by the input itself:
- * - **Terminal mode** - plain input; completes against `shellCwd` and the
- *   session's shell command history.
- * - **Command mode** - a `!`-prefixed AI-composer draft. Bang commands run at
- *   the agent's `cwd` (not `shellCwd`, which only terminal mode's `cd` moves),
- *   so completion resolves from the project root and draws history from the
- *   bang entries in `aiCommandHistory`. Suggestions keep the `!` prefix so the
- *   completed value stays a runnable draft.
+ * Serves BOTH shell surfaces, told apart by the `commandMode` argument (the
+ * text can't say which - a command line looks the same either way):
+ * - **Terminal mode** - completes against `shellCwd` and the session's shell
+ *   command history.
+ * - **Command mode** - the AI composer's `!` mode. Those commands run at the
+ *   agent's `cwd` (not `shellCwd`, which only terminal mode's `cd` moves), so
+ *   completion resolves from the project root and draws history from the bang
+ *   entries in `aiCommandHistory`.
+ *
+ * Suggestion values are plain command lines in both cases - command mode
+ * consumes the `!` on entry, so it is not part of the text being completed.
  *
  * PERF: Prefer calling with no args. Then this hook subscribes only to
  * non-streaming fields on the active session (cwd, shellCwd, fileTree,
@@ -231,19 +247,15 @@ export function useTabCompletion(session?: Session | null): UseTabCompletionRetu
 	// PERF: Only depend on memoized values, NOT the session object itself
 	// This prevents callback recreation on every session state change
 	const getSuggestions = useCallback(
-		(rawInput: string, filter: TabCompletionFilter = 'all'): TabCompletionSuggestion[] => {
-			// Command mode: strip the `!` so every rule below sees a plain command
-			// line, then re-attach it to each produced value so the completion stays
-			// a runnable draft. `bang` is '' in terminal mode, making this a no-op.
-			const commandBody = getShellCommandBody(rawInput);
-			const isCommandMode = commandBody !== null;
-			const bang = isCommandMode ? SHELL_COMMAND_PREFIX : '';
-			const input = isCommandMode ? commandBody : rawInput;
-
-			// A bare `!` is a valid starting point - it means "show me what I've run".
-			// Empty input anywhere else has nothing to complete against.
-			const isBareBang = isCommandMode && !input.trim();
-			if (!input.trim() && !isBareBang) return [];
+		(
+			input: string,
+			filter: TabCompletionFilter = 'all',
+			isCommandMode = false
+		): TabCompletionSuggestion[] => {
+			// An empty command mode line is a valid starting point - it means "show
+			// me what I've run". Empty input in a terminal has nothing to go on.
+			const isEmptyCommandLine = isCommandMode && !input.trim();
+			if (!input.trim() && !isEmptyCommandLine) return [];
 
 			const history = isCommandMode ? commandModeHistory : shellHistory;
 			const files = isCommandMode ? rootFileNames : fileNames;
@@ -283,7 +295,7 @@ export function useTabCompletion(session?: Session | null): UseTabCompletionRetu
 			// 2. Check git branches and tags (always show in git repos, not just for "git" commands)
 			// Skipped on a bare `!`: at the command-word position with nothing typed,
 			// a list of branch names is noise - recent commands are what's wanted.
-			if (isGitRepo && !isBareBang) {
+			if (isGitRepo && !isEmptyCommandLine) {
 				// Add matching branches
 				if (filter === 'all' || filter === 'branch') {
 					for (const branch of gitBranches) {
@@ -326,7 +338,7 @@ export function useTabCompletion(session?: Session | null): UseTabCompletionRetu
 			// 3. Check file tree for matches on the last word
 			// Handle path-like completions (e.g., "cd src/comp" should match files in src/)
 			// Also handle ./ prefix (e.g., "./src" -> "src")
-			if ((filter === 'all' || filter === 'file') && !isBareBang) {
+			if ((filter === 'all' || filter === 'file') && !isEmptyCommandLine) {
 				const hasDotSlashPrefix = lastPart.startsWith('./');
 				const normalizedLastPart = lastPart.replace(/^\.\//, ''); // Strip leading ./
 				const pathParts = normalizedLastPart.split('/');
@@ -393,9 +405,7 @@ export function useTabCompletion(session?: Session | null): UseTabCompletionRetu
 			});
 
 			// Limit to reasonable number (more when showing all types)
-			// Re-attach the command-mode bang so accepting a suggestion leaves the
-			// draft runnable. No-op in terminal mode (`bang` is '').
-			return suggestions.slice(0, 15).map((s) => (bang ? { ...s, value: bang + s.value } : s));
+			return suggestions.slice(0, 15);
 		},
 		[fileNames, rootFileNames, shellHistory, commandModeHistory, isGitRepo, gitBranches, gitTags]
 	);

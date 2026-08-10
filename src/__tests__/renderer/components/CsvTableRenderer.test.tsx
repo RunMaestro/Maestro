@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CsvTableRenderer } from '../../../renderer/components/CsvTableRenderer';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
@@ -439,6 +439,114 @@ describe('CsvTableRenderer', () => {
 			expect(screen.getByLabelText('Previous row')).toBeDisabled();
 		});
 
+		it('navigates rows with Left and Right arrows', () => {
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice\nBob\nCarol'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+			const fields = screen.getByTestId('csv-row-detail-fields');
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Alice');
+
+			fireEvent.keyDown(fields, { key: 'ArrowRight' });
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Bob');
+
+			fireEvent.keyDown(fields, { key: 'ArrowRight' });
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Carol');
+
+			fireEvent.keyDown(fields, { key: 'ArrowLeft' });
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Bob');
+		});
+
+		it('stops at the first and last row', () => {
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice\nBob'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+			const fields = screen.getByTestId('csv-row-detail-fields');
+
+			fireEvent.keyDown(fields, { key: 'ArrowLeft' });
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Alice');
+
+			fireEvent.keyDown(fields, { key: 'ArrowRight' });
+			fireEvent.keyDown(fields, { key: 'ArrowRight' });
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Bob');
+		});
+
+		it('scrolls instead of navigating on Up and Down', () => {
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice\nBob'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+			const fields = screen.getByTestId('csv-row-detail-fields');
+			const scrollBy = vi.fn();
+			fields.scrollBy = scrollBy;
+
+			fireEvent.keyDown(fields, { key: 'ArrowDown' });
+			// Still row 1: Down must not step to the next record
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Alice');
+			expect(scrollBy).toHaveBeenCalledWith({ top: 48 });
+
+			fireEvent.keyDown(fields, { key: 'ArrowUp' });
+			expect(scrollBy).toHaveBeenCalledWith({ top: -48 });
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Alice');
+		});
+
+		it('leaves arrow keys to the caret while the filter has focus', () => {
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice\nBob'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+			const search = screen.getByTestId('csv-row-detail-search');
+			fireEvent.keyDown(search, { key: 'ArrowRight' });
+
+			// Right inside the input moves the caret, it does not change rows
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Alice');
+		});
+
+		it('ignores modified arrows so OS and browser bindings still work', () => {
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice\nBob'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+			const fields = screen.getByTestId('csv-row-detail-fields');
+			fireEvent.keyDown(fields, { key: 'ArrowRight', metaKey: true });
+
+			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Alice');
+		});
+
+		it('focuses the field list on open so the arrows work without a click', async () => {
+			// If the filter input took initial focus the arrows would all be caret
+			// movement and the whole scheme would be dead until the user clicked.
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+
+			await waitFor(() => expect(screen.getByTestId('csv-row-detail-fields')).toHaveFocus());
+		});
+
+		it('focuses the filter on / and returns to the list on Enter', () => {
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+			const fields = screen.getByTestId('csv-row-detail-fields');
+			const search = screen.getByTestId('csv-row-detail-search');
+
+			fireEvent.keyDown(fields, { key: '/' });
+			expect(search).toHaveFocus();
+
+			fireEvent.keyDown(search, { key: 'Enter' });
+			expect(fields).toHaveFocus();
+		});
+
 		it('labels columns with no header cell', () => {
 			const { container } = renderWithLayers(
 				<CsvTableRenderer content={'Name\nAlice,extra'} theme={mockTheme} />
@@ -447,6 +555,23 @@ describe('CsvTableRenderer', () => {
 			openRow(container, 0);
 
 			expect(screen.getByTestId('csv-row-detail-modal')).toHaveTextContent('Column 2');
+		});
+
+		it('renders outside the table subtree so the backdrop can dim the side panels', () => {
+			// The table lives inside the Main Panel, whose `isolate` wrapper is a
+			// stacking context: an in-place backdrop dims only the center while the
+			// Left Bar (relative z-20) and Right Panel paint over it. jsdom has no
+			// layout engine, so assert the modal is NOT a descendant of the
+			// renderer rather than that it is visible.
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name\nAlice'} theme={mockTheme} />
+			);
+
+			openRow(container, 0);
+
+			const modal = screen.getByTestId('csv-row-detail-modal');
+			expect(container.querySelector('.csv-table-renderer')).not.toContainElement(modal);
+			expect(modal.parentElement).toBe(document.body);
 		});
 
 		it('closes on the header close button', () => {
