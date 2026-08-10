@@ -14,7 +14,7 @@
  *   - Exit that dequeues an item for a closed tab marks the orphan busy
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { createMockSession, createMockAITab } from '../../../helpers';
 import type { Session, QueuedItem } from '../../../../renderer/types';
@@ -49,9 +49,17 @@ let emitExit: ((sessionId: string, code: number) => void) | null = null;
 /** The `{sessionId}-batch-{ts}` id the hook spawned under. */
 let spawnedSessionId = '';
 
+/**
+ * The mock replaces `window.maestro` wholesale rather than patching it, so the
+ * original has to be put back or every later suite in the same worker inherits
+ * this stub.
+ */
+let originalMaestro: unknown;
+
 function installMaestroMock() {
 	emitExit = null;
 	spawnedSessionId = '';
+	originalMaestro = (window as unknown as { maestro: unknown }).maestro;
 	(window as unknown as { maestro: unknown }).maestro = {
 		agents: { get: vi.fn(async () => ({ command: 'claude', args: [], capabilities: {} })) },
 		process: {
@@ -128,6 +136,10 @@ describe('useAgentExecution - Auto Run exit vs. parallel tab busy state', () => 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		installMaestroMock();
+	});
+
+	afterEach(() => {
+		(window as unknown as { maestro: unknown }).maestro = originalMaestro;
 	});
 
 	it('leaves still-running parallel tabs busy when the batch task exits', async () => {

@@ -443,7 +443,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 										return {
 											...s,
-											state: anyTabStillBusy ? s.state : ('idle' as SessionState),
+											state: anyTabStillBusy ? ('busy' as SessionState) : ('idle' as SessionState),
 											busySource: anyTabStillBusy ? s.busySource : undefined,
 											thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
 											pendingAICommandForSynopsis: undefined,
