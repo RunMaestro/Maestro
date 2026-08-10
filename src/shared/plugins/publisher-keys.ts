@@ -19,9 +19,15 @@
  *   field a `signature.json` carries (see `signing.ts`).
  */
 export const MAESTRO_PUBLISHER_KEYS: readonly string[] = [
-	// Maestro bundled-plugin publisher key #1, minted 2026-08-07. Rotation:
-	// see CLAUDE-PLUGINS.md "Trust model (v1)".
-	'MCowBQYDK2VwAyEANZcDO/IuvEyV/Xe8JbLjkA4SDCl2ZRYe50Yr3AHuT8U=',
+	// Maestro release-signing key (ed25519), minted 2026-07-23. The private half
+	// lives ONLY in the MAESTRO_PLUGIN_SIGNING_KEY Actions secret (added
+	// 2026-07-25); it is intentionally not held by any individual, so a bundled
+	// plugin can only be signed by a maintainer-tagged release run. This value
+	// must stay the public counterpart of that secret - the release drift guard
+	// fails the build if they diverge. Rotation: see CLAUDE-PLUGINS.md
+	// "Trust model (v1)", and note it is a TWO-part change (new secret AND a
+	// re-baked key here, in the same release).
+	'MCowBQYDK2VwAyEAgG9ilXDpkj83vdxhlOI64cehRMB2EpbW2CNQO3izPu0=',
 ];
 
 /**
