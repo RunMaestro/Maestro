@@ -4,6 +4,12 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { formatTokensCompact } from '../../../shared/formatters';
+import { getActiveTab } from '../../utils/tabHelpers';
+import {
+	resolveContextWindow,
+	isStoredContextWindowOverridden,
+} from '../../utils/contextWindowPrecedence';
 import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -358,6 +364,43 @@ export function EditAgentModal({
 		sshRemoteId: sshRemoteConfig?.remoteId,
 	});
 
+	/**
+	 * Advisory note for the context-window control when the stored value is NOT
+	 * the one in use (#1370, following finding AD1).
+	 *
+	 * Only this surface can compute it: the decision needs the session AND its
+	 * live usage stats, which `AgentConfigPanel` does not receive. The ranking
+	 * itself is deliberately NOT re-derived here - `resolveContextWindow` is the
+	 * same helper the header gauge resolves through, so the note and the gauge
+	 * cannot disagree about which window won.
+	 */
+	const configOptionNotes = useMemo(() => {
+		if (!session) return undefined;
+		const activeTab = getActiveTab(session);
+		const resolved = resolveContextWindow({
+			customModel: session.customModel,
+			customContextWindow: session.customContextWindow,
+			contextWindowSource: session.contextWindowSource,
+			reportedWindow: activeTab?.usageStats?.contextWindow,
+			reportedResolved: activeTab?.usageStats?.contextWindowResolved,
+			// Deliberately omitted: the agent-level configured window ranks BELOW
+			// the stored value, so it can never be what overrides it. Leaving it
+			// out keeps this from waiting on the async lookup the panel does not do.
+		});
+		// Nothing stored means nothing to override, and a value that won needs no
+		// explaining.
+		if (!session.customContextWindow || !isStoredContextWindowOverridden(resolved)) {
+			return undefined;
+		}
+		const winner =
+			resolved.source === 'model-marker'
+				? `the selected model (${formatTokensCompact(resolved.window)})`
+				: `the provider, which reports ${formatTokensCompact(resolved.window)}`;
+		return {
+			contextWindow: `Currently overridden by ${winner}. Edit this field to use your own value instead.`,
+		};
+	}, [session]);
+
 	const handleSave = useCallback(() => {
 		if (!session) return;
 		const name = instanceName.trim();
@@ -698,6 +741,7 @@ export function EditAgentModal({
 						<AgentConfigPanel
 							theme={theme}
 							agent={agent}
+							configOptionNotes={configOptionNotes}
 							customPath={customPath}
 							onCustomPathChange={setCustomPath}
 							onCustomPathBlur={() => {

@@ -880,6 +880,140 @@ describe('EditAgentModal', () => {
 			});
 		});
 
+		// #1370: the stored number stays visible in this control while the gauge,
+		// the Context Timeline and compaction all divide by the provider's window
+		// instead. The control looks like it configures something; it does not.
+		describe('override note (#1370)', () => {
+			const withUsage = (
+				overrides: Partial<Session>,
+				usageStats?: Record<string, unknown>
+			): Session =>
+				createSession({
+					...overrides,
+					activeTabId: 'tab-1',
+					aiTabs: [{ id: 'tab-1', usageStats }],
+				} as Partial<Session>);
+
+			const note = () => screen.queryByTestId('config-option-note-contextWindow');
+
+			it('explains the override when a provider window outranks a materialized value', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000 },
+							{
+								contextWindow: 1_000_000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				// Names the window actually in use, so the number in the field is not
+				// the only figure on screen.
+				expect(note()).toHaveTextContent('1.0M');
+				expect(note()).toHaveTextContent(/edit this field/i);
+			});
+
+			it('stays silent when the stored window is user-edited', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 120000, contextWindowSource: 'user-edited' },
+							{ contextWindow: 1_000_000, contextWindowResolved: true }
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('120000');
+				// The value is winning, so there is nothing to explain.
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('stays silent when the reported window carries no authority flag', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage({ customContextWindow: 200000 }, { contextWindow: 1_000_000 })}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				// An unflagged report may be a parser-injected static fallback, so the
+				// stored value is still the one in use.
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('stays silent when nothing is stored to override', async () => {
+				const { customContextWindow: _drop, ...withoutWindow } = createSession() as Record<
+					string,
+					unknown
+				>;
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={
+							{
+								...withoutWindow,
+								activeTabId: 'tab-1',
+								aiTabs: [
+									{
+										id: 'tab-1',
+										usageStats: { contextWindow: 1_000_000, contextWindowResolved: true },
+									},
+								],
+							} as unknown as Session
+						}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('credits the model marker rather than the provider when it is what won', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000, customModel: 'opus[1m]' },
+							{
+								contextWindow: 500000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).toHaveTextContent(/selected model/i);
+				expect(note()).toHaveTextContent('1.0M');
+			});
+		});
+
 		// Finding AD1. This modal is HOW the agent-level default gets materialized
 		// into a per-session override (finding P1): with no stored value the panel
 		// seeds from `globalConfig.contextWindow`, and pressing Save writes that
