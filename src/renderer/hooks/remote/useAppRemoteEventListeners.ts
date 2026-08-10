@@ -1365,6 +1365,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
 		}
 
+		// Clearing the window clears its provenance too, even when the caller sent
+		// only `customContextWindow: null`. Otherwise a stale 'user-edited' outlives
+		// the value it described and the next window set without provenance
+		// inherits precedence nobody asked for (finding AD1).
+		if (patch.customContextWindow === null) {
+			updated.contextWindowSource = undefined;
+		}
+
 		if (Object.keys(updated).length === 0) {
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 				success: false,

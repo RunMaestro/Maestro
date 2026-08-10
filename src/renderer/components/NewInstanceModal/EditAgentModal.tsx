@@ -379,9 +379,14 @@ export function EditAgentModal({
 		// whatever provenance the session already had, which for everything stored
 		// before AD1 is none - so P1's "provider report wins" stands for it.
 		const contextWindowSource =
-			contextWindowValue !== seededContextWindowRef.current
-				? ('user-edited' as const)
-				: session.contextWindowSource;
+			contextWindowValue === undefined
+				? // Clearing the control clears the value, so its provenance goes with
+					// it - keeping a stale 'user-edited' would let the NEXT value
+					// inherit precedence nobody asked for.
+					undefined
+				: contextWindowValue !== seededContextWindowRef.current
+					? ('user-edited' as const)
+					: session.contextWindowSource;
 		const effortValue = agentConfig[getEffortConfigKey(agent)]?.trim() ?? undefined;
 
 		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.

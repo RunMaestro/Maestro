@@ -916,6 +916,32 @@ describe('EditAgentModal', () => {
 			expect(args[18]).toBeUndefined();
 		});
 
+		it('clears provenance when the user clears the context window', async () => {
+			// Review of PR #1362 (CodeRabbit). Clearing the control makes the value
+			// undefined, which differs from the numeric seed and so used to be
+			// recorded as a deliberate edit. Provenance must die with the value it
+			// describes, or the NEXT window set inherits precedence nobody asked for.
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession({ contextWindowSource: 'user-edited' })}
+					existingSessions={[]}
+				/>
+			);
+
+			const input = await screen.findByDisplayValue('100000');
+			fireEvent.change(input, { target: { value: '' } });
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			expect(args[10]).toBeUndefined();
+			expect(args[18]).toBeUndefined();
+		});
+
 		it('marks a context window the user actually changed as user-edited', async () => {
 			render(
 				<EditAgentModal
