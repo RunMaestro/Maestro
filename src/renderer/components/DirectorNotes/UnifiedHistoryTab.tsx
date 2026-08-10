@@ -23,7 +23,7 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from '../History';
-import type { GraphBucket } from '../History/ActivityGraph';
+import type { PrecomputedGraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useThrottledCallback } from '../../hooks';
@@ -94,7 +94,9 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// Pre-computed graph buckets from backend (covers all entries in
 		// the lookback window - server-cached). Independent from the
 		// paginated entry list below.
-		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphBuckets, setGraphBuckets] = useState<PrecomputedGraphBucket[] | undefined>(
+			undefined
+		);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
 			undefined
 		);

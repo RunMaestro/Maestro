@@ -30,7 +30,7 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from './History';
-import type { GraphBucket } from './History/ActivityGraph';
+import type { PrecomputedGraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -128,7 +128,9 @@ export const HistoryPanel = React.memo(
 		// so flipping between windows is cheap once each has been computed.
 		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
 		// Server-cached graph buckets for the current lookback.
-		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphBuckets, setGraphBuckets] = useState<PrecomputedGraphBucket[] | undefined>(
+			undefined
+		);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
 			undefined
 		);

@@ -9,16 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { HistoryEntryType } from '../../shared/types';
-
-/**
- * Single bucket in the activity-graph aggregate.
- */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-	agent: number;
-}
+import type { GraphBucket } from '../../shared/history';
 
 /**
  * All-time graph data returned by `history:getGraphData` and
