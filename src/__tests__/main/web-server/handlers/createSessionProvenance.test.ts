@@ -70,6 +70,16 @@ describe('handleCreateSession - context window provenance (finding AD1)', () => 
 		expect(config?.contextWindowSource).toBeUndefined();
 	});
 
+	it('ignores provenance sent without a context window', () => {
+		// Provenance describes a value. A source-only payload would leave a marker
+		// with nothing to describe, and that orphan would then outrank a provider
+		// report for whatever window is set later (review of PR #1362).
+		const config = created({ contextWindowSource: 'user-edited' });
+
+		expect(config?.customContextWindow).toBeUndefined();
+		expect(config?.contextWindowSource).toBeUndefined();
+	});
+
 	it('ignores a provenance value it does not recognise', () => {
 		// The field crosses a process boundary from an untrusted client, so only
 		// the one supported value is accepted.
