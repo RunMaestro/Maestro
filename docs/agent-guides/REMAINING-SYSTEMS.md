@@ -304,4 +304,4 @@ Returns: `{ success, draftPrUrl, draftPrNumber, autoRunPath, isFork, forkSlug }`
 - **Auto Run** - Symphony sets up Auto Run documents, then the actual document processing happens via the standard batch/Auto Run system in the renderer (useBatchProcessor, batchStateMachine). Symphony Runner only does the git/PR scaffolding.
 - **CLI** - No overlap. The CLI has its own playbook processing (`src/cli/services/playbooks.ts`) which is independent.
 - **Group Chat** - No direct connection. Symphony sessions can participate in group chats, but the runner itself has no group chat logic.
-- **IPC integration** - Called from `src/main/ipc/handlers/symphony.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
+- **IPC integration** - Called from `src/main/ipc/handlers/symphony/contributionStart.ts` via `symphony:startContribution` IPC handler. Frontend accesses it through `useSymphony` hook and `SymphonyModal.tsx`.
