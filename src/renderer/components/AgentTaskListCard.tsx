@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type { Theme } from '../types';
 import type { AgentTask, AgentTaskList } from '../utils/agentTaskList';
 import { summarizeAgentTaskList } from '../utils/agentTaskList';

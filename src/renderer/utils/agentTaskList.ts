@@ -77,7 +77,7 @@ function normalizeTaskArray(value: unknown): AgentTaskList | null {
 		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 		const item = raw as Record<string, unknown>;
 		const content = extractContent(item);
-		// Every entry must carry a label — a partial list would misreport progress.
+		// Every entry must carry a label - a partial list would misreport progress.
 		if (!content) return null;
 		const activeForm = typeof item.activeForm === 'string' ? item.activeForm.trim() : '';
 		tasks.push({
