@@ -16,7 +16,11 @@ import {
 	useContextTimelineStore,
 	type ContextTimelinePoint,
 } from '../../../renderer/stores/contextTimelineStore';
-import { hydrateContextTimeline } from '../../../renderer/services/contextTimelineHydration';
+import {
+	hydrateContextTimeline,
+	forgetContextTimelineCaptures,
+	__resetContextTimelineHydrationForTests,
+} from '../../../renderer/services/contextTimelineHydration';
 import { __resetConfiguredContextWindowCacheForTests } from '../../../renderer/utils/contextWindowResolver';
 import { createMockSession } from '../../helpers/mockSession';
 import type { BatchedUpdater } from '../../../renderer/hooks/agent/internal/types';
@@ -111,6 +115,7 @@ beforeEach(() => {
 	} as never);
 	useContextTimelineStore.setState({ buffers: {} });
 	__resetConfiguredContextWindowCacheForTests();
+	__resetContextTimelineHydrationForTests();
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		...((window as unknown as { maestro?: Record<string, unknown> }).maestro || {}),
 		process: mockProcess,
@@ -205,6 +210,50 @@ describe('contextTimelineHydration', () => {
 
 		getCaptures.mockResolvedValue({ success: true, trimmed: false, captures: [] });
 		await hydrateContextTimeline(SID, session);
+		expect(useContextTimelineStore.getState().buffers[SID].hydrated).toBe(true);
+	});
+
+	// Review of PR #1365 (Greptile). `hydrateSession` runs AFTER an await, so a
+	// clear that landed while the fetch was in flight used to be undone by the
+	// reply - the discarded history reappeared, or a deleted agent's buffer was
+	// recreated.
+	it('drops a hydration whose history was cleared while the fetch was in flight', async () => {
+		const session = seedSession();
+		let release: ((v: unknown) => void) | undefined;
+		getCaptures.mockReturnValueOnce(
+			new Promise((resolve) => {
+				release = resolve;
+			})
+		);
+
+		const pending = hydrateContextTimeline(SID, session);
+		// The user clears the timeline (or deletes the agent) mid-flight.
+		forgetContextTimelineCaptures(SID);
+		release!({
+			success: true,
+			trimmed: false,
+			captures: STREAM.map((e, i) => ({
+				seq: e.stats.captureSeq ?? i + 1,
+				timestamp: 1_700_000_000_000 + i,
+				sessionId: e.sessionId,
+				usageStats: e.stats,
+			})),
+		});
+		await pending;
+
+		// Nothing restored, and the buffer is NOT marked hydrated, so a later
+		// deliberate reopen can still fetch afresh.
+		expect(useContextTimelineStore.getState().buffers[SID]?.points ?? []).toHaveLength(0);
+		expect(useContextTimelineStore.getState().buffers[SID]?.hydrated).toBeUndefined();
+	});
+
+	it('still hydrates normally when the clear targets a different agent', async () => {
+		const session = seedSession();
+		const pending = hydrateContextTimeline(SID, session);
+		forgetContextTimelineCaptures('some-other-agent');
+		await pending;
+
+		expect(useContextTimelineStore.getState().buffers[SID].points.length).toBeGreaterThan(0);
 		expect(useContextTimelineStore.getState().buffers[SID].hydrated).toBe(true);
 	});
 

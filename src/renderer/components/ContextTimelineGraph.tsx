@@ -11,7 +11,9 @@
  * of `computeOverLimitDisplay(tokens, window, scaleMax)`, the shared helper from
  * finding R1. Both views therefore divide by the same per-panel headroom scale
  * and can never disagree, and the 100% reference line sits at `window /
- * scaleMax` exactly like the bar track's tick.
+ * scaleMax` exactly like the bar track's tick - as a STEP line following each
+ * turn's own stored window, so a mid-session window change moves the limit
+ * rather than judging older turns against a newer one.
  *
  * Not built on the shared `Sparkline` widget: that primitive auto-normalizes to
  * its own data's min/max, has no fixed reference line, cannot break a series,
@@ -31,8 +33,6 @@ interface ContextTimelineGraphProps {
 	points: ContextTimelinePoint[];
 	/** Shared per-panel track maximum (max of the window and the peak tokens). */
 	scaleMax: number;
-	/** The latest resolved window, i.e. where the 100% reference line belongs. */
-	contextWindow: number;
 	theme: Theme;
 }
 
@@ -77,7 +77,6 @@ function toSegments(plot: PlotPoint[]): PlotPoint[][] {
 export const ContextTimelineGraph = memo(function ContextTimelineGraph({
 	points,
 	scaleMax,
-	contextWindow,
 	theme,
 }: ContextTimelineGraphProps) {
 	const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -109,12 +108,36 @@ export const ContextTimelineGraph = memo(function ContextTimelineGraph({
 
 	const segments = useMemo(() => toSegments(plot), [plot]);
 
-	// The 100% boundary, drawn as a reference gridline. It sits at the top of the
-	// plot when nothing has gone over the limit (scaleMax === window).
-	const limitY =
-		contextWindow > 0 && scaleMax > 0
-			? VIEW_H - (Math.min(contextWindow, scaleMax) / scaleMax) * VIEW_H
-			: null;
+	// The 100% boundary. A single flat gridline drawn from the LATEST window put
+	// earlier turns on the wrong side of their own limit whenever the window
+	// changed mid-session (review of PR #1365) - a turn at 80% of a 1M window
+	// appeared above a line representing a later 200k one. The limit is a
+	// property of each turn, so it is drawn as a STEP line following each point's
+	// own stored window. With one window throughout - the overwhelmingly common
+	// case - this is visually identical to the flat line it replaces.
+	const limitPath = useMemo(() => {
+		if (scaleMax <= 0) return null;
+		const withWindow = plot.filter((p) => p.plottable);
+		if (!withWindow.length) return null;
+		const yFor = (w: number) => VIEW_H - (Math.min(w, scaleMax) / scaleMax) * VIEW_H;
+		let d = '';
+		let prevY = 0;
+		withWindow.forEach((p, i) => {
+			const y = yFor(points[p.index].contextWindow);
+			if (i === 0) {
+				// Start at the left edge so the first turn's limit is visible even
+				// when that turn is not at x=0.
+				d += `M 0 ${y} L ${p.x} ${y}`;
+			} else {
+				// Step: hold the previous limit up to this turn, then jump.
+				d += ` L ${p.x} ${prevY} L ${p.x} ${y}`;
+			}
+			prevY = y;
+			// Extend the last segment to the right edge.
+			if (i === withWindow.length - 1) d += ` L ${VIEW_W} ${y}`;
+		});
+		return d;
+	}, [plot, points, scaleMax]);
 
 	const active = activeIndex !== null ? plot[activeIndex] : null;
 	const readout = active ?? plot[plot.length - 1];
@@ -132,13 +155,11 @@ export const ContextTimelineGraph = memo(function ContextTimelineGraph({
 				aria-label="Context usage per turn, oldest on the left"
 				onMouseLeave={() => setActiveIndex(null)}
 			>
-				{limitY !== null && (
-					<line
+				{limitPath !== null && (
+					<path
 						data-testid="timeline-graph-limit-line"
-						x1={0}
-						y1={limitY}
-						x2={VIEW_W}
-						y2={limitY}
+						d={limitPath}
+						fill="none"
 						stroke={theme.colors.textMain}
 						strokeWidth={1}
 						strokeDasharray="3 3"

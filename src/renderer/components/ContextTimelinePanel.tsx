@@ -339,7 +339,6 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 						// reversed list the bar rows below render from.
 						points={points}
 						scaleMax={scaleMax}
-						contextWindow={latestWindow}
 						theme={theme}
 					/>
 				) : (

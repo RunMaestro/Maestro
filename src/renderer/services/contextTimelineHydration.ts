@@ -25,6 +25,16 @@ import { buildContextTimelinePoint } from '../hooks/agent/internal/contextTimeli
 const inFlight = new Set<string>();
 
 /**
+ * Bumped whenever an agent's captures are discarded. A fetch reads this before
+ * awaiting and again before writing; a mismatch means the history it is holding
+ * was thrown away mid-flight, so it must be dropped rather than restored
+ * (review of PR #1365). Without it, clearing a timeline - or deleting the agent
+ * - while `getCaptures` was in flight let the reply repopulate the buffer, or
+ * recreate one for an agent that no longer exists.
+ */
+const discardEpoch = new Map<string, number>();
+
+/**
  * Fetch and replay main's captures for one agent. No-op when the buffer has
  * already been hydrated (a reopen must never re-run this) or when a fetch for
  * the same agent is already running.
@@ -52,10 +62,16 @@ export async function hydrateContextTimeline(
 	}
 
 	inFlight.add(baseSessionId);
+	// Snapshot before the await; anything that discards this agent's history
+	// while the fetch runs moves it on.
+	const epochAtStart = discardEpoch.get(baseSessionId) ?? 0;
 	try {
 		const result = await api.getCaptures(baseSessionId);
 		// A failed fetch is deliberately NOT marked hydrated, so reopening retries.
 		if (!result?.success) return;
+		// The user cleared the timeline (or deleted the agent) while this was in
+		// flight. Writing now would resurrect exactly the history they discarded.
+		if ((discardEpoch.get(baseSessionId) ?? 0) !== epochAtStart) return;
 
 		const points: ContextTimelineHydrationPoint[] = [];
 		for (const capture of result.captures ?? []) {
@@ -90,5 +106,14 @@ export async function hydrateContextTimeline(
  */
 export function forgetContextTimelineCaptures(baseSessionId: string): void {
 	if (!baseSessionId) return;
+	// Invalidate any fetch already in flight BEFORE the async clear, so a reply
+	// that arrives in between cannot restore what is being discarded.
+	discardEpoch.set(baseSessionId, (discardEpoch.get(baseSessionId) ?? 0) + 1);
 	void window.maestro?.contextTimeline?.clearCaptures(baseSessionId);
+}
+
+/** Test-only: drop the epoch bookkeeping so cases don't leak into each other. */
+export function __resetContextTimelineHydrationForTests(): void {
+	inFlight.clear();
+	discardEpoch.clear();
 }

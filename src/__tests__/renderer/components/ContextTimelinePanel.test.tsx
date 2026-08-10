@@ -353,6 +353,27 @@ describe('ContextTimelinePanel view toggle and empty state', () => {
 		expect(screen.getByTestId('timeline-graph-limit-line')).toBeInTheDocument();
 	});
 
+	// Review of PR #1365 (Greptile). One flat line drawn from the LATEST window
+	// judged earlier turns against a limit that was not theirs: an 80%-of-1M turn
+	// rendered above a line representing a later 200k window.
+	it('steps the graph limit line when the window changed mid-session', () => {
+		seed([
+			pt({ id: 'old', contextTokens: 800_000, contextWindow: 1_000_000 }),
+			pt({ id: 'new', contextTokens: 100_000, contextWindow: 200_000 }),
+		]);
+		renderPanel();
+		fireEvent.click(screen.getByTestId('timeline-view-graph'));
+
+		const d = screen.getByTestId('timeline-graph-limit-line').getAttribute('d') ?? '';
+		// scaleMax is 1M, so the 1M limit sits at y=0 and the 200k one at y=80.
+		// Two distinct heights: the line has to move where the window moved.
+		expect(d).toContain('0');
+		expect(d).toContain('80');
+		// A flat line would name exactly one y value.
+		const ys = new Set((d.match(/-?\d+(\.\d+)?/g) ?? []).filter((_, i) => i % 2 === 1));
+		expect(ys.size).toBeGreaterThan(1);
+	});
+
 	it('shows a hovered turn figures instead of the latest', () => {
 		seed([
 			pt({ contextTokens: 100_000, percentage: 50 }),
