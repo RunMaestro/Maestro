@@ -883,6 +883,14 @@ export interface CreateSessionConfig {
 	customModel?: string;
 	customEffort?: string;
 	customContextWindow?: number;
+	/**
+	 * Provenance of {@link customContextWindow} (finding AD1). `'user-edited'`
+	 * only when a human deliberately chose the number - typing
+	 * `--context-window` on the CLI qualifies. The desktop New Agent modal does
+	 * NOT set it: its control is seeded from the agent-level config, so that
+	 * write is a materialization of the default rather than a choice.
+	 */
+	contextWindowSource?: 'user-edited';
 	customProviderPath?: string;
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

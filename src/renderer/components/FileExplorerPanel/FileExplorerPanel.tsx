@@ -352,6 +352,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenInExplorer,
 		handleOpenNewFile,
 		handleOpenNewFolder,
+		handleNewAgentHere,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
@@ -936,6 +937,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenInExplorer={handleOpenInExplorer}
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
+					onNewAgentHere={handleNewAgentHere}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					onPreviewMulti={handlePreviewMulti}

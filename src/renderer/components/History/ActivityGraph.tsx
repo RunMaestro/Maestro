@@ -5,20 +5,15 @@ import { LOOKBACK_OPTIONS, CUE_COLOR, AGENT_COLOR } from './historyConstants';
 import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
+import type { GraphBucket } from '../../../shared/history';
 
 /**
- * Pre-computed activity graph bucket from backend.
- *
- * `agent` is optional: buckets cached to disk (or returned by an older backend)
- * predate the AGENT series, and treating a missing count as 0 is correct - those
+ * A `GraphBucket` as received/computed by the renderer, where `agent` may be
+ * absent: buckets cached to disk (or returned by an older backend) predate
+ * the AGENT series, and treating a missing count as 0 is correct - those
  * entries were tallied into `auto` back when consults were written as AUTO.
  */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-	agent?: number;
-}
+export type PrecomputedGraphBucket = Omit<GraphBucket, 'agent'> & { agent?: number };
 
 // Activity bar graph component with configurable lookback window
 export interface ActivityGraphProps {
@@ -29,7 +24,7 @@ export interface ActivityGraphProps {
 	lookbackHours: number | null; // null = all time
 	onLookbackChange: (hours: number | null) => void;
 	/** Pre-computed buckets from backend (uses all entries, not just first page) */
-	precomputedBuckets?: GraphBucket[];
+	precomputedBuckets?: PrecomputedGraphBucket[];
 	/**
 	 * Time range that `precomputedBuckets` actually spans. When the buckets
 	 * come from the server's all-time aggregate, the renderer's loaded
@@ -119,7 +114,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				? precomputedBuckets
 				: (() => {
 						// Fallback: client-side bucketing from available entries
-						const buckets: GraphBucket[] = Array.from({ length: bucketCount }, () => ({
+						const buckets: PrecomputedGraphBucket[] = Array.from({ length: bucketCount }, () => ({
 							auto: 0,
 							user: 0,
 							cue: 0,
@@ -160,7 +155,8 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	}, [precomputedBuckets, entries, startTime, endTime, msPerBucket, bucketCount, activeFilters]);
 
 	/** Total height of one bucket, across every series. */
-	const bucketTotal = (b: GraphBucket): number => b.auto + b.user + b.cue + (b.agent ?? 0);
+	const bucketTotal = (b: PrecomputedGraphBucket): number =>
+		b.auto + b.user + b.cue + (b.agent ?? 0);
 
 	// Find max value for scaling
 	const maxValue = useMemo(() => {

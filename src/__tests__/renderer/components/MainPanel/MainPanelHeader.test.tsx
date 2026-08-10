@@ -429,6 +429,19 @@ describe('MainPanelHeader', () => {
 		expect(screen.getByText('25%')).toBeInTheDocument();
 	});
 
+	it('renders an over-limit context percentage past 100 without clamping', () => {
+		// Finding R1, Decision 2: the pill shows the true percentage whenever it
+		// has an over-limit measurement, so the header cannot silently disagree
+		// with the Context Timeline. The readout renders whatever number arrives;
+		// this pins that it is not clamped on the way out.
+		render(<MainPanelHeader {...defaultProps} activeTabContextUsage={147} />);
+		const readout = screen.getByText('147%');
+		expect(readout).toBeInTheDocument();
+		// A 4-character value must not wrap in the fixed-width mono pill.
+		expect(readout).toHaveClass('whitespace-nowrap');
+		expect(readout).toHaveClass('tabular-nums');
+	});
+
 	it('renders GitStatusWidget', () => {
 		render(<MainPanelHeader {...defaultProps} />);
 		expect(screen.getByTestId('git-status-widget')).toBeInTheDocument();

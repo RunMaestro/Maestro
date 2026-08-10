@@ -253,7 +253,7 @@ $ git status
 
 You will know you are in command mode: a `$` appears at the left of the input, and a **COMMAND MODE** strip above it names the directory the command will run in.
 
-**Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
+**Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
 **How it behaves:**
 

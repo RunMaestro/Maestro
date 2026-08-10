@@ -160,6 +160,11 @@ vi.mock('lucide-react', () => ({
 			📁
 		</span>
 	),
+	Bot: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="bot-icon" className={className} style={style}>
+			🤖
+		</span>
+	),
 	Files: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="files-icon" className={className} style={style}>
 			🗂️

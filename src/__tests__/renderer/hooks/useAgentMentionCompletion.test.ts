@@ -78,6 +78,30 @@ describe('useAgentMentionCompletion', () => {
 		expect(only.toolType).toBe('codex');
 	});
 
+	it('flags SSH agents with their remote id, and leaves local agents unflagged', () => {
+		const suggestions = getSuggestions(
+			[
+				agent('local', 'Local'),
+				agent('remote', 'Remote', {
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				}),
+				// Configured but switched off: the message runs locally, so no pill.
+				agent('off', 'Off', {
+					sessionSshRemoteConfig: { enabled: false, remoteId: 'remote-1' },
+				}),
+			],
+			[],
+			'current'
+		);
+
+		const byName = new Map(suggestions.map((s) => [s.displayText, s]));
+		expect(byName.get('Remote')?.isSshRemote).toBe(true);
+		expect(byName.get('Remote')?.sshRemoteId).toBe('remote-1');
+		expect(byName.get('Local')?.isSshRemote).toBe(false);
+		expect(byName.get('Local')?.sshRemoteId).toBeNull();
+		expect(byName.get('Off')?.isSshRemote).toBe(false);
+	});
+
 	it('surfaces groups with at least one non-terminal member, carrying member ids', () => {
 		const sessions = [
 			agent('a', 'Alpha', { groupId: 'g1' }),

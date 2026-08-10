@@ -7,9 +7,12 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { shellEscapeForDoubleQuotes } from '../../utils/shell-escape';
 import { getExpandedEnv, resolveSshPath } from '../../utils/cliDetection';
 import { expandTilde } from '../../../shared/pathUtils';
-import { terminateProcessTree } from '../utils/commandKill';
+import { killProcessTreeNow } from '../utils/commandKill';
 import type { CommandResult } from '../types';
 import type { SshRemoteConfig } from '../../../shared/types';
+
+/** Exit code for a command we SIGKILLed. 128+9, the shell convention. */
+const SIGKILL_EXIT_CODE = 137;
 
 /**
  * Runs terminal commands on remote hosts via SSH.
@@ -131,16 +134,30 @@ export class SshCommandRunner {
 				},
 			});
 
+			let settled = false;
+
+			/** Report the run as finished exactly once. */
+			const settle = (exitCode: number) => {
+				if (settled) return;
+				settled = true;
+				this.running.delete(sessionId);
+				this.emitter.emit('command-exit', sessionId, exitCode);
+				resolve({ exitCode });
+			};
+
 			// Killing the local ssh client drops the channel, which is what ends the
-			// remote command - we have no other handle on it. SIGTERM then SIGKILL so
-			// a client wedged mid-handshake still goes away promptly.
-			let cancelEscalation: (() => void) | null = null;
+			// remote command - we have no other handle on it. SIGKILL immediately,
+			// same contract as the local runner: Stop means stopped, now.
 			this.running.set(sessionId, () => {
-				if (!childProcess.pid) {
-					childProcess.kill('SIGKILL');
-					return;
+				if (childProcess.pid) {
+					killProcessTreeNow(childProcess.pid, { sessionId });
 				}
-				cancelEscalation = terminateProcessTree(childProcess.pid, { sessionId });
+				try {
+					childProcess.kill('SIGKILL');
+				} catch {
+					// Already gone.
+				}
+				settle(SIGKILL_EXIT_CODE);
 			});
 
 			// Handle stdout
@@ -178,27 +195,21 @@ export class SshCommandRunner {
 
 			// Handle process exit
 			childProcess.on('exit', (code) => {
-				cancelEscalation?.();
-				this.running.delete(sessionId);
 				logger.debug('[ProcessManager] runCommandViaSsh exit', 'ProcessManager', {
 					sessionId,
 					exitCode: code,
 				});
-				this.emitter.emit('command-exit', sessionId, code || 0);
-				resolve({ exitCode: code || 0 });
+				settle(code || 0);
 			});
 
 			// Handle errors
 			childProcess.on('error', (error) => {
-				cancelEscalation?.();
-				this.running.delete(sessionId);
 				logger.error('[ProcessManager] runCommandViaSsh error', 'ProcessManager', {
 					sessionId,
 					error: error.message,
 				});
 				this.emitter.emit('stderr', sessionId, `SSH Error: ${error.message}`);
-				this.emitter.emit('command-exit', sessionId, 1);
-				resolve({ exitCode: 1 });
+				settle(1);
 			});
 		});
 	}

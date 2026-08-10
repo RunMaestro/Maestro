@@ -2207,7 +2207,7 @@ interface MaestroAPI {
 			sharedContext?: { sshRemoteId: string; remoteCwd: string },
 			projectPath?: string
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number; agent: number }>;
+			buckets: Array<import('../shared/history').GraphBucket>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
@@ -3835,13 +3835,13 @@ interface MaestroAPI {
 				agentEntryCount: number;
 				totalCount: number;
 			};
-			graphBuckets?: Array<{ auto: number; user: number; cue: number; agent: number }>;
+			graphBuckets?: Array<import('../shared/history').GraphBucket>;
 		}>;
 		getGraphData: (
 			bucketCount: number,
 			lookbackHours: number | null
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number; agent: number }>;
+			buckets: Array<import('../shared/history').GraphBucket>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
@@ -4116,6 +4116,22 @@ interface MaestroAPI {
 			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;
 			error?: string;
 		}>;
+	};
+
+	// Context Timeline capture log (main-side backfill of per-agent turn history)
+	contextTimeline: {
+		getCaptures: (sessionId: string | null) => Promise<{
+			success: boolean;
+			captures?: Array<{
+				seq: number;
+				timestamp: number;
+				sessionId: string;
+				usageStats: UsageStats;
+			}>;
+			trimmed?: boolean;
+			error?: string;
+		}>;
+		clearCaptures: (sessionId: string | null) => Promise<{ success: boolean; error?: string }>;
 	};
 
 	// Per-project memory API (Claude Code memory viewer)

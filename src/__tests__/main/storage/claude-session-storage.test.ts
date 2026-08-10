@@ -42,16 +42,22 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock fs/promises
-vi.mock('fs/promises', () => ({
-	default: {
+// Mock fs/promises. Both shapes are needed: the storage imports the default
+// export, while the session-info cache it now lists through uses a namespace
+// import, which only sees the named ones.
+vi.mock('fs/promises', () => {
+	const fsMock = {
 		access: vi.fn(),
 		readdir: vi.fn(),
 		stat: vi.fn(),
 		readFile: vi.fn(),
 		writeFile: vi.fn(),
-	},
-}));
+		mkdir: vi.fn(),
+		rename: vi.fn(),
+		unlink: vi.fn(),
+	};
+	return { default: fsMock, ...fsMock };
+});
 
 // Mock remote-fs utilities
 vi.mock('../../../main/utils/remote-fs', () => ({
@@ -76,6 +82,12 @@ vi.mock('../../../main/utils/pricing', () => ({
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 	captureMessage: vi.fn(),
+}));
+
+// Listing routes through the shared session-info parse cache, which resolves
+// its directory off `app.getPath` at construction time.
+vi.mock('electron', () => ({
+	app: { getPath: vi.fn().mockReturnValue('/tmp/maestro-test-userdata') },
 }));
 
 describe('ClaudeSessionStorage', () => {

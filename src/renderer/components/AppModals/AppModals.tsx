@@ -22,6 +22,7 @@ import type {
 	ToolType,
 	LeaderboardRegistration,
 	ThinkingMode,
+	AdditionalDirectory,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { WizardStep } from '../Wizard/WizardContext';
@@ -121,6 +122,7 @@ export interface AppModalsProps {
 	) => void;
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
+	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -141,7 +143,12 @@ export interface AppModalsProps {
 		},
 		enableMaestroP?: boolean,
 		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
+		maestroPMode?: 'interactive' | 'dynamic',
+		retryOnAvailabilityErrors?: boolean,
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited'
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -648,6 +655,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCreateSession,
 		duplicatingSessionId,
 		newInstancePresetGroupId,
+		newInstancePresetWorkingDir,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -978,6 +986,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				existingSessions={sessions}
 				sourceSession={sourceSession}
 				newInstancePresetGroupId={newInstancePresetGroupId}
+				newInstancePresetWorkingDir={newInstancePresetWorkingDir}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}
