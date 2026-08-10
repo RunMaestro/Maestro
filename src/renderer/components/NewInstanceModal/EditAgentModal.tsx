@@ -6,6 +6,7 @@ import { resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import {
 	resolveContextWindow,
 	isStoredContextWindowOverridden,
@@ -364,6 +365,9 @@ export function EditAgentModal({
 		sshRemoteId: sshRemoteConfig?.remoteId,
 	});
 
+	/** Live store entry for this agent; see the snapshot note in the memo below. */
+	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
+
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
 	 * the one in use (#1370, following finding AD1).
@@ -375,12 +379,23 @@ export function EditAgentModal({
 	 * cannot disagree about which window won.
 	 */
 	const configOptionNotes = useMemo(() => {
-		if (!session) return undefined;
-		const activeTab = getActiveTab(session);
+		// The `session` prop is a snapshot taken when the modal opened
+		// (`openModal('editAgent', { session })`), which is right for the form
+		// fields - they must not change under someone mid-edit. The note describes
+		// what the gauge is doing RIGHT NOW though, and a turn completing while
+		// this is open changes that, so it reads the live store entry instead
+		// (review of #1371).
+		const current = liveSession ?? session;
+		if (!current) return undefined;
+		// Mid provider switch the panel already shows the NEW provider's config
+		// while this would still describe the OLD provider's window, captioning
+		// the wrong control. The switch clears the stored window anyway.
+		if (providerChanged) return undefined;
+		const activeTab = getActiveTab(current);
 		const resolved = resolveContextWindow({
-			customModel: session.customModel,
-			customContextWindow: session.customContextWindow,
-			contextWindowSource: session.contextWindowSource,
+			customModel: current.customModel,
+			customContextWindow: current.customContextWindow,
+			contextWindowSource: current.contextWindowSource,
 			reportedWindow: activeTab?.usageStats?.contextWindow,
 			reportedResolved: activeTab?.usageStats?.contextWindowResolved,
 			// Deliberately omitted: the agent-level configured window ranks BELOW
@@ -389,7 +404,7 @@ export function EditAgentModal({
 		});
 		// Nothing stored means nothing to override, and a value that won needs no
 		// explaining.
-		if (!session.customContextWindow || !isStoredContextWindowOverridden(resolved)) {
+		if (!current.customContextWindow || !isStoredContextWindowOverridden(resolved)) {
 			return undefined;
 		}
 		const winner =
@@ -399,7 +414,7 @@ export function EditAgentModal({
 		return {
 			contextWindow: `Currently overridden by ${winner}. Edit this field to use your own value instead.`,
 		};
-	}, [session]);
+	}, [liveSession, session, providerChanged]);
 
 	const handleSave = useCallback(() => {
 		if (!session) return;
