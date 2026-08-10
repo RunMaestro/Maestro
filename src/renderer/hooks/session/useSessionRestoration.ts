@@ -24,6 +24,18 @@ import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 
+/**
+ * Whether a persisted terminal tab is still there after a restart.
+ *
+ * Only tabs carrying a startup command are durable - the command re-runs on
+ * relaunch, which is the point of them. Restoration and the zero-tab corruption
+ * check both go through this so they cannot disagree about how many tabs an
+ * agent is about to have.
+ */
+function terminalTabSurvivesRestart(tab: { startupCommand?: string }): boolean {
+	return (tab.startupCommand ?? '').trim() !== '';
+}
+
 // ============================================================================
 // Return type
 // ============================================================================
@@ -207,10 +219,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// is still open (the user closed the last chat but kept a terminal around).
 			// Only a session with no tabs whatsoever is treated as data corruption -
 			// recovering the zero-AI-tab case would wipe the tabs the user still has.
+			//
+			// Terminal tabs are counted through `terminalTabSurvivesRestart` because
+			// restoration below drops the ones with no startup command. Counting the
+			// raw array would let an agent whose sole tab is a plain terminal skip
+			// recovery here and then lose that terminal, landing on zero tabs.
 			const restoredTabCount =
 				(session.aiTabs?.length ?? 0) +
 				(session.filePreviewTabs?.length ?? 0) +
-				(session.terminalTabs?.length ?? 0) +
+				(session.terminalTabs ?? []).filter(terminalTabSurvivesRestart).length +
 				(session.browserTabs?.length ?? 0);
 			if (restoredTabCount === 0) {
 				logger.error(
@@ -416,7 +433,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// startup command - those are intentionally durable so their command
 			// re-runs on relaunch. Drop the rest, then reset PTY runtime state.
 			const resetTerminalTabs = (correctedSession.terminalTabs || [])
-				.filter((tab) => (tab.startupCommand ?? '').trim() !== '')
+				.filter(terminalTabSurvivesRestart)
 				.map((tab) => ({
 					...tab,
 					pid: 0,
