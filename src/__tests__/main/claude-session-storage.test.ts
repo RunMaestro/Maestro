@@ -561,10 +561,22 @@ describe('ClaudeSessionStorage', () => {
 		it('should return empty array when project directory does not exist', async () => {
 			// The missing directory surfaces on readdir - listing no longer pays for a
 			// separate existence check before enumerating.
-			vi.mocked(fs.readdir).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+			);
 
 			const sessions = await storage.listSessions('/nonexistent/path');
 			expect(sessions).toEqual([]);
+		});
+
+		it('should rethrow when the session directory is unreadable', async () => {
+			// EACCES/EIO are real faults - swallowing them would report a user's
+			// existing transcripts as "no sessions".
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+			);
+
+			await expect(storage.listSessions('/test/project')).rejects.toThrow('EACCES');
 		});
 	});
 

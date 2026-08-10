@@ -372,8 +372,19 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		let filenames: string[];
 		try {
 			filenames = await fs.readdir(projectDir);
-		} catch {
-			return [];
+		} catch (error) {
+			// A project that has never been opened in Claude simply has no folder.
+			// Anything else (EACCES, EIO) is a real fault: reporting it as "zero
+			// sessions" would silently hide the user's transcripts.
+			if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+				return [];
+			}
+			logger.error(`Error listing session directory: ${projectDir}`, LOG_CONTEXT, error);
+			captureException(error, {
+				operation: 'claudeStorage:statProjectSessionFiles',
+				projectDir,
+			});
+			throw error;
 		}
 
 		const stats = await Promise.all(
@@ -472,6 +483,10 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const files = await this.statProjectSessionFiles(projectDir);
 
 		if (files.length === 0) {
+			// Still a full listing, so still prune: a project whose transcripts were
+			// all deleted must drop its cache entries too, or a recreated file at the
+			// same path with a matching fingerprint would serve stale metadata.
+			await this.parseSessionFilesCached(projectPath, projectDir, [], true);
 			logger.info(`No Claude sessions found for project: ${projectPath}`, LOG_CONTEXT);
 			return [];
 		}
