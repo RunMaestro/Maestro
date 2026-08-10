@@ -11,6 +11,7 @@ import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
 import { useModalStore } from '../../stores/modalStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
@@ -813,7 +814,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 z-[9999] animate-in fade-in duration-100"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 animate-in fade-in duration-100"
+			// Above the toast layer: while the palette is open it owns the screen,
+			// so a stack of notifications can't sit on top of the results list.
+			style={{ zIndex: Z_LAYERS.QUICK_ACTIONS }}
 			onMouseDown={(e) => {
 				// Dismiss when clicking outside the modal content (backdrop only).
 				if (e.target === e.currentTarget && !renamingSession) {

@@ -14,6 +14,14 @@ import { ShellCommandCard } from '../../../renderer/components/ShellCommandCard'
 import { mockTheme } from '../../helpers/mockTheme';
 import type { LogEntry } from '../../../renderer/types';
 
+const safeClipboardWrite = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../renderer/utils/clipboard', () => ({
+	safeClipboardWrite: (text: string) => safeClipboardWrite(text),
+}));
+vi.mock('../../../renderer/utils/flashCopiedToClipboard', () => ({
+	flashCopiedToClipboard: vi.fn(),
+}));
+
 const cancelShellCommand = vi.fn().mockResolvedValue(true);
 vi.mock('../../../renderer/services/shellCommand', () => ({
 	cancelShellCommand: (id: string) => cancelShellCommand(id),
@@ -79,11 +87,64 @@ describe('ShellCommandCard', () => {
 		expect(cancelShellCommand).toHaveBeenCalledWith('log-1');
 	});
 
+	it('acknowledges the press immediately instead of looking inert', () => {
+		// The kill is SIGTERM-then-SIGKILL, so a stubborn process can take up to
+		// the escalation window to die. An unchanged button in that gap reads as
+		// "my click did nothing" - which is exactly how the original bug felt.
+		renderCard(makeLog());
+
+		fireEvent.click(screen.getByText('Stop'));
+
+		expect(screen.getByText('Stopping')).toBeTruthy();
+		expect(screen.queryByText('Stop')).toBeNull();
+	});
+
+	it('does not fire a second kill while one is already in flight', () => {
+		renderCard(makeLog());
+
+		const button = screen.getByText('Stop').closest('button')!;
+		fireEvent.click(button);
+		fireEvent.click(button);
+
+		expect(cancelShellCommand).toHaveBeenCalledTimes(1);
+	});
+
 	it('renders output as terminal text', () => {
 		const { container } = renderCard(makeLog({ text: 'M  src/app.ts\n?? notes.md\n' }));
 
 		expect(container.textContent).toContain('M  src/app.ts');
 		expect(container.textContent).toContain('?? notes.md');
+	});
+
+	describe('ANSI colour', () => {
+		const COLOURED = '\u001b[1m\u001b[36mnode_modules\u001b[0m tailwind.config.mjs\n';
+
+		it('converts escape codes to colour instead of showing them literally', () => {
+			const { container } = renderCard(makeLog({ text: COLOURED }));
+
+			// The text survives...
+			expect(container.textContent).toContain('node_modules');
+			expect(container.textContent).toContain('tailwind.config.mjs');
+			// ...but the codes do not leak through as visible junk, which is what
+			// happened when this output was rendered as markdown instead.
+			expect(container.textContent).not.toContain('[1m');
+			expect(container.textContent).not.toContain('[36m');
+			expect(container.textContent).not.toContain('[0m');
+			// Colour is carried as real markup.
+			expect(container.innerHTML).toContain('<span');
+		});
+
+		it('copies clean text, not escape codes', async () => {
+			renderCard(makeLog({ text: COLOURED }));
+
+			fireEvent.click(screen.getByTitle('Copy output'));
+			await Promise.resolve();
+
+			const copied = safeClipboardWrite.mock.calls[0]?.[0] as string;
+			expect(copied).toContain('node_modules');
+			expect(copied).not.toContain('\u001b');
+			expect(copied).not.toContain('[36m');
+		});
 	});
 
 	it('shows the exit code and duration once finished', () => {

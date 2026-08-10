@@ -10,6 +10,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { Z_LAYERS } from '../../../renderer/constants/zLayers';
 
 /**
  * The action rows, in render order. Scoped to `[data-action-label]` rather than
@@ -2290,6 +2291,17 @@ describe('QuickActionsModal', () => {
 			// Browser tab is at index 0 (first) — should show Move to Last but not Move to First
 			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
 			expect(screen.getByText('Move to Last Position')).toBeInTheDocument();
+		});
+	});
+
+	describe('Layering', () => {
+		it('renders the backdrop above the toast layer so notifications cannot cover the palette', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;
+			expect(backdrop.style.zIndex).toBe(String(Z_LAYERS.QUICK_ACTIONS));
+			expect(Z_LAYERS.QUICK_ACTIONS).toBeGreaterThan(Z_LAYERS.TOAST);
 		});
 	});
 });

@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
 import { formatDurationParts as formatDuration } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { Z_LAYERS } from '../constants/zLayers';
 
 interface ToastContainerProps {
 	theme: Theme;
@@ -365,7 +366,7 @@ export const ToastContainer = memo(function ToastContainer({
 	return createPortal(
 		<div
 			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: 100000 }}
+			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST }}
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (
