@@ -22,6 +22,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { abbreviateGroupName } from '../../shared/formatters';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -221,9 +222,16 @@ export const SessionItem = memo(function SessionItem({
 	const startupCommandIndicatorActive =
 		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
 
-	// Parent agents (sessions with worktreeConfig) get an inline chevron toggle.
+	// Parent agents get an inline chevron toggle. Keyed off worktreeConfig OR an
+	// actual child count: several spawn paths (Auto Run worktree dispatch in
+	// worktreeSpawn.ts, quick-create, watcher discovery) attach children via
+	// parentSessionId without ever writing worktreeConfig on the parent. Gating
+	// on worktreeConfig alone left those parents with a permanently expanded,
+	// uncollapsible subtree. SessionList renders children off the same child
+	// count, so this keeps the toggle present whenever a subtree is visible.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
-	const isWorktreeParent = variant !== 'worktree' && Boolean(session.worktreeConfig);
+	const isWorktreeParent =
+		variant !== 'worktree' && (Boolean(session.worktreeConfig) || (worktreeChildCount ?? 0) > 0);
 	const worktreesExpanded = session.worktreesExpanded ?? true;
 	const showCollapsedCountBadge =
 		isWorktreeParent && !worktreesExpanded && (worktreeChildCount ?? 0) > 0;
@@ -425,7 +433,7 @@ export const SessionItem = memo(function SessionItem({
 								{jumpNumber}
 							</div>
 						)}
-						<Activity className="w-3 h-3" /> {session.toolType}
+						<Activity className="w-3 h-3" /> {getAgentDisplayName(session.toolType)}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 					</div>
 				)}

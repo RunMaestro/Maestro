@@ -13,9 +13,25 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { readFileSync } from 'fs';
+import { execSync } from 'child_process';
 
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
 const appVersion = process.env.VITE_APP_VERSION || packageJson.version;
+
+// Get the first 8 chars of the git commit hash. Honors VITE_COMMIT_HASH when set
+// (CI builds from a tarball / shallow checkout where `git rev-parse` may fail),
+// otherwise reads it from the local repo. Empty string when neither is available.
+// Mirrors vite.config.mts's getCommitHash().
+function getCommitHash(): string {
+	if (process.env.VITE_COMMIT_HASH) {
+		return process.env.VITE_COMMIT_HASH.trim().slice(0, 8);
+	}
+	try {
+		return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim().slice(0, 8);
+	} catch {
+		return '';
+	}
+}
 
 export default defineConfig(({ mode }) => ({
 	plugins: [react()],
@@ -30,7 +46,7 @@ export default defineConfig(({ mode }) => ({
 
 	define: {
 		__APP_VERSION__: JSON.stringify(appVersion),
-		__GIT_HASH__: JSON.stringify('web-desktop'),
+		__COMMIT_HASH__: JSON.stringify(getCommitHash()),
 		'process.env.NODE_ENV': JSON.stringify(mode === 'production' ? 'production' : 'development'),
 	},
 

@@ -5,6 +5,13 @@ import type { Theme } from '../types';
 import { logger } from '../utils/logger';
 import { SvgContextMenu } from './SvgContextMenu';
 import { useSvgContextMenu } from '../hooks/ui/useSvgContextMenu';
+import {
+	adjustBrightness,
+	blendColors,
+	hexToRgb,
+	readableTextOn,
+	transparentize,
+} from '../../shared/colorContrast';
 
 // Track theme for mermaid initialization
 let lastThemeId: string | null = null;
@@ -12,58 +19,6 @@ let lastThemeId: string | null = null;
 interface MermaidRendererProps {
 	chart: string;
 	theme: Theme;
-}
-
-/**
- * Convert hex color to RGB components
- */
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-	const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-	return result
-		? {
-				r: parseInt(result[1], 16),
-				g: parseInt(result[2], 16),
-				b: parseInt(result[3], 16),
-			}
-		: null;
-}
-
-/**
- * Create a slightly lighter/darker version of a color
- */
-function adjustBrightness(hex: string, percent: number): string {
-	const rgb = hexToRgb(hex);
-	if (!rgb) return hex;
-
-	const adjust = (value: number) =>
-		Math.min(255, Math.max(0, Math.round(value + (255 * percent) / 100)));
-	const r = adjust(rgb.r);
-	const g = adjust(rgb.g);
-	const b = adjust(rgb.b);
-
-	return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
-
-/**
- * Blend two hex colors together
- */
-function blendColors(color1: string, color2: string, ratio: number): string {
-	const rgb1 = hexToRgb(color1);
-	const rgb2 = hexToRgb(color2);
-	if (!rgb1 || !rgb2) return color1;
-
-	const r = Math.round(rgb1.r * (1 - ratio) + rgb2.r * ratio);
-	const g = Math.round(rgb1.g * (1 - ratio) + rgb2.g * ratio);
-	const b = Math.round(rgb1.b * (1 - ratio) + rgb2.b * ratio);
-
-	return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
-
-/**
- * Create a semi-transparent version of a color as a solid color blended with background
- */
-function transparentize(color: string, bgColor: string, alpha: number): string {
-	return blendColors(bgColor, color, alpha);
 }
 
 /**
@@ -92,21 +47,53 @@ const initMermaid = (theme: Theme) => {
 		? adjustBrightness(colors.bgMain, 10)
 		: adjustBrightness(colors.bgMain, -5);
 
+	// ER attribute rows. Mermaid's base theme derives these from the node fill
+	// (rowOdd = lighten(primaryColor, 75)), which lands near-white on a dark
+	// theme while the row text stays `nodeTextColor` - light text on a light
+	// row. Deriving both zebra stripes from the app background instead keeps
+	// them in the same contrast band as every other node fill.
+	const rowEven = transparentize(colors.accent, colors.bgMain, 0.06);
+	const rowOdd = transparentize(colors.accent, colors.bgMain, 0.18);
+
+	// Every surface a node label can be painted on. The label color has to clear
+	// AA against the worst of them, not just the primary fill.
+	const nodeTextColor = readableTextOn(colors.textMain, [
+		primaryNodeBg,
+		secondaryNodeBg,
+		tertiaryNodeBg,
+		rowEven,
+		rowOdd,
+	]);
+
+	// Pie slices and git branch labels sit on saturated palette colors rather than
+	// on the background, so their text is measured against the whole palette. One
+	// color has to serve every slice, so this is a best-worst-case pick.
+	const paletteTextColor = readableTextOn(colors.textMain, [
+		colors.accent,
+		colors.success,
+		colors.warning,
+		colors.error,
+	]);
+
+	// Text drawn directly on the accent (gantt bars, sequence numbers). Themes
+	// ship `accentForeground` for exactly this pairing.
+	const onAccentColor = readableTextOn(colors.accentForeground, [colors.accent]);
+
 	// Create theme variables from the app's color scheme
 	const themeVariables = {
 		// Base colors - primary nodes get accent color treatment
 		primaryColor: primaryNodeBg,
-		primaryTextColor: colors.textMain,
+		primaryTextColor: nodeTextColor,
 		primaryBorderColor: primaryBorder,
 
 		// Secondary colors - use success color for variety
 		secondaryColor: secondaryNodeBg,
-		secondaryTextColor: colors.textMain,
+		secondaryTextColor: nodeTextColor,
 		secondaryBorderColor: secondaryBorder,
 
 		// Tertiary colors - use warning for additional variety
 		tertiaryColor: tertiaryNodeBg,
-		tertiaryTextColor: colors.textMain,
+		tertiaryTextColor: nodeTextColor,
 		tertiaryBorderColor: tertiaryBorder,
 
 		// Background and text
@@ -120,8 +107,12 @@ const initMermaid = (theme: Theme) => {
 
 		// Node colors for flowcharts - prominent styling
 		nodeBkg: primaryNodeBg,
-		nodeTextColor: colors.textMain,
+		nodeTextColor,
 		nodeBorder: primaryBorder,
+
+		// ER diagram attribute rows (zebra striping behind `nodeTextColor`)
+		rowEven,
+		rowOdd,
 
 		// Cluster (subgraph) colors - subtle distinction
 		clusterBkg: transparentize(colors.accent, colors.bgMain, 0.05),
@@ -138,7 +129,7 @@ const initMermaid = (theme: Theme) => {
 		// Sequence diagram colors
 		actorBkg: primaryNodeBg,
 		actorBorder: primaryBorder,
-		actorTextColor: colors.textMain,
+		actorTextColor: nodeTextColor,
 		actorLineColor: colors.accent,
 		signalColor: colors.textMain,
 		signalTextColor: colors.textMain,
@@ -151,10 +142,10 @@ const initMermaid = (theme: Theme) => {
 		noteTextColor: colors.textMain,
 		activationBkgColor: transparentize(colors.accent, colors.bgMain, 0.2),
 		activationBorderColor: colors.accent,
-		sequenceNumberColor: colors.bgMain,
+		sequenceNumberColor: onAccentColor,
 
 		// Class diagram colors
-		classText: colors.textMain,
+		classText: nodeTextColor,
 
 		// Git graph colors - use vibrant colors
 		git0: colors.accent,
@@ -165,10 +156,10 @@ const initMermaid = (theme: Theme) => {
 		git5: adjustBrightness(colors.success, isDark ? 20 : -20),
 		git6: adjustBrightness(colors.warning, isDark ? 20 : -20),
 		git7: adjustBrightness(colors.error, isDark ? 20 : -20),
-		gitBranchLabel0: colors.textMain,
-		gitBranchLabel1: colors.textMain,
-		gitBranchLabel2: colors.textMain,
-		gitBranchLabel3: colors.textMain,
+		gitBranchLabel0: paletteTextColor,
+		gitBranchLabel1: paletteTextColor,
+		gitBranchLabel2: paletteTextColor,
+		gitBranchLabel3: paletteTextColor,
 		gitInv0: colors.bgMain,
 		gitInv1: colors.bgMain,
 		gitInv2: colors.bgMain,
@@ -181,7 +172,7 @@ const initMermaid = (theme: Theme) => {
 		altSectionBkgColor: transparentize(colors.accent, colors.bgMain, 0.05),
 		sectionBkgColor2: transparentize(colors.success, colors.bgMain, 0.1),
 		taskBkgColor: colors.accent,
-		taskTextColor: colors.bgMain,
+		taskTextColor: onAccentColor,
 		taskTextLightColor: colors.textMain,
 		taskTextOutsideColor: colors.textMain,
 		activeTaskBkgColor: adjustBrightness(colors.accent, isDark ? 15 : -15),
@@ -207,7 +198,7 @@ const initMermaid = (theme: Theme) => {
 		pie11: blendColors(colors.accent, colors.warning, 0.5),
 		pie12: blendColors(colors.success, colors.error, 0.5),
 		pieTitleTextColor: colors.textMain,
-		pieSectionTextColor: colors.textMain,
+		pieSectionTextColor: paletteTextColor,
 		pieLegendTextColor: colors.textMain,
 		pieStrokeColor: colors.bgMain,
 		pieStrokeWidth: '2px',
@@ -220,7 +211,7 @@ const initMermaid = (theme: Theme) => {
 		// Requirement diagram
 		requirementBkgColor: primaryNodeBg,
 		requirementBorderColor: primaryBorder,
-		requirementTextColor: colors.textMain,
+		requirementTextColor: nodeTextColor,
 
 		// Mindmap - colorful nodes
 		mindmapBkg: primaryNodeBg,

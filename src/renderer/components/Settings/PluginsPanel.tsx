@@ -22,12 +22,9 @@ import {
 import type { Theme } from '../../types';
 import type { PluginListSnapshot } from '../../../main/ipc/handlers/plugins';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
-import type {
-	AggregatedContributions,
-	PanelContribution,
-} from '../../../shared/plugins/contributions';
+import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 import { notifyToast } from '../../stores/notificationStore';
-import { PluginPanelHost } from './PluginPanelHost';
+import { useUIStore } from '../../stores/uiStore';
 import { PluginActivityView } from './PluginActivityView';
 
 interface PluginsPanelProps {
@@ -47,7 +44,10 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 	const [loading, setLoading] = useState(false);
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [contributions, setContributions] = useState<AggregatedContributions | null>(null);
-	const [openPanel, setOpenPanel] = useState<PanelContribution | null>(null);
+	// The modal panel host is mounted ONCE at App level (PluginModalPanelMount);
+	// this launch button just names the panel to open, so the Settings path and a
+	// plugin's own `ui.openPanel` summon share one mount and one webview guest.
+	const setOpenPluginPanelId = useUIStore((s) => s.setOpenPluginPanelId);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -383,7 +383,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 															backgroundColor: theme.colors.accent + '18',
 															color: theme.colors.accent,
 														}}
-														onClick={() => setOpenPanel(panel)}
+														onClick={() => setOpenPluginPanelId(panel.id)}
 														title={`Open ${panel.title}`}
 													>
 														<PanelTop className="w-3 h-3" />
@@ -401,10 +401,6 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 
 			{/* Read-only per-plugin observability for running tier-1 plugins. */}
 			<PluginActivityView theme={theme} records={records} />
-
-			{openPanel && (
-				<PluginPanelHost theme={theme} panel={openPanel} onClose={() => setOpenPanel(null)} />
-			)}
 		</div>
 	);
 }

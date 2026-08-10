@@ -87,6 +87,74 @@ describe('execFile.ts', () => {
 		});
 	});
 
+	describe('execFileStreaming', () => {
+		// These spawn real short-lived node processes: the child_process mock above
+		// only replaces execFile, so spawn is the genuine implementation.
+		const NODE = process.execPath;
+
+		it('delivers stdout chunks as they arrive and resolves with the exit code', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+			const chunks: Array<[string, string]> = [];
+
+			const handle = execFileStreaming(NODE, ['-e', 'process.stdout.write("hello")'], {
+				onChunk: (chunk, stream) => chunks.push([chunk, stream]),
+			});
+			const result = await handle.result;
+
+			expect(chunks).toContainEqual(['hello', 'stdout']);
+			expect(result.stdout).toBe('hello');
+			expect(result.exitCode).toBe(0);
+		});
+
+		it('captures stderr separately and reports a non-zero exit code', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+			const streams: string[] = [];
+
+			const handle = execFileStreaming(
+				NODE,
+				['-e', 'process.stderr.write("boom"); process.exit(3)'],
+				{ onChunk: (_chunk, stream) => streams.push(stream) }
+			);
+			const result = await handle.result;
+
+			expect(streams).toEqual(['stderr']);
+			expect(result.stderr).toBe('boom');
+			expect(result.stdout).toBe('');
+			expect(result.exitCode).toBe(3);
+		});
+
+		it('cancel() terminates the process and reports SIGTERM', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+
+			const handle = execFileStreaming(
+				NODE,
+				['-e', 'process.stdout.write("up"); setInterval(() => {}, 1000)'],
+				{
+					onChunk: () => handle.cancel(),
+				}
+			);
+			const result = await handle.result;
+
+			expect(result.exitCode).toBe('SIGTERM');
+			expect(result.stdout).toBe('up');
+		});
+
+		it('resolves with the spawn error code when the binary is missing', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+
+			// Use a .exe suffix so Windows does not route through cmd.exe
+			// (needsWindowsShell). Shell-spawned missing commands exit 1 instead
+			// of surfacing spawn ENOENT.
+			const handle = execFileStreaming('definitely-not-a-real-binary-xyz.exe', [], {
+				onChunk: () => {},
+			});
+			const result = await handle.result;
+
+			expect(result.exitCode).toBe('ENOENT');
+			expect(result.stderr).toBeTruthy();
+		});
+	});
+
 	describe('execFileNoThrow', () => {
 		describe('successful execution', () => {
 			it('should return stdout and stderr with exitCode 0 on success', async () => {

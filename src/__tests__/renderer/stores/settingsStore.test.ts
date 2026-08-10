@@ -164,6 +164,12 @@ describe('settingsStore', () => {
 			};
 		}
 
+		// Cue stats mock (not in global setup). loadAllSettings calls this for the
+		// one-time cueTimeMs backfill; default to "no retained history".
+		(window.maestro as any).cueStats = {
+			getHistoricalConductorCredit: vi.fn().mockResolvedValue(0),
+		};
+
 		vi.clearAllMocks();
 	});
 
@@ -838,6 +844,32 @@ describe('settingsStore', () => {
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('modalSizes', {});
 		});
 
+		it('resetModalSize drops one key and leaves the rest', () => {
+			useSettingsStore.setState({
+				modalSizes: {
+					settings: { width: 812, height: 621 },
+					about: { width: 560, height: 420 },
+				},
+			});
+
+			useSettingsStore.getState().resetModalSize('settings');
+
+			expect(useSettingsStore.getState().modalSizes).toEqual({
+				about: { width: 560, height: 420 },
+			});
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('modalSizes', {
+				about: { width: 560, height: 420 },
+			});
+		});
+
+		it('resetModalSize does not persist for a modal that was never resized', () => {
+			useSettingsStore.setState({ modalSizes: {} });
+
+			useSettingsStore.getState().resetModalSize('never-resized');
+
+			expect(window.maestro.settings.set).not.toHaveBeenCalledWith('modalSizes', expect.anything());
+		});
+
 		it('setWebInterfaceCustomPort persists only valid 1024-65535', () => {
 			// Valid port
 			useSettingsStore.getState().setWebInterfaceCustomPort(3000);
@@ -1136,6 +1168,49 @@ describe('settingsStore', () => {
 
 			useSettingsStore.getState().updateAutoRunProgress(10000);
 			expect(useSettingsStore.getState().autoRunStats.cumulativeTimeMs).toBe(60000);
+		});
+
+		it('updateAutoRunProgress keeps Auto Run time out of the Cue subtotal', () => {
+			useSettingsStore.setState({
+				autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 50000, cueTimeMs: 5000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().updateAutoRunProgress(10000);
+			expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(5000);
+		});
+
+		it('updateAutoRunProgress accrues Cue credit into both cumulative and Cue time', () => {
+			useSettingsStore.setState({
+				autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 50000, cueTimeMs: 5000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().updateAutoRunProgress(10000, 'cue');
+			const stats = useSettingsStore.getState().autoRunStats;
+			expect(stats.cumulativeTimeMs).toBe(60000);
+			expect(stats.cueTimeMs).toBe(15000);
+		});
+
+		it('updateAutoRunProgress treats legacy stats without cueTimeMs as all Auto Run', () => {
+			const { cueTimeMs: _dropped, ...legacy } = DEFAULT_AUTO_RUN_STATS;
+			useSettingsStore.setState({
+				autoRunStats: { ...legacy, cumulativeTimeMs: 50000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().updateAutoRunProgress(10000, 'cue');
+			expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(10000);
+		});
+
+		it('recordAutoRunComplete preserves the Cue subtotal', () => {
+			useSettingsStore.setState({
+				autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 60000, cueTimeMs: 15000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().recordAutoRunComplete(30000);
+			expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(15000);
 		});
 
 		it('updateAutoRunProgress detects new badge level', () => {
@@ -1544,6 +1619,36 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
 		});
 
+		it('keeps edits made while a reload is in flight', async () => {
+			// A reload (system resume, or another window's write) takes several IPC
+			// round trips. Anything typed during that window must not be reverted to
+			// the older on-disk snapshot - that loses characters and, because the
+			// textarea is controlled, snaps the caret to the end of the field.
+			useSettingsStore.setState({ settingsLoaded: true, conductorProfile: 'abc' });
+			vi.mocked(window.maestro.settings.getAll).mockImplementation(async () => {
+				useSettingsStore.getState().setConductorProfile('abcdef');
+				return { conductorProfile: 'abc', fontSize: 16 };
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.conductorProfile).toBe('abcdef');
+			// Untouched keys still load normally.
+			expect(state.fontSize).toBe(16);
+		});
+
+		it('applies the disk value on the initial load even for touched keys', async () => {
+			useSettingsStore.setState({ settingsLoaded: false, conductorProfile: '' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				conductorProfile: 'from disk',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().conductorProfile).toBe('from disk');
+		});
+
 		it('uses defaults when settings are empty/undefined', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
 
@@ -1553,6 +1658,93 @@ describe('settingsStore', () => {
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
 			expect(state.fontSize).toBe(14);
+		});
+
+		describe('cue time backfill', () => {
+			const HOUR = 60 * 60 * 1000;
+
+			/** Let the un-awaited backfill promise chain settle. */
+			const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+			it('re-attributes historical Cue credit into cueTimeMs', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					concurrentAutoRunTimeMigrationApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 100 * HOUR },
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockResolvedValue(25 * HOUR);
+
+				await loadAllSettings();
+				await flush();
+
+				const stats = useSettingsStore.getState().autoRunStats;
+				expect(stats.cueTimeMs).toBe(25 * HOUR);
+				// Re-attribution only - the total must not grow.
+				expect(stats.cumulativeTimeMs).toBe(100 * HOUR);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('cueTimeBackfillApplied', true);
+			});
+
+			it('never lets the Cue subtotal exceed the cumulative total', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					concurrentAutoRunTimeMigrationApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 10 * HOUR },
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockResolvedValue(50 * HOUR);
+
+				await loadAllSettings();
+				await flush();
+
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(10 * HOUR);
+			});
+
+			it('keeps live-accrued credit when it already exceeds the historical total', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					autoRunStats: {
+						...DEFAULT_AUTO_RUN_STATS,
+						cumulativeTimeMs: 100 * HOUR,
+						cueTimeMs: 30 * HOUR,
+					},
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockResolvedValue(25 * HOUR);
+
+				await loadAllSettings();
+				await flush();
+
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(30 * HOUR);
+			});
+
+			it('does not run once the backfill flag is set', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					cueTimeBackfillApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 100 * HOUR },
+				});
+
+				await loadAllSettings();
+				await flush();
+
+				expect(
+					(window.maestro as any).cueStats.getHistoricalConductorCredit
+				).not.toHaveBeenCalled();
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(0);
+			});
+
+			it('leaves the flag unset when the Cue database read fails, so it retries', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					concurrentAutoRunTimeMigrationApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 100 * HOUR },
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockRejectedValue(
+					new Error('cue.db unavailable')
+				);
+
+				await loadAllSettings();
+				await flush();
+
+				expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+					'cueTimeBackfillApplied',
+					true
+				);
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(0);
+			});
 		});
 
 		it('loads persisted starredSessionsCollapsed into the settings store', async () => {
@@ -1843,6 +2035,45 @@ describe('settingsStore', () => {
 			expect(
 				vi.mocked(window.maestro.settings.set).mock.calls.some(([k]) => k === 'shortcuts')
 			).toBe(false);
+		});
+
+		it('moves focusActiveTab off Opt+Cmd+F so cross-tab search can claim it', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					focusActiveTab: {
+						id: 'focusActiveTab',
+						label: 'Focus Active Tab',
+						keys: ['Alt', 'Meta', 'f'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.focusActiveTab.keys).toEqual(['Alt', 'Meta', 'ArrowUp']);
+			// The freed combo now belongs to cross-tab message search.
+			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
+		});
+
+		it('leaves a user-customized focusActiveTab binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					focusActiveTab: {
+						id: 'focusActiveTab',
+						label: 'Focus Active Tab',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.focusActiveTab.keys).toEqual([
+				'Meta',
+				'Shift',
+				'j',
+			]);
 		});
 
 		it('merges shortcuts: preserves user keys but updates labels from defaults', async () => {

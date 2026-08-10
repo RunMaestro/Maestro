@@ -462,7 +462,13 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...correctedSession,
 				aiTabs: resetAiTabs,
 				activeTabId: restoredActiveTabId,
-				filePreviewTabs: correctedSession.filePreviewTabs || [],
+				// autoplayMedia is a one-shot request from a user action, so it must
+				// never survive a restart. It is normally cleared the moment the
+				// player consumes it; stripping it here covers a quit that lands in
+				// between, which would otherwise start playing on next launch.
+				filePreviewTabs: (correctedSession.filePreviewTabs || []).map((tab) =>
+					tab.autoplayMedia ? { ...tab, autoplayMedia: undefined } : tab
+				),
 				activeFileTabId: restoredActiveFileTabId,
 				browserTabs: resetBrowserTabs,
 				activeBrowserTabId: restoredActiveBrowserTabId,

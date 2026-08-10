@@ -161,7 +161,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				<div className="flex-1 min-w-0">
 					<p className="text-[10px] uppercase font-bold opacity-50 mb-1">Remote Execution</p>
 					<p className="font-semibold mb-1">SSH Remote Hosts</p>
-					<p className="text-xs opacity-60 mb-3">
+					<p className="text-xs opacity-70 mb-3">
 						Configure remote hosts where AI agents can be executed via SSH. This allows running
 						agents on powerful remote machines or servers with specific tools installed.
 					</p>
@@ -341,7 +341,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								No SSH remotes configured
 							</p>
-							<p className="text-xs opacity-60 mt-1" style={{ color: theme.colors.textDim }}>
+							<p className="text-xs opacity-70 mt-1">
 								Add a remote host to run AI agents on external machines
 							</p>
 						</div>

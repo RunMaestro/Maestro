@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
-import { LOOKBACK_OPTIONS, CUE_COLOR } from './historyConstants';
+import { LOOKBACK_OPTIONS, CUE_COLOR, AGENT_COLOR } from './historyConstants';
 import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
+import type { GraphBucket } from '../../../shared/history';
 
-/** Pre-computed activity graph bucket from backend */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
+/**
+ * A `GraphBucket` as received/computed by the renderer, where `agent` may be
+ * absent: buckets cached to disk (or returned by an older backend) predate
+ * the AGENT series, and treating a missing count as 0 is correct - those
+ * entries were tallied into `auto` back when consults were written as AUTO.
+ */
+export type PrecomputedGraphBucket = Omit<GraphBucket, 'agent'> & { agent?: number };
 
 // Activity bar graph component with configurable lookback window
 export interface ActivityGraphProps {
@@ -22,7 +24,7 @@ export interface ActivityGraphProps {
 	lookbackHours: number | null; // null = all time
 	onLookbackChange: (hours: number | null) => void;
 	/** Pre-computed buckets from backend (uses all entries, not just first page) */
-	precomputedBuckets?: GraphBucket[];
+	precomputedBuckets?: PrecomputedGraphBucket[];
 	/**
 	 * Time range that `precomputedBuckets` actually spans. When the buckets
 	 * come from the server's all-time aggregate, the renderer's loaded
@@ -112,10 +114,11 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				? precomputedBuckets
 				: (() => {
 						// Fallback: client-side bucketing from available entries
-						const buckets: GraphBucket[] = Array.from({ length: bucketCount }, () => ({
+						const buckets: PrecomputedGraphBucket[] = Array.from({ length: bucketCount }, () => ({
 							auto: 0,
 							user: 0,
 							cue: 0,
+							agent: 0,
 						}));
 
 						entries.forEach((entry) => {
@@ -131,6 +134,8 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 										buckets[bucketIndex].user++;
 									} else if (entry.type === 'CUE') {
 										buckets[bucketIndex].cue++;
+									} else if (entry.type === 'AGENT') {
+										buckets[bucketIndex].agent = (buckets[bucketIndex].agent ?? 0) + 1;
 									}
 								}
 							}
@@ -145,18 +150,27 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			auto: activeFilters.has('AUTO') ? b.auto : 0,
 			user: activeFilters.has('USER') ? b.user : 0,
 			cue: activeFilters.has('CUE') ? b.cue : 0,
+			agent: activeFilters.has('AGENT') ? (b.agent ?? 0) : 0,
 		}));
 	}, [precomputedBuckets, entries, startTime, endTime, msPerBucket, bucketCount, activeFilters]);
 
+	/** Total height of one bucket, across every series. */
+	const bucketTotal = (b: PrecomputedGraphBucket): number =>
+		b.auto + b.user + b.cue + (b.agent ?? 0);
+
 	// Find max value for scaling
 	const maxValue = useMemo(() => {
-		return Math.max(1, ...bucketData.map((h) => h.auto + h.user + h.cue));
+		return Math.max(1, ...bucketData.map(bucketTotal));
 	}, [bucketData]);
 
 	// Total counts for summary tooltip
 	const totalAuto = useMemo(() => bucketData.reduce((sum, h) => sum + h.auto, 0), [bucketData]);
 	const totalUser = useMemo(() => bucketData.reduce((sum, h) => sum + h.user, 0), [bucketData]);
 	const totalCue = useMemo(() => bucketData.reduce((sum, h) => sum + h.cue, 0), [bucketData]);
+	const totalAgent = useMemo(
+		() => bucketData.reduce((sum, h) => sum + (h.agent ?? 0), 0),
+		[bucketData]
+	);
 
 	// Get time range label for tooltip
 	const getTimeRangeLabel = (index: number) => {
@@ -195,7 +209,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 
 	// Handle bar click
 	const handleBarClick = (index: number) => {
-		const total = bucketData[index].auto + bucketData[index].user + bucketData[index].cue;
+		const total = bucketTotal(bucketData[index]);
 		if (total > 0 && onBarClick) {
 			const { start, end } = getBucketTimeRange(index);
 			onBarClick(start, end);
@@ -291,7 +305,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			className="flex-1 min-w-0 flex flex-col relative mt-0.5"
 			title={
 				hoveredIndex === null
-					? `${lookbackConfig.label}: ${totalAuto} auto, ${totalUser} user${totalCue > 0 ? `, ${totalCue} cue` : ''} (right-click to change)`
+					? `${lookbackConfig.label}: ${totalAuto} auto, ${totalUser} user${totalCue > 0 ? `, ${totalCue} cue` : ''}${totalAgent > 0 ? `, ${totalAgent} agent` : ''} (right-click to change)`
 					: undefined
 			}
 			onContextMenu={handleContextMenu}
@@ -376,6 +390,12 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 								{bucketData[hoveredIndex].cue}
 							</span>
 						</div>
+						<div className="flex items-center justify-between gap-3">
+							<span style={{ color: AGENT_COLOR }}>Agent</span>
+							<span className="font-bold" style={{ color: AGENT_COLOR }}>
+								{bucketData[hoveredIndex].agent ?? 0}
+							</span>
+						</div>
 					</div>
 				</div>
 			)}
@@ -398,10 +418,12 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 					/>
 				)}
 				{bucketData.map((bucket, index) => {
-					const total = bucket.auto + bucket.user + bucket.cue;
+					const total = bucketTotal(bucket);
+					const agentCount = bucket.agent ?? 0;
 					const heightPercent = total > 0 ? (total / maxValue) * 100 : 0;
 					const autoPercent = total > 0 ? (bucket.auto / total) * 100 : 0;
 					const cuePercent = total > 0 ? (bucket.cue / total) * 100 : 0;
+					const agentPercent = total > 0 ? (agentCount / total) * 100 : 0;
 					const userPercent = total > 0 ? (bucket.user / total) * 100 : 0;
 					const isHovered = hoveredIndex === index;
 
@@ -444,6 +466,16 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 										style={{
 											height: `${cuePercent}%`,
 											backgroundColor: CUE_COLOR,
+											minHeight: '1px',
+										}}
+									/>
+								)}
+								{/* Agent portion (middle) - magenta */}
+								{agentCount > 0 && (
+									<div
+										style={{
+											height: `${agentPercent}%`,
+											backgroundColor: AGENT_COLOR,
 											minHeight: '1px',
 										}}
 									/>

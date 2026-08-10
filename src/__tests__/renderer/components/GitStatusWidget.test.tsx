@@ -743,4 +743,77 @@ describe('GitStatusWidget', () => {
 			expect(filePath).toHaveAttribute('title', 'very/long/path/to/deeply/nested/file.ts');
 		});
 	});
+
+	// Regression: the header clips its left cluster with overflow-hidden, so an
+	// inline `absolute top-full` tooltip was invisible on screen even though it
+	// was in the document. jsdom can't measure clipping, so pin the structural
+	// fix: the panel must be portaled out of the widget's subtree.
+	describe('tooltip portal', () => {
+		it('renders the changed-files panel outside the widget, on document.body', () => {
+			mockGetStatus.mockReturnValue(
+				createGitStatusData({
+					fileChanges: [{ path: 'src/app.ts', additions: 5, deletions: 2 }],
+				})
+			);
+			const { container } = render(<GitStatusWidget {...defaultProps} />);
+
+			fireEvent.mouseEnter(screen.getByRole('button').parentElement!);
+
+			const tooltip = screen.getByTestId('git-status-tooltip');
+			expect(container.contains(tooltip)).toBe(false);
+			expect(tooltip.parentElement).toBe(document.body);
+		});
+
+		it('unmounts the panel when the pointer leaves and the delay elapses', async () => {
+			vi.useFakeTimers();
+			try {
+				mockGetStatus.mockReturnValue(
+					createGitStatusData({
+						fileChanges: [{ path: 'src/app.ts', additions: 5, deletions: 2 }],
+					})
+				);
+				render(<GitStatusWidget {...defaultProps} />);
+				const anchor = screen.getByRole('button').parentElement!;
+
+				fireEvent.mouseEnter(anchor);
+				expect(screen.getByTestId('git-status-tooltip')).toBeInTheDocument();
+
+				fireEvent.mouseLeave(anchor);
+				act(() => {
+					vi.advanceTimersByTime(200);
+				});
+
+				expect(screen.queryByTestId('git-status-tooltip')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('keeps the panel open while the pointer is over it', async () => {
+			vi.useFakeTimers();
+			try {
+				mockGetStatus.mockReturnValue(
+					createGitStatusData({
+						fileChanges: [{ path: 'src/app.ts', additions: 5, deletions: 2 }],
+					})
+				);
+				render(<GitStatusWidget {...defaultProps} />);
+				const anchor = screen.getByRole('button').parentElement!;
+
+				fireEvent.mouseEnter(anchor);
+				const tooltip = screen.getByTestId('git-status-tooltip');
+
+				// Pointer travels from widget to panel: the close timer must be cancelled.
+				fireEvent.mouseLeave(anchor);
+				fireEvent.mouseEnter(tooltip);
+				act(() => {
+					vi.advanceTimersByTime(200);
+				});
+
+				expect(screen.getByTestId('git-status-tooltip')).toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
 });

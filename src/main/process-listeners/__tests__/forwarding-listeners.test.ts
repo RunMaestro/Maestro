@@ -48,7 +48,6 @@ describe('Forwarding Listeners', () => {
 		expect(mockProcessManager.on).toHaveBeenCalledWith('thinking-chunk', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('tool-execution', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('stderr', expect.any(Function));
-		expect(mockProcessManager.on).toHaveBeenCalledWith('command-exit', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('query-complete', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('exit', expect.any(Function));
 	});
@@ -251,15 +250,15 @@ describe('Forwarding Listeners', () => {
 		expect(mockSafeSend).toHaveBeenCalledWith('process:stderr', testSessionId, testStderr);
 	});
 
-	it('should forward command-exit events to renderer', () => {
+	it('does NOT forward command-exit - that moved to the data listener', () => {
+		// `process:command-exit` has to be sent AFTER the coalesced process:data
+		// buffer is flushed, or a fast command's output arrives after its own exit
+		// and gets dropped. This module is registered BEFORE the data listener, so
+		// forwarding it from here would always beat that flush. See
+		// data-listener.ts and its test for the ordering guarantee.
 		setupForwardingListeners(mockProcessManager, mockDeps);
 
-		const handler = eventHandlers.get('command-exit');
-		const testSessionId = 'test-session-123';
-		const testExitCode = 0;
-
-		handler?.(testSessionId, testExitCode);
-
-		expect(mockSafeSend).toHaveBeenCalledWith('process:command-exit', testSessionId, testExitCode);
+		expect(eventHandlers.get('command-exit')).toBeUndefined();
+		expect(mockProcessManager.on).not.toHaveBeenCalledWith('command-exit', expect.any(Function));
 	});
 });

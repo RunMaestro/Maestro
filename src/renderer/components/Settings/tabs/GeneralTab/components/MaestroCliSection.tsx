@@ -1,6 +1,7 @@
 import { Terminal } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import type { MaestroCliState } from '../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface MaestroCliSectionProps {
 	theme: Theme;
@@ -21,10 +22,7 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 
 	return (
 		<div data-setting-id="general-maestro-cli">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Terminal className="w-3 h-3" />
-				Maestro CLI
-			</div>
+			<SettingsSectionHeading icon={Terminal}>Maestro CLI</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-2"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -118,7 +116,7 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 								: 'Reinstall CLI'}
 					</button>
 				</div>
-				<div className="text-[11px] opacity-50">
+				<div className="text-[11px] opacity-55">
 					Install target: <code>{status?.installDir || '~/.local/bin'}</code>
 				</div>
 			</div>

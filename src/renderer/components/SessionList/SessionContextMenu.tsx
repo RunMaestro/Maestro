@@ -1,14 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import {
+	ArrowDown,
+	ArrowDownToLine,
+	ArrowUp,
+	ArrowUpFromLine,
 	ChevronRight,
 	Settings,
 	Copy,
 	Bookmark,
 	FolderInput,
 	FolderPlus,
+	FileDiff,
 	Folder,
 	GitBranch,
 	GitPullRequest,
+	History,
 	Trash2,
 	Edit3,
 	Zap,
@@ -20,6 +26,7 @@ import {
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
@@ -204,14 +211,25 @@ export function SessionContextMenu({
 	// Abandon the edit without renaming; keep the menu open.
 	const cancelRenameWindow = () => setRenamingWindowId(null);
 
+	// Git actions (log / pull / push / change branch / PR). Same hook the header
+	// branch pill's dropdown uses, so both entry points behave identically -
+	// here they act on the right-clicked agent rather than the active one.
+	const gitActions = useGitAgentActions(session);
+
+	// `onCreatePR` is the worktree-child path that App already wires up; for any
+	// other git agent the shared action opens the same modal for this session.
+	const createPR = onCreatePR ?? (gitActions.canCreatePR ? gitActions.createPR : undefined);
+
 	// Compute visibility for worktree sections to avoid rendering dividers without buttons
 	const showWorktreeParentSection =
 		(hasWorktreeChildren || session.isGitRepo) &&
 		!session.parentSessionId &&
 		((onQuickCreateWorktree && session.worktreeConfig) || onConfigureWorktrees);
 
-	const showWorktreeChildSection =
-		session.parentSessionId && session.worktreeBranch && (onCreatePR || onDeleteWorktree);
+	// Create PR now lives in the git section above, so this is Remove Worktree only.
+	const showWorktreeChildSection = Boolean(
+		session.parentSessionId && session.worktreeBranch && onDeleteWorktree
+	);
 
 	return (
 		<div
@@ -550,6 +568,112 @@ export function SessionContextMenu({
 				</div>
 			)}
 
+			{/* Git actions - mirrors the header branch pill's dropdown so the same
+			    operations are reachable from either place. */}
+			{gitActions.isGitRepo && (
+				<>
+					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+					<button
+						type="button"
+						onClick={() => {
+							gitActions.viewLog();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-git-log"
+					>
+						<History className="w-3.5 h-3.5" />
+						View Git Log
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							// Fire-and-forget: the diff is fetched asynchronously and
+							// opens its own viewer, so the menu closes right away.
+							void gitActions.viewDiff();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-git-diff"
+					>
+						<FileDiff className="w-3.5 h-3.5" />
+						View Git Diff
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							gitActions.pull();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-git-pull"
+					>
+						<span className="flex items-center gap-2">
+							<ArrowDownToLine className="w-3.5 h-3.5" />
+							Git Pull
+						</span>
+						{gitActions.behind > 0 && (
+							<span className="flex items-center gap-0.5 text-[10px] text-red-500">
+								<ArrowDown className="w-3 h-3" />
+								{gitActions.behind}
+							</span>
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							gitActions.push();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-git-push"
+					>
+						<span className="flex items-center gap-2">
+							<ArrowUpFromLine className="w-3.5 h-3.5" />
+							Git Push
+						</span>
+						{gitActions.ahead > 0 && (
+							<span className="flex items-center gap-0.5 text-[10px] text-green-500">
+								<ArrowUp className="w-3 h-3" />
+								{gitActions.ahead}
+							</span>
+						)}
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							gitActions.switchBranch();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-change-branch"
+					>
+						<GitBranch className="w-3.5 h-3.5" />
+						Change Branch
+					</button>
+					{createPR && (
+						<button
+							type="button"
+							onClick={() => {
+								createPR();
+								onDismiss();
+							}}
+							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+							style={{ color: theme.colors.accent }}
+							data-testid="session-context-create-pr"
+						>
+							<GitPullRequest className="w-3.5 h-3.5" />
+							Create Pull Request
+						</button>
+					)}
+				</>
+			)}
+
 			{showWorktreeParentSection && (
 				<>
 					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -607,20 +731,6 @@ export function SessionContextMenu({
 			{showWorktreeChildSection && (
 				<>
 					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-					{onCreatePR && (
-						<button
-							type="button"
-							onClick={() => {
-								onCreatePR();
-								onDismiss();
-							}}
-							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-							style={{ color: theme.colors.accent }}
-						>
-							<GitPullRequest className="w-3.5 h-3.5" />
-							Create Pull Request
-						</button>
-					)}
 					{onDeleteWorktree && (
 						<button
 							type="button"

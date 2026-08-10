@@ -88,20 +88,21 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 
 `PluginManifest` (`src/shared/plugins/plugin-manifest.ts`):
 
-| Field         | Type                     | Required  | Notes                                                           |
-| ------------- | ------------------------ | --------- | --------------------------------------------------------------- |
-| `id`          | string                   | yes       | `^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`, 3-100 chars                |
-| `name`        | string                   | yes       | display name                                                    |
-| `version`     | string                   | yes       | semver (distinct from `minHostApi`)                             |
-| `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                           |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.9.0`)                      |
-| `description` | string                   | no        |                                                                 |
-| `author`      | string                   | no        |                                                                 |
-| `license`     | string                   | no        |                                                                 |
-| `homepage`    | string                   | no        |                                                                 |
-| `contributes` | object                   | no        | declarative contributions (see catalog)                         |
-| `entry`       | string                   | tier >= 1 | relative path to the sandboxed code entry; FORBIDDEN for tier 0 |
-| `permissions` | `PermissionRequest[]`    | no        | only meaningful for tier >= 1                                   |
+| Field         | Type                     | Required  | Notes                                                                                                                                                                                                              |
+| ------------- | ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`          | string                   | yes       | `^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`, 3-100 chars                                                                                                                                                                   |
+| `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
+| `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
+| `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.16.0`)                                                                                                                                                                        |
+| `description` | string                   | no        |                                                                                                                                                                                                                    |
+| `author`      | string                   | no        |                                                                                                                                                                                                                    |
+| `license`     | string                   | no        |                                                                                                                                                                                                                    |
+| `homepage`    | string                   | no        |                                                                                                                                                                                                                    |
+| `beta`        | boolean                  | no        | presentation-only marketplace flag; surfaces a warning-colored BETA pill on the tile and details pane. Additive and backward-compatible; no `minHostApi` bump. Omitted from the normalized manifest unless `true`. |
+| `contributes` | object                   | no        | declarative contributions (see catalog)                                                                                                                                                                            |
+| `entry`       | string                   | tier >= 1 | relative path to the sandboxed code entry; FORBIDDEN for tier 0                                                                                                                                                    |
+| `permissions` | `PermissionRequest[]`    | no        | only meaningful for tier >= 1                                                                                                                                                                                      |
 
 `minHostApi` is checked same-major and `host >= min`. A v2-targeted plugin will not load on a v1 host and vice versa.
 
@@ -287,10 +288,16 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
+`{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
+
+`size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`). As an explicit exception to the general contribution policy above (where a bad item is dropped), an unknown `size` reports a manifest error but keeps the panel, falling back to `default` rather than dropping the contribution. `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control-style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
 
 ```json
 { "id": "vet-panel", "title": "Vet Panel", "entry": "panel.html", "placement": "right" }
+```
+
+```json
+{ "id": "flow", "title": "Agent Flow", "entry": "panel.html", "placement": "modal", "size": "full" }
 ```
 
 ### hostViews (tier 0 static; tier 1 updates)
@@ -393,6 +400,7 @@ Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` nar
 | `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*`                                    | `{ "capability": "settings:read" }`                              |
 | `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                                                   | `{ "capability": "settings:write" }`                             |
 | `sessions:read`       | medium | none  | list session METADATA (never transcript)                                               | `{ "capability": "sessions:read" }`                              |
+| `sessions:focus`      | low    | none  | switch Maestro to one of the user's existing sessions (navigation only)                | `{ "capability": "sessions:focus" }`                             |
 | `transcripts:read`    | high   | path  | read PROJECTED session content (you declare fields)                                    | `{ "capability": "transcripts:read", "scope": "/abs/project" }`  |
 | `storage:read`        | low    | none  | read own private key-value store                                                       | `{ "capability": "storage:read" }`                               |
 | `storage:write`       | low    | none  | write own private key-value store                                                      | `{ "capability": "storage:write" }`                              |
@@ -453,38 +461,42 @@ module.exports = { activate, deactivate };
 
 Every method below is broker-gated and needs the matching capability granted. Signatures are copied from `buildSdk` (`src/main/plugins/plugin-sandbox-entry.ts`).
 
-| SDK method                                                                        | Capability                   |
-| --------------------------------------------------------------------------------- | ---------------------------- |
-| `maestro.pluginId` (string)                                                       | -                            |
-| `maestro.fs.read(path)` -> `Promise<string>`                                      | `fs:read`                    |
-| `maestro.fs.write(path, contents)` -> `Promise<void>`                             | `fs:write`                   |
-| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                             | `net:fetch`                  |
-| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)      | `net:connect`                |
-| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                     | `net:connect`                |
-| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                   | `net:connect`                |
-| `maestro.agents.list()`                                                           | `agents:read`                |
-| `maestro.agents.get(agentId)`                                                     | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)      | `agents:dispatch`            |
-| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                  | `notifications:toast`        |
-| `maestro.settings.get(key)`                                                       | `settings:read`              |
-| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                 | `settings:write`             |
-| `maestro.sessions.list()` (metadata only)                                         | `sessions:read`              |
-| `maestro.sessions.get(sessionId)` (metadata only)                                 | `sessions:read`              |
-| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`   | `transcripts:read`           |
-| `maestro.storage.get(key)`                                                        | `storage:read`               |
-| `maestro.storage.keys()`                                                          | `storage:read`               |
-| `maestro.storage.set(key, value)` (value is a string)                             | `storage:write`              |
-| `maestro.storage.delete(key)`                                                     | `storage:write`              |
-| `maestro.ui.runCommand(commandId, args?)`                                         | `ui:command`                 |
-| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                  | `ui:hostView`                |
-| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                          | `ui:hostView`                |
-| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON) | `ui:panel`                   |
-| `maestro.events.on(topic, handler(payload, meta))`                                | - (delivery needs subscribe) |
-| `maestro.events.subscribe(topics[])`                                              | `events:subscribe`           |
-| `maestro.events.unsubscribe(topics?)`                                             | `events:subscribe`           |
-| `maestro.commands.register(commandId, handler(args))`                             | - (invoked by host)          |
-| `maestro.tools.register(toolId, handler(args))` (result returned to host)         | - (invoked by host)          |
-| `maestro.process.spawn(command, opts?)` (trusted + gated)                         | `process:spawn`              |
+| SDK method                                                                          | Capability                   |
+| ----------------------------------------------------------------------------------- | ---------------------------- |
+| `maestro.pluginId` (string)                                                         | -                            |
+| `maestro.fs.read(path)` -> `Promise<string>`                                        | `fs:read`                    |
+| `maestro.fs.write(path, contents)` -> `Promise<void>`                               | `fs:write`                   |
+| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                               | `net:fetch`                  |
+| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)        | `net:connect`                |
+| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                       | `net:connect`                |
+| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                     | `net:connect`                |
+| `maestro.agents.list()`                                                             | `agents:read`                |
+| `maestro.agents.get(agentId)`                                                       | `agents:read`                |
+| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)        | `agents:dispatch`            |
+| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                    | `notifications:toast`        |
+| `maestro.settings.get(key)`                                                         | `settings:read`              |
+| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                   | `settings:write`             |
+| `maestro.sessions.list()` (metadata only)                                           | `sessions:read`              |
+| `maestro.sessions.get(sessionId)` (metadata only)                                   | `sessions:read`              |
+| `maestro.sessions.focus(sessionId, tabId?)` -> `Promise<void>` (lands on an AI tab) | `sessions:focus`             |
+| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`     | `transcripts:read`           |
+| `maestro.storage.get(key)`                                                          | `storage:read`               |
+| `maestro.storage.keys()`                                                            | `storage:read`               |
+| `maestro.storage.set(key, value)` (value is a string)                               | `storage:write`              |
+| `maestro.storage.delete(key)`                                                       | `storage:write`              |
+| `maestro.ui.runCommand(commandId, args?)`                                           | `ui:command`                 |
+| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                    | `ui:hostView`                |
+| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                            | `ui:hostView`                |
+| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON)   | `ui:panel`                   |
+| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own `modal` panels only)        | `ui:panel`                   |
+| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own `modal` panels only)       | `ui:panel`                   |
+| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own `modal` panels only)      | `ui:panel`                   |
+| `maestro.events.on(topic, handler(payload, meta))`                                  | - (delivery needs subscribe) |
+| `maestro.events.subscribe(topics[])`                                                | `events:subscribe`           |
+| `maestro.events.unsubscribe(topics?)`                                               | `events:subscribe`           |
+| `maestro.commands.register(commandId, handler(args))`                               | - (invoked by host)          |
+| `maestro.tools.register(toolId, handler(args))` (result returned to host)           | - (invoked by host)          |
+| `maestro.process.spawn(command, opts?)` (trusted + gated)                           | `process:spawn`              |
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
@@ -606,6 +618,14 @@ await maestro.ui.panelPost('my-panel', { nodes });
 </script>
 ```
 
+### Summoning your own panel
+
+A `modal` panel normally opens from Settings -> Encore -> Plugins. To open it yourself - e.g. bind a `keybindings` chord to a command that pops a full-window overlay - call `maestro.ui.openPanel(panelId)`, `maestro.ui.closePanel(panelId)`, or `maestro.ui.togglePanel(panelId)`. All three take the LOCAL panel id, require `ui:panel` (no extra consent), and act ONLY on your own `modal` panels: a docked (`left`/`right`/`main`/`settings`) panel is rejected, since it is always mounted and has its own hide control, and `closePanel` is a no-op unless that exact panel is the one currently open, so you can never dismiss another plugin's surface. Escape, the backdrop, and the close button dismiss the panel too. Requires `minHostApi: '1.16.0'`.
+
+```js
+maestro.commands.register('overlay', () => maestro.ui.togglePanel('flow'));
+```
+
 ---
 
 ## 8. Events
@@ -617,12 +637,15 @@ A plugin with `events:subscribe` receives a FIXED catalog of host topics (`src/s
 | `session.created`     | `{ sessionId, title?, agentId?, projectPath? }`                                |
 | `session.updated`     | `{ sessionId, title?, status? }`                                               |
 | `session.removed`     | `{ sessionId }`                                                                |
+| `session.activated`   | `{ sessionId, tabId? }`                                                        |
 | `agent.awaiting`      | `{ agentId, tabId?, kind?, risk? }`                                            |
 | `agent.statusChanged` | `{ agentId, tabId?, status }`                                                  |
 | `cue.fired`           | `{ cueType, projectPath? }`                                                    |
 | `tool.executed`       | `{ sessionId, tabId?, toolName, toolCallId?, phase?, timestamp, durationMs? }` |
 
 `tool.executed` fires when a tool call transitions (best-effort `phase`, e.g. running / completed / failed, when the provider reports one). It is metadata only: tool NAME and timing, never the tool's arguments or results. Requires `minHostApi: '1.14.0'`.
+
+`session.activated` fires when the focused agent changes (opaque ids only, debounced to at most one event per ~100ms, and never re-fired for the session that is already focused). Use it to highlight whichever agent the user is looking at. Requires `minHostApi: '1.16.0'`.
 
 Register handlers with `maestro.events.on(topic, fn)` first, then start delivery with `maestro.events.subscribe([...])`. Stop with `maestro.events.unsubscribe([...])` (or no argument for all). The handler receives `(payload, meta)` where `meta` is `{ topic, at }`. Unknown topics are ignored.
 

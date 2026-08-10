@@ -15,6 +15,7 @@
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getCueStatsAggregation } from '../../cue/stats/cue-stats-query';
+import { getHistoricalConductorCreditMs } from '../../cue/cue-db';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../../../shared/cue-stats-types';
 import type { CueEngine } from '../../cue/cue-engine';
 
@@ -112,5 +113,18 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 			}
 			return wrappedAggregation(event, range);
 		}
+	);
+
+	// Deliberately NOT behind `isCueStatsEnabled`: this feeds the one-time
+	// `cueTimeMs` backfill, which reads durations the Cue engine already
+	// credited toward the Conductor level. That credit accrues regardless of the
+	// usageStats dashboard flag, so gating the read would leave users who never
+	// turned that flag on with a permanently blank Cue subtotal.
+	ipcMain.handle(
+		'cue-stats:get-historical-conductor-credit',
+		withIpcErrorLogging(
+			handlerOpts('getHistoricalConductorCredit'),
+			async (): Promise<number> => getHistoricalConductorCreditMs()
+		)
 	);
 }

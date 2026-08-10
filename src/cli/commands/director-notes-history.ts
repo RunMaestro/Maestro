@@ -3,7 +3,8 @@
 
 import { readSessions, readHistory, readSettings } from '../services/storage';
 import { formatError, formatDirectorNotesHistory } from '../output/formatter';
-import type { HistoryEntry } from '../../shared/types';
+import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
+import { ALL_HISTORY_ENTRY_TYPES, isHistoryEntryType } from '../../shared/history';
 
 type OutputFormat = 'json' | 'markdown' | 'text';
 
@@ -46,10 +47,12 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 		const format = resolveFormat(options);
 		const lookbackDays = options.days ? parseInt(options.days, 10) : getDefaultLookbackDays();
 		const limit = options.limit ? parseInt(options.limit, 10) : 100;
-		const typeFilter = options.filter?.toUpperCase() as 'AUTO' | 'USER' | 'CUE' | undefined;
+		const typeFilter = options.filter?.toUpperCase() as HistoryEntryType | undefined;
 
-		if (typeFilter && !['AUTO', 'USER', 'CUE'].includes(typeFilter)) {
-			throw new Error(`Invalid filter: ${options.filter}. Must be one of: auto, user, cue`);
+		if (typeFilter && !isHistoryEntryType(typeFilter)) {
+			throw new Error(
+				`Invalid filter: ${options.filter}. Must be one of: ${ALL_HISTORY_ENTRY_TYPES.map((t) => t.toLowerCase()).join(', ')}`
+			);
 		}
 
 		const now = Date.now();
@@ -70,6 +73,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 		let autoCount = 0;
 		let userCount = 0;
 		let cueCount = 0;
+		let agentEntryCount = 0;
 
 		// readHistory with no args returns all entries across all sessions
 		const entries = readHistory();
@@ -82,6 +86,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 			if (entry.type === 'AUTO') autoCount++;
 			else if (entry.type === 'USER') userCount++;
 			else if (entry.type === 'CUE') cueCount++;
+			else if (entry.type === 'AGENT') agentEntryCount++;
 
 			// Apply type filter
 			if (typeFilter && entry.type !== typeFilter) continue;
@@ -104,7 +109,8 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 			autoCount,
 			userCount,
 			cueCount,
-			totalCount: autoCount + userCount + cueCount,
+			agentEntryCount,
+			totalCount: autoCount + userCount + cueCount + agentEntryCount,
 			lookbackDays,
 		};
 
@@ -141,7 +147,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 				`**Period:** ${lookbackDays > 0 ? `Last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'All time'}`
 			);
 			lines.push(
-				`**Stats:** ${stats.agentCount} agents, ${stats.totalCount} entries (${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue)`
+				`**Stats:** ${stats.agentCount} agents, ${stats.totalCount} entries (${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent)`
 			);
 			lines.push(`**Showing:** ${limitedEntries.length} of ${allEntries.length} entries`);
 			lines.push('');

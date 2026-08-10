@@ -1,5 +1,3 @@
-import GithubSlugger from 'github-slugger';
-import type { TocEntry } from './types';
 import { formatSize } from '../../../shared/formatters';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
@@ -357,31 +355,12 @@ export const countMarkdownTasks = (content: string): { open: number; closed: num
 	return { open, closed };
 };
 
-/** Extract headings from markdown content for table of contents */
-export const extractHeadings = (content: string): TocEntry[] => {
-	const headings: TocEntry[] = [];
-	const lines = content.split('\n');
-	let inCodeFence = false;
-	const slugger = new GithubSlugger();
-
-	for (const line of lines) {
-		if (/^ {0,3}(`{3,}|~{3,})/.test(line)) {
-			inCodeFence = !inCodeFence;
-			continue;
-		}
-		if (inCodeFence) continue;
-
-		const match = line.match(/^(#{1,6})\s+(.+)$/);
-		if (match) {
-			const level = match[1].length;
-			const text = match[2].trim();
-			const slug = slugger.slug(text);
-			headings.push({ level, text, slug });
-		}
-	}
-
-	return headings;
-};
+/**
+ * Re-exported from the shared TOC library, which owns heading extraction now
+ * that Director's Notes builds a jump list too. Kept here so existing File
+ * Preview imports keep resolving.
+ */
+export { extractHeadings } from '../Toc';
 
 /**
  * Normalize a POSIX-style path by resolving `.` and `..` segments.

@@ -168,6 +168,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			'/usr/local/sbin',
 			`${home}/.local/bin`, // User local installs (pip, etc.)
 			`${home}/.npm-global/bin`, // npm global with custom prefix
+			`${home}/.bun/bin`, // Bun runtime and package manager (omp installs here)
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location

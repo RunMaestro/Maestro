@@ -1,4 +1,5 @@
 import type { HistoryEntryType } from '../../types';
+import { ALL_HISTORY_ENTRY_TYPES, isHistoryEntryType } from '../../../shared/history';
 
 /**
  * Source-type filter selection (USER / AUTO / CUE) is persisted to
@@ -27,23 +28,55 @@ export function historyPanelFilterKeyForAgent(sessionId: string): string {
 	return `${HISTORY_PANEL_FILTERS_KEY}.${sessionId}`;
 }
 
-const ALL_FILTER_TYPES: readonly HistoryEntryType[] = ['USER', 'AUTO', 'CUE'];
+/**
+ * Types that did not exist in the legacy (unversioned) persisted format.
+ *
+ * A selection saved before a type existed cannot express an opinion about it,
+ * so hydrating such a payload verbatim would leave the new type filtered OUT
+ * and its entries invisible - the user would just see them "missing". Anything
+ * listed here is switched ON when upgrading a legacy payload; once the set is
+ * re-saved in the current format, an explicit deselection is honored forever.
+ */
+const TYPES_ADDED_AFTER_V1: readonly HistoryEntryType[] = ['AGENT'];
+
+/** Current persisted-payload shape. Legacy payloads are a bare array. */
+const FILTER_PAYLOAD_VERSION = 2;
+
+interface PersistedFilterPayload {
+	v: number;
+	filters: string[];
+}
 
 /**
  * Load a persisted filter selection. Returns null when nothing was ever
  * stored (caller falls back to its all-on default). An empty set is a valid
  * persisted choice and is distinct from null.
+ *
+ * Accepts both the current `{v, filters}` payload and the legacy bare array,
+ * upgrading the latter by switching on every type that postdates it.
  */
 export function loadPersistedHistoryFilters(key: string): Set<HistoryEntryType> | null {
 	try {
 		const raw = localStorage.getItem(key);
 		if (raw === null) return null;
 		const parsed: unknown = JSON.parse(raw);
-		if (!Array.isArray(parsed)) return null;
-		const valid = parsed.filter((t): t is HistoryEntryType =>
-			ALL_FILTER_TYPES.includes(t as HistoryEntryType)
-		);
-		return new Set(valid);
+
+		if (Array.isArray(parsed)) {
+			// Legacy payload: predates the types below, so it can't have opted out of them.
+			const valid = parsed.filter(isHistoryEntryType);
+			return new Set([...valid, ...TYPES_ADDED_AFTER_V1]);
+		}
+
+		if (
+			parsed &&
+			typeof parsed === 'object' &&
+			Array.isArray((parsed as PersistedFilterPayload).filters)
+		) {
+			// Current payload: the user's choice is complete - honor it verbatim.
+			return new Set((parsed as PersistedFilterPayload).filters.filter(isHistoryEntryType));
+		}
+
+		return null;
 	} catch {
 		return null;
 	}
@@ -51,7 +84,11 @@ export function loadPersistedHistoryFilters(key: string): Set<HistoryEntryType> 
 
 export function savePersistedHistoryFilters(key: string, filters: Set<HistoryEntryType>): void {
 	try {
-		localStorage.setItem(key, JSON.stringify([...filters]));
+		const payload: PersistedFilterPayload = {
+			v: FILTER_PAYLOAD_VERSION,
+			filters: [...filters],
+		};
+		localStorage.setItem(key, JSON.stringify(payload));
 	} catch {
 		// Ignore write failures (quota, private mode) - persistence is best-effort.
 	}
@@ -75,9 +112,7 @@ export function resolveInitialHistoryFilters(
 	const stored =
 		loadPersistedHistoryFilters(key) ??
 		(fallbackKey ? loadPersistedHistoryFilters(fallbackKey) : null);
-	const base =
-		stored ??
-		new Set<HistoryEntryType>(maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']);
+	const base = stored ?? new Set<HistoryEntryType>(ALL_HISTORY_ENTRY_TYPES);
 	if (!maestroCueEnabled) base.delete('CUE');
 	return base;
 }

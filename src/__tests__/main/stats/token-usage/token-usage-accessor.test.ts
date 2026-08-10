@@ -305,3 +305,77 @@ describe('accountLabel', () => {
 		expect(accountLabel('default')).toBe('Default');
 	});
 });
+
+describe('buildSeries', () => {
+	const { buildSeries, localDayKey } = _internal;
+	const ALL = -Infinity;
+	const NONE = Infinity;
+
+	/** A breakdown whose tokens land on a known local day. */
+	function at(ms: number, overrides: Partial<SessionTokenBreakdown> = {}) {
+		return breakdown({
+			timestampMs: ms,
+			byModel: [model({ inputTokens: 10, outputTokens: 5, costUsd: 1 })],
+			inputTokens: 10,
+			outputTokens: 5,
+			...overrides,
+		});
+	}
+
+	it('buckets tokens by local day, hour, agent, and provider session', () => {
+		const ms = new Date(2026, 4, 20, 14, 30).getTime();
+		const s = buildSeries([at(ms, { sessionId: 'prov-1', agentType: 'claude-code' })], ALL, NONE);
+		const day = localDayKey(ms);
+
+		expect(s.byDay[day]).toBe(15);
+		expect(s.byHour['14']).toBe(15);
+		expect(s.byAgentByDay['claude-code'][day]).toBe(15);
+		expect(s.bySessionByDay['prov-1'][day]).toBe(15);
+	});
+
+	it('sums several sessions landing on the same day', () => {
+		const ms = new Date(2026, 4, 20, 9, 0).getTime();
+		const s = buildSeries([at(ms, { sessionId: 'a' }), at(ms, { sessionId: 'b' })], ALL, NONE);
+		expect(s.byDay[localDayKey(ms)]).toBe(30);
+		expect(Object.keys(s.bySessionByDay)).toHaveLength(2);
+	});
+
+	it('splits tokens by session origin and ignores sessions with none', () => {
+		const ms = new Date(2026, 4, 20, 9, 0).getTime();
+		const s = buildSeries(
+			[
+				at(ms, { sessionId: 'a', origin: 'user' }),
+				at(ms, { sessionId: 'b', origin: 'auto' }),
+				at(ms, { sessionId: 'c' }), // no origin recorded
+			],
+			ALL,
+			NONE
+		);
+		expect(s.bySource).toEqual({ user: 15, auto: 15 });
+	});
+
+	it('excludes sessions outside the query window', () => {
+		const inside = new Date(2026, 4, 20, 9, 0).getTime();
+		const outside = new Date(2020, 0, 1, 9, 0).getTime();
+		const s = buildSeries([at(inside), at(outside, { sessionId: 'old' })], inside - 1000, NONE);
+		expect(Object.keys(s.byDay)).toEqual([localDayKey(inside)]);
+	});
+
+	it('skips zero-token sessions entirely', () => {
+		const ms = new Date(2026, 4, 20, 9, 0).getTime();
+		const s = buildSeries(
+			[breakdown({ timestampMs: ms, byModel: [], inputTokens: 0, outputTokens: 0 })],
+			ALL,
+			NONE
+		);
+		expect(s.byDay).toEqual({});
+		expect(s.bySessionByDay).toEqual({});
+	});
+
+	it('keeps a timestamp-less session out of the day/hour buckets but still in bySource', () => {
+		const s = buildSeries([at(0, { origin: 'user' })], ALL, NONE);
+		expect(s.byDay).toEqual({});
+		expect(s.byHour).toEqual({});
+		expect(s.bySource.user).toBe(15);
+	});
+});

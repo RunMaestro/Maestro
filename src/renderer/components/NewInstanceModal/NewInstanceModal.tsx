@@ -6,6 +6,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentResilienceSection } from './AgentResilienceSection';
@@ -32,6 +33,7 @@ export function NewInstanceModal({
 	existingSessions,
 	sourceSession,
 	presetGroupId,
+	presetWorkingDir,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [selectedAgent, setSelectedAgent] = useState('');
@@ -746,8 +748,16 @@ export function NewInstanceModal({
 			// Seed group selection: duplicate inherits source's group; otherwise
 			// honor any presetGroupId from the caller.
 			setSelectedGroupId(sourceSession?.groupId ?? presetGroupId ?? '');
+			// Seed the working directory from the caller (e.g. "New Agent Here" on a
+			// folder in the Files panel). Skipped when duplicating - loadAgents fills
+			// the working dir from the source session instead. The folder's basename
+			// is a sensible default name, and both fields stay editable.
+			if (!sourceSession && presetWorkingDir) {
+				handleWorkingDirChange(presetWorkingDir);
+				setInstanceName(getBasename(presetWorkingDir));
+			}
 		}
-	}, [isOpen, sourceSession?.id, presetGroupId]);
+	}, [isOpen, sourceSession?.id, presetGroupId, presetWorkingDir, handleWorkingDirChange]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails
@@ -1189,6 +1199,7 @@ export function NewInstanceModal({
 					label="New Session Message"
 					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
 					placeholder="Instructions sent with the first message of every new session..."
+					sizeKey="new-session-message"
 				/>
 
 				{/* Nudge Message */}

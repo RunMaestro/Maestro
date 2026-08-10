@@ -945,6 +945,12 @@ export function createTab(
 export interface CloseTabOptions {
 	/** If true, skip adding to closed tab history (e.g., for wizard tabs) */
 	skipHistory?: boolean;
+	/**
+	 * If true, do not tell main the tab went away. Set by snooze, which reuses
+	 * closeTab() to hide a tab that comes back later - cancelling its armed
+	 * dispatch callbacks would be wrong.
+	 */
+	preserveTabScopedWork?: boolean;
 }
 
 /**
@@ -1184,6 +1190,16 @@ export function closeTab(
 					thinkingStartTime: undefined,
 				}
 			: sessionWithOrphans;
+
+	// Tell main the tab is really gone so it can retire tab-scoped promises - today
+	// that means cancelling dispatch callbacks armed against it, which would
+	// otherwise wake their caller with a bogus `timeout` up to an hour later.
+	// Skipped for a snoozed tab (it comes back) and for an orphaned one (its turn
+	// is still running and the tab remains a valid dispatch target, so the real
+	// exit will fire the callback with a real status).
+	if (!options.preserveTabScopedWork && !shouldOrphanClosedTab) {
+		window.maestro?.tabs?.notifyAiTabClosed?.(session.id, tabId);
+	}
 
 	// Queued items targeting the just-closed tab are intentionally preserved. A
 	// message the user already sent fires in the background against the now-orphaned
@@ -1812,6 +1828,13 @@ export function reopenClosedAiTabById(
  *   }
  * }
  */
+/**
+ * Reopen the most recently closed tab into the standalone tab strip.
+ *
+ * Tiling-aware callers should use `reopenClosedTabWithTiling` in panelLayout.ts,
+ * which layers the tile restore on top of this (the dependency only works that
+ * way round - panelLayout imports from this module, never the reverse).
+ */
 export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTabResult | null {
 	// Check if there's anything in the unified history
 	if (!session.unifiedClosedTabHistory || session.unifiedClosedTabHistory.length === 0) {
@@ -2094,6 +2117,27 @@ export function isSoleAiTabReplacement(
 		session.aiTabs.length === 1 &&
 		session.aiTabs[0].id !== prevAiTabIds[0]
 	);
+}
+
+/**
+ * Session patch that lands on a specific file preview tab.
+ *
+ * The file-tab counterpart to {@link aiTabFocusFields}: spread it into a session
+ * update (`{ ...s, ...fileTabFocusFields(tabId) }`) to make that file tab the
+ * visible one. Clears the terminal and browser selections and forces AI mode,
+ * because both of those outrank the file tab in the render precedence - leaving
+ * either set would keep the old view on screen and the focus would appear to do
+ * nothing.
+ *
+ * @param tabId - The file preview tab to activate.
+ */
+export function fileTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeFileTabId: tabId,
+		activeTerminalTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'ai',
+	};
 }
 
 export interface SetActiveTabResult {

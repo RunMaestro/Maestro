@@ -175,6 +175,7 @@ export interface UseMainPanelPropsDeps {
 	toggleUnreadFilter: () => void;
 	handleOpenTabSearch: () => void;
 	handleOpenOutputSearch: () => void;
+	handleOpenCrossTabSearch: () => void;
 	handleCloseAllTabs: () => void;
 	handleCloseOtherTabs: () => void;
 	handleCloseTabsLeft: () => void;
@@ -398,6 +399,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onToggleUnreadFilter: deps.toggleUnreadFilter,
 			onOpenTabSearch: deps.handleOpenTabSearch,
 			onOpenOutputSearch: deps.handleOpenOutputSearch,
+			onOpenCrossTabSearch: deps.handleOpenCrossTabSearch,
 			onCloseAllTabs: deps.handleCloseAllTabs,
 			onCloseOtherTabs: deps.handleCloseOtherTabs,
 			onCloseTabsLeft: deps.handleCloseTabsLeft,
@@ -644,6 +646,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.toggleUnreadFilter,
 			deps.handleOpenTabSearch,
 			deps.handleOpenOutputSearch,
+			deps.handleOpenCrossTabSearch,
 			deps.handleCloseAllTabs,
 			deps.handleCloseOtherTabs,
 			deps.handleCloseTabsLeft,

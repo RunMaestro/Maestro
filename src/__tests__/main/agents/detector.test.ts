@@ -31,6 +31,21 @@ vi.mock('../../../main/agents/opencode-config', async () => {
 	};
 });
 
+// Spy on the omp catalog prime at the module boundary so the detector's
+// detection-time warm-up is observable without firing the real `omp models
+// --json` fetch. Keep every other export real (setOmpModelCatalog and
+// computeOmpCatalogKey are used by the discoverModels path and by the
+// default-identity key assertion below).
+vi.mock('../../../main/agents/omp-model-catalog', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/agents/omp-model-catalog')>(
+		'../../../main/agents/omp-model-catalog'
+	);
+	return {
+		...actual,
+		primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+	};
+});
+
 // Make readFileSync mockable for ESM - vi.spyOn on ESM namespace fails
 // Also mock fs.promises.access to prevent real filesystem probing
 const { _readFileSync, _fsAccess } = vi.hoisted(() => ({
@@ -71,6 +86,7 @@ vi.mock('fs', async () => {
 // Get mocked modules
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../main/agents/omp-model-catalog';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -379,6 +395,44 @@ describe('agent-detector', () => {
 			expect(agents.find((a) => a.id === 'hermes')?.available).toBe(true);
 			expect(agents.find((a) => a.id === 'codex')?.available).toBe(false);
 			expect(agents.find((a) => a.id === 'pi')?.available).toBe(false);
+		});
+
+		it('warms the default-identity omp catalog when omp detection succeeds', async () => {
+			// When omp is detected, the detector fires a non-blocking prime of the
+			// default-identity context-window catalog so a user's first prompt
+			// already has the real per-turn window (killing the cold-start race
+			// against the spawn-time prime cap). It must run with the expanded env
+			// and the binary's own dir first on PATH (so a bun-based omp resolves
+			// its co-located runtime), under the default-identity key.
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: 'not found', exitCode: 1 };
+			});
+
+			await detector.detectAgents();
+
+			expect(primeOmpModelCatalog).toHaveBeenCalledTimes(1);
+			const [command, env, key] = vi.mocked(primeOmpModelCatalog).mock.calls[0];
+			// Primed against the resolved omp binary...
+			expect(command).toBe('/usr/bin/omp');
+			// ...under the default identity (env overrides undefined)...
+			expect(key).toBe(computeOmpCatalogKey('/usr/bin/omp', undefined));
+			// ...with the binary's own dir first on PATH (co-located runtime),
+			// not a raw process.env.
+			const pathEntries = (env?.PATH ?? '').split(path.delimiter);
+			expect(pathEntries[0]).toBe(path.dirname('/usr/bin/omp'));
+			expect(pathEntries.length).toBeGreaterThan(1);
+		});
+
+		it('does not warm the omp catalog when omp is not installed', async () => {
+			// Default mock: no binaries found. omp detection fails, so no prime fires.
+			mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: 'not found', exitCode: 1 });
+
+			await detector.detectAgents();
+
+			expect(primeOmpModelCatalog).not.toHaveBeenCalled();
 		});
 
 		it('should detect Hermes using the shared CLI metadata', async () => {
@@ -1520,6 +1574,55 @@ describe('agent-detector', () => {
 
 			// Prefers the provider-qualified selector and de-duplicates entries
 			expect(models).toEqual(['anthropic/claude-opus-4-8', 'openai-codex/gpt-5.2']);
+		});
+
+		it('runs omp model discovery with the prime env, not the shared expanded env', async () => {
+			// The `omp models --json` that feeds setOmpModelCatalog must run with the
+			// same env as the two prime sites (detection warm-up and spawn), i.e.
+			// buildOmpPrimeEnv: the binary's own dir first (co-located bun runtime)
+			// plus ~/.bun/bin. getExpandedEnv() omits ~/.bun/bin, so discovery could
+			// fail where the primes succeed and the catalogs would drift apart.
+			Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+			// Pin the inherited PATH so a dev machine that already has ~/.bun/bin
+			// exported cannot make the assertion below pass spuriously.
+			const originalPath = process.env.PATH;
+			process.env.PATH = '/inherited/only';
+
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (cmd === '/usr/bin/omp' && args[0] === 'models' && args[1] === '--json') {
+					return {
+						stdout: JSON.stringify({ models: [{ selector: 'anthropic/claude-opus-4-8' }] }),
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+				if (args[0] === 'omp') {
+					return { stdout: '/usr/bin/omp\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			let discoveryEnv: NodeJS.ProcessEnv | undefined;
+			try {
+				detector.clearCache();
+				detector.clearModelCache();
+				await detector.detectAgents();
+				await detector.discoverModels('omp');
+
+				const discoveryCall = mockExecFileNoThrow.mock.calls.find(
+					(call) => call[0] === '/usr/bin/omp' && call[1][0] === 'models' && call[1][1] === '--json'
+				);
+				expect(discoveryCall).toBeDefined();
+				discoveryEnv = discoveryCall![3] as NodeJS.ProcessEnv | undefined;
+			} finally {
+				process.env.PATH = originalPath;
+			}
+
+			const pathEntries = (discoveryEnv?.PATH ?? '').split(path.delimiter);
+			// Binary's own dir first, so a co-located runtime resolves...
+			expect(pathEntries[0]).toBe(path.dirname('/usr/bin/omp'));
+			// ...and the bun install dir is on PATH (getExpandedEnv would not have it).
+			expect(pathEntries).toContain(`${os.homedir()}/.bun/bin`);
 		});
 
 		it('does not cache a transient empty omp discovery failure', async () => {

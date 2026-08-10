@@ -464,6 +464,87 @@ describe('batch-processor', () => {
 			expect(promptArg).toContain('My task');
 		});
 
+		describe('per-run model/effort override', () => {
+			/** Feed the loop exactly one task, then report the document as drained. */
+			const singleTask = (): void => {
+				let callCount = 0;
+				vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+					callCount++;
+					if (callCount <= 3) return { content: '- [ ] My task', taskCount: 1 };
+					return { content: '', taskCount: 0 };
+				});
+			};
+
+			it('lets the run model/effort win over the session values on the task spawn', async () => {
+				singleTask();
+				const session = mockSession({ customModel: 'opus', customEffort: 'high' });
+
+				await collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+						effort: 'low',
+					})
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'low' });
+				// Run-scoped: the session object is never rewritten.
+				expect(session.customModel).toBe('opus');
+				expect(session.customEffort).toBe('high');
+			});
+
+			it('falls back to the session values when no run override is given', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks'
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+			});
+
+			it('falls back per field when only the model is overridden', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks',
+						{ model: 'sonnet' }
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+			});
+
+			it('applies the run override to the synopsis spawn too', async () => {
+				singleTask();
+				vi.mocked(spawnAgent).mockResolvedValue({
+					success: true,
+					response: '**Summary:** ok\n**Details:** ok',
+					agentSessionId: 'claude-session-123',
+				});
+
+				await collectEvents(
+					runPlaybook(mockSession({ customModel: 'opus' }), mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+					})
+				);
+
+				// Index 0 = task spawn, index 1 = synopsis resume.
+				expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+				const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'sonnet' });
+			});
+		});
+
 		it('should track usage statistics', async () => {
 			const usageStats: UsageStats = {
 				inputTokens: 1000,

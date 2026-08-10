@@ -14,6 +14,7 @@ import {
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	normalizeHistoryEntries,
 } from '../../shared/history';
 
 // Get the Maestro config directory path
@@ -159,7 +160,9 @@ function readSessionHistory(sessionId: string): HistoryEntry[] {
 	}
 	try {
 		const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-		return data.entries || [];
+		// Re-map legacy cross-agent consults (written as AUTO before the AGENT type
+		// existed), matching HistoryManager.getEntries in the app.
+		return normalizeHistoryEntries(data.entries || []);
 	} catch {
 		return [];
 	}

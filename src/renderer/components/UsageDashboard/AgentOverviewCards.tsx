@@ -13,8 +13,9 @@
 import { memo, useMemo, useState } from 'react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { formatAgeShort, formatTokensCompact } from '../../../shared/formatters';
-import { hasUsage, sumUsageTokens } from '../../../shared/usageStats';
+// Token/cost for an agent lives in the Agent Detail modal (double-click a card),
+// not on the card itself - four stats made the tile too crowded to scan.
+import { formatAgeShort } from '../../../shared/formatters';
 import { Sparkline } from './Sparkline';
 import {
 	AGENT_OVERVIEW_SORT_OPTIONS,
@@ -78,7 +79,6 @@ const AgentCard = memo(function AgentCard({
 	}, [data, session, visibleSessions]);
 
 	const tabCount = session.aiTabs?.length ?? 0;
-	const tokenCount = hasUsage(session.usageStats) ? sumUsageTokens(session.usageStats) : null;
 	const sparklineColor = isWorktree ? theme.colors.accent : statusColor;
 
 	// When the dashboard filter selects this card's agent, the 1px default
@@ -266,28 +266,6 @@ const AgentCard = memo(function AgentCard({
 							}
 						>
 							{autoPercent === null ? EMPTY_AUTO_PERCENT_LABEL : `${autoPercent}%`}
-						</span>
-					</div>
-					<div className="flex flex-col min-w-0">
-						<span
-							className="text-[9px] uppercase tracking-wide"
-							style={{ color: theme.colors.textDim }}
-						>
-							Tokens
-						</span>
-						<span
-							className="text-base font-semibold"
-							style={{
-								color: tokenCount === null ? theme.colors.textDim : theme.colors.textMain,
-							}}
-							data-testid="agent-card-token-count"
-							title={
-								tokenCount === null
-									? 'No recorded token usage'
-									: `${tokenCount.toLocaleString()} tokens`
-							}
-						>
-							{tokenCount === null ? EMPTY_AUTO_PERCENT_LABEL : formatTokensCompact(tokenCount)}
 						</span>
 					</div>
 				</div>

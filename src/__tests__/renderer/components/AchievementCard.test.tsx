@@ -75,6 +75,9 @@ vi.mock('lucide-react', () => ({
 	Check: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="check-icon" className={className} style={style} />
 	),
+	Radio: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="radio-icon" className={className} style={style} />
+	),
 }));
 
 // Test theme
@@ -281,12 +284,25 @@ describe('AchievementCard', () => {
 	});
 
 	describe('Stats Grid', () => {
-		it('renders three stat columns', () => {
+		it('renders four stat columns', () => {
 			render(<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />);
 
 			expect(screen.getByText('Total Time')).toBeInTheDocument();
+			expect(screen.getByText('Cue Time (0%)')).toBeInTheDocument();
 			expect(screen.getByText('Longest Run')).toBeInTheDocument();
 			expect(screen.getByText('Total Runs')).toBeInTheDocument();
+		});
+
+		it('shows the Cue share of total time', () => {
+			render(
+				<AchievementCard
+					theme={mockTheme}
+					autoRunStats={{ ...firstBadgeStats, cumulativeTimeMs: 60000, cueTimeMs: 15000 }}
+				/>
+			);
+
+			expect(screen.getByText('Cue Time (25%)')).toBeInTheDocument();
+			expect(screen.getByTestId('radio-icon')).toBeInTheDocument();
 		});
 
 		it('shows formatted total time', () => {

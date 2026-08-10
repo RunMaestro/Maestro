@@ -171,7 +171,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						: totalShortcuts}
 				</span>
 			</div>
-			<p className="text-xs opacity-50 mb-3" style={{ color: theme.colors.textDim }}>
+			<p className="text-xs opacity-70 mb-3">
 				Not all shortcuts can be modified. Press{' '}
 				<kbd
 					className="px-1.5 py-0.5 rounded font-mono"

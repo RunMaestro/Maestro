@@ -8,7 +8,10 @@ import {
 import {
 	hasCapabilityCached,
 	setCapabilitiesCache,
+	getCachedCapabilities,
+	primeCapabilitiesCache,
 } from '../../../renderer/hooks/agent/useAgentCapabilities';
+import { useCapabilitiesPriming } from '../../../renderer/hooks/agent/useCapabilitiesPriming';
 
 const baseCapabilities = {
 	supportsResume: true,
@@ -155,5 +158,103 @@ describe('hasCapabilityCached', () => {
 
 		clearCapabilitiesCache();
 		expect(hasCapabilityCached('test-agent', 'supportsResume')).toBe(false);
+	});
+});
+
+describe('getCachedCapabilities', () => {
+	beforeEach(() => {
+		clearCapabilitiesCache();
+	});
+
+	it('returns undefined for an agent that was never looked up', () => {
+		expect(getCachedCapabilities('uncached-agent')).toBeUndefined();
+	});
+
+	// The distinction hasCapabilityCached cannot make: a cached `false` is an
+	// answer, a miss is not. Conflating them is what silently dropped CLI
+	// dispatches to agent types the user had not opened.
+	it('distinguishes a cached false from a miss', () => {
+		setCapabilitiesCache('test-agent', { ...DEFAULT_CAPABILITIES, supportsBatchMode: false });
+
+		expect(getCachedCapabilities('test-agent')?.supportsBatchMode).toBe(false);
+		expect(getCachedCapabilities('other-agent')).toBeUndefined();
+		// Both look identical through hasCapabilityCached.
+		expect(hasCapabilityCached('test-agent', 'supportsBatchMode')).toBe(false);
+		expect(hasCapabilityCached('other-agent', 'supportsBatchMode')).toBe(false);
+	});
+});
+
+describe('primeCapabilitiesCache', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		clearCapabilitiesCache();
+	});
+
+	it('populates the cache for every returned agent id', async () => {
+		vi.mocked(window.maestro.agents.getAllCapabilities).mockResolvedValueOnce({
+			opencode: { ...DEFAULT_CAPABILITIES, supportsBatchMode: true },
+			terminal: { ...DEFAULT_CAPABILITIES, supportsBatchMode: false },
+		});
+
+		const primed = await primeCapabilitiesCache();
+
+		expect(primed).toBe(2);
+		expect(getCachedCapabilities('opencode')?.supportsBatchMode).toBe(true);
+		expect(getCachedCapabilities('terminal')?.supportsBatchMode).toBe(false);
+		expect(hasCapabilityCached('opencode', 'supportsBatchMode')).toBe(true);
+	});
+
+	it('merges partial capability payloads over the defaults', async () => {
+		vi.mocked(window.maestro.agents.getAllCapabilities).mockResolvedValueOnce({
+			opencode: { supportsBatchMode: true } as any,
+		});
+
+		await primeCapabilitiesCache();
+
+		expect(getCachedCapabilities('opencode')).toEqual({
+			...DEFAULT_CAPABILITIES,
+			supportsBatchMode: true,
+		});
+	});
+
+	it('returns 0 and leaves the cache untouched when the fetch fails', async () => {
+		setCapabilitiesCache('opencode', { ...DEFAULT_CAPABILITIES, supportsBatchMode: true });
+		vi.mocked(window.maestro.agents.getAllCapabilities).mockRejectedValueOnce(
+			new Error('IPC down')
+		);
+
+		await expect(primeCapabilitiesCache()).resolves.toBe(0);
+		expect(getCachedCapabilities('opencode')?.supportsBatchMode).toBe(true);
+	});
+});
+
+describe('useCapabilitiesPriming', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		clearCapabilitiesCache();
+	});
+
+	it('primes the cache once on mount', async () => {
+		vi.mocked(window.maestro.agents.getAllCapabilities).mockResolvedValue({
+			opencode: { ...DEFAULT_CAPABILITIES, supportsBatchMode: true },
+		});
+
+		const { rerender } = renderHook(() => useCapabilitiesPriming());
+		rerender();
+
+		await waitFor(() => {
+			expect(getCachedCapabilities('opencode')?.supportsBatchMode).toBe(true);
+		});
+		expect(window.maestro.agents.getAllCapabilities).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not throw when priming fails', async () => {
+		vi.mocked(window.maestro.agents.getAllCapabilities).mockRejectedValue(new Error('IPC down'));
+
+		expect(() => renderHook(() => useCapabilitiesPriming())).not.toThrow();
+
+		await waitFor(() => {
+			expect(window.maestro.agents.getAllCapabilities).toHaveBeenCalled();
+		});
 	});
 });

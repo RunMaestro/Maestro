@@ -2,6 +2,7 @@ import { Check, Cloud, ExternalLink, Folder, FolderSync, RotateCcw, X } from 'lu
 import type { Theme } from '../../../../../types';
 import { getOpenInLabel } from '../../../../../utils/platformUtils';
 import type { SyncStorageState } from '../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface StorageLocationSectionProps {
 	theme: Theme;
@@ -23,10 +24,7 @@ export function StorageLocationSection({ theme, syncStorage }: StorageLocationSe
 
 	return (
 		<div data-setting-id="general-storage">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<FolderSync className="w-3 h-3" />
-				Storage Location
-			</div>
+			<SettingsSectionHeading icon={FolderSync}>Storage Location</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -35,18 +33,18 @@ export function StorageLocationSection({ theme, syncStorage }: StorageLocationSe
 					<p className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>
 						Settings folder
 					</p>
-					<p className="text-xs opacity-60 mt-0.5">
+					<p className="text-xs opacity-70 mt-0.5">
 						Choose where Maestro stores settings, sessions, and groups (including global environment
 						variables, agents, and configurations). Use a synced folder (iCloud Drive, Dropbox,
 						OneDrive) to share across devices.
 					</p>
-					<p className="text-xs opacity-50 mt-1 italic">
+					<p className="text-xs opacity-70 mt-1 italic">
 						Note: Only run Maestro on one device at a time to avoid sync conflicts.
 					</p>
 				</div>
 
 				<div>
-					<div className="block text-xs opacity-60 mb-1">Default Location</div>
+					<div className="block text-xs opacity-70 mb-1">Default Location</div>
 					<div
 						className="text-xs p-2 rounded font-mono truncate"
 						style={{ backgroundColor: theme.colors.bgActivity }}
@@ -58,7 +56,7 @@ export function StorageLocationSection({ theme, syncStorage }: StorageLocationSe
 
 				{customSyncPath && (
 					<div>
-						<div className="block text-xs opacity-60 mb-1">Current Location (Custom)</div>
+						<div className="block text-xs opacity-70 mb-1">Current Location (Custom)</div>
 						<div
 							className="text-xs p-2 rounded font-mono truncate flex items-center gap-2"
 							style={{
@@ -151,7 +149,7 @@ export function StorageLocationSection({ theme, syncStorage }: StorageLocationSe
 					<button
 						onClick={openStorageFolder}
 						disabled={!defaultStoragePath && !customSyncPath}
-						className="flex items-center gap-1.5 text-[11px] opacity-60 hover:opacity-100 transition-opacity disabled:opacity-30"
+						className="flex items-center gap-1.5 text-[11px] opacity-55 hover:opacity-100 transition-opacity disabled:opacity-30"
 						style={{ color: theme.colors.textMain }}
 						title={customSyncPath || defaultStoragePath}
 					>

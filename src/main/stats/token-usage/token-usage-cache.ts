@@ -31,9 +31,9 @@ const LOG_CONTEXT = '[TokenUsageCache]';
 
 /**
  * Bump to invalidate every persisted entry (e.g. when the breakdown shape
- * changes). v2 added `accountKey` to `SessionTokenBreakdown`.
+ * changes). v2 added `accountKey` to `SessionTokenBreakdown`; v3 added `origin`.
  */
-export const TOKEN_USAGE_CACHE_VERSION = 2;
+export const TOKEN_USAGE_CACHE_VERSION = 3;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {

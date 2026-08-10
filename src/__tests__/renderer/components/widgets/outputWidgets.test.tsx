@@ -128,21 +128,22 @@ describe('SectionCard', () => {
 
 describe('ActivityTimeline', () => {
 	const buckets: TimelineBucket[] = [
-		{ auto: 2, user: 1, cue: 0 },
-		{ auto: 0, user: 3, cue: 1 },
+		{ auto: 2, user: 1, cue: 0, agent: 0 },
+		{ auto: 0, user: 3, cue: 1, agent: 2 },
 	];
 
 	it('renders a column per bucket with a per-bucket tooltip', () => {
 		render(<ActivityTimeline theme={mockTheme} buckets={buckets} />);
-		expect(screen.getByTitle('Auto 2 · User 1 · Cue 0')).toBeInTheDocument();
-		expect(screen.getByTitle('Auto 0 · User 3 · Cue 1')).toBeInTheDocument();
+		expect(screen.getByTitle('Auto 2 · User 1 · Cue 0 · Agent 0')).toBeInTheDocument();
+		expect(screen.getByTitle('Auto 0 · User 3 · Cue 1 · Agent 2')).toBeInTheDocument();
 	});
 
-	it('renders the AUTO/USER/CUE legend by default', () => {
+	it('renders the AUTO/USER/CUE/AGENT legend by default', () => {
 		render(<ActivityTimeline theme={mockTheme} buckets={buckets} />);
 		expect(screen.getByText('User')).toBeInTheDocument();
 		expect(screen.getByText('Auto')).toBeInTheDocument();
 		expect(screen.getByText('Cue')).toBeInTheDocument();
+		expect(screen.getByText('Agent')).toBeInTheDocument();
 	});
 
 	it('shows an empty state when all buckets are zero', () => {

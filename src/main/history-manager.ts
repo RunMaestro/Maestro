@@ -35,6 +35,7 @@ import {
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	normalizeHistoryEntries,
 } from '../shared/history';
 
 const LOG_CONTEXT = '[HistoryManager]';
@@ -284,7 +285,9 @@ export class HistoryManager {
 				// can't clobber an add that lands between our read and this write.
 				await this.writeQueue.enqueue(sessionId, () => atomicWriteJson(filePath, data));
 			}
-			return data.entries || [];
+			// Re-map legacy cross-agent consults (written as AUTO before the AGENT
+			// type existed) so no consumer has to special-case them.
+			return normalizeHistoryEntries(data.entries || []);
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code === 'ENOENT') return []; // Cold-cache miss is expected

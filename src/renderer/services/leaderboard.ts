@@ -24,6 +24,12 @@ export interface SubmitLeaderboardTimeDeltaArgs {
 	/**
 	 * Runs to add to the server total. Defaults to 0 for time that is not an
 	 * Auto Run (e.g. Cue), so `totalRuns` keeps matching the local value.
+	 *
+	 * Send an explicit 0 rather than omitting the field. The server picks
+	 * delta mode vs legacy mode off `deltaRuns !== undefined`, and legacy mode
+	 * overwrites the server-aggregated run count with this one device's local
+	 * total. Omitting it here would silently clobber a multi-device user's
+	 * `total_runs` on every Cue submission.
 	 */
 	deltaRuns?: number;
 	/** What earned this time. Lets the server treat Cue's higher submission

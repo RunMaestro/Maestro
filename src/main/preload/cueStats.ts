@@ -32,6 +32,13 @@ export function createCueStatsApi() {
 				throw error;
 			}
 		},
+
+		// Total Conductor time (ms) the Cue runs still retained in cue.db would
+		// have credited, under the engine's completed-and-floored-to-minutes
+		// rule. Feeds the one-time `cueTimeMs` backfill; ungated, and resolves 0
+		// when there is no retained history.
+		getHistoricalConductorCredit: (): Promise<number> =>
+			ipcRenderer.invoke('cue-stats:get-historical-conductor-credit'),
 	};
 }
 

@@ -1,0 +1,650 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import {
+	FileAudio,
+	Maximize,
+	Pause,
+	Play,
+	Repeat,
+	RotateCcw,
+	RotateCw,
+	SkipBack,
+	SkipForward,
+	Volume2,
+	VolumeX,
+	ExternalLink,
+	AlertTriangle,
+} from 'lucide-react';
+
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
+import { formatElapsedTimeColon } from '../../../shared/formatters';
+import { MEDIA_PLAYBACK_RATES, isMediaStreamUrl, type MediaKind } from '../../../shared/mediaTypes';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+
+interface MediaViewerProps {
+	/** Whether to mount an <audio> or a <video> element. */
+	kind: MediaKind;
+	/** File name, used for the audio placeholder label. */
+	name: string;
+	/** Absolute path. Re-resolved into a fresh stream URL, and the "open externally" target. */
+	path: string;
+	/** Start playing as soon as the file is ready. Set for tabs the user just opened. */
+	autoplay?: boolean;
+	/**
+	 * Seconds to resume from, remembered when the widget last navigated away from
+	 * this file. Applied once, on load.
+	 */
+	resumeTime?: number;
+	/**
+	 * Drop the big stage so the whole player fits a small floating frame: audio
+	 * loses its icon block and video keeps only the picture.
+	 */
+	compact?: boolean;
+	/** Report position so the store can resume this file if the user comes back. */
+	onTimeUpdate?: (seconds: number) => void;
+	/** Mirror play/pause outward, for the floating widget's own state. */
+	onPlayingChange?: (playing: boolean) => void;
+	/** Widget navigation. Rendered inside the transport when provided. */
+	onPrev?: () => void;
+	onNext?: () => void;
+	/**
+	 * Nonce from the playback store. Every increment toggles play/pause, which is
+	 * how the floating frame's minimized pill drives the element without holding
+	 * a ref across the component boundary.
+	 */
+	toggleRequest?: number;
+	theme: any;
+}
+
+/** Seconds jumped by the skip buttons and the plain arrow keys. */
+const SKIP_SECONDS = 10;
+/** Seconds jumped by shift+arrow, for fine scrubbing. */
+const FINE_SKIP_SECONDS = 5;
+
+/** `formatElapsedTimeColon` expects whole seconds; media times are fractional. */
+const formatTime = (seconds: number): string =>
+	Number.isFinite(seconds) ? formatElapsedTimeColon(Math.floor(Math.max(0, seconds))) : '--:--';
+
+/**
+ * Audio/video player for the file preview.
+ *
+ * Wraps a native <audio>/<video> element - Electron ships Chromium with
+ * proprietary codecs, so MP3/AAC/H.264 play without any bundled decoder - and
+ * puts a themed transport on top of it. Bytes arrive over the
+ * `maestro-media://` protocol with range support, so scrubbing a large file
+ * does not load it into memory.
+ *
+ * Playback speed is read from and written back to the global settings store,
+ * so the rate the user picks sticks across files and across restarts.
+ *
+ * This is mounted by MediaPlaybackHost, not by FilePreview - see that file for
+ * why the element has to outlive the tab's render tree.
+ */
+export const MediaViewer = memo(function MediaViewer({
+	kind,
+	name,
+	path,
+	autoplay = false,
+	resumeTime = 0,
+	compact = false,
+	onTimeUpdate,
+	onPlayingChange,
+	onPrev,
+	onNext,
+	toggleRequest = 0,
+	theme,
+}: MediaViewerProps) {
+	const mediaRef = useRef<HTMLMediaElement | null>(null);
+	const containerRef = useRef<HTMLDivElement>(null);
+	const rateMenuRef = useRef<HTMLDivElement>(null);
+
+	const playbackRate = useSettingsStore((s) => s.mediaPlaybackRate);
+	const setPlaybackRate = useSettingsStore((s) => s.setMediaPlaybackRate);
+
+	const [src, setSrc] = useState<string | null>(null);
+	const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+	const [playing, setPlaying] = useState(false);
+	const [currentTime, setCurrentTime] = useState(0);
+	const [duration, setDuration] = useState(0);
+	const [volume, setVolume] = useState(1);
+	const [muted, setMuted] = useState(false);
+	const [looping, setLooping] = useState(false);
+	const [rateMenuOpen, setRateMenuOpen] = useState(false);
+
+	const isVideo = kind === 'video';
+	// Armed per resolved file, consumed once it becomes playable. Keeping this in
+	// a ref (rather than reading the prop at play time) is what stops a return
+	// visit to the tab from restarting something the user deliberately paused.
+	const autoplayPendingRef = useRef(false);
+	// Read inside the path effect without making the effect depend on it: the
+	// request is only ever relevant at the moment a new file starts loading.
+	const autoplayRequestedRef = useRef(autoplay);
+	autoplayRequestedRef.current = autoplay;
+	// Same for the resume position: latched when a file starts loading, consumed
+	// on 'loadedmetadata', and never re-applied (so a manual seek back to 0 sticks).
+	const resumeRef = useRef(resumeTime);
+	const resumeRequestedRef = useRef(resumeTime);
+	resumeRequestedRef.current = resumeTime;
+
+	// Resolve a fresh stream URL rather than trusting the tab's stored content.
+	// Stream URLs carry a per-boot capability token, and file preview tabs are
+	// persisted verbatim - so a media tab restored from disk holds a URL the
+	// protocol handler will (correctly) reject. Re-reading the path mints a URL
+	// valid for this boot, which makes restored media tabs just work.
+	useEffect(() => {
+		let cancelled = false;
+		setSrc(null);
+		setLoadState('loading');
+		setPlaying(false);
+		setCurrentTime(0);
+		setDuration(0);
+		// Re-arm per file, so repurposing this tab onto a new media file plays it.
+		autoplayPendingRef.current = autoplayRequestedRef.current;
+		resumeRef.current = resumeRequestedRef.current;
+
+		void (async () => {
+			try {
+				const resolved = await window.maestro.fs.readFile(path);
+				if (cancelled) return;
+				if (!isMediaStreamUrl(resolved)) {
+					// Deleted, moved, or no longer servable as media.
+					setLoadState('error');
+					return;
+				}
+				setSrc(resolved);
+			} catch {
+				if (!cancelled) setLoadState('error');
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [path]);
+
+	// Mirror playback outward so the floating widget and the palette can tell
+	// whether anything is audible.
+	useEffect(() => {
+		onPlayingChange?.(playing);
+	}, [playing, onPlayingChange]);
+
+	// Report position continuously rather than only on unmount: React gives no
+	// "about to unmount with fresh DOM state" hook, and the element is gone by
+	// cleanup time on a fast switch.
+	useEffect(() => {
+		if (!onTimeUpdate || currentTime <= 0) return;
+		onTimeUpdate(currentTime);
+	}, [currentTime, onTimeUpdate]);
+
+	// Apply the persisted rate to the element on mount and on every change. The
+	// element resets playbackRate to 1 whenever a new source loads, so this also
+	// has to run after 'loadedmetadata'. preservesPitch keeps a 2x podcast
+	// listenable instead of chipmunked.
+	useEffect(() => {
+		const el = mediaRef.current;
+		if (!el) return;
+		el.preservesPitch = true;
+		el.playbackRate = playbackRate;
+	}, [playbackRate, loadState, src]);
+
+	const handleLoadedMetadata = useCallback(() => {
+		const el = mediaRef.current;
+		if (!el) return;
+		// Live/unknown-length streams report Infinity; treat them as unseekable.
+		setDuration(Number.isFinite(el.duration) ? el.duration : 0);
+		el.playbackRate = playbackRate;
+		setLoadState('ready');
+		// Pick up where the widget left this file. Guarded against a stale position
+		// past the end (file replaced on disk since), which would strand playback.
+		if (resumeRef.current > 0 && Number.isFinite(el.duration) && resumeRef.current < el.duration) {
+			el.currentTime = resumeRef.current;
+			setCurrentTime(resumeRef.current);
+		}
+		resumeRef.current = 0;
+		if (autoplayPendingRef.current) {
+			autoplayPendingRef.current = false;
+			// Local files with no gesture requirement: Electron's default autoplay
+			// policy allows this. A rejection (policy change, torn-down element)
+			// just leaves the file paused, which the transport already shows.
+			void el.play().catch(() => undefined);
+		}
+	}, [playbackRate]);
+
+	const handleTimeUpdate = useCallback(() => {
+		const el = mediaRef.current;
+		if (el) setCurrentTime(el.currentTime);
+	}, []);
+
+	const togglePlay = useCallback(() => {
+		const el = mediaRef.current;
+		if (!el) return;
+		if (el.paused) {
+			// play() rejects when the element is torn down mid-request (tab switch)
+			// or the source failed; the 'error' handler already surfaces that state.
+			void el.play().catch(() => undefined);
+		} else {
+			el.pause();
+		}
+	}, []);
+
+	// Honor toggle requests from the floating frame. The initial value is skipped
+	// so mounting never counts as a request.
+	const lastToggleRef = useRef(toggleRequest);
+	useEffect(() => {
+		if (toggleRequest === lastToggleRef.current) return;
+		lastToggleRef.current = toggleRequest;
+		togglePlay();
+	}, [toggleRequest, togglePlay]);
+
+	const seekBy = useCallback((delta: number) => {
+		const el = mediaRef.current;
+		if (!el || !Number.isFinite(el.duration)) return;
+		el.currentTime = Math.min(el.duration, Math.max(0, el.currentTime + delta));
+	}, []);
+
+	const seekTo = useCallback((seconds: number) => {
+		const el = mediaRef.current;
+		if (!el) return;
+		el.currentTime = seconds;
+		setCurrentTime(seconds);
+	}, []);
+
+	const changeVolume = useCallback((next: number) => {
+		const el = mediaRef.current;
+		const clamped = Math.min(1, Math.max(0, next));
+		setVolume(clamped);
+		setMuted(clamped === 0);
+		if (el) {
+			el.volume = clamped;
+			el.muted = clamped === 0;
+		}
+	}, []);
+
+	const toggleMute = useCallback(() => {
+		const el = mediaRef.current;
+		setMuted((prev) => {
+			const next = !prev;
+			if (el) el.muted = next;
+			return next;
+		});
+	}, []);
+
+	const toggleLoop = useCallback(() => {
+		const el = mediaRef.current;
+		setLooping((prev) => {
+			const next = !prev;
+			if (el) el.loop = next;
+			return next;
+		});
+	}, []);
+
+	/** Step to the next/previous rate in the preset ladder. */
+	const stepRate = useCallback(
+		(direction: 1 | -1) => {
+			const index = MEDIA_PLAYBACK_RATES.indexOf(
+				playbackRate as (typeof MEDIA_PLAYBACK_RATES)[number]
+			);
+			// An off-ladder rate (set via CLI) falls back to the nearest 1x anchor.
+			const from = index === -1 ? MEDIA_PLAYBACK_RATES.indexOf(1) : index;
+			const next = Math.min(MEDIA_PLAYBACK_RATES.length - 1, Math.max(0, from + direction));
+			setPlaybackRate(MEDIA_PLAYBACK_RATES[next]);
+		},
+		[playbackRate, setPlaybackRate]
+	);
+
+	const enterFullscreen = useCallback(() => {
+		const el = mediaRef.current;
+		if (el && 'requestFullscreen' in el) void el.requestFullscreen().catch(() => undefined);
+	}, []);
+
+	const openExternally = useCallback(() => {
+		void window.maestro.shell.openPath(path);
+	}, [path]);
+
+	// Close the speed menu on any outside click.
+	useEventListener(
+		'mousedown',
+		(e) => {
+			if (rateMenuRef.current?.contains(e.target as Node)) return;
+			setRateMenuOpen(false);
+		},
+		{ enabled: rateMenuOpen }
+	);
+
+	/**
+	 * Transport keyboard shortcuts. Scoped to the player container and stopped
+	 * from bubbling so they never collide with the FilePreview shortcuts.
+	 */
+	const handleKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+			// Let the range inputs keep their own arrow-key behavior.
+			if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+
+			switch (e.key) {
+				case ' ':
+				case 'k':
+					togglePlay();
+					break;
+				case 'ArrowLeft':
+					seekBy(e.shiftKey ? -FINE_SKIP_SECONDS : -SKIP_SECONDS);
+					break;
+				case 'ArrowRight':
+					seekBy(e.shiftKey ? FINE_SKIP_SECONDS : SKIP_SECONDS);
+					break;
+				case 'ArrowUp':
+					changeVolume(volume + 0.1);
+					break;
+				case 'ArrowDown':
+					changeVolume(volume - 0.1);
+					break;
+				case 'm':
+					toggleMute();
+					break;
+				case 'l':
+					toggleLoop();
+					break;
+				case ',':
+				case '<':
+					stepRate(-1);
+					break;
+				case '.':
+				case '>':
+					stepRate(1);
+					break;
+				case 'f':
+					if (isVideo) enterFullscreen();
+					break;
+				default:
+					return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+		},
+		[
+			togglePlay,
+			seekBy,
+			changeVolume,
+			volume,
+			toggleMute,
+			toggleLoop,
+			stepRate,
+			isVideo,
+			enterFullscreen,
+		]
+	);
+
+	const mediaProps = useMemo(
+		() => ({
+			// Omitted until the stream URL resolves; an empty src would make the
+			// element fire a spurious 'error' and flip us to the unplayable card.
+			...(src ? { src } : {}),
+			preload: 'metadata' as const,
+			onLoadedMetadata: handleLoadedMetadata,
+			onTimeUpdate: handleTimeUpdate,
+			onDurationChange: handleTimeUpdate,
+			onPlay: () => setPlaying(true),
+			onPause: () => setPlaying(false),
+			onEnded: () => setPlaying(false),
+			onError: () => setLoadState('error'),
+		}),
+		[src, handleLoadedMetadata, handleTimeUpdate]
+	);
+
+	const rateLabel = `${playbackRate}x`;
+	const seekable = duration > 0;
+
+	if (loadState === 'error') {
+		return (
+			<div className="flex flex-col items-center justify-center h-full gap-4 select-none">
+				<AlertTriangle className="w-12 h-12" style={{ color: theme.colors.textDim }} />
+				<div className="text-center">
+					<p className="text-lg font-medium" style={{ color: theme.colors.textMain }}>
+						Cannot Play This File
+					</p>
+					<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
+						The codec inside this container is not supported, or the file is no longer there.
+					</p>
+					<button
+						onClick={openExternally}
+						className="mt-4 px-3 py-1.5 rounded text-sm inline-flex items-center gap-2 transition-colors hover:opacity-90"
+						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+					>
+						<ExternalLink className="w-4 h-4" />
+						Open in Default App
+					</button>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div
+			ref={containerRef}
+			className="flex flex-col h-full select-none outline-none"
+			tabIndex={0}
+			onKeyDown={handleKeyDown}
+			onClick={() => containerRef.current?.focus()}
+		>
+			{/* Stage. Audio in compact mode contributes no height, so the transport
+			    alone is the whole widget. */}
+			<div
+				className={`${compact && !isVideo ? '' : 'flex-1 min-h-0'} flex items-center justify-center relative`}
+				style={{ backgroundColor: isVideo ? '#000' : 'transparent' }}
+			>
+				{isVideo ? (
+					<video
+						ref={mediaRef as React.RefObject<HTMLVideoElement>}
+						{...mediaProps}
+						className="max-w-full max-h-full"
+						onDoubleClick={enterFullscreen}
+					/>
+				) : (
+					<>
+						<audio ref={mediaRef as React.RefObject<HTMLAudioElement>} {...mediaProps} />
+						{/* Audio has no picture. Docked, fill the stage with an icon and the
+						    filename; floating, the frame's own title bar already names the
+						    file, so the stage collapses away entirely. */}
+						{!compact && (
+							<div className="flex flex-col items-center gap-3">
+								<FileAudio className="w-16 h-16" style={{ color: theme.colors.accent }} />
+								<span
+									className="text-sm max-w-md truncate px-4"
+									style={{ color: theme.colors.textDim }}
+								>
+									{name}
+								</span>
+							</div>
+						)}
+					</>
+				)}
+
+				{loadState === 'loading' && (
+					<div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+						<Spinner size={32} color={theme.colors.accent} />
+					</div>
+				)}
+			</div>
+
+			{/* Transport */}
+			<div
+				className="shrink-0 border-t px-3 py-2 flex flex-col gap-1.5"
+				style={{ borderColor: theme.colors.border }}
+			>
+				{/* Scrubber */}
+				<div className="flex items-center gap-2">
+					<span
+						className="text-[11px] font-mono tabular-nums shrink-0"
+						style={{ color: theme.colors.textDim }}
+					>
+						{formatTime(currentTime)}
+					</span>
+					<input
+						type="range"
+						min={0}
+						max={seekable ? duration : 1}
+						step={0.01}
+						value={seekable ? Math.min(currentTime, duration) : 0}
+						disabled={!seekable}
+						onChange={(e) => seekTo(Number(e.target.value))}
+						aria-label="Seek"
+						className="flex-1 h-1 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+						style={{ accentColor: theme.colors.accent }}
+					/>
+					<span
+						className="text-[11px] font-mono tabular-nums shrink-0"
+						style={{ color: theme.colors.textDim }}
+					>
+						{formatTime(duration)}
+					</span>
+				</div>
+
+				{/* Controls */}
+				<div className="flex items-center gap-1">
+					{onPrev && (
+						<GhostIconButton
+							onClick={onPrev}
+							title="Previous media file"
+							ariaLabel="Previous media file"
+							color={theme.colors.textDim}
+						>
+							<SkipBack className="w-4 h-4" />
+						</GhostIconButton>
+					)}
+					<GhostIconButton
+						onClick={() => seekBy(-SKIP_SECONDS)}
+						title={`Back ${SKIP_SECONDS}s (Left arrow)`}
+						ariaLabel={`Back ${SKIP_SECONDS} seconds`}
+						color={theme.colors.textDim}
+					>
+						<RotateCcw className="w-4 h-4" />
+					</GhostIconButton>
+
+					<GhostIconButton
+						onClick={togglePlay}
+						title={playing ? 'Pause (Space)' : 'Play (Space)'}
+						ariaLabel={playing ? 'Pause' : 'Play'}
+						color={theme.colors.textMain}
+						padding="p-1.5"
+					>
+						{playing ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+					</GhostIconButton>
+
+					<GhostIconButton
+						onClick={() => seekBy(SKIP_SECONDS)}
+						title={`Forward ${SKIP_SECONDS}s (Right arrow)`}
+						ariaLabel={`Forward ${SKIP_SECONDS} seconds`}
+						color={theme.colors.textDim}
+					>
+						<RotateCw className="w-4 h-4" />
+					</GhostIconButton>
+
+					{onNext && (
+						<GhostIconButton
+							onClick={onNext}
+							title="Next media file"
+							ariaLabel="Next media file"
+							color={theme.colors.textDim}
+						>
+							<SkipForward className="w-4 h-4" />
+						</GhostIconButton>
+					)}
+
+					<div className="flex items-center gap-1 ml-2">
+						<GhostIconButton
+							onClick={toggleMute}
+							title={muted ? 'Unmute (M)' : 'Mute (M)'}
+							ariaLabel={muted ? 'Unmute' : 'Mute'}
+							color={theme.colors.textDim}
+						>
+							{muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+						</GhostIconButton>
+						<input
+							type="range"
+							min={0}
+							max={1}
+							step={0.01}
+							value={muted ? 0 : volume}
+							onChange={(e) => changeVolume(Number(e.target.value))}
+							aria-label="Volume"
+							className="w-20 h-1 cursor-pointer"
+							style={{ accentColor: theme.colors.accent }}
+						/>
+					</div>
+
+					<div className="flex-1" />
+
+					<GhostIconButton
+						onClick={toggleLoop}
+						title={looping ? 'Looping on (L)' : 'Loop (L)'}
+						ariaLabel="Toggle loop"
+						color={looping ? theme.colors.accent : theme.colors.textDim}
+					>
+						<Repeat className="w-4 h-4" />
+					</GhostIconButton>
+
+					{/* Speed - persisted globally, so it carries to the next file */}
+					<div className="relative" ref={rateMenuRef}>
+						<button
+							onClick={() => setRateMenuOpen((o) => !o)}
+							title="Playback speed (, and . to step). Persists across files."
+							aria-label="Playback speed"
+							className="px-2 py-1 rounded text-xs font-mono hover:bg-white/10 transition-colors min-w-[3rem]"
+							style={{
+								color: playbackRate === 1 ? theme.colors.textDim : theme.colors.accent,
+							}}
+						>
+							{rateLabel}
+						</button>
+						{rateMenuOpen && (
+							<div
+								className="absolute bottom-full right-0 mb-1 py-1 rounded shadow-lg border z-10 max-h-64 overflow-y-auto"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
+								}}
+							>
+								{MEDIA_PLAYBACK_RATES.map((rate) => (
+									<button
+										key={rate}
+										onClick={() => {
+											setPlaybackRate(rate);
+											setRateMenuOpen(false);
+										}}
+										className="block w-full text-left px-3 py-1 text-xs font-mono hover:bg-white/10 transition-colors"
+										style={{
+											color: rate === playbackRate ? theme.colors.accent : theme.colors.textMain,
+										}}
+									>
+										{rate}x
+									</button>
+								))}
+							</div>
+						)}
+					</div>
+
+					{isVideo && (
+						<GhostIconButton
+							onClick={enterFullscreen}
+							title="Fullscreen (F)"
+							ariaLabel="Fullscreen"
+							color={theme.colors.textDim}
+						>
+							<Maximize className="w-4 h-4" />
+						</GhostIconButton>
+					)}
+
+					<GhostIconButton
+						onClick={openExternally}
+						title="Open in default app"
+						ariaLabel="Open in default app"
+						color={theme.colors.textDim}
+					>
+						<ExternalLink className="w-4 h-4" />
+					</GhostIconButton>
+				</div>
+			</div>
+		</div>
+	);
+});

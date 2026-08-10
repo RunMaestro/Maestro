@@ -1,11 +1,13 @@
 import React, { useCallback, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { LayoutGrid, Pencil, Smile, Ungroup } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, LayoutGrid, Pencil, Smile, Ungroup } from 'lucide-react';
 import type { TabGroup, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { useModalStore } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { EmojiPickerOverlay } from '../ui';
+import { ShortcutHint } from './ShortcutHint';
 
 export interface GroupTabChipProps {
 	group: TabGroup;
@@ -19,6 +21,20 @@ export interface GroupTabChipProps {
 	onSetEmoji?: (groupId: string, emoji: string) => void;
 	/** Break the group apart into standalone tabs (gated by this chip's confirm dialog). */
 	onBreakApart?: (groupId: string) => void;
+	// --- Drag-to-reorder (identical contract to the other tab items) ---
+	onDragStart?: (tabId: string, e: React.DragEvent) => void;
+	onDragOver?: (tabId: string, e: React.DragEvent) => void;
+	onDragEnd?: () => void;
+	onDrop?: (tabId: string, e: React.DragEvent) => void;
+	isDragging?: boolean;
+	isDragOver?: boolean;
+	registerRef?: (el: HTMLDivElement | null) => void;
+	/** Stable callback - receives the group id */
+	onMoveToFirst?: (tabId: string) => void;
+	/** Stable callback - receives the group id */
+	onMoveToLast?: (tabId: string) => void;
+	isFirstTab?: boolean;
+	isLastTab?: boolean;
 }
 
 /**
@@ -41,6 +57,17 @@ export const GroupTabChip = memo(function GroupTabChip({
 	onRename,
 	onSetEmoji,
 	onBreakApart,
+	onDragStart,
+	onDragOver,
+	onDragEnd,
+	onDrop,
+	isDragging,
+	isDragOver,
+	registerRef,
+	onMoveToFirst,
+	onMoveToLast,
+	isFirstTab,
+	isLastTab,
 }: GroupTabChipProps) {
 	const {
 		isHovered,
@@ -55,7 +82,9 @@ export const GroupTabChip = memo(function GroupTabChip({
 		overlayMouseEnter,
 		overlayMouseLeave,
 		isOverOverlayRef,
-	} = useTabHoverOverlay();
+	} = useTabHoverOverlay({ registerRef });
+
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
 	// Inline rename editing (double-click the chip or the overlay item). Seeded
 	// with the current name; committing an empty value falls back to the auto name
@@ -136,6 +165,50 @@ export const GroupTabChip = memo(function GroupTabChip({
 		[requestBreakApart]
 	);
 
+	const handleMoveToFirstClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToFirst?.(group.id);
+			setOverlayOpen(false);
+		},
+		[onMoveToFirst, group.id, setOverlayOpen]
+	);
+
+	const handleMoveToLastClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToLast?.(group.id);
+			setOverlayOpen(false);
+		},
+		[onMoveToLast, group.id, setOverlayOpen]
+	);
+
+	// Drag-to-reorder. The group is ONE unified tab, so it moves as a single unit
+	// exactly like an AI / file / terminal / browser chip: the handlers below just
+	// forward the group id, and TabBar reorders `unifiedTabOrder` by index. The
+	// group's panes are referenced by the layout tree, not by the order array, so
+	// moving the chip never disturbs the tiling.
+	const handleChipDragStart = useCallback(
+		(e: React.DragEvent) => {
+			onDragStart?.(group.id, e);
+		},
+		[onDragStart, group.id]
+	);
+
+	const handleChipDragOver = useCallback(
+		(e: React.DragEvent) => {
+			onDragOver?.(group.id, e);
+		},
+		[onDragOver, group.id]
+	);
+
+	const handleChipDrop = useCallback(
+		(e: React.DragEvent) => {
+			onDrop?.(group.id, e);
+		},
+		[onDrop, group.id]
+	);
+
 	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
 
 	return (
@@ -144,11 +217,18 @@ export const GroupTabChip = memo(function GroupTabChip({
 			data-tab-id={group.id}
 			className={`flex items-center gap-1.5 shrink-0 px-2 py-1 mb-1 rounded-t text-xs font-medium transition-colors cursor-pointer select-none outline-none ${
 				isActive ? '' : 'max-w-[180px]'
-			}`}
-			style={{
-				color: isActive ? theme.colors.accentForeground : theme.colors.textMain,
-				backgroundColor: isActive ? theme.colors.accent : isHovered ? hoverBgColor : 'transparent',
-			}}
+			} ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'ring-2 ring-inset' : ''}`}
+			style={
+				{
+					color: isActive ? theme.colors.accentForeground : theme.colors.textMain,
+					backgroundColor: isActive
+						? theme.colors.accent
+						: isHovered
+							? hoverBgColor
+							: 'transparent',
+					'--tw-ring-color': isDragOver ? theme.colors.accent : 'transparent',
+				} as React.CSSProperties
+			}
 			title={group.name}
 			onClick={() => {
 				if (isRenaming) return;
@@ -160,6 +240,13 @@ export const GroupTabChip = memo(function GroupTabChip({
 				if (isOverOverlayRef.current) return;
 				handleMouseLeave();
 			}}
+			// Suppressed while the inline rename input is open: a native drag on the
+			// chip would otherwise hijack text selection inside that input.
+			draggable={!isRenaming}
+			onDragStart={handleChipDragStart}
+			onDragOver={handleChipDragOver}
+			onDragEnd={onDragEnd}
+			onDrop={handleChipDrop}
 		>
 			{group.emoji ? (
 				<span className="text-sm leading-none shrink-0" aria-hidden="true">
@@ -251,6 +338,41 @@ export const GroupTabChip = memo(function GroupTabChip({
 									>
 										<Ungroup className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Break apart
+									</button>
+								)}
+
+								{/* Move to First/Last - the keyboard/menu counterpart to dragging the
+								    chip, matching the other tab items' overlay menus. */}
+								{((onMoveToFirst && !isFirstTab) || (onMoveToLast && !isLastTab)) && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+								{onMoveToFirst && !isFirstTab && (
+									<button
+										onClick={handleMoveToFirstClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Move to First Position
+										{tabShortcuts.moveTabToStart && (
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
+										)}
+									</button>
+								)}
+								{onMoveToLast && !isLastTab && (
+									<button
+										onClick={handleMoveToLastClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ChevronsRight
+											className="w-3.5 h-3.5"
+											style={{ color: theme.colors.textDim }}
+										/>
+										Move to Last Position
+										{tabShortcuts.moveTabToEnd && (
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} theme={theme} />
+										)}
 									</button>
 								)}
 							</div>

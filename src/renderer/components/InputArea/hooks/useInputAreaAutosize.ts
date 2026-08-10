@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import type React from 'react';
 import {
-	EXTERNAL_TEXTAREA_MAX_HEIGHT,
+	TEXTAREA_MAX_HEIGHT,
 	resizeTextareaToContent,
-	shouldScrollTextareaToEnd,
+	scrollTextareaToCaretEnd,
 } from '../utils/textareaSizing';
 
 interface UseInputAreaAutosizeArgs {
@@ -24,33 +24,32 @@ export function useInputAreaAutosize({
 	activeTabId,
 	keystrokeResizeScheduledRef,
 }: UseInputAreaAutosizeArgs): void {
-	const prevInputValueRef = useRef(inputValue);
-
 	useEffect(() => {
 		const el = inputRef.current;
 		if (el) {
 			// Skip the resize AND the scroll when the keystroke path already owns them
-			// (its rAF resizes to the keystroke max height and pins the scroll). This
-			// effect fires synchronously in the commit phase, so doing its own
+			// (its rAF resizes to the unified TEXTAREA_MAX_HEIGHT and pins the scroll).
+			// This effect fires synchronously in the commit phase, so doing its own
 			// scroll-to-end for keystrokes would race the rAF and get clobbered (or
 			// clobber it), which is what left freshly typed characters scrolled out of
 			// view. It still owns both for tab switches and programmatic value changes
 			// that never fire onChange (draft restore, slash/template insertion), where
 			// the flag is false.
 			if (!keystrokeResizeScheduledRef?.current) {
-				resizeTextareaToContent(el, EXTERNAL_TEXTAREA_MAX_HEIGHT);
-
-				if (
-					shouldScrollTextareaToEnd(
-						el.selectionEnd,
-						prevInputValueRef.current.length,
-						inputValue.length
-					)
-				) {
-					el.scrollTop = el.scrollHeight;
-				}
+				resizeTextareaToContent(el, TEXTAREA_MAX_HEIGHT);
+				// Pin the caret exactly like the keystroke path: scrollTextareaToCaretEnd
+				// snaps to the bottom only when the caret sits at the end of the new value
+				// (draft restores, slash/template insertions, voice appends) and is a no-op
+				// otherwise. Caveat: the deferred caret setters (@-mention accept in
+				// AtMentionPopover, template variable insertion in useTemplateAutocomplete)
+				// place their caret in a requestAnimationFrame that runs AFTER this
+				// commit-phase effect, so at this point selectionEnd already sits at the end
+				// of the freshly assigned value - this effect cannot honor those mid-text
+				// placements from here. Honoring them end to end would require those setters
+				// to re-scroll after they move the caret; this effect only guarantees the
+				// end-of-value case.
+				scrollTextareaToCaretEnd(el);
 			}
 		}
-		prevInputValueRef.current = inputValue;
 	}, [activeTabId, inputValue, inputRef, keystrokeResizeScheduledRef]);
 }

@@ -92,7 +92,7 @@ export function FilePanelSettingsSection({
 			{/* Content */}
 			<div className="flex-1 min-w-0">
 				<p className="font-semibold mb-1">File Panel Settings</p>
-				<p className="text-xs opacity-60 mb-4">
+				<p className="text-xs opacity-70 mb-4">
 					Limits the indexer so huge directories don&apos;t blow up memory. Scans stop at the entry
 					cap and the Files panel surfaces a warning with Load More / Load All.
 				</p>
@@ -123,7 +123,7 @@ export function FilePanelSettingsSection({
 							background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${depthPct}%, ${theme.colors.bgActivity} ${depthPct}%, ${theme.colors.bgActivity} 100%)`,
 						}}
 					/>
-					<p className="text-[11px] opacity-50 mt-1">
+					<p className="text-[11px] opacity-55 mt-1">
 						Default {DEFAULT_FILE_EXPLORER_MAX_DEPTH}. Deeper scans see more but take longer and use
 						more memory.
 					</p>
@@ -160,7 +160,7 @@ export function FilePanelSettingsSection({
 							);
 						})}
 					</div>
-					<p className="text-[11px] opacity-50 mt-2">
+					<p className="text-[11px] opacity-55 mt-2">
 						Soft cap. Default {formatEntries(DEFAULT_FILE_EXPLORER_MAX_ENTRIES)}. Valid range{' '}
 						{formatEntries(FILE_EXPLORER_MIN_ENTRIES)} –{' '}
 						{formatEntries(FILE_EXPLORER_MAX_ENTRIES_CAP)}. The Files panel shows a Load More / Load
@@ -173,7 +173,7 @@ export function FilePanelSettingsSection({
 					<label className="flex items-center justify-between cursor-pointer">
 						<div className="flex-1 min-w-0 pr-3">
 							<p className="text-xs font-medium">Reduce entry cap on SSH remotes</p>
-							<p className="text-[11px] opacity-50 mt-0.5">
+							<p className="text-[11px] opacity-55 mt-0.5">
 								Apply a fraction of the cap to remote scans. Each directory walked over SSH is a
 								separate round-trip, so a smaller cap returns sooner on large remote trees.
 							</p>
@@ -216,7 +216,7 @@ export function FilePanelSettingsSection({
 									background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${sshFractionPct}%, ${theme.colors.bgActivity} ${sshFractionPct}%, ${theme.colors.bgActivity} 100%)`,
 								}}
 							/>
-							<p className="text-[11px] opacity-50 mt-1">
+							<p className="text-[11px] opacity-55 mt-1">
 								{formatEntries(maxEntries)} × {sshPercentLabel} ={' '}
 								{formatEntries(sshResolvedEntries)} on SSH. Slider steps by 5%.
 							</p>

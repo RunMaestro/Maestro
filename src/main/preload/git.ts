@@ -10,6 +10,11 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	GitCommandOutputChunk,
+	GitRunCommandResult,
+	GitStreamingOperation,
+} from '../../shared/gitUtils';
 
 /**
  * Git worktree information
@@ -268,6 +273,50 @@ export function createGitApi() {
 			remoteCwd?: string
 		): Promise<{ success: boolean; stdout: string; stderr: string }> =>
 			ipcRenderer.invoke('git:switch', cwd, branchName, sshRemoteId, remoteCwd),
+
+		/**
+		 * Run a network git operation (pull/push/fetch), streaming its output.
+		 *
+		 * Subscribe with `onCommandOutput` BEFORE calling this: chunks start
+		 * arriving as soon as the child process writes them.
+		 */
+		runCommand: (options: {
+			runId: string;
+			operation: GitStreamingOperation;
+			cwd: string;
+			sshRemoteId?: string;
+			remoteCwd?: string;
+			setUpstream?: boolean;
+		}): Promise<GitRunCommandResult> => ipcRenderer.invoke('git:runCommand', options),
+
+		/**
+		 * Terminate an in-flight `runCommand`.
+		 */
+		cancelCommand: (runId: string): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('git:cancelCommand', runId),
+
+		/**
+		 * Subscribe to streamed output from `runCommand`. Returns an unsubscribe.
+		 */
+		onCommandOutput: (callback: (data: GitCommandOutputChunk) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, data: GitCommandOutputChunk) =>
+				callback(data);
+			ipcRenderer.on('git:commandOutput', handler);
+			return () => ipcRenderer.removeListener('git:commandOutput', handler);
+		},
+
+		/**
+		 * Check out a branch in the session's working tree.
+		 * Pass `createTracking` for a branch that only exists on origin.
+		 */
+		checkoutBranch: (
+			cwd: string,
+			branch: string,
+			createTracking?: boolean,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; output?: string; error?: string }> =>
+			ipcRenderer.invoke('git:checkoutBranch', cwd, branch, createTracking, sshRemoteId, remoteCwd),
 
 		/**
 		 * Get commit count

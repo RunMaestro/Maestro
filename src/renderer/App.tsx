@@ -85,6 +85,7 @@ import {
 	// Tab handlers
 	useTabHandlers,
 	useTerminalTabHandlers,
+	useSnoozeScheduler,
 	// Group chat handlers
 	useGroupChatHandlers,
 	// Modal handlers
@@ -133,12 +134,14 @@ import {
 	useSessionSwitchCallbacks,
 } from './hooks';
 import { SidebarNavSync } from './hooks/session/SidebarNavSync';
+import { usePluginFocusRequestListener } from './hooks/session/usePluginFocusRequestListener';
 import { useSidebarNavStore } from './stores/sidebarNavStore';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
+import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
@@ -172,6 +175,7 @@ import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineW
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
+import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMount';
 
 // Import services
 // gitService - now used in useModalHandlers (Tier 3C)
@@ -184,10 +188,12 @@ import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem } from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
+// Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
+// closed tab was tiled, else falls back to the plain standalone-strip restore.
+import { reopenClosedTabWithTiling as reopenUnifiedClosedTab } from './utils/panelLayout';
 import {
 	createTab,
 	closeTab,
-	reopenUnifiedClosedTab,
 	getActiveTab,
 	navigateToNextTab,
 	navigateToPrevTab,
@@ -226,6 +232,7 @@ function MaestroConsoleInner() {
 		newInstanceModalOpen,
 		duplicatingSessionId,
 		newInstancePresetGroupId,
+		newInstancePresetWorkingDir,
 		// Edit Agent Modal
 		setEditAgentModalOpen,
 		editAgentSession,
@@ -322,6 +329,7 @@ function MaestroConsoleInner() {
 		// Worktree Modals
 		createWorktreeSession,
 		createPRSession,
+		createPRSourceBranch,
 		deleteWorktreeSession,
 		// Tab Switcher Modal
 		setTabSwitcherOpen,
@@ -1025,6 +1033,10 @@ function MaestroConsoleInner() {
 		return sess.filePreviewTabs.find((t) => t.id === sess.activeFileTabId) ?? null;
 	});
 
+	// Wakes snoozed tabs when their time arrives (and on launch, for wakes
+	// missed while Maestro was closed).
+	useSnoozeScheduler();
+
 	// --- TERMINAL TAB HANDLERS ---
 	const { handleOpenTerminalTab, handleSelectTerminalTab, handleCloseTerminalTab } =
 		useTerminalTabHandlers();
@@ -1202,6 +1214,7 @@ function MaestroConsoleInner() {
 		handleClearAgentError,
 		handleOpenQueueBrowser,
 		handleOpenTabSearch,
+		handleOpenCrossTabSearch,
 		handleOpenPromptComposer,
 		handleOpenFuzzySearch,
 		handleOpenCreatePR,
@@ -1221,6 +1234,7 @@ function MaestroConsoleInner() {
 		handleCloseAutoRunSetup,
 		handleCloseBatchRunner,
 		handleCloseTabSwitcher,
+		handleCloseCrossTabSearch,
 		handleCloseFileSearch,
 		handleClosePromptComposer,
 		handleCloseCreatePRModal,
@@ -1577,6 +1591,7 @@ function MaestroConsoleInner() {
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
 		handleFileSearchSelect,
+		handleCrossTabSearchJump,
 	} = useSessionSwitchCallbacks({
 		setActiveSessionId,
 		handleResumeSession,
@@ -1641,6 +1656,12 @@ function MaestroConsoleInner() {
 	// the timer when autoResumeOnLimit is off. `resumeAutoRunAfterError` is the
 	// shared entry point that unblocks both spec- and goal-driven Auto Runs.
 	useAutoResumeCoordinator({ resumeAutoRunAfterError });
+
+	// --- AGENT CAPABILITY CACHE PRIMING ---
+	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
+	// run outside the active session's tree (CLI/web dispatch) see real values
+	// instead of the conservative defaults.
+	useCapabilitiesPriming();
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
 		updateSessionWith(activeSessionIdRef.current, (s) => ({
@@ -2273,6 +2294,10 @@ function MaestroConsoleInner() {
 		abortBatchOnError: abortAutoRunBatchOnError,
 	});
 
+	// Plugin `sessions.focus` (e.g. Agent Flow node-jump) writes main's store,
+	// which is invisible to the live renderer store - apply it via canonical helpers.
+	usePluginFocusRequestListener();
+
 	// --- GROUP MANAGEMENT ---
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)
 	const {
@@ -2495,6 +2520,7 @@ function MaestroConsoleInner() {
 		handleNavForward,
 		toggleUnreadFilter,
 		setTabSwitcherOpen,
+		handleOpenCrossTabSearch,
 		showUnreadOnly,
 		stagedImages,
 		handleSetLightboxImage,
@@ -2741,6 +2767,7 @@ function MaestroConsoleInner() {
 		toggleUnreadFilter,
 		handleOpenTabSearch,
 		handleOpenOutputSearch,
+		handleOpenCrossTabSearch,
 		handleCloseAllTabs,
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
@@ -2984,6 +3011,9 @@ function MaestroConsoleInner() {
 			{/* Owns Left Bar sort/nav/starred subscriptions; memoized so App wakes
 			    do not re-run this host. Must sit under WindowProvider (ownsSession). */}
 			<SidebarNavSync />
+			{/* The ONE mount for modal-placement plugin panels: serves both the
+			    Settings launch button and a plugin summoning its own overlay. */}
+			<PluginModalPanelMount theme={theme} />
 			<AppShell
 				theme={theme}
 				fontFamily={fontFamily}
@@ -3194,6 +3224,7 @@ function MaestroConsoleInner() {
 						onCreateSession={createNewSession}
 						duplicatingSessionId={duplicatingSessionId}
 						newInstancePresetGroupId={newInstancePresetGroupId}
+						newInstancePresetWorkingDir={newInstancePresetWorkingDir}
 						onCloseEditAgentModal={handleCloseEditAgentModal}
 						onSaveEditAgent={handleSaveEditAgent}
 						editAgentSession={editAgentSession}
@@ -3231,6 +3262,7 @@ function MaestroConsoleInner() {
 						onCloseCreateWorktreeModal={handleCloseCreateWorktreeModal}
 						onCreateWorktree={handleCreateWorktree}
 						createPRSession={createPRSession}
+						createPRSourceBranch={createPRSourceBranch}
 						onCloseCreatePRModal={handleCloseCreatePRModal}
 						onPRCreated={handlePRCreated}
 						deleteWorktreeSession={deleteWorktreeSession}
@@ -3268,8 +3300,6 @@ function MaestroConsoleInner() {
 						setAgentSessionsOpen={setAgentSessionsOpen}
 						setMemoryViewerOpen={setMemoryViewerOpen}
 						setActiveAgentSessionId={setActiveAgentSessionId}
-						setGitDiffPreview={setGitDiffPreview}
-						setGitLogOpen={setGitLogOpen}
 						isAiMode={activeSession?.inputMode === 'ai'}
 						onQuickActionsRenameTab={handleQuickActionsRenameTab}
 						onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
@@ -3357,6 +3387,8 @@ function MaestroConsoleInner() {
 						onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
 						onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 						onCloseTabSwitcher={handleCloseTabSwitcher}
+						onCloseCrossTabSearch={handleCloseCrossTabSearch}
+						onCrossTabSearchJump={handleCrossTabSearchJump}
 						onTabSelect={handleUtilityTabSelect}
 						onFileTabSelect={handleUtilityFileTabSelect}
 						onTerminalTabSelect={handleSelectTerminalTab}

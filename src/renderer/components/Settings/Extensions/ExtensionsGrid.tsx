@@ -68,7 +68,12 @@ export function ExtensionsGrid({ theme, extensions, onSelect }: ExtensionsGridPr
 		<div
 			data-testid="extensions-grid"
 			className="grid gap-3"
-			style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
+			style={{
+				// Never more than 3 across: the per-column floor is a full third of the
+				// row (minus the two gaps), so a 4th column can never fit. Narrower
+				// panels fall back to the 240px floor and drop to 2 or 1 column.
+				gridTemplateColumns: 'repeat(auto-fill, minmax(max(240px, (100% - 1.5rem) / 3), 1fr))',
+			}}
 		>
 			{extensions.map((ext) => {
 				const Icon = ext.kind === 'plugin' ? Puzzle : (BUILTIN_ICONS[ext.id] ?? Puzzle);
@@ -116,7 +121,7 @@ export function ExtensionsGrid({ theme, extensions, onSelect }: ExtensionsGridPr
 									)}
 								</div>
 								<div
-									className="text-xs mt-0.5 line-clamp-2"
+									className="text-xs mt-0.5 line-clamp-3"
 									style={{ color: theme.colors.textDim }}
 								>
 									{ext.description || 'No description provided.'}

@@ -10,6 +10,8 @@ import {
 } from '../../../hooks/input/useMentionPicker';
 import { getAgentIcon } from '../../../constants/agentIcons';
 import { getAgentDisplayName } from '../../../../shared/agentMetadata';
+import { useSshRemoteNames } from '../../../hooks/remote/useSshRemoteNames';
+import { SshRemotePill } from '../../ui/SshRemotePill';
 
 interface AtMentionPopoverProps {
 	isOpen: boolean;
@@ -85,6 +87,10 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 	setSelectedIndex,
 	inputRef,
 }: AtMentionPopoverProps) {
+	// Resolved before the early return (hooks can't sit behind a conditional).
+	// One shared, cached lookup labels every SSH row in the list.
+	const sshRemoteNames = useSshRemoteNames();
+
 	// The picker stays mounted while open (even with zero rows) so the category
 	// bar and empty-state row remain visible - it never silently collapses.
 	if (!isOpen || isTerminalMode) {
@@ -213,6 +219,16 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 										</span>
 									)}
 									<span className="flex-1 truncate font-medium">{item.displayText}</span>
+									{/* Where the message will actually run. No pill means local -
+									    the same convention the Left Bar and header use. */}
+									{!isGroup && item.isSshRemote && (
+										<SshRemotePill
+											remoteName={
+												item.sshRemoteId ? sshRemoteNames.get(item.sshRemoteId) : undefined
+											}
+											className="max-w-[140px]"
+										/>
+									)}
 									{!isGroup && item.toolType && (
 										<span className="text-[10px] opacity-50 flex-shrink-0">
 											{getAgentDisplayName(item.toolType)}

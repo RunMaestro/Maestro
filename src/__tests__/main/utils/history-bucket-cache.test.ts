@@ -94,6 +94,30 @@ describe('buildBucketAggregate', () => {
 		expect(middleHit).toBe(1);
 	});
 
+	it('tallies AGENT entries into their own series, not into auto', () => {
+		// Cross-agent consults used to be written as AUTO, so the regression this
+		// guards is an AGENT entry silently inflating the Auto Run counts again.
+		const start = 2_000_000;
+		const entries: HistoryEntry[] = [
+			makeEntry({ id: '1', type: 'AGENT', timestamp: start }),
+			makeEntry({ id: '2', type: 'AGENT', timestamp: start + 10_000 }),
+			makeEntry({ id: '3', type: 'AUTO', timestamp: start + 5_000 }),
+		];
+		const result = buildBucketAggregate(entries, 4);
+
+		expect(result.agentCount).toBe(2);
+		expect(result.autoCount).toBe(1);
+		expect(result.totalCount).toBe(3);
+		expect(result.buckets.reduce((acc, b) => acc + b.agent, 0)).toBe(2);
+		expect(result.buckets.reduce((acc, b) => acc + b.auto, 0)).toBe(1);
+	});
+
+	it('zero-fills the agent series when there are no entries', () => {
+		const result = buildBucketAggregate([], 3);
+		expect(result.agentCount).toBe(0);
+		expect(result.buckets.every((b) => b.agent === 0)).toBe(true);
+	});
+
 	it('survives a single-entry input (zero-width range)', () => {
 		const entries = [makeEntry({ id: '1', type: 'USER', timestamp: 5_000 })];
 		const result = buildBucketAggregate(entries, 4);
@@ -262,16 +286,17 @@ describe('HistoryBucketCache', () => {
 		sourceFingerprint: 'fp-1',
 		bucketCount: 3,
 		buckets: [
-			{ auto: 1, user: 0, cue: 0 },
-			{ auto: 0, user: 2, cue: 0 },
-			{ auto: 0, user: 0, cue: 3 },
+			{ auto: 1, user: 0, cue: 0, agent: 0 },
+			{ auto: 0, user: 2, cue: 0, agent: 0 },
+			{ auto: 0, user: 0, cue: 3, agent: 4 },
 		],
 		earliestTimestamp: 100,
 		latestTimestamp: 999,
-		totalCount: 6,
+		totalCount: 10,
 		autoCount: 1,
 		userCount: 2,
 		cueCount: 3,
+		agentCount: 4,
 		hostCounts: { [LOCAL_HOST_AGG_KEY]: 6 },
 		computedAt: Date.now(),
 	});
@@ -284,8 +309,11 @@ describe('HistoryBucketCache', () => {
 		const fresh = new HistoryBucketCache(cacheDir);
 		const hit = await fresh.get('round-trip', 'fp-1');
 		expect(hit).not.toBeNull();
-		expect(hit?.totalCount).toBe(6);
+		expect(hit?.totalCount).toBe(10);
 		expect(hit?.buckets[2].cue).toBe(3);
+		// The AGENT series must survive the disk round-trip, not just the in-memory copy.
+		expect(hit?.agentCount).toBe(4);
+		expect(hit?.buckets[2].agent).toBe(4);
 		expect(hit?.hostCounts).toEqual({ [LOCAL_HOST_AGG_KEY]: 6 });
 	});
 
@@ -340,8 +368,8 @@ describe('HistoryBucketCache', () => {
 		]);
 		expect(a).not.toBeNull();
 		expect(b).not.toBeNull();
-		expect(a?.totalCount).toBe(6);
-		expect(b?.totalCount).toBe(6);
+		expect(a?.totalCount).toBe(10);
+		expect(b?.totalCount).toBe(10);
 	});
 
 	it('cold-cache miss resolves to null without throwing on missing dir', async () => {

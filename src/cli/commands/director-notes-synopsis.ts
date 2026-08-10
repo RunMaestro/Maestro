@@ -7,6 +7,7 @@ import { readSettings } from '../services/storage';
 import { formatError } from '../output/formatter';
 import {
 	parseDirectorNotesNarrative,
+	recoverDirectorNotesNarrative,
 	narrativeToMarkdown,
 } from '../../shared/directorNotesNarrative';
 
@@ -60,13 +61,21 @@ function checkEncoreFeatureEnabled(): void {
 /**
  * The agent emits the structured JSON narrative now. For the human-readable
  * `markdown`/`text` formats, convert it back to markdown prose (the pre-Rich-Mode
- * output). Falls back to the raw string for legacy markdown or unparseable
- * output, so this never makes the CLI output worse than the raw synopsis.
- * (`-f json` stays untouched - it intentionally returns the raw `synopsis`.)
+ * output). Output the strict parser rejects gets the same best-effort salvage the
+ * desktop surfaces use, with the reason noted inline so a partial report never
+ * reads as a complete one. Falls back to the raw string for legacy markdown, so
+ * this never makes the CLI output worse than the raw synopsis. (`-f json` stays
+ * untouched - it intentionally returns the raw `synopsis`.)
  */
 function synopsisToReadableMarkdown(synopsis: string): string {
 	const parsed = parseDirectorNotesNarrative(synopsis);
-	return parsed.ok ? narrativeToMarkdown(parsed.narrative) : synopsis;
+	if (parsed.ok) return narrativeToMarkdown(parsed.narrative);
+
+	const recovered = recoverDirectorNotesNarrative(synopsis);
+	if (recovered.ok) {
+		return `> ${recovered.reason}\n\n${narrativeToMarkdown(recovered.narrative)}`;
+	}
+	return synopsis;
 }
 
 function stripMarkdownFormatting(md: string): string {

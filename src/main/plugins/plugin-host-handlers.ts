@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
-import type { HostCallHandlers } from './plugin-sandbox-host';
+import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
 import type { ActionGuard } from './action-guard';
@@ -44,6 +44,7 @@ import {
 	type PanelContribution,
 } from '../../shared/plugins/contributions';
 import type { HistoryEntry } from '../../shared/types';
+import { isHistoryEntryType } from '../../shared/history';
 
 /** Cap a fetched response body so a hostile/huge response cannot exhaust memory. */
 const MAX_FETCH_BYTES = 5_000_000;
@@ -152,6 +153,9 @@ export interface HostHandlerDeps {
 		patch: Record<string, unknown>
 	) => Promise<PluginSessionMetadata | null>;
 	sessionsDelete?: (sessionId: string) => Promise<boolean>;
+	/** Move the user's focus to an existing session, landing on its AI tab.
+	 * Resolves false when the session (or the named AI tab) no longer exists. */
+	sessionsFocus?: (sessionId: string, tabId?: string) => Promise<boolean>;
 
 	/** Tab metadata and mutators. When omitted the handlers fail closed. */
 	tabsList?: (sessionId?: string) => PluginTabMetadata[];
@@ -229,6 +233,15 @@ export interface HostHandlerDeps {
 	 * owning panel webview can receive it. Absent means the method is not
 	 * registered at all (fail closed). */
 	panelPost?: (pluginId: string, namespacedPanelId: string, data: unknown) => void;
+	/** Show/hide sink for a plugin's OWN `modal`-placement panel. Receives the
+	 * already-namespaced panel id and the requested action; broadcasts it to the
+	 * renderer(s), which own the single modal-panel mount. Absent means the
+	 * open/close/toggle methods are not registered at all (fail closed). */
+	panelVisibility?: (
+		pluginId: string,
+		namespacedPanelId: string,
+		action: 'open' | 'close' | 'toggle'
+	) => void;
 
 	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
 	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
@@ -435,7 +448,7 @@ function sanitizeTranscriptWriteEntry(
 	sessionId: string,
 	projectPath: string
 ): HistoryEntry {
-	const type = raw.type === 'AUTO' || raw.type === 'USER' || raw.type === 'CUE' ? raw.type : 'USER';
+	const type = isHistoryEntryType(raw.type) ? raw.type : 'USER';
 	return {
 		id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : `${Date.now()}-${Math.random()}`,
 		type,
@@ -866,6 +879,21 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				if (!deleted) throw new Error(`stale sessionId: ${p.sessionId}`);
 				return { ok: true };
 			});
+		},
+
+		'sessions.focus': async (pluginId, params) => {
+			const p = asObject(params);
+			if (typeof p.sessionId !== 'string') throw new Error('sessionId is required');
+			if (p.tabId !== undefined && typeof p.tabId !== 'string')
+				throw new Error('tabId must be a string');
+			// Closed schema: focus is navigation, so nothing else may ride along.
+			assertClosedSchema('sessions.focus', p, { sessionId: true, tabId: true });
+			assertBrokerAllowed(deps, pluginId, 'sessions.focus', p);
+			requireSession(p.sessionId);
+			if (!deps.sessionsFocus) throw new Error('sessions.focus is unavailable');
+			const ok = await deps.sessionsFocus(p.sessionId, p.tabId);
+			if (!ok) throw new Error(`unknown focus target: ${p.sessionId}`);
+			return { ok: true };
 		},
 
 		'history.list': async (pluginId, params) => {
@@ -1332,6 +1360,46 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			panelPost(pluginId, `${pluginId}/${panelId}`, p.data);
 			return { ok: true };
 		};
+	}
+
+	// ui.openPanel / ui.closePanel / ui.togglePanel: let a plugin summon or dismiss
+	// its OWN modal panel (the hotkey-summoned overlay path). Same own-panels-only
+	// resolution as ui.panelPost, so a plugin can never open, close, or flicker
+	// another plugin's surface, and no new consent is needed: anything that can
+	// contribute a panel at all already holds `ui:panel`. The verbs carry no data -
+	// they are pure show/hide signals - and are registered only when the sink is
+	// wired (fail closed).
+	if (deps.panelVisibility) {
+		const panelVisibility = deps.panelVisibility;
+		const makeVisibilityHandler = (
+			method: 'ui.openPanel' | 'ui.closePanel' | 'ui.togglePanel',
+			action: 'open' | 'close' | 'toggle'
+		): HostCallHandler => {
+			return async (pluginId, params) => {
+				const p = asObject(params);
+				assertClosedSchema(method, p, { panelId: true });
+				const panelId = p.panelId;
+				if (typeof panelId !== 'string' || panelId.trim() === '' || panelId !== panelId.trim()) {
+					throw new Error('panelId is required');
+				}
+				assertBrokerAllowed(deps, pluginId, method, p);
+				const panel = deps.getPanel?.(pluginId, panelId);
+				if (!panel) {
+					throw new Error(`panel "${panelId}" is not declared by this plugin`);
+				}
+				// Only `modal` panels have a summonable host; docked ones are always
+				// mounted and have their own hide control, so this would be a no-op the
+				// plugin could not distinguish from success.
+				if (panel.placement !== 'modal') {
+					throw new Error(`panel "${panelId}" is not a modal panel`);
+				}
+				panelVisibility(pluginId, `${pluginId}/${panelId}`, action);
+				return { ok: true };
+			};
+		};
+		handlers['ui.openPanel'] = makeVisibilityHandler('ui.openPanel', 'open');
+		handlers['ui.closePanel'] = makeVisibilityHandler('ui.closePanel', 'close');
+		handlers['ui.togglePanel'] = makeVisibilityHandler('ui.togglePanel', 'toggle');
 	}
 
 	if (deps.dispatch) {

@@ -340,26 +340,62 @@ describe('QuickActions command builders', () => {
 			worktreeBranch: 'feat/test',
 			parentSessionId: 'parent',
 		});
-		const getDiff = vi.fn().mockResolvedValue({ diff: 'diff' });
+		// The git entries delegate to useGitAgentActions (exercised in its own
+		// suite); here we assert the palette surfaces the whole set and wires
+		// each entry to the matching action.
+		const gitActions = {
+			isGitRepo: true,
+			branch: 'feat/test',
+			ahead: 2,
+			behind: 1,
+			canCreatePR: true,
+			canConfigureWorktrees: true,
+			viewLog: vi.fn(),
+			viewDiff: vi.fn().mockResolvedValue(undefined),
+			pull: vi.fn(),
+			push: vi.fn(),
+			switchBranch: vi.fn(),
+			createPR: vi.fn(),
+			configureWorktrees: vi.fn(),
+		};
 		const git = buildGitWorktreeCommands({
 			activeSession: session,
 			sessions: [createMockSession({ id: 'parent', name: 'Parent' }), session],
-			setGitDiffPreview: vi.fn(),
-			setGitLogOpen: vi.fn(),
+			gitActions,
 			setQuickActionOpen: close,
 			onQuickCreateWorktree: vi.fn(),
 			onOpenCreatePR: vi.fn(),
 			onRefreshGitFileState: vi.fn(),
 			shortcuts: {},
-			gitService: { getDiff, getRemoteBrowserUrl: vi.fn().mockResolvedValue(null) },
-			notifyCenterFlash: vi.fn(),
+			gitService: { getRemoteBrowserUrl: vi.fn().mockResolvedValue(null) },
 			notifyToast: vi.fn(),
 			openUrl: vi.fn(),
 			logger: { error: vi.fn() },
 		});
+
+		// Every git menu entry has a palette equivalent.
+		expect(git.map((a) => a.id)).toEqual(
+			expect.arrayContaining([
+				'gitLog',
+				'gitDiff',
+				'gitPull',
+				'gitPush',
+				'changeBranch',
+				'createPR',
+				'configureWorktrees',
+			])
+		);
+
 		await git.find((a) => a.id === 'gitDiff')!.action();
-		expect(getDiff).toHaveBeenCalledWith('/test/project', undefined, 'remote-1');
-		expect(git.map((a) => a.id)).toContain('createPR');
+		expect(gitActions.viewDiff).toHaveBeenCalled();
+		git.find((a) => a.id === 'gitPull')!.action();
+		expect(gitActions.pull).toHaveBeenCalled();
+		git.find((a) => a.id === 'gitPush')!.action();
+		expect(gitActions.push).toHaveBeenCalled();
+		git.find((a) => a.id === 'changeBranch')!.action();
+		expect(gitActions.switchBranch).toHaveBeenCalled();
+		git.find((a) => a.id === 'configureWorktrees')!.action();
+		expect(gitActions.configureWorktrees).toHaveBeenCalled();
 
 		expect(
 			buildFeatureCommands({

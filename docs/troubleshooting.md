@@ -14,6 +14,10 @@ Yes. Maestro is a pass-through - it calls your provider (Claude Code, Codex, Ope
 
 The only difference is execution mode. When you run Claude Code directly, it's interactive - you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else - your tools, permissions, context - remains identical.
 
+**Claude said it was asking me a question, but no prompt appeared and the agent is stuck.**
+
+Claude Code's `AskUserQuestion` ask-back tool is only wired into Maestro when the tab is in Standard permission mode. In Standard mode, Maestro attaches a permission relay that renders the question as an in-app question picker (the same relay that surfaces tool approvals). In Full Access mode the relay is not attached (permission checks are bypassed with `--dangerously-skip-permissions`), so the question never reaches Maestro and the tool call waits forever, leaving the agent busy (yellow). To unstick it, stop the agent; a follow-up message only queues behind the stalled turn (which never completes), so it won't dispatch and can't recover the turn. If you want ask-back questions to work, switch the tab to Standard mode using the permission pill in the input toolbar. The same limitation applies in Read-Only mode. SSH remote agents can't use Standard mode at all: a Standard-mode Claude Code spawn over SSH fails loudly instead of downgrading, so they always run in Full Access or Read-Only and never surface ask-backs.
+
 ---
 
 ## System Logs
@@ -50,16 +54,17 @@ The **Process Monitor** displays a hierarchical tree view:
 - **Wizard processes** - Active wizard conversations and playbook generation
 
 **Process types shown:**
-| Type | Description |
-|------|-------------|
-| AI Agent | Main Claude Code (or other agent) process |
-| Terminal | Shell process for the session |
-| Batch | Auto Run document processing agent |
-| Synopsis | Context compaction synopsis generation |
-| Moderator | Group chat moderator process |
-| Participant | Group chat participant agent |
-| Wizard | Wizard conversation process |
-| Wizard Gen | Playbook document generation process |
+
+| Type        | Description                               |
+| ----------- | ----------------------------------------- |
+| AI Agent    | Main Claude Code (or other agent) process |
+| Terminal    | Shell process for the session             |
+| Batch       | Auto Run document processing agent        |
+| Synopsis    | Context compaction synopsis generation    |
+| Moderator   | Group chat moderator process              |
+| Participant | Group chat participant agent              |
+| Wizard      | Wizard conversation process               |
+| Wizard Gen  | Playbook document generation process      |
 
 **Features:**
 
@@ -116,38 +121,44 @@ The debug package collects metadata and configuration - never your conversations
 | `agents.json`              | Agent configurations, availability, and capability flags  |
 | `external-tools.json`      | Shell, git, GitHub CLI, and cloudflared availability      |
 | `windows-diagnostics.json` | Windows-specific diagnostics (minimal on other platforms) |
-| `groups.json`              | Session group configurations                              |
+| `groups.json`              | Group structure (no group names)                          |
 | `processes.json`           | Active process information                                |
 | `web-server.json`          | Web server and Cloudflare tunnel status                   |
-| `storage-info.json`        | Storage paths and sizes                                   |
+| `storage-info.json`        | Storage locations and sizes                               |
 
 **Optional (toggleable in UI):**
 
-| File               | Contents                                                        |
-| ------------------ | --------------------------------------------------------------- |
-| `sessions.json`    | Session metadata (names, states, tab counts - no conversations) |
-| `logs.json`        | Recent system log entries                                       |
-| `errors.json`      | Current error states and recent error events                    |
-| `group-chats.json` | Group chat metadata (participant lists, routing - no messages)  |
-| `batch-state.json` | Auto Run state and document queue                               |
+| File               | Contents                                                           |
+| ------------------ | ------------------------------------------------------------------ |
+| `sessions.json`    | Session metadata (states, tab counts - no names, no conversations) |
+| `logs.json`        | Recent system log entries                                          |
+| `errors.json`      | Current error states and recent error events                       |
+| `group-chats.json` | Group chat metadata (participant lists, routing - no messages)     |
+| `batch-state.json` | Auto Run state and document queue                                  |
 
 ### Privacy Protections
 
-The debug package is designed to be **safe to share publicly**:
+Support packages usually end up attached to a public GitHub issue, so the debug package is designed to be **safe to share publicly** - nothing in one identifies you or your work:
 
 - **API keys and tokens** - Replaced with `[REDACTED]`
 - **Passwords and secrets** - Never included
 - **Conversation content** - Excluded entirely (no AI responses, no user messages)
 - **File contents** - Not included from your projects
 - **Custom prompts** - Not included (may contain sensitive context)
-- **File paths** - Sanitized to replace your username with `~`
+- **Your username and computer name** - Replaced with `[user]` and `[host]` wherever they appear
+- **File paths** - Replaced with an opaque descriptor, so no folder, project, or repository names survive
+- **Agent, session, and group names** - Not included
+- **SSH remote identities** - Hosts and usernames replaced with `[REDACTED]`
+- **URLs** - Reduced to scheme and domain, so tunnel URLs cannot be reused
 - **Environment variables** - Only counts shown, not values (may contain secrets)
 - **Custom agent arguments** - Only `[SET]` or `[NOT SET]` shown, not actual values
 
-**Example path sanitization:**
+**Example path redaction:**
 
-- Before: `/Users/johndoe/Projects/MyApp`
-- After: `~/Projects/MyApp`
+- Before: `/Users/johndoe/Projects/MyApp/config.json`
+- After: `[path#3f9a1c04 root=home depth=3 ext=.json]`
+
+The descriptor keeps only what is useful for debugging: where the path starts (`root`), how deep it is (`depth`), the file extension, and flags for spaces or non-ASCII characters (a common cause of process spawn failures). The `path#` fingerprint is stable within a single package, so identical paths still line up, and it is salted per package so it cannot be reversed or matched against another package.
 
 ## WSL2 Issues (Windows)
 

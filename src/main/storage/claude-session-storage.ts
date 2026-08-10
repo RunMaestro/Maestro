@@ -23,6 +23,7 @@ import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { getSessionInfoCache, fileFingerprint, type SessionFileRef } from './session-info-cache';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -360,6 +361,108 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
+	 * Enumerate a project's transcript files with the cheap stats the parse cache
+	 * fingerprints on. Newest-first, 0-byte files (created but abandoned before
+	 * any content was written) dropped. Returns empty for a project that has no
+	 * transcript folder yet.
+	 */
+	private async statProjectSessionFiles(
+		projectDir: string
+	): Promise<{ sessionId: string; filePath: string; sizeBytes: number; mtimeMs: number }[]> {
+		let filenames: string[];
+		try {
+			filenames = await fs.readdir(projectDir);
+		} catch (error) {
+			// A project that has never been opened in Claude simply has no folder.
+			// Anything else (EACCES, EIO) is a real fault: reporting it as "zero
+			// sessions" would silently hide the user's transcripts.
+			if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+				return [];
+			}
+			logger.error(`Error listing session directory: ${projectDir}`, LOG_CONTEXT, error);
+			captureException(error, {
+				operation: 'claudeStorage:statProjectSessionFiles',
+				projectDir,
+			});
+			throw error;
+		}
+
+		const stats = await Promise.all(
+			filenames
+				.filter((f) => f.endsWith('.jsonl'))
+				.map(async (filename) => {
+					const filePath = path.join(projectDir, filename);
+					try {
+						const stat = await fs.stat(filePath);
+						return {
+							sessionId: filename.replace('.jsonl', ''),
+							filePath,
+							sizeBytes: stat.size,
+							mtimeMs: stat.mtimeMs,
+						};
+					} catch (error) {
+						logger.error(`Error stating session file: ${filename}`, LOG_CONTEXT, error);
+						captureException(error, { operation: 'claudeStorage:statSessionFile', filename });
+						return null;
+					}
+				})
+		);
+
+		return stats
+			.filter((s): s is NonNullable<typeof s> => s !== null)
+			.filter((s) => s.sizeBytes > 0)
+			.sort((a, b) => b.mtimeMs - a.mtimeMs);
+	}
+
+	/**
+	 * Parse the given transcript files, serving unchanged ones from the shared
+	 * {@link getSessionInfoCache} rather than re-reading them. Origin/starred/name
+	 * are attached afterwards on purpose: they live in `originsStore` and change
+	 * without the transcript changing, so they must never be cached.
+	 *
+	 * @param prune - Only when `files` covers the whole project folder; a
+	 *   paginated caller passing one page must leave it off.
+	 */
+	private async parseSessionFilesCached(
+		projectPath: string,
+		projectDir: string,
+		files: { sessionId: string; filePath: string; sizeBytes: number; mtimeMs: number }[],
+		prune: boolean
+	): Promise<AgentSessionInfo[]> {
+		const byPath = new Map(files.map((file) => [file.filePath, file]));
+		const refs: SessionFileRef[] = files.map((file) => ({
+			key: file.filePath,
+			fingerprint: fileFingerprint(file.sizeBytes, file.mtimeMs),
+		}));
+
+		const sessions = await getSessionInfoCache(this.agentId).resolve(
+			projectDir,
+			refs,
+			async (ref) => {
+				const file = byPath.get(ref.key);
+				if (!file) return null;
+				try {
+					return await parseSessionFile(file.filePath, file.sessionId, projectPath, {
+						size: file.sizeBytes,
+						mtimeMs: file.mtimeMs,
+					});
+				} catch (error) {
+					logger.error(`Error processing session file: ${file.filePath}`, LOG_CONTEXT, error);
+					captureException(error, {
+						operation: 'claudeStorage:processSessionFile',
+						filename: file.filePath,
+					});
+					return null;
+				}
+			},
+			{ prune }
+		);
+
+		const projectOrigins = this.getProjectOrigins(projectPath);
+		return sessions.map((session) => this.attachOriginInfo(session, projectOrigins));
+	}
+
+	/**
 	 * @param configDir - Optional `CLAUDE_CONFIG_DIR` selecting which Anthropic
 	 *   account's transcripts to list. Omitted (the default) reads `~/.claude`,
 	 *   preserving existing behavior for every caller that doesn't multi-account.
@@ -377,54 +480,26 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		}
 
 		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
+		const files = await this.statProjectSessionFiles(projectDir);
 
-		// Check if the directory exists
-		try {
-			await fs.access(projectDir);
-		} catch {
-			logger.info(`No Claude sessions directory found for project: ${projectPath}`, LOG_CONTEXT);
+		if (files.length === 0) {
+			// Still a full listing, so still prune: a project whose transcripts were
+			// all deleted must drop its cache entries too, or a recreated file at the
+			// same path with a matching fingerprint would serve stale metadata.
+			await this.parseSessionFilesCached(projectPath, projectDir, [], true);
+			logger.info(`No Claude sessions found for project: ${projectPath}`, LOG_CONTEXT);
 			return [];
 		}
 
-		// List all .jsonl files in the directory
-		const files = await fs.readdir(projectDir);
-		const sessionFiles = files.filter((f) => f.endsWith('.jsonl'));
-
-		// Get metadata for each session
-		const sessions = await Promise.all(
-			sessionFiles.map(async (filename) => {
-				const sessionId = filename.replace('.jsonl', '');
-				const filePath = path.join(projectDir, filename);
-
-				try {
-					const stats = await fs.stat(filePath);
-					return await parseSessionFile(filePath, sessionId, projectPath, {
-						size: stats.size,
-						mtimeMs: stats.mtimeMs,
-					});
-				} catch (error) {
-					logger.error(`Error processing session file: ${filename}`, LOG_CONTEXT, error);
-					captureException(error, { operation: 'claudeStorage:processSessionFile', filename });
-					return null;
-				}
-			})
-		);
-
-		// Filter out nulls, 0-byte sessions, and sort by modified date
-		const validSessions = sessions
-			.filter((s): s is NonNullable<typeof s> => s !== null)
-			// Filter out 0-byte sessions (created but abandoned before any content was written)
-			.filter((s) => s.sizeBytes > 0)
-			.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
-
-		// Attach origin info
-		const projectOrigins = this.getProjectOrigins(projectPath);
-		const sessionsWithOrigins = validSessions.map((session) =>
-			this.attachOriginInfo(session, projectOrigins)
+		const sessionsWithOrigins = await this.parseSessionFilesCached(
+			projectPath,
+			projectDir,
+			files,
+			true
 		);
 
 		logger.info(
-			`Found ${validSessions.length} Claude sessions for project: ${projectPath}`,
+			`Found ${sessionsWithOrigins.length} Claude sessions for project: ${projectPath}`,
 			LOG_CONTEXT
 		);
 		return sessionsWithOrigins;
@@ -508,43 +583,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const { cursor, limit = 100 } = options || {};
 		const projectDir = this.getEncodedProjectDir(projectPath);
 
-		// Check if the directory exists
-		try {
-			await fs.access(projectDir);
-		} catch {
+		const sortedFiles = await this.statProjectSessionFiles(projectDir);
+		const totalCount = sortedFiles.length;
+		if (totalCount === 0) {
 			return { sessions: [], hasMore: false, totalCount: 0, nextCursor: null };
 		}
-
-		// List all .jsonl files and get their stats
-		const files = await fs.readdir(projectDir);
-		const sessionFiles = files.filter((f) => f.endsWith('.jsonl'));
-
-		const fileStats = await Promise.all(
-			sessionFiles.map(async (filename) => {
-				const sessionId = filename.replace('.jsonl', '');
-				const filePath = path.join(projectDir, filename);
-				try {
-					const stats = await fs.stat(filePath);
-					return {
-						sessionId,
-						filename,
-						filePath,
-						modifiedAt: stats.mtime.getTime(),
-						sizeBytes: stats.size,
-					};
-				} catch {
-					return null;
-				}
-			})
-		);
-
-		const sortedFiles = fileStats
-			.filter((s): s is NonNullable<typeof s> => s !== null)
-			// Filter out 0-byte sessions (created but abandoned before any content was written)
-			.filter((s) => s.sizeBytes > 0)
-			.sort((a, b) => b.modifiedAt - a.modifiedAt);
-
-		const totalCount = sortedFiles.length;
 
 		// Find cursor position
 		let startIndex = 0;
@@ -557,24 +600,14 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const hasMore = startIndex + limit < totalCount;
 		const nextCursor = hasMore ? pageFiles[pageFiles.length - 1]?.sessionId : null;
 
-		// Get project origins
-		const projectOrigins = this.getProjectOrigins(projectPath);
-
-		// Read full content for sessions in this page
-		const sessions = await Promise.all(
-			pageFiles.map(async (fileInfo) => {
-				const session = await parseSessionFile(fileInfo.filePath, fileInfo.sessionId, projectPath, {
-					size: fileInfo.sizeBytes,
-					mtimeMs: fileInfo.modifiedAt,
-				});
-				if (session) {
-					return this.attachOriginInfo(session, projectOrigins);
-				}
-				return null;
-			})
+		// Read (or serve from cache) the sessions in this page only. Pruning is off:
+		// the page is a slice, not the whole folder.
+		const validSessions = await this.parseSessionFilesCached(
+			projectPath,
+			projectDir,
+			pageFiles,
+			false
 		);
-
-		const validSessions = sessions.filter((s): s is NonNullable<typeof s> => s !== null);
 
 		logger.info(
 			`Paginated Claude sessions - returned ${validSessions.length} of ${totalCount} total (cursor: ${cursor || 'null'}, startIndex: ${startIndex}, hasMore: ${hasMore}, nextCursor: ${nextCursor || 'null'})`,

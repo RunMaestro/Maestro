@@ -8,7 +8,7 @@ import type {
 	UsageStats,
 	Group,
 } from '../../../types';
-import type { AgentSpawnErrorKind } from '../../agent/useAgentExecution';
+import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
 import type {
 	GoalIterationRecord,
 	GoalExitReason,
@@ -51,7 +51,9 @@ type UpdateBatchStateFn = (
 type SpawnAgentFn = (
 	sessionId: string,
 	prompt: string,
-	cwdOverride?: string
+	cwdOverride?: string,
+	/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
+	options?: SpawnAgentRunOverrides
 ) => Promise<{
 	success: boolean;
 	response?: string;
@@ -79,6 +81,7 @@ type SpawnBackgroundSynopsisFn = (
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
 		customModel?: string;
+		customEffort?: string;
 		customContextWindow?: number;
 		enableMaestroP?: boolean;
 		maestroPMode?: 'interactive' | 'dynamic';
@@ -230,6 +233,18 @@ export function useGoalRunner({
 				});
 				return;
 			}
+
+			// Run-scoped model/effort override, built only when the run picked one so
+			// default runs pass no spawn options at all. An absent override means the
+			// spawn uses the session's configured model, then the agent default.
+			// Nothing here is written back to the session.
+			const runOverrides: SpawnAgentRunOverrides | undefined =
+				config.model || config.effort
+					? {
+							...(config.model && { modelOverride: config.model }),
+							...(config.effort && { effortOverride: config.effort }),
+						}
+					: undefined;
 
 			const goalConfig: GoalRunConfig | undefined = config.goalConfig;
 			if (!goalConfig) {
@@ -488,7 +503,8 @@ export function useGoalRunner({
 					result = await onSpawnAgent(
 						sessionId,
 						prompt,
-						effectiveCwd !== session.cwd ? effectiveCwd : undefined
+						effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+						runOverrides
 					);
 				} catch (error) {
 					logger.error('[GoalRunner] Agent spawn threw:', undefined, error);
@@ -726,7 +742,11 @@ export function useGoalRunner({
 								customPath: session.customPath,
 								customArgs: session.customArgs,
 								customEnvVars: session.customEnvVars,
-								customModel: session.customModel,
+								// Mirror the primary iteration's effective config: the run-scoped
+								// model/effort override wins over the session default so the handoff
+								// synopsis spawns under the same configuration as the goal run itself.
+								customModel: config.model ?? session.customModel,
+								customEffort: config.effort ?? session.customEffort,
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,

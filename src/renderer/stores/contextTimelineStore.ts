@@ -55,6 +55,14 @@ export interface ContextTimelinePoint {
 	contextWindow: number;
 	/** Context fill 0-100, or null when it could not be determined this turn. */
 	percentage: number | null;
+	/**
+	 * Monotonic sequence number assigned by main's capture log when the usage
+	 * event was emitted (`UsageStats.captureSeq`). It is the exact dedup key
+	 * between a live append and the same event arriving again through
+	 * `hydrateSession`. Undefined for points built from an event that never
+	 * passed through that listener.
+	 */
+	seq?: number;
 }
 
 /** Per-session capture buffer. */
@@ -62,6 +70,13 @@ export interface ContextTimelineBuffer {
 	points: ContextTimelinePoint[];
 	/** True once the cap forced us to drop the oldest points. */
 	trimmed: boolean;
+	/**
+	 * True once this renderer has attempted to backfill the buffer from main's
+	 * capture log. Distinguishes "genuinely no history" from "not asked yet", so
+	 * the panel can hold the empty-state copy back until the answer is in and a
+	 * reopen never refetches.
+	 */
+	hydrated?: boolean;
 }
 
 /**
@@ -72,6 +87,13 @@ export const MAX_POINTS_PER_SESSION = 2000;
 
 /** Fields the listener supplies for a new point (id/timestamp are stamped here). */
 export type ContextTimelinePointInput = Omit<ContextTimelinePoint, 'id' | 'timestamp'>;
+
+/**
+ * A point restored from main's capture log. Same shape as a live one except the
+ * ORIGINAL capture timestamp comes with it - stamping `Date.now()` here would
+ * make every restored turn claim it happened at the moment the panel opened.
+ */
+export type ContextTimelineHydrationPoint = ContextTimelinePointInput & { timestamp: number };
 
 /**
  * A plain (structured-clone-safe) copy of the trigger element's viewport rect,
@@ -87,11 +109,20 @@ export interface TimelineAnchorRect {
 	height: number;
 }
 
+/** Which presentation the inspector body uses. The bar list is the default. */
+export type ContextTimelineView = 'bar' | 'graph';
+
 interface ContextTimelineState {
 	/** Session whose panel is currently focused/visible (null = panel hidden). */
 	panelSessionId: string | null;
 	/** Whether the visible panel is minimized to a status pill. */
 	minimized: boolean;
+	/**
+	 * Bar list (per-turn rows) or x/y line graph (trend across turns). Lives
+	 * alongside `minimized` so the choice survives closing and reopening the
+	 * panel. Defaults to 'bar' so nothing changes until a user opts in.
+	 */
+	view: ContextTimelineView;
 	/** Viewport rect of the element that opened the panel (null = dock bottom-left). */
 	anchorRect: TimelineAnchorRect | null;
 	/** Per-session capture buffers (capture runs for all sessions, always). */
@@ -99,12 +130,24 @@ interface ContextTimelineState {
 
 	/** Record one turn's context accounting (always-on; no capture gate). */
 	appendPoint: (sessionId: string, point: ContextTimelinePointInput) => void;
+	/**
+	 * Backfill a session from main's capture log (finding S1). Merges rather than
+	 * replaces: a live event that landed while the fetch was in flight keeps its
+	 * place and is not duplicated, because both sides carry the same `seq`.
+	 */
+	hydrateSession: (
+		sessionId: string,
+		points: ContextTimelineHydrationPoint[],
+		trimmed: boolean
+	) => void;
 	/** Open (or refocus) the inspector for a session, optionally anchored to a rect. */
 	openPanel: (sessionId: string, anchorRect?: TimelineAnchorRect | null) => void;
 	/** Collapse the panel to a status pill; the buffer is untouched. */
 	minimizePanel: () => void;
 	/** Restore the panel from the minimized pill. */
 	restorePanel: () => void;
+	/** Switch between the bar list and the line graph. */
+	setView: (view: ContextTimelineView) => void;
 	/** Hide the panel. History is KEPT so reopening shows it again. */
 	closePanel: () => void;
 	/** Clear a session's recorded history without hiding the panel. */
@@ -116,6 +159,7 @@ interface ContextTimelineState {
 export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 	panelSessionId: null,
 	minimized: false,
+	view: 'bar',
 	anchorRect: null,
 	buffers: {},
 
@@ -137,6 +181,48 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 			return { buffers: { ...state.buffers, [sessionId]: { points, trimmed } } };
 		}),
 
+	hydrateSession: (sessionId, incoming, trimmed) =>
+		set((state) => {
+			if (!sessionId) return state;
+			const prev = state.buffers[sessionId] ?? { points: [], trimmed: false };
+			// The dedup watermark: any capture whose seq is already in the buffer
+			// arrived live during the fetch and must not be added twice.
+			const seenSeqs = new Set(
+				prev.points.map((p) => p.seq).filter((seq): seq is number => typeof seq === 'number')
+			);
+			const fresh = incoming
+				.filter((p) => typeof p.seq !== 'number' || !seenSeqs.has(p.seq))
+				.map((p) => ({ id: generateId(), ...p }));
+			const mergedTrimmed = prev.trimmed || trimmed;
+			if (fresh.length === 0) {
+				return {
+					buffers: {
+						...state.buffers,
+						[sessionId]: { ...prev, trimmed: mergedTrimmed, hydrated: true },
+					},
+				};
+			}
+			// Order by the emit-time seq so a hydrated backlog sorts correctly under
+			// live points that arrived first. Points with no seq sort last, keeping
+			// their relative order (Array.prototype.sort is stable).
+			let points = [...prev.points, ...fresh].sort(
+				(a, b) =>
+					(a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER) ||
+					a.timestamp - b.timestamp
+			);
+			let pointsTrimmed = mergedTrimmed;
+			if (points.length > MAX_POINTS_PER_SESSION) {
+				points = points.slice(points.length - MAX_POINTS_PER_SESSION);
+				pointsTrimmed = true;
+			}
+			return {
+				buffers: {
+					...state.buffers,
+					[sessionId]: { points, trimmed: pointsTrimmed, hydrated: true },
+				},
+			};
+		}),
+
 	openPanel: (sessionId, anchorRect = null) =>
 		set((state) => ({
 			panelSessionId: sessionId,
@@ -152,11 +238,15 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 
 	restorePanel: () => set({ minimized: false }),
 
+	setView: (view) => set({ view }),
+
 	closePanel: () => set({ panelSessionId: null, minimized: false, anchorRect: null }),
 
 	clearSession: (sessionId) =>
 		set((state) => ({
-			buffers: { ...state.buffers, [sessionId]: { points: [], trimmed: false } },
+			// `hydrated` stays true: Clear also wipes main's capture log, so
+			// re-fetching would only put the just-cleared history straight back.
+			buffers: { ...state.buffers, [sessionId]: { points: [], trimmed: false, hydrated: true } },
 		})),
 
 	removeSession: (sessionId) =>
