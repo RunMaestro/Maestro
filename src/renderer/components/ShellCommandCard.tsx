@@ -25,6 +25,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { formatDuration } from '../../shared/performance-metrics';
 import { truncatePath } from '../../shared/formatters';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 
 interface ShellCommandCardProps {
 	log: LogEntry;
@@ -48,13 +49,21 @@ export function ShellCommandCard({
 	);
 
 	const handleCopy = useCallback(async () => {
-		await safeClipboardWrite(log.text);
+		// Copy what the user SEES, not the wire format. The stored text keeps its
+		// ANSI codes so the card can render colour, but pasting `\x1b[36m` into an
+		// issue or a shell is never what anyone wants.
+		await safeClipboardWrite(stripAnsiCodes(log.text));
 		flashCopiedToClipboard();
 		setCopied(true);
 		window.setTimeout(() => setCopied(false), 1500);
 	}, [log.text]);
 
+	// Acknowledge the press immediately. The kill is SIGTERM first, so a process
+	// that traps it can take up to the SIGKILL escalation to actually die - and
+	// during that gap an unchanged "Stop" button reads as "the click did nothing".
+	const [stopping, setStopping] = useState(false);
 	const handleStop = useCallback(() => {
+		setStopping(true);
 		void cancelShellCommand(log.id);
 	}, [log.id]);
 
@@ -111,15 +120,16 @@ export function ShellCommandCard({
 							<button
 								type="button"
 								onClick={handleStop}
-								className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] hover:opacity-80 transition-opacity"
+								disabled={stopping}
+								className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] hover:opacity-80 transition-opacity disabled:opacity-50"
 								style={{
 									borderColor: theme.colors.border,
 									color: theme.colors.textMain,
 								}}
-								title="Stop this command"
+								title={stopping ? 'Stopping...' : 'Stop this command'}
 							>
 								<Square className="w-2.5 h-2.5" />
-								Stop
+								{stopping ? 'Stopping' : 'Stop'}
 							</button>
 						</>
 					) : (

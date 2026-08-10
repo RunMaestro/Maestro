@@ -97,6 +97,11 @@ export function isGitHubRateLimitError(err: unknown): boolean {
 /**
  * Detect connectivity failures from the GitHub CLI. These are operational
  * conditions (offline/VPN/DNS/GitHub unreachable), not app crashes.
+ *
+ * A 5xx from api.github.com counts: `HTTP 504: 504 Gateway Timeout` and friends
+ * mean GitHub itself is degraded, which is the same "can't reach the API right
+ * now" condition as a dropped socket. The poller retries on its own schedule, so
+ * paging Sentry on every tick of a GitHub outage is pure noise (MAESTRO-KE).
  */
 export function isGitHubConnectivityError(err: unknown): boolean {
 	const msg = (
@@ -119,7 +124,8 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 		haystack.includes('econnreset') ||
 		haystack.includes('etimedout') ||
 		haystack.includes('network is unreachable') ||
-		haystack.includes('could not resolve host: api.github.com')
+		haystack.includes('could not resolve host: api.github.com') ||
+		/\bhttp\s+5\d{2}\b/.test(haystack)
 	);
 }
 
@@ -265,7 +271,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				throw err;
 			}
 			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" — skipping poll`);
-			void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
+			// GitHub being unreachable or degraded is the same expected operational
+			// condition the doPoll catch below suppresses. Repo auto-detection runs
+			// first, so without this a `gh repo view` 5xx during an outage would
+			// still page Sentry once per tick for every auto-detect trigger
+			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
+			if (!isGitHubConnectivityError(err)) {
+				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
+			}
 			return null;
 		}
 	}

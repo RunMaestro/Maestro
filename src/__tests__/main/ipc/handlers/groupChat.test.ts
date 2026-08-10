@@ -11,6 +11,7 @@ import {
 	registerGroupChatHandlers,
 	GroupChatHandlerDependencies,
 	groupChatEmitters,
+	isExpectedGroomingFailure,
 } from '../../../../main/ipc/handlers/groupChat';
 
 // Import types we need for mocking
@@ -1213,5 +1214,49 @@ describe('groupChat IPC handlers', () => {
 				});
 			}).not.toThrow();
 		});
+	});
+});
+
+describe('isExpectedGroomingFailure', () => {
+	// resetContext grooms a participant for a context summary and always recovers
+	// by starting a fresh session. Failures caused by the user's environment are
+	// therefore expected and must not reach Sentry.
+	it('treats a deleted provider session as expected (MAESTRO-JB)', () => {
+		expect(isExpectedGroomingFailure(new Error('Session not found: abc-123'))).toBe(true);
+	});
+
+	it('treats an uninstalled agent as expected (MAESTRO-KA)', () => {
+		expect(isExpectedGroomingFailure(new Error('Agent claude-code is not available'))).toBe(true);
+	});
+
+	it('treats a grooming process that would not launch as expected (MAESTRO-JS)', () => {
+		expect(
+			isExpectedGroomingFailure(new Error('Failed to spawn grooming process for claude-code'))
+		).toBe(true);
+	});
+
+	it('treats revoked provider credentials as expected (MAESTRO-K7)', () => {
+		expect(
+			isExpectedGroomingFailure(
+				new Error(
+					'Grooming error: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.'
+				)
+			)
+		).toBe(true);
+	});
+
+	it('matches regardless of message casing', () => {
+		expect(isExpectedGroomingFailure(new Error('session NOT FOUND'))).toBe(true);
+		expect(isExpectedGroomingFailure(new Error('Agent codex IS NOT AVAILABLE'))).toBe(true);
+	});
+
+	it('handles non-Error throwables', () => {
+		expect(isExpectedGroomingFailure('Agent opencode is not available')).toBe(true);
+		expect(isExpectedGroomingFailure(undefined)).toBe(false);
+	});
+
+	it('still reports genuine grooming faults', () => {
+		expect(isExpectedGroomingFailure(new Error('Grooming timed out after 60000ms'))).toBe(false);
+		expect(isExpectedGroomingFailure(new Error('spawn ENOENT'))).toBe(false);
 	});
 });
