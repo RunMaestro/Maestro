@@ -33,6 +33,7 @@ import { useSessionStore } from '../stores/sessionStore';
 // creates a fresh private stack). This one reads the app's shared layer stack.
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { getContextColor } from '../utils/theme';
+import { computeOverLimitDisplay } from '../utils/contextUsage';
 import { formatTokensCompact, formatCost } from '../../shared/formatters';
 import { useEventListener } from '../hooks/utils/useEventListener';
 
@@ -128,7 +129,29 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 
 	const latest: ContextTimelinePoint | undefined = points[points.length - 1];
 	const latestWindow = latest?.contextWindow ?? 0;
-	const latestPercent = latest?.percentage ?? null;
+	// True (unclamped) fill for the newest turn. Reading the stored
+	// tokens/window rather than the point's `percentage` is what keeps this
+	// readout alive past 100%: the stored percentage is null once a turn breaches
+	// the window, which used to blank the number exactly when it mattered most.
+	const latestPercent =
+		latest && latest.contextWindow > 0
+			? computeOverLimitDisplay(latest.contextTokens, latest.contextWindow).truePercentage
+			: (latest?.percentage ?? null);
+
+	// Per-panel headroom scale (option A, Decision 3): every rendered row shares
+	// ONE track maximum so bar lengths stay comparable across turns, while each
+	// row's percentage still divides by its OWN stored window - a mid-session
+	// window change must not retroactively distort older rows. When nothing
+	// exceeds the window this equals the window and the track behaves as before.
+	// Every row's OWN window counts toward the track maximum, not just the latest
+	// one. Seeding from `latestWindow` alone broke the geometry the moment the
+	// window changed mid-session: an older 800k/1M row against a latest 200k
+	// window made `scaleMax` 800k, so that row filled the whole track while its
+	// label read 80% - an under-limit row drawn as if it were at the limit.
+	const scaleMax = useMemo(
+		() => points.reduce((max, p) => Math.max(max, p.contextTokens, p.contextWindow), 0),
+		[points]
+	);
 
 	// This is a PASSIVE inspector, so it deliberately does NOT register a layer:
 	// any layer (modal or overlay) trips hasOpenLayers()/hasOpenModal() and
@@ -248,25 +271,21 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 				) : (
 					<div className="flex flex-col gap-2.5">
 						{ordered.map((p) => {
-							const pct = p.percentage;
-							// Drive the bar width from the SAME value as the % label and color:
-							// the provider-reported percentage when available, else the raw
-							// tokens/window ratio. Otherwise a "50%" label could sit beside a
-							// 30%-filled bar when the two sources disagree.
-							const fillFraction =
-								pct !== null
-									? Math.min(1, Math.max(0, pct / 100))
-									: p.contextWindow > 0
-										? Math.min(1, Math.max(0, p.contextTokens / p.contextWindow))
-										: 0;
-							const barColor = getContextColor(pct ?? Math.round(fillFraction * 100), theme);
-							// When the percentage is indeterminate (an accumulated multi-tool
-							// turn whose raw tokens exceed the window), contextTokens can read
-							// higher than the window - "310k / 200k" would imply an impossible
-							// breach. Cap the shown figure to the window and flag it instead.
-							const overflow =
-								pct === null && p.contextWindow > 0 && p.contextTokens > p.contextWindow;
-							const displayTokens = overflow ? p.contextWindow : p.contextTokens;
+							// ONE value drives the label, the bar width and the color, so they
+							// cannot disagree: the true (unclamped) ratio of this row's stored
+							// tokens to this row's stored window, with the bar measured against
+							// the shared headroom scale. A row with no window at all still has
+							// no denominator to divide by and stays "~".
+							const hasWindow = p.contextWindow > 0;
+							const display = computeOverLimitDisplay(p.contextTokens, p.contextWindow, scaleMax);
+							const barColor = getContextColor(display.truePercentage, theme);
+							// The 100% boundary is per row, because each row's limit is its
+							// OWN stored window. A single shared tick drawn from the latest
+							// window would sit at the wrong place on every row recorded
+							// under a different one. Drawn only when there is headroom
+							// beyond that row's limit within the shared track.
+							const tickPercent =
+								hasWindow && scaleMax > p.contextWindow ? (p.contextWindow / scaleMax) * 100 : null;
 							return (
 								<div key={p.id} className="flex flex-col gap-1">
 									<div className="flex items-center justify-between gap-2">
@@ -279,31 +298,43 @@ export function ContextTimelinePanel({ theme }: ContextTimelinePanelProps) {
 										</span>
 										<span
 											className="text-[10px] font-mono tabular-nums"
+											data-testid="timeline-row-label"
 											style={{ color: barColor }}
 											title={
-												overflow
-													? 'Accumulated across multiple internal calls in one turn'
+												display.overLimit
+													? `Over the context limit: ${formatTokensCompact(p.contextTokens)} against a ${formatTokensCompact(p.contextWindow)} window`
 													: undefined
 											}
 										>
-											{pct !== null ? `${Math.round(pct)}%` : '~'} ·{' '}
-											{formatTokensCompact(displayTokens)}
-											{overflow ? '+' : ''}
-											{p.contextWindow > 0 ? ` / ${formatTokensCompact(p.contextWindow)}` : ''}
+											{hasWindow ? `${display.truePercentage}%` : '~'} ·{' '}
+											{formatTokensCompact(p.contextTokens)}
+											{hasWindow ? ` / ${formatTokensCompact(p.contextWindow)}` : ''}
 										</span>
 									</div>
 									{/* Fill bar */}
 									<div
-										className="h-2 rounded-full overflow-hidden"
+										className="h-2 rounded-full overflow-hidden relative"
 										style={{ backgroundColor: theme.colors.bgActivity }}
+										data-testid="timeline-bar-track"
 									>
 										<div
 											className="h-full rounded-full transition-all"
+											data-testid="timeline-bar-fill"
 											style={{
-												width: `${Math.max(fillFraction * 100, p.contextTokens > 0 ? 2 : 0)}%`,
+												width: `${Math.max(display.fillFraction * 100, p.contextTokens > 0 ? 2 : 0)}%`,
 												backgroundColor: barColor,
 											}}
 										/>
+										{/* The persistent 100% boundary; only drawn once some turn
+											    has pushed the track past the window. */}
+										{tickPercent !== null && (
+											<div
+												className="absolute top-0 bottom-0 w-px pointer-events-none"
+												data-testid="timeline-limit-tick"
+												style={{ left: `${tickPercent}%`, backgroundColor: theme.colors.textMain }}
+												title="100% of the context window"
+											/>
+										)}
 									</div>
 									{/* Per-turn token breakdown */}
 									<div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">

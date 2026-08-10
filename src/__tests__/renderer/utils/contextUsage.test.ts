@@ -7,6 +7,7 @@ import {
 	estimateContextUsage,
 	calculateContextTokens,
 	calculateContextDisplay,
+	computeOverLimitDisplay,
 	calculateDisplayInputTokens,
 	estimateAccumulatedGrowth,
 	DEFAULT_CONTEXT_WINDOWS,
@@ -489,6 +490,160 @@ describe('calculateContextDisplay', () => {
 		expect(result.tokens).toBe(200000);
 		expect(result.percentage).toBe(100);
 	});
+
+	describe('over-limit percentages (finding R1, Decision 2)', () => {
+		it('reads exactly 100 at the window boundary with the clamp removed', () => {
+			const result = calculateContextDisplay(
+				{ inputTokens: 150000, cacheReadInputTokens: 50000 },
+				200000,
+				'claude-code'
+			);
+			expect(result.tokens).toBe(200000);
+			expect(result.percentage).toBe(100);
+			expect(result.trustworthy).toBe(true);
+		});
+
+		it('still bounds a fallback-derived reading at 100', () => {
+			// The bound that stays (Task 5): a stored `contextUsage` fallback is
+			// 0-100 by construction, so a percentage recovered from it is NOT an
+			// over-limit measurement and must not be presented as one.
+			const result = calculateContextDisplay(
+				{ inputTokens: 400000, cacheReadInputTokens: 100000 },
+				200000,
+				'claude-code',
+				150
+			);
+			expect(result.percentage).toBe(100);
+			expect(result.trustworthy).toBe(true);
+		});
+
+		it('documents that a raw over-limit frame is still untrustworthy, not a >100 reading', () => {
+			// KNOWN GAP, deliberate: removing the clamp does not by itself make the
+			// header pill read `147%`. A raw frame above the window with no
+			// fallback hits the #762 branch first and returns untrustworthy zeros,
+			// so the header holds its last good value instead. Changing that branch
+			// is explicitly out of scope for this playbook; this test pins the
+			// current contract so the asymmetry with the timeline stays deliberate.
+			const result = calculateContextDisplay(
+				{ inputTokens: 250000, cacheReadInputTokens: 44000 },
+				200000,
+				'claude-code'
+			);
+			expect(result.percentage).toBe(0);
+			expect(result.trustworthy).toBe(false);
+		});
+	});
+});
+
+describe('computeOverLimitDisplay', () => {
+	// Review of PR #1364 (CodeRabbit). The guard checked `scaleMax > 0`, so a
+	// positive-but-too-small scale slipped through and pushed an in-window point
+	// past the track - the exact case the code comment warned about.
+	it('ignores a scaleMax smaller than the window', () => {
+		const result = computeOverLimitDisplay(100_000, 200_000, 100_000);
+		expect(result.fillFraction).toBe(0.5);
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+	});
+
+	it('uses a scaleMax equal to the window unchanged', () => {
+		expect(computeOverLimitDisplay(100_000, 200_000, 200_000).fillFraction).toBe(0.5);
+	});
+
+	const WINDOW = 200000;
+
+	it('reports an under-limit point with its true percentage and proportional fill', () => {
+		const result = computeOverLimitDisplay(100000, WINDOW);
+
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBe(0.5);
+	});
+
+	it('treats a point exactly at the window as 100% but NOT over limit', () => {
+		const result = computeOverLimitDisplay(WINDOW, WINDOW);
+
+		expect(result.truePercentage).toBe(100);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBe(1);
+	});
+
+	it('reports the true unclamped percentage for an over-limit point', () => {
+		// 294000 / 200000 = 147%
+		const result = computeOverLimitDisplay(294000, WINDOW);
+
+		expect(result.truePercentage).toBe(147);
+		expect(result.overLimit).toBe(true);
+		// Without a headroom scale the bar saturates at the track end.
+		expect(result.fillFraction).toBe(1);
+	});
+
+	it('fills proportionally against a shared headroom scale', () => {
+		const result = computeOverLimitDisplay(294000, WINDOW, WINDOW * 2);
+
+		expect(result.truePercentage).toBe(147);
+		expect(result.overLimit).toBe(true);
+		// 294000 / 400000 = 0.735, so the bar sits past the 100% tick at 0.5.
+		expect(result.fillFraction).toBeCloseTo(0.735, 5);
+	});
+
+	it('keeps an under-limit point below the tick when a headroom scale applies', () => {
+		const result = computeOverLimitDisplay(100000, WINDOW, WINDOW * 2);
+
+		expect(result.truePercentage).toBe(50);
+		expect(result.overLimit).toBe(false);
+		expect(result.fillFraction).toBeCloseTo(0.25, 5);
+	});
+
+	it('uses each point OWN window for the percentage, not the shared scale', () => {
+		// A mid-session window change must not retroactively distort old rows.
+		const older = computeOverLimitDisplay(90000, 100000, 400000);
+
+		expect(older.truePercentage).toBe(90);
+		expect(older.overLimit).toBe(false);
+		expect(older.fillFraction).toBeCloseTo(0.225, 5);
+	});
+
+	it('returns zeros (not NaN) for a degenerate zero window', () => {
+		const result = computeOverLimitDisplay(50000, 0);
+
+		expect(result.truePercentage).toBe(0);
+		expect(result.fillFraction).toBe(0);
+		expect(result.overLimit).toBe(false);
+		expect(Number.isNaN(result.truePercentage)).toBe(false);
+		expect(Number.isNaN(result.fillFraction)).toBe(false);
+	});
+
+	it('returns zeros for a negative or non-finite window', () => {
+		expect(computeOverLimitDisplay(50000, -1)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+		expect(computeOverLimitDisplay(50000, Number.NaN)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+	});
+
+	it('floors negative or non-finite token counts at zero', () => {
+		expect(computeOverLimitDisplay(-500, WINDOW)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+		expect(computeOverLimitDisplay(Number.NaN, WINDOW)).toEqual({
+			truePercentage: 0,
+			fillFraction: 0,
+			overLimit: false,
+		});
+	});
+
+	it('ignores an unusable scaleMax and falls back to the window', () => {
+		expect(computeOverLimitDisplay(100000, WINDOW, 0).fillFraction).toBe(0.5);
+		expect(computeOverLimitDisplay(100000, WINDOW, Number.NaN).fillFraction).toBe(0.5);
+	});
 });
 
 describe('DEFAULT_CONTEXT_WINDOWS', () => {
@@ -558,5 +713,80 @@ describe('calculateDisplayInputTokens', () => {
 			cacheCreationInputTokens: 50,
 		};
 		expect(calculateDisplayInputTokens(stats, 'brand-new-agent')).toBe(2_053);
+	});
+});
+
+describe('header and timeline cross-surface agreement (finding R1)', () => {
+	const WINDOW = 200000;
+
+	/**
+	 * Feed one tokens/window pair through BOTH display paths: the header's
+	 * `calculateContextDisplay` and the Context Timeline's
+	 * `computeOverLimitDisplay`. The two surfaces sitting side by side must not
+	 * report different numbers for the same turn - that disagreement is the class
+	 * of bug PR #1221 fixed, and R1 re-opened it by rendering the over-limit case
+	 * differently on each surface.
+	 */
+	const bothSurfaces = (contextTokens: number) => ({
+		header: calculateContextDisplay(
+			{ inputTokens: contextTokens, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+			WINDOW,
+			'claude-code'
+		),
+		timeline: computeOverLimitDisplay(contextTokens, WINDOW),
+	});
+
+	it('agrees on an under-limit turn', () => {
+		const { header, timeline } = bothSurfaces(90000);
+		expect(header.trustworthy).toBe(true);
+		expect(header.percentage).toBe(45);
+		expect(timeline.truePercentage).toBe(45);
+		expect(header.percentage).toBe(timeline.truePercentage);
+		expect(timeline.overLimit).toBe(false);
+	});
+
+	it('agrees on a turn exactly at the limit', () => {
+		const { header, timeline } = bothSurfaces(WINDOW);
+		expect(header.trustworthy).toBe(true);
+		expect(header.percentage).toBe(100);
+		expect(timeline.truePercentage).toBe(100);
+		expect(header.percentage).toBe(timeline.truePercentage);
+		// Exactly at the window is not over it.
+		expect(timeline.overLimit).toBe(false);
+	});
+
+	it('documents the over-limit asymmetry so future drift is deliberate', () => {
+		// The timeline reports the true magnitude of an over-limit turn, which is
+		// the whole point of R1. The header does NOT match it on this input, and
+		// that is by construction rather than by a clamp: a raw frame above the
+		// window with no preserved fallback is the #762 untrustworthy branch, so
+		// the header holds its previous good value instead of rendering anything.
+		// `calculateContextDisplay`'s own clamp is gone (Decision 2), so the day a
+		// trustworthy over-limit numerator reaches it, it will agree with the
+		// timeline automatically. Pinned here so any change to that contract has
+		// to update this expectation on purpose.
+		const { header, timeline } = bothSurfaces(294000);
+		expect(timeline.truePercentage).toBe(147);
+		expect(timeline.overLimit).toBe(true);
+		expect(header.trustworthy).toBe(false);
+		expect(header.percentage).toBe(0);
+	});
+
+	it('agrees when the over-limit turn arrives with a preserved fallback', () => {
+		// The reachable over-limit path today: the accumulated-turn fallback. It is
+		// bounded at 100 on purpose (a stored contextUsage is 0-100 by
+		// construction), so the header reads 100 while the timeline, which plots
+		// the real measured tokens, reads the true figure. Same documented
+		// asymmetry, different entry point.
+		const header = calculateContextDisplay(
+			{ inputTokens: 294000, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+			WINDOW,
+			'claude-code',
+			100
+		);
+		const timeline = computeOverLimitDisplay(294000, WINDOW);
+		expect(header.trustworthy).toBe(true);
+		expect(header.percentage).toBe(100);
+		expect(timeline.truePercentage).toBe(147);
 	});
 });
