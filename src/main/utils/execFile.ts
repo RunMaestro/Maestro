@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { isWindows } from '../../shared/platformDetection';
@@ -366,4 +366,22 @@ async function execFileWithInput(
 			child.stdin.end();
 		}
 	});
+}
+
+/**
+ * Synchronous, never-throwing variant. Returns '' on any failure.
+ *
+ * Blocking the main thread is normally the wrong call, so this exists for one
+ * narrow case: reading state that becomes UNAVAILABLE if you wait. Killing a
+ * process tree is the motivating example - once the parent dies its children
+ * are re-parented to launchd/init, so a ppid snapshot taken asynchronously
+ * (even a few ms later) can no longer find them. The read has to complete
+ * before the kill, and it is only ever triggered by an explicit user action.
+ */
+export function execFileSyncNoThrow(command: string, args: string[] = [], timeout = 2000): string {
+	try {
+		return execFileSync(command, args, { timeout, encoding: 'utf-8' }).toString();
+	} catch {
+		return '';
+	}
 }

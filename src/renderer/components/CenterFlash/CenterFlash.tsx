@@ -25,6 +25,7 @@ import {
 	type CenterFlash as CenterFlashData,
 	type CenterFlashColor,
 } from '../../stores/centerFlashStore';
+import { Z_LAYERS } from '../../constants/zLayers';
 
 interface CenterFlashProps {
 	theme: Theme;
@@ -103,7 +104,7 @@ export const CenterFlash = memo(function CenterFlash({ theme }: CenterFlashProps
 			aria-live="polite"
 			aria-atomic="true"
 			className="fixed inset-0 flex items-center justify-center pointer-events-none"
-			style={{ zIndex: 100001 }}
+			style={{ zIndex: Z_LAYERS.CENTER_FLASH }}
 		>
 			<div
 				className="overflow-hidden rounded-2xl"
