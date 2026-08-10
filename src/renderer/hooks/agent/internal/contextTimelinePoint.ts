@@ -106,6 +106,13 @@ export function buildContextTimelinePoint(
 	//   6. raw reported window
 	//   7. static per-agent table (timeline-only)
 	//
+	// A THIRD precedence list exists in `utils/contextWindowResolver.ts`
+	// (`resolveConfiguredContextWindow`), which ranks `customContextWindow`
+	// first unconditionally and feeds Auto Run's fresh-context picker. It
+	// predates P1/AD1 and serves a different purpose, so it is deliberately
+	// NOT kept in sync - but it is the site a future reader will miss when
+	// changing this order (review of PR #1362).
+	//
 	// The provider-config source lives behind an async `getConfig` call that must
 	// NOT run on this hot per-turn path, so we read it from a synchronous cache
 	// and prime that cache off-path for the next turn. It closes the gap for

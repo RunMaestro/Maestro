@@ -43,6 +43,12 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		//   4. `customContextWindow` of unknown/materialized provenance
 		//   5. async configured window
 		//   6. raw reported window
+		// A THIRD precedence list exists in `utils/contextWindowResolver.ts`
+		// (`resolveConfiguredContextWindow`), which ranks `customContextWindow`
+		// first unconditionally and feeds Auto Run's fresh-context picker. It
+		// predates P1/AD1 and serves a different purpose, so it is deliberately
+		// NOT kept in sync - but it is the site a future reader will miss when
+		// changing this order (review of PR #1362).
 		// A `[1m]` marker on the session's custom model is an explicit model choice
 		// the user made per-session, so it stays at the top.
 		const modelMarker = getModelContextWindowOverride(activeSession?.customModel) ?? 0;

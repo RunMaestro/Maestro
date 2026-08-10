@@ -102,7 +102,9 @@ describe('useContextWindow', () => {
 
 	it('lets a resolved runtime window beat a stored customContextWindow override', async () => {
 		// Finding P1 / D1: the stored value is a materialized creation-time default,
-		// so a provider-resolved window outranks it.
+		// so a provider-resolved window outranks it. Note the ABSENCE of
+		// `contextWindowSource` is what marks it materialized - there is no
+		// `'materialized'` value to assign, by design (review of PR #1362).
 		const session = makeSession({ toolType: 'omp', customContextWindow: 200000 });
 		const tab = {
 			usageStats: {
@@ -157,28 +159,6 @@ describe('useContextWindow', () => {
 		const { result } = renderHook(() => useContextWindow(session, tab));
 
 		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(120000));
-	});
-
-	it('lets a resolved window beat a stored value explicitly marked materialized', async () => {
-		// The explicit counterpart of the legacy case below: provenance recorded,
-		// and it says this number was never a choice.
-		const session = makeSession({
-			toolType: 'omp',
-			customContextWindow: 200000,
-			contextWindowSource: 'materialized',
-		});
-		const tab = {
-			usageStats: {
-				contextWindow: 1_000_000,
-				contextWindowResolved: true,
-				inputTokens: 1000,
-				outputTokens: 500,
-			},
-		};
-
-		const { result } = renderHook(() => useContextWindow(session, tab));
-
-		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
 	});
 
 	it('keeps a [1m] custom-model marker above a user-edited window', async () => {

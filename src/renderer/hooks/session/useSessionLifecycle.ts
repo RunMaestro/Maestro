@@ -102,7 +102,7 @@ export interface SessionLifecycleReturn {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
-		contextWindowSource?: 'user-edited' | 'materialized'
+		contextWindowSource?: 'user-edited'
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -185,7 +185,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			retryOnTokenExhaustion?: boolean,
 			additionalDirectories?: AdditionalDirectory[],
 			/** Provenance of `customContextWindow` (finding AD1). */
-			contextWindowSource?: 'user-edited' | 'materialized'
+			contextWindowSource?: 'user-edited'
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {

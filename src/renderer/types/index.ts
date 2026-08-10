@@ -1186,7 +1186,7 @@ export interface Session {
 	 * nothing like an agent default yet is not a choice either, so any
 	 * value-comparison heuristic gets exactly the codex case wrong.
 	 */
-	contextWindowSource?: 'user-edited' | 'materialized';
+	contextWindowSource?: 'user-edited';
 	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally

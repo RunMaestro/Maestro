@@ -1072,6 +1072,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.customContextWindow && {
 					customContextWindow: config.customContextWindow as number,
 				}),
+				...(config?.contextWindowSource === 'user-edited' && {
+					contextWindowSource: 'user-edited' as const,
+				}),
 				...(config?.customProviderPath && {
 					customProviderPath: config.customProviderPath as string,
 				}),
