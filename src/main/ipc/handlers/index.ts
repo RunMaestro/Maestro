@@ -74,6 +74,7 @@ import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
 import { registerTabsHandlers } from './tabs';
+import { registerContextTimelineHandlers } from './context-timeline';
 import { registerAgentRunHandlers } from './agent-run';
 import {
 	registerWindowsHandlers,
@@ -370,6 +371,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerMemoryHandlers();
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
+	// Register Context Timeline capture handlers (per-agent turn history backfill)
+	registerContextTimelineHandlers();
 	// Register AgentRun control-plane handlers (neutral run/campaign ledger)
 	registerAgentRunHandlers({
 		getProcessManager: deps.getProcessManager,
