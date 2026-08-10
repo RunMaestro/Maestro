@@ -81,50 +81,66 @@ export function useAgentUsageListener(deps: UseAgentUsageListenerDeps): void {
 				? { ...usageStats.absoluteUsage, contextWindow: usageStats.contextWindow }
 				: usageStats;
 
-			// Resolve the effective context window ONCE, matching the header gauge's
-			// precedence (resolveConfiguredContextWindow): a per-agent custom window,
-			// a `[1m]` model marker, or the provider's configured window wins over the
-			// reported/static window, so a session configured for e.g. 1M isn't sized
-			// against a 200k denominator. Shared by the timeline point and the
-			// accumulated-growth fallback so they can never disagree.
+			// Resolve the effective context window ONCE, shared by the timeline point
+			// and the accumulated-growth fallback so they can never disagree.
+			//
+			// Precedence (finding P1). Ranks 1-3 and 5 are POSITIONALLY IDENTICAL to
+			// useContextWindow's, or the header gauge and the Context Timeline
+			// disagree again (the bug PR #1221 fixed). Ranks 4 and 6 are
+			// timeline-only extras and sit below the shared ranks:
+			//   1. `[1m]` model marker
+			//   2. resolved reported window
+			//   3. `customContextWindow` override
+			//   4. cached provider-configured window (timeline-only)
+			//   5. raw reported window
+			//   6. static per-agent table (timeline-only)
 			//
 			// The provider-config source lives behind an async `getConfig` call that
 			// must NOT run on this hot per-turn path, so we read it from a synchronous
-			// cache and prime that cache off-path for the next turn. The two sync
-			// sources (per-session window, model marker) take precedence and cover the
-			// common cases immediately; the cached provider window closes the gap for
-			// agents (e.g. OpenCode) whose window is configured at the provider level
-			// only and would otherwise plot against the static table.
+			// cache and prime that cache off-path for the next turn. It closes the gap
+			// for agents (e.g. OpenCode) whose window is configured at the provider
+			// level only and would otherwise plot against the static table.
 			ensureConfiguredContextWindowCached(sessionForUsage);
-			const syncConfiguredWindow =
-				typeof sessionForUsage.customContextWindow === 'number' &&
-				sessionForUsage.customContextWindow > 0
-					? sessionForUsage.customContextWindow
-					: getModelContextWindowOverride(sessionForUsage.customModel) || 0;
-			const cachedConfiguredWindow = getCachedConfiguredContextWindow(sessionForUsage);
-			// A genuinely provider/model-resolved window (currently Oh My Pi's per-turn
-			// model catalog, flagged via `contextWindowResolved`) is the ACTUAL window
-			// and must beat the agent-level configured FALLBACK - but never an explicit
-			// per-session override or a `[1m]` model marker, both of which rank above it.
+			// A `[1m]` marker on the session's custom model is an explicit model choice
+			// the user made per-session, so it stays at the top.
+			const modelMarker = getModelContextWindowOverride(sessionForUsage.customModel) || 0;
+			// A genuinely provider-resolved window (flagged via `contextWindowResolved`,
+			// set only where the value came from the provider's own payload) is runtime
+			// truth, so it outranks the stored override below.
 			const resolvedReportedWindow =
 				usageStats.contextWindowResolved && usageStats.contextWindow > 0
 					? usageStats.contextWindow
 					: 0;
+			// `customContextWindow` is NOT reliably something the user chose: the agent
+			// definition's `contextWindow` default is materialized into every new session
+			// at creation time (see P1), which is how a fresh omp agent plotted against
+			// 200k instead of the provider's real 1M. Treat it as a fallback that applies
+			// until the provider reports an authoritative window.
+			const sessionOverride =
+				typeof sessionForUsage.customContextWindow === 'number' &&
+				sessionForUsage.customContextWindow > 0
+					? sessionForUsage.customContextWindow
+					: 0;
+			const cachedConfiguredWindow = getCachedConfiguredContextWindow(sessionForUsage);
 			const resolvedWindow =
-				syncConfiguredWindow > 0
-					? syncConfiguredWindow
+				modelMarker > 0
+					? modelMarker
 					: resolvedReportedWindow > 0
 						? resolvedReportedWindow
-						: cachedConfiguredWindow > 0
-							? cachedConfiguredWindow
-							: usageStats.contextWindow > 0
-								? usageStats.contextWindow
-								: agentToolType && agentToolType !== 'terminal'
-									? getContextWindowForAgent(
-											agentToolType,
-											useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
-										)
-									: 0;
+						: sessionOverride > 0
+							? sessionOverride
+							: cachedConfiguredWindow > 0
+								? cachedConfiguredWindow
+								: usageStats.contextWindow > 0
+									? usageStats.contextWindow
+									: agentToolType && agentToolType !== 'terminal'
+										? getContextWindowForAgent(
+												agentToolType,
+												useAgentStore
+													.getState()
+													.getCapabilitySnapshot(agentToolType, sessionRemoteId)
+											)
+										: 0;
 
 			// Gauge percentage, computed AFTER `resolvedWindow` so it divides by the
 			// same denominator the timeline point stores. Computing it earlier used

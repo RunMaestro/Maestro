@@ -514,6 +514,9 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			cacheReadTokens: aggregated.cacheReadInputTokens,
 			cacheCreationTokens: aggregated.cacheCreationInputTokens,
 			contextWindow: aggregated.contextWindow,
+			// The aggregator flags the window as resolved only when a model actually
+			// reported one; the untouched FALLBACK_CONTEXT_WINDOW seed leaves it off.
+			...(aggregated.contextWindowResolved ? { contextWindowReported: true } : {}),
 			costUsd: aggregated.totalCostUsd,
 			// The fields above are the turn's summed SPEND and can exceed the window;
 			// this is the same turn's real occupancy, when the stream gave us one.

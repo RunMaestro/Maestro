@@ -100,6 +100,41 @@ describe('useContextWindow', () => {
 		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
 	});
 
+	it('lets a resolved runtime window beat a stored customContextWindow override', async () => {
+		// Finding P1 / D1: the stored value is a materialized creation-time default,
+		// so a provider-resolved window outranks it.
+		const session = makeSession({ toolType: 'omp', customContextWindow: 200000 });
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+	});
+
+	it('still returns the stored override when the reported window is not flagged resolved', async () => {
+		// Without the authority flag the reported window may be a parser-injected
+		// static fallback, so the stored value stays in charge.
+		const session = makeSession({ toolType: 'omp', customContextWindow: 200000 });
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(200000));
+	});
+
 	it('keeps a [1m] custom-model marker above a resolved window', async () => {
 		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
 		// An explicit [1m] model choice is authoritative and must outrank a
