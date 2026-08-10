@@ -240,6 +240,7 @@ const mockMaestro = {
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
 		onUserInput: vi.fn().mockReturnValue(() => {}),
+		sendRemoteCommandReceipt: vi.fn(),
 	},
 	debug: {
 		createPackage: vi.fn().mockResolvedValue({ success: true }),
@@ -348,6 +349,10 @@ const mockMaestro = {
 		}),
 		homeDir: vi.fn().mockResolvedValue('/home/testuser'),
 	},
+	// Tab lifecycle notifications (renderer -> main); fire-and-forget
+	tabs: {
+		notifyAiTabClosed: vi.fn(),
+	},
 	agents: {
 		detect: vi.fn().mockResolvedValue([]),
 		get: vi.fn().mockResolvedValue(null),
@@ -389,6 +394,8 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		// Bulk capabilities used to prime the renderer capability cache
+		getAllCapabilities: vi.fn().mockResolvedValue({}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),

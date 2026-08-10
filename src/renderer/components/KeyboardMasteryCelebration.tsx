@@ -17,6 +17,7 @@ import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
 import { isMacOSPlatform } from '../utils/platformUtils';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { Z_LAYERS } from '../constants/zLayers';
 
 interface KeyboardMasteryCelebrationProps {
 	theme: Theme;
@@ -39,9 +40,6 @@ const confettiIntensity: Record<number, { particleCount: number; spread: number 
 	3: { particleCount: 300, spread: 100 }, // Virtuoso
 	4: { particleCount: 500, spread: 120 }, // Maestro - big celebration!
 };
-
-// Z-index layering: backdrop (99997) < confetti (99998) < modal (99999)
-const CONFETTI_Z_INDEX = 99998;
 
 /**
  * KeyboardMasteryCelebration - Modal celebrating the user reaching a new mastery level
@@ -100,7 +98,7 @@ export function KeyboardMasteryCelebration({
 			colors,
 			shapes: ['circle', 'star'] as ('circle' | 'star')[],
 			scalar: 1.2,
-			zIndex: CONFETTI_Z_INDEX,
+			zIndex: Z_LAYERS.CONFETTI,
 			disableForReducedMotion: true,
 		});
 
@@ -114,7 +112,7 @@ export function KeyboardMasteryCelebration({
 					colors: [goldColor],
 					shapes: ['star'] as 'star'[],
 					scalar: 1.5,
-					zIndex: CONFETTI_Z_INDEX,
+					zIndex: Z_LAYERS.CONFETTI,
 					disableForReducedMotion: true,
 				});
 			}, 300);

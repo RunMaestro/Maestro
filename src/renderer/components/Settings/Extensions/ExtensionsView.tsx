@@ -5,10 +5,12 @@
  * Mounted in EncoreTab in place of the old plugins-only section.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Search, FolderPlus, Puzzle } from 'lucide-react';
 import type { EncoreFeatureFlags, Theme } from '../../../types';
 import type { ReactNode } from 'react';
+import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { useExtensions } from './useExtensions';
 import { ExtensionsGrid } from './ExtensionsGrid';
 import { ExtensionDetails } from './ExtensionDetails';
@@ -58,6 +60,17 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	// The selected tile, resolved against the live list so it stays fresh after
 	// enable/disable/uninstall (and disappears if the plugin is removed).
 	const selected = selectedKey ? extensions.find((e) => e.key === selectedKey) : undefined;
+
+	// While the details pane is open it owns Escape: back to the grid, not out of
+	// the whole Settings modal. Non-blocking / no focus trap so the rest of
+	// Settings (search, tab switching) keeps working underneath.
+	const closeDetails = useCallback(() => setSelectedKey(null), []);
+	useModalLayer(MODAL_PRIORITIES.EXTENSION_DETAILS, 'Extension Details', closeDetails, {
+		enabled: Boolean(selected),
+		blocksLowerLayers: false,
+		capturesFocus: false,
+		focusTrap: 'none',
+	});
 
 	return (
 		<div data-testid="extensions-view" data-setting-id="encore-plugins">
@@ -113,7 +126,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					ext={selected}
 					contributions={contributions}
 					busy={busyId === selected.id}
-					onBack={() => setSelectedKey(null)}
+					onBack={closeDetails}
 					onTogglePlugin={togglePlugin}
 					onToggleBuiltin={toggleBuiltin}
 					onUninstall={uninstallPlugin}

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
 	snoozeTab,
 	wakeSnoozedTab,
@@ -57,6 +57,17 @@ describe('snoozeTab', () => {
 		const session = buildSession();
 		const result = snoozeTab(session, 'b', Date.now() + HOUR)!;
 		expect(result.session.activeTabId).toBe('a');
+	});
+
+	it('does not tell main the tab closed - a snoozed tab comes back', () => {
+		// snoozeTab reuses closeTab() to remove the tab, but the tab is only hidden.
+		// Emitting the close notification would cancel dispatch callbacks armed
+		// against a tab that is about to return.
+		const notify = window.maestro.tabs.notifyAiTabClosed as ReturnType<typeof vi.fn>;
+		notify.mockClear();
+		const session = buildSession();
+		snoozeTab(session, 'b', Date.now() + HOUR);
+		expect(notify).not.toHaveBeenCalled();
 	});
 
 	it('keeps the snooze out of the Cmd+Shift+T undo stack', () => {

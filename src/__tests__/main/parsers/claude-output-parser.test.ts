@@ -218,6 +218,33 @@ describe('ClaudeOutputParser', () => {
 			expect(usage?.cacheCreationTokens).toBe(10);
 			expect(usage?.contextWindow).toBe(200000);
 			expect(usage?.costUsd).toBe(0.01);
+			// The model reported 200000 itself. That it happens to equal the
+			// fallback seed does not make it less of a provider report, so it is
+			// flagged authoritative (review of PR #1356). Before that fix the
+			// "is it LARGER than the fallback" test silently demoted every
+			// 200k-and-under model to unreported.
+			expect(usage?.contextWindowReported).toBe(true);
+		});
+
+		it('flags a genuinely reported context window as provider-reported', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					result: 'test',
+					modelUsage: {
+						'claude-opus-5': {
+							inputTokens: 100,
+							outputTokens: 50,
+							contextWindow: 1000000,
+						},
+					},
+					total_cost_usd: 0.01,
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage?.contextWindow).toBe(1000000);
+			expect(usage?.contextWindowReported).toBe(true);
 		});
 
 		it('should extract usage with fallback to top-level usage', () => {

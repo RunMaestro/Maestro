@@ -90,6 +90,24 @@ export const MAX_ENTRIES_PER_SESSION = 5000;
 export const ORPHANED_SESSION_ID = '_orphaned';
 
 /**
+ * Single bucket of the activity graph: counts of each entry type within the
+ * bucket's time slice. This is the freshly-computed shape - `agent` is
+ * always populated by every producer (director-notes handlers, the history
+ * bucket cache, which discards pre-agent-series cache entries via
+ * HISTORY_BUCKET_CACHE_VERSION). The renderer's read-side type
+ * (`PrecomputedGraphBucket` in ActivityGraph.tsx) relaxes `agent` to
+ * optional to defend against older cached data - do not weaken this
+ * canonical shape to match that; extend it instead, the way
+ * PrecomputedGraphBucket does.
+ */
+export interface GraphBucket {
+	auto: number;
+	user: number;
+	cue: number;
+	agent: number;
+}
+
+/**
  * Per-session history file format
  */
 export interface HistoryFileData {

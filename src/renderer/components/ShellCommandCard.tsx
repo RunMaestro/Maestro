@@ -25,6 +25,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { formatDuration } from '../../shared/performance-metrics';
 import { truncatePath } from '../../shared/formatters';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 
 interface ShellCommandCardProps {
 	log: LogEntry;
@@ -48,7 +49,10 @@ export function ShellCommandCard({
 	);
 
 	const handleCopy = useCallback(async () => {
-		await safeClipboardWrite(log.text);
+		// Copy what the user SEES, not the wire format. The stored text keeps its
+		// ANSI codes so the card can render colour, but pasting `\x1b[36m` into an
+		// issue or a shell is never what anyone wants.
+		await safeClipboardWrite(stripAnsiCodes(log.text));
 		flashCopiedToClipboard();
 		setCopied(true);
 		window.setTimeout(() => setCopied(false), 1500);
