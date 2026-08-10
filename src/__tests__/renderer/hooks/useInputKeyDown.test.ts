@@ -1589,6 +1589,52 @@ describe('General edge cases - additional', () => {
 			expect(deps.setCommandMode).not.toHaveBeenCalled();
 		});
 
+		it('keeps focus in the composer after exiting', () => {
+			// Exiting hands the input back to the agent - the user is still typing,
+			// so dropping focus would send the next keystroke nowhere.
+			setActiveSession({ inputMode: 'ai' });
+			const deps = commandModeDeps({ inputValue: '' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => {
+				result.current.handleInputKeyDown(createKeyEvent('Escape'));
+			});
+
+			expect(deps.setCommandMode).toHaveBeenCalledWith(false);
+			expect(deps.inputRef.current!.focus).toHaveBeenCalled();
+			expect(deps.inputRef.current!.blur).not.toHaveBeenCalled();
+			expect(deps.terminalOutputRef.current!.focus).not.toHaveBeenCalled();
+		});
+
+		it('exits on Escape when the line is only whitespace', () => {
+			// A line of spaces looks empty. Before this, Escape fell through to the
+			// generic branch and blurred the composer instead of exiting.
+			setActiveSession({ inputMode: 'ai' });
+			const deps = commandModeDeps({ inputValue: '   ' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => {
+				result.current.handleInputKeyDown(createKeyEvent('Escape'));
+			});
+
+			expect(deps.setCommandMode).toHaveBeenCalledWith(false);
+			expect(deps.inputRef.current!.focus).toHaveBeenCalled();
+			expect(deps.inputRef.current!.blur).not.toHaveBeenCalled();
+		});
+
+		it('does NOT exit on Backspace over whitespace - that is an edit', () => {
+			// Backspace is an editing key: on "   " the user is deleting a space.
+			setActiveSession({ inputMode: 'ai' });
+			const deps = commandModeDeps({ inputValue: '   ' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => {
+				result.current.handleInputKeyDown(createKeyEvent('Backspace'));
+			});
+
+			expect(deps.setCommandMode).not.toHaveBeenCalled();
+		});
+
 		it('opens completion on Tab for an EMPTY command line', () => {
 			// "what have I run before" - the terminal has no equivalent.
 			setActiveSession({ inputMode: 'ai' });

@@ -14,6 +14,12 @@ export function createCommandRemoteApi() {
 		 * Subscribe to remote command execution from web interface
 		 * This allows web commands to go through the same code path as desktop commands
 		 * inputMode is optional - if provided, renderer should use it instead of session state
+		 *
+		 * `receiptChannel` is the reply channel the web server mints per command;
+		 * the renderer MUST answer it via `sendRemoteCommandReceipt` so the CLI's
+		 * `success` reflects delivery rather than "an IPC send was issued". It is
+		 * undefined for senders that do not wait for a receipt (main's own
+		 * `remote:executeCommand` sends), so the renderer must tolerate that.
 		 */
 		onRemoteCommand: (
 			callback: (
@@ -23,7 +29,8 @@ export function createCommandRemoteApi() {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				receiptChannel?: string
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -35,7 +42,8 @@ export function createCommandRemoteApi() {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				receiptChannel?: string
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
@@ -45,9 +53,10 @@ export function createCommandRemoteApi() {
 					force,
 					imageCount: images?.length ?? 0,
 					background,
+					receiptChannel,
 				});
 				try {
-					callback(sessionId, command, inputMode, tabId, force, images, background);
+					callback(sessionId, command, inputMode, tabId, force, images, background, receiptChannel);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -60,6 +69,22 @@ export function createCommandRemoteApi() {
 			};
 			ipcRenderer.on('remote:executeCommand', handler);
 			return () => ipcRenderer.removeListener('remote:executeCommand', handler);
+		},
+
+		/**
+		 * Answer a `remote:executeCommand` receipt channel. `accepted: true` means
+		 * the command was handed to the spawn/queue logic - NOT that it finished.
+		 * `reason` names the branch that dropped it (session-not-found,
+		 * tab-not-found, session-busy, unsupported-agent, ...) so the CLI can say
+		 * why instead of reporting a meaningless `success: true`.
+		 */
+		sendRemoteCommandReceipt: (
+			receiptChannel: string,
+			accepted: boolean,
+			reason?: string
+		): void => {
+			log('Sending remote command receipt', { receiptChannel, accepted, reason });
+			ipcRenderer.send(receiptChannel, { accepted, reason });
 		},
 
 		/**

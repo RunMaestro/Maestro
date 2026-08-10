@@ -15,7 +15,7 @@ import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, HistoryEntryType, ToolType } from '../../../shared/types';
 import { paginateEntries } from '../../../shared/history';
-import type { PaginatedResult } from '../../../shared/history';
+import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
 import {
@@ -146,14 +146,6 @@ export interface UnifiedHistoryOptions {
 	offset?: number;
 	/** Number of buckets for the activity graph (passed from frontend lookback config) */
 	graphBucketCount?: number;
-}
-
-/** Pre-computed activity graph bucket for a time slice */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-	agent: number;
 }
 
 export interface UnifiedHistoryEntry extends HistoryEntry {

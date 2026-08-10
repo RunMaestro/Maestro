@@ -9,6 +9,7 @@
 import { ipcRenderer } from 'electron';
 import type { ToolType, HistoryEntry, HistoryEntryType } from '../../shared/types';
 import type { DirectorNotesNarrative } from '../../shared/directorNotesNarrative';
+import type { GraphBucket } from '../../shared/history';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
@@ -18,14 +19,6 @@ export interface UnifiedHistoryStats {
 	userCount: number; // Total USER entries
 	cueCount: number; // Total CUE entries
 	totalCount: number; // Total entries (autoCount + userCount + cueCount)
-}
-
-/** Pre-computed activity graph bucket for a time slice */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-	agent: number;
 }
 
 /**

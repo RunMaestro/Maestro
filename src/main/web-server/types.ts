@@ -378,6 +378,7 @@ export type NewAITabWithPromptCallback = (
  * dispatched immediately through the same path as a plain `dispatch`. Surfaced
  * so `maestro-cli dispatch --queue` can report the queue position to callers.
  */
+export type EnqueueCommandFailureReason = 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 export type EnqueueCommandResult = {
 	success: boolean;
 	tabId?: string;
@@ -390,6 +391,13 @@ export type EnqueueCommandResult = {
 	/** Id of the queued item, for later tracking or removal. */
 	itemId?: string;
 	error?: string;
+	/**
+	 * Machine-readable cause of a failure, so callers can react to a specific
+	 * one without parsing `error`. Dispatch callbacks use `tab-not-found` to
+	 * fall back to agent-level delivery when a `--callback-tab` has since been
+	 * closed (see `deliverCallback` in `dispatch-callbacks/`).
+	 */
+	reason?: EnqueueCommandFailureReason;
 };
 export type EnqueueCommandCallback = (
 	sessionId: string,

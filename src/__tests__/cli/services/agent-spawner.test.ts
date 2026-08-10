@@ -1059,6 +1059,9 @@ Some text with [x] in it that's not a checkbox
 				cacheCreationInputTokens: 10,
 				totalCostUsd: 0.05,
 				contextWindow: 200000,
+				// Reported by the model, so flagged authoritative even though it
+				// matches the fallback size (review of PR #1356).
+				contextWindowResolved: true,
 			});
 		});
 

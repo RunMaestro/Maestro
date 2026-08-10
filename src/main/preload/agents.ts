@@ -75,6 +75,14 @@ export function createAgentsApi() {
 			ipcRenderer.invoke('agents:getCapabilities', agentId),
 
 		/**
+		 * Get capabilities for every known agent type in one round trip.
+		 * Used to prime the renderer capability cache at startup so background
+		 * work (CLI dispatch) is not judged against an empty cache.
+		 */
+		getAllCapabilities: (): Promise<Record<string, AgentCapabilities>> =>
+			ipcRenderer.invoke('agents:getAllCapabilities'),
+
+		/**
 		 * Get an agent's full configuration
 		 */
 		getConfig: (agentId: string): Promise<Record<string, unknown>> =>

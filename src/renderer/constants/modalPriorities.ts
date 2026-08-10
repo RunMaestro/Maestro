@@ -302,6 +302,10 @@ export const MODAL_PRIORITIES = {
 	 * the dropdown first, leaving the Settings modal open for a second Esc). */
 	CUSTOM_THEME_BASE_SELECTOR: 451,
 
+	/** Extension/plugin details pane inside Settings (above settings so Escape
+	 * goes back to the extensions grid instead of closing the whole modal). */
+	EXTENSION_DETAILS: 452,
+
 	/** Settings modal */
 	SETTINGS: 450,
 

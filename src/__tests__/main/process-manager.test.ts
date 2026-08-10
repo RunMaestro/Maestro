@@ -92,6 +92,9 @@ describe('process-manager.ts', () => {
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.05,
 					contextWindow: 200000,
+					// The model reported this window itself, so it is provider truth
+					// even though it equals the fallback (review of PR #1356).
+					contextWindowResolved: true,
 				});
 			});
 
@@ -125,6 +128,7 @@ describe('process-manager.ts', () => {
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.1,
 					contextWindow: 200000, // Should use the highest context window
+					contextWindowResolved: true,
 				});
 			});
 

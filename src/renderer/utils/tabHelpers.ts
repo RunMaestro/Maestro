@@ -945,6 +945,12 @@ export function createTab(
 export interface CloseTabOptions {
 	/** If true, skip adding to closed tab history (e.g., for wizard tabs) */
 	skipHistory?: boolean;
+	/**
+	 * If true, do not tell main the tab went away. Set by snooze, which reuses
+	 * closeTab() to hide a tab that comes back later - cancelling its armed
+	 * dispatch callbacks would be wrong.
+	 */
+	preserveTabScopedWork?: boolean;
 }
 
 /**
@@ -1184,6 +1190,16 @@ export function closeTab(
 					thinkingStartTime: undefined,
 				}
 			: sessionWithOrphans;
+
+	// Tell main the tab is really gone so it can retire tab-scoped promises - today
+	// that means cancelling dispatch callbacks armed against it, which would
+	// otherwise wake their caller with a bogus `timeout` up to an hour later.
+	// Skipped for a snoozed tab (it comes back) and for an orphaned one (its turn
+	// is still running and the tab remains a valid dispatch target, so the real
+	// exit will fire the callback with a real status).
+	if (!options.preserveTabScopedWork && !shouldOrphanClosedTab) {
+		window.maestro?.tabs?.notifyAiTabClosed?.(session.id, tabId);
+	}
 
 	// Queued items targeting the just-closed tab are intentionally preserved. A
 	// message the user already sent fires in the background against the now-orphaned

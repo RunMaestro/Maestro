@@ -922,6 +922,9 @@ app
 				return {
 					success: result.success === true,
 					...(result.error ? { error: result.error } : {}),
+					// Carried through so a closed `--callback-tab` can be told apart
+					// from every other failure and retried at agent level.
+					...(result.reason ? { reason: result.reason } : {}),
 				};
 			},
 			getTargetOutput: async (agentId, since) => {

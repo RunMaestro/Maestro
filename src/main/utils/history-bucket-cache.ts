@@ -21,6 +21,7 @@ import * as crypto from 'crypto';
 import { app } from 'electron';
 import { logger } from './logger';
 import { captureException } from './sentry';
+import type { GraphBucket } from '../../shared/history';
 
 const LOG_CONTEXT = '[HistoryBucketCache]';
 
@@ -32,15 +33,12 @@ export const HISTORY_BUCKET_CACHE_VERSION = 3;
 
 /**
  * Single bucket of the activity graph - counts of each entry type within the
- * bucket's time slice. Mirrors `GraphBucket` in director-notes / ActivityGraph
- * so all three layers (cache, IPC, renderer) share the same shape.
+ * bucket's time slice. Alias for the canonical `GraphBucket` (shared/history.ts)
+ * kept under this name because callers in this file rely on `agent` being
+ * guaranteed present: pre-agent-series cache entries are discarded by the
+ * version check above before ever reaching a `CachedGraphBucket`.
  */
-export interface CachedGraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-	agent: number;
-}
+export type CachedGraphBucket = GraphBucket;
 
 /**
  * What the cache stores per (cacheKey, sourceFingerprint) pair.

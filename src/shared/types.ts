@@ -320,22 +320,41 @@ export interface UsageStats {
 	 */
 	contextWindowCorrectionOnly?: boolean;
 	/**
+	 * Monotonic sequence number stamped by main's context-timeline capture log
+	 * (`src/main/process-listeners/context-timeline-log.ts`) as the event goes
+	 * out on `process:usage`. The renderer records it on the Context Timeline
+	 * point it builds, so a renderer that later hydrates from the main-side log
+	 * can dedup hydrated captures against live ones exactly. Undefined for usage
+	 * events that never passed through that listener (unit tests, replays).
+	 */
+	captureSeq?: number;
+	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
 	 * These are already included in outputTokens but tracked separately for UI display.
 	 */
 	reasoningTokens?: number;
 	/**
-	 * Pre-normalization absolute token totals, set ONLY for providers whose CLI
-	 * reports cumulative session usage that we delta-normalize before emitting
-	 * (currently Codex - see normalizeUsageToDelta in StdoutHandler). For those
-	 * providers the top-level fields above are per-turn DELTAS, which are correct
-	 * for token accumulation but wrong for context-fill display: the cumulative
-	 * total is what actually occupies the model window. Consumers that plot
-	 * context occupancy (the Context Timeline inspector) read from here when
-	 * present and fall back to the top-level fields otherwise. Undefined for
-	 * per-call providers (Claude, Copilot, OpenCode), whose top-level fields are
-	 * already absolute for the current turn.
+	 * Absolute context-occupancy snapshot for the turn, set by providers whose
+	 * top-level fields above are NOT occupancy. Two sources today:
+	 *
+	 * - Codex: its CLI reports cumulative session usage which we delta-normalize
+	 *   before emitting (see normalizeUsageToDelta in StdoutHandler), so the
+	 *   top-level fields are per-turn DELTAS - correct for token accumulation,
+	 *   wrong for context fill. The pre-normalization cumulative total is the
+	 *   occupancy.
+	 * - Claude Code: its result message sums every internal API call of the turn,
+	 *   so the top-level fields are token SPEND and a tool-heavy turn can exceed
+	 *   the window entirely. Its parser attaches the LAST internal call's usage
+	 *   here, which is real occupancy (a single call's input is what was
+	 *   physically sent to the model). Note `outputTokens` in that case is the
+	 *   last call's output, not the turn's - occupancy consumers read the input
+	 *   side.
+	 *
+	 * Consumers that plot context occupancy (the Context Timeline inspector, the
+	 * context gauge) read from here when present and fall back to the top-level
+	 * fields otherwise. Undefined for providers whose top-level fields are already
+	 * absolute for the current turn (Copilot, OpenCode).
 	 */
 	absoluteUsage?: {
 		inputTokens: number;
