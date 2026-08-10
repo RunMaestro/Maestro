@@ -54,6 +54,7 @@ export interface AppSessionModalsProps {
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
+	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with
 
 	// EditAgentModal
 	editAgentModalOpen: boolean;
@@ -130,6 +131,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 	existingSessions,
 	sourceSession,
 	newInstancePresetGroupId,
+	newInstancePresetWorkingDir,
 	// EditAgentModal
 	editAgentModalOpen,
 	onCloseEditAgentModal,
@@ -198,6 +200,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 					existingSessions={existingSessions}
 					sourceSession={sourceSession}
 					presetGroupId={newInstancePresetGroupId}
+					presetWorkingDir={newInstancePresetWorkingDir}
 				/>
 			)}
 
