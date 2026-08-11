@@ -350,6 +350,7 @@ describe('QuickActions command builders', () => {
 			behind: 1,
 			canCreatePR: true,
 			canConfigureWorktrees: true,
+			changes: { fileCount: 5, additions: 206, deletions: 37, modified: 5 },
 			viewLog: vi.fn(),
 			viewDiff: vi.fn().mockResolvedValue(undefined),
 			pull: vi.fn(),
@@ -385,6 +386,9 @@ describe('QuickActions command builders', () => {
 				'configureWorktrees',
 			])
 		);
+
+		// The palette says whether the diff has anything in it, like the menu badges.
+		expect(git.find((a) => a.id === 'gitDiff')!.subtext).toBe('+206 −37 ~5 in 5 files');
 
 		await git.find((a) => a.id === 'gitDiff')!.action();
 		expect(gitActions.viewDiff).toHaveBeenCalled();

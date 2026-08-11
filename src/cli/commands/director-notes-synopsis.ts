@@ -62,8 +62,9 @@ function checkEncoreFeatureEnabled(): void {
  * The agent emits the structured JSON narrative now. For the human-readable
  * `markdown`/`text` formats, convert it back to markdown prose (the pre-Rich-Mode
  * output). Output the strict parser rejects gets the same best-effort salvage the
- * desktop surfaces use, with the reason noted inline so a partial report never
- * reads as a complete one. Falls back to the raw string for legacy markdown, so
+ * desktop surfaces use, with the reason noted inline when the salvage actually
+ * cost content, so a partial report never reads as a complete one. Falls back to
+ * the raw string for legacy markdown, so
  * this never makes the CLI output worse than the raw synopsis. (`-f json` stays
  * untouched - it intentionally returns the raw `synopsis`.)
  */
@@ -73,6 +74,9 @@ function synopsisToReadableMarkdown(synopsis: string): string {
 
 	const recovered = recoverDirectorNotesNarrative(synopsis);
 	if (recovered.ok) {
+		// A lossless repair rebuilt syntax only, so the report is whole - prefixing
+		// a caveat would just make a complete report look suspect.
+		if (recovered.lossless) return narrativeToMarkdown(recovered.narrative);
 		return `> ${recovered.reason}\n\n${narrativeToMarkdown(recovered.narrative)}`;
 	}
 	return synopsis;

@@ -35,9 +35,10 @@ import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { GitChangeCounts } from './ui/GitChangeCounts';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
-import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
+import { remoteUrlToBrowserUrl, type GitChangeTotals } from '../../shared/gitUtils';
 import { openUrl } from '../utils/openUrl';
 import type { Theme } from '../types';
 
@@ -66,6 +67,8 @@ export interface GitPillMenuProps {
 	ahead: number;
 	/** Commits behind upstream - badged on Pull. */
 	behind: number;
+	/** Uncommitted-change totals - badged on View Git Diff. */
+	changes: GitChangeTotals;
 	onViewLog: () => void;
 	onViewDiff: () => void;
 	onPull: () => void;
@@ -113,6 +116,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 	remote,
 	ahead,
 	behind,
+	changes,
 	onViewLog,
 	onViewDiff,
 	onPull,
@@ -244,6 +248,13 @@ export const GitPillMenu = memo(function GitPillMenu({
 					testId="git-pill-menu-diff"
 					icon={<FileDiff className="w-3.5 h-3.5" style={iconStyle} />}
 					label="View Git Diff"
+					badge={
+						<GitChangeCounts
+							theme={theme}
+							totals={changes}
+							className="ml-auto flex items-center gap-1.5 text-[10px]"
+						/>
+					}
 					onClick={onViewDiff}
 				/>
 				<MenuRow

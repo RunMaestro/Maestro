@@ -2,6 +2,7 @@ import type { Session } from '../../../types';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import type { GitAgentActions } from '../../../hooks/git/useGitAgentActions';
 import { resolveGitCwd } from '../../../hooks/git/useGitAgentActions';
+import { formatGitChangeSummary } from '../../../../shared/gitUtils';
 import { captureException } from '../../../utils/sentry';
 import type { QuickAction } from '../types';
 
@@ -64,6 +65,9 @@ export function buildGitWorktreeCommands({
 		commands.push({
 			id: 'gitDiff',
 			label: 'View Git Diff',
+			// Says up front whether the diff has anything in it, the same thing the
+			// badge on the menu rows says.
+			subtext: formatGitChangeSummary(gitActions.changes),
 			shortcut: shortcuts.viewGitDiff,
 			action: () => {
 				// Fire-and-forget: viewDiff opens its own modal (or flashes when the

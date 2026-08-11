@@ -899,15 +899,24 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						logger.warn('Synopsis narrative parse failed', LOG_CONTEXT, {
 							narrativeError: parsed.error,
 							recovered: recovered.ok,
+							lossless: recovered.ok ? recovered.lossless : undefined,
 							recoveryReason: recovered.ok ? recovered.reason : undefined,
 						});
-						narrativeFields = recovered.ok
-							? {
-									narrative: recovered.narrative,
-									narrativeError: parsed.error,
-									narrativeRecovery: recovered.reason,
-								}
-							: { narrativeError: parsed.error };
+						// A lossless repair (an agent that stopped one brace short of
+						// finishing, a stray line break inside a string) produced the whole
+						// report. Shipping the error fields anyway put a red banner over a
+						// complete document and told the user it might be missing parts.
+						if (recovered.ok && recovered.lossless) {
+							narrativeFields = { narrative: recovered.narrative };
+						} else if (recovered.ok) {
+							narrativeFields = {
+								narrative: recovered.narrative,
+								narrativeError: parsed.error,
+								narrativeRecovery: recovered.reason,
+							};
+						} else {
+							narrativeFields = { narrativeError: parsed.error };
+						}
 					}
 
 					return {

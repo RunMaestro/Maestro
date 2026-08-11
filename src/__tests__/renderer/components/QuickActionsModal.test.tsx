@@ -93,6 +93,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({
 		getBranchInfo: () => ({ branch: 'main', remote: '', ahead: 0, behind: 0 }),
 	}),
+	useGitFileStatus: () => ({ getFileCount: () => 0 }),
 }));
 
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({

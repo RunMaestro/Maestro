@@ -28,6 +28,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof GitPillMenu>>
 		anchorRef: { current: null },
 		ahead: 0,
 		behind: 0,
+		changes: { fileCount: 0, additions: 0, deletions: 0, modified: 0 },
 		onViewLog: vi.fn(),
 		onViewDiff: vi.fn(),
 		onPull: vi.fn(),
@@ -162,5 +163,27 @@ describe('GitPillMenu', () => {
 		renderMenu();
 		expect(screen.getByTestId('git-pill-menu-pull')).toHaveTextContent(/^Git Pull$/);
 		expect(screen.getByTestId('git-pill-menu-push')).toHaveTextContent(/^Git Push$/);
+	});
+
+	// The diff row has to say whether opening it will show anything - a clean
+	// tree and a 200-line diff used to look identical here.
+	describe('diff badge', () => {
+		it('badges the diff row with the working-tree line counts', () => {
+			renderMenu({ changes: { fileCount: 5, additions: 206, deletions: 37, modified: 5 } });
+			const row = screen.getByTestId('git-pill-menu-diff');
+			expect(row).toHaveTextContent('206');
+			expect(row).toHaveTextContent('37');
+		});
+
+		it('falls back to a file count when line detail is missing', () => {
+			// Non-active agents get file counts only - no numstat is run for them.
+			renderMenu({ changes: { fileCount: 4, additions: 0, deletions: 0, modified: 0 } });
+			expect(screen.getByTestId('git-pill-menu-diff')).toHaveTextContent('4');
+		});
+
+		it('shows no badge on a clean tree', () => {
+			renderMenu();
+			expect(screen.getByTestId('git-pill-menu-diff')).toHaveTextContent(/^View Git Diff$/);
+		});
 	});
 });

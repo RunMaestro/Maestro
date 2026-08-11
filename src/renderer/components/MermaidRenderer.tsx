@@ -16,6 +16,39 @@ import {
 // Track theme for mermaid initialization
 let lastThemeId: string | null = null;
 
+/**
+ * DOMPurify config for Mermaid's rendered SVG.
+ *
+ * Mermaid renders every flowchart/class/state label as HTML inside a
+ * `<foreignObject>` (`flowchart.htmlLabels: true`), so a `<br/>` in a node
+ * label is a real `<br>` element, the label text lives in `<div>/<span>/<p>`,
+ * and the edge-label background is a styled `<div>`. Two DOMPurify defaults
+ * used to delete all of it and leave only the bare text nodes:
+ *
+ *   1. `USE_PROFILES: { svg: true }` allows SVG tags only, so `div`/`span`/
+ *      `p`/`br` are not in the allow-list.
+ *   2. `HTML_INTEGRATION_POINTS` defaults to `annotation-xml` alone, so ANY
+ *      HTML-namespace child of `<foreignObject>` fails the namespace check
+ *      and is force-removed even when its tag is allowed.
+ *
+ * The visible damage: line breaks vanished ("Visibility only.<br/>Observation"
+ * rendered as "Visibility only.Observation"), the surviving text re-wrapped at
+ * the foreignObject's width, and anything past the box height mermaid had
+ * measured for the ORIGINAL markup was clipped away. Diagram content was
+ * silently lost, not just restyled.
+ *
+ * So: allow the HTML profile and declare `foreignObject` an HTML integration
+ * point. This is still a real security boundary - `<script>`, `on*` handlers,
+ * `<iframe>`, and `javascript:` URLs are all stripped - and it is the second
+ * pass, since mermaid runs its own DOMPurify at `securityLevel: 'strict'`.
+ */
+export const MERMAID_SANITIZE_CONFIG = {
+	USE_PROFILES: { svg: true, svgFilters: true, html: true },
+	ADD_TAGS: ['foreignObject'],
+	ADD_ATTR: ['xmlns', 'xmlns:xlink', 'xlink:href', 'dominant-baseline', 'text-anchor'],
+	HTML_INTEGRATION_POINTS: { foreignobject: true, 'annotation-xml': true },
+};
+
 interface MermaidRendererProps {
 	chart: string;
 	theme: Theme;
@@ -357,11 +390,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 
 				if (result && result.svg) {
 					// Sanitize the SVG before setting it
-					const sanitizedSvg = DOMPurify.sanitize(result.svg, {
-						USE_PROFILES: { svg: true, svgFilters: true },
-						ADD_TAGS: ['foreignObject'],
-						ADD_ATTR: ['xmlns', 'xmlns:xlink', 'xlink:href', 'dominant-baseline', 'text-anchor'],
-					});
+					const sanitizedSvg = DOMPurify.sanitize(result.svg, MERMAID_SANITIZE_CONFIG);
 					setSvgContent(sanitizedSvg);
 					setError(null);
 				} else {

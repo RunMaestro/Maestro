@@ -51,3 +51,9 @@ export type { CalendarPickerProps } from './CalendarPicker';
 
 export { EscCloseButton } from './EscCloseButton';
 export type { EscCloseButtonProps } from './EscCloseButton';
+
+export { CopyIconButton } from './CopyIconButton';
+export type { CopyIconButtonProps } from './CopyIconButton';
+
+export { GitChangeCounts } from './GitChangeCounts';
+export type { GitChangeCountsProps } from './GitChangeCounts';
