@@ -270,6 +270,7 @@ describe('useSessionLifecycle', () => {
 					undefined, // retryOnAvailabilityErrors
 					undefined, // retryOnTokenExhaustion
 					undefined, // additionalDirectories
+					undefined, // contextWindowSource
 					false // boardWorker
 				);
 			});
