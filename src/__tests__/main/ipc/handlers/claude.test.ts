@@ -18,6 +18,7 @@ import {
 	registerClaudeHandlers,
 	ClaudeHandlerDependencies,
 } from '../../../../main/ipc/handlers/claude';
+import { captureException } from '../../../../main/utils/sentry';
 
 // Mock electron's ipcMain and app
 vi.mock('electron', () => ({
@@ -82,6 +83,12 @@ vi.mock('os', () => ({
 }));
 
 // Mock statsCache module
+// Mock Sentry so transcript-read noise assertions can inspect the reporter
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/statsCache', () => ({
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 	loadStatsCache: vi.fn(),
@@ -2297,6 +2304,52 @@ not valid json at all
 				name: 'Legacy',
 				description: 'Legacy skill',
 			});
+		});
+	});
+
+	// MAESTRO-YJ: the stats walk reads every transcript it discovers under
+	// ~/.claude/projects. A tree we lack permission on paged one Sentry event per
+	// file per refresh; it's environmental, so it stays a local warn.
+	describe('claude:getProjectStats unreadable transcripts', () => {
+		const listOneSessionFile = async () => {
+			const fs = await import('fs/promises');
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readdir).mockResolvedValue(['session-1.jsonl'] as unknown as Awaited<
+				ReturnType<typeof fs.default.readdir>
+			>);
+			vi.mocked(fs.default.stat).mockResolvedValue({
+				size: 1024,
+				mtime: new Date('2026-08-06T02:00:00Z'),
+				mtimeMs: Date.parse('2026-08-06T02:00:00Z'),
+			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
+			return fs;
+		};
+
+		it.each(['EACCES', 'EPERM', 'ENOENT'])(
+			'skips captureException when the read fails with %s',
+			async (code) => {
+				const fs = await listOneSessionFile();
+				vi.mocked(fs.default.readFile).mockRejectedValue(
+					Object.assign(new Error(`${code}: permission denied, open 'session-1.jsonl'`), { code })
+				);
+
+				const handler = handlers.get('claude:getProjectStats');
+				await handler!({} as any, '/test/project');
+
+				expect(vi.mocked(captureException)).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected read failure', async () => {
+			const fs = await listOneSessionFile();
+			vi.mocked(fs.default.readFile).mockRejectedValue(
+				Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' })
+			);
+
+			const handler = handlers.get('claude:getProjectStats');
+			await handler!({} as any, '/test/project');
+
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
 		});
 	});
 });

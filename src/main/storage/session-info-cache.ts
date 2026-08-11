@@ -34,6 +34,7 @@ import * as crypto from 'crypto';
 import { app } from 'electron';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { atomicWriteFile, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { mapWithConcurrency, LOCAL_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import type { AgentSessionInfo } from '../agents/session-storage';
@@ -139,9 +140,10 @@ export class SessionInfoCache {
 			} catch (error) {
 				// A missing file is the expected cold-start case; a corrupt one just
 				// costs a reparse. Neither should break listing, so both degrade to an
-				// empty scope - but anything other than ENOENT is worth a breadcrumb.
-				const code = (error as NodeJS.ErrnoException)?.code;
-				if (code !== 'ENOENT') {
+				// empty scope. The rest of the environmental set (EACCES/EPERM on a
+				// userData dir we cannot read, EISDIR, ...) is the same MAESTRO-YH
+				// boundary the transcript reads guard, so it stays local too.
+				if (!isExpectedSessionReadError(error)) {
 					logger.warn(`Failed to read cache for scope ${scopeKey}`, LOG_CONTEXT, { error });
 					void captureException(error, { operation: 'sessionInfoCache:read', scopeKey });
 				}

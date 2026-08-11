@@ -17,6 +17,7 @@ import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
 import { computeClaudeUsageCost } from '../utils/pricing';
 import { claudeModelUsage } from '../../shared/modelUsage';
@@ -233,6 +234,12 @@ async function parseSessionFile(
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
 			return null;
 		}
+		if (isExpectedSessionReadError(error)) {
+			// The transcript belongs to the Claude CLI, not to us - an unreadable
+			// or vanished file is environmental, not a Maestro fault (MAESTRO-YH).
+			logger.warn('Session file not readable', LOG_CONTEXT, { filePath, error });
+			return null;
+		}
 		logger.error(`Error reading session file: ${filePath}`, LOG_CONTEXT, error);
 		captureException(error, { operation: 'claudeStorage:readSessionFile', filePath });
 		return null;
@@ -374,10 +381,18 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			filenames = await fs.readdir(projectDir);
 		} catch (error) {
 			// A project that has never been opened in Claude simply has no folder.
-			// Anything else (EACCES, EIO) is a real fault: reporting it as "zero
-			// sessions" would silently hide the user's transcripts.
 			if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
 				return [];
+			}
+			// Everything else still throws: reporting an unreadable tree as "zero
+			// sessions" would silently hide the user's transcripts. But the
+			// environmental half of that set (a `~/.claude` owned by another user,
+			// a restrictive umask) is the very condition this guard exists for, and
+			// it recurs on every listing - so it stays a local warn. Only a genuinely
+			// unexpected failure pages (MAESTRO-YH).
+			if (isExpectedSessionReadError(error)) {
+				logger.warn(`Session directory not readable: ${projectDir}`, LOG_CONTEXT, { error });
+				throw error;
 			}
 			logger.error(`Error listing session directory: ${projectDir}`, LOG_CONTEXT, error);
 			captureException(error, {
@@ -401,6 +416,12 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							mtimeMs: stat.mtimeMs,
 						};
 					} catch (error) {
+						// The `fs.stat` races the directory listing above, so the entry can
+						// already be gone or unreadable by the time we get here (MAESTRO-YH).
+						if (isExpectedSessionReadError(error)) {
+							logger.warn(`Session file not stattable: ${filename}`, LOG_CONTEXT, { error });
+							return null;
+						}
 						logger.error(`Error stating session file: ${filename}`, LOG_CONTEXT, error);
 						captureException(error, { operation: 'claudeStorage:statSessionFile', filename });
 						return null;
@@ -447,6 +468,12 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 						mtimeMs: file.mtimeMs,
 					});
 				} catch (error) {
+					// Outer half of the same boundary `parseSessionFile` guards: the file
+					// can vanish or become unreadable between the stat and the read.
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Session file not readable: ${file.filePath}`, LOG_CONTEXT, { error });
+						return null;
+					}
 					logger.error(`Error processing session file: ${file.filePath}`, LOG_CONTEXT, error);
 					captureException(error, {
 						operation: 'claudeStorage:processSessionFile',
