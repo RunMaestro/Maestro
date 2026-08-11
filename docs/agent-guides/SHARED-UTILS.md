@@ -106,6 +106,19 @@ helpers below.
 | `stripAnsiCodes(text)`          | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases.                                                                                                                                |
 | `safeDecodeURIComponent(value)` | `(string) => string` | Percent-decode, returning the raw input on malformed escapes (`%`, `%ZZ`) instead of throwing `URIError`. Use for ANY untrusted path/href - agent output and Windows/non-ASCII paths routinely carry a bare `%`. Swallows only `URIError`. |
 
+## Markdown Task Utilities (`src/shared/markdownTasks.ts` - Both)
+
+Use these helpers for every Markdown task count, extraction, reset, or fence-aware line scan. They recognize `-`, `*`, and `+` bullets, checked markers `[x]`, `[X]`, `[✓]`, and `[✔]`, and exclude CommonMark fenced code examples.
+
+| Function                        | Signature                                                   | Purpose                                                                                   |
+| ------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `getMarkdownLines`              | `(content: string) => MarkdownLine[]`                       | Normalize line endings and classify each line by fence position and task state.           |
+| `countUncheckedMarkdownTasks`   | `(content: string) => number`                               | Count unchecked tasks outside fenced code blocks.                                         |
+| `countCheckedMarkdownTasks`     | `(content: string) => number`                               | Count checked tasks outside fenced code blocks.                                           |
+| `countMarkdownTasks`            | `(content: string) => { completed: number; total: number }` | Count all tasks and completed tasks outside fenced code blocks.                           |
+| `extractUncheckedMarkdownTasks` | `(content: string) => string[]`                             | Extract trimmed text from unchecked tasks outside fenced code blocks.                     |
+| `uncheckAllMarkdownTasks`       | `(content: string) => string`                               | Reset checked tasks outside fences while preserving the document's original line endings. |
+
 ## Font Utilities (`src/shared/fontStack.ts` - Both)
 
 | Export                     | Signature                                 | Purpose                                                                                                                                                                                                                                                              |

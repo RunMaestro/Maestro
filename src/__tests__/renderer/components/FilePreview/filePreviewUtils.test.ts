@@ -196,6 +196,13 @@ describe('filePreviewUtils', () => {
 			expect(result.closed).toBe(1);
 		});
 
+		it('handles plus-style tasks and checkmark completions', () => {
+			const content = '+ [ ] open\n+ [✓] closed\n+ [✔] also closed';
+			const result = countMarkdownTasks(content);
+			expect(result.open).toBe(1);
+			expect(result.closed).toBe(2);
+		});
+
 		it('handles indented tasks', () => {
 			const content = '  - [ ] indented open\n  - [x] indented closed';
 			const result = countMarkdownTasks(content);
@@ -212,6 +219,13 @@ describe('filePreviewUtils', () => {
 
 		it('ignores tasks inside tilde code fences', () => {
 			const content = '~~~\n- [ ] inside fence\n~~~\n- [ ] outside';
+			const result = countMarkdownTasks(content);
+			expect(result.open).toBe(1);
+			expect(result.closed).toBe(0);
+		});
+
+		it('does not close a longer fence with a shorter delimiter', () => {
+			const content = '````markdown\n```\n- [ ] inside fence\n````\n- [ ] outside';
 			const result = countMarkdownTasks(content);
 			expect(result.open).toBe(1);
 			expect(result.closed).toBe(0);
