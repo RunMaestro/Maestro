@@ -22,6 +22,7 @@ import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { clearRetryIfSettled } from '../../../stores/retryStore';
+import { isTtsrAbortPending } from '../../../stores/ttsrStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
@@ -143,6 +144,16 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			// here or those one-shot effects would fire once per open window.
 			if (!ownedGate.current?.(sessionId)) return;
 			if (sessionId.includes('-terminal-')) return;
+
+			// TTSR aborted this turn deliberately: main signalled the process and is
+			// about to hand back a corrective prompt on `ttsr:triggered`. Running the
+			// normal exit side effects here would idle the tab, dequeue the next
+			// queued item onto the same process id, and log the turn as finished -
+			// all of which the corrective respawn would then have to undo.
+			if (isTtsrAbortPending(sessionId)) {
+				logger.info('[onExit] Suppressed - TTSR abort in flight', undefined, { sessionId });
+				return;
+			}
 
 			logger.info('[onExit] Process exit event received:', undefined, {
 				rawSessionId: sessionId,

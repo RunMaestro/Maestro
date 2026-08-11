@@ -4,9 +4,27 @@ import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
+import { isWebDesktop } from '../utils/runtimeContext';
 import { formatDurationParts as formatDuration } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
 import { Z_LAYERS } from '../constants/zLayers';
+import type { TtsrToastMarker } from '../../shared/ttsr-types';
+
+/**
+ * Client-specific outcome line for a TTSR interrupt toast, resolved at display
+ * time. The broadcast payload states only the detection (which rule fired); the
+ * desktop renderer is what actually spawns the corrective turn, while
+ * web-desktop clients only mirror its streamed output. Resolving here lets one
+ * payload tell the truth on every client. Returns null when the marker is
+ * absent, so non-TTSR toasts render with their plain message unchanged.
+ */
+function ttsrOutcomeLine(marker: TtsrToastMarker | undefined): string | null {
+	if (!marker) return null;
+	if (isWebDesktop()) return 'Correction runs in the desktop app.';
+	return marker.mode === 'fresh'
+		? 'Restarting the turn with corrective guidance.'
+		: 'Resuming with corrective guidance.';
+}
 
 interface ToastContainerProps {
 	theme: Theme;
@@ -91,6 +109,9 @@ const ToastItem = memo(function ToastItem({
 
 	// Check if toast is clickable (has session navigation or custom action)
 	const isClickable = toast.onClick || toast.clickAction || (toast.sessionId && onSessionClick);
+
+	// Client-specific outcome sentence for TTSR interrupt toasts (null otherwise).
+	const ttsrOutcome = ttsrOutcomeLine(toast.ttsr);
 
 	// Icon based on the toast color (5-color design language).
 	const getIcon = () => {
@@ -257,6 +278,13 @@ const ToastItem = memo(function ToastItem({
 					<div className="text-xs mt-1 leading-relaxed" style={{ color: theme.colors.textDim }}>
 						{toast.message}
 					</div>
+
+					{/* TTSR outcome line - client-specific, resolved at display time */}
+					{ttsrOutcome && (
+						<div className="text-xs mt-1 leading-relaxed" style={{ color: theme.colors.textDim }}>
+							{ttsrOutcome}
+						</div>
+					)}
 
 					{/* Action link */}
 					{toast.actionUrl && (

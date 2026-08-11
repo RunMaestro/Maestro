@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
-import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
+import type { ProcessConfig, ManagedProcess, SpawnResult, ParsedEventObserver } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
@@ -47,6 +47,11 @@ export class ChildProcessSpawner {
 			emitter: this.emitter,
 			bufferManager: this.bufferManager,
 		});
+	}
+
+	/** Forward the parsed-event observer to this spawner's stdout handler. */
+	setParsedEventObserver(observer: ParsedEventObserver | null): void {
+		this.stdoutHandler.setParsedEventObserver(observer);
 	}
 
 	/**

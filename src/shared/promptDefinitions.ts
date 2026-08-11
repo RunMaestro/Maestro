@@ -41,6 +41,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Wizard document generation prompt',
 		category: 'wizard',
 	},
+	// TTSR (Time-Traveling Stream Rules)
+	{
+		id: 'ttsr-rule-authoring',
+		filename: 'ttsr-rule-authoring.md',
+		description: 'Briefs an agent on the TTSR rule schema so it can author rule files',
+		category: 'ttsr',
+	},
 	// Inline Wizard
 	{
 		id: 'wizard-inline-system',
@@ -298,6 +305,8 @@ export const PROMPT_IDS = {
 	MAESTRO_SYSTEM_PROMPT: 'maestro-system-prompt',
 	// Pianola
 	PIANOLA_SYSTEM: 'pianola-system',
+	// TTSR
+	TTSR_RULE_AUTHORING: 'ttsr-rule-authoring',
 	// Group Chat
 	GROUP_CHAT_MODERATOR_SYSTEM: 'group-chat-moderator-system',
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',

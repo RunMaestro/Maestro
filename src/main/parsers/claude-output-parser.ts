@@ -42,6 +42,25 @@ interface ClaudeContentBlock {
 }
 
 /**
+ * Raw SSE event carried inside a stream_event object.
+ *
+ * Emitted by claude-code when spawned with --include-partial-messages. The CLI
+ * wraps each raw Anthropic streaming (SSE) event as
+ * `{ type: 'stream_event', event: <raw SSE event>, session_id, parent_tool_use_id }`.
+ * Only content_block_delta carries token-level text/thinking; the other kinds
+ * (message_start, content_block_start, message_delta, message_stop, etc.) are
+ * control-plane framing.
+ */
+interface ClaudeStreamRawEvent {
+	type: string;
+	delta?: {
+		type?: string;
+		text?: string;
+		thinking?: string;
+	};
+}
+
+/**
  * Token usage as Claude reports it, both per API call (on `assistant` messages)
  * and as the turn total (on `result` messages).
  */
@@ -65,9 +84,10 @@ interface ClaudeRawMessage {
 	/**
 	 * Set on assistant/user messages produced by a Task subagent; references the
 	 * tool_use id of the Task call that spawned it. Absent on main-transcript
-	 * messages.
+	 * messages. Also carried on stream_event objects, where claude-code may emit
+	 * an explicit null - normalizeParentToolUseId collapses null to undefined.
 	 */
-	parent_tool_use_id?: string;
+	parent_tool_use_id?: string | null;
 	result?: string;
 	message?: {
 		id?: string;
@@ -84,6 +104,8 @@ interface ClaudeRawMessage {
 	modelUsage?: Record<string, ModelStats>;
 	usage?: ClaudeCallUsage;
 	total_cost_usd?: number;
+	// Present only on type:"stream_event" objects (--include-partial-messages)
+	event?: ClaudeStreamRawEvent;
 }
 
 /**
@@ -137,6 +159,15 @@ function normalizeParentToolUseId(msg: ClaudeRawMessage): string | undefined {
  */
 export class ClaudeOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'claude-code';
+
+	/**
+	 * Set to true when a prose (text_delta / thinking_delta) stream_event has been
+	 * emitted for the in-flight assistant message. When the complete 'assistant'
+	 * event for that message arrives, it is stamped textAlreadyStreamed: true and
+	 * this marker resets. This is how the parser avoids downstream double-counting
+	 * of prose that was already delivered token-by-token.
+	 */
+	private sawStreamedProseDelta = false;
 
 	/**
 	 * Correlates a tool_use id (from an assistant message) with its tool name so
@@ -207,9 +238,16 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Transform a parsed Claude message into a normalized ParsedEvent
+	 * Transform a parsed Claude message into a normalized ParsedEvent.
+	 * Returns null for stream_event framing that should not reach downstream
+	 * consumers (everything except token-level text/thinking deltas).
 	 */
-	private transformMessage(msg: ClaudeRawMessage): ParsedEvent {
+	private transformMessage(msg: ClaudeRawMessage): ParsedEvent | null {
+		// Handle token-level streaming deltas (--include-partial-messages)
+		if (msg.type === 'stream_event') {
+			return this.transformStreamEvent(msg);
+		}
+
 		// Handle system/init messages
 		if (msg.type === 'system' && msg.subtype === 'init') {
 			return {
@@ -262,12 +300,19 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			// When thinking blocks are present, emit them as partial content for thinking-chunk events
 			const contentToEmit = thinkingText || text;
 
+			// If prose deltas already streamed for this message via stream_event,
+			// its text reached downstream consumers token-by-token. Stamp the flag
+			// so they skip re-ingesting, then reset the marker for the next message.
+			const textAlreadyStreamed = this.sawStreamedProseDelta || undefined;
+			this.sawStreamedProseDelta = false;
+
 			return {
 				type: 'text',
 				text: contentToEmit,
 				sessionId: msg.session_id,
 				isPartial: true,
 				isReasoning: thinkingText.length > 0 || undefined,
+				textAlreadyStreamed,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
 				parentToolUseId: normalizeParentToolUseId(msg),
 				raw: msg,
@@ -310,6 +355,56 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			sessionId: msg.session_id,
 			raw: msg,
 		};
+	}
+
+	/**
+	 * Transform a stream_event object into a token-level partial text event.
+	 *
+	 * stream_event objects only appear with --include-partial-messages and wrap a
+	 * raw Anthropic SSE event. Only content_block_delta carries user-visible token
+	 * deltas:
+	 * - text_delta    -> partial 'text' event
+	 * - thinking_delta -> partial 'text' event with isReasoning: true
+	 *
+	 * Every other SSE kind (message_start, content_block_start, input_json_delta,
+	 * message_delta, message_stop, content_block_stop, signature_delta, and empty
+	 * deltas) returns null so it never spams downstream. Tool inputs continue to
+	 * arrive via the complete assistant event's toolUseBlocks, so input_json_delta
+	 * is intentionally dropped here.
+	 */
+	private transformStreamEvent(msg: ClaudeRawMessage): ParsedEvent | null {
+		const event = msg.event;
+		if (!event || event.type !== 'content_block_delta' || !event.delta) {
+			return null;
+		}
+
+		const delta = event.delta;
+
+		if (delta.type === 'text_delta' && delta.text) {
+			this.sawStreamedProseDelta = true;
+			return {
+				type: 'text',
+				text: delta.text,
+				sessionId: msg.session_id,
+				isPartial: true,
+				raw: msg,
+			};
+		}
+
+		if (delta.type === 'thinking_delta' && delta.thinking) {
+			this.sawStreamedProseDelta = true;
+			return {
+				type: 'text',
+				text: delta.thinking,
+				sessionId: msg.session_id,
+				isPartial: true,
+				isReasoning: true,
+				raw: msg,
+			};
+		}
+
+		// input_json_delta, signature_delta, or any other delta kind: drop it.
+		return null;
 	}
 
 	/**

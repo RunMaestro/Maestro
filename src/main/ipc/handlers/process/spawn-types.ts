@@ -57,4 +57,8 @@ export interface SpawnProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// Set only on a TTSR corrective respawn: the id from `ttsr:triggered`, echoed
+	// back so the TTSR spawn registry recognises this exact turn (and keeps the
+	// aborted turn's goal) without inspecting the prompt.
+	ttsrCorrelationId?: string;
 }
