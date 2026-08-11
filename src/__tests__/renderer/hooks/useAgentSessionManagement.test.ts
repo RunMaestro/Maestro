@@ -284,7 +284,7 @@ describe('useAgentSessionManagement', () => {
 		const existingTab = createMockTab({
 			id: 'tab-existing',
 			agentSessionId: 'agent-123',
-			logs: [], // Empty logs — should trigger reload from disk
+			logs: [], // Empty logs - should trigger reload from disk
 		});
 		const activeSession = createMockSession({
 			aiTabs: [createMockTab({ id: 'tab-1' }), existingTab],

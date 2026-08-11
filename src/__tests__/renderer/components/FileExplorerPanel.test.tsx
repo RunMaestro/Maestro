@@ -1680,7 +1680,7 @@ describe('FileExplorerPanel', () => {
 	describe('Indent Alignment (locked invariants)', () => {
 		const BASE_PAD = 8;
 		const INDENT_STEP = 20;
-		const CHEVRON_PLUS_GAP = 20; // w-3 (12) + gap-2 (8) — must equal INDENT_STEP
+		const CHEVRON_PLUS_GAP = 20; // w-3 (12) + gap-2 (8) - must equal INDENT_STEP
 		const expectedPad = (depth: number) => `${BASE_PAD + depth * INDENT_STEP}px`;
 
 		const getRowByText = (container: HTMLElement, text: string) =>

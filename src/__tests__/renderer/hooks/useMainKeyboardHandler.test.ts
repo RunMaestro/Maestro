@@ -1713,7 +1713,7 @@ describe('useMainKeyboardHandler', () => {
 						filePreviewTabs: [
 							{ id: 'file-tab-1', path: '/test/file.ts', name: 'file', extension: '.ts' },
 						],
-						activeFileTabId: 'file-tab-1', // File tab is active — inputMode stays 'ai'
+						activeFileTabId: 'file-tab-1', // File tab is active - inputMode stays 'ai'
 						unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
 						inputMode: 'ai',
 					},

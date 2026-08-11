@@ -1260,7 +1260,7 @@ describe('useBatchProcessor hook', () => {
 			const endCall = (window.maestro.stats.endAutoRun as ReturnType<typeof vi.fn>).mock.calls[0];
 			expect(endCall[0]).toBe('auto-run-id'); // statsAutoRunId from setup mock
 			expect(endCall[1]).toBeGreaterThan(0); // elapsed duration in ms
-			expect(endCall[2]).toBe(0); // completedTasks — nothing finished before kill
+			expect(endCall[2]).toBe(0); // completedTasks - nothing finished before kill
 
 			// A history entry tagged as AUTO must be written with the elapsed time
 			const historyEntry = mockOnAddHistoryEntry.mock.calls.find(
@@ -5705,7 +5705,7 @@ describe('useBatchProcessor hook', () => {
 				'/projects/worktrees/auto-run-rc-0514',
 				'auto-run-rc-0514',
 				undefined, // sshRemoteId
-				'rc' // baseBranch — must reach IPC, not get dropped
+				'rc' // baseBranch - must reach IPC, not get dropped
 			);
 		});
 	});

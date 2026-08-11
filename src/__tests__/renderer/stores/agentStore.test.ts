@@ -1280,7 +1280,7 @@ describe('agentStore', () => {
 				aiTabs: [
 					{
 						id: 'tab-1',
-						agentSessionId: null, // NEW session — no conversation ID
+						agentSessionId: null, // NEW session - no conversation ID
 						name: null,
 						starred: false,
 						logs: [],

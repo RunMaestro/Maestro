@@ -1324,7 +1324,7 @@ describe('useInputProcessing', () => {
 				const deps = createDeps({
 					activeSession: session,
 					sessionsRef: { current: [session] },
-					inputValue: '', // input is empty — staged images must come from options
+					inputValue: '', // input is empty - staged images must come from options
 					stagedImages: [], // active tab has no staged images at click time
 				});
 				const { result } = renderHook(() => useInputProcessing(deps));

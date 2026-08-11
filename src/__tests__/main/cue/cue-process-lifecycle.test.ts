@@ -598,7 +598,7 @@ describe('cue-process-lifecycle', () => {
 			await vi.advanceTimersByTimeAsync(0);
 
 			mockChild.emit('close', 0);
-			mockChild.emit('close', 1); // duplicate — should be ignored
+			mockChild.emit('close', 1); // duplicate - should be ignored
 			const result = await resultPromise;
 
 			expect(result.status).toBe('completed');

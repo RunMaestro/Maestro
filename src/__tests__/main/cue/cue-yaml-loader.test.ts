@@ -654,7 +654,7 @@ subscriptions:
 			expect(changeHandler).toBeDefined();
 
 			changeHandler!();
-			expect(onChange).not.toHaveBeenCalled(); // Not yet — debounced
+			expect(onChange).not.toHaveBeenCalled(); // Not yet - debounced
 
 			vi.advanceTimersByTime(1000);
 			expect(onChange).toHaveBeenCalledTimes(1);

@@ -2316,7 +2316,7 @@ describe('CueEngine', () => {
 						enabled: true,
 						prompt: 'filtered task',
 						schedule_times: ['09:00'],
-						filter: { matched_day: 'tue' }, // Won't match — today is Monday
+						filter: { matched_day: 'tue' }, // Won't match - today is Monday
 					},
 				],
 			});

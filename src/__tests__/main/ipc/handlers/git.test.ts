@@ -2423,7 +2423,7 @@ export function Component() {
 				'/worktrees/existing',
 				'already-exists',
 				undefined,
-				'rc' // baseBranch — ignored when branch already exists
+				'rc' // baseBranch - ignored when branch already exists
 			);
 
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(

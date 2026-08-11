@@ -3394,7 +3394,7 @@ describe('tabHelpers', () => {
 			const session = createMockSession({
 				aiTabs: [aiTab],
 				browserTabs: [browserTab],
-				activeTabId: 'ai-1', // Stale — points at the AI tab we're about to navigate to
+				activeTabId: 'ai-1', // Stale - points at the AI tab we're about to navigate to
 				activeBrowserTabId: 'browser-1', // What the user is actually on
 				activeFileTabId: null,
 				activeTerminalTabId: null,
