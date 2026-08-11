@@ -210,7 +210,7 @@ export interface AutoRunState {
 	errorTaskDescription?: string;
 	/** True when this run pursues a free-text goal instead of documents */
 	goalMode?: boolean;
-	/** Latest self-reported progress toward the goal (0–100) */
+	/** Latest self-reported progress toward the goal (0-100) */
 	goalProgress?: number;
 	/** One-line rationale accompanying the latest goal progress report */
 	goalRationale?: string;

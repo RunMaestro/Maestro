@@ -493,7 +493,7 @@ export interface BatchRunState {
 	// meaningful when `goalMode` is true; in document/task mode they stay at their
 	// defaults and are ignored. See src/shared/goalDriven/types.ts.
 	goalMode?: boolean; // True when this run is pursuing a free-text goal (not documents)
-	goalProgress?: number; // Latest self-reported progress toward the goal (0–100)
+	goalProgress?: number; // Latest self-reported progress toward the goal (0-100)
 	goalRationale?: string; // One-line rationale accompanying the latest progress report
 	goalIteration?: number; // 1-based iteration number the goal loop is on
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped

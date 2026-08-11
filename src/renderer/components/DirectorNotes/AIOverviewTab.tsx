@@ -111,7 +111,7 @@ let cachedSynopsis: {
 	narrativeRecovery?: string | null;
 } | null = null;
 
-// Exported for testing only – allows resetting the module-level cache between test runs
+// Exported for testing only - allows resetting the module-level cache between test runs
 export function _resetCacheForTesting() {
 	cachedSynopsis = null;
 	activeGenerationPromise = null;

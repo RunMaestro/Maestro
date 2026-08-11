@@ -387,7 +387,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Reveal in Finder / Explorer / File Manager — local files only */}
+						{/* Reveal in Finder / Explorer / File Manager - local files only */}
 						{toolbarVisibility.revealInFolder && !sshRemoteId && (
 							<HoverTooltip theme={theme} label={getRevealLabel(window.maestro?.platform ?? '')}>
 								<button

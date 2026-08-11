@@ -531,7 +531,7 @@ export const TerminalOutput = memo(
 					<div ref={contentRef}>
 						{/* Log entries */}
 						{visibleLogs.map((log, visibleIndex) => {
-							// Absolute index into filteredLogs — sibling lookups (echo stripping)
+							// Absolute index into filteredLogs - sibling lookups (echo stripping)
 							// and jump-to-message targeting must not see the window offset.
 							const index = logStartIndex + visibleIndex;
 							return (

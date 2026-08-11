@@ -19,7 +19,7 @@ A specification is "Ready for Development" when:
 
 ## SCOPE STANDARD
 
-A specification should target a **single user-facing goal** within **900–1600 tokens**:
+A specification should target a **single user-facing goal** within **900-1600 tokens**:
 
 - **Single goal**: One cohesive feature, even if it spans multiple layers/files. Multi-goal means >=2 **top-level independent shippable deliverables** - each could be reviewed, tested, and merged as a separate PR without breaking the others. Never count surface verbs, "and" conjunctions, or noun phrases. Never split cross-layer implementation details inside one user goal.
   - Split: "add dark mode toggle AND refactor auth to JWT AND build admin dashboard"

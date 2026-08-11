@@ -3622,7 +3622,7 @@ describe('TerminalOutput', () => {
 
 			const indices = renderedIndices(container);
 			expect(indices.length).toBeLessThan(logs.length);
-			// The newest entry is what the user is looking at — it must be present.
+			// The newest entry is what the user is looking at - it must be present.
 			expect(screen.getByText('Message 399')).toBeInTheDocument();
 			// Ancient history is deferred, not dropped (see backfill test below).
 			expect(screen.queryByText('Message 0')).not.toBeInTheDocument();

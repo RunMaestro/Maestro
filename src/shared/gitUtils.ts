@@ -377,7 +377,7 @@ export function parseWorktreePathForBranch(stdout: string, branchName: string): 
  * same sanitized branch ("Cue-Dashboard") regardless of entry point.
  */
 // Built from string form so the source file doesn't carry raw control bytes.
-// Matches ASCII control characters (U+0000–U+001F, U+007F) which git rejects in refs.
+// Matches ASCII control characters (U+0000-U+001F, U+007F) which git rejects in refs.
 const GIT_REF_CONTROL_CHARS_RE = new RegExp('[\\u0000-\\u001f\\u007f]', 'g');
 
 export interface SanitizeGitBranchNameOptions {

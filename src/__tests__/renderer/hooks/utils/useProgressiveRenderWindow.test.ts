@@ -1,5 +1,5 @@
 /**
- * Tests for useProgressiveRenderWindow — the tail-first render window that keeps
+ * Tests for useProgressiveRenderWindow - the tail-first render window that keeps
  * agent switching responsive on long transcripts (issue #1342).
  *
  * The hook returns a slice index plus a reveal escape hatch. The behaviours that
@@ -78,7 +78,7 @@ describe('useProgressiveRenderWindow', () => {
 		const afterBackfill = result.current.startIndex;
 
 		// Agent streams 40 more entries. They append at the tail, so they are inside
-		// the window already — the start index must not jump forward.
+		// the window already - the start index must not jump forward.
 		rerender({ total: 540 });
 		expect(result.current.startIndex).toBe(afterBackfill);
 	});
@@ -157,7 +157,7 @@ describe('useProgressiveRenderWindow', () => {
 				result.current.revealTo(100);
 			});
 			// A later request for a newer item must not re-hide the history already
-			// pulled in — that would unmount entries the user can see.
+			// pulled in - that would unmount entries the user can see.
 			act(() => {
 				result.current.revealTo(400);
 			});

@@ -36,7 +36,7 @@ const CLI_SEND_TIMEOUT_MS = 30_000;
  * path + all argv + quoting), so a 100K message would fail with
  * `ENAMETOOLONG`/`EINVAL` before the CLI even runs. 30K leaves ~2.7K of
  * headroom for the rest of the argv. POSIX `ARG_MAX` is typically
- * 128K–2MB, so the historic 100K cap is preserved there.
+ * 128K-2MB, so the historic 100K cap is preserved there.
  */
 const CLI_SEND_OUTPUT_MAX_CHARS_POSIX = 100_000;
 const CLI_SEND_OUTPUT_MAX_CHARS_WINDOWS = 30_000;

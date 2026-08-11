@@ -112,7 +112,7 @@ export interface AutoRunState {
 	// instead of documents. The web client shows goal percent + iteration in
 	// place of task counts when goalMode is true.
 	goalMode?: boolean;
-	goalProgress?: number; // 0–100 self-reported progress
+	goalProgress?: number; // 0-100 self-reported progress
 	goalRationale?: string; // One-line rationale for the latest progress report
 	goalIteration?: number; // 1-based iteration the goal loop is on
 }

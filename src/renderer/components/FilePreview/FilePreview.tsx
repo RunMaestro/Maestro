@@ -62,6 +62,7 @@ import {
 	isBinaryExtension,
 	formatFileSize,
 	countMarkdownTasks,
+	toggleTaskCheckboxAtLine,
 	extractHeadings,
 	isReadableTextPreview,
 	isCodeFile,
@@ -91,6 +92,7 @@ import {
 	domScrollToLineByAttr,
 } from './lineSync';
 import { rehypeSourceLine } from './rehypeSourceLine';
+import { TaskCheckbox } from './TaskCheckbox';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -653,6 +655,80 @@ export const FilePreview = React.memo(
 			}
 		}, []);
 
+		// Ticking a task checkbox in the rendered preview writes the file straight
+		// to disk, so back-to-back clicks need two guards. `pendingTaskContentRef`
+		// holds the document the previous click produced, because `file.content` is
+		// still the pre-write copy until the tab re-reads it - toggling twice from
+		// the stale copy would undo the first flip. `taskWriteChainRef` serializes
+		// the writes so the last click, not the fastest write, wins on disk.
+		const pendingTaskContentRef = useRef<string | null>(null);
+		const taskWriteChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+		useEffect(() => {
+			pendingTaskContentRef.current = null;
+		}, [file?.content]);
+
+		const handleToggleTask = useCallback(
+			async (line: number): Promise<boolean> => {
+				if (!file || !onSave) return false;
+				if (hasChanges) {
+					// The preview renders the file on disk, not the unsaved buffer, so a
+					// write here would silently drop the user's in-editor edits.
+					notifyToast({
+						color: 'yellow',
+						title: 'Unsaved Changes',
+						message: 'Save or discard your edits before ticking tasks.',
+					});
+					return false;
+				}
+
+				const base = pendingTaskContentRef.current ?? file.content;
+				const result = toggleTaskCheckboxAtLine(base, line);
+				// No task marker on that line: the render is out of step with the
+				// source. Leave the file alone rather than rewriting the wrong line.
+				if (!result) return false;
+				pendingTaskContentRef.current = result.content;
+
+				const revert = () => {
+					// Only roll back if no later click has already moved past us.
+					if (pendingTaskContentRef.current === result.content) {
+						pendingTaskContentRef.current = base;
+					}
+				};
+
+				const write = taskWriteChainRef.current.then(() => onSave(file.path, result.content));
+				taskWriteChainRef.current = write.catch(() => {});
+
+				try {
+					if ((await write) === false) {
+						// User cancelled the save-location dialog.
+						revert();
+						return false;
+					}
+					// Keep the file-change poller from flagging our own write.
+					try {
+						const stat = await window.maestro?.fs?.stat(file.path, sshRemoteId);
+						if (stat?.modifiedAt) {
+							lastModifiedRef.current = new Date(stat.modifiedAt).getTime();
+						}
+					} catch {
+						// Non-critical - worst case the banner appears briefly
+					}
+					return true;
+				} catch (err) {
+					revert();
+					logger.error('Failed to toggle task checkbox:', undefined, err);
+					notifyToast({
+						color: 'red',
+						title: 'Save Failed',
+						message: err instanceof Error ? err.message : 'Could not update the task.',
+					});
+					return false;
+				}
+			},
+			[file, onSave, hasChanges, sshRemoteId]
+		);
+
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
@@ -671,6 +747,24 @@ export const FilePreview = React.memo(
 			});
 			return {
 				...components,
+				// GFM task checkboxes. `rehypeSourceLine` stamps each one with the
+				// line its `- [ ]` marker lives on, which is what lets a click edit
+				// the file. Everything else (raw HTML inputs passed through by
+				// rehype-raw) stays inert - a preview is not a form.
+				input: ({ node: _node, type, checked, ...props }: any) => {
+					const line = Number(props['data-source-line']);
+					if (type === 'checkbox' && onSave && Number.isFinite(line)) {
+						return (
+							<TaskCheckbox
+								line={line}
+								checked={!!checked}
+								theme={theme}
+								onToggle={handleToggleTask}
+							/>
+						);
+					}
+					return <input type={type} checked={checked} disabled readOnly {...props} />;
+				},
 				img: ({ src, alt, ...props }: any) => {
 					// Check if this image came from file tree (set by remarkFileLinks)
 					const isFromTree = props['data-maestro-from-tree'] === 'true';
@@ -716,6 +810,8 @@ export const FilePreview = React.memo(
 			file,
 			showRemoteImages,
 			sshRemoteId,
+			onSave,
+			handleToggleTask,
 			effectiveBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,

@@ -41,7 +41,7 @@ export function InputBehaviorSection({
 		: formatShortcutKeys(['Meta', 'Shift', 'Enter']);
 
 	// "Always" mode makes every send a force-send, so the modifier shortcut is
-	// redundant — we ghost it out to signal that.
+	// redundant - we ghost it out to signal that.
 	const alwaysMode = forcedParallelExecution && forcedParallelAlways;
 
 	return (

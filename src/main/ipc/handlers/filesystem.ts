@@ -364,7 +364,7 @@ export function registerFilesystemHandlers(): void {
 	// Enumerate a remote directory tree in a single SSH round-trip.
 	// Replaces N-per-directory `ls` recursion with two batched `find` calls
 	// bundled into one SSH command. Used by the file explorer to load remote
-	// trees in 1–2 round-trips total instead of one per directory.
+	// trees in 1-2 round-trips total instead of one per directory.
 	// SSH-only: local trees use direct fs recursion in the renderer.
 	ipcMain.handle(
 		'fs:listTreeRemote',

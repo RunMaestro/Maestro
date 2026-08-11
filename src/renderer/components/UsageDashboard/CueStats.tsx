@@ -71,7 +71,7 @@ function formatPercent(ratio: number): string {
 const SUMMARY_SPARKLINE_LIMIT = 14;
 
 /**
- * Right-aligned slice of the time-series buckets used to draw a 7–14 point
+ * Right-aligned slice of the time-series buckets used to draw a 7-14 point
  * sparkline beneath each summary card. We pad with leading zeros if the range
  * has fewer buckets so geometry stays stable.
  */

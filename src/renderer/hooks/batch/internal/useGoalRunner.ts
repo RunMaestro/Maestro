@@ -421,7 +421,7 @@ export function useGoalRunner({
 			// Start stats tracking. Record the goal as the document path behind a
 			// `Goal: ` prefix (trimmed to a readable length) so the run is
 			// recognizable - and distinguishable from document runs - in the Usage
-			// Dashboard; progress maps onto the 0–100 task scale.
+			// Dashboard; progress maps onto the 0-100 task scale.
 			let statsAutoRunId: string | null = null;
 			try {
 				statsAutoRunId = await window.maestro.stats.startAutoRun({

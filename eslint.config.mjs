@@ -5,6 +5,7 @@ import reactPlugin from 'eslint-plugin-react';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import prettierConfig from 'eslint-config-prettier';
 import globals from 'globals';
+import maestroPlugin from './eslint-rules/no-em-dash-in-comments.mjs';
 
 export default tseslint.config(
 	// Ignore patterns
@@ -54,6 +55,7 @@ export default tseslint.config(
 		plugins: {
 			react: reactPlugin,
 			'react-hooks': reactHooksPlugin,
+			maestro: maestroPlugin,
 		},
 		rules: {
 			// TypeScript-specific rules
@@ -89,6 +91,12 @@ export default tseslint.config(
 			'no-useless-escape': 'off', // Sometimes needed for clarity in regexes
 			'prefer-const': 'warn',
 			'no-var': 'error',
+
+			// House style, and a merge-conflict guard: em/en-dashes in comments are
+			// what made 603 files differ between main and rc while being otherwise
+			// identical. Autofixable via `eslint --fix`. See the rule for why this
+			// covers comments only and not string literals.
+			'maestro/no-em-dash-in-comments': 'error',
 		},
 		settings: {
 			react: {
