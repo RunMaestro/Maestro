@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { stripAnsiCodes } from '../../shared/stringUtils';
+import { safeDecodeURIComponent, stripAnsiCodes } from '../../shared/stringUtils';
 
 describe('stripAnsiCodes', () => {
 	it('should return empty string for empty input', () => {
@@ -199,5 +199,26 @@ describe('stripAnsiCodes', () => {
 				']1337;RemoteHost=pedram@PedTome.local]1337;CurrentDir=/Users/pedram]1337;ShellIntegrationVersion=13;shell=zsh{"type":"system","subtype":"init"}';
 			expect(stripAnsiCodes(input)).toBe('{"type":"system","subtype":"init"}');
 		});
+	});
+});
+
+describe('safeDecodeURIComponent', () => {
+	it('should decode well-formed percent encoding', () => {
+		expect(safeDecodeURIComponent('my%20file.md')).toBe('my file.md');
+		expect(safeDecodeURIComponent('%2Fa%2Fb.md')).toBe('/a/b.md');
+		expect(safeDecodeURIComponent('caf%C3%A9')).toBe('café');
+	});
+
+	it('should return the original value for malformed percent encoding', () => {
+		expect(safeDecodeURIComponent('100%')).toBe('100%');
+		expect(safeDecodeURIComponent('%')).toBe('%');
+		expect(safeDecodeURIComponent('%zz')).toBe('%zz');
+		expect(safeDecodeURIComponent('%E0%A4%A')).toBe('%E0%A4%A');
+		expect(safeDecodeURIComponent('C:\\temp\\50%off')).toBe('C:\\temp\\50%off');
+	});
+
+	it('should pass through strings with nothing to decode', () => {
+		expect(safeDecodeURIComponent('')).toBe('');
+		expect(safeDecodeURIComponent('plain-text')).toBe('plain-text');
 	});
 });

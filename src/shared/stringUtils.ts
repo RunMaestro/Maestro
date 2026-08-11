@@ -46,6 +46,34 @@ export function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Percent-decode a string, returning it unchanged when decoding would throw
+ *
+ * `decodeURIComponent` throws `URIError` on malformed percent encoding, which
+ * is easy to hit with user-supplied input: a Windows path containing `%`, a
+ * hand-typed deep link, or a markdown image src that was never encoded. Use
+ * this wherever the input is not guaranteed to be well-formed.
+ *
+ * @param value - The possibly percent-encoded string
+ * @returns The decoded string, or the original value if decoding fails
+ *
+ * @example
+ * ```typescript
+ * safeDecodeURIComponent('my%20file.md'); // 'my file.md'
+ * safeDecodeURIComponent('100%');         // '100%' (would throw URIError)
+ * ```
+ */
+export function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		// Malformed percent encoding (e.g. a bare '%' or a truncated '%E0%A4')
+		// throws URIError. Callers handle user-supplied strings that may not be
+		// encoded at all, so fall back to the original value instead of failing.
+		return value;
+	}
+}
+
 export function stripAnsiCodes(text: string): string {
 	// Matches ANSI CSI sequences, including DEC private modes like ESC[?1h.
 	let result = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');

@@ -8,6 +8,7 @@
  */
 
 import type { ParsedDeepLink } from './types';
+import { safeDecodeURIComponent } from './stringUtils';
 
 const PROTOCOL = 'maestro://';
 
@@ -65,23 +66,23 @@ export function parseMaestroDeepLink(url: string): ParsedDeepLink | null {
 			if (sub === 'tab' && subId) {
 				return {
 					action: 'session',
-					sessionId: decodeURIComponent(id),
-					tabId: decodeURIComponent(subId),
+					sessionId: safeDecodeURIComponent(id),
+					tabId: safeDecodeURIComponent(subId),
 				};
 			}
-			return { action: 'session', sessionId: decodeURIComponent(id) };
+			return { action: 'session', sessionId: safeDecodeURIComponent(id) };
 		}
 
 		if (resource === 'group' && id) {
-			return { action: 'group', groupId: decodeURIComponent(id) };
+			return { action: 'group', groupId: safeDecodeURIComponent(id) };
 		}
 
 		if (resource === 'file' && id && sub) {
 			const line = parseLineFragment(hashPart);
 			const result: ParsedDeepLink = {
 				action: 'file',
-				sessionId: decodeURIComponent(id),
-				filePath: decodeURIComponent(sub),
+				sessionId: safeDecodeURIComponent(id),
+				filePath: safeDecodeURIComponent(sub),
 			};
 			if (line !== undefined) result.line = line;
 			return result;
