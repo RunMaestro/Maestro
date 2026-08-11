@@ -972,6 +972,50 @@ export class CueEngine {
 		}
 	}
 
+	/**
+	 * The process just switched to a new system timezone (laptop crossed zones,
+	 * or the OS clock was reconfigured). Called by the main process's timezone
+	 * watcher AFTER `process.env.TZ` has been reassigned, so `new Date()` already
+	 * reports the new zone by the time this runs.
+	 *
+	 * `time.scheduled` matching needs no repair - it compares a freshly-read
+	 * wall clock against `schedule_times` on every 60s tick, so the first tick in
+	 * the new zone is already correct. What IS stale is each source's cached
+	 * next-fire projection (computed once at start), which drives the dashboard's
+	 * "next trigger" column. Recompute those.
+	 *
+	 * Deliberately does NOT synthesize catch-up events. Moving the wall clock
+	 * backward (flying west) lets a slot come around a second time, and moving it
+	 * forward (flying east) can skip one. That is what "run at 08:00 local" means,
+	 * and inventing a fire for a slot that never occurred in either zone would be
+	 * worse than skipping it. Sleep-gap catch-ups are unaffected: the resume
+	 * handler applies the zone change before `reconcileAfterWake()` runs, so the
+	 * reconciler measures the gap in the new zone.
+	 *
+	 * No-op when the engine is disabled.
+	 */
+	handleTimeZoneChange(previousZone: string, zone: string): void {
+		if (!this.enabled) return;
+
+		this.meteredOnLog(
+			'cue',
+			`[CUE] System timezone changed (${previousZone} -> ${zone}) - local-time schedules now follow the new zone`
+		);
+
+		for (const state of this.registry.snapshot().values()) {
+			for (const source of state.triggerSources) {
+				if (typeof source.onTimeZoneChange !== 'function') continue;
+				try {
+					source.onTimeZoneChange();
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					this.meteredOnLog('warn', `[CUE] onTimeZoneChange() threw: ${message}`);
+					void captureException(err, { operation: 'cue.handleTimeZoneChange' });
+				}
+			}
+		}
+	}
+
 	/** Returns queue depth per session (for the Cue Modal) */
 	getQueueStatus(): Map<string, number> {
 		return this.runManager.getQueueStatus();

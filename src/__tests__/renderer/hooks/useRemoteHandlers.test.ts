@@ -786,10 +786,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleRemoteCommand – Terminal mode edge cases
+	// handleRemoteCommand - Terminal mode edge cases
 	// ========================================================================
 
-	describe('handleRemoteCommand – terminal mode edge cases', () => {
+	describe('handleRemoteCommand - terminal mode edge cases', () => {
 		/** Helper: extract the maestro:remoteCommand event handler from addEventListener mock */
 		function getRemoteCommandHandler() {
 			const call = (window.addEventListener as any).mock.calls.find(
@@ -926,10 +926,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleRemoteCommand – AI mode edge cases
+	// handleRemoteCommand - AI mode edge cases
 	// ========================================================================
 
-	describe('handleRemoteCommand – AI mode edge cases', () => {
+	describe('handleRemoteCommand - AI mode edge cases', () => {
 		function getRemoteCommandHandler() {
 			const call = (window.addEventListener as any).mock.calls.find(
 				(c: any[]) => c[0] === 'maestro:remoteCommand'
@@ -1566,10 +1566,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleQuickActionsToggleRemoteControl – edge cases
+	// handleQuickActionsToggleRemoteControl - edge cases
 	// ========================================================================
 
-	describe('handleQuickActionsToggleRemoteControl – edge cases', () => {
+	describe('handleQuickActionsToggleRemoteControl - edge cases', () => {
 		it('clears notification after 4 seconds', async () => {
 			vi.useFakeTimers();
 
@@ -1628,10 +1628,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// sessionSshRemoteNames – edge cases
+	// sessionSshRemoteNames - edge cases
 	// ========================================================================
 
-	describe('sessionSshRemoteNames – edge cases', () => {
+	describe('sessionSshRemoteNames - edge cases', () => {
 		it('skips session with null remoteId', () => {
 			const session = createMockSession({
 				name: 'Agent X',

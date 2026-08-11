@@ -93,5 +93,14 @@ export function createCueScheduledTriggerSource(
 		nextTriggerAt() {
 			return nextFireMs;
 		},
+
+		onTimeZoneChange() {
+			// `checkAndFire` reads the wall clock fresh every tick, so matching is
+			// already correct the moment the process switches zones. Only the cached
+			// projection needs redoing - without this the dashboard would keep
+			// advertising a next-fire computed in the old zone until the next fire.
+			if (!timer) return;
+			recomputeNextFire();
+		},
 	};
 }

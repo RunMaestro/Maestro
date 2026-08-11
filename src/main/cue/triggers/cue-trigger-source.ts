@@ -56,6 +56,20 @@ export interface CueTriggerSource {
 	 * intervals or are reconciled separately) omit this method.
 	 */
 	pollNow?(): void;
+
+	/**
+	 * Optional: the system timezone moved (laptop crossed a timezone, or the OS
+	 * clock was reconfigured). Called by `engine.handleTimeZoneChange()` after
+	 * the process has already been switched to the new zone, so `new Date()` is
+	 * correct by the time this runs.
+	 *
+	 * Only sources whose schedule is expressed in *local wall-clock* terms need
+	 * this - `time.scheduled` recomputes its cached next-fire projection.
+	 * Interval-based sources (heartbeat, pollers, task scanners) and absolute
+	 * timestamps (`time.once`) are unaffected: their next fire is a fixed point
+	 * on the epoch timeline, which a zone change does not move.
+	 */
+	onTimeZoneChange?(): void;
 }
 
 /**
