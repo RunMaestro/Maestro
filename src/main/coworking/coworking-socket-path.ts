@@ -39,7 +39,13 @@ export function getBridgeSocketPath(): string {
 	}
 
 	// Preferred: alongside the rest of the per-userData runtime state.
-	const preferred = path.join(userData, 'coworking.sock');
+	//
+	// `path.posix` rather than `path.join`: everything below this line is a Unix
+	// domain socket path, which is POSIX by definition. On a real macOS/Linux run
+	// the two are identical (win32 returned above), but being explicit keeps the
+	// sun_path byte count honest and lets the tests assert the POSIX contract on
+	// any host.
+	const preferred = path.posix.join(userData, 'coworking.sock');
 	if (Buffer.byteLength(preferred) + 1 <= SUN_PATH_MAX) return preferred;
 
 	// The userData path is too deep to hold a bindable socket (long home
@@ -48,5 +54,5 @@ export function getBridgeSocketPath(): string {
 	// so the socket stays unique per data directory. Callers all resolve the
 	// path through this function, so the bridge and the env var agents read
 	// (COWORKING_SOCKET_ENV_VAR) stay in sync automatically.
-	return path.join(os.tmpdir(), `maestro-coworking-${userDataSlug(userData)}.sock`);
+	return path.posix.join(os.tmpdir(), `maestro-coworking-${userDataSlug(userData)}.sock`);
 }
