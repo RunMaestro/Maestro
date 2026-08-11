@@ -629,7 +629,12 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 								)
 							);
 						} catch (error) {
-							void captureException(error);
+							// Walks every provider's transcript tree, so an unreadable one
+							// lands here on every call. That is environmental, not a bug -
+							// warn locally and keep aggregating the providers that do work.
+							if (!isExpectedSessionReadError(error)) {
+								void captureException(error);
+							}
 							logger.warn(
 								`Failed to get named sessions from ${storage.agentId}: ${error}`,
 								LOG_CONTEXT

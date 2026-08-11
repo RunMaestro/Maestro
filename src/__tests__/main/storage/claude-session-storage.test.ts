@@ -683,5 +683,32 @@ describe('ClaudeSessionStorage', () => {
 			expect(result.sessions).toEqual([]);
 			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
 		});
+
+		// The directory read is the outermost half of the same boundary: a
+		// `~/.claude` tree owned by another user fails here, before any file is
+		// touched. It still throws (reporting it as "zero sessions" would hide
+		// the user's transcripts) but must not page.
+		it.each(['EACCES', 'EPERM'])(
+			'skips captureException when the project directory read fails with %s',
+			async (code) => {
+				vi.mocked(fs.access).mockResolvedValue(undefined as never);
+				vi.mocked(fs.readdir).mockRejectedValue(
+					Object.assign(new Error(`${code}: permission denied, scandir`), { code })
+				);
+
+				await expect(storage.listSessionsPaginated('/project/path')).rejects.toThrow();
+				expect(vi.mocked(captureException)).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected project directory failure', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as never);
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('EIO: i/o error, scandir'), { code: 'EIO' })
+			);
+
+			await expect(storage.listSessionsPaginated('/project/path')).rejects.toThrow();
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
+		});
 	});
 });

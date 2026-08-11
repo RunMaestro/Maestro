@@ -381,10 +381,18 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			filenames = await fs.readdir(projectDir);
 		} catch (error) {
 			// A project that has never been opened in Claude simply has no folder.
-			// Anything else (EACCES, EIO) is a real fault: reporting it as "zero
-			// sessions" would silently hide the user's transcripts.
 			if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
 				return [];
+			}
+			// Everything else still throws: reporting an unreadable tree as "zero
+			// sessions" would silently hide the user's transcripts. But the
+			// environmental half of that set (a `~/.claude` owned by another user,
+			// a restrictive umask) is the very condition this guard exists for, and
+			// it recurs on every listing - so it stays a local warn. Only a genuinely
+			// unexpected failure pages (MAESTRO-YH).
+			if (isExpectedSessionReadError(error)) {
+				logger.warn(`Session directory not readable: ${projectDir}`, LOG_CONTEXT, { error });
+				throw error;
 			}
 			logger.error(`Error listing session directory: ${projectDir}`, LOG_CONTEXT, error);
 			captureException(error, {
