@@ -83,7 +83,8 @@ export interface AppSessionModalsProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
-		contextWindowSource?: 'user-edited'
+		contextWindowSource?: 'user-edited',
+		boardWorker?: boolean
 	) => void;
 	editAgentSession: Session | null;
 

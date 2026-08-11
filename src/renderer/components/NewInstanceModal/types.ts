@@ -94,7 +94,8 @@ export interface EditAgentModalProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
-		contextWindowSource?: 'user-edited'
+		contextWindowSource?: 'user-edited',
+		boardWorker?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;

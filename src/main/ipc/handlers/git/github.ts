@@ -3,8 +3,8 @@ import { execFileNoThrow } from '../../../utils/execFile';
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
 import { resolveGhPath, getCachedGhStatus, setCachedGhStatus } from '../../../utils/cliDetection';
-import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
+import { createPullRequest } from '../../../utils/pr-creator';
 import { LOG_CONTEXT, handlerOpts } from './shared';
 
 /**
@@ -24,61 +24,24 @@ export function registerGithubHandlers(): void {
 				body: string,
 				ghPath?: string
 			) => {
-				// Resolve gh CLI path (uses cached detection or custom path)
-				const ghCommand = await resolveGhPath(ghPath);
-				logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);
-
-				// Build env with the user's full shell PATH so git hooks
-				// (e.g. Husky pre-push running npm) can find Node/npm binaries
-				let shellEnv: NodeJS.ProcessEnv | undefined;
-				try {
-					const shellPath = await getShellPath();
-					if (shellPath) {
-						shellEnv = { ...process.env, PATH: shellPath };
-					}
-				} catch (error) {
-					captureMessage(
-						`git:createPR falling back to default PATH: ${error instanceof Error ? error.message : String(error)}`,
-						'warning'
-					);
-				}
-
-				// First, push the current branch to origin
-				const pushResult = await execFileNoThrow(
-					'git',
-					['push', '-u', 'origin', 'HEAD'],
+				// The shared helper owns the push + `gh pr create` chain; the base
+				// branch stays a required argument here (the renderer resolves it).
+				// Delegated so the Board's per-card PR-on-done and this handler cannot
+				// drift apart.
+				const result = await createPullRequest({
 					worktreePath,
-					shellEnv
-				);
-				if (pushResult.exitCode !== 0) {
-					return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
-				}
-
-				// Create the PR using gh CLI
-				const prResult = await execFileNoThrow(
-					ghCommand,
-					['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
-					worktreePath,
-					shellEnv
-				);
-
-				if (prResult.exitCode !== 0) {
-					// Check if gh CLI is not installed
-					if (
-						prResult.stderr.includes('command not found') ||
-						prResult.stderr.includes('not recognized')
-					) {
-						return {
-							success: false,
-							error: 'GitHub CLI (gh) is not installed. Please install it to create PRs.',
-						};
-					}
-					return { success: false, error: prResult.stderr || 'Failed to create PR' };
-				}
-
-				// The PR URL is typically in stdout
-				const prUrl = prResult.stdout.trim();
-				return { success: true, prUrl };
+					targetBranch: baseBranch,
+					title,
+					body,
+					ghPath,
+					log: (msg) => logger.debug(msg, LOG_CONTEXT),
+					warn: (msg) => captureMessage(msg, 'warning'),
+				});
+				// Reply shape is unchanged for renderer callers: the helper's
+				// resolved `targetBranch` is redundant here (it is `baseBranch`).
+				return result.success
+					? { success: true, prUrl: result.prUrl }
+					: { success: false, error: result.error };
 			}
 		)
 	);

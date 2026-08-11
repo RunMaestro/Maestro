@@ -331,8 +331,9 @@ describe('EditAgentModal', () => {
 				true,
 				true,
 				undefined, // additionalDirectories
-				undefined // contextWindowSource: the window was not touched, so no
+				undefined, // contextWindowSource: the window was not touched, so no
 				// provenance is recorded and P1 precedence stands (finding AD1)
+				false // boardWorker (defaults off, checkbox untouched)
 			);
 		});
 
@@ -428,8 +429,9 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -662,8 +664,9 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 
@@ -736,8 +739,9 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 
@@ -816,8 +820,9 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 

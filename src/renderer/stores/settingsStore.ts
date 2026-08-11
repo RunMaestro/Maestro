@@ -226,6 +226,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	pianola: false,
 	plugins: false,
 	concerto: false,
+	board: false,
 	groupsPlus: false,
 };
 

@@ -32,6 +32,7 @@ interface ExtensionsViewProps {
 export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 	const {
 		extensions,
+		encoreFeatures,
 		contributions,
 		pluginsSubsystemEnabled,
 		busyId,
@@ -124,6 +125,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 				<ExtensionDetails
 					theme={theme}
 					ext={selected}
+					encoreFeatures={encoreFeatures}
 					contributions={contributions}
 					busy={busyId === selected.id}
 					onBack={closeDetails}

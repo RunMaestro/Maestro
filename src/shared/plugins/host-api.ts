@@ -29,8 +29,11 @@ import semver from 'semver';
  * power), and the summonable-panel trio `ui.openPanel` / `ui.closePanel` /
  * `ui.togglePanel` under the existing `ui:panel` capability alongside the
  * optional panel manifest field `size?: 'default' | 'full'` (absent or invalid
- * => `default`, so older manifests are untouched). 1.15.0 is taken by the Board
- * + Profiles work, so this fork skips it. 1.14.0 added the
+ * => `default`, so older manifests are untouched). 1.15.0 added the additive
+ * Board event topics `board.cardStatusChanged` / `board.cardCompleted` /
+ * `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
+ * the card title; never prompts, run output, summaries, or block reasons).
+ * 1.14.0 added the
  * backward-compatible additive `tool.executed` event topic (metadata-only tool
  * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
  * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES

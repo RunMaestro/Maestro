@@ -82,6 +82,7 @@
 					"usage-dashboard",
 					"symphony",
 					"concerto",
+					"board",
 					{
 						"group": "Maestro Cue",
 						"icon": "bolt",

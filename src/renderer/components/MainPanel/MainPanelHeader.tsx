@@ -15,6 +15,7 @@ import {
 import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { GitStatusWidget } from '../GitStatusWidget';
+import { BoardStatusIndicator } from '../BoardStatusIndicator';
 import { GitPillMenu } from '../GitPillMenu';
 import { useHoverTooltip } from '../../hooks';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
@@ -356,6 +357,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						{gitPillMenu}
 					</div>
 				</div>
+
+				{/* Board activity pill - self-gated on the Board + Cue Encore flags */}
+				<BoardStatusIndicator projectRoot={activeSession.projectRoot} theme={theme} />
 
 				{/* Git Status Widget - compact mode handled via CSS container queries */}
 				<GitStatusWidget
