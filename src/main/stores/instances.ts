@@ -139,7 +139,7 @@ export function initializeStores(options: StoreInitOptions): {
 		'maestro-agent-configs.json'
 	);
 
-	// Agent capability snapshots — keyed by `agentId` or `agentId:remoteUuid`.
+	// Agent capability snapshots - keyed by `agentId` or `agentId:remoteUuid`.
 	// Per-device because detection state (installed paths, auth status) is
 	// inherently local to the machine, even when other agent settings sync.
 	_agentCapabilitiesStore = new Store<AgentCapabilitiesData>({

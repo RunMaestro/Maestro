@@ -34,7 +34,7 @@ const SELECT_TOTAL_SQL = `
 
 /**
  * Convert a Unix timestamp (ms) to a YYYY-MM-DD bucket using the local
- * timezone — matches the convention used by other byDay aggregations.
+ * timezone - matches the convention used by other byDay aggregations.
  */
 function toLocalYmd(timestamp: number): string {
 	const d = new Date(timestamp);
@@ -70,7 +70,7 @@ export function incrementShortcutUsage(db: Database.Database, firedAt: number): 
 
 /**
  * Fetch per-day shortcut usage counts within a time range, ascending.
- * Days with no activity are NOT included — the renderer zero-fills.
+ * Days with no activity are NOT included - the renderer zero-fills.
  */
 export function getShortcutUsageByDay(
 	db: Database.Database,

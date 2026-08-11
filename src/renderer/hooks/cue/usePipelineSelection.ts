@@ -1,5 +1,5 @@
 /**
- * usePipelineSelection — Selection state and derived lookups for the pipeline editor.
+ * usePipelineSelection - Selection state and derived lookups for the pipeline editor.
  *
  * Manages selectedNodeId/selectedEdgeId, resolves composite IDs to pipeline nodes/edges,
  * computes derived data (incoming triggers, source/target nodes), and provides click handlers.
@@ -117,7 +117,7 @@ export function usePipelineSelection({
 				if (sourceNode?.type === 'trigger') {
 					const triggerData = sourceNode.data as TriggerNodeData;
 					// Per-edge prompt takes precedence. Fall back to the event-type
-					// barebones template — NEVER to the agent node's inputPrompt, which
+					// barebones template - NEVER to the agent node's inputPrompt, which
 					// used to leak the first trigger's prompt onto every other trigger
 					// feeding the same agent.
 					triggerEdges.push({

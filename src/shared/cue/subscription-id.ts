@@ -1,7 +1,7 @@
 /**
  * Stable composite identity for a Cue subscription as exposed to remote
  * callers (the CLI, the web/mobile UI). The Cue YAML itself doesn't carry a
- * per-subscription primary key — subscription `name` is unique only *within*
+ * per-subscription primary key - subscription `name` is unique only *within*
  * a pipeline, and a single session can host multiple pipelines that each
  * legitimately define a sub with the same name. Composing
  * `${sessionId}::${pipeline}::${name}` gives a stable, parseable id that
@@ -48,7 +48,7 @@ export function pipelineKeyForSubscription(sub: CueSubscriptionIdInput): string 
 /**
  * Compose the remote-exposed subscription id. Always
  * `${sessionId}::${pipeline}::${name}`. Names containing `::` would break
- * round-trip parsing — Cue validator rejects names with these characters, so
+ * round-trip parsing - Cue validator rejects names with these characters, so
  * this should never fire in practice, but we throw in dev to surface a hand-
  * edited YAML mistake instead of silently producing a degenerate id.
  */
@@ -61,7 +61,7 @@ export function composeCueSubscriptionId(sessionId: string, sub: CueSubscription
 	) {
 		// Falling through silently would let a malformed component produce
 		// an unparseable id that the toggle path would then reject as
-		// "no such subscription" — worse than the YAML error this catches.
+		// "no such subscription" - worse than the YAML error this catches.
 		throw new Error(
 			`Cue subscription id components must not contain "${CUE_SUBSCRIPTION_ID_SEP}" (session=${sessionId}, pipeline=${pipeline}, name=${sub.name})`
 		);
@@ -71,7 +71,7 @@ export function composeCueSubscriptionId(sessionId: string, sub: CueSubscription
 
 /**
  * Inverse of {@link composeCueSubscriptionId}. Returns `null` when the input
- * doesn't carry exactly three non-empty `::`-separated components — callers
+ * doesn't carry exactly three non-empty `::`-separated components - callers
  * must treat `null` as "no matching subscription" rather than falling back
  * to a partial match.
  */

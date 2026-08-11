@@ -8,7 +8,7 @@
  * deliberately picked the API token source) are left untouched - flipping them
  * on would silently revert their choice to Dynamic.
  *
- * Idempotent via a marker in the settings store — once the marker is set the
+ * Idempotent via a marker in the settings store - once the marker is set the
  * migration never runs again, so a user who later turns Adaptive Mode off on a
  * given agent won't have it forced back on.
  */
@@ -54,7 +54,7 @@ export function migrateAdaptiveModeDefault(store: Store<MaestroSettings>): void 
 
 	store.set(ADAPTIVE_MODE_DEFAULT_MIGRATION_MARKER, true);
 	logger.info(
-		`Adaptive Mode default migration complete — enabled on ${updated} existing Claude Code agent(s)`,
+		`Adaptive Mode default migration complete - enabled on ${updated} existing Claude Code agent(s)`,
 		'Migration'
 	);
 }

@@ -2,7 +2,7 @@
  * @file auto-updater.test.ts
  * @description Tests for the electron-updater integration in src/main/auto-updater.ts.
  *
- * Focused on the `updates:install` IPC handler — specifically that it invokes
+ * Focused on the `updates:install` IPC handler - specifically that it invokes
  * the optional `onBeforeQuitAndInstall` hook before calling
  * `autoUpdater.quitAndInstall()`. This hook is what lets the host bypass the
  * busy-agent quit confirmation gate so the Windows installer (which spawns
@@ -43,7 +43,7 @@ vi.mock('../../main/utils/sentry', () => ({
 }));
 
 // electron-updater is loaded via dynamic `require` inside auto-updater.ts to
-// defer electron.app access — that bypasses vitest's module mocker. We use the
+// defer electron.app access - that bypasses vitest's module mocker. We use the
 // __setAutoUpdaterForTesting escape hatch instead.
 const mockAutoUpdater = {
 	autoDownload: false,

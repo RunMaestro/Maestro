@@ -5,7 +5,7 @@
  * composes them into a single flat list for cross-tab search.
  *
  * When adding or editing an entry, ensure `keywords` covers every visible
- * string a user would type after seeing the section in the UI — section
+ * string a user would type after seeing the section in the UI - section
  * headings, sub-headings, and notable button labels. The DOM-parity test in
  * searchableSettings.test.ts catches missing entries, but it cannot catch
  * keyword drift from rendered text. Add a query to the `it.each` block in

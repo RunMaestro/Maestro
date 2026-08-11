@@ -356,7 +356,7 @@ export class StdoutHandler {
 		try {
 			parsed = JSON.parse(line);
 		} catch {
-			// Not valid JSON — handled in the else branch below
+			// Not valid JSON - handled in the else branch below
 		}
 
 		if (parsed !== null && toolType === 'copilot-cli') {
@@ -391,7 +391,7 @@ export class StdoutHandler {
 			}
 		}
 
-		// ── SSH error detection (line-based — SSH patterns are plain text) ──
+		// ── SSH error detection (line-based - SSH patterns are plain text) ──
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
@@ -483,13 +483,13 @@ export class StdoutHandler {
 
 		// Handle streaming text events (OpenCode, Codex reasoning)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			// For Copilot, skip thinking-chunk emission — the parser's delta events
+			// For Copilot, skip thinking-chunk emission - the parser's delta events
 			// accumulate in streamedText which is emitted once as the result at exit.
 			// Emitting thinking-chunks AND result would duplicate the content.
 			if (managedProcess.toolType !== 'copilot-cli') {
 				this.emitter.emit('thinking-chunk', sessionId, event.text);
 			}
-			// Reasoning content is internal thinking — don't include it in the
+			// Reasoning content is internal thinking - don't include it in the
 			// final response text. Only message content should be in streamedText.
 			if (!event.isReasoning) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
@@ -564,12 +564,12 @@ export class StdoutHandler {
 		//   - assistant.turn_end fires after every LLM turn, including
 		//     narration turns ("I'll delegate this to..."), so it can't
 		//     mark session end.
-		//   - session.shutdown is NOT written to stdout in batch mode —
+		//   - session.shutdown is NOT written to stdout in batch mode -
 		//     it only goes to `~/.copilot/session-state/<id>/events.jsonl`,
 		//     and Copilot may keep writing to that file (via subagent
 		//     processes) AFTER our parent process exits.
 		// The authoritative completion signal lives on disk, so we defer
-		// the final flush to ExitHandler — which awaits the disk-side
+		// the final flush to ExitHandler - which awaits the disk-side
 		// shutdown marker before emitting the `exit` event. Legacy
 		// `phase: 'final_answer'` messages still flush immediately via
 		// the path below.

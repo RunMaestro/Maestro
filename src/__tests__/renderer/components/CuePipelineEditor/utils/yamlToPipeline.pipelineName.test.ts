@@ -5,7 +5,7 @@
  * stripping the `-chain-N` / `-fanin` suffix off their `name` field. If
  * the user edited a subscription's `name` in YAML (the most natural way
  * to rename a pipeline), pipelines would split or lose chain links on
- * reload — what the user saw in the UI no longer matched the YAML.
+ * reload - what the user saw in the UI no longer matched the YAML.
  *
  * With `pipeline_name` as an explicit, authoritative field, subscription
  * `name` is just a unique ID and can be freely edited without breaking
@@ -75,7 +75,7 @@ describe('pipeline_name-based grouping', () => {
 	});
 
 	it('groups subscriptions by pipeline_name when `name`s collide across pipelines', () => {
-		// Two pipelines where every subscription is named "Work" — would be
+		// Two pipelines where every subscription is named "Work" - would be
 		// impossible to disambiguate via suffix convention. pipeline_name
 		// makes this trivial.
 		const subs: CueSubscription[] = [

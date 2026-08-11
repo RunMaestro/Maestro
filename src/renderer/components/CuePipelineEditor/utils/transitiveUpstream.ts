@@ -1,6 +1,6 @@
 /**
  * Pure graph traversal that surfaces every agent whose output reaches a given
- * target node — either directly (edge → target) or transitively via one or
+ * target node - either directly (edge → target) or transitively via one or
  * more intermediate agents that forward it through (edge with
  * `forwardOutput: true`).
  *
@@ -50,7 +50,7 @@ export function computeTransitiveUpstream(
 	const nodeById = new Map(pipeline.nodes.map((n) => [n.id, n]));
 	if (!nodeById.has(targetNodeId)) return [];
 
-	// Index incoming agent edges once — traversal hits these repeatedly.
+	// Index incoming agent edges once - traversal hits these repeatedly.
 	const incomingAgentEdges = new Map<string, typeof pipeline.edges>();
 	for (const edge of pipeline.edges) {
 		if (!agentNode(nodeById, edge.source)) continue;

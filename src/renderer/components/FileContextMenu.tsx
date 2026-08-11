@@ -20,7 +20,7 @@ export interface FileContextMenuState {
 	y: number;
 	/** Absolute path to the file */
 	filePath: string;
-	/** File name (basename) — used for conditional options like Document Graph */
+	/** File name (basename) - used for conditional options like Document Graph */
 	fileName: string;
 }
 
@@ -30,7 +30,7 @@ interface FileContextMenuProps {
 	onDismiss: () => void;
 	/** Open file in preview tab */
 	onPreview?: (filePath: string) => void;
-	/** Project root absolute path — used to derive relative path for Document Graph */
+	/** Project root absolute path - used to derive relative path for Document Graph */
 	projectRoot?: string;
 	/** Whether the session is SSH remote (disables local-only actions) */
 	sshRemote?: boolean;
@@ -132,7 +132,7 @@ export function FileContextMenu({
 					</button>
 				)}
 
-				{/* Document Graph — markdown files only */}
+				{/* Document Graph - markdown files only */}
 				{showDocGraph && (
 					<button
 						onClick={handleFocusInGraph}
@@ -144,7 +144,7 @@ export function FileContextMenu({
 					</button>
 				)}
 
-				{/* Open in Default App — not available over SSH */}
+				{/* Open in Default App - not available over SSH */}
 				{!sshRemote && (
 					<button
 						onClick={handleOpenInDefaultApp}

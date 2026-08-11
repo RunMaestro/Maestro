@@ -3,7 +3,7 @@
  *
  * @file src/web/mobile/RightPanel.tsx
  *
- * Covers the inline (desktop) vs full-screen (mobile) layout fork —
+ * Covers the inline (desktop) vs full-screen (mobile) layout fork -
  * specifically that the inline panel reserves bottom padding for the
  * fixed CommandInputBar (PR #895 follow-up: AutoRun toolbar was being
  * buried by the input bar overlay).
@@ -109,7 +109,7 @@ describe('RightPanel — inputBarHeight reserve (PR #895 desktop layout fix)', (
 			.querySelector<HTMLDivElement>('[role="tab"]')
 			?.closest('div')?.parentElement;
 		expect(panel).toBeTruthy();
-		// Full-screen panel uses position:fixed top/left/right/bottom — no paddingBottom reserve.
+		// Full-screen panel uses position:fixed top/left/right/bottom - no paddingBottom reserve.
 		expect(panel?.style.paddingBottom).toBe('');
 		expect(panel?.style.position).toBe('fixed');
 	});

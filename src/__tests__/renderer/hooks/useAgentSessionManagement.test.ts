@@ -394,7 +394,7 @@ describe('useAgentSessionManagement', () => {
 
 		const [updatedSession] = updateFn([committedSession]);
 
-		// Exactly one tab for 'agent-race' (the first one), focused — no duplicate.
+		// Exactly one tab for 'agent-race' (the first one), focused - no duplicate.
 		const raceTabs = updatedSession.aiTabs.filter((t: AITab) => t.agentSessionId === 'agent-race');
 		expect(raceTabs).toHaveLength(1);
 		expect(updatedSession.activeTabId).toBe('tab-race');

@@ -50,7 +50,7 @@ export function useBatchControlActions({
 }: UseBatchControlActionsDeps): UseBatchControlActionsReturn {
 	/**
 	 * Request to stop the batch run after the current task completes.
-	 * No `isMountedRef` check — stop requests should always be honoured.
+	 * No `isMountedRef` check - stop requests should always be honoured.
 	 * All operations are safe: ref updates, reducer dispatch, broadcast.
 	 */
 	const stopBatchRun = useCallback(
@@ -71,7 +71,7 @@ export function useBatchControlActions({
 	);
 
 	/**
-	 * Pause the batch run due to an agent error. Idempotent — if a
+	 * Pause the batch run due to an agent error. Idempotent - if a
 	 * resolution promise already exists for the session, it's reused.
 	 */
 	const pauseBatchOnError = useCallback(

@@ -1,4 +1,4 @@
-// Profiling commands — start/stop/status a Chromium performance capture in the
+// Profiling commands - start/stop/status a Chromium performance capture in the
 // running Maestro desktop app, driven externally so scripts can capture ->
 // analyze -> loop while iterating on performance.
 //

@@ -1,5 +1,5 @@
 /**
- * compositeAnnotatedImage — Bake annotation strokes and shapes onto the source image.
+ * compositeAnnotatedImage - Bake annotation strokes and shapes onto the source image.
  *
  * Renders the original image and a snapshot of the live SVG overlay onto an
  * offscreen canvas at the image's intrinsic dimensions, then returns a PNG
@@ -7,7 +7,7 @@
  * elements (selection outlines, resize handles, fill toggle) so that runtime
  * editing chrome never bakes into the saved image, then serialized as-is
  * (its viewBox already matches the image's native pixel size), wrapped as a
- * data URL, loaded as an `<img>`, and drawn over the image — so stroke and
+ * data URL, loaded as an `<img>`, and drawn over the image - so stroke and
  * shape geometry survives untouched.
  */
 

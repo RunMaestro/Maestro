@@ -1,5 +1,5 @@
 /**
- * usePipelineCanvasCallbacks — ReactFlow canvas event callbacks.
+ * usePipelineCanvasCallbacks - ReactFlow canvas event callbacks.
  *
  * Owns the set of canvas callbacks that are tightly coupled to ReactFlow's
  * mutable node state and the All-Pipelines-view read-only guards:
@@ -11,7 +11,7 @@
  *   - isValidConnection: live validation while dragging a connection.
  *   - onDragOver / onDrop: drawer-to-canvas drag-and-drop.
  *
- * onDrop specifically defers `setSelectedNodeId` via setTimeout(50ms) — the
+ * onDrop specifically defers `setSelectedNodeId` via setTimeout(50ms) - the
  * new node must render before selection fires, otherwise `selectedNode` is
  * null on the first render after the drop.
  */
@@ -49,7 +49,7 @@ import { generateUUID } from '../../../shared/uuid';
 /** Prefix used for ReactFlow-only pipeline-group background nodes. */
 const PIPELINE_GROUP_PREFIX = 'pipeline-group:';
 
-/** Delay before selecting a dropped node — lets ReactFlow mount the new node
+/** Delay before selecting a dropped node - lets ReactFlow mount the new node
  *  before selection fires, otherwise `selectedNode` resolves to null on the
  *  first render. Preserve verbatim. */
 const DROP_SELECT_DELAY_MS = 50;
@@ -130,7 +130,7 @@ export function usePipelineCanvasCallbacks({
 	// Updating displayNodes alone makes the nodes vanish visually but they
 	// reappear on the next resync (computedNodes is rebuilt from an unchanged
 	// pipelineState) and the dirty flag never flips. So we ALSO commit removals
-	// to the canonical pipelineState — pruning connected edges, mirroring
+	// to the canonical pipelineState - pruning connected edges, mirroring
 	// onDeleteNode. (Single-node Delete via the keyboard hook / trash icon
 	// already commits via onDeleteNode; this path covers multi-select where no
 	// single node is tracked as selected.)
@@ -138,7 +138,7 @@ export function usePipelineCanvasCallbacks({
 		(changes: NodeChange[]) => {
 			setDisplayNodes((nds) => applyNodeChanges(changes, nds));
 
-			// All Pipelines view is read-only — no deletions.
+			// All Pipelines view is read-only - no deletions.
 			if (isAllPipelinesView) return;
 
 			// Group removed node ids by owning pipeline (composite id:
@@ -217,10 +217,10 @@ export function usePipelineCanvasCallbacks({
 
 	// While dragging the group, place every child node at its captured start
 	// position plus the group's TOTAL delta from drag start. Absolute (not
-	// incremental) so it's immune to ReactFlow's event ordering — onNodesChange
+	// incremental) so it's immune to ReactFlow's event ordering - onNodesChange
 	// moves the group before onNodeDrag fires, which would zero out a per-frame
 	// delta and strand the children. Children's canonical pipelineState
-	// positions are NOT touched here — the delta is committed once on drag stop
+	// positions are NOT touched here - the delta is committed once on drag stop
 	// as a viewOffset.
 	const onNodeDrag = useCallback(
 		(_event: React.MouseEvent, node: Node, _draggedNodes: Node[]) => {
@@ -331,7 +331,7 @@ export function usePipelineCanvasCallbacks({
 	// Edge dragging is disabled, so the only changes that matter here are
 	// `remove`s emitted by ReactFlow's built-in delete (box-select + Delete, or
 	// deleting a node which cascades to its connected edges). Commit those to
-	// pipelineState so the deletion sticks and the dirty flag flips — without
+	// pipelineState so the deletion sticks and the dirty flag flips - without
 	// this, edge removes were silently dropped and the edge reappeared on resync.
 	const onEdgesChange: OnEdgesChange = useCallback(
 		(changes: EdgeChange[]) => {
@@ -416,7 +416,7 @@ export function usePipelineCanvasCallbacks({
 					});
 
 					if (existingTriggerEdges.length === 0) {
-						// First incoming trigger — single-trigger mode. Seed the agent
+						// First incoming trigger - single-trigger mode. Seed the agent
 						// node's inputPrompt so AgentConfigPanel's single-trigger
 						// textarea has something helpful. Leave newEdge.prompt
 						// undefined so save uses inputPrompt and user edits target the
@@ -429,7 +429,7 @@ export function usePipelineCanvasCallbacks({
 							});
 						}
 					} else {
-						// Second+ incoming trigger — now in multi-trigger mode. Give the
+						// Second+ incoming trigger - now in multi-trigger mode. Give the
 						// new edge its own template prompt and migrate any legacy
 						// inputPrompt onto the existing edges that don't have their own
 						// prompt yet, then clear inputPrompt so it can never leak.
@@ -462,7 +462,7 @@ export function usePipelineCanvasCallbacks({
 		[isAllPipelinesView, setPipelineState]
 	);
 
-	// Phase 14C — stabilize isValidConnection identity.
+	// Phase 14C - stabilize isValidConnection identity.
 	// ReactFlow re-registers its internal validation bookkeeping whenever the
 	// callback identity changes. Previously nodes/edges were in the dep array,
 	// so every node drag (which produces a new `nodes` array reference via
@@ -509,7 +509,7 @@ export function usePipelineCanvasCallbacks({
 			event.preventDefault();
 			event.stopPropagation();
 
-			// All Pipelines view is read-only — refuse to place new nodes.
+			// All Pipelines view is read-only - refuse to place new nodes.
 			// The toolbar disables the drawer buttons in this view, but a drag
 			// from an already-open drawer (possible if the view changed mid-drag)
 			// must still be rejected here.
@@ -557,7 +557,7 @@ export function usePipelineCanvasCallbacks({
 					// Ad-hoc first-pipeline creation on drop. ID must align with
 					// the form yamlToPipeline generates on reload
 					// (`pipeline-${baseName}`) so the first save+reopen cycle
-					// matches positions correctly — same reason as the explicit
+					// matches positions correctly - same reason as the explicit
 					// `createPipeline` path in `usePipelineCrud.ts`.
 					const name = 'Pipeline 1';
 					targetPipeline = {
@@ -586,7 +586,7 @@ export function usePipelineCanvasCallbacks({
 						data: triggerData,
 					};
 				} else if (dropData.type === 'agent' && dropData.sessionId) {
-					// Each drop creates a fresh visual instance — even when the
+					// Each drop creates a fresh visual instance - even when the
 					// user drags the same agent onto the canvas twice. The
 					// `nodeKey` is what lets the YAML round-trip preserve those
 					// distinct instances instead of merging them by sessionName
@@ -606,9 +606,9 @@ export function usePipelineCanvasCallbacks({
 					};
 				} else if (dropData.type === 'command') {
 					// Two drop sources:
-					//   1) standalone "Command" pill — no owningSessionId; the user picks
+					//   1) standalone "Command" pill - no owningSessionId; the user picks
 					//      the owning agent in CommandConfigPanel after dropping.
-					//   2) legacy per-session terminal pill (no longer rendered) — pre-binds.
+					//   2) legacy per-session terminal pill (no longer rendered) - pre-binds.
 					const suffix = Date.now().toString(36).slice(-5);
 					const ownerId = dropData.owningSessionId ?? '';
 					const commandData: CommandNodeData = {

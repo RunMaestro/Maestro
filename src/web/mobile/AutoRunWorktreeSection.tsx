@@ -1,10 +1,10 @@
 /**
- * AutoRunWorktreeSection — mobile counterpart to desktop's WorktreeRunSection.
+ * AutoRunWorktreeSection - mobile counterpart to desktop's WorktreeRunSection.
  *
  * Lets the user toggle "Dispatch to a separate worktree" before launching an
  * Auto Run, pick a base branch from the session's git repo, name the new
  * branch, and optionally request a PR on completion. The composed config is
- * sent to the desktop via `configure_auto_run`'s `worktree` field — the
+ * sent to the desktop via `configure_auto_run`'s `worktree` field - the
  * desktop handles the actual `git worktree add` + checkout + (optionally) PR
  * creation, exactly the same path the desktop's WorktreeRunSection feeds.
  */
@@ -19,7 +19,7 @@ import type { LaunchWorktreeConfig, WorktreeSummary } from '../hooks/useAutoRun'
 /**
  * Discriminated state emitted by `AutoRunWorktreeSection.onChange` so the
  * parent sheet can distinguish "user left this off" from "user enabled it but
- * the form is invalid" — only the former should silently fall back to a normal
+ * the form is invalid" - only the former should silently fall back to a normal
  * Auto Run launch. `enabled-loading` is the brief window between toggle-on and
  * `loadBranches()` resolving; the parent should disable launch but suppress
  * "branch name required" warnings during this period.
@@ -117,8 +117,8 @@ export function AutoRunWorktreeSection({
 	}, [enabled, isConfigured, loadBranches]);
 
 	// Surface existing worktrees as informational chips so the user knows what
-	// already exists before naming a new one. Failures here are non-fatal — the
-	// chip just stays hidden — but we still log so we don't lose the signal.
+	// already exists before naming a new one. Failures here are non-fatal - the
+	// chip just stays hidden - but we still log so we don't lose the signal.
 	useEffect(() => {
 		if (!enabled || !isConfigured) {
 			setExistingWorktrees([]);
@@ -158,8 +158,8 @@ export function AutoRunWorktreeSection({
 			onChange({ status: 'disabled' });
 			return;
 		}
-		// While branches are still loading — including the brief gap between
-		// toggle-on and `setBranchLoadStatus('loading')` actually committing —
+		// While branches are still loading - including the brief gap between
+		// toggle-on and `setBranchLoadStatus('loading')` actually committing -
 		// `newBranchName` is empty and `baseBranch` is unset. Don't fire
 		// spurious "Branch name is required" / "Base branch is required"
 		// warnings during that window. The successful-load handler populates
@@ -233,11 +233,11 @@ export function AutoRunWorktreeSection({
 	}, []);
 
 	if (!isGitRepo) {
-		// Hidden entirely for non-git sessions — matches desktop UX.
+		// Hidden entirely for non-git sessions - matches desktop UX.
 		return null;
 	}
 
-	// Don't surface "Branch name is required" while branches are still loading —
+	// Don't surface "Branch name is required" while branches are still loading -
 	// the input populates from the seeded default once loadBranches resolves.
 	// Without this gate, the warning flashes briefly on every toggle-on.
 	const branchNameMissing = enabled && branchLoadStatus !== 'loading' && !newBranchName.trim();

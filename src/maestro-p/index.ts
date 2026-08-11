@@ -5,9 +5,9 @@
 // consume the interactive Claude Max quota instead of API billing.
 //
 // Two modes:
-//   * run    — default. Send a prompt to claude, tail the JSONL transcript,
+//   * run    - default. Send a prompt to claude, tail the JSONL transcript,
 //              re-emit assistant / user / result envelopes on stdout, exit.
-//   * status — `--status`. Spawn claude, send `/usage`, capture the panel,
+//   * status - `--status`. Spawn claude, send `/usage`, capture the panel,
 //              parse it into a single `status` JSON object, exit.
 //
 // The structured JSONL transcript is the source of truth for run-mode output;
@@ -87,7 +87,7 @@ program
 	.allowExcessArguments(true);
 
 // Commander handles --help/--version (prints and exits 0). For everything
-// else it returns and falls through to our own parseArgs walker — commander's
+// else it returns and falls through to our own parseArgs walker - commander's
 // option schema doesn't know about claude's flag surface, so we re-parse.
 program.parse(process.argv);
 
@@ -190,7 +190,7 @@ function addUsage(agg: AggregateUsage, msgUsage: unknown): void {
 // Per the playbook tool_result filter: `user` entries pass through ONLY if
 // their content array carries at least one tool_result block. Plain `text`
 // user entries are the prompt echo claude writes immediately after we send
-// stdin — drop those.
+// stdin - drop those.
 function hasToolResultBlock(message: unknown): boolean {
 	if (!message || typeof message !== 'object') return false;
 	const content = (message as { content?: unknown }).content;
@@ -323,7 +323,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	};
 
 	// Cancel the first-byte timer as soon as claude writes anything to the
-	// transcript — any entry (even the prompt-echo user row) proves the turn
+	// transcript - any entry (even the prompt-echo user row) proves the turn
 	// started, so from here only the idle watchdog governs the run.
 	const markFirstEntrySeen = (): void => {
 		if (firstEntrySeen) return;
@@ -342,7 +342,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// the turn not having started (and not finalized), so it stops itself the
 	// moment any transcript byte arrives even before cleanupTimers runs.
 	//
-	// TUI-liveness gate: the JSONL "first entry" signal lags the turn — claude
+	// TUI-liveness gate: the JSONL "first entry" signal lags the turn - claude
 	// can be demonstrably working (spinner animating, token counter rising) for
 	// a long time before it writes its first transcript line. We must NOT keep
 	// pressing Enter into a turn that has already started: stray taps risk
@@ -368,7 +368,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				return;
 			}
 			if (lastScreen !== null && driver.getScreenTail() !== lastScreen) {
-				// Screen painted since our last tap with no JSONL entry yet — the
+				// Screen painted since our last tap with no JSONL entry yet - the
 				// working spinner is animating, so the turn has started. Stop
 				// tapping and let the first-byte/idle timers govern from here.
 				if (resubmitTimer) {
@@ -495,7 +495,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			return;
 		}
 
-		// Ignore other entry types (system/summary/etc.) — claude's internal
+		// Ignore other entry types (system/summary/etc.) - claude's internal
 		// taxonomy.
 	};
 
@@ -507,7 +507,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	};
 
 	const handleEntry = (entry: unknown): void => {
-		// Any transcript line means claude started the turn — cancel the
+		// Any transcript line means claude started the turn - cancel the
 		// first-byte timer before the init-gating buffer logic so a pre-init
 		// entry still counts as "first byte".
 		markFirstEntrySeen();
@@ -521,13 +521,13 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	const handleParseError = (payload: ParseErrorPayload): void => {
 		const snippet = payload.line.length > 200 ? `${payload.line.slice(0, 200)}…` : payload.line;
 		process.stderr.write(
-			`maestro-p: JSONL parse error: ${payload.error.message} — line: ${snippet}\n`
+			`maestro-p: JSONL parse error: ${payload.error.message} - line: ${snippet}\n`
 		);
 	};
 
 	driver.on('limit-hit', () => {
 		limitHit = true;
-		// A quota limit means claude paints the limit line on the TUI and sits —
+		// A quota limit means claude paints the limit line on the TUI and sits -
 		// it won't emit (further) transcript output this turn. Don't wait for the
 		// first-byte / idle timeout (up to 120s) to settle: that long stall is what
 		// makes a Dynamic-mode turn look like it produced "no response" after the
@@ -559,7 +559,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 
 	// Arm the first-byte timer the moment the TUI is up. It spans the ready
 	// handshake, session discovery, and the wait for claude's first transcript
-	// entry — any of which stalling indefinitely (a prompt swallowed by a
+	// entry - any of which stalling indefinitely (a prompt swallowed by a
 	// startup modal is the canonical case) trips it. The ready-timeout (exit 4)
 	// covers a TUI that never reaches its prompt; this covers a TUI that reaches
 	// the prompt but never starts a turn.
@@ -571,7 +571,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// prompt text each point at a different remaining fix.
 		const screenTail = driver.getScreenTail();
 		process.stderr.write(
-			`maestro-p: no transcript output within ${args.firstByteTimeoutSeconds}s of sending the prompt — claude never started the turn (prompt may have been swallowed by a startup modal). Failing with first_byte_timeout.\n` +
+			`maestro-p: no transcript output within ${args.firstByteTimeoutSeconds}s of sending the prompt - claude never started the turn (prompt may have been swallowed by a startup modal). Failing with first_byte_timeout.\n` +
 				`maestro-p: last screen at timeout (ANSI-stripped tail):\n${screenTail}\n`
 		);
 		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
@@ -613,7 +613,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// Bound discovery by the first-byte budget, not the (much larger)
 			// idle budget. The session file only appears once claude actually
 			// starts the turn, so "file never showed up" is the same failure as
-			// "no first byte" — both should fail fast rather than ride the full
+			// "no first byte" - both should fail fast rather than ride the full
 			// --max-wait window. The FLOOR still covers a slow cold start.
 			timeoutMs: Math.max(DISCOVERY_TIMEOUT_FLOOR_MS, firstByteTimeoutMs),
 		});
@@ -727,7 +727,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 	// Diagnostic hook: when MAESTRO_P_DUMP_RAW points at a file, write the raw
 	// captured screen there before parsing. The /usage layout drifts by plan
 	// type (personal Max vs Team/Enterprise vs API-billing), and parse failures
-	// are screen-only — there's no transcript to inspect after the fact. This
+	// are screen-only - there's no transcript to inspect after the fact. This
 	// lets a maintainer capture the exact panel a given account renders without
 	// rebuilding an instrumented binary. Best-effort: a write failure must never
 	// derail the status probe itself.
@@ -736,7 +736,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		try {
 			fs.writeFileSync(dumpPath, raw, 'utf8');
 		} catch {
-			// ignore — diagnostics are non-fatal
+			// ignore - diagnostics are non-fatal
 		}
 	}
 

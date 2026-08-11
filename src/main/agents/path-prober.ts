@@ -164,7 +164,7 @@ export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
 		env.PATH = merged.join(delim);
 		return env;
 	} catch (err) {
-		// Shell PATH probe failures (timeouts, exit-non-zero) are recoverable —
+		// Shell PATH probe failures (timeouts, exit-non-zero) are recoverable -
 		// callers fall back to the base expanded env. Reporting these to Sentry
 		// produces high-volume noise from slow shell init scripts; only escalate
 		// for unexpected error shapes.

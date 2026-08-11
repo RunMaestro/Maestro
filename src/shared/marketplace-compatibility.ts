@@ -15,7 +15,7 @@ import type { MarketplacePlaybook } from './marketplace-types';
  *
  * Maestro's package.json uses uppercase prerelease tags (e.g. "0.16.17-RC")
  * while playbook manifests use lowercase ("0.16.17-rc"). Per semver 2.0,
- * prerelease identifiers are compared as ASCII, so "RC" < "rc" — which would
+ * prerelease identifiers are compared as ASCII, so "RC" < "rc" - which would
  * incorrectly gate a `-rc` playbook on an `-RC` build of the same version.
  * Lowercasing both sides before comparison sidesteps this without rolling our
  * own comparator.
@@ -46,7 +46,7 @@ export function isCompatible(playbook: MarketplacePlaybook, runningVersion: stri
 }
 
 /**
- * Strict beta check — only the literal boolean `true` counts. Anything else
+ * Strict beta check - only the literal boolean `true` counts. Anything else
  * (absent, false, "true", "yes", 1, 0) is treated as not-beta. This prevents
  * future contributors from assuming JS truthy-coercion applies.
  */

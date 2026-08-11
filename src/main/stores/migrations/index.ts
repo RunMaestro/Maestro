@@ -2,7 +2,7 @@
  * Settings Store Migrations
  *
  * One-shot startup migrations that run after the settings store is
- * initialized. Each migration is responsible for its own idempotency marker —
+ * initialized. Each migration is responsible for its own idempotency marker -
  * `runSettingsMigrations()` is invoked unconditionally on every boot.
  *
  * Register new migrations by importing and calling them here. Order matters
@@ -21,7 +21,7 @@ import { migratePlaybooksFolder } from './playbooks-folder';
 
 /**
  * Run all registered settings-store migrations once. Safe to call on every
- * boot — individual migrations short-circuit when their marker is set.
+ * boot - individual migrations short-circuit when their marker is set.
  *
  * Any migration that throws is logged at error and swallowed so a buggy
  * migration cannot block startup.

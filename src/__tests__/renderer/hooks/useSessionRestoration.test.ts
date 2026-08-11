@@ -142,7 +142,7 @@ afterEach(() => {
 });
 
 // ============================================================================
-// restoreSession — Migration logic
+// restoreSession - Migration logic
 // ============================================================================
 
 describe('restoreSession — Migration logic', () => {
@@ -448,7 +448,7 @@ describe('restoreSession — Migration logic', () => {
 });
 
 // ============================================================================
-// restoreSession — Corruption recovery
+// restoreSession - Corruption recovery
 // ============================================================================
 
 describe('restoreSession — Corruption recovery', () => {
@@ -627,7 +627,7 @@ describe('restoreSession — Corruption recovery', () => {
 });
 
 // ============================================================================
-// restoreSession — Runtime state reset
+// restoreSession - Runtime state reset
 // ============================================================================
 
 describe('restoreSession — Runtime state reset', () => {
@@ -841,7 +841,7 @@ describe('restoreSession — Runtime state reset', () => {
 		});
 
 		// When unifiedTabOrder is undefined and terminalTabs is missing,
-		// restoration builds order from AI tabs only — no default terminal tab is created.
+		// restoration builds order from AI tabs only - no default terminal tab is created.
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
 		expect(restored!.terminalTabs).toHaveLength(0);
 	});
@@ -860,7 +860,7 @@ describe('restoreSession — Runtime state reset', () => {
 });
 
 // ============================================================================
-// restoreSession — Git info for local sessions
+// restoreSession - Git info for local sessions
 // ============================================================================
 
 describe('restoreSession — Git info (local sessions)', () => {
@@ -944,7 +944,7 @@ describe('restoreSession — Git info (local sessions)', () => {
 });
 
 // ============================================================================
-// restoreSession — Error handling
+// restoreSession - Error handling
 // ============================================================================
 
 describe('restoreSession — Error handling', () => {
@@ -1485,7 +1485,7 @@ describe('Session & Group loading effect', () => {
 });
 
 // ============================================================================
-// restoreSession — Terminal tab persistence
+// restoreSession - Terminal tab persistence
 // ============================================================================
 
 describe('restoreSession — Terminal tab persistence', () => {
@@ -1636,7 +1636,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		// Migration only ensures the array exists — it does not add a default tab
+		// Migration only ensures the array exists - it does not add a default tab
 		expect(restored!.terminalTabs).toHaveLength(0);
 		expect(restored!.activeTerminalTabId).toBeNull();
 	});

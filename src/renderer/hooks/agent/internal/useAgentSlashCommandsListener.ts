@@ -1,5 +1,5 @@
 /**
- * useAgentSlashCommandsListener — registers `window.maestro.process.onSlashCommands`
+ * useAgentSlashCommandsListener - registers `window.maestro.process.onSlashCommands`
  *
  * Routes the discovered slash commands to the matching session via
  * `parseSessionId` then writes them on `session.agentCommands` with
@@ -23,7 +23,7 @@ export function useAgentSlashCommandsListener(): void {
 			(sessionId: string, slashCommands: string[]) => {
 				const actualSessionId = parseSessionId(sessionId).baseSessionId;
 
-				// Perf: orphan event — skip the no-op map.
+				// Perf: orphan event - skip the no-op map.
 				if (!getSessions().some((s) => s.id === actualSessionId)) return;
 
 				setSessions((prev) =>

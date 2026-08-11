@@ -231,7 +231,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				// This prevents batch output from appearing in the interactive AI terminal
 				const targetSessionId = `${sessionId}-batch-${Date.now()}`;
 
-				// Batch tasks always spawn fresh sessions — prepare Maestro system prompt
+				// Batch tasks always spawn fresh sessions - prepare Maestro system prompt
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: getActiveTab(session)?.id,
@@ -511,7 +511,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					);
 
 					// Watchdog for hung Auto Run batch tasks: detect long silence and force-kill.
-					// A value of 0 means "unlimited" — skip the watchdog entirely.
+					// A value of 0 means "unlimited" - skip the watchdog entirely.
 					if (isBatchProcess) {
 						const inactivityTimeoutMin = useSettingsStore.getState().autoRunInactivityTimeoutMin;
 						if (inactivityTimeoutMin > 0) {

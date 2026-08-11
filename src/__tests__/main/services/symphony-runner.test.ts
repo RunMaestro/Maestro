@@ -38,7 +38,7 @@ vi.mock('../../../main/utils/symphony-fork', () => ({
 	ensureForkSetup: vi.fn(),
 }));
 
-// Mock cliDetection — resolveGhPath returns 'gh' so existing assertions still match
+// Mock cliDetection - resolveGhPath returns 'gh' so existing assertions still match
 vi.mock('../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
 }));

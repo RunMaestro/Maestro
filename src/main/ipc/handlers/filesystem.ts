@@ -350,7 +350,7 @@ export function registerFilesystemHandlers(): void {
 					return null;
 				}
 				// EISDIR happens when a caller passes a directory path (e.g., user
-				// clicks an entry that resolved to a folder). Treat like ENOENT —
+				// clicks an entry that resolved to a folder). Treat like ENOENT -
 				// return null so the renderer can handle the absence cleanly instead
 				// of surfacing an unhandled IPC rejection. Fixes MAESTRO-JP.
 				if (error?.code === 'EISDIR') {
@@ -364,7 +364,7 @@ export function registerFilesystemHandlers(): void {
 	// Enumerate a remote directory tree in a single SSH round-trip.
 	// Replaces N-per-directory `ls` recursion with two batched `find` calls
 	// bundled into one SSH command. Used by the file explorer to load remote
-	// trees in 1–2 round-trips total instead of one per directory.
+	// trees in 1-2 round-trips total instead of one per directory.
 	// SSH-only: local trees use direct fs recursion in the renderer.
 	ipcMain.handle(
 		'fs:listTreeRemote',
@@ -528,7 +528,7 @@ export function registerFilesystemHandlers(): void {
 						effectivePatterns = [...effectivePatterns, ...parseGitignoreContent(content)];
 					}
 				} catch {
-					// .gitignore may not exist or be readable — not an error
+					// .gitignore may not exist or be readable - not an error
 				}
 			}
 

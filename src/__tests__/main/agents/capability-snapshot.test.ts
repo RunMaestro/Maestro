@@ -23,7 +23,7 @@ function makeFakeStore(initial: AgentCapabilitiesSnapshotMap = {}) {
 	};
 }
 
-// Silence Sentry calls — captureMessage is fire-and-forget so the implementation
+// Silence Sentry calls - captureMessage is fire-and-forget so the implementation
 // just `void`-awaits it. Vitest will still log unhandled promise rejections
 // otherwise (the real impl tries to use `electron.app` which is unavailable here).
 // The hoisted handle lets us assert which failures DO and DON'T get reported.
@@ -92,7 +92,7 @@ describe('CapabilitySnapshotManager', () => {
 
 		expect(result.status).toBe('not_installed');
 		expect(result.lastError).toBeUndefined();
-		// The previous binary path must NOT survive — otherwise the UI shows a
+		// The previous binary path must NOT survive - otherwise the UI shows a
 		// red "Not installed" pill alongside a valid-looking path. Same for
 		// version / models, which would all be stale.
 		expect(result.path).toBeUndefined();

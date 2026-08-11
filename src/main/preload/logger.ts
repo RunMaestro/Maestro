@@ -41,7 +41,7 @@ export function createLoggerApi() {
 
 		// Subscribe to new log entries in real-time.
 		// Main forwards entries in batches via `logger:newLogBatch` to amortize
-		// IPC overhead — we fan them out here so consumers keep a per-entry API.
+		// IPC overhead - we fan them out here so consumers keep a per-entry API.
 		onNewLog: (callback: (log: SystemLogEntry) => void) => {
 			const batchHandler = (_: Electron.IpcRendererEvent, batch: SystemLogEntry[]) => {
 				for (const log of batch) callback(log);

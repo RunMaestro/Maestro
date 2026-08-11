@@ -180,7 +180,7 @@ describe('remote-fs', () => {
 			// Regression: an earlier implementation scanned for symlinks with
 			// `for f in <path>/* <path>/.[!.]* <path>/..?*; do ...; done`, which
 			// aborts with exit 1 under zsh (the default shell on macOS) whenever
-			// any pattern has no match — common for directories without dotfiles.
+			// any pattern has no match - common for directories without dotfiles.
 			// Using `find -type l` avoids shell glob expansion entirely.
 			const deps = createMockDeps({ stdout: 'file.txt\n', stderr: '', exitCode: 0 });
 
@@ -196,7 +196,7 @@ describe('remote-fs', () => {
 		it('uses find -exec for the symlink scan so a pipeline does not leak [ -d ] exit status', async () => {
 			// Regression: a `find … | while read f; do [ -d "$f" ] && basename "$f"; done`
 			// pipeline exits with the status of its last body command, so any directory
-			// containing a symlink whose target was NOT a directory (common — e.g. a
+			// containing a symlink whose target was NOT a directory (common - e.g. a
 			// file-symlink in a project root) made the whole SSH command exit 1 and
 			// `readDirRemote` report failure even though `ls` succeeded. Seen in the
 			// field on a remote checkout with a single file-symlink.
@@ -248,7 +248,7 @@ describe('remote-fs', () => {
 		});
 
 		it('detects truncation when file count exceeds maxFiles', async () => {
-			// head returned cap+1 entries — the helper should slice off the marker
+			// head returned cap+1 entries - the helper should slice off the marker
 			// entry and flag truncated=true.
 			const files = ['a', 'b', 'c', 'd'].map((n) => `./${n}.txt`).join('\n');
 			const stdout = `./src\n${SEP}\n${files}\n`;
@@ -325,7 +325,7 @@ describe('remote-fs', () => {
 			const call = (deps.execSsh as any).mock.calls[0][1];
 			const remoteCommand = call[call.length - 1] as string;
 			expect(remoteCommand).toContain("-name 'node_modules'");
-			// Path-bearing patterns are dropped — they cannot work with -name.
+			// Path-bearing patterns are dropped - they cannot work with -name.
 			expect(remoteCommand).not.toContain('dist/cache');
 			expect(remoteCommand).not.toContain('build/**');
 		});
@@ -642,7 +642,7 @@ describe('remote-fs', () => {
 		});
 
 		it('issues exactly one SSH call for a dir with many files', async () => {
-			// Simulate 300 session files coming back in a single stat response — the
+			// Simulate 300 session files coming back in a single stat response - the
 			// key property that separates this implementation from the previous
 			// per-file stat fan-out that tripped OpenSSH MaxStartups.
 			const lines: string[] = [];
@@ -777,7 +777,7 @@ describe('remote-fs', () => {
 		it('expands a home-relative path via $HOME so the cd lands in the right directory', async () => {
 			// Regression: shellEscape() single-quotes the path, which prevents
 			// tilde expansion and silently sends the stat loop to the wrong
-			// cwd — the bug that broke Claude/Copilot remote session listing.
+			// cwd - the bug that broke Claude/Copilot remote session listing.
 			const deps = createMockDeps({
 				stdout: '',
 				stderr: '',
@@ -1328,7 +1328,7 @@ describe('remote-fs', () => {
 		it('caps concurrent SSH calls per host at 4', async () => {
 			const { deps, pending, release } = deferredDeps();
 
-			// Fire 8 calls — cap is 4, so only 4 should reach execSsh.
+			// Fire 8 calls - cap is 4, so only 4 should reach execSsh.
 			const calls = Array.from({ length: 8 }, (_, i) =>
 				readFileRemote(`/file-${i}`, baseConfig, deps)
 			);
@@ -1339,7 +1339,7 @@ describe('remote-fs', () => {
 			await new Promise((r) => setTimeout(r, 30));
 			expect(pending()).toBe(4);
 
-			// Drain everything — release one slot at a time, waiting between
+			// Drain everything - release one slot at a time, waiting between
 			// each so the next queued call has time to start (and push its
 			// releaser onto the deferred queue) before the next release fires.
 			for (let i = 0; i < 8; i++) {
@@ -1354,7 +1354,7 @@ describe('remote-fs', () => {
 			const { deps, pending, release } = deferredDeps();
 			const otherConfig: SshRemoteConfig = { ...baseConfig, host: 'other.example.com' };
 
-			// 4 to each host — both should saturate independently (8 in flight).
+			// 4 to each host - both should saturate independently (8 in flight).
 			const calls = [
 				...Array.from({ length: 4 }, (_, i) => readFileRemote(`/a-${i}`, baseConfig, deps)),
 				...Array.from({ length: 4 }, (_, i) => readFileRemote(`/b-${i}`, otherConfig, deps)),
@@ -1372,7 +1372,7 @@ describe('remote-fs', () => {
 				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
 			};
 
-			// Fire 5 calls — if the slot weren't released on rejection, the 5th
+			// Fire 5 calls - if the slot weren't released on rejection, the 5th
 			// would hang forever waiting on an acquire() that never resolves.
 			const results = await Promise.allSettled(
 				Array.from({ length: 5 }, (_, i) => readFileRemote(`/x-${i}`, baseConfig, failingDeps))

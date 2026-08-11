@@ -1622,7 +1622,7 @@ describe('useBatchHandlers', () => {
 
 			// IPC history.add should still be called
 			expect(window.maestro.history.add).toHaveBeenCalled();
-			// Should not throw — no crash from null ref
+			// Should not throw - no crash from null ref
 		});
 	});
 

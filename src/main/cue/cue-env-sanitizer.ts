@@ -11,8 +11,8 @@
  *   - Blocklist:   PATH, HOME, USER, SHELL, LD_PRELOAD, LD_LIBRARY_PATH,
  *                  DYLD_INSERT_LIBRARIES, NODE_OPTIONS
  *     Comparison is CASE-INSENSITIVE (we uppercase the incoming name before
- *     membership check). Windows env var lookup is case-insensitive — `Path`
- *     and `PATH` refer to the same variable — so a case-sensitive blocklist
+ *     membership check). Windows env var lookup is case-insensitive - `Path`
+ *     and `PATH` refer to the same variable - so a case-sensitive blocklist
  *     would let an attacker bypass the guard by spelling `Path` or `PaTh`.
  *     The returned `droppedNames` preserves the original casing of the
  *     input so operators see what was actually rejected.
@@ -69,7 +69,7 @@ export function sanitizeCustomEnvVars(
 			if (onLog) {
 				onLog(
 					'warn',
-					`[CUE] Dropped custom env var "${name}" — name is not a valid POSIX identifier`
+					`[CUE] Dropped custom env var "${name}" - name is not a valid POSIX identifier`
 				);
 			}
 			continue;
@@ -81,7 +81,7 @@ export function sanitizeCustomEnvVars(
 		if (BLOCKED_ENV_VARS.has(name.toUpperCase())) {
 			droppedNames.push(name);
 			if (onLog) {
-				onLog('warn', `[CUE] Dropped custom env var "${name}" — blocklisted for safety`);
+				onLog('warn', `[CUE] Dropped custom env var "${name}" - blocklisted for safety`);
 			}
 			continue;
 		}

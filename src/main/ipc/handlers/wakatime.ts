@@ -25,8 +25,8 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * Register all WakaTime-related IPC handlers.
  *
  * Handlers:
- * - wakatime:checkCli — Check if wakatime-cli is installed (auto-installs if needed) and return version
- * - wakatime:validateApiKey — Validate an API key against the WakaTime API
+ * - wakatime:checkCli - Check if wakatime-cli is installed (auto-installs if needed) and return version
+ * - wakatime:validateApiKey - Validate an API key against the WakaTime API
  */
 export function registerWakatimeHandlers(wakatimeManager: WakaTimeManager): void {
 	// Check if wakatime-cli is available (auto-installs if needed)

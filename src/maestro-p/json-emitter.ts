@@ -20,11 +20,11 @@
 //
 // State machine
 // -------------
-// `init` is one-shot — second and subsequent emitInit() calls are a silent
+// `init` is one-shot - second and subsequent emitInit() calls are a silent
 // no-op (callers that retry on race shouldn't crash). The terminal events
 // (`emitResult`, `emitStatus`) are also one-shot; once either has fired, ALL
 // subsequent emit calls throw. assistant/user emissions before init or after
-// the terminal also throw — these are programmer errors that would corrupt
+// the terminal also throw - these are programmer errors that would corrupt
 // the wire protocol if allowed through.
 
 export interface EmitInitOptions {
@@ -50,7 +50,7 @@ export interface EmitResultOptions {
 //
 // `auth_state` distinguishes a real measurement from the "Not logged in"
 // stub. When `unauthenticated`, the percent / resets_at fields are placeholder
-// zeros — Claude's `/usage` panel for an unauthenticated config dir is the
+// zeros - Claude's `/usage` panel for an unauthenticated config dir is the
 // API-billing variant ($0.00 across the board), which carries no real Max
 // plan signal. Downstream consumers (dashboard, mode selector) key off
 // `auth_state` to decide whether the numbers mean anything.
@@ -130,7 +130,7 @@ export class JsonEmitter {
 		if (this.finalEmitted) {
 			throw new Error('JsonEmitter: emitStatus() called after final envelope');
 		}
-		// `--status` mode is a standalone single-line protocol — init is
+		// `--status` mode is a standalone single-line protocol - init is
 		// intentionally NOT required (and would be wrong, since status mode
 		// never spawns a Claude session id at the wire level).
 		this.finalEmitted = true;

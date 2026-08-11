@@ -38,7 +38,7 @@ export interface BucketAggregateOptions {
 	 * Lookback window in milliseconds. When provided, the bucket range
 	 * spans `[end - lookbackMs, end]` and entries outside the window are
 	 * dropped. When omitted (or `null`), the range spans the entries'
-	 * actual `[earliest, latest]` — i.e. "all time".
+	 * actual `[earliest, latest]` - i.e. "all time".
 	 */
 	lookbackMs?: number | null;
 	/**
@@ -54,7 +54,7 @@ export interface BucketAggregateOptions {
  * - With no `lookbackMs`: buckets span the entries' full time range (the
  *   "all-encompassing" / "All time" view).
  * - With `lookbackMs`: buckets span `[endTime - lookbackMs, endTime]` and
- *   entries outside that window are excluded — the renderer's lookback
+ *   entries outside that window are excluded - the renderer's lookback
  *   selector hits this path.
  *
  * If no entries fall in range, returns a zero-filled bucket array with the
@@ -110,7 +110,7 @@ export function buildBucketAggregate(
 	}
 
 	// For windowed mode the range is fixed by the lookback, not the
-	// observed entries — keeps the axis labels stable as entries arrive
+	// observed entries - keeps the axis labels stable as entries arrive
 	// or get filtered out.
 	const rangeStart = windowStart ?? earliest;
 	const rangeEnd = windowStart !== null ? endTime : latest;

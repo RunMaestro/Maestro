@@ -231,7 +231,7 @@ describe('getGraphData', () => {
 		expect(createCueQueryService(deps).getGraphData()).toHaveLength(0);
 	});
 
-	it('filters dormant subscriptions via isSubscriptionParticipant — owned by other agent excluded', () => {
+	it('filters dormant subscriptions via isSubscriptionParticipant - owned by other agent excluded', () => {
 		const session = makeSession('s1', 'A');
 		const ownedBySelf: CueSubscription = {
 			name: 'mine',
@@ -320,7 +320,7 @@ describe('getSettings', () => {
 		// Regression: owner_agent_id is per-root (it names an agent that must live
 		// at that cue.yaml's root). When getSettings surfaced the first session's
 		// owner_agent_id, the Settings modal read it and saveSettings broadcast it
-		// into every cue.yaml — flagging unrelated single-agent projects with a
+		// into every cue.yaml - flagging unrelated single-agent projects with a
 		// bogus "owner_agent_id does not match any agent" warning.
 		const state = makeState(
 			makeConfig([], {

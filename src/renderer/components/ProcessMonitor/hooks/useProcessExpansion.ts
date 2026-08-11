@@ -23,7 +23,7 @@ function writeStoredExpandedLevel(level: number): void {
 	try {
 		window.localStorage.setItem(PROCESS_MONITOR_LEVEL_KEY, String(level));
 	} catch {
-		// localStorage may throw in private mode or when full — non-fatal for a UI preference.
+		// localStorage may throw in private mode or when full - non-fatal for a UI preference.
 	}
 }
 
@@ -36,7 +36,7 @@ export interface UseProcessExpansionResult {
 
 // Owns the expanded-node Set, the stepwise expand/collapse buttons, and the
 // initial-restore-from-localStorage effect. Receives the latest tree on every
-// render — the initial-restore effect's `hasExpandedInitially` guard makes
+// render - the initial-restore effect's `hasExpandedInitially` guard makes
 // re-runs cheap no-ops, so a tree changing every poll cycle does not cascade.
 export function useProcessExpansion(
 	tree: ProcessNode[],

@@ -6,18 +6,20 @@ Essential guidance for working with this codebase. For detailed architecture, se
 
 This guide has been split into focused sub-documents for progressive disclosure:
 
-| Document                             | Description                                                                                                  |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features)  |
-| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                              |
-| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                        |
-| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                            |
-| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                  |
-| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                            |
-| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                    |
-| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                  |
-| [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`) |
-| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                             |
+| Document                             | Description                                                                                                                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features)                                                              |
+| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                                                                                          |
+| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                                                                                    |
+| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                                                                                        |
+| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                                                                              |
+| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                                                                                        |
+| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                                                                                |
+| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                                                                              |
+| [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`)                                                             |
+| [[CLAUDE-PLUGINS.md]]                | Plugin system architecture: tiers, sandbox, broker, capabilities, contributions, signing, trust model (read before editing `src/main/plugins/` or `src/shared/plugins/`) |
+| [[CLAUDE-SETTINGS.md]]               | Settings modal style guide: typography, color, dimming, spacing, primitives, registration checklist (read before editing `src/renderer/components/Settings/`)            |
+| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                                                                                         |
 
 ---
 
@@ -25,23 +27,25 @@ This guide has been split into focused sub-documents for progressive disclosure:
 
 **MANDATORY:** Before creating any new utility function, helper, hook, component, type, or constant, check the guide docs in `docs/agent-guides/` to see if it already exists. Duplicated code is the #1 source of maintenance burden in this codebase - there are already grep-verified instances of 20+ duplicate format helpers, 60+ ad-hoc mock factories, and 500+ manual modal-layer registrations. Don't add to the pile.
 
-| Before creating...                                 | Check this guide first                                         |
-| -------------------------------------------------- | -------------------------------------------------------------- |
-| Utility function (formatting, IDs, paths, strings) | [SHARED-UTILS.md](docs/agent-guides/SHARED-UTILS.md)           |
-| IPC handler or preload bridge                      | [IPC-PATTERNS.md](docs/agent-guides/IPC-PATTERNS.md)           |
-| Store action, selector, or hook                    | [STATE-PATTERNS.md](docs/agent-guides/STATE-PATTERNS.md)       |
-| Agent parser, storage, or error pattern            | [AGENT-INFRA.md](docs/agent-guides/AGENT-INFRA.md)             |
-| UI component, modal, or theme usage                | [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md)             |
-| Test mock, factory, or setup pattern               | [TEST-PATTERNS.md](docs/agent-guides/TEST-PATTERNS.md)         |
-| Renderer service or constant                       | [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md) |
-| Process spawning or listener                       | [PROCESS-SYSTEM.md](docs/agent-guides/PROCESS-SYSTEM.md)       |
-| Web/mobile hook or component                       | [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md)               |
-| CLI command or playbook feature                    | [CLI-PLAYBOOKS.md](docs/agent-guides/CLI-PLAYBOOKS.md)         |
-| Group chat or Symphony feature                     | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)               |
-| Stats, analytics, or dashboard                     | [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)     |
-| Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)         |
-| Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)           |
-| App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)       |
+| Before creating...                                 | Check this guide first                                           |
+| -------------------------------------------------- | ---------------------------------------------------------------- |
+| Utility function (formatting, IDs, paths, strings) | [SHARED-UTILS.md](docs/agent-guides/SHARED-UTILS.md)             |
+| IPC handler or preload bridge                      | [IPC-PATTERNS.md](docs/agent-guides/IPC-PATTERNS.md)             |
+| Store action, selector, or hook                    | [STATE-PATTERNS.md](docs/agent-guides/STATE-PATTERNS.md)         |
+| Agent parser, storage, or error pattern            | [AGENT-INFRA.md](docs/agent-guides/AGENT-INFRA.md)               |
+| UI component, modal, or theme usage                | [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md)               |
+| Test mock, factory, or setup pattern               | [TEST-PATTERNS.md](docs/agent-guides/TEST-PATTERNS.md)           |
+| Renderer service or constant                       | [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md)   |
+| Process spawning or listener                       | [PROCESS-SYSTEM.md](docs/agent-guides/PROCESS-SYSTEM.md)         |
+| Web/mobile hook or component                       | [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md)                 |
+| CLI command or playbook feature                    | [CLI-PLAYBOOKS.md](docs/agent-guides/CLI-PLAYBOOKS.md)           |
+| Group chat or Symphony feature                     | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)                 |
+| Stats, analytics, or dashboard                     | [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)       |
+| Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)           |
+| Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)             |
+| App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)         |
+| Stat card, chart, sparkline, or input control      | [WIDGET-LIBRARY.md](docs/agent-guides/WIDGET-LIBRARY.md)         |
+| Plugin, sandbox capability, or contribution        | [PLUGIN-DEVELOPMENT.md](docs/agent-guides/PLUGIN-DEVELOPMENT.md) |
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 
@@ -166,12 +170,12 @@ This codebase uses **tabs for indentation**, not spaces. Always match existing f
 
 ### Writing Style: No Em-Dashes or En-Dashes
 
-**NEVER use em-dashes (`—`, U+2014) or en-dashes (`–`, U+2013) anywhere.** This applies to everything you write: user docs (`docs/`), in-app documentation, system prompts (`src/prompts/`), UI copy, code comments, commit messages, PR descriptions, and your own responses. Em-dashes are a tell-tale sign of bot-authored text; humans almost never type them. Use one of these instead, whichever fits the sentence:
+**NEVER use em-dashes (`-`, U+2014) or en-dashes (`-`, U+2013) anywhere.** This applies to everything you write: user docs (`docs/`), in-app documentation, system prompts (`src/prompts/`), UI copy, code comments, commit messages, PR descriptions, and your own responses. Em-dashes are a tell-tale sign of bot-authored text; humans almost never type them. Use one of these instead, whichever fits the sentence:
 
 - A spaced hyphen (`-`) for an aside or appositive.
 - A comma, colon, or parentheses to set off a clause.
 - Two separate sentences when the clauses stand on their own.
-- A plain hyphen (`-`) for numeric ranges (e.g. `10-20`, not `10–20`).
+- A plain hyphen (`-`) for numeric ranges (e.g. `10-20`, not `10-20`).
 
 This is non-negotiable. If you catch an em-dash or en-dash in anything you produce or edit, replace it.
 

@@ -117,7 +117,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		sessionIdRef.current = session.id;
 	}, [session.id]);
 
-	// SSH remote ID — use sshRemoteId (set after AI spawns) or fall back to
+	// SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to
 	// sessionSshRemoteConfig (set before spawn). Ensures file ops work for both
 	// AI and terminal-only SSH sessions.
 	const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
@@ -226,7 +226,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setSessions,
 	});
 
-	// ── expandFolder — shared between file ops and drag-to-move ───────────────
+	// ── expandFolder - shared between file ops and drag-to-move ───────────────
 
 	const expandFolder = useCallback(
 		(relativePath: string) => {
@@ -480,7 +480,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						{!compact && <Search className="w-3 h-3" />}
 						Find
 					</button>
-					{/* Open in file manager — local sessions only */}
+					{/* Open in file manager - local sessions only */}
 					{!sshRemoteId && (
 						<button
 							onClick={() =>
@@ -572,7 +572,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						</div>
 					</button>
 				</div>
-				{/* Path row — doubles as a drop target for the workspace root. The path
+				{/* Path row - doubles as a drop target for the workspace root. The path
 				    points at the root working directory, so dropping a tree item (or an
 				    OS file) here moves/imports it to the root, same as the bottom
 				    receptacle. Uses '' as the destination, mirroring handleFolderDrop. */}
@@ -746,7 +746,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 									const item = flattenedTree[virtualRow.index];
 									// Render as a stable memo'd component (identity defined at module
 									// level, not inside a render), so React never sees a new component
-									// type on each parent render — prevents remounting every visible row.
+									// type on each parent render - prevents remounting every visible row.
 									return (
 										<FileTreeRow
 											key={item.path}
@@ -810,7 +810,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				/>
 			)}
 
-			{/* Move-to-root receptacle — appears only while an in-tree row is being
+			{/* Move-to-root receptacle - appears only while an in-tree row is being
 			    dragged, giving items buried in subfolders a target to land back at
 			    the workspace root. Sits at the bottom of the panel, just above the
 			    stats bar. Mirrors the Left Bar's "Drop here to ungroup" zone for UI
@@ -978,7 +978,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				/>
 			)}
 
-			{/* OS-file import overlay — explains what dropping a Finder/Explorer file
+			{/* OS-file import overlay - explains what dropping a Finder/Explorer file
 			    does, mirroring the main panel's chat-drop hint. Shown only for
 			    external drags (isExternalDrag); in-tree moves get row highlighting
 			    instead. `pointer-events-none` lets dragover/drop pass through to the

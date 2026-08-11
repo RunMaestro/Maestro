@@ -1,5 +1,5 @@
 /**
- * Tests for TerminalSelectionContextMenu — the right-click menu shown when the
+ * Tests for TerminalSelectionContextMenu - the right-click menu shown when the
  * user highlights text in XTerminal and chooses Copy-to-Clipboard or Send-to-Agent.
  */
 

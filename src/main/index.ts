@@ -289,7 +289,7 @@ if (!installationId) {
 	logger.info('Generated new installation ID', 'Startup', { installationId });
 }
 
-// Run one-shot settings-store migrations (idempotent — each migration owns
+// Run one-shot settings-store migrations (idempotent - each migration owns
 // its own marker). Mirrors the installation-ID generator above as the
 // canonical "first thing we do after the settings store is up" hook.
 runSettingsMigrations(store);
@@ -587,7 +587,7 @@ app
 						headers: { 'content-type': contentType },
 					});
 				} catch (err) {
-					// Only swallow "file not found" — surface every other fs error
+					// Only swallow "file not found" - surface every other fs error
 					// (EACCES, EISDIR, etc.) so Sentry / the renderer can react
 					// instead of silently 404ing on a broken install.
 					if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
@@ -700,7 +700,7 @@ app
 		// Bring up the CLI server and publish the discovery file as early as
 		// possible. Done here (before initializePrompts / Cue / history / etc.)
 		// so an unhandled error later in startup can't silently leave maestro-cli
-		// without a discovery file — the symptom that previously forced users to
+		// without a discovery file - the symptom that previously forced users to
 		// toggle Live Mode on/off to coax the file into existence.
 		const cliServerDeps = {
 			getWebServer: () => webServer,
@@ -791,7 +791,7 @@ app
 		// Fire-and-forget: sample `maestro-p --status` for every CLAUDE_CONFIG_DIR
 		// account referenced by a recent Batch Mode-enabled Claude session so the
 		// context-window popover has fresh quota data on first turn. Failures here
-		// are non-fatal — the spawner's resolver tolerates a null snapshot by
+		// are non-fatal - the spawner's resolver tolerates a null snapshot by
 		// defaulting to interactive, and the next sampler refresh will repopulate.
 		const startupUsageSampling = runStartupUsageSampling({
 			sessionsStore,
@@ -877,7 +877,7 @@ app
 				};
 
 				// `action: notify` surfaces a toast through the owning agent instead of
-				// spawning anything — handled before command/prompt so the spawn config,
+				// spawning anything - handled before command/prompt so the spawn config,
 				// SSH wrap, and history-recording paths below stay agent-only. The
 				// notify message is pre-resolved by the dispatch service via the
 				// fallback chain (notify.message → label → prompt → name); falling
@@ -927,7 +927,7 @@ app
 				}
 
 				// `action: command` runs a shell command or maestro-cli call instead of an
-				// AI prompt — skip agent path resolution and SSH wrapping.
+				// AI prompt - skip agent path resolution and SSH wrapping.
 				if (action === 'command') {
 					if (!command) {
 						// Should be unreachable post-validator, but guard anyway so a
@@ -1081,7 +1081,7 @@ app
 			},
 			onPreventSleep: (reason) => powerManager.addBlockReason(reason),
 			onAllowSleep: (reason) => powerManager.removeBlockReason(reason),
-			// Phase 01 — gate cue_events stats lineage writes on the
+			// Phase 01 - gate cue_events stats lineage writes on the
 			// `encoreFeatures.usageStats` flag. Read on every record so toggling
 			// the Encore flag at runtime takes effect without an app restart.
 			getUsageStatsEnabled: () => {
@@ -1093,7 +1093,7 @@ app
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
 		// on every event so toggling Cue or usageStats at runtime takes effect
 		// without an app restart. Same predicate as cue-stats.ts:isCueStatsEnabled
-		// — both flags required.
+		// - both flags required.
 		configureCueTelemetry({
 			getInstallationId: () => store.get('installationId') as string | null,
 			getAppVersion: () => app.getVersion(),
@@ -1180,7 +1180,7 @@ app
 		if (isMacOS()) {
 			const template: Electron.MenuItemConstructorOptions[] = [
 				{
-					// Explicit appMenu — uses a custom Quit item instead of `role: 'quit'`
+					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
 					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
 					// quit role (as "Quit and Keep Windows"), and that keystroke sits
 					// one modifier away from Opt+Q (Maestro Cue), causing accidental
@@ -1213,11 +1213,11 @@ app
 					],
 				},
 				{
-					// Custom Edit menu — equivalent to `role: 'editMenu'` minus
+					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
 					// `undo` / `redo`. Those built-in roles register Cmd+Z /
 					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
 					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W — see the note
+					// (same trap as `role: 'close'` eating Cmd+W - see the note
 					// above the appMenu block). Removing them frees Cmd+Z for the
 					// image annotator's stroke-undo handler.
 					//
@@ -1325,7 +1325,7 @@ app
 	})
 	.catch(async (err) => {
 		// Without this, an unhandled rejection anywhere in the long startup chain
-		// silently aborts initialization — historically the cause of the missing
+		// silently aborts initialization - historically the cause of the missing
 		// CLI discovery file. Log loudly and report to Sentry so we can actually
 		// diagnose future regressions instead of guessing.
 		logger.error(`Fatal error during app startup: ${err}`, 'Startup');
@@ -1339,7 +1339,7 @@ app.on('window-all-closed', () => {
 		app.quit();
 	} else {
 		// On macOS the app stays alive after all windows close (dock click reopens).
-		// Kill all managed PTY/child processes now so they don't leak — session
+		// Kill all managed PTY/child processes now so they don't leak - session
 		// restoration will re-spawn fresh PTYs when the window is reopened.
 		processManager?.killAll();
 	}
@@ -1458,7 +1458,7 @@ function setupIpcHandlers() {
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
 		getCueProcesses: () => {
-			// Always query the executor's active process map — processes may still be
+			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete
 			// independently of engine state).
 			const processList = getCueProcessList();

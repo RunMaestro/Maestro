@@ -66,7 +66,7 @@ export async function ensureForkSetup(
 		env
 	);
 	if (forkResult.exitCode !== 0) {
-		// gh repo fork returns non-zero if fork already exists but prints to stderr — check for that
+		// gh repo fork returns non-zero if fork already exists but prints to stderr - check for that
 		const alreadyExists = forkResult.stderr.includes('already exists');
 		if (!alreadyExists) {
 			logger.error('Failed to fork repo', LOG_CONTEXT, { stderr: forkResult.stderr });

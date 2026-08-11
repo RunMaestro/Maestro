@@ -92,7 +92,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 					}}
 					title={
 						isAgentBusy
-							? 'Agent is thinking — you can configure auto-run, but launching is paused until it finishes'
+							? 'Agent is thinking - you can configure auto-run, but launching is paused until it finishes'
 							: 'Run auto-run on tasks'
 					}
 				>

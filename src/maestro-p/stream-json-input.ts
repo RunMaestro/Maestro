@@ -8,7 +8,7 @@
 // Claude Code agent backed by `maestro-p` (see
 // src/main/process-manager/spawners/ChildProcessSpawner.ts:104 and
 // src/main/process-manager/utils/streamJsonBuilder.ts:27). Without this
-// translation the JSON literal — including a multi-KB base64 blob — would be
+// translation the JSON literal - including a multi-KB base64 blob - would be
 // typed verbatim into the TUI by tui-driver.ts and no image would attach.
 //
 // Envelope shape (matches the spawner):
@@ -21,7 +21,7 @@
 //                  { type: 'text',  text: '<prompt text>' } ] } }
 //
 // Output: `@/tmp/maestro-p-image-…-0.png @/tmp/maestro-p-image-…-1.jpeg\n<text>`
-// — Claude's prompt-mention parser resolves each `@path` via the Read tool
+// - Claude's prompt-mention parser resolves each `@path` via the Read tool
 // (verified end-to-end with `claude --print` returning the OCR'd text of a
 // known fixture).
 
@@ -124,7 +124,7 @@ export function translateStreamJsonInput(raw: string): TranslatedStreamJson | nu
 
 /**
  * Best-effort cleanup of temp files created by translateStreamJsonInput.
- * Synchronous and swallows errors — we call this from process exit paths
+ * Synchronous and swallows errors - we call this from process exit paths
  * where async cleanup would race with `process.exit()` and missing-file
  * errors don't matter (the OS will reap /tmp eventually anyway).
  */
@@ -133,7 +133,7 @@ export function cleanupStreamJsonImages(paths: readonly string[]): void {
 		try {
 			fs.unlinkSync(p);
 		} catch {
-			// already gone or unwritable — fine, /tmp gets swept
+			// already gone or unwritable - fine, /tmp gets swept
 		}
 	}
 }

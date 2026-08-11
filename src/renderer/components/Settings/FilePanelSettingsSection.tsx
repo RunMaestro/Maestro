@@ -3,7 +3,7 @@
  *
  * Exposes two knobs that apply to every session (local and remote):
  * - Max recursion depth (controls how deep the scan walks)
- * - Max file entries (soft cap — scans stop early and the panel shows a
+ * - Max file entries (soft cap - scans stop early and the panel shows a
  *   "truncated" warning with a Load More / Load All affordance)
  *
  * Styled to match IgnorePatternsSection so the Settings > Display "File
@@ -36,7 +36,7 @@ export interface FilePanelSettingsSectionProps {
 	onSshReduceEntryCapFractionChange: (value: number) => void;
 }
 
-/** Preset buckets for max entries — kept small so the UI is one click wide. */
+/** Preset buckets for max entries - kept small so the UI is one click wide. */
 const MAX_ENTRY_PRESETS = [10_000, 50_000, 100_000, 250_000, 500_000];
 
 function formatEntries(value: number): string {

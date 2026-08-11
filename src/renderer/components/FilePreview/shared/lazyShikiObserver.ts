@@ -6,7 +6,7 @@
  * Why one factory:
  *   The markdown and text Fast tiers used to ship near-identical highlighters
  *   in their own modules. The Phase 3 plan called the dedup out explicitly,
- *   and our CI flake fixes had to touch both files for the same root cause —
+ *   and our CI flake fixes had to touch both files for the same root cause -
  *   exactly the drift this consolidation prevents.
  *
  * Strategy (unchanged from per-tier versions):
@@ -19,11 +19,11 @@
  *      marker keeps re-mounts cheap.
  *
  * Per-tier variation:
- *   - `selector` — different tiers attach the highlighter to different DOM
+ *   - `selector` - different tiers attach the highlighter to different DOM
  *     shapes.
- *   - `componentName` — used in `captureException.extra.component` so Sentry
+ *   - `componentName` - used in `captureException.extra.component` so Sentry
  *     reports stay traceable to the tier that produced them.
- *   - `themeName` — derived from the Theme.mode by the caller (or passed
+ *   - `themeName` - derived from the Theme.mode by the caller (or passed
  *     directly for tests).
  */
 
@@ -98,7 +98,7 @@ export function createLazyShikiObserver(
 			const html = hl.codeToHtml(code, { lang: resolved, theme: themeName });
 			el.innerHTML = stripShikiWrapper(html);
 		} catch (err) {
-			// Unknown language or runtime error — fall back to the existing
+			// Unknown language or runtime error - fall back to the existing
 			// plain-text rendering and clear the marker so a future observation
 			// can retry. Report so we hear about real Shiki regressions.
 			el.removeAttribute(HIGHLIGHTED_ATTR);

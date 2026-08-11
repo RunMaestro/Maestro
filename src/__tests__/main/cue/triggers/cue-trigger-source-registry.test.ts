@@ -14,7 +14,7 @@ import type { CueTriggerSourceContext } from '../../../../main/cue/triggers/cue-
 
 // Mock the underlying provider modules so the factory tests don't actually
 // touch chokidar / gh / fs. We only care that the factory selects the right
-// shape — the providers themselves are tested elsewhere.
+// shape - the providers themselves are tested elsewhere.
 vi.mock('../../../../main/cue/cue-file-watcher', () => ({
 	createCueFileWatcher: vi.fn(() => vi.fn()),
 }));
@@ -95,7 +95,7 @@ describe('createTriggerSource', () => {
 		vi.clearAllMocks();
 	});
 
-	describe('positive cases — non-null source with correct shape and provider factory invoked', () => {
+	describe('positive cases - non-null source with correct shape and provider factory invoked', () => {
 		it.each(POSITIVE_CASES)('$event', ({ event, overrides, factoryKey }) => {
 			const source = createTriggerSource(event, makeCtx(baseSub(event, overrides)));
 
@@ -121,7 +121,7 @@ describe('createTriggerSource', () => {
 		});
 	});
 
-	describe('negative cases — null for missing required fields or runtime-handled types', () => {
+	describe('negative cases - null for missing required fields or runtime-handled types', () => {
 		it.each(NULL_CASES)('$event ($reason)', ({ event, overrides }) => {
 			const source = createTriggerSource(event, makeCtx(baseSub(event, overrides)));
 			expect(source).toBeNull();

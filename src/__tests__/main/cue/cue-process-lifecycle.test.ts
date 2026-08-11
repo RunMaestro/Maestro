@@ -12,7 +12,7 @@ import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
-// Mock parsers — default returns null (no parser)
+// Mock parsers - default returns null (no parser)
 const mockGetOutputParser = vi.fn(() => null as any);
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
@@ -407,7 +407,7 @@ describe('cue-process-lifecycle', () => {
 				);
 				await vi.advanceTimersByTimeAsync(0);
 
-				// Codex emits this diagnostic on stderr on every run — it's
+				// Codex emits this diagnostic on stderr on every run - it's
 				// informational, not an error, and should never surface in the
 				// activity log's "Errors" panel.
 				mockChild.stderr.emit('data', 'Reading additional input from stdin...\n');
@@ -478,7 +478,7 @@ describe('cue-process-lifecycle', () => {
 				await vi.advanceTimersByTimeAsync(0);
 
 				// Even a message that happens to look like Codex noise stays put
-				// for non-Codex agents — filtering is opt-in per agent.
+				// for non-Codex agents - filtering is opt-in per agent.
 				mockChild.stderr.emit('data', 'Reading additional input from stdin...\n');
 				mockChild.emit('close', 0);
 
@@ -516,7 +516,7 @@ describe('cue-process-lifecycle', () => {
 			stopProcess('stop-test');
 			expect(childKill).toHaveBeenCalledWith('SIGTERM');
 
-			// Process hasn't exited — SIGKILL should fire after delay
+			// Process hasn't exited - SIGKILL should fire after delay
 			await vi.advanceTimersByTimeAsync(5000);
 			expect(childKill).toHaveBeenCalledWith('SIGKILL');
 

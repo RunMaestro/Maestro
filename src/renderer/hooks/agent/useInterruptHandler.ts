@@ -1,5 +1,5 @@
 /**
- * useInterruptHandler — extracted from App.tsx
+ * useInterruptHandler - extracted from App.tsx
  *
  * Handles interrupting/stopping running AI processes:
  *   - Sends SIGINT to active process (AI or terminal mode)
@@ -59,7 +59,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 	const { setSessions } = useSessionStore.getState();
 
 	// ========================================================================
-	// handleInterrupt — interrupt the active process
+	// handleInterrupt - interrupt the active process
 	// ========================================================================
 	const handleInterrupt = useCallback(async () => {
 		if (!activeSession) return;
@@ -99,7 +99,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						interruptPromises.push((window as any).maestro.process.interrupt(fp.sessionId));
 					}
 				} catch {
-					// Non-critical — forced parallel lookup failure shouldn't block interrupt
+					// Non-critical - forced parallel lookup failure shouldn't block interrupt
 				}
 			}
 

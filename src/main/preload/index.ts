@@ -183,7 +183,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// App lifecycle API
 	app: createAppApi(),
 
-	// Synchronous platform string — process.platform never changes at runtime
+	// Synchronous platform string - process.platform never changes at runtime
 	platform: process.platform,
 
 	// Stats API
@@ -207,7 +207,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue API (event-driven automation)
 	cue: createCueApi(),
 
-	// Cue Backup API (Cue modal Backup tab — snapshot/restore cue.yaml + prompts)
+	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
 	// WakaTime API (CLI check, API key validation)

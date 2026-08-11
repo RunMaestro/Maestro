@@ -166,7 +166,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 
 	const handleForcedParallelToggle = useCallback(() => {
 		if (!forcedParallelExecution && !forcedParallelAcknowledged) {
-			// First time enabling — show warning modal
+			// First time enabling - show warning modal
 			setShowForcedParallelWarning(true);
 		} else {
 			// Already acknowledged or turning off

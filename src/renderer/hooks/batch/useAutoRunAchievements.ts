@@ -1,5 +1,5 @@
 /**
- * useAutoRunAchievements — extracted from App.tsx
+ * useAutoRunAchievements - extracted from App.tsx
  *
  * Tracks elapsed time for active auto-runs and updates achievement stats:
  *   - 60-second interval progress tracker for active batch sessions

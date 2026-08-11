@@ -49,7 +49,7 @@ export class PtySpawner {
 
 			if (isTerminal) {
 				if (!shell) {
-					// No shell specified — use the explicit command/args directly (e.g. ssh for remote terminals)
+					// No shell specified - use the explicit command/args directly (e.g. ssh for remote terminals)
 					ptyCommand = command;
 					ptyArgs = args;
 				} else {
@@ -156,7 +156,7 @@ export class PtySpawner {
 			// Handle output
 			ptyProcess.onData((data) => {
 				if (isTerminalTab) {
-					// Raw pass-through for xterm.js terminal tabs — no filtering
+					// Raw pass-through for xterm.js terminal tabs - no filtering
 					if (data.length > 0) {
 						logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
 							sessionId,

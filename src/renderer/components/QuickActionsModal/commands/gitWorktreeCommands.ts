@@ -136,7 +136,7 @@ export function buildGitWorktreeCommands({
 						message:
 							error instanceof Error ? error.message : 'Failed to open repository in browser',
 					});
-					// Network/git failures are recoverable — capture for tracking but keep modal close path.
+					// Network/git failures are recoverable - capture for tracking but keep modal close path.
 					captureException(error);
 				}
 				setQuickActionOpen(false);

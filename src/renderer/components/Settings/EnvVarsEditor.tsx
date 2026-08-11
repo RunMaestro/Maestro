@@ -19,7 +19,7 @@ import type { Theme } from '../../types';
 
 /**
  * Variable names whose values MUST be absolute filesystem paths. A relative
- * value (e.g. `sm/Users/me/.claude-smash` — a real typo we shipped through)
+ * value (e.g. `sm/Users/me/.claude-smash` - a real typo we shipped through)
  * gets `path.resolve()`'d against the main-process cwd at sample time, which
  * silently points the variable at a non-existent directory and produces
  * confusing dashboard tabs. Validating here rejects the bad value at write
@@ -79,7 +79,7 @@ export function EnvVarsEditor({
 		) {
 			return `Invalid value: contains disallowed special characters; quote or escape them if you intend to include them.`;
 		}
-		// Variables that are consumed as filesystem paths must be absolute —
+		// Variables that are consumed as filesystem paths must be absolute -
 		// relative values get resolved against the main-process cwd at runtime
 		// (often `/`) and silently point at a non-existent directory.
 		if (ABSOLUTE_PATH_KEYS.has(entry.key) && entry.value && !isAbsolutePath(entry.value)) {

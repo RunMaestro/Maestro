@@ -84,7 +84,7 @@ export function createProgressPoll(deps: ProgressPollDeps): ProgressPollControll
 				otherDocsTotal += r.taskCount + r.checkedCount;
 				otherDocsChecked += r.checkedCount;
 			} catch {
-				// Ignore — baseline is best-effort.
+				// Ignore - baseline is best-effort.
 			}
 		}
 	};
@@ -138,7 +138,7 @@ export function createProgressPoll(deps: ProgressPollDeps): ProgressPollControll
 				}
 			}
 		} catch {
-			// Ignore polling errors — agent may be modifying file.
+			// Ignore polling errors - agent may be modifying file.
 		} finally {
 			inFlight = false;
 			if (active && gen === generation) {

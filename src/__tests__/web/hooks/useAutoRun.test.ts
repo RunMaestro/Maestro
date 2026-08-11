@@ -5,7 +5,7 @@
  * - launchAutoRun forwards the optional `worktree` payload through
  *   `configure_auto_run` and returns a Promise<LaunchAutoRunResult>.
  * - launchAutoRun resolves with success=false (and an error message) when the
- *   server reports failure or the request rejects — used by the mobile App
+ *   server reports failure or the request rejects - used by the mobile App
  *   to revert the optimistic "connecting" indicator (Gap 1).
  * - loadGitBranches dispatches `get_git_branches` and unwraps the response.
  * - listWorktrees dispatches `list_worktrees` and unwraps the response.

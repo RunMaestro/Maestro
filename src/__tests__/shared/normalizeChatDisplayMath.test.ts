@@ -1,5 +1,5 @@
 /**
- * Tests for shared/normalizeChatDisplayMath.ts — pre-parse normalization of
+ * Tests for shared/normalizeChatDisplayMath.ts - pre-parse normalization of
  * multi-line `$$...$$` display math on chat surfaces (#622 follow-up).
  */
 

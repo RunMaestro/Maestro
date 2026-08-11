@@ -205,7 +205,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									</button>
 								</HoverTooltip>
 							)}
-						{/* Word-wrap toggle — edit mode only. Switches between soft-wrap
+						{/* Word-wrap toggle - edit mode only. Switches between soft-wrap
 						    (default; long lines wrap at whitespace) and no-wrap
 						    (horizontal scroll). */}
 						{toolbarVisibility.wordWrap && isEditableText && markdownEditMode && (
@@ -382,7 +382,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Reveal in Finder / Explorer / File Manager — local files only */}
+						{/* Reveal in Finder / Explorer / File Manager - local files only */}
 						{toolbarVisibility.revealInFolder && !sshRemoteId && (
 							<HoverTooltip theme={theme} label={getRevealLabel(window.maestro?.platform ?? '')}>
 								<button

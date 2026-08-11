@@ -281,7 +281,7 @@ export const MainPanel = React.memo(
 		);
 
 		// Fetch available models, effort levels, and agent defaults when agent type changes.
-		// Uses a stale flag to prevent race conditions when switching between agents —
+		// Uses a stale flag to prevent race conditions when switching between agents -
 		// without this, a slow response (e.g., `opencode models` subprocess) from the
 		// previous agent can overwrite the current agent's model list.
 		useEffect(() => {
@@ -298,7 +298,7 @@ export const MainPanel = React.memo(
 					if (!stale) setPillModels([]);
 				});
 			// Fetch effort options. Agents use either `effort` (Claude Code) or
-			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) — probe both
+			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both
 			// and use whichever the agent defines, so this stays correct as new
 			// agents are added without touching this file.
 			Promise.all([
@@ -467,7 +467,7 @@ export const MainPanel = React.memo(
 					tabElement.focus({ preventScroll: true });
 				},
 				reloadBrowserTab: () => {
-					// Same stale-closure caveat as `focusBrowserAddressBar` — read fresh.
+					// Same stale-closure caveat as `focusBrowserAddressBar` - read fresh.
 					const session = selectActiveSession(useSessionStore.getState());
 					if (!session?.activeBrowserTabId) return;
 					const host = document.querySelector('[data-testid="browser-tab-host"]');
@@ -517,7 +517,7 @@ export const MainPanel = React.memo(
 			[refreshGitStatus, activeSession?.id]
 		);
 
-		// Terminal buffer action wrappers — resolve the terminal tab's scrollback to text,
+		// Terminal buffer action wrappers - resolve the terminal tab's scrollback to text,
 		// then delegate to the App-level text handlers (copy / gist / send to agent).
 		const resolveBuffer = useCallback(
 			(tabId: string): { content: string; displayName: string } | null => {
@@ -571,7 +571,7 @@ export const MainPanel = React.memo(
 			[props.onCopyText]
 		);
 
-		// Right-click "Send to Agent" on highlighted text — resolve the tab's display name
+		// Right-click "Send to Agent" on highlighted text - resolve the tab's display name
 		// so the Send-to-Agent modal shows e.g. "Terminal 2 Selection" as the source.
 		const handleSendTerminalSelectionToAgent = useCallback(
 			(tabId: string, text: string) => {
@@ -586,7 +586,7 @@ export const MainPanel = React.memo(
 			[activeSession, props.onSendTextToAgent]
 		);
 
-		// Browser content action wrappers — extract the rendered text of a browser tab
+		// Browser content action wrappers - extract the rendered text of a browser tab
 		// (activating it first if necessary) and delegate to the App-level text handlers.
 		const resolveBrowserContent = useCallback(
 			async (
@@ -713,7 +713,7 @@ export const MainPanel = React.memo(
 				setGitDiffPreview(diff.diff);
 			} else {
 				notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
-				// Polling cache said there were changes but `git diff` is empty —
+				// Polling cache said there were changes but `git diff` is empty -
 				// repo state changed since the last poll. Re-sync so the widget
 				// stops advertising stale stats.
 				void refreshGitStatus();

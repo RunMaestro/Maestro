@@ -282,7 +282,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					windowStateStore.set('isMaximized', isMaximized);
 					windowStateStore.set('isFullScreen', isFullScreen);
 				} catch {
-					// Ignore ENFILE/ENOSPC errors during window close — non-critical
+					// Ignore ENFILE/ENOSPC errors during window close - non-critical
 				}
 			};
 
@@ -345,7 +345,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				//
 				// Strategy: inject a bubble-phase keydown listener into the guest page.
 				// After all page handlers have run, if the page did NOT call preventDefault
-				// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut —
+				// on a Meta/Ctrl keystroke, it means the page doesn't use that shortcut -
 				// so we forward it to the app. If the page DID preventDefault, the page's
 				// shortcut takes precedence and we leave it alone.
 				const guest = guestContents as BrowserTabGuestContents;
@@ -430,13 +430,13 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				});
 			});
 
-			// Deny all popup/new-window requests — external links use IPC shell:openExternal
+			// Deny all popup/new-window requests - external links use IPC shell:openExternal
 			mainWindow.webContents.setWindowOpenHandler(({ url }) => {
 				logger.warn(`Blocked window.open request: ${url}`, 'Window');
 				return { action: 'deny' };
 			});
 
-			// Restrict navigation to the app itself — prevent renderer from navigating away.
+			// Restrict navigation to the app itself - prevent renderer from navigating away.
 			// Both the dev-server URL and the renderer entry's file:// URL are constants
 			// for the lifetime of this window, so compute them once at setup time rather
 			// than on every navigation event. The production guard only allows the

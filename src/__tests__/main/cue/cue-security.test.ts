@@ -1,16 +1,16 @@
 /**
- * Phase 11 — Security hardening tests.
+ * Phase 11 - Security hardening tests.
  *
  * Covers all four security guards added in Phase 11:
- *   11A — `validateGlobPattern` rejects path-traversal / absolute / drive
+ *   11A - `validateGlobPattern` rejects path-traversal / absolute / drive
  *         patterns; the file-watcher runtime guard drops events that resolve
  *         outside the project root.
- *   11B — `sanitizeCustomEnvVars` drops blocklisted and malformed env var
+ *   11B - `sanitizeCustomEnvVars` drops blocklisted and malformed env var
  *         names before they reach the child process.
- *   11C — `readPromptFile` (via `cue-config-normalizer`) refuses to read
+ *   11C - `readPromptFile` (via `cue-config-normalizer`) refuses to read
  *         prompt files that resolve outside the project root. Exercised by
  *         loading a crafted YAML through the normalizer.
- *   11D — `initCueDb` chmods the DB file to 0o600 after opening; a failing
+ *   11D - `initCueDb` chmods the DB file to 0o600 after opening; a failing
  *         chmod logs a warning but does not fail initialization.
  *
  * Intentionally split from the feature-level tests (`cue-file-watcher.test.ts`,
@@ -23,7 +23,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 
 // ────────────────────────────────────────────────────────────────────────────
-// 11A-1 — Glob validator
+// 11A-1 - Glob validator
 // ────────────────────────────────────────────────────────────────────────────
 
 import { validateSubscription } from '../../../main/cue/config/cue-config-validator';
@@ -32,7 +32,7 @@ function watchErrors(sub: Record<string, unknown>): string[] {
 	return validateSubscription({ name: 'test', event: 'file.changed', prompt: 'go', ...sub }, 'sub');
 }
 
-describe('Phase 11A — validateGlobPattern rejects traversal patterns', () => {
+describe('Phase 11A - validateGlobPattern rejects traversal patterns', () => {
 	it('rejects patterns containing ".." segments', () => {
 		const errs = watchErrors({ watch: '../**/*.ts' });
 		expect(errs.some((e) => /path traversal/i.test(e))).toBe(true);
@@ -107,7 +107,7 @@ describe('Phase 11A — validateGlobPattern rejects traversal patterns', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 11A-2 — File-watcher runtime guard
+// 11A-2 - File-watcher runtime guard
 // ────────────────────────────────────────────────────────────────────────────
 
 const mockOn = vi.fn().mockReturnThis();
@@ -126,7 +126,7 @@ vi.mock('crypto', () => ({
 
 import { createCueFileWatcher } from '../../../main/cue/cue-file-watcher';
 
-describe('Phase 11A — file-watcher runtime path containment', () => {
+describe('Phase 11A - file-watcher runtime path containment', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
@@ -219,12 +219,12 @@ describe('Phase 11A — file-watcher runtime path containment', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 11B — Env var sanitizer
+// 11B - Env var sanitizer
 // ────────────────────────────────────────────────────────────────────────────
 
 import { sanitizeCustomEnvVars, getBlockedEnvVarNames } from '../../../main/cue/cue-env-sanitizer';
 
-describe('Phase 11B — sanitizeCustomEnvVars', () => {
+describe('Phase 11B - sanitizeCustomEnvVars', () => {
 	it('returns an empty result for undefined input', () => {
 		const res = sanitizeCustomEnvVars(undefined);
 		expect(res.sanitized).toEqual({});
@@ -295,7 +295,7 @@ describe('Phase 11B — sanitizeCustomEnvVars', () => {
 	});
 
 	it('drops blocklisted vars case-insensitively (Windows env vars are case-insensitive)', () => {
-		// Windows env var lookup is case-insensitive — `Path` and `PATH`
+		// Windows env var lookup is case-insensitive - `Path` and `PATH`
 		// refer to the same slot, so a case-sensitive blocklist would let an
 		// attacker bypass the guard with `path` or `PaTh`. Verify both
 		// lowercase and mixed-case variants get dropped and logged.
@@ -372,13 +372,13 @@ describe('Phase 11B — sanitizeCustomEnvVars', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 11C — readPromptFile path traversal
+// 11C - readPromptFile path traversal
 // ────────────────────────────────────────────────────────────────────────────
 
 import * as yaml from 'js-yaml';
 import { parseCueConfigDocument } from '../../../main/cue/config/cue-config-normalizer';
 
-describe('Phase 11C — prompt_file path containment', () => {
+describe('Phase 11C - prompt_file path containment', () => {
 	let tmpDir: string;
 	let projectRoot: string;
 
@@ -387,7 +387,7 @@ describe('Phase 11C — prompt_file path containment', () => {
 		projectRoot = path.join(tmpDir, 'project');
 		fs.mkdirSync(path.join(projectRoot, '.maestro', 'prompts'), { recursive: true });
 		fs.writeFileSync(path.join(projectRoot, '.maestro', 'prompts', 'ok.md'), 'hello');
-		// Sibling file outside the project root — what a traversal would target.
+		// Sibling file outside the project root - what a traversal would target.
 		fs.writeFileSync(path.join(tmpDir, 'secret.md'), 'SECRET');
 	});
 
@@ -442,7 +442,7 @@ describe('Phase 11C — prompt_file path containment', () => {
 			// Only meaningful on case-insensitive FSes (macOS / Windows). A
 			// case-sensitive `startsWith` would false-negative reject a legit
 			// path when the projectRoot happens to be cased differently than
-			// the prompt-file reference — the filesystem treats them as the
+			// the prompt-file reference - the filesystem treats them as the
 			// same file, so the containment guard must too.
 			const raw = yaml.dump({
 				subscriptions: [
@@ -450,7 +450,7 @@ describe('Phase 11C — prompt_file path containment', () => {
 						name: 't',
 						event: 'time.heartbeat',
 						interval_minutes: 1,
-						// Legitimate in-root path, but upper-cased — should
+						// Legitimate in-root path, but upper-cased - should
 						// still resolve to the real file's contents.
 						prompt_file: path.join(projectRoot, '.maestro', 'prompts', 'OK.MD').toUpperCase(),
 					},
@@ -460,7 +460,7 @@ describe('Phase 11C — prompt_file path containment', () => {
 			expect(doc).not.toBeNull();
 			// Path casing beyond the root prefix may not match a real file
 			// on disk, so `prompt` can still be '' if the upper-cased
-			// filename doesn't exist — what we're asserting is the
+			// filename doesn't exist - what we're asserting is the
 			// CONTAINMENT guard didn't reject it. `readPromptFile` returning
 			// '' (file not found) vs undefined (containment rejection) means
 			// the promptSpec.file is still recorded. Easier to test: swap the
@@ -486,7 +486,7 @@ describe('Phase 11C — prompt_file path containment', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 11D — DB file permissions
+// 11D - DB file permissions
 // ────────────────────────────────────────────────────────────────────────────
 //
 // Emulate the existing cue-db.test.ts mock strategy: better-sqlite3 is a
@@ -525,7 +525,7 @@ const mockDb = {
 				{ name: 'parent_event_id' },
 			];
 		}
-		// Phase 01 — same idea for the persisted queue table; return the full
+		// Phase 01 - same idea for the persisted queue table; return the full
 		// column set so the additive migration is a no-op under the mock.
 		if (typeof query === 'string' && query.startsWith('table_info(cue_event_queue)')) {
 			return [
@@ -588,12 +588,12 @@ import { initCueDb, closeCueDb } from '../../../main/cue/cue-db';
 // non-existent DB path (which throws ENOENT on every platform).
 const isPosix = process.platform !== 'win32';
 
-describe('Phase 11D — cue-db file permissions', () => {
+describe('Phase 11D - cue-db file permissions', () => {
 	const createdFiles: string[] = [];
 	// initCueDb calls fs.mkdirSync(dirname(dbPath), { recursive: true }) when
 	// the parent directory does not exist. The chmod-failure test points at a
 	// non-existent dir so the tmpdir gets a new subdirectory created on every
-	// run — track those so afterEach cleans them up instead of leaving them
+	// run - track those so afterEach cleans them up instead of leaving them
 	// behind in the user's tmpdir.
 	const createdDirs: string[] = [];
 
@@ -643,7 +643,7 @@ describe('Phase 11D — cue-db file permissions', () => {
 
 	it('continues initialization and logs a warn when chmod fails', () => {
 		const onLog = vi.fn();
-		// Point at a path whose parent does not exist — `new Database()` is
+		// Point at a path whose parent does not exist - `new Database()` is
 		// mocked so it does not care, but `fs.chmodSync` will throw ENOENT
 		// because there is no file at the path to chmod. Exactly the error
 		// shape we want to exercise.
@@ -660,7 +660,7 @@ describe('Phase 11D — cue-db file permissions', () => {
 		expect(() => initCueDb(onLog, dbPath)).not.toThrow();
 
 		expect(onLog).toHaveBeenCalledWith('warn', expect.stringMatching(/chmod 0o600 failed/));
-		// Pragma (WAL) still ran — initialization did not abort when chmod failed.
+		// Pragma (WAL) still ran - initialization did not abort when chmod failed.
 		expect(mockDb.pragma).toHaveBeenCalledWith('journal_mode = WAL');
 	});
 });

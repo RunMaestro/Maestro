@@ -7,33 +7,33 @@ Ignore the rest of the codebase unless the provided content explicitly reference
 
 **Inputs:**
 
-- **content** — Content to review: diff, full file, or function
-- **also_consider** (optional) — Areas to keep in mind during review alongside normal edge-case analysis
+- **content** - Content to review: diff, full file, or function
+- **also_consider** (optional) - Areas to keep in mind during review alongside normal edge-case analysis
 
 **MANDATORY: Execute steps in the Execution section IN EXACT ORDER. DO NOT skip steps or change the sequence. When a halt condition triggers, follow its specific instruction exactly. Each action within a step is a REQUIRED action to complete that step.**
 
-**Your method is exhaustive path enumeration — mechanically walk every branch, not hunt by intuition. Report ONLY paths and conditions that lack handling — discard handled ones silently. Do NOT editorialize or add filler — findings only.**
+**Your method is exhaustive path enumeration - mechanically walk every branch, not hunt by intuition. Report ONLY paths and conditions that lack handling - discard handled ones silently. Do NOT editorialize or add filler - findings only.**
 
 ## EXECUTION
 
 ### Step 1: Receive Content
 
 - Load the content to review strictly from provided input
-- If content is empty, or cannot be decoded as text, return `[{"location":"N/A","trigger_condition":"Input empty or undecodable","guard_snippet":"Provide valid content to review","potential_consequence":"Review skipped — no analysis performed"}]` and stop
+- If content is empty, or cannot be decoded as text, return `[{"location":"N/A","trigger_condition":"Input empty or undecodable","guard_snippet":"Provide valid content to review","potential_consequence":"Review skipped - no analysis performed"}]` and stop
 - Identify content type (diff, full file, or function) to determine scope rules
 
 ### Step 2: Exhaustive Path Analysis
 
-**Walk every branching path and boundary condition within scope — report only unhandled ones.**
+**Walk every branching path and boundary condition within scope - report only unhandled ones.**
 
 - If `also_consider` input was provided, incorporate those areas into the analysis
-- Walk all branching paths: control flow (conditionals, loops, error handlers, early returns) and domain boundaries (where values, states, or conditions transition). Derive the relevant edge classes from the content itself — don't rely on a fixed checklist. Examples: missing else/default, unguarded inputs, off-by-one loops, arithmetic overflow, implicit type coercion, race conditions, timeout gaps
+- Walk all branching paths: control flow (conditionals, loops, error handlers, early returns) and domain boundaries (where values, states, or conditions transition). Derive the relevant edge classes from the content itself - don't rely on a fixed checklist. Examples: missing else/default, unguarded inputs, off-by-one loops, arithmetic overflow, implicit type coercion, race conditions, timeout gaps
 - For each path: determine whether the content handles it
-- Collect only the unhandled paths as findings — discard handled ones silently
+- Collect only the unhandled paths as findings - discard handled ones silently
 
 ### Step 3: Validate Completeness
 
-- Revisit every edge class from Step 2 — e.g., missing else/default, null/empty inputs, off-by-one loops, arithmetic overflow, implicit type coercion, race conditions, timeout gaps
+- Revisit every edge class from Step 2 - e.g., missing else/default, null/empty inputs, off-by-one loops, arithmetic overflow, implicit type coercion, race conditions, timeout gaps
 - Add any newly found unhandled paths to findings; discard confirmed-handled ones
 
 ### Step 4: Present Findings
@@ -59,4 +59,4 @@ No extra text, no explanations, no markdown wrapping. An empty array `[]` is val
 
 ## HALT CONDITIONS
 
-- If content is empty or cannot be decoded as text, return `[{"location":"N/A","trigger_condition":"Input empty or undecodable","guard_snippet":"Provide valid content to review","potential_consequence":"Review skipped — no analysis performed"}]` and stop
+- If content is empty or cannot be decoded as text, return `[{"location":"N/A","trigger_condition":"Input empty or undecodable","guard_snippet":"Provide valid content to review","potential_consequence":"Review skipped - no analysis performed"}]` and stop

@@ -538,7 +538,7 @@ describe('useMergeTransferHandlers', () => {
 	});
 
 	// ----------------------------------------------------------------
-	// handleSendToAgent — terminal buffer transfer path
+	// handleSendToAgent - terminal buffer transfer path
 	// ----------------------------------------------------------------
 
 	describe('handleSendToAgent — terminal buffer mode', () => {
@@ -874,7 +874,7 @@ describe('useMergeTransferHandlers', () => {
 	});
 
 	// ----------------------------------------------------------------
-	// handleSendToAgent — additional coverage
+	// handleSendToAgent - additional coverage
 	// ----------------------------------------------------------------
 
 	describe('handleSendToAgent — additional coverage', () => {
@@ -1144,7 +1144,7 @@ describe('useMergeTransferHandlers', () => {
 	});
 
 	// ----------------------------------------------------------------
-	// onMergeComplete — additional coverage
+	// onMergeComplete - additional coverage
 	// ----------------------------------------------------------------
 
 	describe('onMergeComplete — additional coverage', () => {
@@ -1223,7 +1223,7 @@ describe('useMergeTransferHandlers', () => {
 			if (updatedTarget) {
 				expect(updatedTarget.activeTabId).toBe('target-tab');
 			} else {
-				// The callback's setSessions updated the store — verify the toast as proof it ran
+				// The callback's setSessions updated the store - verify the toast as proof it ran
 				expect(mockNotifyToast).toHaveBeenCalledWith(
 					expect.objectContaining({
 						type: 'success',
@@ -1260,7 +1260,7 @@ describe('useMergeTransferHandlers', () => {
 	});
 
 	// ----------------------------------------------------------------
-	// onSessionCreated — additional coverage
+	// onSessionCreated - additional coverage
 	// ----------------------------------------------------------------
 
 	describe('onSessionCreated — additional coverage', () => {
@@ -1350,7 +1350,7 @@ describe('useMergeTransferHandlers', () => {
 	});
 
 	// ----------------------------------------------------------------
-	// handleMerge — additional coverage
+	// handleMerge - additional coverage
 	// ----------------------------------------------------------------
 
 	describe('handleMerge — additional coverage', () => {

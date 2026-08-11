@@ -1,5 +1,5 @@
 /**
- * Agent ID Constants — Single Source of Truth
+ * Agent ID Constants - Single Source of Truth
  *
  * This module defines the canonical list of all agent IDs in Maestro.
  * The ToolType union is derived from this array, ensuring type safety
@@ -11,7 +11,7 @@
 
 /**
  * All known agent IDs in Maestro.
- * This is the single source of truth — ToolType is derived from this array.
+ * This is the single source of truth - ToolType is derived from this array.
  */
 export const AGENT_IDS = [
 	'terminal',

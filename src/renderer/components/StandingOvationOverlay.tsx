@@ -325,7 +325,7 @@ export function StandingOvationOverlay({
 				}
 			}
 		} catch (error) {
-			// Canvas/image generation errors — not clipboard
+			// Canvas/image generation errors - not clipboard
 			logger.error('Failed to generate share image:', undefined, error);
 		}
 	}, [generateShareImage]);

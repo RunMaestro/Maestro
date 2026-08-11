@@ -1,8 +1,8 @@
 /**
- * useSessionRestoration — extracted from App.tsx (Phase 2E)
+ * useSessionRestoration - extracted from App.tsx (Phase 2E)
  *
  * Owns session loading, restoration, migration, and corruption recovery.
- * Reads from Zustand stores directly — no parameters needed.
+ * Reads from Zustand stores directly - no parameters needed.
  *
  * Functions:
  *   - restoreSession: migrates legacy fields, recovers corrupted data, resets runtime state
@@ -93,7 +93,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
 	// If the agent is unavailable, marks the session with error state.
-	// Called after splash hides — never blocks startup.
+	// Called after splash hides - never blocks startup.
 	const validateAgentInBackground = useCallback(
 		async (sessionId: string, toolType: string, sshRemoteId: string | undefined) => {
 			try {
@@ -351,7 +351,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				const GIT_TIMEOUT_MS = 5000;
 				// NOTE: On timeout, the inner git operations continue running in the
 				// background until the OS/filesystem eventually resolves/rejects them.
-				// This is a known trade-off of Promise.race — Promises are not cancellable.
+				// This is a known trade-off of Promise.race - Promises are not cancellable.
 				try {
 					const gitResult = await Promise.race([
 						(async () => {
@@ -382,7 +382,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 
-			// Migration: ensure terminalTabs exists (may be empty — terminals are created on demand)
+			// Migration: ensure terminalTabs exists (may be empty - terminals are created on demand)
 			if (!correctedSession.terminalTabs) {
 				correctedSession = {
 					...correctedSession,
@@ -555,10 +555,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					// Restore persisted active session ID, falling back to first session.
 					const savedActiveSessionId = await window.maestro.sessions.getActiveSessionId();
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
-						// Saved ID is valid — hydrate locally without writing back to disk
+						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
 					} else if (restoredSessions[0]?.id) {
-						// Saved ID is stale or missing — persist the fallback so it
+						// Saved ID is stale or missing - persist the fallback so it
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
@@ -583,7 +583,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					}
 				} else {
 					setSessions([]);
-					// No sessions means no file tree to load — unblock splash immediately
+					// No sessions means no file tree to load - unblock splash immediately
 					useSessionStore.getState().setInitialFileTreeReady(true);
 				}
 
@@ -606,7 +606,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				logger.error('Failed to load sessions/groups:', undefined, e);
 				setSessions([]);
 				setGroups([]);
-				// Error loading sessions — no file tree to wait for
+				// Error loading sessions - no file tree to wait for
 				useSessionStore.getState().setInitialFileTreeReady(true);
 			} finally {
 				// Mark initial load as complete to enable persistence
