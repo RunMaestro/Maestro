@@ -2,16 +2,8 @@ import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { Image, X, Search, PenLine } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { imageCache } from '../../hooks';
+import { safeDecodeURIComponent } from '../../../shared/stringUtils';
 import type { Theme } from '../../types';
-
-// Safe wrapper around safeDecodeURIComponent that falls back to original string on malformed URIs
-function safeDecodeURIComponent(str: string): string {
-	try {
-		return safeDecodeURIComponent(str);
-	} catch {
-		return str;
-	}
-}
 
 // Helper to compute initial image state synchronously from cache
 // This prevents flickering when ReactMarkdown rebuilds the component tree

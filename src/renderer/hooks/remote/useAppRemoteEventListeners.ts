@@ -1072,6 +1072,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.customContextWindow && {
 					customContextWindow: config.customContextWindow as number,
 				}),
+				...(config?.contextWindowSource === 'user-edited' && {
+					contextWindowSource: 'user-edited' as const,
+				}),
 				...(config?.customProviderPath && {
 					customProviderPath: config.customProviderPath as string,
 				}),
@@ -1300,6 +1303,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				customEnvVars: undefined,
 				customModel: undefined,
 				customContextWindow: undefined,
+				// Provenance describes the value cleared above and must not outlive
+				// it (finding AD1); mirrors the Edit Agent modal's switch branch.
+				contextWindowSource: undefined,
 				enableMaestroP: undefined,
 				maestroPPath: undefined,
 				maestroPMode: undefined,
@@ -1342,6 +1348,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customModel',
 			'customEffort',
 			'customContextWindow',
+			// Provenance for the key above (finding AD1). Must be allowlisted or
+			// `maestro-cli update-agent --context-window` writes the number without
+			// its provenance, and the value it just set stays outranked by the
+			// provider's report - the deliberate edit would silently not apply.
+			'contextWindowSource',
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
@@ -1355,6 +1366,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
+		}
+
+		// Clearing the window clears its provenance too, even when the caller sent
+		// only `customContextWindow: null`. Otherwise a stale 'user-edited' outlives
+		// the value it described and the next window set without provenance
+		// inherits precedence nobody asked for (finding AD1).
+		if (patch.customContextWindow === null) {
+			updated.contextWindowSource = undefined;
 		}
 
 		if (Object.keys(updated).length === 0) {

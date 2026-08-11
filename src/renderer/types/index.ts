@@ -1173,6 +1173,20 @@ export interface Session {
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
 	customContextWindow?: number; // Custom context window size (overrides agent-level)
+	/**
+	 * Provenance of `customContextWindow` (finding AD1).
+	 *
+	 * `'user-edited'` means a human deliberately set this number and it outranks
+	 * a provider-reported window. Anything else - including ABSENT, which is
+	 * every value stored before AD1 shipped - means the value cannot be
+	 * distinguished from a materialized creation-time default, so P1's
+	 * precedence stands and the provider's own report wins.
+	 *
+	 * Deliberately NOT inferred from the value: an orphaned `400000` looks
+	 * nothing like an agent default yet is not a choice either, so any
+	 * value-comparison heuristic gets exactly the codex case wrong.
+	 */
+	contextWindowSource?: 'user-edited';
 	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally

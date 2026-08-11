@@ -34,29 +34,43 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 	}, [activeSession?.toolType, activeSession?.customContextWindow]);
 
 	const activeTabContextWindow = useMemo(() => {
-		// Precedence (finding P1). Keep this list POSITIONALLY IDENTICAL to
-		// useAgentUsageListener's, or the header gauge and the Context Timeline
+		// Precedence (findings P1 and AD1). Keep this list POSITIONALLY IDENTICAL
+		// to useAgentUsageListener's, or the header gauge and the Context Timeline
 		// disagree again (the bug PR #1221 fixed):
 		//   1. `[1m]` model marker
-		//   2. resolved reported window
-		//   3. `customContextWindow` override
-		//   4. async configured window
-		//   5. raw reported window
+		//   2. user-edited `customContextWindow`
+		//   3. resolved reported window
+		//   4. `customContextWindow` of unknown/materialized provenance
+		//   5. async configured window
+		//   6. raw reported window
+		// A THIRD precedence list exists in `utils/contextWindowResolver.ts`
+		// (`resolveConfiguredContextWindow`), which ranks `customContextWindow`
+		// first unconditionally and feeds Auto Run's fresh-context picker. It
+		// predates P1/AD1 and serves a different purpose, so it is deliberately
+		// NOT kept in sync - but it is the site a future reader will miss when
+		// changing this order (review of PR #1362).
 		// A `[1m]` marker on the session's custom model is an explicit model choice
 		// the user made per-session, so it stays at the top.
 		const modelMarker = getModelContextWindowOverride(activeSession?.customModel) ?? 0;
 		if (modelMarker > 0) return modelMarker;
+		const sessionOverride = activeSession?.customContextWindow ?? 0;
+		// A window the user deliberately set is intent, not a stale default, so it
+		// outranks even the provider's own report (finding AD1). Someone who lowers
+		// their window to force earlier compaction means it; P1 alone silently
+		// discarded that the moment the provider reported.
+		if (activeSession?.contextWindowSource === 'user-edited' && sessionOverride > 0) {
+			return sessionOverride;
+		}
 		const reported = activeTab?.usageStats?.contextWindow ?? 0;
 		// A genuinely provider-resolved window (flagged via `contextWindowResolved`,
 		// set only where the value came from the provider's own payload) is runtime
 		// truth, so it outranks the stored override below.
 		if (activeTab?.usageStats?.contextWindowResolved && reported > 0) return reported;
-		// `customContextWindow` is NOT reliably something the user chose: the agent
-		// definition's `contextWindow` default is materialized into every new session
-		// at creation time (see P1), which is how a fresh omp agent displayed 200k
-		// instead of the provider's real 1M. Treat it as a fallback that applies
-		// until the provider reports an authoritative window.
-		const sessionOverride = activeSession?.customContextWindow ?? 0;
+		// Reaching here means the stored value has NO recorded provenance, so it
+		// cannot be told apart from the agent definition's `contextWindow` default
+		// materialized into every new session at creation time (see P1) - which is
+		// how a fresh omp agent displayed 200k instead of the provider's real 1M.
+		// Treat it as a fallback that applies until the provider reports.
 		if (sessionOverride > 0) return sessionOverride;
 		return configuredContextWindow > 0 ? configuredContextWindow : reported;
 	}, [
@@ -64,6 +78,7 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		activeTab?.usageStats?.contextWindow,
 		activeTab?.usageStats?.contextWindowResolved,
 		activeSession?.customContextWindow,
+		activeSession?.contextWindowSource,
 		activeSession?.customModel,
 	]);
 

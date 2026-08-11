@@ -101,6 +101,8 @@ export interface SessionLifecycleReturn {
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited',
 		boardWorker?: boolean
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
@@ -183,6 +185,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
 			additionalDirectories?: AdditionalDirectory[],
+			/** Provenance of `customContextWindow` (finding AD1). */
+			contextWindowSource?: 'user-edited',
 			boardWorker?: boolean
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
@@ -202,6 +206,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customModel,
 						customEffort,
 						customContextWindow,
+						contextWindowSource,
 						sessionSshRemoteConfig,
 						enableMaestroP,
 						maestroPPath,
@@ -245,6 +250,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customModel: undefined,
 							customEffort: undefined,
 							customContextWindow: undefined,
+							// Provenance describes the value cleared above, so it must not
+							// outlive it: a stale 'user-edited' would make the new
+							// provider's window look deliberate (finding AD1).
+							contextWindowSource: undefined,
 							enableMaestroP: undefined,
 							maestroPPath: undefined,
 							maestroPMode: undefined,

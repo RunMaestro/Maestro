@@ -596,6 +596,39 @@ getSshErrorPatterns(): AgentErrorPatterns
 
 Per-agent session storage for reading historical conversations.
 
+### Expected transcript-read failures (`src/main/utils/session-read-errors.ts`)
+
+Provider transcripts under `~/.claude/projects`, `~/.codex/sessions`, etc. belong
+to the agent CLI, not to Maestro. Any code that reads a transcript it merely
+_discovered_ on disk must classify environmental failures instead of reporting
+them, or one unreadable tree pages a Sentry event per file per refresh
+(MAESTRO-W9, MAESTRO-YG/YH/YJ):
+
+```typescript
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
+
+try {
+	const content = await fs.readFile(filePath, 'utf-8');
+	// ...
+} catch (error) {
+	if (error instanceof RangeError) {
+		logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
+	} else if (isExpectedSessionReadError(error)) {
+		logger.warn('Session file not readable', LOG_CONTEXT, { filePath, error });
+	} else {
+		captureException(error); // genuine fault, keep reporting
+	}
+	return null;
+}
+```
+
+Covers `EACCES`, `EPERM`, `ENOENT`, `ENOTDIR`, `EISDIR`, `EBUSY`. Do NOT widen it
+to codes that indicate a Maestro bug (`EMFILE` means we leaked descriptors).
+Pair it with the `RangeError` carve-out for oversized files - they are separate
+boundaries. When quieting one call site, grep the whole file for other
+`captureException` calls on the same failure path (an outer `fs.stat` catch
+usually needs the same guard).
+
 ### Storage Interface (`src/main/agents/session-storage.ts`)
 
 ```typescript
@@ -638,6 +671,43 @@ Subclasses implement:
 | `CodexSessionStorage`        | `codex-session-storage.ts`         | `~/.codex/sessions/YYYY/MM/DD/`                                      | JSONL events            |
 | `OpenCodeSessionStorage`     | `opencode-session-storage.ts`      | `~/.local/share/opencode/opencode.db` (v1.2+) or `storage/` (legacy) | SQLite (or legacy JSON) |
 | `FactoryDroidSessionStorage` | `factory-droid-session-storage.ts` | `~/.factory/sessions/`                                               | JSONL + settings.json   |
+
+### Parse Cache (`src/main/storage/session-info-cache.ts`)
+
+`listSessions()` is enumerate-then-parse for every storage, and the parse is the
+expensive half: a heavy Claude user is 5+ GB of JSONL across ~14k transcripts,
+which is why the Cost & Tokens dashboard used to take ~15 seconds to render every
+single time. `SessionInfoCache` caches the parsed `AgentSessionInfo` keyed by a
+`mtimeMs + size` fingerprint, so only new or grown transcripts are re-read.
+Enumerating and stat-ing all 14k files costs under 100ms.
+
+Use it instead of hand-rolling another mtime map (there are already several):
+
+```typescript
+const files = await this.statProjectSessionFiles(projectDir); // readdir + stat
+const sessions = await getSessionInfoCache(this.agentId).resolve(
+	projectDir, // scope: one cache file per project folder
+	files.map((f) => ({ key: f.filePath, fingerprint: fileFingerprint(f.sizeBytes, f.mtimeMs) })),
+	(ref) => parseSessionFile(...), // only called on a miss; null = skip, not cached
+	{ prune: true } // ONLY when refs cover the whole scope (never for one page)
+);
+```
+
+Rules:
+
+- Attach mutable metadata (origin, starred, session name) AFTER `resolve()`. It
+  lives in `originsStore` and changes without the transcript changing, so a
+  fingerprint would never catch it.
+- Returned infos are the cached objects: spread them, never mutate in place.
+- Bump `SESSION_INFO_CACHE_VERSION` when `AgentSessionInfo` gains a field, or
+  cached entries will come back missing it.
+- Tests: `setSessionInfoCacheForTest(agentId, new SessionInfoCache(agentId, tmpDir))`
+  in `beforeEach`, or fixtures that reuse one path + stats while varying content
+  will (correctly) hit the cache.
+
+Wired up for `ClaudeSessionStorage` (local paths). `CodexSessionStorage` predates
+it and still carries its own equivalent cache; the remaining storages parse
+everything on every list and should adopt this when their volume justifies it.
 
 ### Registry Functions
 

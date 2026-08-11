@@ -309,6 +309,39 @@ describe('useAgentUsageListener', () => {
 		expect(last.percentage).toBe(10); // round(100000 / 1000000 * 100)
 	});
 
+	// Finding AD1, and the timeline half of the pair. useContextWindow has the
+	// positionally identical case; if only one of the two learns about
+	// provenance the header gauge and the Context Timeline disagree again, which
+	// is exactly the bug PR #1221 fixed.
+	it('keeps a user-edited window above a resolved reported window', () => {
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'omp',
+			customContextWindow: 120000,
+			contextWindowSource: 'user-edited',
+		});
+		useSessionStore.setState({ sessions: [session] });
+
+		const batched = makeBatched();
+		renderHook(() =>
+			useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+		);
+
+		handler!('sess-1', {
+			inputTokens: 60000,
+			outputTokens: 0,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			contextWindow: 1000000,
+			contextWindowResolved: true,
+		});
+
+		const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+		const last = points[points.length - 1];
+		expect(last.contextWindow).toBe(120000);
+		expect(last.percentage).toBe(50); // round(60000 / 120000 * 100)
+	});
+
 	it('keeps an unresolved reported window below the per-session override', () => {
 		// Without the `contextWindowResolved` flag the reported value may be a
 		// parser-injected static fallback, so the stored override still wins.

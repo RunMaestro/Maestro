@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { stripAnsiCodes } from '../../shared/stringUtils';
+import { safeDecodeURIComponent, stripAnsiCodes } from '../../shared/stringUtils';
 
 describe('stripAnsiCodes', () => {
 	it('should return empty string for empty input', () => {
@@ -198,6 +198,34 @@ describe('stripAnsiCodes', () => {
 			const input =
 				']1337;RemoteHost=pedram@PedTome.local]1337;CurrentDir=/Users/pedram]1337;ShellIntegrationVersion=13;shell=zsh{"type":"system","subtype":"init"}';
 			expect(stripAnsiCodes(input)).toBe('{"type":"system","subtype":"init"}');
+		});
+	});
+
+	describe('safeDecodeURIComponent', () => {
+		it('decodes well-formed percent escapes', () => {
+			expect(safeDecodeURIComponent('my%20file.ts')).toBe('my file.ts');
+			expect(safeDecodeURIComponent('%E4%B8%AD%E6%96%87.md')).toBe('\u4e2d\u6587.md');
+		});
+
+		it('returns the raw string for malformed escapes instead of throwing', () => {
+			// decodeURIComponent throws URIError on each of these. A stray '%' is
+			// ordinary prose ("100% done"), so markdown link targets hit it. MAESTRO-XS
+			expect(safeDecodeURIComponent('100% done.md')).toBe('100% done.md');
+			expect(safeDecodeURIComponent('%')).toBe('%');
+			expect(safeDecodeURIComponent('%ZZ')).toBe('%ZZ');
+			expect(safeDecodeURIComponent('%E0%A4%A')).toBe('%E0%A4%A');
+		});
+
+		it('leaves strings with no escapes untouched', () => {
+			expect(safeDecodeURIComponent('plain.md')).toBe('plain.md');
+			expect(safeDecodeURIComponent('')).toBe('');
+		});
+
+		it('terminates (guards against a self-recursive implementation)', () => {
+			// A previous copy of this helper called itself instead of
+			// decodeURIComponent, blowing the stack and silently returning the
+			// undecoded input via its own catch.
+			expect(safeDecodeURIComponent('a%20b')).toBe('a b');
 		});
 	});
 });

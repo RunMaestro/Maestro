@@ -8,6 +8,7 @@ import { useModalStore } from '../../../stores/modalStore';
 import { safeClipboardWrite } from '../../../utils/clipboard';
 import { captureException } from '../../../utils/sentry';
 import { shouldOpenExternally } from '../../../utils/fileExplorer';
+import { joinPath } from '../../../../shared/formatters';
 import type { ContextMenuState, MultiDeleteModalState } from '../types';
 import { PREVIEW_ALL_CONFIRM_THRESHOLD } from '../types';
 import { collectPreviewableFiles, findNodeAtPath } from '../utils/pathHelpers';
@@ -58,6 +59,7 @@ interface UseFileContextMenuResult {
 	handleOpenInExplorer: () => void;
 	handleOpenNewFile: () => void;
 	handleOpenNewFolder: () => void;
+	handleNewAgentHere: () => void;
 	handleOpenRename: () => void;
 	handleOpenDelete: () => Promise<void>;
 	handleFocusInGraph: () => void;
@@ -492,6 +494,20 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu, session.fullPath]);
 
+	// Open the New Agent modal pre-seeded with this folder as the working
+	// directory, giving a one-click path from browsing files to an agent scoped
+	// to a subfolder. Mirrors how the Left Bar's group menu opens the same modal
+	// with preset data rather than threading a callback down from App.
+	const handleNewAgentHere = useCallback(() => {
+		const menu = contextMenu;
+		setContextMenu(null);
+		if (!menu || !menu.node || menu.node.type !== 'folder') return;
+		useModalStore.getState().openModal('newInstance', {
+			duplicatingSessionId: null,
+			presetWorkingDir: joinPath(session.fullPath, menu.path),
+		});
+	}, [contextMenu, session.fullPath]);
+
 	// Resolve the folder that a "New File"/"New Folder" action should target from
 	// the current menu context. A folder row creates inside that folder; a file
 	// row or the empty-space root menu creates alongside it (the parent dir, which
@@ -560,6 +576,7 @@ export function useFileContextMenu({
 		handleOpenInExplorer,
 		handleOpenNewFile,
 		handleOpenNewFolder,
+		handleNewAgentHere,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,

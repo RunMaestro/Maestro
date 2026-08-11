@@ -43,6 +43,7 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
+import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
 	snapshotStarredTranscript,
 	releaseTranscriptMirror,
@@ -59,28 +60,12 @@ export type { GlobalAgentStats, ProviderStats };
 const LOG_CONTEXT = '[AgentSessions]';
 
 /**
- * Node fs error codes we expect when reading a provider transcript we merely
- * discovered on disk. The file belongs to the agent CLI, not to us: it can be
- * unreadable (restrictive umask, a `~/.claude` tree owned by another user),
- * deleted between the directory listing and the read, or briefly locked on
- * Windows. These are environmental, never a Maestro bug, so we keep the local
- * warn but skip Sentry to avoid telemetry noise (MAESTRO-W9). Same shape as the
- * `RangeError` carve-out in the loops below: classify the expected boundary,
- * log it locally, and let everything else report.
+ * Re-exported so existing importers keep resolving from here. The definition
+ * moved to `src/main/utils/session-read-errors.ts` because the sibling read
+ * sites that hit the same boundary (`storage/claude-session-storage.ts`,
+ * `ipc/handlers/claude.ts`) can't import from this module without a cycle.
  */
-const EXPECTED_SESSION_READ_ERROR_CODES = new Set([
-	'EACCES',
-	'EPERM',
-	'ENOENT',
-	'ENOTDIR',
-	'EISDIR',
-	'EBUSY',
-]);
-
-export function isExpectedSessionReadError(error: unknown): boolean {
-	const code = (error as NodeJS.ErrnoException | null)?.code;
-	return typeof code === 'string' && EXPECTED_SESSION_READ_ERROR_CODES.has(code);
-}
+export { isExpectedSessionReadError };
 
 /**
  * Generic agent session origins data structure
@@ -644,7 +629,12 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 								)
 							);
 						} catch (error) {
-							void captureException(error);
+							// Walks every provider's transcript tree, so an unreadable one
+							// lands here on every call. That is environmental, not a bug -
+							// warn locally and keep aggregating the providers that do work.
+							if (!isExpectedSessionReadError(error)) {
+								void captureException(error);
+							}
 							logger.warn(
 								`Failed to get named sessions from ${storage.agentId}: ${error}`,
 								LOG_CONTEXT
