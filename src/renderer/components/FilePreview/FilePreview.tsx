@@ -686,7 +686,7 @@ export const FilePreview = React.memo(
 							lastModifiedRef.current = new Date(stat.modifiedAt).getTime();
 						}
 					} catch {
-						// Non-critical — worst case the banner appears briefly
+						// Non-critical - worst case the banner appears briefly
 					}
 					return true;
 				} catch (err) {
@@ -1659,7 +1659,7 @@ export const FilePreview = React.memo(
 						<RefreshCw className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
 						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
 							{hasChanges
-								? 'File changed on disk. You have unsaved edits — reloading will discard them.'
+								? 'File changed on disk. You have unsaved edits - reloading will discard them.'
 								: 'File changed on disk.'}
 						</span>
 						<div className="flex items-center gap-2 shrink-0">
@@ -1818,7 +1818,7 @@ export const FilePreview = React.memo(
 										}}
 										placeholder={
 											searchMode === 'jq'
-												? 'jq filter — .field, select(.x == "y"), keys, contains("...")'
+												? 'jq filter - .field, select(.x == "y"), keys, contains("...")'
 												: searchKind === 'line'
 													? 'Go to line number…'
 													: searchKind === 'regex'
