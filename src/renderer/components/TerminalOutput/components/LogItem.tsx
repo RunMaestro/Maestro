@@ -27,6 +27,7 @@ import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { LogFilterControls } from '../../LogFilterControls';
 import { linkifyNode } from '../../../utils/linkify';
 import { RetryStatusCard } from '../../RetryStatusCard';
+import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
@@ -240,6 +241,25 @@ export const LogItem = memo(
 							fontFamily={fontFamily}
 							ansiConverter={ansiConverter}
 						/>
+					</div>
+				</div>
+			);
+		}
+
+		// A snoozed tab that came back marks the gap with its own card, carrying
+		// the note the user left themselves. Same clean row as the other cards.
+		if (log.snoozeReturn) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-2"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 80px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<SnoozeReturnCard log={log} theme={theme} />
 					</div>
 				</div>
 			);

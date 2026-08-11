@@ -349,6 +349,24 @@ export const MainPanel = React.memo(
 		const activeTab = useMemo(() => derivedActiveTab ?? null, [derivedActiveTab]);
 		const activeTabError = activeTab?.agentError;
 
+		// Whether the agent has any tab at all. An agent is allowed to have zero AI
+		// tabs as long as some other tab kind is still open, so the tab strip has to
+		// key off the union rather than aiTabs alone.
+		const hasAnyTab = useMemo(
+			() =>
+				(activeSession?.aiTabs?.length ?? 0) +
+					(activeSession?.filePreviewTabs?.length ?? 0) +
+					(activeSession?.terminalTabs?.length ?? 0) +
+					(activeSession?.browserTabs?.length ?? 0) >
+				0,
+			[
+				activeSession?.aiTabs,
+				activeSession?.filePreviewTabs,
+				activeSession?.terminalTabs,
+				activeSession?.browserTabs,
+			]
+		);
+
 		// SSH remote name for header display
 		const sshRemoteName = useSshRemoteName(
 			activeSession?.sessionSshRemoteConfig?.enabled,
@@ -1176,9 +1194,11 @@ export const MainPanel = React.memo(
 								/>
 							) : null
 						) : (
-							/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */
-							activeSession.aiTabs &&
-							activeSession.aiTabs.length > 0 &&
+							/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
+							   An agent can sit at zero AI tabs while terminal/file/browser tabs are
+							   open, so gating this on aiTabs alone would hide the whole strip (and
+							   the "+" button) and strand the user in whatever view was last active. */
+							hasAnyTab &&
 							onTabSelect &&
 							onTabClose &&
 							onNewTab && (

@@ -14,6 +14,7 @@
 import {
 	Session,
 	AITab,
+	LogEntry,
 	SnoozedTabEntry,
 	SnoozeHistoryEntry,
 	SnoozeResolution,
@@ -107,19 +108,54 @@ export function snoozeTab(
 }
 
 /**
+ * Build the "back from snooze" transcript card for a returning tab.
+ *
+ * The wake notification is transient - it auto-dismisses or gets clicked away,
+ * taking the note-to-self with it. This entry is the durable record: it marks
+ * the gap in the conversation and keeps the note where the conversation is, so
+ * weeks later the tab still explains why it's open.
+ */
+function buildSnoozeReturnLog(entry: SnoozedTabEntry, resolution: 'woke' | 'unsnoozed'): LogEntry {
+	return {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'system',
+		// Plain-text fallback. This is what cross-tab search matches on, so the
+		// note goes in the text too: searching the reminder should find the tab it
+		// belongs to.
+		text: entry.note ? `Back from snooze: ${entry.note}` : 'Back from snooze',
+		snoozeReturn: {
+			...(entry.note ? { note: entry.note } : {}),
+			snoozedAt: entry.snoozedAt,
+			wakeAt: entry.wakeAt,
+			resolution,
+		},
+	};
+}
+
+/**
  * Restore a snoozed tab to the tab bar and clear its snooze.
  *
  * Used by both the scheduled wake and the manual "Unsnooze now" action. The tab
  * keeps its original ID so deep links and any still-running agent process
- * re-attach cleanly.
+ * re-attach cleanly. Either way the returning tab gets a "back from snooze"
+ * card appended to its transcript, so the gap (and the note) is visible in the
+ * conversation itself rather than only in a toast.
  *
  * @param session - Session owning the snooze
  * @param snoozeId - Snooze entry to wake
+ * @param resolution - How it came back: on schedule, or pulled back early
  * @returns Updated session and the tab to focus, or null if the snooze is gone
  */
-export function wakeSnoozedTab(session: Session, snoozeId: string): WakeSnoozedTabResult | null {
+export function wakeSnoozedTab(
+	session: Session,
+	snoozeId: string,
+	resolution: 'woke' | 'unsnoozed' = 'woke'
+): WakeSnoozedTabResult | null {
 	const entry = session.snoozedTabs?.find((s) => s.id === snoozeId);
 	if (!entry) return null;
+
+	const returnLog = buildSnoozeReturnLog(entry, resolution);
 
 	const remaining = (session.snoozedTabs || []).filter((s) => s.id !== snoozeId);
 
@@ -136,6 +172,12 @@ export function wakeSnoozedTab(session: Session, snoozeId: string): WakeSnoozedT
 			session: {
 				...session,
 				snoozedTabs: remaining,
+				// The snooze still resolved here, so the card and the unread flag
+				// belong on the tab the user actually lands on - not lost with the
+				// discarded duplicate.
+				aiTabs: session.aiTabs.map((t) =>
+					t.id === existing.id ? { ...t, hasUnread: true, logs: [...t.logs, returnLog] } : t
+				),
 				activeTabId: existing.id,
 				activeFileTabId: null,
 				activeBrowserTabId: null,
@@ -149,7 +191,12 @@ export function wakeSnoozedTab(session: Session, snoozeId: string): WakeSnoozedT
 		};
 	}
 
-	const restoredTab: AITab = { ...entry.tab, state: 'idle', hasUnread: true };
+	const restoredTab: AITab = {
+		...entry.tab,
+		state: 'idle',
+		hasUnread: true,
+		logs: [...entry.tab.logs, returnLog],
+	};
 
 	// Translate the saved unified position into an aiTabs insertion index by
 	// counting how many AI tabs precede it (same math as reopenUnifiedClosedTab).

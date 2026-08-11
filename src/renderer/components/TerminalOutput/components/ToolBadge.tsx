@@ -1,6 +1,8 @@
 import React from 'react';
 import type { LogEntry, Theme } from '../../../types';
 import { summarizeToolInput, summarizeToolOutput } from '../utils/toolSummaries';
+import { AgentTaskListCard } from '../../AgentTaskListCard';
+import { extractAgentTaskList } from '../../../utils/agentTaskList';
 
 /**
  * The compact tool-execution badge: name pill, status glyph, input summary and
@@ -13,8 +15,13 @@ import { summarizeToolInput, summarizeToolOutput } from '../utils/toolSummaries'
 export const ToolBadge = React.memo(({ log, theme }: { log: LogEntry; theme: Theme }) => {
 	// Extract tool input details for display
 	const toolInput = log.metadata?.toolState?.input;
+	// Checklist-shaped payloads (Claude Code/OpenCode TodoWrite, Codex update_plan)
+	// get the richer inline card instead of the generic key/value summary.
+	const taskList = extractAgentTaskList(toolInput);
 	const toolSummary =
-		toolInput !== undefined && toolInput !== null ? summarizeToolInput(toolInput) : null;
+		!taskList && toolInput !== undefined && toolInput !== null
+			? summarizeToolInput(toolInput)
+			: null;
 	// Show the tool result once it has finished. Without this the
 	// compact tool log drops the output entirely (e.g. MCP calls
 	// like squash_repos that take no args render as a bare name).
@@ -57,6 +64,7 @@ export const ToolBadge = React.memo(({ log, theme }: { log: LogEntry; theme: The
 					</span>
 				)}
 			</div>
+			{taskList && <AgentTaskListCard theme={theme} taskList={taskList} />}
 			{toolSummary?.detail && (
 				<div
 					className="mt-1 ml-1 pl-2 opacity-70 break-words whitespace-pre-wrap border-l"

@@ -734,6 +734,8 @@ The tab disappears from the tab bar and from tab navigation. The conversation is
 
 When the time arrives, the tab reappears and Maestro raises a notification that stays until you dismiss it, so a reminder can't scroll past unseen. Click it to jump straight to the tab.
 
+The returning tab also gets a **Back from snooze** card at the end of its conversation, showing how long it was away, when it was due, and the note you left yourself. The notification is momentary, but this card stays in the transcript, so weeks later the tab still explains why it came back.
+
 <Note>
 Wakes are delivered by the running app. If Maestro is closed when a snooze comes due, the tab returns the next time you launch - overdue reminders are never silently dropped.
 </Note>

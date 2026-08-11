@@ -617,7 +617,8 @@ export const useTabStore = create<TabStore>()((set) => ({
 	unsnoozeTab: (sessionId, snoozeId) => {
 		const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 		if (!session) return null;
-		const result = wakeSnoozedTabHelper(session, snoozeId);
+		// 'unsnoozed': the user pulled this back early rather than it coming due.
+		const result = wakeSnoozedTabHelper(session, snoozeId, 'unsnoozed');
 		if (!result) return null;
 		updateSessionWith(sessionId, () => result.session);
 		return result;

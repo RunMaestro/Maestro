@@ -26,6 +26,35 @@ import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout'
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 
+/** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
+function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
+	const ids = new Set<string>();
+	for (const g of session.tabGroups ?? []) {
+		for (const ref of collectLeafTabRefs(g.layout)) {
+			if (ref.type === 'terminal') ids.add(ref.id);
+		}
+	}
+	return ids;
+}
+
+/**
+ * Whether a persisted terminal tab is still there after a restart.
+ *
+ * Tabs carrying a startup command are durable - the command re-runs on relaunch,
+ * which is the point of them. Group-tiled terminals are durable too: the tile is
+ * part of a layout the user deliberately built, so it comes back with a fresh
+ * shell rather than letting normalizeTabGroups prune the dangling leaf and
+ * dissolve the group. Restoration and the zero-tab corruption check both go
+ * through this so they cannot disagree about how many tabs an agent is about to
+ * have.
+ */
+function terminalTabSurvivesRestart(
+	tab: { id: string; startupCommand?: string },
+	groupedTerminalIds: Set<string>
+): boolean {
+	return (tab.startupCommand ?? '').trim() !== '' || groupedTerminalIds.has(tab.id);
+}
+
 // ============================================================================
 // Return type
 // ============================================================================
@@ -205,11 +234,27 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				session = { ...session, createdAt: backfill };
 			}
 
-			// Sessions must have aiTabs - if missing, this is a data corruption issue
-			// Create a default tab to prevent crashes when code calls .find() on aiTabs
-			if (!session.aiTabs || session.aiTabs.length === 0) {
+			// An agent may legitimately have zero AI tabs as long as some other tab kind
+			// is still open (the user closed the last chat but kept a terminal around).
+			// Only a session with no tabs whatsoever is treated as data corruption -
+			// recovering the zero-AI-tab case would wipe the tabs the user still has.
+			//
+			// Terminal tabs are counted through `terminalTabSurvivesRestart` because
+			// restoration below drops the ones that are neither startup-command tabs
+			// nor group-tiled. Counting the raw array would let an agent whose sole
+			// tab is a plain terminal skip recovery here and then lose that terminal,
+			// landing on zero tabs.
+			const survivingTerminalIds = collectGroupedTerminalIds(session);
+			const restoredTabCount =
+				(session.aiTabs?.length ?? 0) +
+				(session.filePreviewTabs?.length ?? 0) +
+				(session.terminalTabs ?? []).filter((tab) =>
+					terminalTabSurvivesRestart(tab, survivingTerminalIds)
+				).length +
+				(session.browserTabs?.length ?? 0);
+			if (restoredTabCount === 0) {
 				logger.error(
-					'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+					'[restoreSession] Session has no tabs of any kind - data corruption, creating default tab:',
 					undefined,
 					session.id
 				);
@@ -249,6 +294,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
 					unifiedClosedTabHistory: [],
 				};
+			}
+
+			// Normalize a missing aiTabs array so the rest of the app can keep calling
+			// .find()/.map() on it. Zero AI tabs is a valid state; undefined is not.
+			if (!session.aiTabs) {
+				session = { ...session, aiTabs: [] };
 			}
 
 			// Fix inconsistency: activeFileTabId should only be set in AI mode.
@@ -408,14 +459,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// comes back with a fresh shell (scrollback isn't persisted). Keeping the tab
 			// also stops normalizeTabGroups from pruning its now-dangling leaf and
 			// dissolving the group. Collect the group-tiled terminal ids first.
-			const groupedTerminalIds = new Set<string>();
-			for (const g of correctedSession.tabGroups ?? []) {
-				for (const ref of collectLeafTabRefs(g.layout)) {
-					if (ref.type === 'terminal') groupedTerminalIds.add(ref.id);
-				}
-			}
+			const groupedTerminalIds = collectGroupedTerminalIds(correctedSession);
 			const resetTerminalTabs = (correctedSession.terminalTabs || [])
-				.filter((tab) => (tab.startupCommand ?? '').trim() !== '' || groupedTerminalIds.has(tab.id))
+				.filter((tab) => terminalTabSurvivesRestart(tab, groupedTerminalIds))
 				.map((tab) => ({
 					...tab,
 					pid: 0,

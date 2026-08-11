@@ -318,6 +318,21 @@ export interface LogEntry {
 		/** True when output hit the size cap and was cut short. */
 		truncated?: boolean;
 	};
+	// Anchors the "back from snooze" card marking where a snoozed tab returned to
+	// the conversation. Written once by `wakeSnoozedTab` and never updated, so it
+	// freezes into the transcript as a permanent record of the gap - including
+	// the note-to-self, which would otherwise live only in a toast that scrolls
+	// away. See components/SnoozeReturnCard.tsx.
+	snoozeReturn?: {
+		/** The note the user left themselves when snoozing, if any. */
+		note?: string;
+		/** When the tab was put away. */
+		snoozedAt: number;
+		/** When it was scheduled to come back. */
+		wakeAt: number;
+		/** Whether it returned on schedule or the user pulled it back early. */
+		resolution: 'woke' | 'unsnoozed';
+	};
 }
 
 // Queued item for the session-level execution queue

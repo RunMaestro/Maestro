@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { FileAudio, FileVideo, Minus, Pause, Play, Square, X } from 'lucide-react';
+import { FileAudio, FileVideo, GripVertical, Minus, Pause, Play, Square, X } from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
@@ -30,6 +30,8 @@ interface FloatingMediaPlayerProps {
 
 /** Height of the collapsed pill; the player is clipped but still mounted. */
 const PILL_HEIGHT = 40;
+/** Movement below this is a click, not a drag, so a shaky hand still selects. */
+const DRAG_SLOP_PX = 4;
 /**
  * Below modals (9999) and Center Flash (100001) so the widget can never cover an
  * overlay, but above the main panel content it floats over.
@@ -84,12 +86,16 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 		origin: MediaFloatRect;
 	} | null>(null);
 	const [gesturing, setGesturing] = useState(false);
+	// Set once a move gesture passes the slop threshold, so the title can be both
+	// a drag surface and a "go to my tab" button without one stealing the other.
+	const draggedRef = useRef(false);
 
 	const beginMove = useCallback(
 		(e: React.MouseEvent) => {
 			if (e.button !== 0) return;
 			e.preventDefault();
 			gestureRef.current = { mode: 'move', startX: e.clientX, startY: e.clientY, origin: rect };
+			draggedRef.current = false;
 			setGesturing(true);
 		},
 		[rect]
@@ -117,6 +123,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 			const dx = e.clientX - gesture.startX;
 			const dy = e.clientY - gesture.startY;
 			if (gesture.mode === 'move') {
+				if (Math.abs(dx) + Math.abs(dy) > DRAG_SLOP_PX) draggedRef.current = true;
 				setRect(
 					clampToViewport({
 						...gesture.origin,
@@ -179,7 +186,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 		>
 			{/* Title bar doubles as the drag handle */}
 			<div
-				className="shrink-0 flex items-center gap-1.5 px-2 h-10 border-b"
+				className="shrink-0 flex items-center gap-1.5 pl-1 pr-2 h-10 border-b"
 				style={{
 					borderColor: minimized ? 'transparent' : theme.colors.border,
 					cursor: gesturing ? 'grabbing' : 'grab',
@@ -188,12 +195,24 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				onDoubleClick={onReturnToTab}
 				title="Drag to move, double-click to return to the tab"
 			>
+				{/* Explicit grip, so the widget looks movable instead of making the user
+				    discover it. The whole bar drags; this is the affordance. */}
+				<GripVertical
+					className="w-3.5 h-4 shrink-0 opacity-60"
+					style={{ color: theme.colors.textDim }}
+					aria-hidden
+				/>
 				<KindIcon className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
 
+				{/* Drags with the bar (no mousedown guard) and only acts as a button when
+				    the pointer stayed put - otherwise grabbing the title, which is most
+				    of the bar, did nothing at all. */}
 				<button
-					onClick={onReturnToTab}
-					onMouseDown={(e) => e.stopPropagation()}
-					className="flex flex-col items-start min-w-0 flex-1 text-left"
+					onClick={() => {
+						if (draggedRef.current) return;
+						onReturnToTab();
+					}}
+					className="flex flex-col items-start min-w-0 flex-1 text-left cursor-grab active:cursor-grabbing"
 					title="Go to this file's tab"
 				>
 					<span

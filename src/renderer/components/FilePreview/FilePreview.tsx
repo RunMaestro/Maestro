@@ -77,7 +77,6 @@ import { useFilePreviewSearch } from '../../hooks/file';
 import type { FilePreviewSearchAdapter } from './search/types';
 import { FilePreviewHeader } from './FilePreviewHeader';
 import { ImageViewer } from './ImageViewer';
-import { MediaViewportSlot } from '../MediaPlayback';
 import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
@@ -113,7 +112,6 @@ export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
 		{
 			file,
-			fileTabId,
 			onClose,
 			theme,
 			markdownEditMode,
@@ -353,17 +351,20 @@ export const FilePreview = React.memo(
 		// Command palette so all three agree on what counts as media.
 		// `file.name` already carries the extension (tab name + extension, joined
 		// upstream), which is what getFileTabMediaKind needs.
-		const mediaKind = useMemo(
-			() => (file ? getFileTabMediaKind(file.name, file.content) : null),
+		//
+		// A media file tab never reaches this component - MainPanelContent routes it
+		// straight to the player. This flag is the guard for any other caller, so a
+		// stream URL renders the "open externally" card instead of being dumped on
+		// screen as text.
+		const isMedia = useMemo(
+			() => (file ? getFileTabMediaKind(file.name, file.content) !== null : false),
 			[file]
 		);
-		const isMedia = mediaKind !== null;
 
 		// Check for binary files - either by extension or by content analysis
 		// Memoize to avoid recalculating on every render (content analysis can be expensive)
 		// Media counts as binary so every "text-only" guard below (edit mode,
-		// preview tiers, TOC, search) excludes it; the render branch picks the
-		// media slot off mediaKind before it ever reaches the binary fallback.
+		// preview tiers, TOC, search) excludes it, and it lands on the binary card.
 		const isBinary = useMemo(() => {
 			if (!file) return false;
 			if (isImage) return false;
@@ -1927,11 +1928,6 @@ export const FilePreview = React.memo(
 					)}
 					{isImage ? (
 						<ImageViewer src={file.content} alt={file.name} theme={theme} />
-					) : mediaKind && fileTabId ? (
-						// The player itself lives in MediaPlaybackHost so playback survives
-						// this component unmounting on every tab switch; the slot only
-						// reserves the area and reports where to park it.
-						<MediaViewportSlot tabId={fileTabId} />
 					) : isBinary ? (
 						<div className="flex flex-col items-center justify-center h-full gap-4">
 							<FileCode className="w-16 h-16" style={{ color: theme.colors.textDim }} />

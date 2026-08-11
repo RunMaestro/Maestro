@@ -133,6 +133,46 @@ describe('FloatingMediaPlayer', () => {
 		});
 	});
 
+	it('drags from the title text, which is most of the handle', () => {
+		useMediaPlaybackStore.setState({
+			floatRect: { top: 200, left: 200, width: 400, height: 240 },
+		});
+		const { onReturnToTab } = renderPlayer();
+		const el = screen.getByTestId('floating-media-player') as HTMLElement;
+
+		// The title used to swallow its own mousedown, so grabbing the widget where
+		// it looks most grabbable did nothing at all.
+		fireEvent.mouseDown(screen.getByTitle("Go to this file's tab"), {
+			button: 0,
+			clientX: 300,
+			clientY: 300,
+		});
+		fireEvent.mouseMove(window, { clientX: 350, clientY: 320 });
+		fireEvent.mouseUp(window);
+		fireEvent.click(screen.getByTitle("Go to this file's tab"));
+
+		expect(el.style.left).toBe('250px');
+		expect(el.style.top).toBe('220px');
+		// A drag is not a click: it must not yank the user to the file's tab.
+		expect(onReturnToTab).not.toHaveBeenCalled();
+	});
+
+	it('still treats a steady click on the title as go-to-tab', () => {
+		useMediaPlaybackStore.setState({
+			floatRect: { top: 200, left: 200, width: 400, height: 240 },
+		});
+		const { onReturnToTab } = renderPlayer();
+		const title = screen.getByTitle("Go to this file's tab");
+
+		fireEvent.mouseDown(title, { button: 0, clientX: 300, clientY: 300 });
+		// Below the slop threshold - a shaky hand, not a drag.
+		fireEvent.mouseMove(window, { clientX: 301, clientY: 301 });
+		fireEvent.mouseUp(window);
+		fireEvent.click(title);
+
+		expect(onReturnToTab).toHaveBeenCalledOnce();
+	});
+
 	it('ignores a non-left mouse button', () => {
 		useMediaPlaybackStore.setState({
 			floatRect: { top: 200, left: 200, width: 400, height: 240 },

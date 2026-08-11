@@ -31,6 +31,7 @@ import {
 } from '../coworking/coworking-types';
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
+import { killPty } from './utils/commandKill';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -459,7 +460,7 @@ export class ProcessManager extends EventEmitter {
 					// reaches EOF, node-pty's worker thread exits, and its TSFN releases
 					// before Electron's environment teardown runs CleanupHandles.
 					try {
-						proc.ptyProcess.kill('SIGKILL');
+						killPty(proc.ptyProcess, 'SIGKILL');
 					} catch {
 						// Process may already be dead
 					}
@@ -469,7 +470,7 @@ export class ProcessManager extends EventEmitter {
 
 					// Use SIGTERM (not the default SIGHUP which shells may survive on macOS)
 					try {
-						ptyProc.kill('SIGTERM');
+						killPty(ptyProc, 'SIGTERM');
 					} catch {
 						// Process may already be dead
 					}
@@ -477,7 +478,7 @@ export class ProcessManager extends EventEmitter {
 					// Escalate to SIGKILL if the process doesn't exit promptly.
 					const escalationTimer = setTimeout(() => {
 						try {
-							ptyProc.kill('SIGKILL');
+							killPty(ptyProc, 'SIGKILL');
 							logger.warn(
 								'[ProcessManager] PTY did not exit after SIGTERM, escalated to SIGKILL',
 								'ProcessManager',

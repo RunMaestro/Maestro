@@ -44,6 +44,8 @@ export function isSelfContainedCard(entry: LogEntry): boolean {
 		entry.recoveryAction ||
 		// Custom AI command chip on a user message
 		entry.aiCommand ||
+		// "Back from snooze" marker - text owned by utils/snoozeHelpers.ts
+		entry.snoozeReturn ||
 		// Tool call card / hidden-progress placeholder
 		entry.metadata?.hiddenProgress ||
 		entry.metadata?.toolState

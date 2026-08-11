@@ -105,9 +105,13 @@ describe('useAgentExecution', () => {
 	});
 
 	it('spawns a batch agent and returns aggregated results', async () => {
+		// The tab is idle: a batch (Auto Run) spawn runs under its own `-batch-`
+		// process id and never marks a tab busy, so on exit there is no parallel
+		// thread to preserve and the session settles idle. The case where a tab IS
+		// still running is covered in useAgentExecution.exitQueueState.test.tsx.
 		const session = createMockSession({
 			state: 'busy',
-			aiTabs: [createMockTab({ state: 'busy' })],
+			aiTabs: [createMockTab({ state: 'idle' })],
 		});
 		const sessionsRef = { current: [session] };
 		const setSessions = vi.fn();

@@ -12,7 +12,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	TerminalOutput,
@@ -2328,6 +2327,86 @@ describe('TerminalOutput', () => {
 
 			// No in_progress task, falls back to first task's content
 			expect(screen.getByText('Fix lint issues (2/2)')).toBeInTheDocument();
+		});
+
+		it('expands the task list card to show individual task items', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'TodoWrite',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								todos: [
+									{
+										content: 'Fix lint issues',
+										status: 'completed',
+										activeForm: 'Fixing lint issues',
+									},
+									{ content: 'Run tests', status: 'in_progress', activeForm: 'Running tests' },
+									{ content: 'Build project', status: 'pending', activeForm: 'Building project' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Collapsed by default - individual items are not rendered
+			expect(screen.queryByText('Fix lint issues')).not.toBeInTheDocument();
+			expect(screen.queryByText('Build project')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Expand task list' }));
+
+			expect(screen.getByText('Fix lint issues')).toBeInTheDocument();
+			expect(screen.getByText('Build project')).toBeInTheDocument();
+			// In-progress task uses its present-tense activeForm
+			expect(screen.getByText('Running tests')).toBeInTheDocument();
+		});
+
+		it('renders a task list card for Codex update_plan payloads', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'update_plan',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								plan: [
+									{ step: 'Read the failing spec', status: 'completed' },
+									{ step: 'Patch the parser', status: 'in_progress' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Patch the parser (1/2)')).toBeInTheDocument();
+			// Generic key/value fallback is suppressed for checklist payloads
+			expect(screen.queryByText('plan: [2]')).not.toBeInTheDocument();
 		});
 
 		it('renders Bash tool with command detail', () => {

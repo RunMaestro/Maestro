@@ -1,4 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import React, {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	memo,
+	type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
 import {
 	FileAudio,
 	Maximize,
@@ -21,6 +30,7 @@ import { formatElapsedTimeColon } from '../../../shared/formatters';
 import { MEDIA_PLAYBACK_RATES, isMediaStreamUrl, type MediaKind } from '../../../shared/mediaTypes';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
 
 interface MediaViewerProps {
 	/** Whether to mount an <audio> or a <video> element. */
@@ -66,6 +76,66 @@ const FINE_SKIP_SECONDS = 5;
 const formatTime = (seconds: number): string =>
 	Number.isFinite(seconds) ? formatElapsedTimeColon(Math.floor(Math.max(0, seconds))) : '--:--';
 
+interface PlaybackRateMenuProps {
+	/** The speed button the list hangs above. */
+	anchorRef: RefObject<HTMLElement | null>;
+	/** Owned by the parent so its outside-click check can see the portaled list. */
+	menuRef: RefObject<HTMLDivElement>;
+	rate: number;
+	onSelect: (rate: number) => void;
+	theme: any;
+}
+
+/**
+ * Playback speed list, portaled to the body.
+ *
+ * It cannot be an `absolute bottom-full` child of the transport: the floating
+ * media widget clips its own overflow, so an in-flow menu is sliced off at the
+ * frame edge and the faster rates become unreachable. Portaling plus
+ * `useAnchoredMenuPosition` puts it over everything and keeps it on screen.
+ */
+const PlaybackRateMenu = memo(function PlaybackRateMenu({
+	anchorRef,
+	menuRef,
+	rate,
+	onSelect,
+	theme,
+}: PlaybackRateMenuProps) {
+	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, {
+		placement: 'above',
+		align: 'end',
+	});
+
+	return createPortal(
+		<div
+			ref={menuRef}
+			data-testid="playback-rate-menu"
+			// Above the floating player (60) and its docked frame (5), far below
+			// modals (9999) so it can never cover an overlay.
+			className="fixed z-[100] py-1 rounded shadow-xl border max-h-64 overflow-y-auto select-none"
+			style={{
+				left,
+				top,
+				opacity: ready ? 1 : 0,
+				backgroundColor: theme.colors.bgActivity,
+				borderColor: theme.colors.border,
+			}}
+		>
+			{MEDIA_PLAYBACK_RATES.map((option) => (
+				<button
+					key={option}
+					onClick={() => onSelect(option)}
+					className="block w-full text-left px-3 py-1 text-xs font-mono hover:bg-white/10 transition-colors"
+					style={{ color: option === rate ? theme.colors.accent : theme.colors.textMain }}
+				>
+					{option}x
+				</button>
+			))}
+		</div>,
+		document.body
+	);
+});
+
 /**
  * Audio/video player for the file preview.
  *
@@ -97,6 +167,7 @@ export const MediaViewer = memo(function MediaViewer({
 }: MediaViewerProps) {
 	const mediaRef = useRef<HTMLMediaElement | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
+	const rateButtonRef = useRef<HTMLButtonElement>(null);
 	const rateMenuRef = useRef<HTMLDivElement>(null);
 
 	const playbackRate = useSettingsStore((s) => s.mediaPlaybackRate);
@@ -302,11 +373,13 @@ export const MediaViewer = memo(function MediaViewer({
 		void window.maestro.shell.openPath(path);
 	}, [path]);
 
-	// Close the speed menu on any outside click.
+	// Close the speed menu on any outside click. Both the button and the portaled
+	// list count as inside - the list is no longer a DOM descendant of the button.
 	useEventListener(
 		'mousedown',
 		(e) => {
-			if (rateMenuRef.current?.contains(e.target as Node)) return;
+			const target = e.target as Node;
+			if (rateMenuRef.current?.contains(target) || rateButtonRef.current?.contains(target)) return;
 			setRateMenuOpen(false);
 		},
 		{ enabled: rateMenuOpen }
@@ -585,8 +658,9 @@ export const MediaViewer = memo(function MediaViewer({
 					</GhostIconButton>
 
 					{/* Speed - persisted globally, so it carries to the next file */}
-					<div className="relative" ref={rateMenuRef}>
+					<div className="relative">
 						<button
+							ref={rateButtonRef}
 							onClick={() => setRateMenuOpen((o) => !o)}
 							title="Playback speed (, and . to step). Persists across files."
 							aria-label="Playback speed"
@@ -598,29 +672,16 @@ export const MediaViewer = memo(function MediaViewer({
 							{rateLabel}
 						</button>
 						{rateMenuOpen && (
-							<div
-								className="absolute bottom-full right-0 mb-1 py-1 rounded shadow-lg border z-10 max-h-64 overflow-y-auto"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
+							<PlaybackRateMenu
+								anchorRef={rateButtonRef}
+								menuRef={rateMenuRef}
+								rate={playbackRate}
+								onSelect={(rate) => {
+									setPlaybackRate(rate);
+									setRateMenuOpen(false);
 								}}
-							>
-								{MEDIA_PLAYBACK_RATES.map((rate) => (
-									<button
-										key={rate}
-										onClick={() => {
-											setPlaybackRate(rate);
-											setRateMenuOpen(false);
-										}}
-										className="block w-full text-left px-3 py-1 text-xs font-mono hover:bg-white/10 transition-colors"
-										style={{
-											color: rate === playbackRate ? theme.colors.accent : theme.colors.textMain,
-										}}
-									>
-										{rate}x
-									</button>
-								))}
-							</div>
+								theme={theme}
+							/>
 						)}
 					</div>
 
