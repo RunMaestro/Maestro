@@ -22,7 +22,16 @@ import tseslint from 'typescript-eslint';
 import maestroPlugin from './eslint-rules/no-em-dash-in-comments.mjs';
 
 export default tseslint.config({
-	files: ['src/__tests__/**/*.ts', 'src/__tests__/**/*.tsx', 'scripts/**/*.mjs'],
+	// `scripts/` is mostly .mjs but holds a .js too (notarize.js), so match every
+	// JS flavour ESLint can parse. The .ps1 / .sh helpers in there are out of
+	// reach for any ESLint rule.
+	files: [
+		'src/__tests__/**/*.ts',
+		'src/__tests__/**/*.tsx',
+		'scripts/**/*.mjs',
+		'scripts/**/*.js',
+		'scripts/**/*.cjs',
+	],
 	languageOptions: {
 		parser: tseslint.parser,
 		ecmaVersion: 2022,
