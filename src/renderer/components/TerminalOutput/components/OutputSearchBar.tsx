@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { EscCloseButton } from '../../ui/EscCloseButton';
 
 interface OutputSearchBarProps {
 	theme: Theme;
@@ -12,6 +13,8 @@ interface OutputSearchBarProps {
 	setOutputSearchRegex: (regex: boolean) => void;
 	goToNextMatch: () => void;
 	goToPrevMatch: () => void;
+	/** Dismiss the find bar - same action the Escape layer runs. */
+	onClose: () => void;
 }
 
 export function OutputSearchBar({
@@ -25,6 +28,7 @@ export function OutputSearchBar({
 	setOutputSearchRegex,
 	goToNextMatch,
 	goToPrevMatch,
+	onClose,
 }: OutputSearchBarProps) {
 	return (
 		<div
@@ -63,15 +67,12 @@ export function OutputSearchBar({
 						spellCheck={outputSearchRegex ? false : undefined}
 						autoFocus
 					/>
-					<div
-						className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-						style={{
-							backgroundColor: theme.colors.bgMain,
-							color: theme.colors.textDim,
-						}}
-					>
-						ESC
-					</div>
+					<EscCloseButton
+						theme={theme}
+						variant="adornment"
+						label="Close search (Esc)"
+						onClose={onClose}
+					/>
 				</div>
 				<button
 					onClick={() => setOutputSearchRegex(!outputSearchRegex)}

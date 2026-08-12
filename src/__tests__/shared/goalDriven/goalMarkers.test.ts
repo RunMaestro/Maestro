@@ -122,10 +122,10 @@ describe('parseGoalMarkers', () => {
 
 		it('captures curly / smart punctuation in the rationale verbatim', () => {
 			const result = parseGoalMarkers(
-				'<!-- maestro:progress 55 | refactored the “auth” module — it’s nearly done… -->'
+				'<!-- maestro:progress 55 | refactored the “auth” module - it’s nearly done… -->'
 			);
 			expect(result.progress).toBe(55);
-			expect(result.rationale).toBe('refactored the “auth” module — it’s nearly done…');
+			expect(result.rationale).toBe('refactored the “auth” module - it’s nearly done…');
 		});
 
 		it('uses the last progress marker when several are present', () => {

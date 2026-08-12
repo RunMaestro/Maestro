@@ -52,7 +52,7 @@ describe('BrowserTabView <webview> src (reload-loop regression)', () => {
 		// A did-navigate / did-redirect-navigation event rewrites the store URL, so
 		// the parent re-renders this SAME view with a new tab.url. Before the fix
 		// the controlled `src={tab.url}` prop re-assigned the <webview> src on every
-		// such update, and re-assigning a <webview>'s src RELOADS it — a
+		// such update, and re-assigning a <webview>'s src RELOADS it - a
 		// redirecting/canonicalizing site (google.com -> www.google.com/) then
 		// oscillated forever. The fix captures the mount-time url in a ref so React
 		// never re-drives src afterward.

@@ -514,7 +514,7 @@ export function NotificationsPanel({
 				>
 					<strong>Tip:</strong> The default Command Chain uses TTS (text-to-speech), but you can
 					leverage any notification stack you prefer. Chain commands together with pipes to mix and
-					match—for example, log to a file while also speaking aloud.
+					match - for example, log to a file while also speaking aloud.
 				</div>
 			</div>
 		</div>

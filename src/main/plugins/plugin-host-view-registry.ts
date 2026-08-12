@@ -27,8 +27,8 @@ export interface PluginHostViewRegistryDeps {
 	isEnabled: () => boolean;
 	/** Active declarations, normally PluginManager.getContributions().hostViews. */
 	getHostViews: () => readonly HostViewContribution[];
-	/** Whether the plugin's registry record is PRESENT (any loadStatus). Presence —
-	 * including permanent failure states like `invalid`/`incompatible` — means the
+	/** Whether the plugin's registry record is PRESENT (any loadStatus). Presence -
+	 * including permanent failure states like `invalid`/`incompatible` - means the
 	 * declaration set is authoritative and undeclared runtime views are purged.
 	 * Absence means a transient reload window: retain runtime views until the
 	 * record reappears (plugin code cannot re-send them unprompted). */

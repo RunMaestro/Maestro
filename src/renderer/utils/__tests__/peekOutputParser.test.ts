@@ -92,7 +92,7 @@ describe('parsePeekOutput', () => {
 	});
 
 	it('should skip tool_result blocks inside assistant messages', () => {
-		// tool_result blocks belong on user messages, not assistant — anything
+		// tool_result blocks belong on user messages, not assistant - anything
 		// in an assistant message that isn't text/thinking/tool_use is dropped.
 		const raw = JSON.stringify({
 			type: 'assistant',
@@ -219,7 +219,7 @@ describe('parsePeekOutput', () => {
 		const raw =
 			'{"type":"assistant","message":{"content":[{"type":"text","text":"partial\n{"type":"result","result":"ok"}';
 		const result = parsePeekOutput(raw);
-		// The incomplete line buffers, then the next line appends — the combined string
+		// The incomplete line buffers, then the next line appends - the combined string
 		// may or may not parse. The result message should still be recoverable.
 		expect(result.length).toBeGreaterThanOrEqual(0);
 	});

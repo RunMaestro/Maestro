@@ -109,10 +109,10 @@ describe('TypingIndicator', () => {
 			/>
 		);
 
-		// Type out "AB" — need enough ticks to complete
+		// Type out "AB" - need enough ticks to complete
 		act(() => flushRaf(100));
 		act(() => flushRaf(130)); // 'A'
-		act(() => flushRaf(160)); // 'B' — typing complete, sets isTypingComplete
+		act(() => flushRaf(160)); // 'B' - typing complete, sets isTypingComplete
 
 		// Flush any pending rAF from the completion render
 		act(() => flushRaf(190));

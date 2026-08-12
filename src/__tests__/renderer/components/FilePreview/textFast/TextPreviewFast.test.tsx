@@ -233,7 +233,7 @@ describe('TextPreviewFast', () => {
 			await flushRaf();
 			await flushRaf();
 
-			// Precision scroll should fire — either the page's parent element or
+			// Precision scroll should fire - either the page's parent element or
 			// a child text-node parent gets scrollIntoView.
 			expect(scrollIntoViewSpy).toHaveBeenCalled();
 			const last = scrollIntoViewSpy.mock.calls.at(-1);

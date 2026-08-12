@@ -59,6 +59,7 @@ function breakdown(overrides: Partial<SessionTokenBreakdown> = {}): SessionToken
 		sessionId: 'sess-1',
 		agentType: 'claude-code',
 		projectPath: '/proj/alpha',
+		accountKey: '/home/u/.claude',
 		timestampMs: Date.parse('2026-01-15T12:00:00Z'),
 		byModel,
 		inputTokens: 0,
@@ -244,5 +245,137 @@ describe('bucketStart', () => {
 		const start = new Date(bucketStart(ms, 'week'));
 		expect(start.getDay()).toBe(1); // Monday
 		expect(start.getDate()).toBe(9);
+	});
+});
+
+describe('aggregate - byAccount', () => {
+	it('splits totals across provider accounts instead of blending them', () => {
+		const all = [
+			breakdown({
+				sessionId: 's1',
+				accountKey: '/home/u/.claude',
+				byModel: [model({ inputTokens: 100, costUsd: 1 })],
+			}),
+			breakdown({
+				sessionId: 's2',
+				accountKey: '/home/u/.claude-work',
+				byModel: [model({ inputTokens: 300, costUsd: 3 })],
+			}),
+		];
+
+		const agg = aggregate(all, {});
+		expect(agg.byAccount).toHaveLength(2);
+		// Sorted by highest spend first.
+		expect(agg.byAccount[0].key).toBe('/home/u/.claude-work');
+		expect(agg.byAccount[0].costUsd).toBe(3);
+		expect(agg.byAccount[1].costUsd).toBe(1);
+		// Grand total still reconciles to the sum of the accounts.
+		expect(agg.totals.costUsd).toBe(4);
+	});
+
+	it('counts a session once per account even when it spans several models', () => {
+		const all = [
+			breakdown({
+				accountKey: '/home/u/.claude',
+				byModel: [
+					model({ model: 'claude-opus-4-8', inputTokens: 10, costUsd: 1 }),
+					model({ model: 'claude-haiku-4-5', inputTokens: 5, costUsd: 0.1 }),
+				],
+			}),
+		];
+
+		const agg = aggregate(all, {});
+		expect(agg.byAccount).toHaveLength(1);
+		expect(agg.byAccount[0].sessionCount).toBe(1);
+	});
+});
+
+describe('accountLabel', () => {
+	const { accountLabel } = _internal;
+
+	it('strips the .claude- prefix for a named account', () => {
+		expect(accountLabel('/home/u/.claude-gmail')).toBe('gmail');
+	});
+
+	it('names the plain ~/.claude dir as the default', () => {
+		expect(accountLabel('/home/u/.claude')).toBe('Default (~/.claude)');
+	});
+
+	it('labels agents with no multi-account concept as Default', () => {
+		expect(accountLabel('default')).toBe('Default');
+	});
+});
+
+describe('buildSeries', () => {
+	const { buildSeries, localDayKey } = _internal;
+	const ALL = -Infinity;
+	const NONE = Infinity;
+
+	/** A breakdown whose tokens land on a known local day. */
+	function at(ms: number, overrides: Partial<SessionTokenBreakdown> = {}) {
+		return breakdown({
+			timestampMs: ms,
+			byModel: [model({ inputTokens: 10, outputTokens: 5, costUsd: 1 })],
+			inputTokens: 10,
+			outputTokens: 5,
+			...overrides,
+		});
+	}
+
+	it('buckets tokens by local day, hour, agent, and provider session', () => {
+		const ms = new Date(2026, 4, 20, 14, 30).getTime();
+		const s = buildSeries([at(ms, { sessionId: 'prov-1', agentType: 'claude-code' })], ALL, NONE);
+		const day = localDayKey(ms);
+
+		expect(s.byDay[day]).toBe(15);
+		expect(s.byHour['14']).toBe(15);
+		expect(s.byAgentByDay['claude-code'][day]).toBe(15);
+		expect(s.bySessionByDay['prov-1'][day]).toBe(15);
+	});
+
+	it('sums several sessions landing on the same day', () => {
+		const ms = new Date(2026, 4, 20, 9, 0).getTime();
+		const s = buildSeries([at(ms, { sessionId: 'a' }), at(ms, { sessionId: 'b' })], ALL, NONE);
+		expect(s.byDay[localDayKey(ms)]).toBe(30);
+		expect(Object.keys(s.bySessionByDay)).toHaveLength(2);
+	});
+
+	it('splits tokens by session origin and ignores sessions with none', () => {
+		const ms = new Date(2026, 4, 20, 9, 0).getTime();
+		const s = buildSeries(
+			[
+				at(ms, { sessionId: 'a', origin: 'user' }),
+				at(ms, { sessionId: 'b', origin: 'auto' }),
+				at(ms, { sessionId: 'c' }), // no origin recorded
+			],
+			ALL,
+			NONE
+		);
+		expect(s.bySource).toEqual({ user: 15, auto: 15 });
+	});
+
+	it('excludes sessions outside the query window', () => {
+		const inside = new Date(2026, 4, 20, 9, 0).getTime();
+		const outside = new Date(2020, 0, 1, 9, 0).getTime();
+		const s = buildSeries([at(inside), at(outside, { sessionId: 'old' })], inside - 1000, NONE);
+		expect(Object.keys(s.byDay)).toEqual([localDayKey(inside)]);
+	});
+
+	it('skips zero-token sessions entirely', () => {
+		const ms = new Date(2026, 4, 20, 9, 0).getTime();
+		const s = buildSeries(
+			[breakdown({ timestampMs: ms, byModel: [], inputTokens: 0, outputTokens: 0 })],
+			ALL,
+			NONE
+		);
+		expect(s.byDay).toEqual({});
+		expect(s.bySessionByDay).toEqual({});
+	});
+
+	it('keeps a timestamp-less session out of the day/hour buckets but still in bySource', () => {
+		const s = buildSeries([at(0, { origin: 'user' })], ALL, NONE);
+		expect(s.byDay).toEqual({});
+		expect(s.byHour).toEqual({});
+		expect(s.bySource.user).toBe(15);
 	});
 });

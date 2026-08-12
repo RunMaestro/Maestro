@@ -8,7 +8,7 @@
  * engine parses to drive a progress bar and decide when to stop (see
  * `goalExitEvaluator.ts`).
  *
- * These types are pure data contracts — no Electron, React, or IPC. They are
+ * These types are pure data contracts - no Electron, React, or IPC. They are
  * consumed by later phases (the engine, the modal, the progress UI).
  */
 
@@ -33,7 +33,7 @@ export interface GoalRunConfig {
  * treat a missing progress report.
  */
 export interface GoalMarkers {
-	/** Reported progress, clamped to 0–100 and rounded; `null` if not reported. */
+	/** Reported progress, clamped to 0-100 and rounded; `null` if not reported. */
 	progress: number | null;
 	/** Optional short rationale accompanying the progress marker; `null` if absent or empty. */
 	rationale: string | null;
@@ -49,7 +49,7 @@ export interface GoalMarkers {
 export interface GoalIterationRecord {
 	/** 1-based iteration number. */
 	iteration: number;
-	/** Normalized progress for this iteration (0–100, never null in history). */
+	/** Normalized progress for this iteration (0-100, never null in history). */
 	progress: number;
 	/** Optional rationale captured from the iteration's progress marker. */
 	rationale: string | null;
@@ -89,7 +89,7 @@ export const STALL_THRESHOLD = 3;
  * Absolute upper bound on iterations for an "infinite" (`maxIterations: null`)
  * run.
  *
- * The normal exit paths — completion, deadlock, and stall detection — should
+ * The normal exit paths - completion, deadlock, and stall detection - should
  * stop any healthy run long before this. But a buggy or adversarial agent can
  * defeat the stall detector indefinitely (e.g. oscillating its reported
  * progress 50 → 51 → 50 → 51 so a strict upward tick keeps resetting the stall

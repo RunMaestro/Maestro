@@ -1,0 +1,50 @@
+{
+	"id": "agent-flow",
+	"name": "Agent Flow",
+	"version": "0.2.0",
+	"tier": 2,
+	"maestro": { "minHostApi": "1.16.0" },
+	"description": "Live per-session execution-graph visualization built from host tool + agent lifecycle events.",
+	"category": "insights",
+	"beta": true,
+	"entry": "main.js",
+	"permissions": [
+		{
+			"capability": "events:subscribe",
+			"reason": "Follow tool and agent lifecycle events to build the flow graph."
+		},
+		{ "capability": "ui:panel", "reason": "Render the Agent Flow graph in its own panel." },
+		{
+			"capability": "sessions:read",
+			"reason": "Seed lane titles and agent ids for open sessions at startup."
+		},
+		{
+			"capability": "sessions:focus",
+			"reason": "Jump to an agent's session when you click its node in the overlay."
+		}
+	],
+	"contributes": {
+		"panels": [
+			{
+				"id": "flow",
+				"title": "Agent Flow",
+				"entry": "panel.html",
+				"placement": "modal",
+				"size": "full"
+			}
+		],
+		"commands": [
+			{ "id": "overlay", "title": "Agent Flow: Toggle Overlay" },
+			{ "id": "clear", "title": "Agent Flow: Clear Graph" },
+			{ "id": "sync", "title": "Agent Flow: Refresh Panel" }
+		],
+		"keybindings": [
+			{
+				"id": "toggle-overlay",
+				"key": "Alt+Shift+F",
+				"command": "overlay",
+				"description": "Summon or dismiss the Agent Flow overlay"
+			}
+		]
+	}
+}

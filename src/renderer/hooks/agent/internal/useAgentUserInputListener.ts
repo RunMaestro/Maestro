@@ -1,5 +1,5 @@
 /**
- * useAgentUserInputListener — mirrors submitted user messages across renderer
+ * useAgentUserInputListener - mirrors submitted user messages across renderer
  * contexts. Agent output already travels through process:data; user messages are
  * local optimistic state, so web-desktop peers need this explicit event.
  */

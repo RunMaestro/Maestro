@@ -1,5 +1,5 @@
 /**
- * CommandConfigPanel — Unified configuration panel for command nodes.
+ * CommandConfigPanel - Unified configuration panel for command nodes.
  *
  * Switches between two modes:
  *   - shell: arbitrary shell command (PATH-aware, runs in owning session's project root)
@@ -85,7 +85,7 @@ export function CommandConfigPanel({
 	// node before the component is torn down on selection change.
 	//
 	// Also register with the pending-edits registry so `handleSave` can flush
-	// this panel's pending writes before it reads pipelineState — clicking Save
+	// this panel's pending writes before it reads pipelineState - clicking Save
 	// within 300ms of a keystroke would otherwise persist stale values.
 	useEffect(() => {
 		const unregister = registerPendingEdit(() => {
@@ -213,7 +213,7 @@ export function CommandConfigPanel({
 				minWidth: 0,
 			}}
 		>
-			{/* Owning session row — picker when unbound, read-only pill once chosen.
+			{/* Owning session row - picker when unbound, read-only pill once chosen.
 			 *  The "Commands" drawer pill drops nodes with owningSessionId="" so the
 			 *  user picks the owner here. Dragging from a session row pre-binds. */}
 			{data.owningSessionId ? (
@@ -235,7 +235,7 @@ export function CommandConfigPanel({
 						{data.owningSessionName}
 					</span>
 					<span style={{ fontSize: 10, color: theme.colors.textDim, flex: 1 }}>
-						— project root provides cwd and PATH
+						- project root provides cwd and PATH
 					</span>
 					{sessions && sessions.length > 0 && (
 						<button

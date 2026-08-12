@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { HistoryFilterToggle } from '../../../../renderer/components/History';
 import type { HistoryEntryType } from '../../../../renderer/types';
+import { ALL_HISTORY_ENTRY_TYPES } from '../../../../shared/history';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
@@ -209,19 +210,33 @@ describe('HistoryFilterToggle', () => {
 	it('renders pill icons by default', () => {
 		const { container } = render(
 			<HistoryFilterToggle
-				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE', 'AGENT'])}
 				onToggleFilter={vi.fn()}
 				theme={mockTheme}
 			/>
 		);
-		// Three pills, each with an SVG icon when not compact.
-		expect(container.querySelectorAll('button svg').length).toBe(3);
+		// One pill per entry type, each with an SVG icon when not compact.
+		expect(container.querySelectorAll('button svg').length).toBe(ALL_HISTORY_ENTRY_TYPES.length);
+	});
+
+	it('renders a pill for the AGENT type', () => {
+		const onToggleFilter = vi.fn();
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AGENT'])}
+				onToggleFilter={onToggleFilter}
+				theme={mockTheme}
+			/>
+		);
+		expect(screen.getByText('AGENT')).toBeInTheDocument();
+		fireEvent.click(screen.getByText('AGENT'));
+		expect(onToggleFilter).toHaveBeenCalledWith('AGENT');
 	});
 
 	it('hides pill icons when compact', () => {
 		const { container } = render(
 			<HistoryFilterToggle
-				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE', 'AGENT'])}
 				onToggleFilter={vi.fn()}
 				theme={mockTheme}
 				compact

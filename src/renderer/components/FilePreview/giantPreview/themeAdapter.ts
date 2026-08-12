@@ -61,7 +61,7 @@ export function buildEditorTheme(theme: Theme): Extension {
 			'.cm-cursor': {
 				borderLeftColor: c.accent,
 			},
-			// Search panel chrome — CM6 renders the panel as plain HTML, so
+			// Search panel chrome - CM6 renders the panel as plain HTML, so
 			// we style it via descendant selectors here.
 			'.cm-panels': {
 				backgroundColor: c.bgSidebar,

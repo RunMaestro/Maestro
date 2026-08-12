@@ -6,6 +6,7 @@
 import type { ProcessManager } from '../process-manager';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies, type UsageStats } from './types';
 import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
+import { appendUsageCapture } from './context-timeline-log';
 
 /**
  * Sets up the usage listener for token/cost statistics.
@@ -121,6 +122,13 @@ export function setupUsageListener(
 				});
 			}
 		}
+
+		// Record the RAW capture before it goes out, and stamp the assigned seq
+		// onto the very payload renderers receive. A renderer hydrating from the
+		// main-side log can then dedup live events against hydrated ones by seq
+		// instead of guessing (finding S1). Group-chat sessions flow through here
+		// too; they simply never match an agent base session on retrieval.
+		usageStats.captureSeq = appendUsageCapture(sessionId, usageStats);
 
 		safeSend('process:usage', sessionId, usageStats);
 	});

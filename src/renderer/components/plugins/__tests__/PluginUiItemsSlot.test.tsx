@@ -5,6 +5,7 @@ import { PluginUiItemsSlot } from '../PluginUiItemsSlot';
 import type {
 	AggregatedContributions,
 	UiItemContribution,
+	UiSurface,
 } from '../../../../shared/plugins/contributions';
 
 const EMPTY: AggregatedContributions = {
@@ -41,7 +42,7 @@ function uiItem(over: Partial<UiItemContribution> = {}): UiItemContribution {
 // exercises. The global test setup defines window.maestro without `plugins`.
 const pluginBridge = {
 	contributions: vi.fn<() => Promise<AggregatedContributions>>(),
-	onChanged: vi.fn(() => () => {}),
+	onChanged: vi.fn<(listener: () => void) => () => void>(() => () => {}),
 	invokeCommand: vi.fn().mockResolvedValue({ dispatched: true }),
 };
 
@@ -71,6 +72,93 @@ describe('PluginUiItemsSlot', () => {
 		await waitFor(() => expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('p/go'));
 	});
 
+	it('notifies the menu owner after a contributed action activates', async () => {
+		const onActivate = vi.fn();
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			uiItems: [uiItem({ surface: 'contextMenuItem', label: 'Plugin menu action' })],
+		});
+
+		render(
+			<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" onActivate={onActivate} />
+		);
+
+		fireEvent.click(await screen.findByText('Plugin menu action'));
+		await waitFor(() => expect(onActivate).toHaveBeenCalledTimes(1));
+	});
+
+	it.each([
+		'tabBar',
+		'sessionRowBadge',
+		'groupHeaderBadge',
+		'settingsSection',
+		'rightPanelTab',
+		'contextMenuItem',
+		'emptyState',
+	] as const)('renders only a matching %s host-owned slot', async (surface) => {
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			uiItems: [uiItem({ surface, label: `Action for ${surface}` })],
+		});
+
+		const { container } = render(<PluginUiItemsSlot surface={surface} />);
+
+		await screen.findByText(`Action for ${surface}`);
+		expect(container.querySelector(`[data-plugin-uiitems-slot="${surface}"]`)).not.toBeNull();
+	});
+
+	it('removes items when the registry changes after disable or uninstall', async () => {
+		let current: AggregatedContributions = {
+			...EMPTY,
+			uiItems: [uiItem({ surface: 'toolbar', label: 'Will disappear' })],
+		};
+		let notifyChanged: (() => void) | undefined;
+		pluginBridge.contributions.mockImplementation(() => Promise.resolve(current));
+		pluginBridge.onChanged.mockImplementation((listener) => {
+			notifyChanged = listener;
+			return () => {};
+		});
+
+		render(<PluginUiItemsSlot surface="toolbar" />);
+		await screen.findByText('Will disappear');
+
+		current = EMPTY;
+		notifyChanged?.();
+
+		await waitFor(() => expect(screen.queryByText('Will disappear')).not.toBeInTheDocument());
+	});
+
+	it.each([
+		'plugin-management',
+		'permission-consent',
+		'uninstall-grant-revoke',
+		'security-indicators',
+	])('does not render a crafted contribution into protected %s', async (protectedSurface) => {
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			uiItems: [
+				uiItem({
+					surface: protectedSurface as UiSurface,
+					label: `Spoof ${protectedSurface}`,
+				}),
+			],
+		});
+
+		const { container } = render(<PluginUiItemsSlot surface={protectedSurface as UiSurface} />);
+
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		expect(container.querySelector('[data-plugin-uiitems-slot]')).toBeNull();
+		expect(screen.queryByText(`Spoof ${protectedSurface}`)).not.toBeInTheDocument();
+	});
+
+	it('renders no plugin UI while the plugins Encore flag is off', async () => {
+		pluginBridge.contributions.mockRejectedValue(new Error('PluginsDisabled'));
+
+		const { container } = render(<PluginUiItemsSlot surface="emptyState" />);
+
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		expect(container.querySelector('[data-plugin-uiitems-slot]')).toBeNull();
+	});
 	it('does not leak an item into a non-matching surface', async () => {
 		pluginBridge.contributions.mockResolvedValue({
 			...EMPTY,

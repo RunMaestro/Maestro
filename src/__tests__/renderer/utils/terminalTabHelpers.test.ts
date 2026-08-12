@@ -1,5 +1,5 @@
 /**
- * Tests for terminalTabHelpers.ts — pure functions for managing TerminalTab state.
+ * Tests for terminalTabHelpers.ts - pure functions for managing TerminalTab state.
  *
  * Functions tested:
  * - createTerminalTab

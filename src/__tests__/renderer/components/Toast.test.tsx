@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { ToastContainer } from '../../../renderer/components/Toast';
+import { ToastContainer, buildToastClipboardText } from '../../../renderer/components/Toast';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -358,9 +358,9 @@ describe('Toast', () => {
 			setStoreToasts([createMockToast()]);
 
 			render(<ToastContainer theme={mockTheme} />);
-			// No anchor/button with link behavior beyond the close button
+			// Only the two rail buttons (close + copy), no action link
 			const buttons = screen.getAllByRole('button');
-			expect(buttons).toHaveLength(1); // only the close button
+			expect(buttons).toHaveLength(2);
 		});
 	});
 
@@ -370,14 +370,67 @@ describe('Toast', () => {
 			setStoreToasts([createMockToast({ sessionId: 'session-1' })]);
 
 			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
-			// Close button is the last button (the X icon)
-			const buttons = screen.getAllByRole('button');
-			const closeButton = buttons[buttons.length - 1];
-			fireEvent.click(closeButton);
+			fireEvent.click(screen.getByLabelText('Close'));
 
 			// onSessionClick should NOT be called from close
 			// (onSessionClick triggers from the toast body click)
 			expect(onSessionClick).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('copy button', () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+
+		beforeEach(() => {
+			writeText.mockClear();
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				configurable: true,
+			});
+		});
+
+		it('copies the toast text to the clipboard', async () => {
+			setStoreToasts([
+				createMockToast({
+					group: 'Ops',
+					project: 'Maestro',
+					tabName: 'main',
+					title: 'Pipeline failing',
+					message: 'chat source broken',
+					actionUrl: 'https://example.com/run/1',
+				}),
+			]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			await act(async () => {
+				fireEvent.click(screen.getByLabelText('Copy notification text'));
+			});
+
+			expect(writeText).toHaveBeenCalledWith(
+				'Ops · Maestro · main\nPipeline failing\nchat source broken\nhttps://example.com/run/1'
+			);
+		});
+
+		it('does not navigate or dismiss the toast when copying', async () => {
+			const onSessionClick = vi.fn();
+			setStoreToasts([createMockToast({ sessionId: 'session-1' })]);
+
+			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
+			await act(async () => {
+				fireEvent.click(screen.getByLabelText('Copy notification text'));
+			});
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+
+			expect(onSessionClick).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
+		});
+
+		it('builds clipboard text from only the populated fields', () => {
+			expect(buildToastClipboardText(createMockToast({ title: 'Done', message: 'All good' }))).toBe(
+				'Done\nAll good'
+			);
 		});
 	});
 
@@ -440,7 +493,7 @@ describe('Toast', () => {
 		});
 
 		it('shows 0s for exactly 0ms edge (not rendered due to guard)', () => {
-			// taskDuration of 0 is guarded — "does not display" already tested
+			// taskDuration of 0 is guarded - "does not display" already tested
 			// But let's verify sub-second with exact 1000ms boundary
 			setStoreToasts([createMockToast({ taskDuration: 1000 })]);
 

@@ -252,7 +252,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
-	// Handle remote set Auto Run folder events from web interface — repoints
+	// Handle remote set Auto Run folder events from web interface - repoints
 	// a session at a different `.maestro/` folder, mirroring desktop's
 	// `dialog.selectFolder` + `handleAutoRunFolderSelected` flow. Lists docs
 	// from the new path via the autorun preload API and writes the new folder
@@ -296,7 +296,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				};
 			}
 
-			// Treat a structured failure the same as a thrown one — otherwise we
+			// Treat a structured failure the same as a thrown one - otherwise we
 			// silently repoint the session at an unreadable folder and the caller
 			// gets a false-positive `{ success: true }`.
 			if (!listResult?.success) {
@@ -434,7 +434,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					return;
 				}
 
-				// Capture whether the launch enables worktree dispatch — used below to
+				// Capture whether the launch enables worktree dispatch - used below to
 				// decide whether to spawn a child session via the desktop helper.
 				const worktreeEnabled = Boolean(config.worktree?.enabled);
 
@@ -454,17 +454,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// helper writes the resolved values back into config.worktree when
 				// createPROnCompletion is true; we mirror that result onto batchConfig
 				// below so PR creation downstream sees the correct path/branch.
+				// Per-run model/effort override (CLI `--model` / `--effort`). Spread
+				// only when set so an omitted flag never serializes as an empty string,
+				// which would pin the run to a nonexistent model instead of falling
+				// through to the agent default.
 				const batchConfig: BatchRunConfig = {
 					documents,
 					prompt: config.prompt || DEFAULT_BATCH_PROMPT,
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
+					...(config.model && { model: config.model }),
+					...(config.effort && { effort: config.effort }),
 				};
 
 				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,
 				// spawn a child session linked to the launching parent BEFORE calling
 				// startBatchRun. Without this, startBatchRun creates the worktree on
-				// disk but no session is bound to the launching agent — chokidar in
+				// disk but no session is bound to the launching agent - chokidar in
 				// useWorktreeHandlers eventually attaches the new directory to whichever
 				// sibling's worktreeConfig.basePath matches first, producing the wrong-
 				// parent attachment reported in PR #946.
@@ -516,13 +522,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						// `git worktree add` returned for an already-attached branch).
 						// Forward that authoritative value to startBatchRun; when PR
 						// creation is off, leave batchConfig.worktree undefined and rely
-						// on worktreeTarget + the spawned session's cwd — the same shape
+						// on worktreeTarget + the spawned session's cwd - the same shape
 						// the desktop launch path produces.
 						if (spawnConfig.worktree) {
 							batchConfig.worktree = spawnConfig.worktree;
 						}
 						// Setting worktreeTarget tells startBatchRun to skip its own
-						// setupWorktree call — the spawn helper already created the
+						// setupWorktree call - the spawn helper already created the
 						// directory and built the session.
 						batchConfig.worktreeTarget = spawnConfig.worktreeTarget;
 					} catch (err) {
@@ -778,11 +784,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// Reset all completed task checkboxes (both `[x]` and `[X]`) back to `[ ]`
 			// while preserving leading whitespace and the rest of the line. The
 			// trailing whitespace group is `\s?` (not `\s`) so malformed lines like
-			// `- [x]Task` (no space after the bracket) still get unchecked — the
+			// `- [x]Task` (no space after the bracket) still get unchecked - the
 			// desktop's uncheckAllTasks() behaves the same way.
 			const reset = original.replace(/^(\s*[-*]\s*)\[[xX]\](\s?)/gm, '$1[ ]$2');
 			if (reset === original) {
-				// Nothing to reset — still report success so the UI doesn't show an error.
+				// Nothing to reset - still report success so the UI doesn't show an error.
 				window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(responseChannel, true);
 				return;
 			}
@@ -794,7 +800,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			);
 			// Mirror the reset back into session state so the renderer's right
 			// panel reflects the new content immediately instead of waiting for
-			// the next refresh — and the autoRunContent stays in sync with disk.
+			// the next refresh - and the autoRunContent stays in sync with disk.
 			if (writeResult?.success && session.autoRunSelectedFile + '.md' === filename) {
 				setSessions((prev) =>
 					prev.map((s) =>
@@ -819,7 +825,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
-	// Auto Run error-recovery actions from web — mirror the desktop AutoRunErrorBanner buttons.
+	// Auto Run error-recovery actions from web - mirror the desktop AutoRunErrorBanner buttons.
 	useEventListener('maestro:resumeAutoRunError', (e: Event) => {
 		const { sessionId, responseChannel } = (e as CustomEvent).detail;
 		try {
@@ -862,7 +868,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
-	// Playbook CRUD from web — forwards to window.maestro.playbooks.*
+	// Playbook CRUD from web - forwards to window.maestro.playbooks.*
 	useEventListener('maestro:listPlaybooks', async (e: Event) => {
 		const { sessionId, responseChannel } = (e as CustomEvent).detail;
 		try {
@@ -917,7 +923,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:deletePlaybook', async (e: Event) => {
 		const { sessionId, playbookId, responseChannel } = (e as CustomEvent).detail;
 		try {
-			// `playbooks.delete` returns `{ success: boolean; error?: string }` — if the
+			// `playbooks.delete` returns `{ success: boolean; error?: string }` - if the
 			// IPC reports `success: false` (e.g. playbook not found) we must surface
 			// that back to the web client instead of silently acking true, otherwise
 			// the mobile UI optimistically drops the entry and the list goes stale.
@@ -1066,6 +1072,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.customContextWindow && {
 					customContextWindow: config.customContextWindow as number,
 				}),
+				...(config?.contextWindowSource === 'user-edited' && {
+					contextWindowSource: 'user-edited' as const,
+				}),
 				...(config?.customProviderPath && {
 					customProviderPath: config.customProviderPath as string,
 				}),
@@ -1093,7 +1102,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// driven by React render cycles and a 2s timer, so a CLI consumer that
 			// runs `create-agent` and then immediately `list agents` / `send` would
 			// otherwise hit the disk-backed CLI storage layer before the in-memory
-			// session has been flushed — surfacing as `AGENT_NOT_FOUND` (issue #1013).
+			// session has been flushed - surfacing as `AGENT_NOT_FOUND` (issue #1013).
 			// `setMany` is incremental and idempotent: the debounced flush that
 			// follows simply rewrites the same row.
 			try {
@@ -1294,6 +1303,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				customEnvVars: undefined,
 				customModel: undefined,
 				customContextWindow: undefined,
+				// Provenance describes the value cleared above and must not outlive
+				// it (finding AD1); mirrors the Edit Agent modal's switch branch.
+				contextWindowSource: undefined,
 				enableMaestroP: undefined,
 				maestroPPath: undefined,
 				maestroPMode: undefined,
@@ -1336,6 +1348,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customModel',
 			'customEffort',
 			'customContextWindow',
+			// Provenance for the key above (finding AD1). Must be allowlisted or
+			// `maestro-cli update-agent --context-window` writes the number without
+			// its provenance, and the value it just set stays outranked by the
+			// provider's report - the deliberate edit would silently not apply.
+			'contextWindowSource',
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
@@ -1349,6 +1366,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
+		}
+
+		// Clearing the window clears its provenance too, even when the caller sent
+		// only `customContextWindow: null`. Otherwise a stale 'user-edited' outlives
+		// the value it described and the next window set without provenance
+		// inherits precedence nobody asked for (finding AD1).
+		if (patch.customContextWindow === null) {
+			updated.contextWindowSource = undefined;
 		}
 
 		if (Object.keys(updated).length === 0) {

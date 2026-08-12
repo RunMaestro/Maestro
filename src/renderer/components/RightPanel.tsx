@@ -39,6 +39,7 @@ import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
 import type { FileNode } from '../types/fileTree';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -124,13 +125,13 @@ interface RightPanelProps {
 	// Document Graph handlers
 	onFocusFileInGraph?: (relativePath: string) => void;
 
-	// Browser tab handler — used by file-tree "Open in Maestro Browser"
+	// Browser tab handler - used by file-tree "Open in Maestro Browser"
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 }
 
 export const RightPanel = memo(
 	forwardRef<RightPanelHandle, RightPanelProps>(function RightPanel(props, ref) {
-		// === State from stores (direct subscriptions — no prop drilling) ===
+		// === State from stores (direct subscriptions - no prop drilling) ===
 		const session = useSessionStore(selectActiveSession);
 		const setSessions = useSessionStore((s) => s.setSessions);
 		// Multi-window scoping: only surface an agent this window owns. If the active
@@ -167,7 +168,7 @@ export const RightPanel = memo(
 		const autoRunIsLoadingDocuments = useBatchStore((s) => s.isLoadingDocuments);
 		const autoRunDocumentTaskCounts = useBatchStore((s) => s.documentTaskCounts);
 
-		// Direct store subscription for error state — the prop chain passes error state
+		// Direct store subscription for error state - the prop chain passes error state
 		// through updateBatchStateAndBroadcast/UPDATE_PROGRESS which drops error fields.
 		const sessionId = session?.id;
 		const errorPaused = useBatchStore(
@@ -489,6 +490,8 @@ export const RightPanel = memo(
 						</button>
 					))}
 
+					<PluginUiItemsSlot surface="rightPanelTab" className="px-1 shrink-0" />
+
 					<button
 						onClick={() => setRightPanelOpen(!rightPanelOpen)}
 						className="flex items-center justify-center p-2 rounded hover:bg-white/5 transition-colors w-12 shrink-0"
@@ -510,7 +513,7 @@ export const RightPanel = memo(
 					onClick={(e) => {
 						setActiveFocus('right');
 						// Only focus the container for file explorer, not for autorun (which has its own focus management)
-						// Skip when the filter input is focused — otherwise the container steals focus from it
+						// Skip when the filter input is focused - otherwise the container steals focus from it
 						if (activeRightTab === 'files' && e.target !== fileTreeFilterInputRef.current) {
 							fileTreeContainerRef.current?.focus();
 						}
@@ -736,7 +739,7 @@ export const RightPanel = memo(
 									width: `${
 										// Goal mode drives the bar straight from the self-reported percent.
 										// (Phase 02 also mirrors progress into completedTasksAcrossAllDocs/100,
-										// so the task ratio below would coincide — but branch explicitly so
+										// so the task ratio below would coincide - but branch explicitly so
 										// the value is unambiguous and the label below reads "Goal: N%".)
 										currentSessionBatchState.goalMode
 											? Math.min(100, Math.max(0, currentSessionBatchState.goalProgress ?? 0))
@@ -780,7 +783,7 @@ export const RightPanel = memo(
 												currentSessionBatchState.goalRationale || undefined,
 											]
 												.filter(Boolean)
-												.join(' — ') || undefined
+												.join(' - ') || undefined
 										: undefined
 								}
 							>
@@ -802,16 +805,18 @@ export const RightPanel = memo(
 
 						{/* Action row - left: the (spec-only) follow-task toggle; right: the
 						    action links + Stop, all on one plane to keep the card compact.
-						    Kept off the status-line row so a long rationale can't clip it. */}
-						<div className="mt-1.5 flex items-center justify-between gap-2">
+						    Kept off the status-line row so a long rationale can't clip it.
+						    Every control here is whitespace-nowrap and must stay legible, so
+						    the row wraps instead of overflowing when the Right Panel is
+						    narrow: `justify-end` + `mr-auto` on the toggle keeps the controls
+						    hard against the right edge on one line, and drops them onto their
+						    own right-aligned line once they no longer fit beside the toggle. */}
+						<div className="mt-1.5 flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5">
 							{/* "Follow active task" only applies to task-based runs that step
 							    through a document. Goal mode iterates a single goal with no
-							    discrete task list to follow, so hide the checkbox there (empty
-							    spacer keeps the controls right-aligned). */}
-							{currentSessionBatchState.goalMode ? (
-								<div />
-							) : (
-								<label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+							    discrete task list to follow, so hide the checkbox there. */}
+							{!currentSessionBatchState.goalMode && (
+								<label className="flex items-center gap-1.5 cursor-pointer shrink-0 mr-auto">
 									<input
 										type="checkbox"
 										checked={autoFollowEnabled}
@@ -824,7 +829,9 @@ export const RightPanel = memo(
 									</span>
 								</label>
 							)}
-							<div className="flex items-center gap-2 shrink-0">
+							{/* Wraps internally too, so the links/Stop stay inside the card even
+							    at the narrowest panel width where they alone can't fit a line. */}
+							<div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5 min-w-0">
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (
 									<span

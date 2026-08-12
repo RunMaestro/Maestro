@@ -800,7 +800,7 @@ describe('handleCreateWorktreeFromConfig', () => {
 			await result.current.handleCreateWorktreeFromConfig('feature-new', '/projects/worktrees');
 		});
 
-		// No new session was added — count stays at 2
+		// No new session was added - count stays at 2
 		expect(useSessionStore.getState().sessions.length).toBe(2);
 		expect(useSessionStore.getState().activeSessionId).toBe('child-existing');
 		expect(notifyToast).toHaveBeenCalledWith(
@@ -1551,7 +1551,7 @@ describe('Effects', () => {
 				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: false },
 			};
 
-			// Scan succeeded but found nothing — most commonly because of a symlinked
+			// Scan succeeded but found nothing - most commonly because of a symlinked
 			// basePath or transient filesystem hiccup. Should NOT bulk-remove sessions.
 			mockGit.scanWorktreeDirectory.mockResolvedValue({
 				gitSubdirs: [],
@@ -2042,7 +2042,7 @@ describe('Effects', () => {
 		// Regression for the "worktrees re-added under a wrong agent" bug. After
 		// the worktree-wipe bug (PR #931 missing), the renderer would happily
 		// attach every worktree found under basePath to whichever parent agent's
-		// scan iterated first — even when those worktrees belonged to a different
+		// scan iterated first - even when those worktrees belonged to a different
 		// repo entirely.
 
 		it('filters out scanned subdirs whose repoRoot does not match the parent repo', async () => {
@@ -2162,7 +2162,7 @@ describe('Effects', () => {
 			expect(sessions.some((s) => s.id === 'wrong-agent-child')).toBe(false);
 			expect(sessions.some((s) => s.id === 'correct-child')).toBe(true);
 			// Wrong-agent detachments must NOT fire the misleading "Worktree Removed"
-			// toast — the worktree still exists on disk. Use "Worktree Re-assigned"
+			// toast - the worktree still exists on disk. Use "Worktree Re-assigned"
 			// (or no toast) so the user isn't told the worktree was deleted.
 			expect(notifyToast).not.toHaveBeenCalledWith(
 				expect.objectContaining({ title: 'Worktree Removed' })
@@ -2541,7 +2541,7 @@ describe('Effects', () => {
 			// First worktreeInfo call: the discovered worktree path → repo-b
 			// Second worktreeInfo call: the parent's cwd → repo-a
 			// (Renderer fires both in parallel via Promise.all, so order doesn't
-			// matter — we just need both to resolve to non-matching repos.)
+			// matter - we just need both to resolve to non-matching repos.)
 			mockGit.worktreeInfo.mockImplementation(async (path: string) => {
 				if (path === '/shared/worktrees/feat-other') {
 					return {

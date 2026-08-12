@@ -2,7 +2,7 @@
  * TerminalSelectionContextMenu - Right-click menu for selected text in XTerminal.
  *
  * Shown when the user right-clicks while text is highlighted in the terminal
- * (and no URL link is being hovered — that case is handled by LinkContextMenu).
+ * (and no URL link is being hovered - that case is handled by LinkContextMenu).
  */
 
 import { useRef, useCallback } from 'react';

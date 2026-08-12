@@ -5,7 +5,7 @@
  *    (process.env, process.versions.electron, process.platform).
  * 2. Reads server-injected config from window.__MAESTRO_CONFIG__.
  * 3. Imports the real preload index, which calls contextBridge.exposeInMainWorld
- *    — our electron-shim contextBridge writes that to window.maestro.
+ *    - our electron-shim contextBridge writes that to window.maestro.
  * 4. Dynamically imports the real renderer main entry.
  * 5. Registers the PWA service worker (reusing src/web/utils/serviceWorker.ts).
  */

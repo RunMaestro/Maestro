@@ -69,7 +69,11 @@ export function QuickActionRow({
 							aria-hidden="true"
 						/>
 					)}
-					<span className="font-medium truncate">{action.label}</span>
+					{/* data-action-label lets tests read the label without having to strip
+					    number badges, subtext, and shortcut hints out of textContent. */}
+					<span className="font-medium truncate" data-action-label={action.label}>
+						{action.label}
+					</span>
 					{action.isInBatch && (
 						<div
 							className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"

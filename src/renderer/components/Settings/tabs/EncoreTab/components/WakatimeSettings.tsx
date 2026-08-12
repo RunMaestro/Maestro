@@ -29,7 +29,7 @@ export function WakatimeSettings({
 						<Timer className="w-3.5 h-3.5 opacity-60" />
 						Enable WakaTime tracking
 					</p>
-					<p className="text-xs opacity-50 mt-0.5">
+					<p className="text-xs opacity-70 mt-0.5">
 						Track coding activity in Maestro sessions via WakaTime.
 					</p>
 				</div>
@@ -65,7 +65,7 @@ export function WakatimeSettings({
 						<p className="text-sm" style={{ color: theme.colors.textMain }}>
 							Detailed file tracking
 						</p>
-						<p className="text-xs opacity-50 mt-0.5">
+						<p className="text-xs opacity-70 mt-0.5">
 							Track per-file write activity. Sends file paths (not content) to WakaTime.
 						</p>
 					</div>
@@ -93,7 +93,7 @@ export function WakatimeSettings({
 
 			{wakatimeEnabled && (
 				<div>
-					<label htmlFor="wakatime-api-key" className="block text-xs opacity-60 mb-1">
+					<label htmlFor="wakatime-api-key" className="block text-xs opacity-70 mb-1">
 						API Key
 					</label>
 					<div
@@ -115,7 +115,7 @@ export function WakatimeSettings({
 							placeholder="waka_..."
 						/>
 						{wakatimeState.wakatimeKeyValidating && (
-							<span className="ml-2 text-xs opacity-50">...</span>
+							<span className="ml-2 text-xs opacity-70">...</span>
 						)}
 						{!wakatimeState.wakatimeKeyValidating && wakatimeState.wakatimeKeyValid === true && (
 							<Check className="w-4 h-4 ml-2" style={{ color: theme.colors.success }} />
@@ -137,7 +137,7 @@ export function WakatimeSettings({
 							</button>
 						)}
 					</div>
-					<p className="text-[10px] mt-1.5 opacity-50">
+					<p className="text-[10px] mt-1.5 opacity-55">
 						Get your API key from wakatime.com/settings/api-key. Keys are stored locally in
 						~/.maestro/settings.json.
 					</p>

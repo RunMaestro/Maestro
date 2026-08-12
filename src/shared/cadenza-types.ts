@@ -23,6 +23,7 @@
  *              pop several at once to show related code side by side
  *   view     - a custom view the agent composes from native building blocks
  *              (stat cards, sections, bars, donuts, ...) as a JSON spec in `body`
+ *   html     - an isolated single-page HTML mockup with inline CSS/JavaScript
  *   decision - a prompt (`body`) plus `options` buttons; clicking one replies to
  *              the owning agent with that option's value (a live prompt inject)
  */
@@ -33,6 +34,7 @@ export type CadenzaViewType =
 	| 'image'
 	| 'code'
 	| 'view'
+	| 'html'
 	| 'decision';
 
 /** One choice on a `decision` cadenza. Clicking sends `value` to the agent. */
@@ -61,6 +63,7 @@ export const CADENZA_VIEW_TYPES: readonly CadenzaViewType[] = [
 	'image',
 	'code',
 	'view',
+	'html',
 	'decision',
 ] as const;
 
@@ -83,8 +86,7 @@ export interface CadenzaPayload {
 	viewType?: CadenzaViewType;
 	/** Header label. */
 	title?: string;
-	/** Tracker line (tracker), markdown source (markdown), or JSON block spec
-	 *  (view). Updated in place. */
+	/** Tracker line, markdown source, JSON block spec, or HTML document. */
 	body?: string;
 	/** File path for the `file` type, or the image path for the `image` type. */
 	path?: string;

@@ -4,6 +4,7 @@ import {
 	buildCrossAgentLogEntry,
 	buildConsultTabName,
 	ensureConsultTab,
+	buildConsultHistoryEntry,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
@@ -332,5 +333,69 @@ describe('ensureConsultTab', () => {
 			question: 'anyone home?',
 		});
 		expect(result).toBeNull();
+	});
+});
+
+describe('buildConsultHistoryEntry', () => {
+	function entry(overrides: Partial<Parameters<typeof buildConsultHistoryEntry>[0]> = {}) {
+		return buildConsultHistoryEntry({
+			entryId: 'e1',
+			timestamp: 1_700_000_000_000,
+			sourceAgentName: 'Pedsidian',
+			subject: 'why was the export empty',
+			accumulated: 'Because the grooming agent timed out.',
+			historySessionId: 'tgt',
+			projectPath: '/repo',
+			...overrides,
+		});
+	}
+
+	it('records a consult as AGENT, not AUTO', () => {
+		// A consult is an ordinary message proxied in from another agent. Typing it
+		// AUTO made it render as an Auto Run task and inflated the Auto Run counts.
+		expect(entry().type).toBe('AGENT');
+	});
+
+	it('names who consulted and about what', () => {
+		expect(entry().summary).toBe('Consulted by Pedsidian: why was the export empty');
+		expect(entry().sessionName).toBe('↩ why was the export empty');
+	});
+
+	it('falls back to the consult tab name when there is no subject', () => {
+		const e = entry({ subject: '', consultTabName: '↩ Pedsidian', targetName: 'rc' });
+		expect(e.summary).toBe('Consulted by Pedsidian');
+		expect(e.sessionName).toBe('↩ Pedsidian');
+	});
+
+	it('falls back to the target agent name when there is no tab name either', () => {
+		expect(entry({ subject: '', targetName: 'rc' }).sessionName).toBe('rc');
+	});
+
+	it('marks a clean consult successful and keeps the response as the detail', () => {
+		const e = entry();
+		expect(e.success).toBe(true);
+		expect(e.fullResponse).toBe('Because the grooming agent timed out.');
+	});
+
+	it('persists the failure reason for a consult that never answered', () => {
+		// Regression: failures accumulate no text, so the reason (which lives only
+		// on the chunk) was dropped - leaving a red X with an empty detail view.
+		const e = entry({ accumulated: '', error: 'Codex is not available.' });
+		expect(e.success).toBe(false);
+		expect(e.fullResponse).toContain('Codex is not available.');
+	});
+
+	it('keeps BOTH the partial answer and the reason when a consult fails mid-stream', () => {
+		const e = entry({ accumulated: 'I started to look and', error: 'timed out' });
+		expect(e.fullResponse).toContain('I started to look and');
+		expect(e.fullResponse).toContain('timed out');
+	});
+
+	it('leaves the detail undefined when there is nothing to show', () => {
+		expect(entry({ accumulated: '' }).fullResponse).toBeUndefined();
+	});
+
+	it('stamps the calling agent so the target remembers who consulted it', () => {
+		expect(entry().sourceAgentName).toBe('Pedsidian');
 	});
 });

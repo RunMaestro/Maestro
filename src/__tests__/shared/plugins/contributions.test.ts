@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
-	collectContributions,
 	aggregateContributions,
+	collectContributions,
 	gateContributions,
 	MAX_HOST_VIEW_BLOCKS_BYTES,
 	groupingRuleMatches,
+	isPluginUiSurface,
 	matchesGroupingPattern,
+	PROTECTED_UI_SURFACES,
+	UI_SURFACES,
+	validatePluginUiMount,
 } from '../../../shared/plugins/contributions';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 
@@ -244,6 +248,31 @@ describe('collectContributions', () => {
 		expect(c.commands.map((x) => x.id)).toEqual(['com.acme/cmd']);
 		expect(c.panels.map((x) => x.localId)).toEqual(['good']);
 		expect(c.errors.some((e) => e.includes('relative path inside the plugin'))).toBe(true);
+	});
+
+	it('parses the optional panel size and never drops a panel over it', () => {
+		const c = collectContributions(
+			manifest(
+				'com.acme',
+				{
+					panels: [
+						{ id: 'plain', title: 'Plain', entry: 'panel.html' },
+						{ id: 'full', title: 'Full', entry: 'panel.html', placement: 'modal', size: 'full' },
+						{ id: 'explicit', title: 'Explicit', entry: 'panel.html', size: 'default' },
+						{ id: 'bogus', title: 'Bogus', entry: 'panel.html', size: 'enormous' },
+					],
+				},
+				1
+			)
+		);
+		// Absent -> 'default' with NO error, so pre-size manifests are untouched.
+		expect(c.panels.find((p) => p.localId === 'plain')?.size).toBe('default');
+		expect(c.panels.find((p) => p.localId === 'full')?.size).toBe('full');
+		expect(c.panels.find((p) => p.localId === 'explicit')?.size).toBe('default');
+		// Invalid -> error, but the panel still renders at the safe default size.
+		expect(c.panels.find((p) => p.localId === 'bogus')?.size).toBe('default');
+		expect(c.errors.some((e) => e.includes('invalid size'))).toBe(true);
+		expect(c.panels).toHaveLength(4);
 	});
 
 	it('rejects agents for tier 0 and accepts them for tier 1', () => {
@@ -645,6 +674,104 @@ describe('hostViews contribution (host-rendered BlockView data)', () => {
 	});
 });
 
+describe('PluginUiSurface registry and trusted-chrome guard', () => {
+	function uiItemManifest(surface: string): PluginManifest {
+		const contribution = {
+			id: 'go',
+			surface,
+			label: 'Go',
+			command: 'run',
+			tooltip: 'Run Go',
+		};
+		return manifest('com.ui', { uiItems: [contribution] }, 1);
+	}
+
+	it.each([
+		'tabBar',
+		'sessionRowBadge',
+		'groupHeaderBadge',
+		'settingsSection',
+		'rightPanelTab',
+		'contextMenuItem',
+		'emptyState',
+	])('accepts the %s ui:contribute surface', (surface) => {
+		const collected = collectContributions(uiItemManifest(surface));
+
+		expect(collected.errors).toEqual([]);
+		expect(collected.uiItems).toMatchObject([{ surface, tooltip: 'Run Go' }]);
+		expect(isPluginUiSurface(surface)).toBe(true);
+	});
+
+	it('keeps every contributable surface in the positive allowlist', () => {
+		expect(UI_SURFACES).toEqual(
+			expect.arrayContaining([
+				'status-bar',
+				'menu',
+				'sidebar',
+				'activity-bar',
+				'toolbar',
+				'tabBar',
+				'sessionRowBadge',
+				'groupHeaderBadge',
+				'settingsSection',
+				'rightPanelTab',
+				'contextMenuItem',
+				'emptyState',
+			])
+		);
+		for (const protectedSurface of PROTECTED_UI_SURFACES) {
+			expect(UI_SURFACES).not.toContain(protectedSurface);
+			expect(isPluginUiSurface(protectedSurface)).toBe(false);
+		}
+	});
+
+	it.each(PROTECTED_UI_SURFACES)(
+		'drops declarative and ui:render-unsafe attempts at protected %s',
+		(protectedSurface) => {
+			const collected = collectContributions(uiItemManifest(protectedSurface));
+			const aggregated = aggregateContributions(
+				[uiItemManifest(protectedSurface)],
+				(pluginId, capability) => pluginId === 'com.ui' && capability === 'ui:contribute'
+			);
+			const unsafe = validatePluginUiMount({
+				pluginId: 'com.ui',
+				tier: 'ui:render-unsafe',
+				target: protectedSurface,
+			});
+
+			expect(collected.uiItems).toEqual([]);
+			expect(collected.errors.join(' ')).toContain('protected chrome');
+			expect(aggregated.uiItems).toEqual([]);
+			expect(aggregated.errorsByPlugin['com.ui']?.join(' ')).toContain('protected chrome');
+			expect(unsafe.allowed).toBe(false);
+			expect(unsafe.error).toContain('protected chrome');
+		}
+	);
+
+	it('does not infer target policy from a namespaced contribution id', () => {
+		const collected = collectContributions(
+			manifest(
+				'evil',
+				{
+					uiItems: [
+						{
+							id: 'permission-consent',
+							surface: 'permission-consent',
+							label: 'Spoof consent',
+							command: 'run',
+						},
+					],
+				},
+				1
+			)
+		);
+
+		expect(collected.uiItems).toEqual([]);
+		expect(collected.errors.join(' ')).toContain('permission-consent');
+		expect(isPluginUiSurface('evil/permission-consent')).toBe(false);
+	});
+});
+
 describe('gateContributions (per-capability customization gate)', () => {
 	const built = collectContributions(
 		manifest(
@@ -679,7 +806,7 @@ describe('gateContributions (per-capability customization gate)', () => {
 
 	it('ui:render-unsafe does NOT unlock host-rendered uiItems or panels (D-PanelsEscape)', () => {
 		// SECURITY INVARIANT: ui:render-unsafe is the high-risk "render arbitrary UI"
-		// escape hatch — it is NOT a substitute grant for the host-rendered surfaces.
+		// escape hatch - it is NOT a substitute grant for the host-rendered surfaces.
 		// Holding only it must leave uiItems/panels gated out; otherwise an author who
 		// got the inert escape-hatch grant would silently gain menu/panel injection.
 		const onlyUnsafe = gateContributions(built, (cap) => cap === 'ui:render-unsafe');
@@ -688,7 +815,7 @@ describe('gateContributions (per-capability customization gate)', () => {
 	});
 });
 
-describe('aggregateContributions — gated aggregation', () => {
+describe('aggregateContributions - gated aggregation', () => {
 	it('gates capability-scoped contributions per plugin when given the predicate', () => {
 		const m = manifest(
 			'com.g2',

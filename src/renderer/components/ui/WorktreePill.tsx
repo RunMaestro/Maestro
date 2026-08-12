@@ -1,5 +1,5 @@
 /**
- * WorktreePill — small pill badge marking a worktree child agent.
+ * WorktreePill - small pill badge marking a worktree child agent.
  *
  * Used in two places:
  *   1. The left-panel agent list (`SessionItem.tsx`), gated by `showWorktreePill`.

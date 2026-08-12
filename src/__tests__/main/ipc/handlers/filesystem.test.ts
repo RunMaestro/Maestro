@@ -959,13 +959,13 @@ describe('filesystem handlers', () => {
 
 			const handler = registeredHandlers.get('fs:directorySize');
 
-			// Without ignore patterns — uses defaults (node_modules, __pycache__)
+			// Without ignore patterns - uses defaults (node_modules, __pycache__)
 			// .git is NOT ignored by default
 			const resultNoIgnore = await handler!({}, '/project');
 			expect(resultNoIgnore.folderCount).toBe(2); // src + .git
 			expect(resultNoIgnore.fileCount).toBe(2); // file.txt + index.ts
 
-			// With .git in ignore patterns — .git is excluded
+			// With .git in ignore patterns - .git is excluded
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
 				const p = String(dirPath).replace(/\\/g, '/');
 				if (p === '/project') {

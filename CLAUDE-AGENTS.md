@@ -4,18 +4,19 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name          | Status     | Notes                                                                                                                               |
-| --------------- | ------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                      |
-| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                                                                                           |
-| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                    |
-| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                     |
-| `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker |
-| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                             |
+| ID              | Name          | Status     | Notes                                                                                                                                              |
+| --------------- | ------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                     |
+| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                                                                                                          |
+| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                   |
+| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
+| `copilot-cli`   | Copilot-CLI   | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
+| `grok`          | Grok CLI      | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |
+| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
 
 ## Agent Capabilities
 
-Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (23 boolean flags + 1 optional). The table below shows key capabilities; see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for the complete list.
+Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (24 boolean flags + 1 optional). The table below shows key capabilities; see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) for the complete list.
 
 | Capability                    | Description                              | UI Feature Controlled      |
 | ----------------------------- | ---------------------------------------- | -------------------------- |
@@ -30,7 +31,7 @@ Each agent declares capabilities that control UI feature availability. See `src/
 | `supportsCostTracking`        | Reports token costs                      | Cost widget                |
 | `supportsUsageStats`          | Reports token counts                     | Context window widget      |
 | `supportsBatchMode`           | Runs per-message                         | Batch processing           |
-| `requiresPromptToStart`       | No eager spawn — needs prompt            | Deferred spawn             |
+| `requiresPromptToStart`       | No eager spawn - needs prompt            | Deferred spawn             |
 | `supportsStreaming`           | Streams output                           | Real-time display          |
 | `supportsModelSelection`      | Supports --model flag                    | Model dropdown             |
 | `supportsResultMessages`      | Distinguishes final result               | Message classification     |
@@ -42,6 +43,7 @@ Each agent declares capabilities that control UI feature availability. See `src/
 | `usesJsonLineOutput`          | Uses JSONL output in batch mode          | CLI batch parsing strategy |
 | `usesCombinedContextWindow`   | Uses combined input+output context       | Context bar display mode   |
 | `supportsStreamJsonInput`     | Accepts stream-json input via stdin      | Image input method         |
+| `supportsPromptViaStdin`      | CLI reads the prompt from stdin          | Windows prompt delivery    |
 | `imageResumeMode?`            | Image handling on resume (optional)      | Resume image strategy      |
 
 ### Accessing Capabilities
@@ -56,8 +58,8 @@ Each agent declares capabilities that control UI feature availability. See `src/
 
 Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 
-- `getAgentDisplayName(agentId)` — human-readable name with fallback
-- `isBetaAgent(agentId)` — beta badge check
+- `getAgentDisplayName(agentId)` - human-readable name with fallback
+- `isBetaAgent(agentId)` - beta badge check
 
 The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-private. Use the functions above to access it.
 
@@ -69,6 +71,7 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 - **JSON Output:** `--output-format stream-json`
 - **Resume:** `--resume <session-id>`
 - **Read-only:** `--permission-mode plan`
+- **Standard mode:** permission relay (`--permission-prompt-tool` + `--mcp-config`), also carries `AskUserQuestion` ask-backs; absent in full/read-only/SSH/interactive (TUI wrapper) paths
 - **Session Storage:** `~/.claude/projects/<encoded-path>/`
 
 ### Codex
@@ -106,13 +109,31 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 - **Known Limitations:**
   - **SSH interactive mode:** PTY-based interactive Copilot sessions do not go through `wrapSpawnWithSsh()`, so interactive Copilot over SSH remote is not supported. Batch mode (`-p`) over SSH works correctly via the standard child-process spawner.
 
+### Grok CLI
+
+- **Binary:** `grok`
+- **JSON Output:** `--output-format streaming-json` (JSONL: `thought`, `text`, `end`, `error` events)
+- **Batch Mode:** `-p/--single <prompt>` (headless, no subcommand)
+- **Resume:** `--resume <session-id>` (session ID is a UUIDv7, emitted only on the final `end` event)
+- **Read-only:** `--permission-mode plan` (CLI-enforced)
+- **YOLO Mode:** `--always-approve` (also used for batch mode)
+- **Thinking Display:** Streams `thought` deltas into Maestro's thinking panel
+- **Session Storage:** `~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/` (local and SSH-remote)
+- **Model Discovery:** Reads `~/.grok/models_cache.json` (grok-4.5 at 500K context, grok-composer-2.5-fast at 200K), with a static fallback list
+- **Reasoning Effort:** `--reasoning-effort` with none, minimal, low, medium, high, xhigh, max (grok-4.5 rejects `none`)
+- **Known Limitations:**
+  - **No tool events on stdout:** tool activity exists only in on-disk session files, so live tool display is unavailable
+  - **No usage or cost in the stream:** context usage and cost widgets stay empty
+  - **Batch-only:** interactive PTY mode is not wired (same posture as Codex)
+  - **No image input**
+
 ## Adding New Agents
 
 To add support for a new agent:
 
 1. Add agent ID to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
 2. Add agent definition to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS`
-3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (23 boolean flags)
+3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (24 boolean flags)
 4. Add display name and beta status to `src/shared/agentMetadata.ts` (internal maps, accessed via `getAgentDisplayName()` / `isBetaAgent()`)
 5. Add context window default to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
 6. Sync `AgentCapabilities` interface in renderer: `useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`

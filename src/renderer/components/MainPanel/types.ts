@@ -1,6 +1,5 @@
 import type React from 'react';
 import type {
-	Session,
 	Theme,
 	BatchRunState,
 	UnifiedTab,
@@ -60,7 +59,6 @@ export interface MainPanelProps {
 	agentSessionsOpen: boolean;
 	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
-	activeSession: Session | null;
 	theme: Theme;
 	isMobileLandscape?: boolean;
 	stagedImages: string[];
@@ -175,6 +173,8 @@ export interface MainPanelProps {
 	onOpenTabSearch?: () => void;
 	/** Handler to open output/message search (Cmd+F) */
 	onOpenOutputSearch?: () => void;
+	/** Open cross-tab message search (Opt+Cmd+F) */
+	onOpenCrossTabSearch?: () => void;
 	// Bulk tab close operations
 	onCloseAllTabs?: () => void;
 	onCloseOtherTabs?: (pivotTabId?: string) => void;
@@ -227,6 +227,8 @@ export interface MainPanelProps {
 	onAtBottomChange?: (isAtBottom: boolean) => void;
 	// Input blur handler for persisting AI input state
 	onInputBlur?: () => void;
+	/** Capture composer owner on focus so blur can pin the write target */
+	onComposerFocus?: () => void;
 	// Prompt composer modal
 	onOpenPromptComposer?: () => void;
 	// Replay a user message (AI mode)

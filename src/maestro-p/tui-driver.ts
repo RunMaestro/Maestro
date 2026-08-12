@@ -2,7 +2,7 @@
 //
 // Spawns the Claude CLI under a PTY and exposes a minimal event stream the
 // run-mode flow can consume. By design this module is NOT the source of
-// truth for assistant output — that comes from the structured JSONL
+// truth for assistant output - that comes from the structured JSONL
 // transcript Claude writes alongside its TUI. The driver's only jobs
 // post-startup are:
 //
@@ -11,7 +11,7 @@
 //      detected with an UNANCHORED regex because PTY output routinely
 //      prepends \r cursor returns, so ^-anchored line matching misses it.
 //   2. Detect quota-limit messages on the screen. This is the one signal
-//      the JSONL doesn't carry — Claude emits the limit text only to its
+//      the JSONL doesn't carry - Claude emits the limit text only to its
 //      terminal panel.
 //   3. Surface every ANSI-stripped completed line via 'line' for the
 //      --status mode /usage panel capture. Run mode ignores 'line' events
@@ -92,7 +92,7 @@ const READY_REGEX = /[›❯]\s/;
 //
 // MUST stay tightly ANCHORED to Claude's literal banner wording. This regex is
 // tested against EVERY line of rendered TUI output (see handleData), which
-// includes the assistant's own prose and tool results — so any broad
+// includes the assistant's own prose and tool results - so any broad
 // "limit + reached/hit/exceeded" match false-positives the moment the agent
 // merely *discusses* limits (e.g. building Maestro's own token-mode feature copy:
 // "we hit the limit of 4 cards", "when your usage limit is reached…"). A false
@@ -113,7 +113,7 @@ const LIMIT_REGEX =
 // only governs tool-permission prompts later). The text regex below is a
 // best-effort fast-path that catches the current wording; the blind-tap
 // fallback (see READY_TAP_INTERVAL_MS) is what actually keeps us robust
-// to text changes — Anthropic can reword the prompt or add another gate
+// to text changes - Anthropic can reword the prompt or add another gate
 // (terms-of-service, model picker, …) and the tap loop still unsticks us.
 //
 // `\s*` between words tolerates both raw output ("trust this folder")
@@ -369,7 +369,7 @@ export class TuiDriver extends EventEmitter {
 		try {
 			this.ptyProcess.write('/quit\r');
 		} catch {
-			// PTY may already be tearing down — fall through to the grace timer.
+			// PTY may already be tearing down - fall through to the grace timer.
 		}
 		await new Promise<void>((resolve) => {
 			if (this.exited) {
@@ -403,7 +403,7 @@ export class TuiDriver extends EventEmitter {
 		try {
 			this.ptyProcess.kill('SIGKILL');
 		} catch {
-			// Already gone — nothing to do.
+			// Already gone - nothing to do.
 		}
 	}
 
@@ -426,7 +426,7 @@ export class TuiDriver extends EventEmitter {
 		// Trust-prompt auto-accept is a fast-path optimization: when the
 		// current wording matches, we send Enter immediately rather than
 		// waiting up to READY_TAP_INTERVAL_MS for the periodic tap. The
-		// blind-tap loop in start() is the actual contract — this regex
+		// blind-tap loop in start() is the actual contract - this regex
 		// can go stale the moment Anthropic rewords the prompt.
 		// Bypass-permissions gate first: it needs Down+Enter, not the blind Enter
 		// the trust/ready paths use. Run it on the painting chunk so we select

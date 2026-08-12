@@ -51,6 +51,8 @@ export interface TimelineBucket {
 	auto: number;
 	user: number;
 	cue: number;
+	/** AGENT entries. Optional: predates the type, treated as 0 when absent. */
+	agent?: number;
 }
 
 /** One slice of a donut breakdown. */

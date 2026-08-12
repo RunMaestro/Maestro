@@ -3,14 +3,14 @@
  *
  * `background:service` means: "this plugin's sandbox child holds long-lived
  * work the host must keep alive". The plugin child (utilityProcess) IS the
- * service runtime — there is no separate worker to spawn. What the supervisor
+ * service runtime - there is no separate worker to spawn. What the supervisor
  * adds on top of the plain sandbox lifecycle is:
  *
  * - a registry of which plugin holds which registered services;
  * - crash-restart: when a sandbox child dies while holding registered
  *   services, the supervisor restarts it with bounded exponential backoff
  *   (mirroring pianola-supervisor discipline). The restart re-runs the
- *   plugin's own activate path, which re-registers its services — the
+ *   plugin's own activate path, which re-registers its services - the
  *   supervisor never re-plays registrations itself;
  * - a restart cap: after MAX_RESTARTS consecutive rapid failures the plugin
  *   is marked `failed-permanent` and abandoned until a manual re-enable;
@@ -66,7 +66,7 @@ export interface PluginBackgroundSupervisorDeps {
 	/**
 	 * Restart the owning sandbox child. Wired to the plugin manager's
 	 * refresh/reconcile path, which re-reads disk and starts every runnable
-	 * plugin that is not running — including the crashed one. The restarted
+	 * plugin that is not running - including the crashed one. The restarted
 	 * child re-runs activate(), which re-registers its services.
 	 */
 	restartPlugin: (pluginId: string) => void;
@@ -104,8 +104,8 @@ export class PluginBackgroundSupervisor {
 
 	/**
 	 * Register (or re-register) a service for a plugin. Re-registering an
-	 * existing id is idempotent — that is exactly what a restarted child's
-	 * activate path does — and clears a pending restart cycle: the child is
+	 * existing id is idempotent - that is exactly what a restarted child's
+	 * activate path does - and clears a pending restart cycle: the child is
 	 * demonstrably alive again, so the plugin returns to `running`.
 	 */
 	register(pluginId: string, service: { id?: unknown; name?: unknown }): { serviceId: string } {
@@ -141,7 +141,7 @@ export class PluginBackgroundSupervisor {
 	/**
 	 * Unregister one service. Returns false for an unknown id (the handler
 	 * surfaces that as an error). When the last service goes, the plugin
-	 * leaves supervision entirely — a later crash restarts nothing.
+	 * leaves supervision entirely - a later crash restarts nothing.
 	 */
 	unregister(pluginId: string, serviceId: string): boolean {
 		const entry = this.plugins.get(pluginId);

@@ -9,28 +9,9 @@ import { memo, useState, useEffect, useRef } from 'react';
 import { GitBranch } from 'lucide-react';
 import type { Session, Theme, AITab, BatchRunState, ThinkingItem } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
-import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
-import { useUIStore } from '../stores/uiStore';
-
-/**
- * Open the live Thought Stream for a session and make sure it's visible.
- *
- * The Thought Stream is docked inside the Right Panel and renders nothing while
- * that panel is collapsed (see ThoughtStreamPanel), so we open the Right Panel
- * too. Capture itself is session-agnostic (useThoughtStreamCaptureListener taps
- * the raw thinking stream for any owned session), so this works for a regular
- * interactive "thinking" session, not just an Auto Run - it's what turns the
- * previously inert status pill into a "zoom in and see what the agent is doing"
- * affordance. Uses getState() so wiring a click handler doesn't add a store
- * subscription to the memoized pill.
- */
-function openThoughtStreamForSession(sessionId: string): void {
-	useUIStore.getState().setRightPanelOpen(true);
-	useThoughtStreamStore.getState().openPanel(sessionId);
-}
 
 interface ThinkingStatusPillProps {
-	/** Pre-filtered flat list of (session, tab) pairs — one entry per busy tab across all agents.
+	/** Pre-filtered flat list of (session, tab) pairs - one entry per busy tab across all agents.
 	 * PERF: Caller should memoize this to avoid O(n) filter on every render. */
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
@@ -119,7 +100,7 @@ function getItemDisplayName(
 
 // formatTokensCompact imported from ../utils/formatters
 
-// Single row in the expanded dropdown — represents one (session, tab) thinking item
+// Single row in the expanded dropdown - represents one (session, tab) thinking item
 const ThinkingItemRow = memo(
 	({
 		item,
@@ -140,10 +121,7 @@ const ThinkingItemRow = memo(
 
 		return (
 			<button
-				onClick={() => {
-					onSessionClick?.(session.id, tab?.id);
-					openThoughtStreamForSession(session.id);
-				}}
+				onClick={() => onSessionClick?.(session.id, tab?.id)}
 				className="flex items-center justify-between gap-3 w-full px-3 py-2 text-left hover:bg-white/5 transition-colors"
 				style={{ color: theme.colors.textMain }}
 			>
@@ -192,7 +170,7 @@ function getAutoRunTaskCounts(autoRunState: BatchRunState): { completed: number;
 }
 
 // AutoRun entry inside a "Running Processes" dropdown. When onStop is provided it renders a
-// per-row Stop button — used when AutoRun is demoted from the pill (because the focused tab is
+// per-row Stop button - used when AutoRun is demoted from the pill (because the focused tab is
 // busy) so the user can still stop AutoRun without losing it to a navigation-only list.
 const AutoRunRow = memo(
 	({
@@ -334,7 +312,7 @@ const AutoRunPill = memo(
 						</span>
 					)}
 
-					{/* Progress — goal percent for goal runs, task count otherwise. Each branch
+					{/* Progress - goal percent for goal runs, task count otherwise. Each branch
 					    carries its own divider; the label words drop on very narrow widths (pill-label). */}
 					{autoRunState.goalMode ? (
 						<div
@@ -443,7 +421,7 @@ const AutoRunPill = memo(
 						</>
 					)}
 
-					{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+					{/* Expanded dropdown - anchored to the pill so its width matches the pill. */}
 					{concurrentCount > 0 && isExpanded && (
 						<div
 							className="absolute inset-x-0 bottom-full pb-1 z-50"
@@ -466,7 +444,7 @@ const AutoRunPill = memo(
 								>
 									Running Processes
 								</div>
-								{/* AutoRun entry — stop lives on the pill itself, so no per-row Stop here */}
+								{/* AutoRun entry - stop lives on the pill itself, so no per-row Stop here */}
 								<AutoRunRow
 									theme={theme}
 									completedTasks={completedTasks}
@@ -497,7 +475,7 @@ AutoRunPill.displayName = 'AutoRunPill';
 /**
  * ThinkingStatusPill Inner Component
  * Shows the primary thinking item with an expandable list when multiple tabs are thinking.
- * Each "thinking item" is a (session, tab) pair — one entry per busy tab across all agents.
+ * Each "thinking item" is a (session, tab) pair - one entry per busy tab across all agents.
  * Features: pulsing indicator, session name, bytes/tokens, elapsed time, Claude session UUID.
  *
  * When AutoRun is active for the active session, shows AutoRunPill with +N badge for concurrent items.
@@ -550,7 +528,7 @@ function ThinkingStatusPillInner({
 	);
 
 	// If AutoRun is active for the current session, show the AutoRun pill with concurrent
-	// thinking items badge for parallel operations — UNLESS the focused tab has its own live
+	// thinking items badge for parallel operations - UNLESS the focused tab has its own live
 	// request. In that case the pill must describe the focused tab so its Stop button interrupts
 	// what the user is looking at; AutoRun is demoted into the dropdown (with its own Stop) below.
 	if (autoRunState?.isRunning && !focusedTabBusy) {
@@ -571,11 +549,11 @@ function ThinkingStatusPillInner({
 		return null;
 	}
 
-	// AutoRun is running but demoted because the focused tab is busy — surface it in the dropdown.
+	// AutoRun is running but demoted because the focused tab is busy - surface it in the dropdown.
 	const demotedAutoRun = autoRunState?.isRunning ? autoRunState : null;
 
 	// Primary item selection (each layer falls back to the next):
-	//   1. The exact active tab in the active session — when forced-parallel runs two busy
+	//   1. The exact active tab in the active session - when forced-parallel runs two busy
 	//      tabs in the same agent, this keeps the pill (name, elapsed time) describing the
 	//      tab the user is viewing, which is also the tab Stop will interrupt.
 	//   2. Any busy tab in the active session (active tab itself isn't busy).
@@ -641,14 +619,18 @@ function ThinkingStatusPillInner({
 					style={{ backgroundColor: theme.colors.warning }}
 				/>
 
-				{/* Maestro session name - always visible, not clickable, truncates on narrow widths */}
-				<span
-					className="text-xs font-medium truncate min-w-0"
+				{/* Maestro session name - always visible, truncates on narrow widths. Clickable:
+				    it jumps to the thinking tab, same as the tab-name segment. The tab-name
+				    segment is the first thing container queries drop on narrow widths, so the
+				    name has to carry the jump too or the pill loses its only affordance. */}
+				<button
+					onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
+					className="text-xs font-medium truncate min-w-0 hover:underline cursor-pointer"
 					style={{ color: theme.colors.textMain }}
-					title={fullTooltip}
+					title={`Jump to this tab · ${fullTooltip}`}
 				>
 					{maestroSessionName}
-				</span>
+				</button>
 
 				{/* Token info / Thinking placeholder - carries its own divider so hiding the
 				    segment on narrow widths (pill-seg-tokens) takes the divider with it */}
@@ -693,16 +675,13 @@ function ThinkingStatusPillInner({
 					<div className="pill-seg-claude-id flex items-center gap-2 min-w-0">
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 						<button
-							onClick={() => {
-								onSessionClick?.(primarySession.id, primaryTab?.id);
-								openThoughtStreamForSession(primarySession.id);
-							}}
+							onClick={() => onSessionClick?.(primarySession.id, primaryTab?.id)}
 							className="text-xs font-mono hover:underline cursor-pointer truncate min-w-0"
 							style={{ color: theme.colors.accent }}
 							title={
 								agentSessionId
-									? `View live thoughts · Claude Session: ${agentSessionId}`
-									: 'View live thoughts'
+									? `Jump to this tab · Claude Session: ${agentSessionId}`
+									: 'Jump to this tab'
 							}
 						>
 							{displayClaudeId}
@@ -750,7 +729,7 @@ function ThinkingStatusPillInner({
 					</>
 				)}
 
-				{/* Expanded dropdown — anchored to the pill so its width matches the pill. */}
+				{/* Expanded dropdown - anchored to the pill so its width matches the pill. */}
 				{hasMultiple && isExpanded && (
 					<div
 						className="absolute inset-x-0 bottom-full pb-1 z-50"

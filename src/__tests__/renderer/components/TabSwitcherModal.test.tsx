@@ -444,7 +444,7 @@ describe('TabSwitcherModal', () => {
 					/>
 				);
 
-				// No name or agentSessionId yet — shows "New Session"
+				// No name or agentSessionId yet - shows "New Session"
 				expect(screen.getByText('New Session')).toBeInTheDocument();
 			});
 		});
@@ -575,7 +575,7 @@ describe('TabSwitcherModal', () => {
 			it('caps at 100% when tokens fill the window exactly', () => {
 				// Use values that fill the window without overflowing so we exercise
 				// the Math.min(100, …) cap rather than the overflow branch (which now
-				// returns untrustworthy zeros — see issue #762).
+				// returns untrustworthy zeros - see issue #762).
 				const tab = createTestTab({
 					usageStats: {
 						inputTokens: 199500,
@@ -606,7 +606,7 @@ describe('TabSwitcherModal', () => {
 			it('hides the gauge when accumulated tokens overflow without a fallback', () => {
 				// Issue #762: an accumulated multi-tool turn can blow past the configured
 				// window before any session-level percentage has been preserved. We must
-				// not surface that as "0%" — hide the gauge instead so users don't read
+				// not surface that as "0%" - hide the gauge instead so users don't read
 				// untrustworthy data.
 				const tab = createTestTab({
 					usageStats: {
@@ -656,6 +656,27 @@ describe('TabSwitcherModal', () => {
 			expect(screen.getByTestId('search-icon')).toBeInTheDocument();
 			expect(screen.getByPlaceholderText('Search open tabs...')).toBeInTheDocument();
 			expect(screen.getByText('ESC')).toBeInTheDocument();
+		});
+
+		// Pointer-only surfaces (remote desktop, tablet) have no Escape key.
+		it('closes when the ESC pill is clicked', () => {
+			const tabs = [createTestTab()];
+			const onClose = vi.fn();
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={tabs}
+					activeTabId={tabs[0].id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={onClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			expect(onClose).toHaveBeenCalledTimes(1);
 		});
 
 		it('renders dialog with correct ARIA attributes', () => {

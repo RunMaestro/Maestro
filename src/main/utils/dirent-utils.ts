@@ -22,7 +22,7 @@ export interface ResolvedDirentType {
 	/**
 	 * True if the entry is a symlink whose target could not be stat'd
 	 * (broken link, permission denied, etc.). `isDirectory` and `isFile`
-	 * will both be `false` in this case — callers decide how to present
+	 * will both be `false` in this case - callers decide how to present
 	 * broken links (skip, treat as file, treat as error).
 	 */
 	isBrokenSymlink: boolean;

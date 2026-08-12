@@ -2,7 +2,10 @@ import { useEffect, useRef } from 'react';
 import { useClaudeUsageStore } from '../../../../stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../../../stores/codexUsageStore';
 import { logger } from '../../../../utils/logger';
-import { hasUsefulAnthropicQuotaDetails, hasUsefulCodexQuotaDetails } from '../quotaDetails';
+import {
+	hasUsefulAnthropicQuotaDetails,
+	hasUsefulCodexQuotaDetails,
+} from '../../../../../shared/usageQuota';
 
 export function useQuotaTabDiscovery(isOpen: boolean, usageStatsTabEnabled: boolean): void {
 	const quotaSampledForOpenRef = useRef(false);

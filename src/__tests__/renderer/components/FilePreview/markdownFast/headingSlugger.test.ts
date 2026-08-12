@@ -64,7 +64,7 @@ describe('applyHeadingSlugs', () => {
 
 	it('strips inline markdown markers from the slug source text', () => {
 		// "**Bold**" → slugger should see "Bold" (markdown-it's inline.content keeps the literal **)
-		// Confirm we still produce SOME slug — exact form depends on slugger, but
+		// Confirm we still produce SOME slug - exact form depends on slugger, but
 		// it must be deterministic.
 		const a = parseAndSlug('# **Important** thing')
 			.find((t) => t.type === 'heading_open')!

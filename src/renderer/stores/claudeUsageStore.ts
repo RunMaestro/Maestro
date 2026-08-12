@@ -1,5 +1,5 @@
 /**
- * claudeUsageStore — renderer-side mirror of the main-process Claude plan
+ * claudeUsageStore - renderer-side mirror of the main-process Claude plan
  * usage snapshot map.
  *
  * Snapshots live on disk (electron-store namespace `claude-usage-snapshots`,
@@ -15,7 +15,7 @@
  *   - The settings UI / Usage Dashboard "Refresh now" button can also call
  *     `refresh()` after asking main to re-sample.
  *
- * This is renderer-local state, NOT persisted across app restarts — the
+ * This is renderer-local state, NOT persisted across app restarts - the
  * authoritative store is on the main side. We hold the same map shape here for
  * cheap synchronous reads from React components.
  */
@@ -30,7 +30,7 @@ import type { Session } from '../types';
  * Duplicated here to keep the renderer bundle free of main-process imports.
  *
  * `authState` is optional for back-compat with snapshots persisted before the
- * field existed — readers treat absence as `'authenticated'` and only switch
+ * field existed - readers treat absence as `'authenticated'` and only switch
  * the dashboard row into the "run /login" CTA when it's explicitly
  * `'unauthenticated'`.
  */
@@ -73,7 +73,7 @@ export const useClaudeUsageStore = create<ClaudeUsageState>((set, get) => ({
 			const next = await window.maestro.agents.getClaudeUsageSnapshots();
 			set({ snapshots: next ?? {}, loaded: true });
 		} catch {
-			// Swallow — main-side errors surface in main logs; the renderer just
+			// Swallow - main-side errors surface in main logs; the renderer just
 			// keeps the last good snapshot rather than blowing up the UI.
 			set({ loaded: true });
 		} finally {
@@ -183,7 +183,7 @@ export function getClaudeUsageSnapshotForSession(
  * Module-level cache for the claude-code agent's `customEnvVars`. One IPC
  * fetch per renderer process; subsequent consumers read the same Promise. The
  * agent-level vars rarely change at runtime (Settings → Agents) so we don't
- * subscribe to a live channel — call sites just need a stable reference for
+ * subscribe to a live channel - call sites just need a stable reference for
  * deriving `CLAUDE_CONFIG_DIR` per session.
  */
 let cachedClaudeAgentEnv: Record<string, string> | undefined;
@@ -224,7 +224,7 @@ function resolveSessionConfigDirKey(
 ): string | undefined {
 	if (!session || session.toolType !== 'claude-code') return undefined;
 	// The spawner stamps the canonical key onto claudeInteractive when it
-	// resolves the mode. Prefer that — it's already canonicalized via
+	// resolves the mode. Prefer that - it's already canonicalized via
 	// `path.resolve()` on the main side.
 	const stamped = session.claudeInteractive?.lastUsageSnapshotKey;
 	if (typeof stamped === 'string' && stamped.length > 0) {
@@ -240,7 +240,7 @@ function resolveSessionConfigDirKey(
 }
 
 /**
- * Hook variant of `resolveSessionConfigDirKey` — pairs the lazy agent-env
+ * Hook variant of `resolveSessionConfigDirKey` - pairs the lazy agent-env
  * fetch with React state so consumers re-render once the IPC resolves and
  * the implicit default key becomes derivable.
  */

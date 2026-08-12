@@ -963,7 +963,7 @@ describe('ProcessMonitor', () => {
 				<ProcessMonitor theme={theme} sessions={[session]} groups={[group]} onClose={onClose} />
 			);
 
-			// Initial state: fully expanded — process visible
+			// Initial state: fully expanded - process visible
 			await waitFor(() => {
 				expect(
 					screen.getByText('Test Session - AI Agent (claude-code) - Tab 1')
@@ -973,7 +973,7 @@ describe('ProcessMonitor', () => {
 
 			const collapseButton = screen.getByTitle('Collapse one level');
 
-			// First click collapses the deepest level (sessions) — process hidden, session still visible
+			// First click collapses the deepest level (sessions) - process hidden, session still visible
 			fireEvent.click(collapseButton);
 			await waitFor(() => {
 				expect(
@@ -982,7 +982,7 @@ describe('ProcessMonitor', () => {
 			});
 			expect(screen.getByText('Test Session')).toBeInTheDocument();
 
-			// Second click collapses the group level — only the group remains visible
+			// Second click collapses the group level - only the group remains visible
 			fireEvent.click(collapseButton);
 			await waitFor(() => {
 				expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
@@ -1018,7 +1018,7 @@ describe('ProcessMonitor', () => {
 
 			const expandButton = screen.getByTitle('Expand one level');
 
-			// First click expands group — session visible but process not
+			// First click expands group - session visible but process not
 			fireEvent.click(expandButton);
 			await waitFor(() => {
 				expect(screen.getByText('Test Session')).toBeInTheDocument();
@@ -1027,7 +1027,7 @@ describe('ProcessMonitor', () => {
 				screen.queryByText('Test Session - AI Agent (claude-code) - Tab 1')
 			).not.toBeInTheDocument();
 
-			// Second click expands session — process now visible
+			// Second click expands session - process now visible
 			fireEvent.click(expandButton);
 			await waitFor(() => {
 				expect(
@@ -1054,7 +1054,7 @@ describe('ProcessMonitor', () => {
 				).toBeInTheDocument();
 			});
 
-			// Step down once — sessions visible, process hidden.
+			// Step down once - sessions visible, process hidden.
 			fireEvent.click(screen.getByTitle('Collapse one level'));
 			await waitFor(() => {
 				expect(
@@ -1066,7 +1066,7 @@ describe('ProcessMonitor', () => {
 			// Persisted level should be 1 (depth-0 group expanded only).
 			expect(window.localStorage.getItem('maestro.processMonitor.expandedLevel')).toBe('1');
 
-			// Tear down and re-render — should restore to the same level.
+			// Tear down and re-render - should restore to the same level.
 			unmount();
 			render(
 				<ProcessMonitor theme={theme} sessions={[session]} groups={[group]} onClose={onClose} />
@@ -1503,7 +1503,7 @@ describe('ProcessMonitor', () => {
 			// Escape is owned by the layer stack: KillConfirmDialog registers a
 			// CONFIRM-priority layer (1000) that wins over PROCESS_MONITOR (550).
 			// In the test the layer stack is mocked, so we drive Esc by finding
-			// the kill dialog's registered onEscape and invoking it directly —
+			// the kill dialog's registered onEscape and invoking it directly -
 			// mirrors how a real Esc keypress reaches the topmost layer.
 			const killLayer = mockRegisterLayer.mock.calls
 				.map((call) => call[0] as { ariaLabel?: string; onEscape?: () => void })

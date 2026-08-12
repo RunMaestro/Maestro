@@ -1,13 +1,16 @@
 /**
- * useAutoRunAchievements — extracted from App.tsx
+ * useAutoRunAchievements - extracted from App.tsx
  *
  * Tracks elapsed time for active auto-runs and updates achievement stats:
  *   - 60-second interval progress tracker for active batch sessions
  *   - Badge unlock triggers standing ovation overlay
  *   - Peak usage stats tracker (max agents, concurrent queries, queue depth)
  *
- * Reads from: sessionStore (sessions), settingsStore (autoRunStats, usageStats),
+ * Reads from: sessionStore (usagePeaksKey via sessions), settingsStore (autoRunStats, usageStats),
  *             batchStore (activeBatchSessionIds), modalStore (setStandingOvationData)
+ *
+ * PERF: Does not subscribe to full sessions[]. Peak-stats use a narrow count signature;
+ * streaming log/token flushes must not wake App via this hook.
  */
 
 import { useEffect, useRef } from 'react';
@@ -15,7 +18,9 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
+import type { AchievementTimeSource } from '../../types';
 import { cueService } from '../../services/cue';
+import { submitLeaderboardTimeDelta } from '../../services/leaderboard';
 
 // ============================================================================
 // Dependencies interface
@@ -33,8 +38,19 @@ export interface UseAutoRunAchievementsDeps {
 export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	const { activeBatchSessionIds } = deps;
 
-	// --- Reactive subscriptions ---
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Peak-stats signature only - do not subscribe to full sessions[]. Streaming
+	// log/token flushes must not wake App; re-run when agent/busy/queue counts shift.
+	const usagePeaksKey = useSessionStore((s) => {
+		let nonTerminal = 0;
+		let busy = 0;
+		let queueDepth = 0;
+		for (const sess of s.sessions) {
+			if (sess.toolType !== 'terminal') nonTerminal++;
+			if (sess.state === 'busy') busy++;
+			queueDepth += sess.executionQueue?.length || 0;
+		}
+		return `${nonTerminal}|${busy}|${queueDepth}`;
+	});
 
 	// --- Store actions (stable via getState) ---
 	const { updateAutoRunProgress, updateUsageStats } = useSettingsStore.getState();
@@ -50,10 +66,10 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// credit subscription so both paths accrue through the identical
 	// updateAutoRunProgress flow. The local badge and the leaderboard both read
 	// cumulativeTimeMs, so there is a single source of truth and no drift.
-	const creditAchievementTime = (deltaMs: number): void => {
+	const creditAchievementTime = (deltaMs: number, source: AchievementTimeSource): void => {
 		if (deltaMs <= 0) return;
 		const autoRunStats = useSettingsStore.getState().autoRunStats;
-		const { newBadgeLevel } = updateAutoRunProgress(deltaMs);
+		const { newBadgeLevel } = updateAutoRunProgress(deltaMs, source);
 		if (newBadgeLevel !== null) {
 			const badge = CONDUCTOR_BADGES.find((b) => b.level === newBadgeLevel);
 			if (badge) {
@@ -91,7 +107,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 			const deltaMs = elapsedMs * activeBatchSessionIds.length;
 
 			// Update achievement stats with the delta (raises ovation on badge unlock)
-			creditAchievementTime(deltaMs);
+			creditAchievementTime(deltaMs, 'autoRun');
 		}, 60000); // Every 60 seconds
 
 		return () => {
@@ -107,7 +123,17 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	useEffect(() => {
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
 			if (payload?.type === 'conductorTimeCredit') {
-				creditAchievementTime(payload.creditMs);
+				creditAchievementTime(payload.creditMs, 'cue');
+				// Ship the same delta to the leaderboard. The server accumulates
+				// from deltaMs, so time credited only locally would drift below
+				// the server total forever. deltaRuns is 0 because a Cue run is
+				// not an Auto Run and must not inflate totalRuns.
+				//
+				// This lives here rather than in creditAchievementTime because
+				// the Auto Run timer above shares that helper, and Auto Run
+				// already submits its full elapsed time once on completion
+				// (useBatchHandlers) - submitting per tick too would double-count.
+				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs, source: 'cue' });
 			}
 		});
 		return unsubscribe;
@@ -115,6 +141,8 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {
+		const sessions = useSessionStore.getState().sessions;
+
 		// Count current active agents (non-terminal sessions)
 		const activeAgents = sessions.filter((s) => s.toolType !== 'terminal').length;
 
@@ -135,5 +163,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 			maxSimultaneousQueries: busySessions,
 			maxQueueDepth: totalQueueDepth,
 		});
-	}, [sessions, activeBatchSessionIds]);
+		// usagePeaksKey encodes the same counts read above; include it so peaks
+		// refresh when agent/busy/queue shift without a full sessions[] sub.
+	}, [usagePeaksKey, activeBatchSessionIds]);
 }

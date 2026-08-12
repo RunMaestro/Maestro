@@ -107,7 +107,7 @@ vi.mock('../../../renderer/services/git', () => ({
 // Prompt content is now loaded via window.maestro.prompts.get() and cached at module level.
 // The window.maestro.prompts mock is set up below in the window.maestro block.
 
-// Mock substituteTemplateVariables — pass through the template as-is for simplicity
+// Mock substituteTemplateVariables - pass through the template as-is for simplicity
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((template: string) => template),
 }));
@@ -296,7 +296,7 @@ describe('agentStore', () => {
 
 			useSessionStore.getState().setSessions([session]);
 
-			// No tabId arg — should use session's agentErrorTabId
+			// No tabId arg - should use session's agentErrorTabId
 			useAgentStore.getState().clearAgentError('session-1');
 
 			const updated = useSessionStore.getState().sessions[0];
@@ -851,7 +851,7 @@ describe('agentStore', () => {
 
 			await useAgentStore.getState().killAgent('session-1');
 
-			// killAgent is a low-level action — state management is caller's responsibility
+			// killAgent is a low-level action - state management is caller's responsibility
 			expect(useSessionStore.getState().sessions[0].state).toBe('busy');
 		});
 
@@ -1181,7 +1181,7 @@ describe('agentStore', () => {
 
 			await useAgentStore.getState().interruptAgent('session-1');
 
-			// interruptAgent is low-level — doesn't change session state
+			// interruptAgent is low-level - doesn't change session state
 			expect(useSessionStore.getState().sessions[0].state).toBe('busy');
 		});
 
@@ -1267,7 +1267,7 @@ describe('agentStore', () => {
 				aiTabs: [
 					{
 						id: 'tab-1',
-						agentSessionId: null, // NEW session — no conversation ID
+						agentSessionId: null, // NEW session - no conversation ID
 						name: null,
 						starred: false,
 						logs: [],

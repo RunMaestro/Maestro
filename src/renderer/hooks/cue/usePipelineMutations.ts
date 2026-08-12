@@ -1,9 +1,9 @@
 /**
- * usePipelineMutations — Node/edge mutation callbacks scoped to the selected pipeline.
+ * usePipelineMutations - Node/edge mutation callbacks scoped to the selected pipeline.
  *
  * Each callback takes the relevant `selected*PipelineId` directly as a live
  * React prop (not via a mutable ref). When selection state changes upstream,
- * React re-runs this hook and recomputes the callbacks with fresh IDs —
+ * React re-runs this hook and recomputes the callbacks with fresh IDs -
  * eliminating the stale-closure class of bugs that previously required the
  * `useSelectionRef` bridge in CuePipelineEditor.
  *

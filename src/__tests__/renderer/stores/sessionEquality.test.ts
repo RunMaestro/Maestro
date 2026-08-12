@@ -15,7 +15,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { sidebarSessionEquality } from '../../../renderer/stores/sessionEquality';
+import {
+	sidebarSessionEquality,
+	activeSessionChromeEquality,
+} from '../../../renderer/stores/sessionEquality';
 import { createMockSession } from '../../helpers/mockSession';
 import type { AITab, Session } from '../../../renderer/types';
 
@@ -142,5 +145,55 @@ describe('sidebarSessionEquality', () => {
 		const a = [createMockSession({ id: 'a', aiTabs: [tab({ id: 't1' })] })];
 		const b = [createMockSession({ id: 'a', aiTabs: [tab({ id: 't1' }), tab({ id: 't2' })] })];
 		expect(sidebarSessionEquality(a, b)).toBe(false);
+	});
+});
+
+describe('activeSessionChromeEquality', () => {
+	it('returns true when isGeneratingName flips (MainPanel owns naming spinner)', () => {
+		const a = createMockSession({ aiTabs: [tab({ id: 't1', isGeneratingName: false })] });
+		const b: Session = {
+			...a,
+			aiTabs: [{ ...a.aiTabs[0], isGeneratingName: true }],
+		};
+		expect(activeSessionChromeEquality(a, b)).toBe(true);
+	});
+
+	it('returns true when session/tab busy state flips (sidebar + MainPanel own busy paint)', () => {
+		const a = createMockSession({
+			state: 'idle',
+			aiTabs: [tab({ id: 't1', state: 'idle' })],
+		});
+		const b: Session = {
+			...a,
+			state: 'busy',
+			aiTabs: [{ ...a.aiTabs[0], state: 'busy' }],
+		};
+		expect(activeSessionChromeEquality(a, b)).toBe(true);
+	});
+
+	it('returns false when browser customTitle changes', () => {
+		const a = createMockSession({
+			browserTabs: [{ id: 'b1', title: 'Docs', url: 'https://x', customTitle: undefined } as any],
+		});
+		const b = createMockSession({
+			browserTabs: [{ id: 'b1', title: 'Docs', url: 'https://x', customTitle: 'Pinned' } as any],
+		});
+		expect(activeSessionChromeEquality(a, b)).toBe(false);
+	});
+
+	it('returns true when only logs change', () => {
+		const a = createMockSession({
+			aiTabs: [tab({ id: 't1', logs: [] })],
+		});
+		const b: Session = {
+			...a,
+			aiTabs: [
+				{
+					...a.aiTabs[0],
+					logs: [{ id: 'log-1', timestamp: 0, source: 'stdout', text: 'streamed' }],
+				},
+			],
+		};
+		expect(activeSessionChromeEquality(a, b)).toBe(true);
 	});
 });

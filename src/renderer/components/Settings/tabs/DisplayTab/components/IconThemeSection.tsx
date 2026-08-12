@@ -27,7 +27,7 @@ export function IconThemeSection({
 				onChange={setFileExplorerIconTheme}
 				theme={theme}
 			/>
-			<p className="text-xs opacity-50 mt-2">
+			<p className="text-xs opacity-70 mt-2">
 				Rich uses Material Icon Theme style file and folder SVGs in the Files pane. Default
 				preserves Maestro&apos;s current icon behavior.
 			</p>

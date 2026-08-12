@@ -199,7 +199,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		try {
 			parsed = new URL(url);
 		} catch {
-			// Detect absolute file paths and redirect to openPath — Fixes MAESTRO-FN/FA/F4
+			// Detect absolute file paths and redirect to openPath - Fixes MAESTRO-FN/FA/F4
 			if (path.isAbsolute(url)) {
 				if (fsSync.existsSync(url)) {
 					const errorMessage = await shell.openPath(url);
@@ -210,11 +210,11 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 				}
 				throw new Error(`Path does not exist: ${url}`);
 			}
-			// Relative paths (LICENSE, ./README.md, vscode/**) are not actionable — log and return
+			// Relative paths (LICENSE, ./README.md, vscode/**) are not actionable - log and return
 			logger.warn(`Ignored non-URL string passed to openExternal: "${url}"`, 'Shell');
 			return;
 		}
-		// Redirect file:// URLs to shell.openPath instead of rejecting — Fixes MAESTRO-9M
+		// Redirect file:// URLs to shell.openPath instead of rejecting - Fixes MAESTRO-9M
 		if (parsed.protocol === 'file:') {
 			const filePath = decodeURIComponent(parsed.pathname);
 			if (!fsSync.existsSync(filePath)) {
@@ -260,7 +260,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			await shell.trashItem(absolutePath);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			// User or system cancelled the trash operation — not a real error
+			// User or system cancelled the trash operation - not a real error
 			// Fixes MAESTRO-A4
 			if (
 				message.includes('aborted') ||
@@ -298,7 +298,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 		const absolutePath = path.resolve(itemPath);
 		if (!fsSync.existsSync(absolutePath)) {
-			// Path doesn't exist — log and return gracefully since many callers
+			// Path doesn't exist - log and return gracefully since many callers
 			// fire-and-forget without catching. Fixes MAESTRO-B3
 			logger.warn(`shell:openPath - path does not exist: ${absolutePath}`, 'Shell');
 			return;
@@ -377,7 +377,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		if (!status.isRunning || !status.url) return status;
 
 		// Append the web server's token path so the URL stays usable.
-		// tunnelManager itself is token-agnostic — composition happens here,
+		// tunnelManager itself is token-agnostic - composition happens here,
 		// matching tunnel:start above.
 		const webServer = getWebServer();
 		const serverUrl = webServer?.getSecureUrl();
@@ -389,7 +389,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 				return { ...status, url: status.url + tokenPath };
 			}
 		} catch {
-			// Malformed server URL — fall back to bare tunnel URL
+			// Malformed server URL - fall back to bare tunnel URL
 		}
 		return status;
 	});
@@ -725,7 +725,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
  * burst output (debug mode, noisy components) materially reduces IPC pressure.
  */
 const LOGGER_FORWARD_FLUSH_INTERVAL_MS = 50;
-/** Hard cap on buffered entries — flush early if we exceed this size. */
+/** Hard cap on buffered entries - flush early if we exceed this size. */
 const LOGGER_FORWARD_FLUSH_SIZE = 100;
 
 /**

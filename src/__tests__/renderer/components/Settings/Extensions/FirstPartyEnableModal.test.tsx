@@ -1,5 +1,5 @@
 /**
- * FirstPartyEnableModal — the pre-enable permission review surface.
+ * FirstPartyEnableModal - the pre-enable permission review surface.
  *
  * This modal is the visible half of the enable gate: it discloses the
  * capabilities a first-party feature will be granted BEFORE anything is
@@ -11,7 +11,7 @@
  * instead of an empty list.
  *
  * The modal renders through the shared Modal, which registers with the layer
- * stack, so it is wrapped in LayerStackProvider (required — Modal throws
+ * stack, so it is wrapped in LayerStackProvider (required - Modal throws
  * without it). That also lets us prove Escape routes to onCancel.
  */
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';

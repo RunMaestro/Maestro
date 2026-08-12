@@ -42,7 +42,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 }));
 
 // Mock the CLI system-prompt builder. Real-impl would read the bundled
-// `maestro-system-prompt` template from disk + call git — neither is
+// `maestro-system-prompt` template from disk + call git - neither is
 // available or interesting under unit tests. We can still observe whether
 // runPlaybook calls it and what it produces by tweaking the mock per test.
 vi.mock('../../../cli/services/system-prompt', () => ({
@@ -369,7 +369,7 @@ describe('batch-processor', () => {
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
 			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(session);
-			// Spawn call #0 is the task spawn — must carry appendSystemPrompt
+			// Spawn call #0 is the task spawn - must carry appendSystemPrompt
 			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
 			expect(taskSpawnOpts?.appendSystemPrompt).toBe('the maestro context');
 		});
@@ -387,7 +387,7 @@ describe('batch-processor', () => {
 
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
-			// Spawn call #0 is the task spawn — its prompt must start with the message.
+			// Spawn call #0 is the task spawn - its prompt must start with the message.
 			const taskPrompt = vi.mocked(spawnAgent).mock.calls[0][2];
 			expect(taskPrompt.startsWith('Always check linting first.\n\n---\n\n')).toBe(true);
 		});
@@ -412,7 +412,7 @@ describe('batch-processor', () => {
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
 			// Two spawns: index 0 = task spawn, index 1 = synopsis (resume).
-			// Synopsis spawn must NOT carry appendSystemPrompt — matches the
+			// Synopsis spawn must NOT carry appendSystemPrompt - matches the
 			// desktop `spawnBackgroundSynopsis` path which omits it on resume.
 			expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
 			const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
@@ -434,7 +434,7 @@ describe('batch-processor', () => {
 
 			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
 
-			// Called exactly once for the playbook, not per-task — important for
+			// Called exactly once for the playbook, not per-task - important for
 			// avoiding repeated git execFile + prompt-read overhead inside the
 			// task loop.
 			expect(prepareMaestroSystemPromptCli).toHaveBeenCalledTimes(1);
@@ -467,6 +467,87 @@ describe('batch-processor', () => {
 			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
 			expect(promptArg).toContain('Custom prompt for processing');
 			expect(promptArg).toContain('My task');
+		});
+
+		describe('per-run model/effort override', () => {
+			/** Feed the loop exactly one task, then report the document as drained. */
+			const singleTask = (): void => {
+				let callCount = 0;
+				vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+					callCount++;
+					if (callCount <= 3) return { content: '- [ ] My task', taskCount: 1 };
+					return { content: '', taskCount: 0 };
+				});
+			};
+
+			it('lets the run model/effort win over the session values on the task spawn', async () => {
+				singleTask();
+				const session = mockSession({ customModel: 'opus', customEffort: 'high' });
+
+				await collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+						effort: 'low',
+					})
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'low' });
+				// Run-scoped: the session object is never rewritten.
+				expect(session.customModel).toBe('opus');
+				expect(session.customEffort).toBe('high');
+			});
+
+			it('falls back to the session values when no run override is given', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks'
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+			});
+
+			it('falls back per field when only the model is overridden', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks',
+						{ model: 'sonnet' }
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+			});
+
+			it('applies the run override to the synopsis spawn too', async () => {
+				singleTask();
+				vi.mocked(spawnAgent).mockResolvedValue({
+					success: true,
+					response: '**Summary:** ok\n**Details:** ok',
+					agentSessionId: 'claude-session-123',
+				});
+
+				await collectEvents(
+					runPlaybook(mockSession({ customModel: 'opus' }), mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+					})
+				);
+
+				// Index 0 = task spawn, index 1 = synopsis resume.
+				expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+				const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'sonnet' });
+			});
 		});
 
 		it('should track usage statistics', async () => {
@@ -1355,8 +1436,8 @@ describe('batch-processor', () => {
 	describe('runPlaybook - mid-execution halt marker', () => {
 		it('emits halt event and stops dispatch when the agent writes the marker', async () => {
 			// Calls 1-4: initial scan, pre-scan halt check, doc-loop initial count,
-			// in-loop content read for prompt template — all clean.
-			// Call 5: post-spawn re-read — agent has written the halt marker.
+			// in-loop content read for prompt template - all clean.
+			// Call 5: post-spawn re-read - agent has written the halt marker.
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
 				callCount++;
@@ -1409,7 +1490,7 @@ describe('batch-processor', () => {
 				if (callCount <= 3) {
 					return { content: '- [ ] Task one', taskCount: 1 };
 				}
-				// Same task count — agent left it unchecked but wrote the marker
+				// Same task count - agent left it unchecked but wrote the marker
 				return {
 					content: '- [ ] Task one\n<!-- maestro:halt: cannot proceed -->',
 					taskCount: 1,

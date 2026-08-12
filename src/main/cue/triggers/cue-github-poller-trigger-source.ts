@@ -65,7 +65,7 @@ export function createCueGitHubPollerTriggerSource(
 		},
 
 		nextTriggerAt() {
-			// GitHub pollers fire whenever a matching PR/issue appears upstream —
+			// GitHub pollers fire whenever a matching PR/issue appears upstream -
 			// no predictable next-fire time.
 			return null;
 		},

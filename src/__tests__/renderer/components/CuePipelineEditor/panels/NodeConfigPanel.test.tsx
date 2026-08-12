@@ -125,8 +125,8 @@ describe('NodeConfigPanel', () => {
 		// bug: without `key={selectedNode.id}`, a pending debounced write from
 		// agent A's panel could commit to agent B after the panel reparents.
 		// The cheapest observable is that the child AgentConfigPanel mock's
-		// text content changes to the new node id — which requires a real
-		// DOM update per render — and that the container's child is the
+		// text content changes to the new node id - which requires a real
+		// DOM update per render - and that the container's child is the
 		// same element when the SAME id is passed twice (no needless remount).
 		const otherAgent: PipelineNode = {
 			...agentNode,
@@ -205,7 +205,7 @@ describe('NodeConfigPanel', () => {
 			return screen.getByText((_content, element) => {
 				if (!element || element.tagName !== 'SPAN') return false;
 				const txt = element.textContent ?? '';
-				// Bold-weight header span — discriminate from sibling pill spans
+				// Bold-weight header span - discriminate from sibling pill spans
 				// (which carry toolType / status). 600-weight is set inline above.
 				return /^(Test Agent|Pedsidian|Floating Agent)( \(\d+\))?$/.test(txt);
 			}) as HTMLElement;
@@ -230,12 +230,12 @@ describe('NodeConfigPanel', () => {
 				/>
 			);
 
-			// Header text is just the name — no parenthetical suffix.
+			// Header text is just the name - no parenthetical suffix.
 			expect(getAgentHeaderSpan().textContent).toBe('Test Agent');
 		});
 
 		it('appends "(1)" / "(2)" when multiple visual nodes share the same sessionId', () => {
-			// Two agent nodes pointing at the same backing session — exactly the
+			// Two agent nodes pointing at the same backing session - exactly the
 			// shape pipelineGraph indexes with the (N) suffix on the canvas.
 			const a = makeAgent('agent-1', 'sess-1', 'Pedsidian');
 			const b = makeAgent('agent-2', 'sess-1', 'Pedsidian');
@@ -257,7 +257,7 @@ describe('NodeConfigPanel', () => {
 				/>
 			);
 
-			// First instance — header reads exactly "Pedsidian (1)".
+			// First instance - header reads exactly "Pedsidian (1)".
 			expect(getAgentHeaderSpan().textContent).toBe('Pedsidian (1)');
 
 			rerender(
@@ -277,7 +277,7 @@ describe('NodeConfigPanel', () => {
 			// Two pipelines each with one node sharing the same sessionId.
 			// Within either pipeline, only one node uses that sessionId, so
 			// neither header gets a suffix. This guards the "find the OWNING
-			// pipeline first" rule — without it, the implementation could
+			// pipeline first" rule - without it, the implementation could
 			// scan all pipelines and double-count.
 			const aP1 = makeAgent('agent-1', 'sess-1', 'Pedsidian');
 			const aP2 = makeAgent('agent-2', 'sess-1', 'Pedsidian');

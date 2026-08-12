@@ -35,6 +35,7 @@
  */
 
 import React, { useRef, useEffect, ReactNode, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
@@ -68,6 +69,13 @@ export interface ModalProps {
 	customHeader?: ReactNode;
 	/** Optional icon to display before the title */
 	headerIcon?: ReactNode;
+	/**
+	 * Optional content rendered in the header, just before the close button.
+	 * For secondary affordances that belong to the modal as a whole (a "View
+	 * History" link, a filter toggle) rather than to its body. Use this instead
+	 * of `customHeader` when you only want to ADD to the standard header.
+	 */
+	headerActions?: ReactNode;
 	/** Modal width in pixels. Defaults to 400 */
 	width?: number;
 	/**
@@ -107,6 +115,17 @@ export interface ModalProps {
 	allowOverflow?: boolean;
 	/** Ref to the inner modal card (used by callers that need to animate the card itself) */
 	cardRef?: React.Ref<HTMLDivElement>;
+	/**
+	 * Render into `document.body` instead of in place. Required for any modal
+	 * opened from inside the Main Panel: `MainPanel.tsx` wraps the session view
+	 * in `isolate` (`isolation: isolate`), which creates a stacking context, so
+	 * the backdrop's z-index is scoped to that subtree and the Left Bar
+	 * (`relative z-20`) and Right Panel (later in DOM order) paint over it -
+	 * the panels stay bright while only the center dims. No z-index can win
+	 * across a stacking context; escaping to the body is the fix. Defaults to
+	 * false since most modals already mount at the App root.
+	 */
+	portal?: boolean;
 	/** Enable persisted modal resizing. Defaults to true, but has no effect without `resizeKey` (see below). */
 	resizable?: boolean;
 	/**
@@ -137,6 +156,7 @@ export function Modal({
 	footer,
 	customHeader,
 	headerIcon,
+	headerActions,
 	width = 400,
 	scaleWidthWithFont = true,
 	maxWidthCss = '95vw',
@@ -151,6 +171,7 @@ export function Modal({
 	contentClassName,
 	allowOverflow = false,
 	cardRef,
+	portal = false,
 	resizable = true,
 	resizeKey,
 	defaultSize,
@@ -216,7 +237,7 @@ export function Modal({
 		[cardRef]
 	);
 
-	return (
+	const overlay = (
 		<div
 			ref={containerRef}
 			className="fixed inset-0 modal-overlay flex items-center justify-center animate-in fade-in duration-200 outline-none"
@@ -251,6 +272,8 @@ export function Modal({
 					<ResizeHandles
 						onResizeStart={resizableModal.onResizeStart}
 						accentColor={theme.colors.accent}
+						onResetSize={resizableModal.onResetSize}
+						canReset={resizableModal.canReset}
 					/>
 				)}
 
@@ -267,15 +290,18 @@ export function Modal({
 									{title}
 								</h2>
 							</div>
-							{showCloseButton && (
-								<GhostIconButton
-									onClick={onClose}
-									ariaLabel="Close modal"
-									color={theme.colors.textDim}
-								>
-									<X className="w-4 h-4" />
-								</GhostIconButton>
-							)}
+							<div className="flex items-center gap-2">
+								{headerActions}
+								{showCloseButton && (
+									<GhostIconButton
+										onClick={onClose}
+										ariaLabel="Close modal"
+										color={theme.colors.textDim}
+									>
+										<X className="w-4 h-4" />
+									</GhostIconButton>
+								)}
+							</div>
 						</div>
 					))}
 
@@ -294,6 +320,8 @@ export function Modal({
 			</div>
 		</div>
 	);
+
+	return portal ? createPortal(overlay, document.body) : overlay;
 }
 
 /**

@@ -49,7 +49,7 @@ export function buildInlineCodeHandlers(children: React.ReactNode) {
 		onClick: (e: React.MouseEvent) => {
 			// preventDefault: when <code> is nested inside an <a> (e.g. AI emits
 			// `[\`file.md\`](file.md)`), stopPropagation alone keeps the parent
-			// link's onClick from firing — but the browser's default link
+			// link's onClick from firing - but the browser's default link
 			// navigation still runs because no preventDefault was called. That
 			// can navigate the renderer to a non-existent in-bundle file and
 			// unload the app. preventDefault is a no-op for standalone <code>.

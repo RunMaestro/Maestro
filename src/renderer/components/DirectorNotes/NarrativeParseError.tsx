@@ -1,16 +1,22 @@
 /**
  * NarrativeParseError
  *
- * The OVERT failure surface for Rich Mode. When the AI's structured output
- * cannot be parsed into a `DirectorNotesNarrative`, Rich Mode must fail loudly
- * instead of silently degrading to plain text: this banner makes the failure
- * unmissable (error-colored border + background + alert icon, full width) and
- * still keeps the raw output reachable behind a "View raw output" disclosure
- * with a Copy button.
+ * The OVERT failure surface shared by BOTH reading modes. When the AI's
+ * structured output cannot be parsed into a `DirectorNotesNarrative`, Rich and
+ * Plain Mode must fail loudly instead of silently degrading: neither may dump
+ * the raw JSON object into a markdown renderer and call it a report. This banner
+ * makes the failure unmissable (colored border + background + alert icon, full
+ * width) and keeps the raw output reachable behind a "View raw output"
+ * disclosure with a Copy button.
  *
- * It deliberately does NOT render the markdown as if nothing went wrong. The
- * deterministic stat widgets above it keep rendering (the numbers are unaffected
- * by a narrative parse failure); only the narrative area shows this error.
+ * Two states:
+ * - Failure (default): nothing usable survived; this banner is all there is.
+ * - Recovered (`recovery` set): a salvaged narrative renders alongside it, so
+ *   the banner takes the softer warning tone and says what was recovered rather
+ *   than passing a partial report off as a complete one.
+ *
+ * The deterministic stat widgets are unaffected either way (their numbers never
+ * come from the LLM); only the narrative area shows this banner.
  */
 
 import { useState } from 'react';
@@ -24,9 +30,20 @@ interface NarrativeParseErrorProps {
 	error: string;
 	/** The raw agent output, preserved verbatim and shown on disclosure. */
 	rawOutput: string;
+	/**
+	 * Set when a narrative WAS salvaged from this output: the human-readable
+	 * reason from `recoverDirectorNotesNarrative`. Switches the banner to the
+	 * partial-recovery state.
+	 */
+	recovery?: string | null;
 }
 
-export function NarrativeParseError({ theme, error, rawOutput }: NarrativeParseErrorProps) {
+export function NarrativeParseError({
+	theme,
+	error,
+	rawOutput,
+	recovery,
+}: NarrativeParseErrorProps) {
 	const [showRaw, setShowRaw] = useState(false);
 	const [copied, setCopied] = useState(false);
 
@@ -39,34 +56,41 @@ export function NarrativeParseError({ theme, error, rawOutput }: NarrativeParseE
 		}
 	};
 
+	// A recovered run still produced a readable narrative, so it warns rather
+	// than errors; a total failure keeps the full error treatment.
+	const accent = recovery ? theme.colors.warning : theme.colors.error;
+
 	return (
 		<div
 			className="w-full rounded-lg border overflow-hidden"
 			style={{
-				backgroundColor: theme.colors.error + '14',
-				borderColor: theme.colors.error + '66',
+				backgroundColor: accent + '14',
+				borderColor: accent + '66',
 			}}
 			role="alert"
 		>
 			<div className="flex items-start gap-3 p-4">
 				<AlertTriangle
 					className="w-5 h-5 shrink-0 mt-0.5"
-					style={{ color: theme.colors.error }}
+					style={{ color: accent }}
 					aria-hidden="true"
 				/>
 				<div className="flex-1 min-w-0 select-text">
-					<h3 className="text-sm font-bold" style={{ color: theme.colors.error }}>
-						Rich Mode could not parse the AI's structured output
+					<h3 className="text-sm font-bold" style={{ color: accent }}>
+						{recovery
+							? "Part of the AI's structured output could not be parsed"
+							: "Maestro could not parse the AI's structured output"}
 					</h3>
 					<p className="text-xs mt-1" style={{ color: theme.colors.textMain }}>
-						The deterministic stats above are unaffected, but the narrative could not be built. The
-						raw output is preserved below and in Plain Mode / Copy / Save.
+						{recovery
+							? `${recovery} The narrative shown was rebuilt from the readable part, so it may be incomplete.`
+							: 'The activity stats are unaffected, but the narrative could not be built from this run. The raw output is preserved below, and Copy / Save export it verbatim.'}
 					</p>
-					<p className="text-xs mt-2 font-mono break-words" style={{ color: theme.colors.error }}>
+					<p className="text-xs mt-2 font-mono break-words" style={{ color: accent }}>
 						{error}
 					</p>
 
-					{/* Raw-output disclosure — the unparsed text stays reachable. */}
+					{/* Raw-output disclosure - the unparsed text stays reachable. */}
 					<button
 						type="button"
 						onClick={() => setShowRaw((v) => !v)}

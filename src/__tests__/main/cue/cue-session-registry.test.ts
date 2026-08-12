@@ -111,7 +111,7 @@ describe('cue-session-registry', () => {
 
 			registry.evictStaleScheduledKeys('s1', 'sub-1', '10:00');
 
-			// 08:00 and 09:00 are evicted; 10:00 stays — re-firing 10:00 must still be deduped.
+			// 08:00 and 09:00 are evicted; 10:00 stays - re-firing 10:00 must still be deduped.
 			expect(registry.markScheduledFired('s1', 'sub-1', '08:00')).toBe(true);
 			expect(registry.markScheduledFired('s1', 'sub-1', '09:00')).toBe(true);
 			expect(registry.markScheduledFired('s1', 'sub-1', '10:00')).toBe(false);
@@ -208,10 +208,10 @@ describe('cue-session-registry', () => {
 			expect(registry.size()).toBe(0);
 			expect(registry.has('s1')).toBe(false);
 
-			// Scheduled keys are gone — re-firing the same slot succeeds.
+			// Scheduled keys are gone - re-firing the same slot succeeds.
 			expect(registry.markScheduledFired('s1', 'sub-1', '09:00')).toBe(true);
 
-			// Startup keys are PRESERVED — re-firing must be deduped. This is the
+			// Startup keys are PRESERVED - re-firing must be deduped. This is the
 			// regression target: toggling Cue off/on must NOT re-fire app.startup.
 			expect(registry.markStartupFired('s1', 'init')).toBe(false);
 			expect(registry.markStartupFired('s2', 'init')).toBe(false);
@@ -235,14 +235,14 @@ describe('cue-session-registry', () => {
 			registry.markScheduledFired('s1', 'sub-1', '09:00');
 			const evicted = registry.sweepStaleScheduledKeys('09:00');
 			expect(evicted).toBe(0);
-			// Key still in set — re-firing is still deduped
+			// Key still in set - re-firing is still deduped
 			expect(registry.markScheduledFired('s1', 'sub-1', '09:00')).toBe(false);
 		});
 
 		it('evicts keys whose time component differs from the current time', () => {
 			registry.markScheduledFired('s1', 'sub-1', '08:59');
 			registry.markScheduledFired('s1', 'sub-1', '09:00');
-			// At 09:01 — the 08:59 key is stale, the 09:00 key is also stale
+			// At 09:01 - the 08:59 key is stale, the 09:00 key is also stale
 			const evicted = registry.sweepStaleScheduledKeys('09:01');
 			expect(evicted).toBe(2);
 			// After eviction, both slots can fire again
@@ -262,7 +262,7 @@ describe('cue-session-registry', () => {
 		it('does not affect startup fired keys', () => {
 			registry.markStartupFired('s1', 'init');
 			registry.sweepStaleScheduledKeys('09:00');
-			// Startup key is unaffected — still deduped
+			// Startup key is unaffected - still deduped
 			expect(registry.markStartupFired('s1', 'init')).toBe(false);
 		});
 	});

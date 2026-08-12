@@ -92,7 +92,7 @@ export function GoalConfigPanel({
 				</div>
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>
 					Spell out what "done" looks like and when the agent should declare a deadlock instead of
-					spinning. This guides the agent — it isn't matched automatically.
+					spinning. This guides the agent - it isn't matched automatically.
 				</p>
 				<div className="relative">
 					<textarea
@@ -128,7 +128,7 @@ export function GoalConfigPanel({
 					reached or a deadlock is detected.
 				</p>
 				<div className="flex items-center gap-2">
-					{/* Infinite / numeric segmented toggle — mirrors the loop ∞/max control */}
+					{/* Infinite / numeric segmented toggle - mirrors the loop ∞/max control */}
 					<div
 						className="flex items-center rounded-lg border overflow-hidden"
 						style={{ borderColor: theme.colors.border }}
@@ -165,7 +165,7 @@ export function GoalConfigPanel({
 						</button>
 					</div>
 
-					{/* Numeric input — only meaningful when a finite cap is selected */}
+					{/* Numeric input - only meaningful when a finite cap is selected */}
 					{!isInfinite && (
 						<input
 							type="number"

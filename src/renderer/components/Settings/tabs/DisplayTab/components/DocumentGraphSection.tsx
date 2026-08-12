@@ -33,7 +33,7 @@ export function DocumentGraphSection({
 					onChange={setDocumentGraphShowExternalLinks}
 				/>
 				<div>
-					<label htmlFor="document-graph-max-nodes" className="block text-xs opacity-60 mb-2">
+					<label htmlFor="document-graph-max-nodes" className="block text-xs opacity-70 mb-2">
 						Maximum nodes to display
 					</label>
 					<div className="flex items-center gap-3">
@@ -57,7 +57,7 @@ export function DocumentGraphSection({
 							{documentGraphMaxNodes}
 						</span>
 					</div>
-					<p className="text-xs opacity-50 mt-1">
+					<p className="text-xs opacity-70 mt-1">
 						Limits initial graph size for performance. Use &quot;Load more&quot; to show additional
 						nodes.
 					</p>

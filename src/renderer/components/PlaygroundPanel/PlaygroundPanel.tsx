@@ -66,6 +66,8 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 					<ResizeHandles
 						onResizeStart={resizableModal.onResizeStart}
 						accentColor={theme.colors.accent}
+						onResetSize={resizableModal.onResetSize}
+						canReset={resizableModal.canReset}
 					/>
 
 					<PlaygroundHeader theme={theme} onClose={onClose} />

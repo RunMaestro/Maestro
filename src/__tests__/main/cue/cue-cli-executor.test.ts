@@ -268,7 +268,7 @@ describe('cue-cli-executor', () => {
 
 		expect(result.status).toBe('failed');
 		expect(result.exitCode).toBeNull();
-		// ENOENT is an expected failure mode (missing CLI bundle) — must NOT
+		// ENOENT is an expected failure mode (missing CLI bundle) - must NOT
 		// be captured to Sentry, otherwise dev-only misconfig spams prod error
 		// tracking.
 		expect(mockCaptureException).not.toHaveBeenCalled();

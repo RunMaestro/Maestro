@@ -34,6 +34,7 @@ export const AGENT_IDS = [
 	'opencode',
 	'factory-droid',
 	'copilot-cli',
+	'grok',
 ] as const;
 
 export type AgentId = (typeof AGENT_IDS)[number];
@@ -217,6 +218,7 @@ interface AgentCapabilities {
 	supportsResultMessages: boolean; // Distinct "done" events
 	supportsModelSelection: boolean; // --model flag
 	supportsStreamJsonInput: boolean; // stdin image input
+	supportsPromptViaStdin: boolean; // CLI reads the prompt from stdin
 	supportsThinkingDisplay: boolean; // Thinking/reasoning content
 	supportsContextMerge: boolean; // Receive transferred context
 	supportsContextExport: boolean; // Export context for transfer
@@ -327,6 +329,8 @@ interface ParsedEvent {
 	sessionId?: string;
 	text?: string;
 	toolName?: string;
+	toolCallId?: string; // Stable id used to merge running -> completed for the same call
+	parentToolUseId?: string; // Set on activity spawned by a parent tool (e.g. Task subagents)
 	toolState?: unknown;
 	usage?: {
 		inputTokens: number;
@@ -378,12 +382,112 @@ Sticky mode (`'sticky'`) opts out of all three clear points. Off mode
 suppresses appending in the first place at the renderer's `onThinkingChunk`
 listener.
 
+### Streams vs cards: what may be appended to
+
+A `LogEntry` is one of two things, and coalescing must tell them apart:
+
+- **A stream** - `stdout` / `stderr` / `thinking` text arriving in chunks.
+  Consecutive chunks coalesce into one entry so the transcript isn't one
+  bubble per packet.
+- **A self-contained card** - a `!` command's output, a retry-outage card, a
+  session-recovery prompt, a tool call. Its text is owned by whoever created
+  it and is updated by log id, never appended to.
+
+Cards keep a **natural `source`**: a command-mode card is `source: 'stdout'`
+because its body genuinely is terminal output. So `source` alone cannot tell
+you whether appending is safe, and every site that assumed it could has
+produced a bug - most recently agent replies being concatenated into a `!`
+command's terminal output, because the card was the newest `stdout` entry when
+the next chunk arrived (command mode runs _during_ a turn by design, so this
+was near-certain rather than a rare race).
+
+The rule lives in one place, `renderer/utils/logEntries.ts`:
+
+- `isSelfContainedCard(entry)` - enumerates the card markers
+- `canAppendToLogEntry(entry, source)` - same source **and** not a card
+
+Used by all three coalescing sites (`useBatchedSessionUpdates` AI-tab path,
+its legacy `shellLogs` path, and `useAgentThinkingListener`). Callers keep
+their own policy on top (the 500ms window, session-busy). **Adding a new card
+kind:** add its marker to `isSelfContainedCard` and every site is correct by
+construction.
+
 **Adding a new agent:** make sure your parser tags reasoning deltas with
 `isReasoning: true` and emits tool-use events through the standard
 `tool_use` ParsedEvent type. Verify the tab transitions to `idle` cleanly
 on exit by spot-checking that thinking cells disappear when
 `showThinking === 'on'` and persist when `showThinking === 'sticky'` -
 covered by `src/__tests__/renderer/hooks/useAgentListeners.test.ts`.
+
+### Tool-Execution Pipeline (end to end)
+
+Tool badges (the "Read", "Bash", "Task" cells with a running/completed/failed
+state) flow through a single pipeline shared by every provider. A parser only
+has to emit the right `ParsedEvent`; the main process dedups and forwards, and
+the renderer merges and draws.
+
+1. **Parse** (`src/main/parsers/agent-output-parser.ts` + each parser). A parser
+   emits `ParsedEvent { type: 'tool_use', toolName, toolCallId?, toolState, parentToolUseId? }`.
+   `toolState` carries `{ status: 'running' | 'completed' | 'failed' | 'error', input?, output? }`.
+   `toolCallId` is the stable id that ties a later `completed`/`failed` event
+   back to the earlier `running` one. `parentToolUseId` is set when the activity
+   was spawned by a parent tool call (claude-code's `Task` subagents; see Phase 2)
+   so the renderer can nest it.
+2. **Dedup + emit** (`src/main/process-manager/handlers/StdoutHandler.ts`). On a
+   `tool_use` event the handler emits a `tool-execution` event on the process
+   manager. It keeps a per-process `emittedToolCallIds` Set so a `running` event
+   is emitted once per `toolCallId`; the id is removed once the call reaches a
+   terminal state, so a reused id is not suppressed. Events without a
+   `toolCallId` (some providers) always emit and are attributed downstream by
+   tool name.
+3. **Forward over IPC** (`src/main/process-listeners/forwarding-listeners.ts`).
+   The `tool-execution` event is sent to the renderer on the
+   `process:tool-execution` channel and, for web-desktop parity, broadcast to
+   connected web clients.
+4. **Merge into tab logs** (`src/renderer/hooks/agent/internal/useAgentToolExecutionListener.ts`).
+   The listener builds a deterministic log id `tool-${toolCallId}` and merges by
+   id, so a `running` cell transitions in place to `completed`/`failed`. Without
+   a `toolCallId` it attributes a finalizing event to the most recent still
+   `running` entry of the same `toolName`, else appends a fresh entry. Tool
+   events are recorded regardless of the `showToolCalls` setting. Visibility is a
+   pure render concern that `TerminalOutput` computes as `showToolCalls &&
+thinkingOn`, hiding `source:'tool'` entries when the setting is off OR the
+   active tab's `showThinking` is `'off'` (tool cells are "behind the scenes"
+   activity that follows the Thinking toggle). The Settings UI mirrors this: the
+   "Show tool calls in responses" switch is grouped under Default Thinking Mode
+   and ghosts out (disabled) when the default mode is Off. Storage is still
+   governed by the thinking/tool log contract above, so the `showThinking`
+   lifecycle can drop stored `thinking`/`tool` entries (for example on exit when
+   not `'sticky'`) independently of `showToolCalls`.
+5. **Render** (`src/renderer/components/TerminalOutput/components/LogItem.tsx` +
+   `src/renderer/components/TerminalOutput/utils/toolSummaries.ts`). `LogItem`
+   draws the tool badge and its status; `toolSummaries.ts` turns `toolState.input`
+   into the short human summary (e.g. the path a `Read` opened). Child entries
+   carrying `parentToolUseId` are grouped under their parent by
+   `utils/groupSubagentToolLogs.ts` and collapse behind an expandable
+   "N tool call(s)" toggle.
+
+**Per-provider support matrix** (does the parser emit `tool_use` on the live
+stream?):
+
+| Provider        | Live tool badges | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Yes              | Includes `tool_result` -> terminal state (Phase 1) and `Task` subagent nesting via `parentToolUseId` (Phase 2)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `codex`         | Yes              | Emits `tool_use` from its JSONL stream                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `opencode`      | Yes              | `step_start` -> `tool_use` -> `step_finish` per step                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `copilot-cli`   | Yes              | Emits `tool_use` from `--output-format json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `pi`            | Yes              | Emits `tool_use`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `omp`           | Yes              | Emits `tool_use`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `grok`          | No               | Tool activity is only in on-disk session files, not on stdout                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `factory-droid` | No               | The `-o stream-json` stream Maestro consumes carries only `system`/`message`/`completion`/`error` objects; tool activity is folded into the assistant `message.text` rather than emitted as distinct events. Structured tool events exist only in droid's separate `debug` (SSE) and `jsonrpc` formats, which are a different transport than the JSONL parser reads. To wire this up: capture real `-o stream-json` lines from a `droid` build that forces a tool call and, if a `tool_call`/`tool_result` object appears, extend `factory-droid-output-parser.ts` to emit `tool_use` ParsedEvents |
+
+**AskUserQuestion (Phase 3).** claude-code's `AskUserQuestion` tool is not
+answered through this display pipeline but through the permission relay
+(`src/main/permission-relay/`): when running interactively in standard
+permission mode, the relay recognizes `AskUserQuestion`, surfaces the question
+options in the permission prompt UI, and returns the user's selection as the
+tool answer. See that directory and the Phase 3 doc for the answer-delivery
+contract.
 
 ### Parser Implementations
 
@@ -492,6 +596,39 @@ getSshErrorPatterns(): AgentErrorPatterns
 
 Per-agent session storage for reading historical conversations.
 
+### Expected transcript-read failures (`src/main/utils/session-read-errors.ts`)
+
+Provider transcripts under `~/.claude/projects`, `~/.codex/sessions`, etc. belong
+to the agent CLI, not to Maestro. Any code that reads a transcript it merely
+_discovered_ on disk must classify environmental failures instead of reporting
+them, or one unreadable tree pages a Sentry event per file per refresh
+(MAESTRO-W9, MAESTRO-YG/YH/YJ):
+
+```typescript
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
+
+try {
+	const content = await fs.readFile(filePath, 'utf-8');
+	// ...
+} catch (error) {
+	if (error instanceof RangeError) {
+		logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
+	} else if (isExpectedSessionReadError(error)) {
+		logger.warn('Session file not readable', LOG_CONTEXT, { filePath, error });
+	} else {
+		captureException(error); // genuine fault, keep reporting
+	}
+	return null;
+}
+```
+
+Covers `EACCES`, `EPERM`, `ENOENT`, `ENOTDIR`, `EISDIR`, `EBUSY`. Do NOT widen it
+to codes that indicate a Maestro bug (`EMFILE` means we leaked descriptors).
+Pair it with the `RangeError` carve-out for oversized files - they are separate
+boundaries. When quieting one call site, grep the whole file for other
+`captureException` calls on the same failure path (an outer `fs.stat` catch
+usually needs the same guard).
+
 ### Storage Interface (`src/main/agents/session-storage.ts`)
 
 ```typescript
@@ -534,6 +671,43 @@ Subclasses implement:
 | `CodexSessionStorage`        | `codex-session-storage.ts`         | `~/.codex/sessions/YYYY/MM/DD/`                                      | JSONL events            |
 | `OpenCodeSessionStorage`     | `opencode-session-storage.ts`      | `~/.local/share/opencode/opencode.db` (v1.2+) or `storage/` (legacy) | SQLite (or legacy JSON) |
 | `FactoryDroidSessionStorage` | `factory-droid-session-storage.ts` | `~/.factory/sessions/`                                               | JSONL + settings.json   |
+
+### Parse Cache (`src/main/storage/session-info-cache.ts`)
+
+`listSessions()` is enumerate-then-parse for every storage, and the parse is the
+expensive half: a heavy Claude user is 5+ GB of JSONL across ~14k transcripts,
+which is why the Cost & Tokens dashboard used to take ~15 seconds to render every
+single time. `SessionInfoCache` caches the parsed `AgentSessionInfo` keyed by a
+`mtimeMs + size` fingerprint, so only new or grown transcripts are re-read.
+Enumerating and stat-ing all 14k files costs under 100ms.
+
+Use it instead of hand-rolling another mtime map (there are already several):
+
+```typescript
+const files = await this.statProjectSessionFiles(projectDir); // readdir + stat
+const sessions = await getSessionInfoCache(this.agentId).resolve(
+	projectDir, // scope: one cache file per project folder
+	files.map((f) => ({ key: f.filePath, fingerprint: fileFingerprint(f.sizeBytes, f.mtimeMs) })),
+	(ref) => parseSessionFile(...), // only called on a miss; null = skip, not cached
+	{ prune: true } // ONLY when refs cover the whole scope (never for one page)
+);
+```
+
+Rules:
+
+- Attach mutable metadata (origin, starred, session name) AFTER `resolve()`. It
+  lives in `originsStore` and changes without the transcript changing, so a
+  fingerprint would never catch it.
+- Returned infos are the cached objects: spread them, never mutate in place.
+- Bump `SESSION_INFO_CACHE_VERSION` when `AgentSessionInfo` gains a field, or
+  cached entries will come back missing it.
+- Tests: `setSessionInfoCacheForTest(agentId, new SessionInfoCache(agentId, tmpDir))`
+  in `beforeEach`, or fixtures that reuse one path + stats while varying content
+  will (correctly) hit the cache.
+
+Wired up for `ClaudeSessionStorage` (local paths). `CodexSessionStorage` predates
+it and still carries its own equivalent cache; the remaining storages parse
+everything on every list and should adopt this when their volume justifies it.
 
 ### Registry Functions
 

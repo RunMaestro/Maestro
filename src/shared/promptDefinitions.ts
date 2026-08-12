@@ -210,7 +210,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Feedback conversation prompt',
 		category: 'system',
 	},
-	// Includes — reusable blocks referenced from other prompts via {{INCLUDE:name}}.
+	// Includes - reusable blocks referenced from other prompts via {{INCLUDE:name}}.
 	// Filenames are leading-underscore by convention; id matches filename stem.
 	{
 		id: '_toc',

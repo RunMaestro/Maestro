@@ -134,11 +134,73 @@ The expanded Prompt Composer (`src/renderer/components/PromptComposerModal.tsx`)
 
 ### Resizable Modals
 
-Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
+Dialog-style modals can offer persisted, center-anchored drag-to-resize via `useResizableModal()` (`src/renderer/hooks/ui/useResizableModal.ts`), backed by pure sizing/clamping helpers in `src/renderer/utils/modalSizing.ts` and the handle UI in `src/renderer/components/ui/ResizeHandles.tsx`. Sizes persist in the `modalSizes` setting (`src/renderer/stores/settingsStore.ts`: `setModalSize`/`resetModalSize`/`resetModalSizes`), clamped to a `320x240` minimum and the `90vw x 90vh` app-wide ceiling described above, with per-modal `minSize`/`maxSize` overrides for dense tools or width-capped reading surfaces (e.g. Director's Notes caps `maxSize.width` at `1050`).
+
+**Resetting a size.** Double-clicking any resize handle forgets that one modal's remembered size and snaps it back to its declared `defaultSize`. Pass the hook's `onResetSize`/`canReset` through to `ResizeHandles` to enable it - `<Modal>` already does, and every bespoke shell that renders `ResizeHandles` directly should too, so the gesture is uniform. `canReset` only gates the tooltip wording (the handles are invisible until hover, so the native `title` is the gesture's only discoverability), and `resetModalSize` skips the settings write when nothing was stored, so an idle double-click is free. Settings -> Display -> Modal Layout still offers the reset-every-modal escape hatch (`resetModalSizes`).
 
 The shared `<Modal>` component wires this up automatically via `resizable`/`resizeKey`/`defaultSize`/`minSize`/`maxSize` props, but **resizing only activates when the caller passes an explicit, stable `resizeKey`.** Omitting it (the default for most `<Modal>` callers - simple confirms, help dialogs) falls back to the legacy fixed `width`/`maxHeight`/`scaleWidthWithFont` sizing instead of a title-derived key: a title/priority-derived fallback isn't stable across unrelated dialogs (every default-titled `ConfirmModal` would otherwise collide on one persisted size). Bespoke modal shells that don't use `<Modal>` (e.g. `QuitConfirmModal.tsx`) should stay off `useResizableModal` entirely if they're simple, non-resizable confirms.
 
 When two toggleable states of the same modal need independent footprints (e.g. Prompt Composer's compact vs. fullscreen), use two distinct `resizeKey`s (`prompt-composer-compact` / `prompt-composer-fullscreen`) rather than one shared key with a mode-dependent `defaultSize` - `defaultSize` is only consulted before the first saved size exists, so a single key would let one mode's manual resize silently pin the other mode's size too.
+
+### Modals Opened From Inside the Main Panel
+
+A modal rendered from a component that lives inside the Main Panel (file
+preview renderers, terminal views, chat surfaces) MUST pass `portal` to
+`<Modal>`:
+
+```tsx
+<Modal theme={theme} title="Row 1" priority={MODAL_PRIORITIES.CSV_ROW_DETAIL} portal>
+```
+
+`MainPanel.tsx` wraps the session view in `isolate` (`isolation: isolate`),
+which creates a stacking context. A `fixed inset-0` backdrop rendered inside
+that subtree is still full-viewport in size, but its `z-index: 9999` only ranks
+it _within_ MainPanel's context. The Left Bar (`SessionList.tsx`, `relative
+z-20`) and the Right Panel (later in DOM order) are siblings of that context, so
+they paint on top: the center dims while both side panels stay fully lit, and
+the modal looks clipped to the middle of the window.
+
+No z-index fixes this - ranking never crosses a stacking context. Rendering into
+`document.body` is the only escape, which is what `portal` does. Most modals
+mount at the App root already and don't need it, which is why it is opt-in.
+
+Because jsdom has no layout engine, a test asserting `toBeInTheDocument()`
+passes whether or not the modal escaped. Assert it is **not** a descendant of
+its host subtree instead:
+
+```tsx
+expect(container.querySelector('.csv-table-renderer')).not.toContainElement(modal);
+expect(modal.parentElement).toBe(document.body);
+```
+
+React context flows through portals, so `useModalLayer` registration, Escape
+handling, and theming are unaffected by the relocation.
+
+### Resizable Textareas
+
+Any textarea with a native `resize-y` grip should remember the height the user drags it to. A size someone picked by hand is a preference, so snapping back to the default on the next open (or the next app launch) is a bug, not a reset.
+
+```tsx
+const resize = useResizableTextarea({
+	sizeKey: 'settings-conductor-profile', // stable, unique
+	minHeight: 100, // floor for a remembered height
+});
+
+<textarea
+	ref={resize.textareaRef}
+	className="... resize-y"
+	style={{ borderColor: theme.colors.border, minHeight: '100px', ...resize.style }}
+/>;
+```
+
+How it works:
+
+- `useResizableTextarea` (`src/renderer/hooks/ui/useResizableTextarea.ts`) observes the element and persists the dragged height, debounced. Heights live in one `textareaHeights` map in `settingsStore`, keyed by `sizeKey`, written through to settings and hydrated by `loadAllSettings` on startup.
+- The native grip writes the dragged height onto the element's inline `style.height` - the same property the hook writes when restoring one. The observer just compares the current inline height against the last applied height, so a user drag is the only thing it can see (content, font size and viewport width never move an explicit height).
+- Omit `defaultHeight` to leave the textarea at whatever its `rows` / CSS `min-height` already give it until the user resizes it. Pass one only when the textarea has no natural size worth keeping.
+- `minHeight` / `maxHeight` bound what can be remembered; heights are also clamped to the viewport at read time, so a textarea sized on a large display still opens sanely on a laptop.
+- Spread `resize.style` LAST in the `style` prop, after the caller's own `minHeight`, or the inline height gets overwritten.
+- Pass `externalRef` when the component already owns a ref on the textarea (autocomplete, focus-on-open). Do NOT add a second ref or a second `ResizeObserver`.
 
 ### Escape Key Flow
 
@@ -174,6 +236,29 @@ In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
 - `top()` - log the topmost layer
 - `simulate.escape()` - dispatch an Escape event
 - `simulate.closeAll()` - clear the entire stack
+
+### Every Modal Needs a Graphical Exit (`<EscCloseButton>`)
+
+**Rule:** a modal, palette, or find bar must always be dismissable with the pointer alone. Escape is not enough: remote desktop sessions swallow it, tablets driving the web interface have no key to send, and a keyboard-only exit reads as "stuck" to the user.
+
+The `ESC` pill is that exit. Use `<EscCloseButton>` (`src/renderer/components/ui/EscCloseButton.tsx`) - do NOT hand-roll the `px-2 py-0.5 rounded text-xs font-bold` pill again. It was previously copy-pasted as an inert `<div>` (three of them with `pointer-events-none`) in nine places, so every one of those surfaces advertised an exit that did nothing on click.
+
+```tsx
+// Header pill, sitting in the search row
+<EscCloseButton theme={theme} onClose={onClose} />
+
+// Adornment pill, absolutely positioned inside a `relative` input wrapper
+<EscCloseButton
+	theme={theme}
+	variant="adornment"
+	label="Close filter (Esc)"
+	onClose={handleFilterEscape}
+/>
+```
+
+`onClose` must do **exactly** what pressing Escape does. When the Escape path lives in a `useModalLayer` / `registerLayer` callback, extract it into a named `useCallback` and pass the same function to both, rather than duplicating the body (see `TerminalOutput`'s `closeOutputSearch` and `QuickActionsModal`'s `handleEscape`).
+
+Tests: query the pill by role, not by index. It is a real `<button>` now, so `getAllByRole('button')[n]` in a modal test counts it - scope list assertions to the rows themselves (e.g. `[data-action-label]`).
 
 ### Text Selection in Modals
 
@@ -506,6 +591,23 @@ Existing in-app callers using `type:` continue to work without changes.
 
 ---
 
+## Above-Modal Layering (`Z_LAYERS`)
+
+Ordinary modals use plain Tailwind classes: `z-[9999]` for the backdrop, `z-[10000]`/`z-[10001]` for menus and tooltips anchored inside one. Those numbers only ever compete with each other, so they stay inline.
+
+The handful of overlays that deliberately outrank a modal read their value from `Z_LAYERS` in `src/renderer/constants/zLayers.ts`. Their relative order is a product decision, so it lives in one file instead of being rediscovered as a magic number per component:
+
+| Layer                    | Surface                                                         |
+| ------------------------ | --------------------------------------------------------------- |
+| `Z_LAYERS.CONFETTI`      | Celebration particles - decorative, sits under real UI          |
+| `Z_LAYERS.TOAST`         | `ToastContainer` - visible over modals so results aren't missed |
+| `Z_LAYERS.QUICK_ACTIONS` | Command palette - owns the screen, including over toasts        |
+| `Z_LAYERS.CENTER_FLASH`  | Momentary ack - always the top-most pixel                       |
+
+Do NOT add a new hard-coded five-digit z-index. If a surface needs to sit above a modal, give it an entry here so the ordering stays reviewable. Note that a z-index only ranks within its stacking context: a portal to `document.body` (toasts, center flash) always compares against the root, while an inline overlay compares against its nearest ancestor that establishes a context.
+
+---
+
 ## Center Flash System (rapid temporary notifications)
 
 **Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system - they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.
@@ -658,6 +760,20 @@ Standard cancel/confirm button layout:
 />
 ```
 
+### `<ShortcutHint>` (`src/renderer/components/TabBar/ShortcutHint.tsx`)
+
+The keys badge at the right edge of a tab overlay-menu row:
+
+```tsx
+{
+	tabShortcuts.moveTabToStart && (
+		<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
+	);
+}
+```
+
+Used by every tab item's overlay menu (`AITabOverlayMenu`, `FileTab`, `TerminalTabItem`, `BrowserTabItem`, `GroupTabChip`). It was previously re-declared inline, byte-identical, in four of those components - do NOT add a fifth copy. Positions itself with `ml-auto`, so it only lays out correctly inside a flex row item. Key glyphs come from `formatShortcutKeys`, which is platform-correct; never hard-code `⌘` / `Ctrl` in menu copy.
+
 ### `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/AdditionalDirectoriesSection.tsx`)
 
 The row editor for an agent's extra directory grants (path + independent R / W square toggles + remove). Shared by NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen so all three emit the same `AdditionalDirectory[]`.
@@ -700,6 +816,50 @@ Key features:
 - Built-in Enter key handling with `submitEnabled` guard
 - Error state changes border color to `theme.colors.error`
 - Auto-generated `id` for label association (accessibility)
+
+### `<ToggleSwitch>` (`src/renderer/components/ui/ToggleSwitch.tsx`)
+
+The themed pill toggle. Use it instead of hand-rolling the
+`relative w-10 h-5 rounded-full` + `translate-x-5` button - that markup was
+copy-pasted across the bundled command panels and drifted (some copies lost
+`title`, some lost `aria-checked`):
+
+```tsx
+<ToggleSwitch
+	checked={enabled}
+	onChange={onEnabledChange}
+	theme={theme}
+	ariaLabel="Show Spec Kit commands in slash command autocomplete"
+	title={enabled ? 'Hide from slash command autocomplete' : 'Show in slash command autocomplete'}
+/>
+```
+
+Renders `role="switch"` with `aria-checked`, so tests select it with
+`getByRole('switch', { name: ... })`. For a full labeled settings row with icon,
+section label, and description, use `<SettingCheckbox>` below instead.
+
+### `<CollapsedCommandsNotice>` (`src/renderer/components/ui/CollapsedCommandsNotice.tsx`)
+
+Placeholder shown in place of a disabled command section's list (Spec Kit,
+OpenSpec, BMAD). Turning a section off collapses its commands out of view, but
+they stay reachable for editing behind "Show anyway":
+
+```tsx
+{
+	!enabled && commands.length > 0 && (
+		<CollapsedCommandsNotice
+			theme={theme}
+			count={commands.length}
+			expanded={revealWhileDisabled}
+			onToggle={() => setRevealWhileDisabled((prev) => !prev)}
+			sectionName="Spec Kit"
+		/>
+	);
+}
+```
+
+Panels pair it with a `revealWhileDisabled` state that resets in a
+`useEffect` on `enabled`, so re-disabling a section always re-collapses the list.
 
 ### `<ErrorBoundary>` (`src/renderer/components/ErrorBoundary.tsx`)
 
@@ -830,6 +990,58 @@ This rule applies to **content containers** sized to wrap text. It does NOT appl
 
 ---
 
+## Responsive Headers - Container Queries, Not JS Width
+
+Header rows that sit inside a resizable panel (main panel header, left-sidebar section headers) must degrade **on a single line** as the panel narrows: progressively hide the least useful elements rather than wrapping onto a second row. Wrapping is always a bug here - it shifts every row below it and looks broken.
+
+Do this with **CSS container queries**, not JavaScript width detection. A JS approach needs a `ResizeObserver`, re-renders on every drag frame, and lags a pointer-driven resize; the CSS is declarative, runs at layout time, and cannot desync.
+
+### The pattern
+
+Three pieces, all required:
+
+1. **Establish the context** on the header element:
+   ```css
+   .my-header-container {
+   	container-type: inline-size;
+   	container-name: myheader;
+   }
+   ```
+2. **Guarantee no-wrap structurally** in the JSX: `whitespace-nowrap` (plus `truncate` for the title) on the label group, and `shrink-0` on the icons and the right-hand control cluster. This holds the single line even where container queries don't apply - the queries only decide _when_ each item drops, never _whether_ the row wraps.
+3. **Give each droppable element a hook class** and hide it at a threshold, dropping the least informative item first:
+   ```css
+   @container myheader (max-width: 340px) {
+   	.my-count-badge {
+   		display: none;
+   	}
+   }
+   ```
+
+### Rules
+
+- **Drop counts and labels; keep buttons.** Put the hook class on the count `<span>` inside a button, never on the button itself - an affordance that vanishes is unreachable, a number that vanishes costs nothing. Collapse a labelled button to its icon/glyph instead of removing it.
+- **Preserve the accessible name.** When a label is `display: none`, the accessible name must still come from a `title` (or `aria-label`) on the button, or the collapsed control becomes unidentifiable to screen readers.
+- **All thresholds must clear the panel's minimum width.** The left sidebar clamps to `minWidth: 280` (`useResizablePanel` in `SessionList.tsx`); everything droppable must have dropped by then or the header wraps at the drag floor.
+- **Adding a control to one of these headers means adding a drop rule for it.** This is the most likely way to regress the layout - a new button widens the row with no threshold to shed it.
+
+### Canonical implementations
+
+| Surface                     | Container  | Hook classes                                                 | CSS                              |
+| --------------------------- | ---------- | ------------------------------------------------------------ | -------------------------------- |
+| Main panel header           | `header`   | `.header-session-name`, `.header-cost-widget`, ...           | `index.css` "Header Bar"         |
+| Group Chats sidebar section | `gcheader` | `.gc-count-badge`, `.gc-archived-count`, `.gc-newchat-label` | `index.css` "Group Chats Header" |
+
+### Testing
+
+jsdom has **no layout engine and never evaluates container queries**, so no unit test can assert "the label is hidden at 275px". Test the _contract_ instead, in two layers:
+
+- **Render test** (`GroupChatList.test.tsx` -> "single-line header contract"): the container class is present, the anti-wrap utilities survive, each droppable element carries its hook class, and the collapsed button keeps its accessible name and click handler.
+- **Cross-file test** (`groupChatHeaderResponsive.regression.test.ts`): the JSX hook classes and the `@container` rules still agree in both directions (a rename on either side fails), the drop order is preserved, and no threshold falls below the sidebar minimum.
+
+That pairing is what makes the silent failure mode loud - the class names are the only thing tying the two files together, and nothing else in the build would catch drift.
+
+---
+
 ## Touch Gestures (`useLongPress`)
 
 The desktop renderer also runs on phones (web-desktop build), where several interactions are right-click-only or hover-only and thus unreachable. `useLongPress` (`src/renderer/hooks/utils/useLongPress.ts`) is the canonical way to expose a right-click affordance (context menu, tab action overlay) to touch users. Do NOT hand-roll a `setTimeout` + `touchmove` gesture; reuse this hook.
@@ -940,6 +1152,28 @@ The second case is the one that gets missed: an SVG appended with `appendChild` 
 
 ---
 
+## Table of Contents (`components/Toc`)
+
+Any long scrollable surface that wants a jump list uses the shared TOC. Do NOT re-implement the floating button, the panel, or its keyboard handling: users have muscle memory from File Preview, and a second copy drifts from it.
+
+| Piece               | Location                            | Responsibility                                                                      |
+| ------------------- | ----------------------------------- | ----------------------------------------------------------------------------------- |
+| `<TocOverlay>`      | `components/Toc/TocOverlay.tsx`     | The button + panel, entry rendering, Arrow/Home/End navigation, focus-first-on-open |
+| `useTocOverlay()`   | `hooks/ui/useTocOverlay.ts`         | Open state, toggle hotkey, Escape, click-outside, focus restore on close            |
+| `computeTocWidth()` | `components/Toc/tocWidth.ts`        | Panel width from the longest entry (clamped 200-500px)                              |
+| `extractHeadings()` | `components/Toc/extractHeadings.ts` | Markdown headings -> `TocEntry[]`, code-fence aware, `github-slugger` slugs         |
+
+Consumers: `FilePreviewToc` (markdown files) and `AIOverviewTab` (Director's Notes, both reading modes).
+
+Two things a host must get right:
+
+- **Anchors have to exist.** The default scroll path is `containerRef.querySelector('#slug')`. For rendered markdown that means passing `rehype-slug` so headings carry ids matching `extractHeadings`' slugs. For non-heading targets (Director's Notes' `SectionCard`s, the virtualized Fast tier) either put a matching `id` on the target or pass `onSelectEntry` and handle the scroll yourself.
+- **The keydown must reach the hook.** `handleKeyDown` fires from the element that has DOM focus, and keys bubble UP. If an ancestor owns focus, the hook never sees the hotkey. Focus the scroll region itself - in Director's Notes the tab exposes a `TabFocusHandle` whose `focus()` targets the content region for exactly this reason.
+
+Escape ordering is the host's call. On a layer-stack modal, delegate to `closeIfOpen()` first and only close the modal when it returns false, so Escape dismisses the panel before the modal.
+
+---
+
 ## Tab System
 
 Each agent supports multiple AI tabs within its workspace. Tab management hooks live in `src/renderer/hooks/tabs/`.
@@ -983,7 +1217,7 @@ Each tab has an `AITab` type with:
 - `handleCloseTabsLeft()` / `handleCloseTabsRight()` - close tabs on one side of active
 - `handleCloseCurrentTab()` - returns `CloseCurrentTabResult` indicating which tab type was closed
 - `handleTabReorder(fromIndex, toIndex)` - reorder AI tabs
-- `handleUnifiedTabReorder(fromIndex, toIndex)` - reorder the unified tab bar (mixes AI, file, browser, terminal)
+- `handleUnifiedTabReorder(fromIndex, toIndex)` - reorder the unified tab bar (mixes AI, file, browser, terminal, and tiled-group chips). A tiled group is ONE unified tab and drags/reorders as a single unit like any other chip; its panes are referenced by the group's layout tree, not by `unifiedTabOrder`, so moving the chip never disturbs the tiling.
 - `handleRequestTabRename(tabId)` - open rename modal
 - `handleTabStar(tabId, starred)` - pin/unpin
 - `handleTabMarkUnread(tabId)` - mark unread
@@ -999,6 +1233,33 @@ Each tab has an `AITab` type with:
 - `handleFileTabNavigateBack()` / `handleFileTabNavigateForward()` - per-file-tab navigation history
 
 The hook also returns selectors: `activeTab`, `unifiedTabs`, `activeFileTab`, `activeBrowserTab`, and the file-tab history state (`fileTabBackHistory`, `fileTabForwardHistory`, `fileTabCanGoBack`, `fileTabCanGoForward`).
+
+### Tiled pane focus - move the caret, not just the ring
+
+A tab group's `focusedPaneId` drives the focus RING and input routing. It does **not**
+move DOM focus, so a keyboard pane switch alone leaves the caret in the previous
+pane and the user's next keystroke goes to the wrong place.
+
+The keyboard pane commands in `useTilingShortcuts` therefore publish a one-shot
+`paneFocusRequest` (the destination leaf id) on `uiStore` whenever they move pane
+focus - `focusPane`, `cyclePane`, `splitFocusedPane`, and `closeFocusedPane` when
+the group survives. `MainPanelContent` consumes it (clearing it immediately so a
+stale request can't re-steal focus on a later remount) and routes focus by pane
+kind: terminal panes go to that tab's xterm via `TerminalViewHandle.focusTerminal(tabId)`,
+AI panes to the shared chat textarea. Browser panes are skipped - the webview already
+takes Chromium input off `groupFocusedBrowserTabId` - and file panes have no text
+input to land in. It also resets `activeFocus` to `'main'`, because the pane
+shortcuts are not gated on it and can fire while the Left/Right Bar owns it.
+
+Two things to preserve when touching this:
+
+- **Use `focusTerminal(tabId)`, never `focusActiveTerminal()`.** A tiled terminal pane
+  does not set `activeTerminalTabId` (`focusPaneInSession` only syncs `activeTabId`,
+  and only for AI panes), so the "active" variant lands on the wrong terminal or none.
+- **Keep it a request, not an effect keyed on `focusedPaneId`.** A mouse press anywhere
+  in a pane also moves `focusedPaneId`, so a derived effect would yank the caret into
+  the AI input mid-drag and break text selection in the conversation. Keyboard-only
+  keeps the focus steal tied to explicit user intent.
 
 ---
 

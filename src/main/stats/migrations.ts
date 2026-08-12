@@ -278,7 +278,7 @@ function migrateV4(db: Database.Database): void {
  * Migration v5: Add is_worktree column to query_events and session_lifecycle.
  *
  * Uses PRAGMA table_info to check whether the column already exists before
- * issuing ALTER TABLE — this lets the migration be safely re-applied if a
+ * issuing ALTER TABLE - this lets the migration be safely re-applied if a
  * previous run partially completed before being recorded.
  */
 function migrateV5(db: Database.Database): void {
@@ -310,7 +310,7 @@ function migrateV6(db: Database.Database): void {
 /**
  * Migration v7: Add shortcut_usage_daily table.
  *
- * Per-day rolled-up counter — one row per local-date with the total number of
+ * Per-day rolled-up counter - one row per local-date with the total number of
  * keyboard shortcuts fired. The renderer increments via UPSERT so the table
  * stays bounded (one row per day across the lifetime of the app).
  */

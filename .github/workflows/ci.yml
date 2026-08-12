@@ -17,15 +17,20 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx prettier --check .
-      - run: npx eslint src/
+      # Use the npm script rather than a bare `eslint src/` so CI and a local
+      # `npm run lint:eslint` cannot drift apart. It chains the second,
+      # dash-rule-only pass over src/__tests__ and scripts.
+      - run: npm run lint:eslint
       - run: npm run lint # TypeScript type checking
 
   test:
+    name: Test (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
     strategy:
       # Run the suite on both platforms; don't cancel one when the other fails.
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        shard: [1, 2]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -34,4 +39,4 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npm run test
+      - run: npm run test -- --shard=${{ matrix.shard }}/2

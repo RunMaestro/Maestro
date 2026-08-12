@@ -21,7 +21,7 @@ import {
 } from '../../utils/ipcHandler';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
-import type { SessionsData, AgentConfigsData } from '../../stores/types';
+import type { SessionsData, AgentConfigsData, SettingsStoreInterface } from '../../stores/types';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { SshRemoteSettingsStore } from '../../utils/ssh-remote-resolver';
 import type { ToolType } from '../../../shared/types';
@@ -51,6 +51,8 @@ export interface CrossAgentHandlerDependencies {
 	sessionsStore: Store<SessionsData>;
 	/** Per-agent config values (context window, model, effort, custom env vars). */
 	agentConfigsStore: Store<AgentConfigsData>;
+	/** App settings store; read for the `crossAgentMentionsWritable` opt-in. */
+	settingsStore: SettingsStoreInterface;
 	/** SSH remote store adapter; null disables remote execution. */
 	sshStore: SshRemoteSettingsStore | null;
 	/** Per-agent custom env var resolver (fallback when no session override). */
@@ -68,6 +70,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 		getAgentDetector,
 		sessionsStore,
 		agentConfigsStore,
+		settingsStore,
 		sshStore,
 		getCustomEnvVars,
 		safeSend,
@@ -130,11 +133,16 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					createdAt: Date.now(),
 				};
 
+				// Read-only by default; the user can opt into read/write consults via
+				// Settings > General > Cross-Agent Mentions.
+				const writable = settingsStore.get('crossAgentMentionsWritable', false) as boolean;
+
 				logger.info(`${LOG_CONTEXT} Dispatching cross-agent request`, LOG_CONTEXT, {
 					requestId,
 					sourceSessionId: payload.sourceSessionId,
 					targetSessionId: payload.targetSessionId,
 					transcriptEntries: payload.transcript.length,
+					writable,
 				});
 
 				// Fire-and-forget: startCrossAgentRequest resolves once the spawn is
@@ -148,6 +156,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					getTargetSession,
 					getAgentConfig,
 					getCustomEnvVars,
+					writable,
 					onChunk: (chunk: CrossAgentResponseChunk) => safeSend('cross-agent:chunk', chunk),
 				}).catch((err) => {
 					logger.error(`${LOG_CONTEXT} Cross-agent dispatch failed`, LOG_CONTEXT, {

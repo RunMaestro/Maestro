@@ -54,6 +54,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { isImageFile } from '../../../shared/gitUtils';
+import { getFileTabMediaKind } from '../../utils/mediaTabs';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
 	getLanguageFromFilename,
@@ -61,6 +62,7 @@ import {
 	isBinaryExtension,
 	formatFileSize,
 	countMarkdownTasks,
+	toggleTaskCheckboxAtLine,
 	extractHeadings,
 	isReadableTextPreview,
 	isCodeFile,
@@ -80,6 +82,7 @@ import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
+import { computeTocWidth } from '../Toc';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
 import {
@@ -89,6 +92,7 @@ import {
 	domScrollToLineByAttr,
 } from './lineSync';
 import { rehypeSourceLine } from './rehypeSourceLine';
+import { TaskCheckbox } from './TaskCheckbox';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -97,7 +101,7 @@ import { logger } from '../../utils/logger';
 const MarkdownPreviewFast = lazy(() => import('./markdownFast'));
 
 // Lazy-loaded Fast tier preview for plain text and code files. Same lazy
-// strategy as the markdown Fast tier — small text files don't pay for
+// strategy as the markdown Fast tier - small text files don't pay for
 // TanStack Virtual + Shiki until a large file triggers the Fast tier.
 const TextPreviewFast = lazy(() => import('./textFast'));
 
@@ -208,7 +212,7 @@ export const FilePreview = React.memo(
 		const containerRef = useRef<HTMLDivElement>(null);
 		// Imperative handle for the CodeMirror-based markdown/text edit editor.
 		// Replaces the raw <textarea> ref the previous implementation passed
-		// around — see ./markdownEditor for the surface this exposes.
+		// around - see ./markdownEditor for the surface this exposes.
 		const editorRef = useRef<MarkdownEditorHandle>(null);
 		const markdownContainerRef = useRef<HTMLDivElement>(null);
 		const layerIdRef = useRef<string>();
@@ -309,7 +313,7 @@ export const FilePreview = React.memo(
 		useEffect(() => {
 			if (!pendingScrollToLine || !file) return;
 			// The editor only exists in edit mode. If we're still in preview,
-			// flip to edit first — the next render lands back here with the
+			// flip to edit first - the next render lands back here with the
 			// editor mounted and the handle available.
 			if (!markdownEditMode) {
 				setMarkdownEditMode(true);
@@ -345,13 +349,30 @@ export const FilePreview = React.memo(
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
+		// Playable audio/video. Shares one predicate with MediaPlaybackHost and the
+		// Command palette so all three agree on what counts as media.
+		// `file.name` already carries the extension (tab name + extension, joined
+		// upstream), which is what getFileTabMediaKind needs.
+		//
+		// A media file tab never reaches this component - MainPanelContent routes it
+		// straight to the player. This flag is the guard for any other caller, so a
+		// stream URL renders the "open externally" card instead of being dumped on
+		// screen as text.
+		const isMedia = useMemo(
+			() => (file ? getFileTabMediaKind(file.name, file.content) !== null : false),
+			[file]
+		);
+
 		// Check for binary files - either by extension or by content analysis
 		// Memoize to avoid recalculating on every render (content analysis can be expensive)
+		// Media counts as binary so every "text-only" guard below (edit mode,
+		// preview tiers, TOC, search) excludes it, and it lands on the binary card.
 		const isBinary = useMemo(() => {
 			if (!file) return false;
 			if (isImage) return false;
+			if (isMedia) return true;
 			return isBinaryExtension(file.name) || isBinaryContent(file.content);
-		}, [isImage, file]);
+		}, [isImage, isMedia, file]);
 
 		// Any non-binary, non-image file can be edited as text
 		const isEditableText = !isImage && !isBinary;
@@ -363,7 +384,7 @@ export const FilePreview = React.memo(
 		}, [file?.content]);
 
 		// Choose preview tier based on file size + line shape. Applies to all
-		// text-like content (markdown, plain text, source code) — binary and
+		// text-like content (markdown, plain text, source code) - binary and
 		// image files always stay in Rich. Tier is memoized on path so
 		// switching tabs and coming back doesn't re-decide.
 		//
@@ -401,7 +422,7 @@ export const FilePreview = React.memo(
 		// Tier-aware search adapter, memoized so its identity only changes when
 		// the routing actually flips. useFilePreviewSearch lists searchAdapter
 		// in its effect dependency array, so an unstable identity would re-run
-		// the effect on every render — refs are stable so they don't belong in
+		// the effect on every render - refs are stable so they don't belong in
 		// the deps even though the callbacks close over them.
 		//   Fast markdown  → markdownFast handle (block-virtualized hit map)
 		//   Fast text/code → textFast handle (page-virtualized hit map)
@@ -560,23 +581,9 @@ export const FilePreview = React.memo(
 			return extractHeadings(file.content);
 		}, [isMarkdown, file?.content]);
 
-		// Compute dynamic ToC overlay width based on longest heading text
-		const tocWidth = useMemo(() => {
-			if (tocEntries.length === 0) return 200;
-			const MIN_WIDTH = 200;
-			const MAX_WIDTH = 500;
-			const CHAR_WIDTH = 7.5; // approximate px per character at ~0.8rem
-			const BASE_PADDING = 24; // px padding inside buttons
-			const HEADER_EXTRA = 100; // "CONTENTS" header + headings count badge
-
-			let maxNeeded = HEADER_EXTRA;
-			for (const entry of tocEntries) {
-				const indent = (entry.level - 1) * 12 + 8;
-				const textWidth = entry.text.length * CHAR_WIDTH;
-				maxNeeded = Math.max(maxNeeded, indent + textWidth + BASE_PADDING);
-			}
-			return Math.min(Math.max(Math.ceil(maxNeeded), MIN_WIDTH), MAX_WIDTH);
-		}, [tocEntries]);
+		// Dynamic ToC overlay width - shared with Director's Notes so an equally
+		// long heading yields an equally wide panel on both surfaces.
+		const tocWidth = useMemo(() => computeTocWidth(tocEntries), [tocEntries]);
 
 		const scrollMarkdownToBoundary = useCallback((direction: 'top' | 'bottom') => {
 			// Use contentRef which is the actual scrollable container
@@ -648,6 +655,80 @@ export const FilePreview = React.memo(
 			}
 		}, []);
 
+		// Ticking a task checkbox in the rendered preview writes the file straight
+		// to disk, so back-to-back clicks need two guards. `pendingTaskContentRef`
+		// holds the document the previous click produced, because `file.content` is
+		// still the pre-write copy until the tab re-reads it - toggling twice from
+		// the stale copy would undo the first flip. `taskWriteChainRef` serializes
+		// the writes so the last click, not the fastest write, wins on disk.
+		const pendingTaskContentRef = useRef<string | null>(null);
+		const taskWriteChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+		useEffect(() => {
+			pendingTaskContentRef.current = null;
+		}, [file?.content]);
+
+		const handleToggleTask = useCallback(
+			async (line: number): Promise<boolean> => {
+				if (!file || !onSave) return false;
+				if (hasChanges) {
+					// The preview renders the file on disk, not the unsaved buffer, so a
+					// write here would silently drop the user's in-editor edits.
+					notifyToast({
+						color: 'yellow',
+						title: 'Unsaved Changes',
+						message: 'Save or discard your edits before ticking tasks.',
+					});
+					return false;
+				}
+
+				const base = pendingTaskContentRef.current ?? file.content;
+				const result = toggleTaskCheckboxAtLine(base, line);
+				// No task marker on that line: the render is out of step with the
+				// source. Leave the file alone rather than rewriting the wrong line.
+				if (!result) return false;
+				pendingTaskContentRef.current = result.content;
+
+				const revert = () => {
+					// Only roll back if no later click has already moved past us.
+					if (pendingTaskContentRef.current === result.content) {
+						pendingTaskContentRef.current = base;
+					}
+				};
+
+				const write = taskWriteChainRef.current.then(() => onSave(file.path, result.content));
+				taskWriteChainRef.current = write.catch(() => {});
+
+				try {
+					if ((await write) === false) {
+						// User cancelled the save-location dialog.
+						revert();
+						return false;
+					}
+					// Keep the file-change poller from flagging our own write.
+					try {
+						const stat = await window.maestro?.fs?.stat(file.path, sshRemoteId);
+						if (stat?.modifiedAt) {
+							lastModifiedRef.current = new Date(stat.modifiedAt).getTime();
+						}
+					} catch {
+						// Non-critical - worst case the banner appears briefly
+					}
+					return true;
+				} catch (err) {
+					revert();
+					logger.error('Failed to toggle task checkbox:', undefined, err);
+					notifyToast({
+						color: 'red',
+						title: 'Save Failed',
+						message: err instanceof Error ? err.message : 'Could not update the task.',
+					});
+					return false;
+				}
+			},
+			[file, onSave, hasChanges, sshRemoteId]
+		);
+
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
@@ -666,6 +747,24 @@ export const FilePreview = React.memo(
 			});
 			return {
 				...components,
+				// GFM task checkboxes. `rehypeSourceLine` stamps each one with the
+				// line its `- [ ]` marker lives on, which is what lets a click edit
+				// the file. Everything else (raw HTML inputs passed through by
+				// rehype-raw) stays inert - a preview is not a form.
+				input: ({ node: _node, type, checked, ...props }: any) => {
+					const line = Number(props['data-source-line']);
+					if (type === 'checkbox' && onSave && Number.isFinite(line)) {
+						return (
+							<TaskCheckbox
+								line={line}
+								checked={!!checked}
+								theme={theme}
+								onToggle={handleToggleTask}
+							/>
+						);
+					}
+					return <input type={type} checked={checked} disabled readOnly {...props} />;
+				},
 				img: ({ src, alt, ...props }: any) => {
 					// Check if this image came from file tree (set by remarkFileLinks)
 					const isFromTree = props['data-maestro-from-tree'] === 'true';
@@ -711,6 +810,8 @@ export const FilePreview = React.memo(
 			file,
 			showRemoteImages,
 			sshRemoteId,
+			onSave,
+			handleToggleTask,
 			effectiveBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
@@ -939,7 +1040,7 @@ export const FilePreview = React.memo(
 						lastModifiedRef.current = new Date(stat.modifiedAt).getTime();
 					}
 				} catch {
-					// Non-critical — worst case the banner appears briefly
+					// Non-critical - worst case the banner appears briefly
 				}
 				notifyCenterFlash({ message: 'File Saved', color: 'theme' });
 			} catch (err) {
@@ -1289,6 +1390,15 @@ export const FilePreview = React.memo(
 				} else {
 					failClipboardToast('Failed to Copy Image');
 				}
+			} else if (isMedia) {
+				// The "content" of a media tab is an internal stream URL, which is
+				// useless on the clipboard. Copy the file path instead.
+				const ok = await safeClipboardWrite(file.path);
+				if (ok) {
+					flashCopiedToClipboard(undefined, 'Path Copied');
+				} else {
+					failClipboardToast('Failed to Copy Path');
+				}
 			} else {
 				const ok = await safeClipboardWrite(file.content);
 				if (ok) {
@@ -1358,7 +1468,7 @@ export const FilePreview = React.memo(
 				// All three tiers (Rich / Fast / Giant) now share the same search
 				// bar. Giant tier exposes findInContent/scrollToMatch through its
 				// adapter so the count + navigation flow through the same UI.
-				// Cmd+Shift+F is goToFiles — let it bubble to the global handler.
+				// Cmd+Shift+F is goToFiles - let it bubble to the global handler.
 				setSearchOpen(true);
 				setTimeout(() => searchInputRef.current?.focus(), 0);
 			} else if (
@@ -1367,7 +1477,7 @@ export const FilePreview = React.memo(
 				isEditableText &&
 				(markdownEditMode || hasChanges)
 			) {
-				// Cmd+S to save — works in edit mode, and also in preview when there
+				// Cmd+S to save - works in edit mode, and also in preview when there
 				// are still unsaved edits from a prior edit session.
 				e.preventDefault();
 				e.stopPropagation();
@@ -1586,7 +1696,7 @@ export const FilePreview = React.memo(
 						<RefreshCw className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
 						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
 							{hasChanges
-								? 'File changed on disk. You have unsaved edits — reloading will discard them.'
+								? 'File changed on disk. You have unsaved edits - reloading will discard them.'
 								: 'File changed on disk.'}
 						</span>
 						<div className="flex items-center gap-2 shrink-0">
@@ -1745,7 +1855,7 @@ export const FilePreview = React.memo(
 										}}
 										placeholder={
 											searchMode === 'jq'
-												? 'jq filter — .field, select(.x == "y"), keys, contains("...")'
+												? 'jq filter - .field, select(.x == "y"), keys, contains("...")'
 												: searchKind === 'line'
 													? 'Go to line number…'
 													: searchKind === 'regex'
@@ -1971,7 +2081,7 @@ export const FilePreview = React.memo(
 						</div>
 					) : isEditableText && markdownEditMode ? (
 						// Edit mode - CodeMirror 6 editor for any text file.
-						// Key on file path so switching files remounts the editor —
+						// Key on file path so switching files remounts the editor -
 						// keeps each file's undo history isolated (the previous
 						// textarea-based implementation got that "for free" since
 						// changing value reset the input).
@@ -1995,7 +2105,7 @@ export const FilePreview = React.memo(
 							onKeyDown={(e) => {
 								// CodeMirror's defaultKeymap already binds Cmd/Ctrl+ArrowUp/Down
 								// to doc start/end, PageUp/PageDown for paging, and the usual
-								// selection / word-jump shortcuts — no need to reimplement them
+								// selection / word-jump shortcuts - no need to reimplement them
 								// against a textarea ref. We only intercept the app-level
 								// shortcuts (save, exit edit mode, toggle preview/edit).
 								//
@@ -2025,7 +2135,7 @@ export const FilePreview = React.memo(
 						/>
 					) : isHtml && htmlRenderMode && !markdownEditMode ? (
 						// Rendered HTML preview. Feeds file.content into an iframe via
-						// srcDoc so local and SSH-remote files work the same way — the
+						// srcDoc so local and SSH-remote files work the same way - the
 						// bytes are already in memory. Sandbox lets scripts/popups/forms
 						// run but withholds same-origin so the page cannot reach the host
 						// renderer.

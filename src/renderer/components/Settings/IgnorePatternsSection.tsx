@@ -133,7 +133,7 @@ export function IgnorePatternsSection({
 					<p className="text-[10px] uppercase font-bold opacity-50 mb-1">File Indexing</p>
 				)}
 				<p className="font-semibold mb-1">{title}</p>
-				<p className="text-xs opacity-60 mb-3">{description}</p>
+				<p className="text-xs opacity-70 mb-3">{description}</p>
 
 				{/* Honor .gitignore checkbox (optional) */}
 				{showHonorGitignore && onHonorGitignoreChange && (

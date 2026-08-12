@@ -11,11 +11,18 @@ export type { ModalProps, ModalFooterProps } from './Modal';
 export { FormInput } from './FormInput';
 export type { FormInputProps } from './FormInput';
 
-export { EmojiPickerField, GroupAppearancePicker } from './EmojiPickerField';
-export type { EmojiPickerFieldProps, GroupAppearancePickerProps } from './EmojiPickerField';
+export { EmojiPickerField, EmojiPickerOverlay, GroupAppearancePicker } from './EmojiPickerField';
+export type {
+	EmojiPickerFieldProps,
+	EmojiPickerOverlayProps,
+	GroupAppearancePickerProps,
+} from './EmojiPickerField';
 
 export { ToggleSwitch } from './ToggleSwitch';
 export type { ToggleSwitchProps } from './ToggleSwitch';
+
+export { CollapsedCommandsNotice } from './CollapsedCommandsNotice';
+export type { CollapsedCommandsNoticeProps } from './CollapsedCommandsNotice';
 
 export { RadioGroup } from './RadioGroup';
 export type { RadioGroupProps, RadioOption } from './RadioGroup';
@@ -39,4 +46,14 @@ export type { HoverTooltipProps } from './HoverTooltip';
 
 export { ResizeHandles } from './ResizeHandles';
 
-export { EscCloseHint } from './EscCloseHint';
+export { CalendarPicker } from './CalendarPicker';
+export type { CalendarPickerProps } from './CalendarPicker';
+
+export { EscCloseButton } from './EscCloseButton';
+export type { EscCloseButtonProps } from './EscCloseButton';
+
+export { CopyIconButton } from './CopyIconButton';
+export type { CopyIconButtonProps } from './CopyIconButton';
+
+export { GitChangeCounts } from './GitChangeCounts';
+export type { GitChangeCountsProps } from './GitChangeCounts';

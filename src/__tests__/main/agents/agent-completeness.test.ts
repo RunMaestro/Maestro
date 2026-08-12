@@ -88,6 +88,7 @@ describe('Agent Completeness', () => {
 						'supportsModelSelection',
 						'requiresPromptToStart',
 						'supportsStreamJsonInput',
+						'supportsPromptViaStdin',
 						'supportsThinkingDisplay',
 						'supportsContextMerge',
 						'supportsContextExport',

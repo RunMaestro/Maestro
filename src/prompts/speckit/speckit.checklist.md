@@ -95,7 +95,7 @@ You **MUST** consider the user input before proceeding (if not empty).
       - Depth calibration (e.g., "Is this a lightweight pre-commit sanity list or a formal release gate?")
       - Audience framing (e.g., "Will this be used by the author only or peers during PR review?")
       - Boundary exclusion (e.g., "Should we explicitly exclude performance tuning items this round?")
-      - Scenario class gap (e.g., "No recovery flows detected—are rollback / partial failure paths in scope?")
+      - Scenario class gap (e.g., "No recovery flows detected - are rollback / partial failure paths in scope?")
 
    Question formatting rules:
    - If presenting options, generate a compact table with columns: Option | Candidate | Why It Matters

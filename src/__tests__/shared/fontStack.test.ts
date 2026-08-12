@@ -1,5 +1,5 @@
 /**
- * Tests for shared/fontStack.ts — monospace fallback for the interface font.
+ * Tests for shared/fontStack.ts - monospace fallback for the interface font.
  */
 
 import { describe, it, expect } from 'vitest';

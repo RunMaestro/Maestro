@@ -98,13 +98,13 @@ Agents support multiple AI conversation tabs and file preview tabs in a unified 
 
 ### Critical Invariant: `unifiedTabOrder` Must Stay in Sync
 
-**Every tab in `aiTabs` or `filePreviewTabs` MUST have a corresponding entry in `unifiedTabOrder`.** The TabBar renders from `unifiedTabOrder` — tabs missing from this array are invisible even if their content renders.
+**Every tab in `aiTabs` or `filePreviewTabs` MUST have a corresponding entry in `unifiedTabOrder`.** The TabBar renders from `unifiedTabOrder` - tabs missing from this array are invisible even if their content renders.
 
 ```typescript
 // Session tab state (three arrays that MUST stay in sync)
 session.aiTabs: AITab[]                    // AI conversation tab data
 session.filePreviewTabs: FilePreviewTab[]  // File preview tab data
-session.unifiedTabOrder: UnifiedTabRef[]   // Visual order — TabBar source of truth
+session.unifiedTabOrder: UnifiedTabRef[]   // Visual order - TabBar source of truth
 
 session.activeTabId: string                // Active AI tab
 session.activeFileTabId: string | null     // Active file tab (null if AI tab active)
@@ -115,7 +115,7 @@ session.activeFileTabId: string | null     // Active file tab (null if AI tab ac
 Always update both the tab array AND `unifiedTabOrder`:
 
 ```typescript
-// CORRECT — tab appears in TabBar
+// CORRECT - tab appears in TabBar
 return {
 	...s,
 	aiTabs: [...s.aiTabs, newTab],
@@ -123,12 +123,12 @@ return {
 	unifiedTabOrder: [...s.unifiedTabOrder, { type: 'ai', id: newTabId }],
 };
 
-// WRONG — tab content renders but no tab visible
+// WRONG - tab content renders but no tab visible
 return {
 	...s,
 	aiTabs: [...s.aiTabs, newTab],
 	activeTabId: newTabId,
-	// unifiedTabOrder not updated — ghost tab!
+	// unifiedTabOrder not updated - ghost tab!
 };
 ```
 
@@ -148,8 +148,8 @@ return {
 
 ### Shared Utilities (`tabHelpers.ts`)
 
-- **`buildUnifiedTabs(session)`** — Builds the unified tab list from session data. Follows `unifiedTabOrder` then appends orphaned tabs as a safety net. Single source of truth used by both `useTabHandlers.ts` and `tabStore.ts`.
-- **`ensureInUnifiedTabOrder(order, type, id)`** — Returns order unchanged if tab is present, appends it otherwise. Zero-cost no-op when no repair needed (returns same reference).
+- **`buildUnifiedTabs(session)`** - Builds the unified tab list from session data. Follows `unifiedTabOrder` then appends orphaned tabs as a safety net. Single source of truth used by both `useTabHandlers.ts` and `tabStore.ts`.
+- **`ensureInUnifiedTabOrder(order, type, id)`** - Returns order unchanged if tab is present, appends it otherwise. Zero-cost no-op when no repair needed (returns same reference).
 
 ## 7. Execution Queue
 
@@ -326,7 +326,7 @@ When debugging visual issues (tooltips clipped, elements not visible, scroll beh
 
 3. **Portal Escape:** For overlays/tooltips that get clipped, use `createPortal(el, document.body)` to escape stacking context
 
-4. **Fixed Positioning:** Elements with `position: fixed` inside transformed parents won't position relative to viewport—check ancestor transforms
+4. **Fixed Positioning:** Elements with `position: fixed` inside transformed parents won't position relative to viewport - check ancestor transforms
 
 **Common fixes:**
 
@@ -341,7 +341,7 @@ element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 
 ## 12. Encore Features (Feature Gating)
 
-Optional features that not all users need should be gated behind Encore Features — disabled by default, completely invisible when off (no shortcuts, menus, or command palette entries).
+Optional features that not all users need should be gated behind Encore Features - disabled by default, completely invisible when off (no shortcuts, menus, or command palette entries).
 
 **Critical architecture detail:** `encoreFeatures` state lives in App.tsx's `useSettings()` and is passed to SettingsModal as **props** (not consumed via SettingsModal's own `useSettings()`). This ensures toggles propagate immediately to App.tsx for gating.
 
@@ -349,25 +349,25 @@ Optional features that not all users need should be gated behind Encore Features
 
 When adding a new Encore Feature, gate **all** access points:
 
-1. **Type flag** — Add to `EncoreFeatureFlags` in `src/renderer/types/index.ts`
-2. **Default** — Set to `false` in `DEFAULT_ENCORE_FEATURES` in `useSettings.ts`
-3. **Toggle UI** — Add section in SettingsModal's Encore tab (follow Director's Notes pattern)
-4. **App.tsx** — Gate modal rendering and callback props on `encoreFeatures.yourFeature`
-5. **Keyboard shortcuts** — Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`
-6. **Hamburger menu** — Make the setter optional, conditionally render the menu item in `SessionList.tsx`
-7. **Command palette** — Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
+1. **Type flag** - Add to `EncoreFeatureFlags` in `src/renderer/types/index.ts`
+2. **Default** - Set to `false` in `DEFAULT_ENCORE_FEATURES` in `useSettings.ts`
+3. **Toggle UI** - Add section in SettingsModal's Encore tab (follow Director's Notes pattern)
+4. **App.tsx** - Gate modal rendering and callback props on `encoreFeatures.yourFeature`
+5. **Keyboard shortcuts** - Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`
+6. **Hamburger menu** - Make the setter optional, conditionally render the menu item in `SessionList.tsx`
+7. **Command palette** - Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
 
 ### Reference Implementations
 
-**Director's Notes** — First Encore Feature, canonical example:
+**Director's Notes** - First Encore Feature, canonical example:
 
 - **Flag:** `encoreFeatures.directorNotes` in `EncoreFeatureFlags`
 - **App.tsx gating:** Modal render wrapped in `{encoreFeatures.directorNotes && directorNotesOpen && (…)}`, callback passed as `encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined`
 - **Keyboard shortcut:** `ctx.encoreFeatures?.directorNotes` guard in `useMainKeyboardHandler.ts`
 - **Hamburger menu:** `setDirectorNotesOpen` made optional in `SessionList.tsx`, button conditionally rendered with `{setDirectorNotesOpen && (…)}`
-- **Command palette:** `onOpenDirectorNotes` already conditionally renders in `QuickActionsModal.tsx` — passing `undefined` from App.tsx is sufficient
+- **Command palette:** `onOpenDirectorNotes` already conditionally renders in `QuickActionsModal.tsx` - passing `undefined` from App.tsx is sufficient
 
-**Maestro Cue** — Event-driven automation, second Encore Feature:
+**Maestro Cue** - Event-driven automation, second Encore Feature:
 
 - **Flag:** `encoreFeatures.maestroCue` in `EncoreFeatureFlags`
 - **App.tsx gating:** Cue modal, hooks (`useCue`, `useCueAutoDiscovery`), and engine lifecycle gated on `encoreFeatures.maestroCue`
@@ -382,21 +382,21 @@ See [CONTRIBUTING.md → Encore Features](CONTRIBUTING.md#encore-features-featur
 
 ## 13. Browser Tab Keyboard Interception
 
-When a `<webview>` has focus, keyboard events are trapped in its guest Chromium process — the renderer's `window` keydown handler never sees them. Maestro uses a three-layer approach to ensure app shortcuts (tab cycling, Cmd+L, etc.) still work:
+When a `<webview>` has focus, keyboard events are trapped in its guest Chromium process - the renderer's `window` keydown handler never sees them. Maestro uses a three-layer approach to ensure app shortcuts (tab cycling, Cmd+L, etc.) still work:
 
-1. **Main process `before-input-event`** — intercepts shortcuts before the guest page sees them, sends via `browser-tab:shortcutKey` IPC
-2. **Renderer IPC listener** — blurs the webview and re-dispatches as a native `KeyboardEvent` on `window`
-3. **Focus-steal prevention** — `BrowserTabView` blocks auto-focus from page content (autofocus elements, `window.focus()`) so the webview only captures keyboard input after an explicit user click
+1. **Main process `before-input-event`** - intercepts shortcuts before the guest page sees them, sends via `browser-tab:shortcutKey` IPC
+2. **Renderer IPC listener** - blurs the webview and re-dispatches as a native `KeyboardEvent` on `window`
+3. **Focus-steal prevention** - `BrowserTabView` blocks auto-focus from page content (autofocus elements, `window.focus()`) so the webview only captures keyboard input after an explicit user click
 
 **Key files:** `window-manager.ts` (before-input-event + guest injection), `preload/system.ts` (IPC bridge), `useMainKeyboardHandler.ts` (IPC → dispatch), `BrowserTabView.tsx` (focus guard)
 
-**Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers.ts`) must explicitly handle `browser` type tabs — they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
+**Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers.ts`) must explicitly handle `browser` type tabs - they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
 
 See [[IPC-PATTERNS.md → Browser Tab Shortcut Forwarding]](docs/agent-guides/IPC-PATTERNS.md#browser-tab-shortcut-forwarding) for the full event flow.
 
 ## 14. Search / Filter Input ESC Pill
 
-Any search or filter input that is dismissible via Escape **must** display an inline `ESC` pill flush-right inside the input bar. This gives users a consistent visual affordance that Escape will clear or close the input — no hidden affordances.
+Any search or filter input that is dismissible via Escape **must** display an inline `ESC` pill flush-right inside the input bar. This gives users a consistent visual affordance that Escape will clear or close the input - no hidden affordances.
 
 **When this applies:**
 
@@ -432,10 +432,10 @@ Any search or filter input that is dismissible via Escape **must** display an in
 
 **Rules:**
 
-1. The pill must perform the **same action** as Escape — never have the pill diverge from the keyboard handler.
+1. The pill must perform the **same action** as Escape - never have the pill diverge from the keyboard handler.
 2. Use `theme.colors.textDim` and `text-xs font-bold opacity-50 hover:opacity-100` so the pill stays muted but discoverable.
 3. The pill is a `<button>` (focusable, click-dismissible), not decorative text.
-4. For inputs inside modals registered with the LayerStack, the pill still belongs — Escape closes the layer, the pill mirrors that.
+4. For inputs inside modals registered with the LayerStack, the pill still belongs - Escape closes the layer, the pill mirrors that.
 
 **Examples that follow this pattern:** `LogViewer.tsx`, `FileSearchModal.tsx`, `AgentSessionsModal.tsx`, `TabSwitcherModal.tsx`, `QuickActionsModal.tsx`.
 

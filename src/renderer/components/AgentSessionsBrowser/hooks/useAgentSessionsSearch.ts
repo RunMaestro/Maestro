@@ -30,7 +30,7 @@ export function useAgentSessionsSearch({
 			clearTimeout(searchTimeoutRef.current);
 		}
 
-		// Title search filters in-memory — no IPC needed
+		// Title search filters in-memory - no IPC needed
 		if (searchMode === 'title' || !search.trim()) {
 			setSearchResults([]);
 			setIsSearching(false);

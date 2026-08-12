@@ -449,10 +449,10 @@ describe('CueModal', () => {
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Default tab is 'pipeline' — editor renders with no pending token.
+			// Default tab is 'pipeline' - editor renders with no pending token.
 			expect(capturedEditorProps.initialPipelineId).toBeUndefined();
 
-			// Navigate to Dashboard and click "View in Pipeline" — handler sets
+			// Navigate to Dashboard and click "View in Pipeline" - handler sets
 			// pendingPipelineId AND switches activeTab to 'pipeline', so the
 			// editor remounts and now sees the token in its initialPipelineId prop.
 			fireEvent.click(screen.getByText('Dashboard'));
@@ -465,7 +465,7 @@ describe('CueModal', () => {
 
 			// Navigate back to Dashboard. handleSetActiveTab(non-pipeline) MUST
 			// reset pendingPipelineId to null. The editor unmounts here, so we
-			// can't read its props — that's the whole point of the regression
+			// can't read its props - that's the whole point of the regression
 			// (the next remount is where the bug manifested).
 			fireEvent.click(screen.getByText('Dashboard'));
 
@@ -479,7 +479,7 @@ describe('CueModal', () => {
 
 		it('preserves the token when navigating within the pipeline tab', () => {
 			// Defensive: handleSetActiveTab is idempotent for `tab === 'pipeline'`.
-			// Calling it with the already-active value must NOT clear the token —
+			// Calling it with the already-active value must NOT clear the token -
 			// otherwise rapid re-clicks of the Pipeline Editor tab would race
 			// against a still-pending "View in Pipeline" navigation.
 			mockUseCueReturn = {
@@ -636,7 +636,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Pipeline is still dirty (save hasn't completed) but pipelineSaving
-			// is true — the user clicked Save and now wants to dismiss the modal
+			// is true - the user clicked Save and now wants to dismiss the modal
 			// while the IPC round-trip continues in the background.
 			act(() => {
 				useCueDirtyStore.getState().setPipelineDirty(true);

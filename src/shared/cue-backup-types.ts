@@ -1,5 +1,5 @@
 /**
- * Cue backup — shared types between main and renderer.
+ * Cue backup - shared types between main and renderer.
  *
  * A backup is a zip file capturing every workspace's `.maestro/cue.yaml`
  * plus the contents of `.maestro/prompts/` so that Cue configuration can
@@ -61,10 +61,10 @@ export interface CueBackupRestoreResult {
 
 /**
  * Per-file diff status comparing a backup file against its live counterpart:
- *  - `unchanged`  — live file exists and matches the backup byte-for-byte;
+ *  - `unchanged`  - live file exists and matches the backup byte-for-byte;
  *                   the UI should hide Diff/Restore for these.
- *  - `changed`    — live file exists but differs.
- *  - `missing-live` — no live file at the original path; restore would
+ *  - `changed`    - live file exists but differs.
+ *  - `missing-live` - no live file at the original path; restore would
  *                     recreate it, diff would show the backup as additions.
  */
 export type CueBackupFileDiffStatus = 'unchanged' | 'changed' | 'missing-live';

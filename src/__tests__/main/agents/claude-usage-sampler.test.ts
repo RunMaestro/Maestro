@@ -19,8 +19,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Hoist the mock functions so vi.mock() factories — which are themselves
-// hoisted above all imports — can reference them at module-init time. Without
+// Hoist the mock functions so vi.mock() factories - which are themselves
+// hoisted above all imports - can reference them at module-init time. Without
 // vi.hoisted(), the factory closes over a `mockExecFile` that hasn't been
 // initialized yet, and the first `import` from the source module crashes
 // with "Cannot access 'mockExecFile' before initialization".
@@ -374,7 +374,7 @@ describe('claude-usage-sampler', () => {
 		});
 	});
 
-	describe('failure modes — never throw, always return null', () => {
+	describe('failure modes - never throw, always return null', () => {
 		it('returns null on ENOENT (binary missing)', async () => {
 			primeFailure(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
 			const snap = await sampleUsage({ binPath: '/nope.js', cwd: '/tmp' });

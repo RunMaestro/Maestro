@@ -210,7 +210,7 @@ describe('GitStatusWidget', () => {
 			);
 			render(<GitStatusWidget {...defaultProps} />);
 			// Component displays modifiedCount in full mode (orange text) and fileCount in compact mode
-			// When values match, multiple elements exist — scope to the full-mode span
+			// When values match, multiple elements exist - scope to the full-mode span
 			const fullMode = document.querySelector('.header-git-status-full')!;
 			expect(within(fullMode).getByText('2')).toBeInTheDocument();
 		});
@@ -243,7 +243,7 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// fileCount (compact) and modifiedCount (full) are both 1 — scope to compact span
+			// fileCount (compact) and modifiedCount (full) are both 1 - scope to compact span
 			const compact = document.querySelector('.header-git-status-compact')!;
 			expect(within(compact).getByText('1')).toBeInTheDocument();
 		});
@@ -706,7 +706,7 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// fileCount (compact) and modifiedCount (full) are both 20 — scope queries
+			// fileCount (compact) and modifiedCount (full) are both 20 - scope queries
 			const fullMode = document.querySelector('.header-git-status-full')!;
 			expect(within(fullMode).getByText('190')).toBeInTheDocument();
 			expect(within(fullMode).getByText('27')).toBeInTheDocument();
@@ -741,6 +741,79 @@ describe('GitStatusWidget', () => {
 
 			const filePath = screen.getByText('very/long/path/to/deeply/nested/file.ts');
 			expect(filePath).toHaveAttribute('title', 'very/long/path/to/deeply/nested/file.ts');
+		});
+	});
+
+	// Regression: the header clips its left cluster with overflow-hidden, so an
+	// inline `absolute top-full` tooltip was invisible on screen even though it
+	// was in the document. jsdom can't measure clipping, so pin the structural
+	// fix: the panel must be portaled out of the widget's subtree.
+	describe('tooltip portal', () => {
+		it('renders the changed-files panel outside the widget, on document.body', () => {
+			mockGetStatus.mockReturnValue(
+				createGitStatusData({
+					fileChanges: [{ path: 'src/app.ts', additions: 5, deletions: 2 }],
+				})
+			);
+			const { container } = render(<GitStatusWidget {...defaultProps} />);
+
+			fireEvent.mouseEnter(screen.getByRole('button').parentElement!);
+
+			const tooltip = screen.getByTestId('git-status-tooltip');
+			expect(container.contains(tooltip)).toBe(false);
+			expect(tooltip.parentElement).toBe(document.body);
+		});
+
+		it('unmounts the panel when the pointer leaves and the delay elapses', async () => {
+			vi.useFakeTimers();
+			try {
+				mockGetStatus.mockReturnValue(
+					createGitStatusData({
+						fileChanges: [{ path: 'src/app.ts', additions: 5, deletions: 2 }],
+					})
+				);
+				render(<GitStatusWidget {...defaultProps} />);
+				const anchor = screen.getByRole('button').parentElement!;
+
+				fireEvent.mouseEnter(anchor);
+				expect(screen.getByTestId('git-status-tooltip')).toBeInTheDocument();
+
+				fireEvent.mouseLeave(anchor);
+				act(() => {
+					vi.advanceTimersByTime(200);
+				});
+
+				expect(screen.queryByTestId('git-status-tooltip')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('keeps the panel open while the pointer is over it', async () => {
+			vi.useFakeTimers();
+			try {
+				mockGetStatus.mockReturnValue(
+					createGitStatusData({
+						fileChanges: [{ path: 'src/app.ts', additions: 5, deletions: 2 }],
+					})
+				);
+				render(<GitStatusWidget {...defaultProps} />);
+				const anchor = screen.getByRole('button').parentElement!;
+
+				fireEvent.mouseEnter(anchor);
+				const tooltip = screen.getByTestId('git-status-tooltip');
+
+				// Pointer travels from widget to panel: the close timer must be cancelled.
+				fireEvent.mouseLeave(anchor);
+				fireEvent.mouseEnter(tooltip);
+				act(() => {
+					vi.advanceTimersByTime(200);
+				});
+
+				expect(screen.getByTestId('git-status-tooltip')).toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 });

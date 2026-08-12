@@ -29,7 +29,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (24 boolean fields)
 4. **Add display name & beta status** to `src/shared/agentMetadata.ts` - add entry to the internal `AGENT_DISPLAY_NAMES` record and optionally to `BETA_AGENTS` set (both are module-private; use `getAgentDisplayName()` and `isBetaAgent()` to read them)
 5. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
-6. **Sync renderer interfaces** — add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
+6. **Sync renderer interfaces** - add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
 
 #### Conditional Steps (based on capabilities)
 
@@ -138,6 +138,7 @@ interface AgentCapabilities {
 	supportsImageInputOnResume: boolean; // Can receive images when resuming a session
 	supportsSlashCommands: boolean; // Has discoverable slash commands
 	supportsStreamJsonInput: boolean; // Accepts --input-format stream-json for image stdin
+	supportsPromptViaStdin: boolean; // CLI reads the prompt from stdin when it is not an argument
 
 	// Storage & tracking
 	supportsSessionStorage: boolean; // Persists provider sessions we can browse
@@ -146,7 +147,7 @@ interface AgentCapabilities {
 
 	// Execution behavior
 	supportsBatchMode: boolean; // Runs per-message (vs persistent process)
-	requiresPromptToStart: boolean; // No eager spawn — needs prompt to start
+	requiresPromptToStart: boolean; // No eager spawn - needs prompt to start
 	supportsStreaming: boolean; // Streams output incrementally
 	supportsModelSelection: boolean; // Supports --model flag for model selection
 
@@ -188,6 +189,7 @@ interface AgentCapabilities {
 | `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                          |
 | `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                            |
 | `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                          |
+| `supportsPromptViaStdin`        | Windows sends long prompts over stdin             | Prompt always stays in argv (~32K limit applies)                 |
 | `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                       |
 | `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                    |
 | `supportsUsageStats`            | Token usage display                               | Display hidden                                                   |
@@ -256,6 +258,7 @@ When adding a new agent, start with all capabilities set to `false`:
   supportsImageInputOnResume: false,
   supportsSlashCommands: false,
   supportsStreamJsonInput: false,
+  supportsPromptViaStdin: false,
   supportsSessionStorage: false,
   supportsCostTracking: false,
   supportsUsageStats: false,
@@ -379,6 +382,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInputOnResume: false, // true if images work on resume
 		supportsSlashCommands: false,
 		supportsStreamJsonInput: false, // true if --input-format stream-json
+		supportsPromptViaStdin: false, // true ONLY if the CLI reads the prompt from stdin - verify it
 		supportsSessionStorage: false, // Enable if you implement storage
 		supportsCostTracking: false, // Enable if API-based with costs
 		supportsUsageStats: true, // If token counts in output
@@ -1023,8 +1027,68 @@ codex exec --json resume <thread_id> "continue"
 - **Agent ID:** `copilot-cli`
 - **Binary:** `copilot`
 - **CLI Flags:** `-p/--prompt`, `--output-format json`, `--continue`, `--resume[=session-id]`, `--allow-tool`, `--deny-tool`, `--no-ask-user`, `--model`
-- **Output Parser:** `src/main/parsers/copilot-output-parser.ts` — handles concatenated JSONL (no newline separators), `assistant.message_delta` / `assistant.message` / `assistant.reasoning*` / `tool.execution_start|complete` / `session.shutdown` / `result` events, and per-process tool-name tracking.
-- **Session Storage:** `src/main/storage/copilot-session-storage.ts` — reads `~/.copilot/session-state/<session-id>/workspace.yaml` + `events.jsonl`, supports local and SSH-remote.
+- **Output Parser:** `src/main/parsers/copilot-output-parser.ts` - handles concatenated JSONL (no newline separators), `assistant.message_delta` / `assistant.message` / `assistant.reasoning*` / `tool.execution_start|complete` / `session.shutdown` / `result` events, and per-process tool-name tracking.
+- **Session Storage:** `src/main/storage/copilot-session-storage.ts` - reads `~/.copilot/session-state/<session-id>/workspace.yaml` + `events.jsonl`, supports local and SSH-remote.
 - **Error Patterns:** auth failures, rate limiting, token exhaustion (7 variants), network errors, model-availability errors, session-not-found.
 - **Model Discovery:** Fetches the `github-copilot` model list from [models.dev](https://models.dev) (3s timeout) and merges it with the user's configured model from `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
 - **Known Limitations:** Interactive PTY mode does not go through `wrapSpawnWithSsh()`, so interactive Copilot-CLI over SSH is not supported. Batch mode (`-p`) works over SSH.
+
+---
+
+### Grok CLI ✅ Fully Implemented
+
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). All facts below verified against grok v0.2.93.
+
+| Aspect           | Value                                                                                                                         |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Binary           | `grok`                                                                                                                        |
+| JSON Output      | `--output-format streaming-json` (JSONL, one event per line)                                                                  |
+| Batch Mode       | `-p/--single <prompt>` headless mode (no subcommand prefix)                                                                   |
+| Resume           | `--resume <session-id>`                                                                                                       |
+| Read-only        | `--permission-mode plan` (CLI-enforced; blocks writes headlessly without hanging)                                             |
+| YOLO Mode        | `--always-approve` (also the batch-mode arg; boolean flag so arg dedup stays clean)                                           |
+| Session ID Field | `sessionId` (camelCase, UUIDv7) on the final `end` event only; no init event exists                                           |
+| Session Storage  | `$GROK_HOME/sessions/<percent-encoded-cwd>/<session-uuid>/` (default `GROK_HOME=~/.grok`)                                     |
+| Context Window   | 500K tokens (grok-4.5 default); 200K for grok-composer-2.5-fast                                                               |
+| Model Selection  | `-m <model>`; dynamic discovery from `$GROK_HOME/models_cache.json` (or `grok models`)                                        |
+| Reasoning Effort | `--reasoning-effort` accepts none, minimal, low, medium, high, xhigh, max (default high; grok-4.5 rejects `none` server-side) |
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/grok-output-parser.ts`
+- ✅ Session Storage: `src/main/storage/grok-session-storage.ts` (Copilot-style directory-per-session layout; parses `summary.json` + `chat_history.jsonl`, local and SSH-remote)
+- ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (auth, rate limit, context exhaustion, network, invalid model)
+- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`); `supportsUsageStats` and `supportsCostTracking` are false because the stream carries neither
+
+**JSON Event Types:**
+
+Exactly four event types appear on stdout with `--output-format streaming-json`:
+
+- `thought` → reasoning delta (routed to the thinking panel via `isReasoning: true`)
+- `text` → assistant text delta (partial; deltas concatenate directly)
+- `end` → final result (`stopReason`, `sessionId`, `requestId`); the only place the session ID appears; carries no usage and no cost
+- `error` → failure (`message`); duplicated on stderr as `Error: <message>`, process exits 1
+
+**Known Limitations:**
+
+- **No tool events on stdout:** tool activity is recorded only in the on-disk session files (`events.jsonl` / `chat_history.jsonl`), so live tool display is not possible from the stream
+- **No token usage or cost anywhere in the stream:** the context usage widget shows nothing for Grok until xAI adds usage fields
+- **Interactive PTY mode is not wired:** Maestro drives Grok in batch mode only, like Codex
+- **No image input:** no image flag observed in `grok --help`
+- **No `noToolsArgs` / all-tools-off flag:** verified on v0.2.93 - `--tools ""` is treated as unset, and a hard-coded `--disallowed-tools` list would rot. Tab naming uses plan mode (`readOnlyArgs`) only. Do not add `noToolsArgs` until Grok ships a verified all-off flag.
+- **Wizard discovery is always-approve (not plan):** discovery needs read/fetch (package.json, GitHub). Spawns use `--always-approve --max-turns 8 --no-subagents` via `GROK_WIZARD_DISCOVERY_ARGS` in `src/renderer/utils/grokWizard.ts`. Residual: the model can still write under cwd within the turn budget (no Claude-style tool allowlist on Grok CLI yet). Prefer a tool allowlist if/when the CLI supports one.
+- **History is not a scrubbed vault:** transcripts under `$GROK_HOME/sessions/` (default `~/.grok/sessions/`) are plain JSONL. Maestro reads them for History without redacting user-pasted secrets - same OS-user confidentiality model as Claude/Codex.
+- **Auth/rate error patterns are multi-token only:** bare `401`/`429` are intentionally not matched (false positives on recovery UX). Tighten further when live unauthenticated/rate-limit CLI strings are captured.
+
+**Command Line Pattern:**
+
+```bash
+# Basic batch execution (Maestro's default composition)
+grok --cwd /path/to/project --always-approve --output-format streaming-json -p "prompt"
+
+# Resume a session
+grok --cwd /path/to/project --always-approve --output-format streaming-json --resume <session-id> -p "continue"
+
+# Read-only plan mode
+grok --cwd /path/to/project --output-format streaming-json --permission-mode plan -p "prompt"
+```

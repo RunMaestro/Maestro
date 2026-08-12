@@ -3,7 +3,7 @@
  *
  * Evaluates filter expressions against event payloads. Supports exact match,
  * negation, numeric comparison, glob patterns, and boolean matching.
- * All filter conditions are AND'd — every condition must pass.
+ * All filter conditions are AND'd - every condition must pass.
  */
 
 import picomatch from 'picomatch';
@@ -81,7 +81,7 @@ export function matchesFilter(
 				const isMatch = picomatch(filterValue);
 				if (!isMatch(String(payloadValue))) return false;
 			} else {
-				// Plain string — exact match
+				// Plain string - exact match
 				if (String(payloadValue) !== filterValue) return false;
 			}
 		}

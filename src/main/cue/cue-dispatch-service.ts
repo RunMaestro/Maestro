@@ -43,7 +43,7 @@ export interface CueDispatchService {
 	/**
 	 * Dispatches a subscription and returns the number of runs actually queued.
 	 * Callers (e.g. manual-trigger) use the count to tell the user when a
-	 * trigger silently accomplished nothing — e.g. all fan-out targets had
+	 * trigger silently accomplished nothing - e.g. all fan-out targets had
 	 * empty prompts. Previously this returned void and the user had no way
 	 * to distinguish "no-op" from "running in the background".
 	 *
@@ -80,7 +80,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 		): number {
 			// Telemetry: one `trigger_fired` per subscription dispatch (not per
 			// fan-out target). Best-effort and gated on Encore flags inside the
-			// telemetry module — never throws into the dispatch path.
+			// telemetry module - never throws into the dispatch path.
 			recordTriggerFired({
 				eventType: event.type,
 				subscriptionName: sub.name,
@@ -109,7 +109,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						allSessions.find((s) => s.name === targetName || s.id === targetName);
 
 					if (!targetSession) {
-						deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" — skipping`);
+						deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" - skipping`);
 						skippedTargets.push(`${targetName} (not found)`);
 						continue;
 					}
@@ -130,7 +130,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 					if (!prompt) {
 						deps.onLog(
 							'warn',
-							`[CUE] Fan-out target ${i} of "${sub.name}" has no prompt — skipping dispatch`
+							`[CUE] Fan-out target ${i} of "${sub.name}" has no prompt - skipping dispatch`
 						);
 						skippedTargets.push(`${targetName} (empty prompt)`);
 						continue;
@@ -151,7 +151,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 					);
 					dispatched++;
 				}
-				// If every fan-out target was skipped the user sees nothing happen —
+				// If every fan-out target was skipped the user sees nothing happen -
 				// surface a loud error so they can fix the broken prompts. This was
 				// the primary cause of "manual trigger doesn't start with 2 agents"
 				// reports: the debounce race wiped prompts so both targets got skipped.
@@ -165,7 +165,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			}
 
 			// For `action: notify` the prompt slot carries the resolved toast
-			// body — the validator allows empty `prompt` since the message comes
+			// body - the validator allows empty `prompt` since the message comes
 			// from the notify config + fallback chain.
 			let prompt: string;
 			let resolvedNotify: CueNotifyConfig | undefined;
@@ -176,7 +176,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			} else {
 				prompt = promptOverride ?? sub.prompt;
 				if (!prompt) {
-					deps.onLog('warn', `[CUE] "${sub.name}" has no prompt — skipping dispatch`);
+					deps.onLog('warn', `[CUE] "${sub.name}" has no prompt - skipping dispatch`);
 					return 0;
 				}
 			}

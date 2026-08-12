@@ -50,7 +50,7 @@ function seedSnapshots(snapshots: Record<string, any>) {
 
 function seedSessions(configDirs: string[]) {
 	// Build minimal claude-code session records that carry the requested
-	// CLAUDE_CONFIG_DIR values via customEnvVars — that's all the dashboard
+	// CLAUDE_CONFIG_DIR values via customEnvVars - that's all the dashboard
 	// needs to enumerate them as configured accounts.
 	const sessions = configDirs.map((dir, i) => ({
 		id: `sess-${i}`,
@@ -62,7 +62,7 @@ function seedSessions(configDirs: string[]) {
 	useSessionStore.setState({ sessions } as any);
 }
 
-describe('ClaudePlanUsage — empty state', () => {
+describe('ClaudePlanUsage - empty state', () => {
 	it('renders the empty message when no accounts are configured and no snapshots cached', () => {
 		render(<ClaudePlanUsage theme={theme} />);
 		expect(screen.getByTestId('claude-plan-empty')).toBeInTheDocument();
@@ -70,9 +70,9 @@ describe('ClaudePlanUsage — empty state', () => {
 	});
 });
 
-describe('ClaudePlanUsage — configured account without snapshot', () => {
+describe('ClaudePlanUsage - configured account without snapshot', () => {
 	it('renders a "hit Refresh" CTA for a session-configured account that has no snapshot yet', () => {
-		// Session declares CLAUDE_CONFIG_DIR but the snapshot store is empty —
+		// Session declares CLAUDE_CONFIG_DIR but the snapshot store is empty -
 		// the tab list should still surface the account, and the per-tab body
 		// should guide the user to hit Refresh instead of showing nothing.
 		seedSessions(['/Users/me/.claude-pending']);
@@ -102,14 +102,14 @@ describe('ClaudePlanUsage — configured account without snapshot', () => {
 		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-tab-pending')).toBeInTheDocument();
 
-		// Switch to the pending tab — CTA visible, no bars.
+		// Switch to the pending tab - CTA visible, no bars.
 		fireEvent.click(screen.getByTestId('claude-plan-tab-pending'));
 		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 	});
 });
 
-describe('ClaudePlanUsage — multi-account tabs', () => {
+describe('ClaudePlanUsage - multi-account tabs', () => {
 	it('renders a tab per account but only one row at a time (selected tab)', () => {
 		seedSnapshots({
 			'/Users/me/.claude': {
@@ -208,7 +208,7 @@ describe('ClaudePlanUsage — multi-account tabs', () => {
 	});
 });
 
-describe('ClaudePlanUsage — case-variant dedup', () => {
+describe('ClaudePlanUsage - case-variant dedup', () => {
 	it('collapses a case-variant CLAUDE_CONFIG_DIR onto the canonical snapshot row', () => {
 		// macOS filesystem is case-insensitive: `/Users/me/.claude-opswat` (the
 		// fs-discovered, snapshot-keyed spelling) and `/users/me/.claude-opswat`
@@ -237,7 +237,7 @@ describe('ClaudePlanUsage — case-variant dedup', () => {
 	});
 });
 
-describe('ClaudePlanUsage — unauthenticated row', () => {
+describe('ClaudePlanUsage - unauthenticated row', () => {
 	it('renders the "run /login" CTA in place of bars when authState is unauthenticated', () => {
 		seedSnapshots({
 			'/Users/me/.claude-0din': {
@@ -289,7 +289,7 @@ describe('ClaudePlanUsage — unauthenticated row', () => {
 		expect(screen.getByTestId('claude-plan-row-0din-unauthenticated')).toBeInTheDocument();
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 
-		// Switch to the authenticated tab — CTA disappears, three bars appear.
+		// Switch to the authenticated tab - CTA disappears, three bars appear.
 		fireEvent.click(screen.getByTestId('claude-plan-tab-default'));
 		expect(screen.queryByTestId('claude-plan-row-0din-unauthenticated')).toBeNull();
 		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
@@ -315,7 +315,7 @@ describe('ClaudePlanUsage — unauthenticated row', () => {
 	});
 });
 
-describe('ClaudePlanUsage — refresh wiring', () => {
+describe('ClaudePlanUsage - refresh wiring', () => {
 	it('calls the refresh IPC and re-pulls the store on click', async () => {
 		getClaudeUsageSnapshotsMock.mockResolvedValue({
 			'/Users/me/.claude': {
@@ -354,7 +354,7 @@ describe('ClaudePlanUsage — refresh wiring', () => {
 	});
 });
 
-describe('ClaudePlanUsage — hide/show accounts (list view)', () => {
+describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 	function seedTwoAccounts() {
 		seedSnapshots({
 			'/Users/me/.claude': {

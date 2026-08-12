@@ -30,7 +30,7 @@ export function EnvironmentTab({ theme }: EnvironmentTabProps) {
 						Global Environment Variables
 					</span>
 				</div>
-				<p className="text-xs opacity-50 mb-2">
+				<p className="text-xs opacity-70 mb-2">
 					Variables set here apply to all terminal sessions and AI agents. Per-agent environment
 					variables (configured in each agent's settings) take precedence when both define the same
 					key. Common use cases: API keys, proxy settings, custom tool paths.

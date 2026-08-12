@@ -4,6 +4,13 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { formatTokensCompact } from '../../../shared/formatters';
+import { getActiveTab } from '../../utils/tabHelpers';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import {
+	resolveContextWindow,
+	isStoredContextWindowOverridden,
+} from '../../utils/contextWindowPrecedence';
 import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -50,6 +57,13 @@ export function EditAgentModal({
 	const homeDir = useHomeDir();
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
+	/**
+	 * The context window the config panel was SEEDED with, so save can tell a
+	 * deliberate edit from an untouched round-trip (finding AD1). A ref, not
+	 * state: nothing renders from it and it must not retrigger the seeding
+	 * effect that writes it.
+	 */
+	const seededContextWindowRef = useRef<number | undefined>(undefined);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [customPath, setCustomPath] = useState('');
@@ -204,12 +218,23 @@ export function EditAgentModal({
 				if (isProviderSwitch) {
 					// When provider changed, use agent-level defaults for the new provider
 					setAgentConfig(globalConfig);
+					// The new provider's default is the seed, so leaving it alone is not
+					// an edit. The provider switch clears the old override anyway.
+					seededContextWindowRef.current = globalConfig.contextWindow;
 				} else {
 					// Empty string means explicitly cleared, undefined means never set (use agent-level default)
 					const effortKey = getEffortConfigKey(foundAgent);
 					const modelValue =
 						session.customModel !== undefined ? session.customModel : (globalConfig.model ?? '');
 					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
+					// Remember what the control was SEEDED with so save can tell an
+					// actual edit from an untouched round-trip. Seeding from
+					// `globalConfig.contextWindow` when the session has no override is
+					// exactly how the agent-level default gets materialized into a
+					// per-session value just by opening this modal and pressing Save
+					// (finding P1); without this the write would be indistinguishable
+					// from a deliberate choice (finding AD1).
+					seededContextWindowRef.current = contextWindowValue;
 					const effortValue =
 						session.customEffort !== undefined
 							? session.customEffort
@@ -340,6 +365,57 @@ export function EditAgentModal({
 		sshRemoteId: sshRemoteConfig?.remoteId,
 	});
 
+	/** Live store entry for this agent; see the snapshot note in the memo below. */
+	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
+
+	/**
+	 * Advisory note for the context-window control when the stored value is NOT
+	 * the one in use (#1370, following finding AD1).
+	 *
+	 * Only this surface can compute it: the decision needs the session AND its
+	 * live usage stats, which `AgentConfigPanel` does not receive. The ranking
+	 * itself is deliberately NOT re-derived here - `resolveContextWindow` is the
+	 * same helper the header gauge resolves through, so the note and the gauge
+	 * cannot disagree about which window won.
+	 */
+	const configOptionNotes = useMemo(() => {
+		// The `session` prop is a snapshot taken when the modal opened
+		// (`openModal('editAgent', { session })`), which is right for the form
+		// fields - they must not change under someone mid-edit. The note describes
+		// what the gauge is doing RIGHT NOW though, and a turn completing while
+		// this is open changes that, so it reads the live store entry instead
+		// (review of #1371).
+		const current = liveSession ?? session;
+		if (!current) return undefined;
+		// Mid provider switch the panel already shows the NEW provider's config
+		// while this would still describe the OLD provider's window, captioning
+		// the wrong control. The switch clears the stored window anyway.
+		if (providerChanged) return undefined;
+		const activeTab = getActiveTab(current);
+		const resolved = resolveContextWindow({
+			customModel: current.customModel,
+			customContextWindow: current.customContextWindow,
+			contextWindowSource: current.contextWindowSource,
+			reportedWindow: activeTab?.usageStats?.contextWindow,
+			reportedResolved: activeTab?.usageStats?.contextWindowResolved,
+			// Deliberately omitted: the agent-level configured window ranks BELOW
+			// the stored value, so it can never be what overrides it. Leaving it
+			// out keeps this from waiting on the async lookup the panel does not do.
+		});
+		// Nothing stored means nothing to override, and a value that won needs no
+		// explaining.
+		if (!current.customContextWindow || !isStoredContextWindowOverridden(resolved)) {
+			return undefined;
+		}
+		const winner =
+			resolved.source === 'model-marker'
+				? `the selected model (${formatTokensCompact(resolved.window)})`
+				: `the provider, which reports ${formatTokensCompact(resolved.window)}`;
+		return {
+			contextWindow: `Currently overridden by ${winner}. Edit this field to use your own value instead.`,
+		};
+	}, [liveSession, session, providerChanged]);
+
 	const handleSave = useCallback(() => {
 		if (!session) return;
 		const name = instanceName.trim();
@@ -356,6 +432,19 @@ export function EditAgentModal({
 			typeof agentConfig.contextWindow === 'number' && agentConfig.contextWindow > 0
 				? agentConfig.contextWindow
 				: undefined;
+		// Provenance for that number (finding AD1). Only a value the user actually
+		// moved off the seed counts as intent; an untouched round-trip keeps
+		// whatever provenance the session already had, which for everything stored
+		// before AD1 is none - so P1's "provider report wins" stands for it.
+		const contextWindowSource =
+			contextWindowValue === undefined
+				? // Clearing the control clears the value, so its provenance goes with
+					// it - keeping a stale 'user-edited' would let the NEXT value
+					// inherit precedence nobody asked for.
+					undefined
+				: contextWindowValue !== seededContextWindowRef.current
+					? ('user-edited' as const)
+					: session.contextWindowSource;
 		const effortValue = agentConfig[getEffortConfigKey(agent)]?.trim() ?? undefined;
 
 		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.
@@ -401,7 +490,8 @@ export function EditAgentModal({
 			enableMaestroP ? maestroPMode : undefined,
 			retryOnAvailabilityErrors,
 			retryOnTokenExhaustion,
-			normalizeAdditionalDirectories(additionalDirectories, homeDir)
+			normalizeAdditionalDirectories(additionalDirectories, homeDir),
+			contextWindowSource
 		);
 		onClose();
 	}, [
@@ -647,6 +737,7 @@ export function EditAgentModal({
 					label="New Session Message"
 					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
 					placeholder="Instructions sent with the first message of every new session..."
+					sizeKey="new-session-message"
 				/>
 
 				{/* Nudge Message */}
@@ -665,6 +756,7 @@ export function EditAgentModal({
 						<AgentConfigPanel
 							theme={theme}
 							agent={agent}
+							configOptionNotes={configOptionNotes}
 							customPath={customPath}
 							onCustomPathChange={setCustomPath}
 							onCustomPathBlur={() => {
@@ -761,7 +853,7 @@ export function EditAgentModal({
 				{/* SSH Remote Execution - Top Level.
 				    Always rendered (not gated on sshRemotes.length) because the
 				    "remote-controlled" toggle inside is meaningful even when no
-				    local remotes exist — it lets a Maestro SSH'd into this
+				    local remotes exist - it lets a Maestro SSH'd into this
 				    machine see mirrored history for this agent. */}
 				<SshRemoteSelector
 					theme={theme}

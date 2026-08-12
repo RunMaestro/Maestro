@@ -281,7 +281,7 @@ export function extractContentPreview(content: string, title: string): string | 
 	if (plaintext.toLowerCase().startsWith(title.toLowerCase())) {
 		plaintext = plaintext.slice(title.length).trim();
 		// Remove any leading punctuation or whitespace left over
-		plaintext = plaintext.replace(/^[:\-–—.!?,;\s]+/, '');
+		plaintext = plaintext.replace(/^[:\-–\u2014.!?,;\s]+/, '');
 	}
 
 	// If no meaningful content left, return undefined

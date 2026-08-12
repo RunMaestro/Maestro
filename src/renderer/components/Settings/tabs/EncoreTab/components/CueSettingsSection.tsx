@@ -65,7 +65,7 @@ export function CueSettingsSection({ theme, cueState }: CueSettingsSectionProps)
 								color: theme.colors.textMain,
 							}}
 						/>
-						<p className="text-[10px] mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
+						<p className="text-[10px] mt-1 opacity-70">
 							Maximum time a triggered run can execute before it&apos;s automatically stopped.
 							Increase if your tasks regularly need more time.
 						</p>
@@ -101,7 +101,7 @@ export function CueSettingsSection({ theme, cueState }: CueSettingsSectionProps)
 								style={{ color: theme.colors.textDim }}
 							/>
 						</div>
-						<p className="text-[10px] mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
+						<p className="text-[10px] mt-1 opacity-70">
 							What to do when a pipeline stage times out or errors. &quot;Break&quot; stops the
 							entire chain; &quot;Continue&quot; skips the failed stage and proceeds to the next.
 						</p>
@@ -129,7 +129,7 @@ export function CueSettingsSection({ theme, cueState }: CueSettingsSectionProps)
 								color: theme.colors.textMain,
 							}}
 						/>
-						<p className="text-[10px] mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
+						<p className="text-[10px] mt-1 opacity-70">
 							How many Cue-triggered runs can execute in parallel. Higher values increase throughput
 							but agents may conflict on shared files. Default: 1.
 						</p>
@@ -158,7 +158,7 @@ export function CueSettingsSection({ theme, cueState }: CueSettingsSectionProps)
 								color: theme.colors.textMain,
 							}}
 						/>
-						<p className="text-[10px] mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
+						<p className="text-[10px] mt-1 opacity-70">
 							Events that arrive while the concurrent limit is reached are buffered here. When the
 							queue is full, the oldest event is dropped. Set to 0 to disable buffering. Default:
 							512.

@@ -22,11 +22,11 @@ export interface CueNotifyToastParams {
 	/** Owning agent (session) ID. Drives both `project` lookup in the renderer
 	 *  and the default `jump-session` click target. */
 	agentId: string;
-	/** Toast title — typically the agent's display name or the subscription name. */
+	/** Toast title - typically the agent's display name or the subscription name. */
 	title: string;
 	/** Toast body text. */
 	message: string;
-	/** Sticky toast — disables auto-dismiss, requires explicit click-to-close. */
+	/** Sticky toast - disables auto-dismiss, requires explicit click-to-close. */
 	sticky?: boolean;
 	/** Override the default click intent (defaults to jump-session for the agent). */
 	clickAction?: CueNotifyClickAction;

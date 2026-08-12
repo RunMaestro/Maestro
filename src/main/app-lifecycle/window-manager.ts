@@ -10,7 +10,7 @@
  * `createSecondaryWindow` callers around that factory.
  */
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, screen } from 'electron';
 import type Store from 'electron-store';
 import type { SettingsStoreInterface, WindowState } from '../stores/types';
 import type { WindowState as SharedWindowState } from '../../shared/window-types';
@@ -27,7 +27,9 @@ import { attachMainWindowNavigationGuards } from './main-window-navigation';
 import { attachSpellCheckContextMenu } from './spell-check-menu';
 import { attachWindowCrashHandlers } from './window-crash-handlers';
 import { registerDevAutoUpdaterStubs } from './dev-auto-updater-stubs';
-import { resolveVisibleWindowPosition } from './window-position';
+import { resolveVisibleWindowPosition, resolveWindowSizeConstraints } from './window-position';
+import { resolveBundledCliPathSync } from '../maestro-cli-manager';
+import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /** Bounds/state used to size and position a window at creation time. */
 interface WindowCreationBounds {
@@ -124,6 +126,10 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		windowRegistry,
 		getIsQuitting,
 	} = deps;
+	const maestroCliPath = resolveBundledCliPathSync();
+	const preloadAdditionalArguments = maestroCliPath
+		? [`${MAESTRO_CLI_PATH_ARG_PREFIX}${maestroCliPath}`]
+		: [];
 
 	/**
 	 * Builds the renderer URL for a window. Secondary windows get a
@@ -155,8 +161,18 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		// Restore saved window state, discarding off-screen coordinates so the
 		// window can never spawn invisible (saved while minimized -> -32000 on
 		// Windows, or on an unplugged monitor); fall back to a centered window.
-		const width = bounds?.width ?? WINDOW_STATE_DEFAULTS.width;
-		const height = bounds?.height ?? WINDOW_STATE_DEFAULTS.height;
+		const rawWidth = bounds?.width ?? WINDOW_STATE_DEFAULTS.width;
+		const rawHeight = bounds?.height ?? WINDOW_STATE_DEFAULTS.height;
+		// Clamp the size and the minimum size to the target display's work area so
+		// the window fits (and can be maximized) on small or heavily-scaled
+		// screens, where a fixed 1000x600 minimum can exceed the work area and make
+		// native maximize silently no-op. See resolveWindowSizeConstraints.
+		const { width, height, minWidth, minHeight } = resolveWindowSizeConstraints({
+			x: bounds?.x,
+			y: bounds?.y,
+			width: rawWidth,
+			height: rawHeight,
+		});
 		const position = resolveVisibleWindowPosition({ x: bounds?.x, y: bounds?.y, width, height });
 
 		const browserWindow = new BrowserWindow({
@@ -164,13 +180,14 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			y: position.y,
 			width,
 			height,
-			minWidth: 1000,
-			minHeight: 600,
+			minWidth,
+			minHeight,
 			backgroundColor: '#0b0b0d',
 			...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
 			...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
 			webPreferences: {
 				preload: preloadPath,
+				additionalArguments: preloadAdditionalArguments,
 				contextIsolation: true,
 				nodeIntegration: false,
 				sandbox: true,
@@ -186,6 +203,53 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		} else if (bounds?.isMaximized) {
 			browserWindow.maximize();
 		}
+
+		// Electron caches the minimum size set at creation, so a display change
+		// while the app runs (the user rescales their display, or drags the window
+		// to a smaller monitor) would leave a stale minimum that can again exceed
+		// the new work area and block maximize. Re-clamp against the window's
+		// current display, read from getBounds() which is authoritative once the
+		// window exists, so the fix survives live changes.
+		//
+		// Track the last-applied minimum and only re-assert it when it actually
+		// changes. On GTK the `moved` event fires repeatedly through a single drag,
+		// so calling setMinimumSize with the same values every tick would be pure
+		// churn; the guard collapses it to one call per real change.
+		let lastAppliedMinWidth: number | undefined;
+		let lastAppliedMinHeight: number | undefined;
+		const reclampMinimumSize = () => {
+			if (browserWindow.isDestroyed()) return;
+			const { minWidth: nextMinWidth, minHeight: nextMinHeight } = resolveWindowSizeConstraints(
+				browserWindow.getBounds()
+			);
+			if (nextMinWidth === lastAppliedMinWidth && nextMinHeight === lastAppliedMinHeight) return;
+			lastAppliedMinWidth = nextMinWidth;
+			lastAppliedMinHeight = nextMinHeight;
+			browserWindow.setMinimumSize(nextMinWidth, nextMinHeight);
+		};
+		// display-metrics-changed fires only when a display's OWN geometry or scale
+		// changes, NOT when the window is dragged from a large monitor onto an
+		// already-connected smaller one - in that case the stale (larger) minimum
+		// would linger and keep blocking maximize on the destination display. So
+		// re-clamp on the window's own `moved` event too. The change-guard above
+		// absorbs the flood of `moved` events a live drag produces.
+		//
+		// createBrowserWindow is shared by createSecondaryWindow, so each window
+		// registers its own per-window `display-metrics-changed` listener here
+		// (removed on 'closed' below). This is intentional: past ~10 concurrent
+		// windows Node emits a MaxListenersExceededWarning, which is acceptable.
+		screen.on('display-metrics-changed', reclampMinimumSize);
+		browserWindow.on('moved', reclampMinimumSize);
+		browserWindow.on('closed', () => {
+			screen.removeListener('display-metrics-changed', reclampMinimumSize);
+			browserWindow.removeListener('moved', reclampMinimumSize);
+		});
+		// Re-clamp once now that the window exists. The constraints computed above
+		// come from the raw saved x/y, which can resolve against a different display
+		// than the window actually opens on (e.g. the Windows -32000 minimized
+		// sentinel matches the leftmost display); getBounds() is the truth once the
+		// window is real, so this corrects the minimum for the true opening display.
+		reclampMinimumSize();
 
 		logger.info('Browser window created', 'Window', {
 			size: `${width}x${height}`,
@@ -218,7 +282,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					windowStateStore.set('isMaximized', isMaximized);
 					windowStateStore.set('isFullScreen', isFullScreen);
 				} catch {
-					// Ignore ENFILE/ENOSPC errors during window close — non-critical
+					// Ignore ENFILE/ENOSPC errors during window close - non-critical
 				}
 			};
 

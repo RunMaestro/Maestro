@@ -59,10 +59,12 @@ export function normalizeModalSize(value: unknown): ModalSize | null {
 	if (!isFinitePositiveNumber(candidate.width) || !isFinitePositiveNumber(candidate.height)) {
 		return null;
 	}
-	return {
-		width: Math.round(candidate.width),
-		height: Math.round(candidate.height),
-	};
+	// Round AFTER the positive check, then re-check: a sub-0.5 width passes
+	// isFinitePositiveNumber but rounds to 0, which would persist a zero-size modal.
+	const width = Math.round(candidate.width);
+	const height = Math.round(candidate.height);
+	if (width <= 0 || height <= 0) return null;
+	return { width, height };
 }
 
 export function sanitizeModalSizes(value: unknown): ModalSizes {

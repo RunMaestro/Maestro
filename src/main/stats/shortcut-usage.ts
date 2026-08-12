@@ -47,7 +47,7 @@ export function incrementShortcutUsage(db: Database.Database, firedAt: number): 
 
 /**
  * Fetch per-day shortcut usage counts within a time range, ascending.
- * Days with no activity are NOT included — the renderer zero-fills.
+ * Days with no activity are NOT included - the renderer zero-fills.
  */
 export function getShortcutUsageByDay(
 	db: Database.Database,

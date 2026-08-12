@@ -1,6 +1,6 @@
 /**
  * @file plugin-identity.test.ts
- * @description Tests for `pluginIdentity` — the single place that maps an installed
+ * @description Tests for `pluginIdentity` - the single place that maps an installed
  * plugin directory to the `AuthIdentity` (content digest + signature status + signer
  * key) the authorization ledger mints against and the refresh verifier compares.
  */

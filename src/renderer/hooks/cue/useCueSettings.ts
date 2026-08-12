@@ -1,10 +1,10 @@
 /**
- * useCueSettings — Global Cue engine settings loader.
+ * useCueSettings - Global Cue engine settings loader.
  *
  * Fetches cue settings from the engine on mount. Exposes a `settingsLoaded`
  * flag that flips to true after the mount fetch resolves (success OR failure)
  * so consumers can gate write operations (e.g. handleSave) until settings are
- * known — prevents saving pipelines with stale default settings in the brief
+ * known - prevents saving pipelines with stale default settings in the brief
  * window between modal open and settings arrival.
  */
 

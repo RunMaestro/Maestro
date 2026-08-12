@@ -28,6 +28,33 @@ describe('uiStore', () => {
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
 			expect(state.usageDashboardViewMode).toBe('overview');
+			expect(state.paneFocusRequest).toBeNull();
+		});
+	});
+
+	describe('pane focus request (tab tiling)', () => {
+		it('publishes a request for the given leaf id', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-1');
+		});
+
+		it('clears the request once it has been consumed', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().clearPaneFocusRequest();
+			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+		});
+
+		it('replaces an unconsumed request rather than queueing', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().requestPaneFocus('leaf-2');
+			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-2');
+		});
+
+		it('re-publishes the same leaf after a clear so a repeat press refocuses', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().clearPaneFocusRequest();
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-1');
 		});
 	});
 
@@ -232,6 +259,38 @@ describe('uiStore', () => {
 		});
 	});
 
+	describe('pending log jump (cross-tab search)', () => {
+		const JUMP = { sessionId: 'agent-1', tabId: 'tab-2', logId: 'log-9' };
+
+		it('starts empty', () => {
+			expect(useUIStore.getState().pendingLogJump).toBeNull();
+		});
+
+		it('stores a jump request', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			expect(useUIStore.getState().pendingLogJump).toEqual(JUMP);
+		});
+
+		it('clears the request once the target entry consumes it', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			useUIStore.getState().clearPendingLogJump('log-9');
+			expect(useUIStore.getState().pendingLogJump).toBeNull();
+		});
+
+		it('does not clear a newer request queued for a different entry', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			useUIStore.getState().clearPendingLogJump('some-older-log');
+			expect(useUIStore.getState().pendingLogJump).toEqual(JUMP);
+		});
+
+		it('replaces an unconsumed request', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			const next = { sessionId: 'agent-1', tabId: 'tab-3', logId: 'log-10' };
+			useUIStore.getState().setPendingLogJump(next);
+			expect(useUIStore.getState().pendingLogJump).toEqual(next);
+		});
+	});
+
 	describe('session filter state', () => {
 		it('sets session filter open', () => {
 			useUIStore.getState().setSessionFilterOpen(true);
@@ -371,7 +430,7 @@ describe('uiStore', () => {
 		});
 
 		it('extracted actions still mutate state correctly', () => {
-			// Grab actions once, then call them — mirrors the App.tsx pattern
+			// Grab actions once, then call them - mirrors the App.tsx pattern
 			const { setLeftSidebarOpen, setActiveFocus } = useUIStore.getState();
 
 			setLeftSidebarOpen(false);

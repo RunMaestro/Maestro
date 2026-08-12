@@ -63,6 +63,9 @@ vi.mock('lucide-react', () => ({
 	ExternalLink: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="external-link-icon" className={className} style={style} />
 	),
+	MessagesSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="messages-square-icon" className={className} style={style} />
+	),
 }));
 
 // Create a mock theme

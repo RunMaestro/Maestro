@@ -36,7 +36,12 @@ function Harness({
 
 	return (
 		<div ref={modal.modalRef} data-testid="modal" style={modal.style}>
-			<ResizeHandles onResizeStart={modal.onResizeStart} accentColor="#ff00ff" />
+			<ResizeHandles
+				onResizeStart={modal.onResizeStart}
+				accentColor="#ff00ff"
+				onResetSize={modal.onResetSize}
+				canReset={modal.canReset}
+			/>
 		</div>
 	);
 }
@@ -260,6 +265,174 @@ describe('useResizableModal', () => {
 		expect(screen.getByTestId('modal')).toHaveStyle({
 			width: '520px',
 			height: '360px',
+		});
+	});
+
+	describe('resize-ending click suppression', () => {
+		it('swallows the click that follows a resize-ending mouseup, so releasing over a click-to-close backdrop cannot close it', () => {
+			const onBackdropClick = vi.fn();
+			render(
+				<div onClick={onBackdropClick} data-testid="backdrop">
+					<Harness />
+				</div>
+			);
+
+			// Growing the modal moves the cursor past its old bounds - onto the
+			// "backdrop" here - by the time the button is released.
+			fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-se'), {
+				clientX: 0,
+				clientY: 0,
+			});
+			fireEvent.mouseMove(document, { clientX: 300, clientY: 300 });
+			fireEvent.mouseUp(document);
+
+			// The browser would synthesize this click at the same coordinates,
+			// landing on whatever is under the cursor - the backdrop.
+			fireEvent.click(screen.getByTestId('backdrop'));
+
+			expect(onBackdropClick).not.toHaveBeenCalled();
+		});
+
+		it('does not suppress a later, unrelated click once the resize-ending one has been swallowed', () => {
+			const onBackdropClick = vi.fn();
+			render(
+				<div onClick={onBackdropClick} data-testid="backdrop">
+					<Harness />
+				</div>
+			);
+
+			fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-se'), {
+				clientX: 0,
+				clientY: 0,
+			});
+			fireEvent.mouseMove(document, { clientX: 300, clientY: 300 });
+			fireEvent.mouseUp(document);
+			fireEvent.click(screen.getByTestId('backdrop'));
+			expect(onBackdropClick).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByTestId('backdrop'));
+			expect(onBackdropClick).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not arm suppression for a plain click with no preceding resize', () => {
+			const onBackdropClick = vi.fn();
+			render(
+				<div onClick={onBackdropClick} data-testid="backdrop">
+					<Harness />
+				</div>
+			);
+
+			fireEvent.click(screen.getByTestId('backdrop'));
+
+			expect(onBackdropClick).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('double-click to reset', () => {
+		it('drops the saved size and snaps back to the declared default', () => {
+			useSettingsStore.setState({
+				modalSizes: {
+					'test-modal': { width: 520, height: 360 },
+				},
+			});
+
+			render(<Harness />);
+			const modal = screen.getByTestId('modal');
+			expect(modal).toHaveStyle({ width: '520px', height: '360px' });
+
+			fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-se'));
+
+			expect(useSettingsStore.getState().modalSizes['test-modal']).toBeUndefined();
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith('modalSizes', {});
+			// The resolve effect rewrites the inline size from defaultSize.
+			expect(modal).toHaveStyle({ width: '400px', height: '300px' });
+		});
+
+		it('resets from any handle, not just the corner', () => {
+			useSettingsStore.setState({
+				modalSizes: { 'test-modal': { width: 520, height: 360 } },
+			});
+
+			render(<Harness />);
+			fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-n'));
+
+			expect(useSettingsStore.getState().modalSizes['test-modal']).toBeUndefined();
+		});
+
+		it('leaves other modals’ sizes alone', () => {
+			useSettingsStore.setState({
+				modalSizes: {
+					'test-modal': { width: 520, height: 360 },
+					'other-modal': { width: 700, height: 500 },
+				},
+			});
+
+			render(<Harness />);
+			fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-se'));
+
+			expect(useSettingsStore.getState().modalSizes).toEqual({
+				'other-modal': { width: 700, height: 500 },
+			});
+		});
+
+		it('does not write settings when the modal was never resized', () => {
+			render(<Harness />);
+
+			fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-se'));
+
+			expect(window.maestro.settings.set).not.toHaveBeenCalled();
+		});
+
+		it('only advertises the reset gesture once a size is remembered', () => {
+			const { unmount } = render(<Harness />);
+			expect(screen.getByTestId('modal-resize-handle-se')).toHaveAttribute(
+				'title',
+				'Drag to resize'
+			);
+			unmount();
+
+			useSettingsStore.setState({
+				modalSizes: { 'test-modal': { width: 520, height: 360 } },
+			});
+			render(<Harness />);
+			expect(screen.getByTestId('modal-resize-handle-se')).toHaveAttribute(
+				'title',
+				'Drag to resize, double-click to reset'
+			);
+		});
+
+		it('is inert when resizing is disabled', () => {
+			useSettingsStore.setState({
+				modalSizes: { 'test-modal': { width: 520, height: 360 } },
+			});
+
+			render(<Harness enabled={false} />);
+			fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-se'));
+
+			expect(useSettingsStore.getState().modalSizes['test-modal']).toEqual({
+				width: 520,
+				height: 360,
+			});
+		});
+
+		it('a pending debounced viewport write cannot resurrect the size after a reset', async () => {
+			useSettingsStore.setState({
+				modalSizes: { 'test-modal': { width: 1100, height: 850 } },
+			});
+			render(<Harness />);
+
+			// Shrinking the viewport queues a debounced re-clamp write.
+			act(() => {
+				setViewport(700, 600);
+				window.dispatchEvent(new Event('resize'));
+			});
+			fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-se'));
+
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 400));
+			});
+
+			expect(useSettingsStore.getState().modalSizes['test-modal']).toBeUndefined();
 		});
 	});
 });

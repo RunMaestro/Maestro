@@ -21,7 +21,7 @@
 //     section's first line as a bare `<time>(<zone>)` fragment.
 //
 // All four cases came out of the captures the conductor took on the
-// prior pass — see MAESTRO-P-01-binary.md "Architectural Lesson #3".
+// prior pass - see MAESTRO-P-01-binary.md "Architectural Lesson #3".
 //
 // Approach
 // --------
@@ -34,7 +34,7 @@
 //   `week_all_models` when its own line is too garbled, and synthesize a
 //   { percent: 0, resets_at } placeholder if the whole section is missing
 //   so downstream consumers always see a populated field.
-// - Sonnet specifically does NOT use the inline-scan fallback for resets —
+// - Sonnet specifically does NOT use the inline-scan fallback for resets -
 //   when its line is polluted, the polluted prefix is the *prior* section's
 //   trailing reset (a cursor-positioning carryover), so inline-scanning
 //   would lock onto the wrong value.
@@ -42,7 +42,7 @@
 // Signature deviation from the playbook
 // -------------------------------------
 // The playbook documents `parseUsage(raw, nowIso): StatusSnapshot | null`,
-// but `StatusSnapshot.config_dir` cannot come from the screen-scrape — it's
+// but `StatusSnapshot.config_dir` cannot come from the screen-scrape - it's
 // a runtime concern (the caller already resolved `CLAUDE_CONFIG_DIR ?? ~/.claude`).
 // We accept `configDir` as a third argument so the returned snapshot is
 // the complete wire envelope and can be passed verbatim to `emitStatus()`
@@ -51,7 +51,7 @@
 import { stripAnsiCodes } from '../shared/stringUtils';
 import type { StatusSnapshot } from './json-emitter';
 
-// Body of a reset spec — the part AFTER the optional "Resets" prefix.
+// Body of a reset spec - the part AFTER the optional "Resets" prefix.
 // Tolerates:
 //   "6pm (America/Chicago)"
 //   "1:40am(America/Chicago)"                  (no internal spaces)
@@ -66,7 +66,7 @@ import type { StatusSnapshot } from './json-emitter';
 // ampm alternation is ordered `am|pm|m` so the regex matches the full
 // two-letter token when present and only falls through to bare `m` when
 // the leading letter was clobbered. A lone `m` resolves to PM (see
-// to24Hour) — this is a heuristic justified by real captures: the gmail
+// to24Hour) - this is a heuristic justified by real captures: the gmail
 // account's compound session row consistently renders "6pm" as "6m"
 // (drops the 'p'), while "am" tokens stay intact in every capture we
 // have. Cost of being wrong on a hypothetical clobbered `am`: 12-hour
@@ -116,7 +116,7 @@ const SECTION_WINDOW_CAP = 8;
 
 // "Not logged in" detection. Claude's status bar renders
 // "Not logged in · Run /login" when the active CLAUDE_CONFIG_DIR has no
-// authenticated tokens — instead of the Max-plan window panel we'd normally
+// authenticated tokens - instead of the Max-plan window panel we'd normally
 // parse, `/usage` shows the API-billing variant (all $0.00, no percentages).
 // Surfacing this as a distinct snapshot kind (rather than a generic parse
 // failure) lets the dashboard tell the user "run /login here" instead of
@@ -145,7 +145,7 @@ const INLINE_SCAN_LINE_COUNT = 3;
 // Inserting a newline before each section header and each "Resets" run
 // restores one-row-per-line structure so the existing windowing works
 // unchanged. On panels that already carry real line feeds this only inserts a
-// harmless blank split ahead of rows that were already on their own line —
+// harmless blank split ahead of rows that were already on their own line -
 // `getSectionWindow` slices from the header line either way. The compound
 // session row whose "Resets" decayed to "Reses" (see RESET_SPEC_BODY) has no
 // matchable "Resets" token, so it stays glued and is still recovered by the
@@ -180,7 +180,7 @@ export function parseUsage(raw: string, nowIso: string, configDir: string): Stat
 	// half-loaded paint win the first-sighting marker race, so percentages come
 	// out stale and a week section whose "Resets …" hadn't painted yet borrows
 	// the session's reset. Restrict parsing to the LAST paint by slicing from the
-	// final "Current session" header — that paint is the settled one (the
+	// final "Current session" header - that paint is the settled one (the
 	// debounce waits for the stream to go quiet before we read). On single-paint
 	// captures (the common case, and every `\n`-delimited fixture) the last
 	// occurrence is the only one, so this is a no-op.
@@ -229,7 +229,7 @@ export function parseUsage(raw: string, nowIso: string, configDir: string): Stat
 	// treat absence as `'authenticated'` (see StatusSnapshot in json-emitter.ts
 	// and UsageSnapshot in claude-mode-selector.ts), and dropping it keeps the
 	// wire envelope byte-compatible with snapshots written before this field
-	// existed — fixtures don't need rewriting and on-disk caches don't need a
+	// existed - fixtures don't need rewriting and on-disk caches don't need a
 	// migration.
 	return {
 		type: 'status',
@@ -363,7 +363,7 @@ function resolveSonnet(
 	const sonnet = extractSection(lines, markers, 'week_sonnet_only', nowIso, false);
 	if (sonnet) return sonnet;
 
-	// Section header was found and percent parsed, but no resets — borrow
+	// Section header was found and percent parsed, but no resets - borrow
 	// from week_all_models (same rolling window in real captures).
 	const windowLines = getSectionWindow(lines, markers, 'week_sonnet_only');
 	if (windowLines) {
@@ -373,7 +373,7 @@ function resolveSonnet(
 		}
 	}
 
-	// Whole section missing — synthesize a placeholder so downstream
+	// Whole section missing - synthesize a placeholder so downstream
 	// consumers always see a populated field.
 	return { percent: 0, resetsAt: allModels.resetsAt };
 }
@@ -503,7 +503,7 @@ function wallClockInZoneToUtc(
 		return null;
 	}
 	let h = parseInt(parts.hour, 10);
-	// Intl emits '24' for midnight under some locales — normalize so the
+	// Intl emits '24' for midnight under some locales - normalize so the
 	// reconstructed UTC reflects the same wall clock the formatter saw.
 	if (h === 24) h = 0;
 	const seenMs = Date.UTC(

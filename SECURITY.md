@@ -76,7 +76,7 @@ The following are known aspects of Maestro's design that users should be aware o
 
 ### Process Execution
 
-Maestro spawns AI agents and terminal processes with the same privileges as the user running the application. This is by design—the agents need filesystem and command access to function. Users should:
+Maestro spawns AI agents and terminal processes with the same privileges as the user running the application. This is by design - the agents need filesystem and command access to function. Users should:
 
 - Only run Maestro on projects they trust
 - Be aware that AI agents can execute commands on your system
@@ -95,15 +95,15 @@ Maestro uses Electron's IPC for communication between the main process and rende
 
 ### Sentry DSN
 
-The Sentry DSN in the codebase is a **public secret by design**. This is standard practice for client-side error reporting—the DSN is intentionally exposed to allow error telemetry. Reporting this as a vulnerability is not necessary. We monitor for abuse and will rotate keys if needed.
+The Sentry DSN in the codebase is a **public secret by design**. This is standard practice for client-side error reporting - the DSN is intentionally exposed to allow error telemetry. Reporting this as a vulnerability is not necessary. We monitor for abuse and will rotate keys if needed.
 
 ## Security Best Practices in Codebase
 
 For contributors, Maestro enforces these security patterns:
 
-- **Always use `execFileNoThrow`** for external commands—never shell-based execution
+- **Always use `execFileNoThrow`** for external commands - never shell-based execution
 - **Validate all IPC inputs** in main process handlers
-- **Minimize preload API surface**—only expose what's necessary
+- **Minimize preload API surface** - only expose what's necessary
 - **Sanitize file paths** before filesystem operations
 
 See [CLAUDE.md](CLAUDE.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for more details.

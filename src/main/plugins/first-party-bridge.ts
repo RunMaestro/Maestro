@@ -17,7 +17,7 @@
  *  - revoke  = grants gone + flag off + supervised work stops (fails closed).
  *
  * Grants-gone-behind-our-back (ledger reset, session-only relaunch) forces the
- * feature off on the next reconcile — never silently degraded operation.
+ * feature off on the next reconcile - never silently degraded operation.
  */
 
 import type { FirstPartyPluginDefinition } from '../../shared/plugins/first-party';
@@ -45,7 +45,7 @@ export interface FirstPartySupervisorHooks {
 
 export interface FirstPartyPluginBridgeDeps {
 	settingsStore: SettingsStoreLike;
-	/** Live grants for a plugin id — the sealed ledger's `readGrants`. */
+	/** Live grants for a plugin id - the sealed ledger's `readGrants`. */
 	readGrants: (pluginId: string) => readonly PermissionGrant[];
 	/**
 	 * Mint the definition's declared grants host-side (first-party = trusted by
@@ -53,7 +53,7 @@ export interface FirstPartyPluginBridgeDeps {
 	 * consents use and throw loudly when the ledger rejects the write.
 	 */
 	mintFirstPartyGrants: (definition: FirstPartyPluginDefinition) => void;
-	/** Drop the plugin's grants — the sealed ledger's `revoke`. */
+	/** Drop the plugin's grants - the sealed ledger's `revoke`. */
 	revokeGrants: (pluginId: string) => void;
 	/** Supervised background-service hooks; omit for service-less features. */
 	supervisor?: FirstPartySupervisorHooks;
@@ -87,7 +87,7 @@ export function hasRequiredFirstPartyGrants(
  * directory to digest, so the content-hash slot carries an explicit
  * `first-party:` provenance marker (auditable in the sealed ledger), the
  * signature status is `trusted` (host code, trusted by construction), and
- * there is — honestly — no signer key.
+ * there is - honestly - no signer key.
  */
 export function firstPartyAuthIdentity(definition: FirstPartyPluginDefinition): AuthIdentity {
 	return {
@@ -98,7 +98,7 @@ export function firstPartyAuthIdentity(definition: FirstPartyPluginDefinition): 
 }
 
 /**
- * Build the host-side grant minter over the sealed authorization ledger — the
+ * Build the host-side grant minter over the sealed authorization ledger - the
  * SAME `mint` seam the consent window's minter writes through, so first-party
  * grants live in the sealed, anti-rollback ledger like every community grant.
  *
@@ -158,10 +158,10 @@ export class FirstPartyPluginBridge {
 	}
 
 	/**
-	 * Enable: mint the declared grants host-side (idempotent — skipped when the
+	 * Enable: mint the declared grants host-side (idempotent - skipped when the
 	 * live grants already satisfy the declaration), flip the flag, reconcile
 	 * supervised work. Disable: flag off + supervised work stops (grants kept).
-	 * A minter failure propagates AFTER the state has been forced off — the
+	 * A minter failure propagates AFTER the state has been forced off - the
 	 * feature never runs without its declared authority.
 	 */
 	setEnabled(enabled: boolean): FirstPartyBridgeState {

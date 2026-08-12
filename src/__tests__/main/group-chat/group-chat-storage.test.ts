@@ -470,7 +470,7 @@ describe('group-chat-storage', () => {
 		it('serializes concurrent updateGroupChat calls without data loss', async () => {
 			const chat = await createGroupChat('Concurrent Test', 'claude-code');
 
-			// Fire 10 concurrent updates — without serialization these would race
+			// Fire 10 concurrent updates - without serialization these would race
 			const promises = Array.from({ length: 10 }, (_, i) =>
 				updateGroupChat(chat.id, { name: `Update-${i}` })
 			);
@@ -579,7 +579,7 @@ describe('group-chat-storage', () => {
 		it('waits for pending writes before deleting', async () => {
 			const chat = await createGroupChat('Delete Race', 'claude-code');
 
-			// Fire an update and a delete concurrently — delete should wait
+			// Fire an update and a delete concurrently - delete should wait
 			const updatePromise = updateGroupChat(chat.id, { name: 'About to delete' });
 			const deletePromise = deleteGroupChat(chat.id);
 
@@ -601,7 +601,7 @@ describe('group-chat-storage', () => {
 				addedAt: Date.now(),
 			});
 
-			// Fire participant update then delete — both serialize through the queue
+			// Fire participant update then delete - both serialize through the queue
 			const updatePromise = updateParticipant(chat.id, 'Worker', { tokenCount: 999 });
 			const deletePromise = deleteGroupChat(chat.id);
 

@@ -332,7 +332,7 @@ export class BroadcastService {
 				completedTasks: state.completedTasks,
 			});
 		} else {
-			// State cleared — remove tracking
+			// State cleared - remove tracking
 			this.previousAutoRunStates.delete(sessionId);
 		}
 	}
@@ -467,6 +467,7 @@ export class BroadcastService {
 					status: 'running' | 'completed' | 'error';
 					input?: Record<string, unknown>;
 				};
+				parentToolUseId?: string;
 			};
 		}
 	): void {

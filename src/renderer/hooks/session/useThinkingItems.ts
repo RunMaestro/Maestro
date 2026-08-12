@@ -1,5 +1,5 @@
 /**
- * useThinkingItems — narrow store subscription for the ThinkingStatusPill.
+ * useThinkingItems - narrow store subscription for the ThinkingStatusPill.
  *
  * PERF: Does not subscribe to the full `sessions` array reference. Uses
  * `useStoreWithEqualityFn` so MaestroConsoleInner / MainPanel are not

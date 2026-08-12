@@ -2,8 +2,8 @@
  * remark plugin: promote lone inline math to display math.
  *
  * `remark-math` only recognizes `$$\n...\n$$` (multi-line) as a display-math
- * block. A single-line `$$x+y$$` — which is how most users write a centered
- * formula in a chat message — gets parsed as inline math and renders without
+ * block. A single-line `$$x+y$$` - which is how most users write a centered
+ * formula in a chat message - gets parsed as inline math and renders without
  * the centered, block-level KaTeX treatment.
  *
  * This plugin walks the full mdast tree (root + nested containers like
@@ -12,7 +12,7 @@
  * user's visual intent for `$$...$$` on its own line (#622).
  *
  * Note: `remark-math` does not preserve whether the source used `$...$` or
- * `$$...$$` — both become `inlineMath`. We rely on the chat-surface config
+ * `$$...$$` - both become `inlineMath`. We rely on the chat-surface config
  * pairing this plugin with `remarkMath({ singleDollarTextMath: false })`,
  * which only emits `inlineMath` for double-dollar sources, so promotion is
  * safe.

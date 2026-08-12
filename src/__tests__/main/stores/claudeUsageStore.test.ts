@@ -1,8 +1,8 @@
 /**
  * Tests for src/main/stores/claudeUsageStore.ts
  *
- * Covers the full public surface — `setSnapshot`, `getSnapshot`,
- * `getAllSnapshots`, `clear`, `resolveConfigDirKey` — plus TTL pruning on
+ * Covers the full public surface - `setSnapshot`, `getSnapshot`,
+ * `getAllSnapshots`, `clear`, `resolveConfigDirKey` - plus TTL pruning on
  * both read and write paths, multi-account isolation, and the lazy
  * singleton initialization invariant that lets `vi.mock('electron-store')`
  * actually take effect.
@@ -238,7 +238,7 @@ describe('claudeUsageStore', () => {
 			setSnapshot(dead);
 			// getAllSnapshots() must drop `dead` based on its sampledAt.
 			expect(getAllSnapshots()).toEqual({ [live.configDirKey]: live });
-			// And prune-on-read must persist that drop — calling getSnapshot
+			// And prune-on-read must persist that drop - calling getSnapshot
 			// for `dead` returns null cleanly the next time.
 			expect(getSnapshot(dead.configDirKey)).toBeNull();
 		});

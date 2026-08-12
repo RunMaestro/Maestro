@@ -22,12 +22,14 @@ export interface SessionFilterModeState {
  *   - Temporarily expands groups containing matching sessions
  *   - Expands bookmarks if any bookmarked sessions match
  *   - Collapses groups when filter text is cleared (but filter input still open)
+ *
+ * PERF: Do not subscribe to `sessions` / `groups` here. SessionList already uses
+ * `sidebarSessionEquality`; a bare sessions subscription undoes that shield and
+ * re-renders the Left Bar on every log/token flush. Effects read getState() at
+ * open/filter-text time (deps are only UI open + filter string).
  */
 export function useSessionFilterMode(): SessionFilterModeState {
 	const sessionFilterOpen = useUIStore((s) => s.sessionFilterOpen);
-	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
-	const sessions = useSessionStore((s) => s.sessions);
-	const groups = useSessionStore((s) => s.groups);
 
 	const [sessionFilter, setSessionFilter] = useState('');
 
@@ -46,13 +48,15 @@ export function useSessionFilterMode(): SessionFilterModeState {
 	);
 	const [filterModeInitialized, setFilterModeInitialized] = useState(false);
 
-	// Stable store actions
 	const setGroups = useSessionStore.getState().setGroups;
 	const setBookmarksCollapsed = useUIStore.getState().setBookmarksCollapsed;
 
 	// When filter opens, apply filter mode preferences (or defaults on first open)
 	// When filter closes, save current states as filter mode preferences and restore original states
 	useEffect(() => {
+		const groups = useSessionStore.getState().groups;
+		const bookmarksCollapsed = useUIStore.getState().bookmarksCollapsed;
+
 		if (sessionFilterOpen) {
 			// Save current (non-filter) states when filter opens
 			if (preFilterGroupStates.size === 0) {
@@ -106,10 +110,14 @@ export function useSessionFilterMode(): SessionFilterModeState {
 				setPreFilterBookmarksCollapsed(null);
 			}
 		}
+		// Intentionally omit groups/bookmarksCollapsed - snapshot at open/close only.
 	}, [sessionFilterOpen]);
 
 	// Temporarily expand groups when filtering to show matching sessions
 	useEffect(() => {
+		const sessionFilterOpenNow = useUIStore.getState().sessionFilterOpen;
+		const sessions = useSessionStore.getState().sessions;
+
 		if (sessionFilter) {
 			// Find groups that contain matching sessions (search session name AND AI tab names)
 			const groupsWithMatches = new Set<string>();
@@ -141,11 +149,12 @@ export function useSessionFilterMode(): SessionFilterModeState {
 			if (hasMatchingBookmarks) {
 				setBookmarksCollapsed(false);
 			}
-		} else if (sessionFilterOpen) {
+		} else if (sessionFilterOpenNow) {
 			// Filter cleared but filter input still open - collapse groups again, keep bookmarks expanded
 			setGroups((prev) => prev.map((g) => ({ ...g, collapsed: true })));
 			setBookmarksCollapsed(false);
 		}
+		// sessions read at filter-text change time only - do not subscribe (streaming).
 	}, [sessionFilter]);
 
 	return {

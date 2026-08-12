@@ -12,8 +12,11 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { buildNameMap } from './chartUtils';
+import { buildNameMap, computeAxisLabelIndices } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
+import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
 
 interface ProviderTrendsChartProps {
 	data: StatsAggregation;
@@ -24,7 +27,7 @@ interface ProviderTrendsChartProps {
 }
 
 // Mirrors `getAgentColor` in AgentComparisonChart so the two charts use the
-// same color per provider — important when reading them side-by-side.
+// same color per provider - important when reading them side-by-side.
 function getProviderColor(index: number, theme: Theme, colorBlindMode: boolean): string {
 	if (colorBlindMode) {
 		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
@@ -79,12 +82,14 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 	colorBlindMode = false,
 	sessions,
 }: ProviderTrendsChartProps) {
-	const [metricMode, setMetricMode] = useState<'count' | 'duration'>('count');
+	const [metricMode, setMetricMode] = useState<ChartMetricMode>('count');
 	const [hoveredDay, setHoveredDay] = useState<number | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 
 	const { providers, providerNames, providerColors, dates, perDayValues } = useMemo(() => {
 		const byAgentByDay = data.byAgentByDay || {};
+		const tokensByAgentByDay = tokenSeries?.byAgentByDay ?? {};
 		const providerKeys = Object.keys(byAgentByDay);
 
 		const totals: Record<string, number> = {};
@@ -107,11 +112,18 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 		}
 		const sortedDates = Array.from(dateSet).sort();
 
-		const lookup: Record<string, Record<string, { count: number; duration: number }>> = {};
+		const lookup: Record<
+			string,
+			Record<string, { count: number; duration: number; tokens: number }>
+		> = {};
 		for (const p of sorted) {
 			for (const d of byAgentByDay[p]) {
 				if (!lookup[d.date]) lookup[d.date] = {};
-				lookup[d.date][p] = { count: d.count, duration: d.duration };
+				lookup[d.date][p] = {
+					count: d.count,
+					duration: d.duration,
+					tokens: tokensByAgentByDay[p]?.[d.date] ?? 0,
+				};
 			}
 		}
 
@@ -122,7 +134,7 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 			dates: sortedDates,
 			perDayValues: lookup,
 		};
-	}, [data.byAgentByDay, sessions, theme, colorBlindMode]);
+	}, [data.byAgentByDay, tokenSeries, sessions, theme, colorBlindMode]);
 
 	const chartWidth = 600;
 	const chartHeight = 220;
@@ -138,14 +150,17 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 			if (total > max) max = total;
 		}
 		if (max === 0) return { yMax: 1, yTicks: [0] };
-		const padded = metricMode === 'count' ? Math.ceil(max * 1.1) : max * 1.1;
+		// Counts and tokens are whole units; only duration keeps fractional ticks.
+		const padded = metricMode === 'duration' ? max * 1.1 : Math.ceil(max * 1.1);
 		const tickCount = 5;
 		const ticks = Array.from({ length: tickCount }, (_, i) => (padded / (tickCount - 1)) * i);
 		return {
 			yMax: padded,
-			yTicks: metricMode === 'count' ? ticks.map((t) => Math.round(t)) : ticks,
+			yTicks: metricMode === 'duration' ? ticks : ticks.map((t) => Math.round(t)),
 		};
 	}, [dates, perDayValues, providers, metricMode]);
+
+	const xLabelIndices = useMemo(() => computeAxisLabelIndices(dates.length), [dates.length]);
 
 	const barWidth = dates.length > 0 ? innerWidth / dates.length : 0;
 	const barInner = Math.max(1, barWidth * 0.7);
@@ -186,39 +201,17 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 				>
 					Provider Trends Over Time
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor: metricMode === 'count' ? theme.colors.accent : 'transparent',
-								color: metricMode === 'count' ? theme.colors.bgMain : theme.colors.textDim,
-							}}
-						>
-							Queries
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor: metricMode === 'duration' ? theme.colors.accent : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.bgMain : theme.colors.textDim,
-							}}
-						>
-							Time
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					labels={{ count: 'Queries', duration: 'Time' }}
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			<div className="relative">
+				<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 				{dates.length === 0 || providers.length === 0 ? (
 					<div
 						className="flex items-center justify-center"
@@ -253,7 +246,11 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 									fontSize={10}
 									fill={theme.colors.textDim}
 								>
-									{metricMode === 'count' ? t : formatYAxisDuration(t)}
+									{metricMode === 'count'
+										? t
+										: metricMode === 'tokens'
+											? formatMetricValue('tokens', t)
+											: formatYAxisDuration(t)}
 								</text>
 							</g>
 						))}
@@ -304,9 +301,7 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 						})}
 
 						{dates.map((date, dayIdx) => {
-							const labelInterval =
-								dates.length > 14 ? Math.ceil(dates.length / 7) : dates.length > 7 ? 2 : 1;
-							if (dayIdx % labelInterval !== 0 && dayIdx !== dates.length - 1) return null;
+							if (!xLabelIndices.has(dayIdx)) return null;
 							return (
 								<text
 									key={`x-${dayIdx}`}
@@ -353,7 +348,9 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 												<span style={{ color: theme.colors.textMain }}>
 													{metricMode === 'count'
 														? `${formatNumber(v)} ${v === 1 ? 'query' : 'queries'}`
-														: formatDuration(v)}
+														: metricMode === 'tokens'
+															? `${formatMetricValue('tokens', v)} tokens`
+															: formatDuration(v)}
 												</span>
 											</div>
 										);

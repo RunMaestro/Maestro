@@ -4,7 +4,7 @@
  * candidate-path fallback, in-memory caching, and `{{REF:name}}` resolution.
  *
  * The renderer/main pair (src/main/prompt-manager.ts) is the canonical impl
- * — the CLI loader mirrors its behavior so an agent driven by `maestro-cli`
+ * - the CLI loader mirrors its behavior so an agent driven by `maestro-cli`
  * sees the same content as a desktop-spawned agent, including the absolute
  * on-disk paths that `{{REF:_interface-primitives}}` etc. expand to.
  */
@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Single shared mock fn so the named-export and default-export view of
-// `fs/promises.readFile` are the same instance — otherwise the prompt-loader
+// `fs/promises.readFile` are the same instance - otherwise the prompt-loader
 // reads via the default while tests configure the named (or vice versa) and
 // the configuration goes nowhere. `vi.hoisted` is required because `vi.mock`
 // calls are hoisted to the top of the file; referencing a plain `const`
@@ -26,7 +26,7 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', async () => {
 	const actual = await vi.importActual<typeof import('fs')>('fs');
-	// `actual.constants` is a getter on the fs module — spreading `actual`
+	// `actual.constants` is a getter on the fs module - spreading `actual`
 	// drops it (only own enumerable data properties carry through), and
 	// `getBundledPromptsDir` reads `fs.constants.R_OK`. Inline the literal
 	// so the mock surface still exposes a usable constants object.
@@ -43,7 +43,12 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 import fsSync from 'fs';
-import { getCliPrompt, _resetCliPromptCacheForTests } from '../../../cli/services/prompt-loader';
+import path from 'path';
+import {
+	_getBundledPromptCandidatesForTests,
+	getCliPrompt,
+	_resetCliPromptCacheForTests,
+} from '../../../cli/services/prompt-loader';
 
 describe('CLI prompt-loader', () => {
 	beforeEach(() => {
@@ -65,14 +70,14 @@ describe('CLI prompt-loader', () => {
 				},
 			})
 		);
-		// accessSync probes for the bundled REF resolver dir — return success
+		// accessSync probes for the bundled REF resolver dir - return success
 		// so subsequent REF expansion has a stable root if it ever runs.
 		vi.mocked(fsSync.accessSync).mockReturnValue(undefined);
 
 		const content = await getCliPrompt('autorun-default');
 
 		expect(content).toBe('user edited content');
-		// Only the customizations file should have been read — no bundled fallback
+		// Only the customizations file should have been read - no bundled fallback
 		expect(mockReadFile).toHaveBeenCalledTimes(1);
 	});
 
@@ -88,6 +93,14 @@ describe('CLI prompt-loader', () => {
 		expect(content).toBe('bundled content');
 		// Customizations + first bundled candidate were tried
 		expect(mockReadFile).toHaveBeenCalled();
+	});
+
+	it('finds checkout prompts from the standalone dist/cli bundle layout', () => {
+		const filename = '_interface-primitives.md';
+		const moduleDirectory = path.join(process.cwd(), 'dist', 'cli');
+		const expected = path.join(process.cwd(), 'src', 'prompts', filename);
+
+		expect(_getBundledPromptCandidatesForTests(filename, moduleDirectory)).toContain(expected);
 	});
 
 	it('caches a loaded prompt so subsequent calls do not re-read the filesystem', async () => {

@@ -29,9 +29,7 @@ export function AboutTab({ theme }: AboutTabProps) {
 			</div>
 
 			{/* Tagline */}
-			<p className="text-base mt-3 opacity-70" style={{ color: theme.colors.textDim }}>
-				Agent Orchestration Command Center
-			</p>
+			<p className="text-base mt-3 opacity-70">Agent Orchestration Command Center</p>
 
 			{/* Version */}
 			<div className="mt-10 text-3xl font-bold font-mono" style={{ color: theme.colors.textMain }}>
