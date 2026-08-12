@@ -2348,6 +2348,29 @@ interface MaestroAPI {
 			loopNumber: number,
 			sshRemoteId?: string
 		) => Promise<{ workingCopyPath: string; originalPath: string }>;
+		// Playbook STATUS.json watching. Types reference the single canonical
+		// PlaybookStatus in shared/types via inline import (no redeclaration).
+		// `subscriberId` reference-counts the watcher: several agents can run Auto
+		// Run against one project, and the watch must survive any one of them
+		// finishing. `isRemote` declines the watch outright for SSH agents, whose
+		// STATUS.json lives on the remote host where chokidar cannot see it.
+		watchStatus: (
+			projectPath: string,
+			subscriberId: string,
+			isRemote?: boolean
+		) => Promise<{
+			status: import('../shared/types').PlaybookStatus | null;
+			watching: boolean;
+			isRemote?: boolean;
+			message?: string;
+		}>;
+		unwatchStatus: (projectPath: string, subscriberId: string) => Promise<Record<string, never>>;
+		onStatusChanged: (
+			handler: (data: {
+				projectPath: string;
+				status: import('../shared/types').PlaybookStatus | null;
+			}) => void
+		) => () => void;
 	};
 	// Playbooks API (saved batch run configurations)
 	playbooks: {
