@@ -12,6 +12,11 @@ import {
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	normalizeHistoryEntryType,
+	normalizeHistoryEntries,
+	isHistoryEntryType,
+	visibleHistoryEntryTypes,
+	ALL_HISTORY_ENTRY_TYPES,
 	type HistoryFileData,
 	type MigrationMarker,
 	type PaginationOptions,
@@ -258,6 +263,96 @@ describe('shared/history', () => {
 			const result = paginateEntries(entries, { offset: -1 });
 			// slice(-1, 99) would return the last element
 			expect(result.entries.length).toBeLessThanOrEqual(1);
+		});
+	});
+});
+
+describe('history entry type helpers', () => {
+	const base: HistoryEntry = {
+		id: 'e1',
+		type: 'AUTO',
+		timestamp: 1_700_000_000_000,
+		summary: 'Consulted by Pedsidian: why',
+		projectPath: '/repo',
+	};
+
+	describe('ALL_HISTORY_ENTRY_TYPES', () => {
+		it('is the single list of every entry type', () => {
+			expect([...ALL_HISTORY_ENTRY_TYPES].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'USER']);
+		});
+	});
+
+	describe('isHistoryEntryType', () => {
+		it('accepts every known type', () => {
+			for (const t of ALL_HISTORY_ENTRY_TYPES) expect(isHistoryEntryType(t)).toBe(true);
+		});
+
+		it('rejects unknown values without throwing', () => {
+			for (const v of ['auto', 'BOGUS', '', null, undefined, 7, {}]) {
+				expect(isHistoryEntryType(v)).toBe(false);
+			}
+		});
+	});
+
+	describe('visibleHistoryEntryTypes', () => {
+		it('drops CUE when the Cue feature is off', () => {
+			expect(visibleHistoryEntryTypes(false)).not.toContain('CUE');
+		});
+
+		it('keeps AGENT regardless of the Cue feature', () => {
+			expect(visibleHistoryEntryTypes(false)).toContain('AGENT');
+			expect(visibleHistoryEntryTypes(true)).toContain('AGENT');
+		});
+	});
+
+	describe('normalizeHistoryEntryType', () => {
+		it('re-maps a legacy consult (AUTO + sourceAgentName) to AGENT', () => {
+			// Consults were written as AUTO before the AGENT type existed, which made
+			// them render as Auto Run tasks and inflated the Auto Run counts.
+			expect(normalizeHistoryEntryType({ ...base, sourceAgentName: 'Pedsidian' })).toBe('AGENT');
+		});
+
+		it('leaves a genuine Auto Run entry alone', () => {
+			expect(normalizeHistoryEntryType(base)).toBe('AUTO');
+		});
+
+		it('leaves USER and CUE entries alone even if somehow attributed', () => {
+			expect(normalizeHistoryEntryType({ ...base, type: 'USER' })).toBe('USER');
+			expect(normalizeHistoryEntryType({ ...base, type: 'CUE', sourceAgentName: 'X' })).toBe('CUE');
+		});
+
+		it('passes through entries already written as AGENT', () => {
+			expect(
+				normalizeHistoryEntryType({ ...base, type: 'AGENT', sourceAgentName: 'Pedsidian' })
+			).toBe('AGENT');
+		});
+	});
+
+	describe('normalizeHistoryEntries', () => {
+		it('re-maps only the legacy consults in a mixed list', () => {
+			const result = normalizeHistoryEntries([
+				base,
+				{ ...base, id: 'e2', sourceAgentName: 'Pedsidian' },
+				{ ...base, id: 'e3', type: 'USER' },
+			]);
+			expect(result.map((e) => e.type)).toEqual(['AUTO', 'AGENT', 'USER']);
+		});
+
+		it('returns the same array reference when nothing needs re-mapping', () => {
+			// Hot path: every read goes through this, so it must not allocate for the
+			// overwhelmingly common case of a file with no legacy consults.
+			const entries = [base, { ...base, id: 'e2', type: 'USER' as const }];
+			expect(normalizeHistoryEntries(entries)).toBe(entries);
+		});
+
+		it('does not mutate the input entries', () => {
+			const entries = [{ ...base, sourceAgentName: 'Pedsidian' }];
+			normalizeHistoryEntries(entries);
+			expect(entries[0].type).toBe('AUTO');
+		});
+
+		it('handles an empty list', () => {
+			expect(normalizeHistoryEntries([])).toEqual([]);
 		});
 	});
 });

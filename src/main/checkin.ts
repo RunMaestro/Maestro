@@ -81,8 +81,19 @@ async function getOrCreateInstallId(app: App): Promise<string> {
  * the settings store. It is optional and best-effort: a missing/empty value is
  * simply omitted from the payload rather than sent as null, and never blocks the
  * ping. `platform`/`arch` come straight from `process` and are always included.
+ *
+ * Unpackaged runs never ping. `app.getVersion()` reads the version out of the
+ * application's package.json, and an unpackaged launch may have none in scope -
+ * Electron then returns the version of the Electron binary itself, which lands
+ * in the analytics as a bogus app version. The e2e suite launches
+ * `dist/main/index.js` directly (a file, so no package.json), and gives each run
+ * a throwaway data dir, so every run also minted a fresh install id. That put
+ * hundreds of phantom one-shot "installs" on Electron version numbers into the
+ * dataset. Developer machines and CI are not the install base; skip them.
  */
 export async function sendCheckin(app: App, theme?: string | null): Promise<void> {
+	if (!app.isPackaged) return;
+
 	try {
 		const guid = await getOrCreateInstallId(app);
 		const version = app.getVersion();
@@ -100,17 +111,29 @@ export async function sendCheckin(app: App, theme?: string | null): Promise<void
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), CHECKIN_TIMEOUT_MS);
 		try {
-			await fetch(CHECKIN_ENDPOINT, {
+			const response = await fetch(CHECKIN_ENDPOINT, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body),
 				signal: controller.signal,
 			});
+			// A rejected ping used to be indistinguishable from a delivered one:
+			// the response was never inspected, so a 500 or a validation 400 read
+			// as success. Warn on it - if the endpoint starts turning check-ins
+			// away, the install-base numbers quietly flatline and nothing says so.
+			if (!response.ok) {
+				logger.warn(
+					`Check-in ping rejected: HTTP ${response.status} ${response.statusText}`,
+					'Checkin'
+				);
+			}
 		} finally {
 			clearTimeout(timeout);
 		}
 	} catch (err) {
-		// Swallow everything - offline, timeout, 5xx, DNS, etc. Never surfaced.
+		// Transport-level failure - offline, DNS, timeout. Expected and routine
+		// on a laptop, so it stays at debug. A reachable endpoint that refuses
+		// the ping is the interesting case, and that is warned about above.
 		logger.debug(
 			`Check-in ping failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
 			'Checkin'

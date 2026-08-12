@@ -3,6 +3,7 @@ import {
 	walkTreePartitioned,
 } from '../../shared/treeUtils';
 import { isImageFile } from '../../shared/gitUtils';
+import { isMediaFile } from '../../shared/mediaTypes';
 import { shouldIgnore, parseGitignoreContent, LOCAL_IGNORE_DEFAULTS } from '../../shared/globUtils';
 import { logger } from './logger';
 
@@ -12,6 +13,13 @@ import { logger } from './logger';
 export function shouldOpenExternally(filename: string): boolean {
 	// Images that can be previewed inline should NOT open externally
 	if (isImageFile(filename)) {
+		return false;
+	}
+
+	// Same for audio/video Maestro can play itself. Only the containers Chromium
+	// can actually decode qualify, so the formats it cannot demux (mkv, avi, wmv,
+	// flv, wma) stay in the list below and keep opening in the system player.
+	if (isMediaFile(filename)) {
 		return false;
 	}
 
@@ -41,22 +49,13 @@ export function shouldOpenExternally(filename: string): boolean {
 		'sketch',
 		'fig',
 		'xd',
-		// Video
-		'mp4',
-		'mov',
+		// Video/audio Chromium cannot demux, so Maestro's own player can't help.
+		// Playable formats are handled by the isMediaFile check above and must not
+		// be listed here.
 		'avi',
 		'mkv',
-		'webm',
 		'wmv',
 		'flv',
-		'm4v',
-		// Audio
-		'mp3',
-		'wav',
-		'flac',
-		'aac',
-		'm4a',
-		'ogg',
 		'wma',
 		// Archives
 		'zip',

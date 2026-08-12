@@ -1,5 +1,5 @@
 /**
- * Leaderboard service — ships achievement time deltas to the RunMaestro
+ * Leaderboard service - ships achievement time deltas to the RunMaestro
  * leaderboard.
  *
  * The server builds its totals from `deltaMs` submissions (delta mode, so a
@@ -24,6 +24,12 @@ export interface SubmitLeaderboardTimeDeltaArgs {
 	/**
 	 * Runs to add to the server total. Defaults to 0 for time that is not an
 	 * Auto Run (e.g. Cue), so `totalRuns` keeps matching the local value.
+	 *
+	 * Send an explicit 0 rather than omitting the field. The server picks
+	 * delta mode vs legacy mode off `deltaRuns !== undefined`, and legacy mode
+	 * overwrites the server-aggregated run count with this one device's local
+	 * total. Omitting it here would silently clobber a multi-device user's
+	 * `total_runs` on every Cue submission.
 	 */
 	deltaRuns?: number;
 	/** What earned this time. Lets the server treat Cue's higher submission
@@ -89,7 +95,7 @@ export async function submitLeaderboardTimeDelta(
 	} catch (error) {
 		// Background submission: a network blip must not break the run that
 		// earned the time. The delta is lost for this submission (the server is
-		// delta-accumulated, so there is no retry queue today) — report it so
+		// delta-accumulated, so there is no retry queue today) - report it so
 		// the loss is visible rather than silent.
 		Sentry.captureException(error, {
 			extra: { operation: 'leaderboard-delta-submit', deltaMs, deltaRuns },

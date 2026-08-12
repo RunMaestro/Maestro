@@ -52,6 +52,8 @@ export function useUsageDashboardData({
 						? {
 								occurrences: cueAgg.totals.occurrences,
 								totalDurationMs: cueAgg.totals.totalDurationMs,
+								tokens:
+									(cueAgg.totals.totalInputTokens ?? 0) + (cueAgg.totals.totalOutputTokens ?? 0),
 							}
 						: null
 				);

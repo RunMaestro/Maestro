@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
+import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
 import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
@@ -32,7 +32,7 @@ export function isSynopsisRequest(msg: {
  * History entry for the addHistoryEntry function.
  */
 export interface HistoryEntryInput {
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;

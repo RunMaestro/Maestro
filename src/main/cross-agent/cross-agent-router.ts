@@ -55,16 +55,37 @@ export const CROSS_AGENT_SESSION_PREFIX = 'cross-agent-';
 
 /**
  * How long a consulted agent may go SILENT before we give up on it. Reset on
- * every `data` event, so an agent that keeps streaming (long tool runs, a
- * subagent fan-out, extended thinking) is never killed mid-answer. Guards
- * against a hung target leaking the data/exit listeners we attach to the shared
- * ProcessManager.
+ * every LIVENESS signal (see `LIVENESS_EVENTS`), so an agent that keeps working
+ * - long tool runs, a subagent fan-out, extended thinking - is never killed
+ * mid-answer. Guards against a hung target leaking the listeners we attach to
+ * the shared ProcessManager.
  *
  * This was previously a single wall-clock budget armed at spawn, which killed
  * healthy consults that simply took longer than the budget to finish - the
  * failure mode that motivated the split.
  */
 const CROSS_AGENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * The ProcessManager events that prove a consulted agent is still working.
+ *
+ * This list is the whole point, and getting it wrong silently reintroduces the
+ * wall-clock bug the idle/hard split was meant to kill. For a `--print`
+ * stream-json run, `StdoutHandler` routes a turn's intermediate activity to
+ * `thinking-chunk` / `tool-execution` / `usage`, and only emits `data` when
+ * `isResultMessage(event)` is true - i.e. the terminal result, at the very end
+ * (see `handleParsedEvent`, plus the exit-time flush in `ExitHandler`). A
+ * healthy Claude consult therefore emits ZERO `data` events until it is
+ * completely finished.
+ *
+ * Arming the budget on `data` alone made it a hard N-minute deadline for every
+ * claude-code consult: an agent doing real work for longer than the budget was
+ * killed at exactly the budget, having never once re-armed the timer. That is
+ * precisely the "agent is working fine but the consult dies anyway" failure.
+ *
+ * Every event here is emitted as `(sessionId, payload)`, so one filter fits all.
+ */
+const LIVENESS_EVENTS = ['data', 'thinking-chunk', 'tool-execution', 'usage'] as const;
 
 /**
  * Absolute ceiling on a single consult, regardless of how chatty it is. A target
@@ -336,7 +357,15 @@ export async function startCrossAgentRequest(
 	const onData = (sid: string, data: string): void => {
 		if (sid !== sessionId) return;
 		buffer += data;
-		// Output means the target is alive and working: restart its silence budget.
+	};
+
+	/**
+	 * Any liveness signal for THIS consult restarts the silence budget. Separate
+	 * from `onData` because most of these events carry no text we want to buffer -
+	 * they only prove the target is still working.
+	 */
+	const onLiveness = (sid: string): void => {
+		if (sid !== sessionId) return;
 		armIdleTimer();
 	};
 
@@ -346,6 +375,7 @@ export async function startCrossAgentRequest(
 
 	const cleanup = (): void => {
 		processManager.off('data', onData);
+		for (const evt of LIVENESS_EVENTS) processManager.off(evt, onLiveness);
 		processManager.off('exit', onExit);
 		processManager.off('session-id', onSessionId);
 		if (timer.idle) clearTimeout(timer.idle);
@@ -450,6 +480,9 @@ export async function startCrossAgentRequest(
 	};
 
 	processManager.on('data', onData);
+	// Re-arm the silence budget on every proof-of-life, not just `data` - a
+	// claude-code consult emits `data` only once, at the very end.
+	for (const evt of LIVENESS_EVENTS) processManager.on(evt, onLiveness);
 	processManager.on('exit', onExit);
 	processManager.on('session-id', onSessionId);
 

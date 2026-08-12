@@ -142,6 +142,15 @@ System sleep / app suspension can leave the engine paused mid-day. Handled in fo
   - `file.changed` / `agent.completed` / `task.pending` are NOT reconciled (FSEvents survives sleep, fan-in state is durable, task scanner re-scans on next tick).
 - **`cue-engine.ts:reconcileAfterWake`** - the resume-time entry point. Stops the heartbeat (so its 30s tick can't clobber `last_seen` mid-reconcile), runs `detectSleepAndReconcile`, then calls `pollNow()` on every trigger source that exposes it (currently the GitHub poller - fires an immediate `gh pr/issue list` so PRs/issues that appeared during sleep surface within seconds instead of waiting up to `poll_minutes`). Re-starts the heartbeat in a `finally` block. Idempotent against multiple resume events from the same wake.
 
+## Timezone changes (laptop crossing zones)
+
+`time.scheduled` matches a local wall clock, so the engine's view of "what time is it" has to follow the laptop. V8 caches the local timezone the first time a `Date` needs it and never re-reads it; Chromium refreshes its **renderers** on an OS timezone change but leaves the **main** process (where the whole engine runs) stale. Without help, a flight from CST to PST would keep firing schedules on the old clock until the app restarted.
+
+- **`utils/timezone-watcher.ts`** - polls every 60s (and on `powerMonitor.on('resume')`) for the real system zone, using two independent signals: the `/etc/localtime` symlink target on POSIX (a live syscall, uncacheable) and, as the cross-platform fallback, ICU's default zone. It also compares ICU's current UTC offset against `getTimezoneOffset()` to catch a stale cache when the zone ID itself did not move. On a change it assigns `process.env.TZ`, which is what makes Node reset V8's `DateCache`. No restart.
+- **`cue-engine.ts:handleTimeZoneChange`** - runs after the process has switched zones. Matching needs no repair (each 60s tick re-reads the clock), but every source's cached next-fire projection does, so it calls the optional `onTimeZoneChange()` on each source. Only `time.scheduled` implements it; interval sources and `time.once` are fixed points on the epoch timeline that a zone change does not move.
+- **Ordering matters on resume.** `index.ts` calls `timeZoneWatcher.check()` **before** `cueEngine.reconcileAfterWake()` so a laptop that flew while asleep computes its missed local slots in the zone it woke up in.
+- **`TZ` set before launch wins.** If the environment pinned `TZ` (containers, `TZ=UTC npm start`), the watcher logs once and stays inert.
+
 ## Trigger source contract
 
 Every source implements the interface in `triggers/cue-trigger-source.ts`. They share a registry (`cue-trigger-source-registry.ts`) and a filter helper (`cue-trigger-filter.ts`). Quick reference:
@@ -241,7 +250,8 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 7. **`ChainDepth` is unique to chain step, not run.** Two parallel fan-out runs at depth 3 each show depth 3, not 3 and 4. The depth guard counts steps from the originating trigger, not total runs in flight.
 8. **`HEARTBEAT_INTERVAL_MS` is the floor for `time.heartbeat` reconciliation granularity.** A subscription with `interval_minutes: 0.1` (6s) WILL accumulate "missed" intervals that get fired as a single catch-up event after sleep - because the reconciler does `Math.floor(gapMs / intervalMs)`. Sub-minute intervals + sleep events == mass dispatch. Either reject sub-minute intervals in validation or cap reconciled `missedCount` at 1.
 9. **Sentry `operation` tags are part of the alerting contract.** `cue:heartbeat`, `cue:finalizeOutputRunStatus`, `cue:shell:sshWrap`, `cue:cliExecutor` are referenced by oncall paging rules. Don't refactor away the per-call-site tags.
-10. **Restored queue entries lose `pipelineName`.** This is by design (no schema column). If we ever care to preserve labels across crashes, add a column to `cue_event_queue` and thread it through `PersistableQueueEntry`.
+10. **A timezone change can repeat or skip one `time.scheduled` slot.** Local-time semantics: fly west and the wall clock rewinds past a slot that already fired today, so it fires again; fly east and a slot can be stepped over. This is deliberate - `handleTimeZoneChange` never synthesizes a catch-up for a slot that occurred in neither zone. Sleep-gap catch-ups are unaffected (the zone is applied before the reconciler runs).
+11. **Restored queue entries lose `pipelineName`.** This is by design (no schema column). If we ever care to preserve labels across crashes, add a column to `cue_event_queue` and thread it through `PersistableQueueEntry`.
 
 ## Common change recipes
 

@@ -464,6 +464,91 @@ describe('auto-run command', () => {
 		expect(sentMessage!.worktree).toBeUndefined();
 	});
 
+	describe('per-run model/effort override', () => {
+		/**
+		 * Wire up a client whose sendCommand captures the outgoing message, so a
+		 * test can assert on the `configure_auto_run` payload the CLI ships.
+		 */
+		const captureSentMessage = (): (() => Record<string, unknown> | undefined) => {
+			let sentMessage: Record<string, unknown> | undefined;
+			vi.mocked(existsSync).mockReturnValue(true);
+			vi.mocked(resolveTargetSessionId).mockReturnValue('agent-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((msg) => {
+						sentMessage = msg;
+						return Promise.resolve({
+							type: 'configure_auto_run_result',
+							success: true,
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+			return () => sentMessage;
+		};
+
+		it('should send model and effort when --model and --effort are provided', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				model: 'opus',
+				effort: 'high',
+			});
+
+			const sentMessage = getSent();
+			expect(sentMessage).toBeDefined();
+			expect(sentMessage!.model).toBe('opus');
+			expect(sentMessage!.effort).toBe('high');
+		});
+
+		it('should omit model and effort entirely when the flags are not provided', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], { agent: 'agent-123', launch: true });
+
+			const sentMessage = getSent();
+			expect(sentMessage).toBeDefined();
+			// Absent (not `undefined`) so an unset flag never serializes across the
+			// WebSocket boundary and the agent default stays in effect.
+			expect('model' in sentMessage!).toBe(false);
+			expect('effort' in sentMessage!).toBe(false);
+		});
+
+		it('should treat whitespace-only --model/--effort as unset', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				model: '   ',
+				effort: '\t',
+			});
+
+			const sentMessage = getSent();
+			expect(sentMessage).toBeDefined();
+			expect('model' in sentMessage!).toBe(false);
+			expect('effort' in sentMessage!).toBe(false);
+		});
+
+		it('should send model without effort when only --model is provided', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				model: 'sonnet',
+			});
+
+			const sentMessage = getSent();
+			expect(sentMessage).toBeDefined();
+			expect(sentMessage!.model).toBe('sonnet');
+			expect('effort' in sentMessage!).toBe(false);
+		});
+	});
+
 	it('should error when server returns failure', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 		vi.mocked(resolveTargetSessionId).mockReturnValue('agent-123');

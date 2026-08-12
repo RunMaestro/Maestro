@@ -71,6 +71,7 @@ The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-pri
 - **JSON Output:** `--output-format stream-json`
 - **Resume:** `--resume <session-id>`
 - **Read-only:** `--permission-mode plan`
+- **Standard mode:** permission relay (`--permission-prompt-tool` + `--mcp-config`), also carries `AskUserQuestion` ask-backs; absent in full/read-only/SSH/interactive (TUI wrapper) paths
 - **Session Storage:** `~/.claude/projects/<encoded-path>/`
 
 ### Codex

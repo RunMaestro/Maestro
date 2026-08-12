@@ -46,4 +46,14 @@ export type { HoverTooltipProps } from './HoverTooltip';
 
 export { ResizeHandles } from './ResizeHandles';
 
-export { EscCloseHint } from './EscCloseHint';
+export { CalendarPicker } from './CalendarPicker';
+export type { CalendarPickerProps } from './CalendarPicker';
+
+export { EscCloseButton } from './EscCloseButton';
+export type { EscCloseButtonProps } from './EscCloseButton';
+
+export { CopyIconButton } from './CopyIconButton';
+export type { CopyIconButtonProps } from './CopyIconButton';
+
+export { GitChangeCounts } from './GitChangeCounts';
+export type { GitChangeCountsProps } from './GitChangeCounts';

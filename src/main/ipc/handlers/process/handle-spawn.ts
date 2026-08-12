@@ -5,7 +5,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../../process-manager';
 import { AgentDetector } from '../../../agents';
-import { checkCustomPath } from '../../../agents/path-prober';
+import { checkBinaryExists, checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
 	getActivePluginManager,
@@ -42,7 +42,11 @@ import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-sp
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
-import { primeOmpModelCatalog, computeOmpCatalogKey } from '../../../agents/omp-model-catalog';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+	buildOmpPrimeEnv,
+} from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -768,25 +772,82 @@ export async function handleProcessSpawn(
 	// catalog is never served to another (see computeOmpCatalogKey). SSH remotes
 	// are skipped (their catalog may differ) and fall back to the configured window.
 	let ompModelCatalogKey: string | undefined;
-	if (config.toolType === 'omp' && localAgentBinDir && localSpawnBinaryPath) {
-		// Identity uses the session's stable custom env overrides (not the
-		// platform-expanded `customEnvVarsToPass`, which on Windows is the whole
-		// env) so the same logical config maps to one catalog across platforms and
-		// matches the detector's default-identity warm-up.
-		ompModelCatalogKey = computeOmpCatalogKey(localSpawnBinaryPath, effectiveCustomEnvVars);
-		// Bounded await: block the spawn only briefly so the first turn resolves
-		// correctly on a warm/fast catalog, and proceed (letting the prime finish
-		// in the background for later turns) when it is slow or fails.
-		const OMP_PRIME_SPAWN_CAP_MS = 2000;
-		const prime = primeOmpModelCatalog(
-			localSpawnBinaryPath,
-			{ ...process.env, ...customEnvVarsToPass },
-			ompModelCatalogKey
-		);
-		await Promise.race([
-			prime,
-			new Promise<void>((resolve) => setTimeout(resolve, OMP_PRIME_SPAWN_CAP_MS)),
-		]);
+	// Set only when the prime outran the spawn cap: the spawn continues without a
+	// catalog, so the first turn emits the fallback window and we push a corrected
+	// one once this settles (see below, after the process exists).
+	let ompLatePrime: Promise<void> | undefined;
+	if (config.toolType === 'omp' && !sshRemoteUsed) {
+		// The prime needs an ABSOLUTE binary path (buildOmpPrimeEnv prepends its
+		// dirname, and the catalog key must identify one binary). A bare or
+		// relative path used to skip the whole block silently, which left
+		// ompModelCatalogKey undefined and latched the 200k fallback for the life
+		// of the process. Resolve it instead, reusing the same probes detection
+		// uses (they already cover ~/.bun/bin), and warn if it still cannot be.
+		let ompPrimeBinaryPath =
+			localSpawnBinaryPath && path.isAbsolute(localSpawnBinaryPath)
+				? localSpawnBinaryPath
+				: undefined;
+		if (!ompPrimeBinaryPath) {
+			const relativeDetection = localSpawnBinaryPath
+				? await checkCustomPath(localSpawnBinaryPath)
+				: undefined;
+			if (relativeDetection?.exists && relativeDetection.path) {
+				ompPrimeBinaryPath = relativeDetection.path;
+			} else {
+				const probed = await checkBinaryExists(agent?.binaryName || localSpawnBinaryPath || 'omp');
+				if (probed.exists && probed.path && path.isAbsolute(probed.path)) {
+					ompPrimeBinaryPath = probed.path;
+				}
+			}
+		}
+
+		if (!ompPrimeBinaryPath) {
+			logger.warn(`Skipped omp model catalog prime: no absolute binary path`, LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				sessionCustomPath: config.sessionCustomPath,
+				agentPath: agent?.path,
+				binaryName: agent?.binaryName,
+			});
+		} else {
+			// Identity uses the session's stable custom env overrides (not the
+			// platform-expanded `customEnvVarsToPass`, which on Windows is the whole
+			// env) so the same logical config maps to one catalog across platforms and
+			// matches the detector's default-identity warm-up.
+			ompModelCatalogKey = computeOmpCatalogKey(ompPrimeBinaryPath, effectiveCustomEnvVars);
+			// Bounded await: block the spawn only briefly so the first turn resolves
+			// correctly on a warm/fast catalog, and proceed (letting the prime finish
+			// in the background for later turns) when it is slow or fails.
+			const OMP_PRIME_SPAWN_CAP_MS = 3500;
+			// Prime with the platform-expanded env (mirroring the Windows agent path
+			// above) so the bun-based `omp` binary resolves in a packaged app: packaged
+			// Electron apps do not inherit the shell PATH, so a raw `process.env` lacks
+			// user-local bin dirs like `~/.bun/bin`. buildOmpPrimeEnv also prepends the
+			// binary's own dir so a co-located runtime is found first, and the detector's
+			// warm-up shares it so both prime sites build an identical env.
+			const primeEnv = buildOmpPrimeEnv(ompPrimeBinaryPath, customEnvVarsToPass);
+			const primeStartedAt = Date.now();
+			// retryFailedPrime: a user starting an agent must get a fresh attempt
+			// rather than inheriting a negative-cached failure (e.g. from a cold
+			// packaged start) that would pin the fallback window for 5 minutes.
+			const prime = primeOmpModelCatalog(ompPrimeBinaryPath, primeEnv, ompModelCatalogKey, {
+				retryFailedPrime: true,
+			});
+			const primeExceededCap = await Promise.race([
+				prime.then(() => false),
+				new Promise<boolean>((resolve) => setTimeout(() => resolve(true), OMP_PRIME_SPAWN_CAP_MS)),
+			]);
+			if (primeExceededCap) {
+				// Makes the cold-start theory checkable in the packaged app's log:
+				// the first turn will show the fallback window until the prime lands.
+				logger.warn(`omp prime exceeded spawn cap, continuing in background`, LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					command: ompPrimeBinaryPath,
+					elapsedMs: Date.now() - primeStartedAt,
+					capMs: OMP_PRIME_SPAWN_CAP_MS,
+				});
+				ompLatePrime = prime;
+			}
+		}
 	}
 
 	const result = processManager.spawn({
@@ -829,6 +890,22 @@ export async function handleProcessSpawn(
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 	});
+
+	// The prime outran the spawn cap, so the process started without a usable
+	// catalog and its first usage event carries the 200k fallback. Close the loop:
+	// when the prime lands, re-emit that turn's usage with the real window instead
+	// of leaving the gauge wrong until the next turn. Attached AFTER spawn so the
+	// managed process exists; the push itself no-ops if it already exited.
+	if (ompLatePrime && ompModelCatalogKey) {
+		const latePrimeCatalogKey = ompModelCatalogKey;
+		void ompLatePrime
+			.then(() => {
+				processManager.pushResolvedOmpContextWindow(config.sessionId, latePrimeCatalogKey);
+			})
+			.catch(() => {
+				// primeOmpModelCatalog already warn-logs its own failures.
+			});
+	}
 
 	logger.info(`Process spawned successfully`, LOG_CONTEXT, {
 		sessionId: config.sessionId,

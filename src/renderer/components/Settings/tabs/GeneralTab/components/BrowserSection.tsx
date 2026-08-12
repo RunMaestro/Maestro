@@ -64,7 +64,7 @@ export function BrowserSection({
 					<div className="font-medium" style={{ color: theme.colors.textMain }}>
 						Open HTML files in Maestro Browser on double-click
 					</div>
-					<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs opacity-70 mt-0.5">
 						When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro
 						browser instead of the file preview. Right-click for the full menu either way.
 					</div>
@@ -80,7 +80,7 @@ export function BrowserSection({
 				className="mt-3 p-3 rounded border"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<div className="block text-xs opacity-60 mb-1">Browser Home URL</div>
+				<div className="block text-xs opacity-70 mb-1">Browser Home URL</div>
 				<div className="flex gap-2">
 					<input
 						type="text"
@@ -103,7 +103,7 @@ export function BrowserSection({
 						</button>
 					)}
 				</div>
-				<p className="text-xs opacity-40 mt-2">
+				<p className="text-xs opacity-70 mt-2">
 					The URL loaded when opening a new browser tab (Cmd+B).
 				</p>
 			</div>
@@ -115,7 +115,7 @@ export function BrowserSection({
 				<div className="font-medium" style={{ color: theme.colors.textMain }}>
 					Background browser tabs
 				</div>
-				<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+				<div className="text-xs opacity-70 mt-0.5 mb-2">
 					An inactive browser tab is unloaded by default, so its page reloads and loses any
 					in-memory state when you return. Keep recent or all tabs alive to preserve their state at
 					the cost of memory (each live tab holds a full browser process).
@@ -132,9 +132,7 @@ export function BrowserSection({
 				/>
 				{browserTabKeepAlive === 'recent' && (
 					<div className="mt-3 flex items-center gap-2">
-						<label className="text-xs opacity-60" style={{ color: theme.colors.textDim }}>
-							Keep this many recent tabs alive
-						</label>
+						<label className="text-xs opacity-70">Keep this many recent tabs alive</label>
 						<input
 							type="number"
 							min={1}

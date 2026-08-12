@@ -55,7 +55,11 @@ vi.mock('../../../../renderer/hooks/keyboard/useListNavigation', () => ({
 	},
 }));
 
-// Mock @tanstack/react-virtual
+// Mock @tanstack/react-virtual. The options are captured so tests can assert on
+// virtualization config the DOM can't show (jsdom has no layout, so real
+// measurement never runs) - notably `getItemKey`, which controls whether the
+// measurement cache follows an entry or its slot.
+const capturedVirtualizerOpts: any[] = [];
 vi.mock('@tanstack/react-virtual', () => ({
 	useVirtualizer: (opts: any) => ({
 		getVirtualItems: () =>
@@ -68,6 +72,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 		getTotalSize: () => opts.count * 80,
 		scrollToIndex: vi.fn(),
 		measureElement: vi.fn(),
+		__opts: capturedVirtualizerOpts.push(opts),
 	}),
 }));
 
@@ -323,6 +328,45 @@ afterEach(() => {
 });
 
 describe('UnifiedHistoryTab', () => {
+	describe('Row virtualization', () => {
+		// Regression: the virtualizer's measurement cache is keyed by item key, and
+		// the default key is the row INDEX. Filtering/searching swaps which entry
+		// occupies each index, so every row inherited the measured height of
+		// whatever used to sit in its slot - rendering as uneven gaps between cards
+		// until something forced a remeasure. Keying by entry id makes a changed
+		// list a cache miss instead of a wrong hit.
+		it('keys row measurements by entry id, not by row index', async () => {
+			capturedVirtualizerOpts.length = 0;
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => expect(capturedVirtualizerOpts.length).toBeGreaterThan(0));
+			const { getItemKey } = capturedVirtualizerOpts.at(-1)!;
+			expect(getItemKey).toBeTypeOf('function');
+
+			await waitFor(() => {
+				const latest = capturedVirtualizerOpts.at(-1)!;
+				expect(latest.count).toBe(createMockEntries().length);
+			});
+
+			const opts = capturedVirtualizerOpts.at(-1)!;
+			expect(opts.getItemKey(0)).toBe('entry-1');
+			expect(opts.getItemKey(1)).toBe('entry-2');
+			expect(opts.getItemKey(2)).toBe('entry-3');
+		});
+
+		it('falls back to the index when an entry is missing rather than throwing', async () => {
+			capturedVirtualizerOpts.length = 0;
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => expect(capturedVirtualizerOpts.length).toBeGreaterThan(0));
+			const { getItemKey } = capturedVirtualizerOpts.at(-1)!;
+			// An out-of-range index can be requested transiently while the list
+			// shrinks; the key function must stay total.
+			expect(() => getItemKey(9999)).not.toThrow();
+			expect(getItemKey(9999)).toBe(9999);
+		});
+	});
+
 	describe('Loading and Data Fetching', () => {
 		it('shows loading state initially', () => {
 			mockGetUnifiedHistory.mockReturnValue(new Promise(() => {}));

@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import {
-	getInitialRenameValue,
-	moveActiveUnifiedTabToEdge,
-	toggleReadOnlyModeFields,
-} from '../../utils/tabHelpers';
+import { moveActiveUnifiedTabToEdge, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
 import { useModalStore } from '../../stores/modalStore';
+import { getTabDisplayName } from '../../utils/tabHelpers';
 import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
@@ -334,7 +332,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					isOutputSearchOpen &&
 					(ctx.isShortcut(e, 'agentSwitcher') ||
 						ctx.isShortcut(e, 'quickAction') ||
-						ctx.isShortcut(e, 'fuzzyFileSearch'));
+						ctx.isShortcut(e, 'fuzzyFileSearch') ||
+						// "Not in this tab - search them all" is the natural escalation
+						// from an open Find bar, so it must not be eaten by the guard.
+						ctx.isShortcut(e, 'searchAllTabs'));
 				const isOutputSearchRefocusShortcut =
 					isOutputSearchOpen &&
 					(e.metaKey || e.ctrlKey) &&
@@ -719,6 +720,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.mainPanelRef?.current?.focusActiveTab();
 				trackShortcut('focusActiveTab');
+			} else if (ctx.isShortcut(e, 'searchAllTabs')) {
+				// Resolve the agent from the store at event time rather than reading
+				// `ctx.activeSession`. The keyboard context's shape is not stable across
+				// branches (the multi-window work drops `activeSession` from the ref and
+				// resolves it per event), and a missing property here made the guard
+				// silently falsy - which, with preventDefault already called, swallowed
+				// the keystroke with no visible effect.
+				const searchSession = selectActiveSession(useSessionStore.getState());
+				// Group chats have no AI tabs to search across. preventDefault only when
+				// we actually act, so an inapplicable context falls through instead of
+				// eating the key.
+				if (!ctx.activeGroupChatId && searchSession?.aiTabs?.length) {
+					e.preventDefault();
+					ctx.handleOpenCrossTabSearch?.();
+					trackShortcut('searchAllTabs');
+				}
 			} else if (ctx.isShortcut(e, 'viewGitDiff') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				ctx.handleViewGitDiff();
@@ -1025,6 +1042,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				// Bulk close shortcuts (AI mode only - terminal tabs don't have bulk close)
 				if (activeSession.inputMode === 'ai') {
+					// Snooze the active AI tab (Opt+Cmd+S). AI-only: file, terminal, and
+					// browser tabs have no conversation to come back to.
+					if (ctx.isTabShortcut(e, 'snoozeTab')) {
+						e.preventDefault();
+						const tab = activeSession.aiTabs?.find(
+							(t: AITab) => t.id === activeSession.activeTabId
+						);
+						if (tab) {
+							useModalStore.getState().openModal('snoozeTab', {
+								tabId: tab.id,
+								tabLabel: getTabDisplayName(tab, activeSession.agentSessionId),
+							});
+							trackShortcut('snoozeTab');
+						}
+					}
 					if (ctx.isTabShortcut(e, 'closeAllTabs')) {
 						e.preventDefault();
 						ctx.handleCloseAllTabs();
@@ -1070,48 +1102,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {
 					e.preventDefault();
-					if (activeSession.inputMode === 'terminal') {
-						const activeTerminalTabId = activeSession.activeTerminalTabId;
-						const terminalTab = activeSession.terminalTabs?.find(
-							(t: { id: string }) => t.id === activeTerminalTabId
-						);
-						if (activeTerminalTabId && terminalTab) {
-							ctx.setRenameTabId(activeTerminalTabId);
-							ctx.setRenameTabInitialName(terminalTab.name ?? '');
-							ctx.setRenameTabModalOpen(true);
-							trackShortcut('renameTab');
-						}
-					} else if (activeSession.activeFileTabId) {
-						// File tabs keep inputMode 'ai' but outrank the AI tab in render
-						// precedence, so rename the visible file tab, not the hidden AI tab.
-						const activeFileTabId = activeSession.activeFileTabId;
-						const fileTab = activeSession.filePreviewTabs?.find(
-							(t: { id: string }) => t.id === activeFileTabId
-						);
-						if (fileTab) {
-							ctx.setRenameTabId(fileTab.id);
-							ctx.setRenameTabInitialName(fileTab.customName ?? '');
-							ctx.setRenameTabModalOpen(true);
-							trackShortcut('renameTab');
-						}
-					} else if (activeSession.activeBrowserTabId) {
-						const browserTab = activeSession.browserTabs?.find(
-							(t: { id: string }) => t.id === activeSession.activeBrowserTabId
-						);
-						if (browserTab) {
-							ctx.setRenameTabId(browserTab.id);
-							ctx.setRenameTabInitialName(browserTab.customTitle ?? '');
-							ctx.setRenameTabModalOpen(true);
-							trackShortcut('renameTab');
-						}
-					} else {
-						const activeTab = ctx.getActiveTab(activeSession);
-						if (activeTab) {
-							ctx.setRenameTabId(activeTab.id);
-							ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
-							ctx.setRenameTabModalOpen(true);
-							trackShortcut('renameTab');
-						}
+					// Group-aware: with a tiled group active this targets its FOCUSED PANE,
+					// so renaming a terminal/browser/file tile actually renames that tile
+					// instead of the AI tab hidden behind the group.
+					const renameRef = resolveActiveTabRef(activeSession);
+					const renameValue = renameRef ? resolveTabRefRenameValue(activeSession, renameRef) : null;
+					if (renameRef && renameValue !== null) {
+						ctx.setRenameTabId(renameRef.id);
+						ctx.setRenameTabInitialName(renameValue);
+						ctx.setRenameTabModalOpen(true);
+						trackShortcut('renameTab');
 					}
 				}
 				// AI-tab-specific metadata toggles (read-only, save-to-history,

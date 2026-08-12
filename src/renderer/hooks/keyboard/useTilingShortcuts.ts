@@ -75,13 +75,18 @@ export function useTilingShortcuts(): TilingShortcutHandlers {
 	const focusPane = useCallback((direction: 'left' | 'right' | 'up' | 'down') => {
 		const sessionId = resolveActiveSessionId();
 		if (!sessionId) return;
+		// Captured inside the updater so DOM focus is only requested when the move
+		// actually happened (no neighbor that way leaves the caret where it was).
+		let focused: string | null = null;
 		updateSessionWith(sessionId, (s) => {
 			const group = activeGroupOf(s);
 			if (!group || !group.focusedPaneId) return s;
 			const neighbor = findPaneInDirection(group, group.focusedPaneId, direction);
 			if (!neighbor) return s;
+			focused = neighbor;
 			return focusPaneInSession(s, group.id, neighbor);
 		});
+		if (focused) useUIStore.getState().requestPaneFocus(focused);
 	}, []);
 
 	// Cycle focus through the group's panes in document order (Alt+[ prev, Alt+] next)
@@ -91,6 +96,7 @@ export function useTilingShortcuts(): TilingShortcutHandlers {
 	const cyclePane = useCallback((direction: 'prev' | 'next') => {
 		const sessionId = resolveActiveSessionId();
 		if (!sessionId) return;
+		let focused: string | null = null;
 		updateSessionWith(sessionId, (s) => {
 			const group = activeGroupOf(s);
 			if (!group) return s;
@@ -102,8 +108,10 @@ export function useTilingShortcuts(): TilingShortcutHandlers {
 			const step = direction === 'next' ? 1 : -1;
 			const base = currentIdx === -1 ? (direction === 'next' ? -1 : 0) : currentIdx;
 			const nextIdx = (base + step + ids.length) % ids.length;
+			focused = ids[nextIdx];
 			return focusPaneInSession(s, group.id, ids[nextIdx]);
 		});
+		if (focused) useUIStore.getState().requestPaneFocus(focused);
 	}, []);
 
 	// Split the focused pane, pulling the next standalone AI/file tab out of the
@@ -114,6 +122,7 @@ export function useTilingShortcuts(): TilingShortcutHandlers {
 		const sessionId = resolveActiveSessionId();
 		if (!sessionId) return;
 		let flashNoTab = false;
+		let focused: string | null = null;
 		updateSessionWith(sessionId, (s) => {
 			const group = activeGroupOf(s);
 			if (!group || !group.focusedPaneId) return s;
@@ -134,8 +143,10 @@ export function useTilingShortcuts(): TilingShortcutHandlers {
 				),
 			};
 			// Focus the freshly inserted pane so input immediately targets it.
+			if (newLeaf) focused = newLeaf.id;
 			return newLeaf ? focusPaneInSession(cleaned, group.id, newLeaf.id) : cleaned;
 		});
+		if (focused) useUIStore.getState().requestPaneFocus(focused);
 		if (flashNoTab) {
 			notifyCenterFlash({
 				message: 'No standalone tab to split into',
@@ -153,6 +164,10 @@ export function useTilingShortcuts(): TilingShortcutHandlers {
 		// Closing a pane changes the leaf set, so drop any stale maximize/zoom that
 		// might point at the pane being removed. Cheap and keeps the view consistent.
 		useUIStore.getState().setZoomedPaneId(null);
+		// Only set when the group SURVIVES the close. If it dissolves, the panel
+		// falls back to single-view and owns its own focus - there is no pane left
+		// to aim at.
+		let focused: string | null = null;
 		updateSessionWith(sessionId, (s) => {
 			const group = activeGroupOf(s);
 			if (!group || !group.focusedPaneId) return s;
@@ -183,8 +198,10 @@ export function useTilingShortcuts(): TilingShortcutHandlers {
 			const withLayout = updateGroupInSession(s, group.id, (g) => ({ ...g, layout: rebalanced }));
 			const promoted = promoteRef(withLayout, removedRef);
 			// focusPaneInSession moves focusedPaneId to the neighbor and syncs activeTabId.
+			focused = focusTarget;
 			return focusTarget ? focusPaneInSession(promoted, group.id, focusTarget) : promoted;
 		});
+		if (focused) useUIStore.getState().requestPaneFocus(focused);
 	}, []);
 
 	// Toggle maximize/zoom for the focused pane. Transient UI-store state, not the

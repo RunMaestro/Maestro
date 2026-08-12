@@ -132,7 +132,7 @@ class OpencodeServerManager {
 
 		// Bind to an OS-assigned port (`--port=0`) and read the real URL from the
 		// readiness banner. Pre-picking a "free" port and passing it separately is a
-		// TOCTOU race — the port can be taken between the probe and the server's
+		// TOCTOU race - the port can be taken between the probe and the server's
 		// bind, surfacing only as an opaque 15s startup timeout.
 		const child = spawn(opts.binaryPath, ['serve', `--hostname=${hostname}`, '--port=0'], {
 			cwd: opts.cwd,

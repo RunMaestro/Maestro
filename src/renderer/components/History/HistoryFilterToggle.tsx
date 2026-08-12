@@ -1,18 +1,19 @@
 import { memo } from 'react';
 import type { Theme, HistoryEntryType } from '../../types';
 import { getPillColor, getEntryIcon } from './historyConstants';
+import { ALL_HISTORY_ENTRY_TYPES } from '../../../shared/history';
 
 export interface HistoryFilterToggleProps {
 	activeFilters: Set<HistoryEntryType>;
 	onToggleFilter: (type: HistoryEntryType) => void;
 	theme: Theme;
 	/** Which filter types to display. Defaults to all types when omitted. */
-	visibleTypes?: HistoryEntryType[];
+	visibleTypes?: readonly HistoryEntryType[];
 	/** Hide pill icons to save horizontal space in narrow panels. */
 	compact?: boolean;
 }
 
-const ALL_TYPES: HistoryEntryType[] = ['USER', 'AUTO', 'CUE'];
+const ALL_TYPES: readonly HistoryEntryType[] = ALL_HISTORY_ENTRY_TYPES;
 
 export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 	activeFilters,

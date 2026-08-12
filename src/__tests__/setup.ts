@@ -240,6 +240,7 @@ const mockMaestro = {
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
 		onUserInput: vi.fn().mockReturnValue(() => {}),
+		sendRemoteCommandReceipt: vi.fn(),
 	},
 	debug: {
 		createPackage: vi.fn().mockResolvedValue({ success: true }),
@@ -348,6 +349,10 @@ const mockMaestro = {
 		}),
 		homeDir: vi.fn().mockResolvedValue('/home/testuser'),
 	},
+	// Tab lifecycle notifications (renderer -> main); fire-and-forget
+	tabs: {
+		notifyAiTabClosed: vi.fn(),
+	},
 	agents: {
 		detect: vi.fn().mockResolvedValue([]),
 		get: vi.fn().mockResolvedValue(null),
@@ -389,6 +394,8 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		// Bulk capabilities used to prime the renderer capability cache
+		getAllCapabilities: vi.fn().mockResolvedValue({}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
@@ -460,6 +467,9 @@ const mockMaestro = {
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
+		// Transcript mirror (starred + snoozed retention)
+		snapshotStarredTranscript: vi.fn().mockResolvedValue(undefined),
+		releaseSnoozedTranscript: vi.fn().mockResolvedValue(undefined),
 	},
 	autorun: {
 		readDoc: vi.fn().mockResolvedValue({ success: true, content: '' }),
@@ -602,6 +612,31 @@ const mockMaestro = {
 	},
 	stats: {
 		recordQuery: vi.fn().mockResolvedValue({ success: true }),
+		getTokenUsage: vi.fn().mockResolvedValue({
+			totals: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+				sessionCount: 0,
+			},
+			byAgent: [],
+			byModel: [],
+			byProject: [],
+			byAccount: [],
+			timeline: [],
+			series: {
+				byDay: {},
+				byHour: {},
+				byAgentByDay: {},
+				bySessionByDay: {},
+				bySource: { user: 0, auto: 0 },
+			},
+			coverageByAgent: {},
+			generatedAtMs: 0,
+		}),
 		getAggregation: vi.fn().mockResolvedValue({
 			totalQueries: 0,
 			totalDuration: 0,

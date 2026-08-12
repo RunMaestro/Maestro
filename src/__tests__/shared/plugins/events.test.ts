@@ -25,6 +25,15 @@ describe('plugin event topics', () => {
 		expect(PLUGIN_EVENT_TOPICS).not.toContain('transcript.appended');
 	});
 
+	it('carries session.activated as an ids-only focus signal', () => {
+		expect(PLUGIN_EVENT_TOPICS).toContain('session.activated');
+		const activated: PluginEventPayloads['session.activated'] = { sessionId: 's1' };
+		expect(activated.sessionId).toBe('s1');
+		// tabId is optional; nothing derived from the session's content rides along.
+		const withTab: PluginEventPayloads['session.activated'] = { sessionId: 's1', tabId: 't1' };
+		expect(Object.keys(withTab).sort()).toEqual(['sessionId', 'tabId']);
+	});
+
 	it('agent.completed payload supports rich metadata without raw output', () => {
 		const completed: PluginEventPayloads['agent.completed'] = {
 			sessionId: 's1',

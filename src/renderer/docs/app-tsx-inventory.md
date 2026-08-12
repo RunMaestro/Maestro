@@ -967,17 +967,18 @@ useEffect(() => {
 **Purpose**: Handles keyboard navigation in file explorer.
 
 **Key Bindings**:
-| Key Combo | Action |
-|-----------|--------|
-| `Cmd/Ctrl+↑` | Jump to top |
-| `Cmd/Ctrl+↓` | Jump to bottom |
-| `Alt+↑` | Page up (10 items) |
-| `Alt+↓` | Page down (10 items) |
-| `↑` | Move up one item |
-| `↓` | Move down one item |
-| `←` | Collapse folder or navigate to parent |
-| `→` | Expand folder |
-| `Enter` | Toggle folder or open file |
+
+| Key Combo    | Action                                |
+| ------------ | ------------------------------------- |
+| `Cmd/Ctrl+↑` | Jump to top                           |
+| `Cmd/Ctrl+↓` | Jump to bottom                        |
+| `Alt+↑`      | Page up (10 items)                    |
+| `Alt+↓`      | Page down (10 items)                  |
+| `↑`          | Move up one item                      |
+| `↓`          | Move down one item                    |
+| `←`          | Collapse folder or navigate to parent |
+| `→`          | Expand folder                         |
+| `Enter`      | Toggle folder or open file            |
 
 **Dependencies**: `activeFocus`, `activeRightTab`, `flatFileList`, `selectedFileIndex`, `activeSession?.fileExplorerExpanded`, `activeSessionId`, `setSessions`, `toggleFolder`, `handleFileClick`, `hasOpenModal`
 

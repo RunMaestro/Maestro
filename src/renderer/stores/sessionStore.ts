@@ -25,6 +25,7 @@ import {
 	setGroupParent as updateGroupParent,
 } from '../../shared/groupHierarchy';
 import { useContextTimelineStore } from './contextTimelineStore';
+import { forgetContextTimelineCaptures } from '../services/contextTimelineHydration';
 
 // ============================================================================
 // Store Types
@@ -195,6 +196,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 				for (const sess of s.sessions) {
 					if (!liveIds.has(sess.id)) {
 						useContextTimelineStore.getState().removeSession(sess.id);
+						forgetContextTimelineCaptures(sess.id);
 					}
 				}
 			}
@@ -208,8 +210,10 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 			const filtered = s.sessions.filter((session) => session.id !== id);
 			// Skip if nothing was removed
 			if (filtered.length === s.sessions.length) return s;
-			// Drop the deleted agent's context-timeline buffer so it doesn't leak.
+			// Drop the deleted agent's context-timeline buffer so it doesn't leak,
+			// and main's raw capture log with it.
 			useContextTimelineStore.getState().removeSession(id);
+			forgetContextTimelineCaptures(id);
 			return { sessions: filtered };
 		}),
 

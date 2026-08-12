@@ -1331,6 +1331,22 @@ describe('isExpectedGroomingFailure', () => {
 		expect(isExpectedGroomingFailure(new Error('Agent claude-code is not available'))).toBe(true);
 	});
 
+	it('treats a grooming process that would not launch as expected (MAESTRO-JS)', () => {
+		expect(
+			isExpectedGroomingFailure(new Error('Failed to spawn grooming process for claude-code'))
+		).toBe(true);
+	});
+
+	it('treats revoked provider credentials as expected (MAESTRO-K7)', () => {
+		expect(
+			isExpectedGroomingFailure(
+				new Error(
+					'Grooming error: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.'
+				)
+			)
+		).toBe(true);
+	});
+
 	it('matches regardless of message casing', () => {
 		expect(isExpectedGroomingFailure(new Error('session NOT FOUND'))).toBe(true);
 		expect(isExpectedGroomingFailure(new Error('Agent codex IS NOT AVAILABLE'))).toBe(true);

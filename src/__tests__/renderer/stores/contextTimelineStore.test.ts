@@ -145,7 +145,9 @@ describe('contextTimelineStore', () => {
 		store.clearSession(SID);
 		const s = useContextTimelineStore.getState();
 		expect(selectPoints(SID)(s)).toHaveLength(0);
-		expect(s.buffers[SID]).toEqual({ points: [], trimmed: false });
+		// `hydrated` stays true after a clear: Clear also wipes main's capture log,
+		// so re-fetching would only restore what the user just discarded.
+		expect(s.buffers[SID]).toEqual({ points: [], trimmed: false, hydrated: true });
 	});
 
 	it('bounds the buffer at MAX_POINTS_PER_SESSION and sets trimmed', () => {
@@ -191,5 +193,54 @@ describe('contextTimelineStore', () => {
 		const s = useContextTimelineStore.getState();
 		expect(s.buffers[SID]).toBeUndefined();
 		expect(s.panelSessionId).toBe('other');
+	});
+
+	// --- hydrateSession (finding S1) ---
+
+	it('hydrateSession fills an empty buffer and marks it hydrated', () => {
+		useContextTimelineStore
+			.getState()
+			.hydrateSession(SID, [{ ...pt(), seq: 1, timestamp: 111 }], false);
+		const buffer = useContextTimelineStore.getState().buffers[SID];
+		expect(buffer.points).toHaveLength(1);
+		expect(buffer.points[0].timestamp).toBe(111);
+		expect(buffer.hydrated).toBe(true);
+	});
+
+	it('hydrateSession skips a capture whose seq already landed live', () => {
+		const store = useContextTimelineStore.getState();
+		store.appendPoint(SID, pt({ seq: 2, contextTokens: 222 }));
+		store.hydrateSession(
+			SID,
+			[
+				{ ...pt(), seq: 1, timestamp: 100, contextTokens: 111 },
+				{ ...pt(), seq: 2, timestamp: 200, contextTokens: 999 },
+			],
+			false
+		);
+		const points = useContextTimelineStore.getState().buffers[SID].points;
+		expect(points.map((p) => p.seq)).toEqual([1, 2]);
+		expect(points.map((p) => p.contextTokens)).toEqual([111, 222]);
+	});
+
+	it('hydrateSession bounds the merged buffer at MAX_POINTS_PER_SESSION', () => {
+		const incoming = Array.from({ length: MAX_POINTS_PER_SESSION + 3 }, (_, i) => ({
+			...pt({ contextTokens: i }),
+			seq: i + 1,
+			timestamp: i + 1,
+		}));
+		useContextTimelineStore.getState().hydrateSession(SID, incoming, false);
+		const buffer = useContextTimelineStore.getState().buffers[SID];
+		expect(buffer.points).toHaveLength(MAX_POINTS_PER_SESSION);
+		expect(buffer.trimmed).toBe(true);
+		expect(buffer.points[0].contextTokens).toBe(3);
+	});
+
+	it('hydrateSession marks the buffer hydrated even when nothing came back', () => {
+		useContextTimelineStore.getState().hydrateSession(SID, [], true);
+		const buffer = useContextTimelineStore.getState().buffers[SID];
+		expect(buffer.points).toHaveLength(0);
+		expect(buffer.trimmed).toBe(true);
+		expect(buffer.hydrated).toBe(true);
 	});
 });

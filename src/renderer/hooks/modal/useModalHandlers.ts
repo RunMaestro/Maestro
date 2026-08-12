@@ -30,7 +30,8 @@ import { useAgentStore } from '../../stores/agentStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
-import { aiTabFocusFields, getInitialRenameValue } from '../../utils/tabHelpers';
+import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
@@ -104,6 +105,7 @@ export interface ModalHandlersReturn {
 	// Open handlers
 	handleOpenQueueBrowser: () => void;
 	handleOpenTabSearch: () => void;
+	handleOpenCrossTabSearch: () => void;
 	handleOpenPromptComposer: () => void;
 	handleOpenFuzzySearch: () => void;
 	handleOpenCreatePR: () => void;
@@ -135,6 +137,7 @@ export interface ModalHandlersReturn {
 	handleCloseAutoRunSetup: () => void;
 	handleCloseBatchRunner: () => void;
 	handleCloseTabSwitcher: () => void;
+	handleCloseCrossTabSearch: () => void;
 	handleCloseFileSearch: () => void;
 	handleClosePromptComposer: () => void;
 	handleCloseCreatePRModal: () => void;
@@ -481,6 +484,10 @@ export function useModalHandlers(
 		getModalActions().setTabSwitcherOpen(true);
 	}, []);
 
+	const handleOpenCrossTabSearch = useCallback(() => {
+		getModalActions().setCrossTabSearchOpen(true);
+	}, []);
+
 	const handleOpenPromptComposer = useCallback(() => {
 		getModalActions().setPromptComposerOpen(true);
 	}, []);
@@ -676,6 +683,10 @@ export function useModalHandlers(
 		getModalActions().setTabSwitcherOpen(false);
 	}, []);
 
+	const handleCloseCrossTabSearch = useCallback(() => {
+		getModalActions().setCrossTabSearchOpen(false);
+	}, []);
+
 	const handleCloseFileSearch = useCallback(() => {
 		getModalActions().setFuzzyFileSearchOpen(false);
 	}, []);
@@ -713,45 +724,17 @@ export function useModalHandlers(
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
 		if (!currentSession) return;
 
-		const actions = getModalActions();
+		// Same target resolution as the Cmd+Shift+R shortcut: the focused pane when a
+		// tiled group is active, else the visible single-view tab.
+		const renameRef = resolveActiveTabRef(currentSession);
+		if (!renameRef) return;
+		const renameValue = resolveTabRefRenameValue(currentSession, renameRef);
+		if (renameValue === null) return;
 
-		if (currentSession.inputMode === 'terminal' && currentSession.activeTerminalTabId) {
-			const termTab = currentSession.terminalTabs?.find(
-				(t) => t.id === currentSession.activeTerminalTabId
-			);
-			if (termTab) {
-				actions.setRenameTabId(termTab.id);
-				actions.setRenameTabInitialName(termTab.name || '');
-				actions.setRenameTabModalOpen(true);
-			}
-		} else if (currentSession.activeFileTabId) {
-			// File tabs keep inputMode 'ai' but outrank the AI tab in render
-			// precedence, so target the visible file tab before falling through.
-			const fileTab = currentSession.filePreviewTabs?.find(
-				(t) => t.id === currentSession.activeFileTabId
-			);
-			if (fileTab) {
-				actions.setRenameTabId(fileTab.id);
-				actions.setRenameTabInitialName(fileTab.customName ?? '');
-				actions.setRenameTabModalOpen(true);
-			}
-		} else if (currentSession.activeBrowserTabId) {
-			const browserTab = currentSession.browserTabs?.find(
-				(t) => t.id === currentSession.activeBrowserTabId
-			);
-			if (browserTab) {
-				actions.setRenameTabId(browserTab.id);
-				actions.setRenameTabInitialName(browserTab.customTitle ?? '');
-				actions.setRenameTabModalOpen(true);
-			}
-		} else if (currentSession.inputMode === 'ai' && currentSession.activeTabId) {
-			const activeTab = currentSession.aiTabs?.find((t) => t.id === currentSession.activeTabId);
-			if (activeTab) {
-				actions.setRenameTabId(activeTab.id);
-				actions.setRenameTabInitialName(getInitialRenameValue(activeTab));
-				actions.setRenameTabModalOpen(true);
-			}
-		}
+		const actions = getModalActions();
+		actions.setRenameTabId(renameRef.id);
+		actions.setRenameTabInitialName(renameValue);
+		actions.setRenameTabModalOpen(true);
 	}, []);
 
 	const handleQuickActionsOpenTabSwitcher = useCallback(() => {
@@ -1089,6 +1072,7 @@ export function useModalHandlers(
 		// Open handlers
 		handleOpenQueueBrowser,
 		handleOpenTabSearch,
+		handleOpenCrossTabSearch,
 		handleOpenPromptComposer,
 		handleOpenFuzzySearch,
 		handleOpenCreatePR,
@@ -1116,6 +1100,7 @@ export function useModalHandlers(
 		handleCloseAutoRunSetup,
 		handleCloseBatchRunner,
 		handleCloseTabSwitcher,
+		handleCloseCrossTabSearch,
 		handleCloseFileSearch,
 		handleClosePromptComposer,
 		handleCloseCreatePRModal,

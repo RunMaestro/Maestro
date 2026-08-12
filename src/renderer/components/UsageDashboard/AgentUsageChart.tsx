@@ -20,8 +20,16 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
-import { buildNameMap } from './chartUtils';
+import { buildNameMap, computeAxisLabelIndices } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
+import {
+	MetricModeToggle,
+	formatMetricValue,
+	metricModeNoun,
+	type ChartMetricMode,
+} from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
 
 // 10 distinct colors for agents
 const AGENT_COLORS = [
@@ -43,13 +51,14 @@ interface AgentDayData {
 	formattedDate: string;
 	count: number;
 	duration: number;
+	tokens: number;
 }
 
 // All agents' data for a single day
 interface DayData {
 	date: string;
 	formattedDate: string;
-	agents: Record<string, { count: number; duration: number }>;
+	agents: Record<string, { count: number; duration: number; tokens: number }>;
 }
 
 interface AgentUsageChartProps {
@@ -137,7 +146,8 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 }: AgentUsageChartProps) {
 	const [hoveredDay, setHoveredDay] = useState<{ dayIndex: number; agent?: string } | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-	const [metricMode, setMetricMode] = useState<'count' | 'duration'>('count');
+	const [metricMode, setMetricMode] = useState<ChartMetricMode>('count');
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 
 	// Chart dimensions
 	const chartWidth = 600;
@@ -192,6 +202,22 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			// Build per-agent arrays aligned to all dates, and track each agent's
 			// first/last index with real data so we don't draw the line across
 			// dates where the agent didn't exist yet (or no longer existed).
+			// Token totals arrive keyed by PROVIDER session id, but this chart is keyed
+			// by Maestro agent. Only the renderer knows that mapping, via each agent's
+			// tab `agentSessionId`s, so join here. Provider sessions no open tab still
+			// references can't be attributed and are simply not counted.
+			const tokensBySessionByDay = tokenSeries?.bySessionByDay ?? {};
+			const tokensForAgentDate = (maestroSessionId: string, date: string): number => {
+				const session = sessions?.find((s) => s.id === maestroSessionId);
+				if (!session?.aiTabs) return 0;
+				let total = 0;
+				for (const tab of session.aiTabs) {
+					const providerId = tab.agentSessionId;
+					if (providerId) total += tokensBySessionByDay[providerId]?.[date] ?? 0;
+				}
+				return total;
+			};
+
 			const agentData: Record<string, AgentDayData[]> = {};
 			const ranges: Record<string, { firstIdx: number; lastIdx: number }> = {};
 			for (const sessionId of agentList) {
@@ -205,6 +231,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 					formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
 					count: dayMap.get(date)?.count || 0,
 					duration: dayMap.get(date)?.duration || 0,
+					tokens: tokensForAgentDate(sessionId, date),
 				}));
 
 				let firstIdx = -1;
@@ -220,11 +247,15 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 
 			// Build combined day data for tooltips
 			const combinedData: DayData[] = sortedDates.map((date) => {
-				const agents: Record<string, { count: number; duration: number }> = {};
+				const agents: Record<string, { count: number; duration: number; tokens: number }> = {};
 				for (const sessionId of agentList) {
 					const dayData = agentData[sessionId].find((d) => d.date === date);
 					if (dayData) {
-						agents[sessionId] = { count: dayData.count, duration: dayData.duration };
+						agents[sessionId] = {
+							count: dayData.count,
+							duration: dayData.duration,
+							tokens: dayData.tokens,
+						};
 					}
 				}
 				return {
@@ -242,7 +273,9 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 				worktreeAgents: worktreeSet,
 				agentRanges: ranges,
 			};
-		}, [data.bySessionByDay, sessions]);
+		}, [data.bySessionByDay, sessions, tokenSeries]);
+
+	const xLabelIndices = useMemo(() => computeAxisLabelIndices(allDates.length), [allDates.length]);
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
@@ -260,14 +293,12 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			const range = agentRanges[agent];
 			if (!range || range.firstIdx === -1) continue;
 			const slice = chartData[agent].slice(range.firstIdx, range.lastIdx + 1);
-			const agentMax = Math.max(
-				...slice.map((d) => (metricMode === 'count' ? d.count : d.duration))
-			);
+			const agentMax = Math.max(...slice.map((d) => d[metricMode]));
 			maxValue = Math.max(maxValue, agentMax);
 		}
 
 		// Add 10% padding
-		const yMax = metricMode === 'count' ? Math.ceil(maxValue * 1.1) : maxValue * 1.1;
+		const yMax = metricMode === 'duration' ? maxValue * 1.1 : Math.ceil(maxValue * 1.1);
 
 		// X scale
 		const xScaleFn = (index: number) =>
@@ -310,7 +341,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			for (let idx = range.firstIdx; idx <= range.lastIdx; idx++) {
 				const day = agentDays[idx];
 				const x = xScale(idx);
-				const y = yScale(metricMode === 'count' ? day.count : day.duration);
+				const y = yScale(day[metricMode]);
 				segments.push(`${idx === range.firstIdx ? 'M' : 'L'} ${x} ${y}`);
 			}
 			paths[agent] = segments.join(' ');
@@ -352,7 +383,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			className="p-4 rounded-lg"
 			style={{ backgroundColor: theme.colors.bgMain }}
 			role="figure"
-			aria-label={`Agent usage chart showing ${metricMode === 'count' ? 'query counts' : 'duration'} over time. ${agents.length} agents displayed.`}
+			aria-label={`Agent usage chart showing ${metricModeNoun(metricMode)} over time. ${agents.length} agents displayed.`}
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
@@ -362,40 +393,18 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 				>
 					Agent Usage Over Time
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor: metricMode === 'count' ? theme.colors.accent : 'transparent',
-								color: metricMode === 'count' ? theme.colors.bgMain : theme.colors.textDim,
-							}}
-						>
-							Queries
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor: metricMode === 'duration' ? theme.colors.accent : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.bgMain : theme.colors.textDim,
-							}}
-						>
-							Time
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					labels={{ count: 'Queries', duration: 'Time' }}
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			{/* Chart container */}
 			<div className="relative">
+				<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 				{allDates.length === 0 || agents.length === 0 ? (
 					<div
 						className="flex items-center justify-center"
@@ -409,7 +418,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 						viewBox={`0 0 ${chartWidth} ${chartHeight}`}
 						preserveAspectRatio="xMidYMid meet"
 						role="img"
-						aria-label={`Line chart showing ${metricMode === 'count' ? 'query counts' : 'duration'} per agent over time`}
+						aria-label={`Line chart showing ${metricModeNoun(metricMode)} per agent over time`}
 					>
 						{/* Grid lines */}
 						{yTicks.map((tick, idx) => (
@@ -436,16 +445,17 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 								fontSize={10}
 								fill={theme.colors.textDim}
 							>
-								{metricMode === 'count' ? tick : formatYAxisDuration(tick)}
+								{metricMode === 'count'
+									? tick
+									: metricMode === 'tokens'
+										? formatMetricValue('tokens', tick)
+										: formatYAxisDuration(tick)}
 							</text>
 						))}
 
 						{/* X-axis labels */}
 						{allDates.map((day, idx) => {
-							const labelInterval =
-								allDates.length > 14 ? Math.ceil(allDates.length / 7) : allDates.length > 7 ? 2 : 1;
-
-							if (idx % labelInterval !== 0 && idx !== allDates.length - 1) {
+							if (!xLabelIndices.has(idx)) {
 								return null;
 							}
 
@@ -501,7 +511,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 									return null;
 								}
 								const x = xScale(dayIdx);
-								const y = yScale(metricMode === 'count' ? day.count : day.duration);
+								const y = yScale(day[metricMode]);
 								const isHovered = hoveredDay?.dayIndex === dayIdx && hoveredDay?.agent === agent;
 
 								return (
@@ -536,7 +546,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 							fill={theme.colors.textDim}
 							transform={`rotate(-90, 12, ${chartHeight / 2})`}
 						>
-							{metricMode === 'count' ? 'Queries' : 'Time'}
+							{metricMode === 'count' ? 'Queries' : metricMode === 'tokens' ? 'Tokens' : 'Time'}
 						</text>
 					</svg>
 				)}
@@ -586,7 +596,9 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 												<span style={{ color: theme.colors.textMain }}>
 													{metricMode === 'count'
 														? `${dayData.count} ${dayData.count === 1 ? 'query' : 'queries'}`
-														: formatDuration(dayData.duration)}
+														: metricMode === 'tokens'
+															? `${formatMetricValue('tokens', dayData.tokens)} tokens`
+															: formatDuration(dayData.duration)}
 												</span>
 											</div>
 										);

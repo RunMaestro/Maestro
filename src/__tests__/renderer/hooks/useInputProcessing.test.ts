@@ -16,7 +16,14 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
 	};
 });
 
+// Command mode routes to the shell-command service; assert the routing, not the run.
+vi.mock('../../../renderer/services/shellCommand', () => ({
+	runShellCommand: vi.fn().mockResolvedValue(undefined),
+	cancelShellCommand: vi.fn().mockResolvedValue(false),
+}));
+
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
+import { runShellCommand } from '../../../renderer/services/shellCommand';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type {
 	Session,
@@ -173,6 +180,155 @@ describe('useInputProcessing', () => {
 
 			// Should not call any state setters
 			expect(mockSetSessions).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('command mode', () => {
+		// Command mode is composer state now, so routing is driven by the
+		// isCommandMode dep - NOT by a `!` in the text (the gesture consumes it).
+		const commandModeDeps = (overrides: Parameters<typeof createDeps>[0] = {}) =>
+			createDeps({ isCommandMode: () => true, ...overrides });
+
+		it('runs the draft as a shell command instead of sending it to the agent', async () => {
+			const deps = commandModeDeps({ inputValue: 'git status' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(runShellCommand).mock.calls[0][0]).toMatchObject({
+				command: 'git status',
+				tabId: deps.activeSession!.activeTabId,
+			});
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('runs a command containing bangs verbatim', async () => {
+			// The bang is no longer a sentinel, so it is ordinary shell text here.
+			const deps = commandModeDeps({ inputValue: "find . -name '*!*'" });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(vi.mocked(runShellCommand).mock.calls[0][0]).toMatchObject({
+				command: "find . -name '*!*'",
+			});
+		});
+
+		it('records history bang-prefixed so it can be told from agent messages', async () => {
+			const deps = commandModeDeps({ inputValue: 'npm test' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			let sessions = [deps.activeSession!];
+			for (const [updater] of mockSetSessions.mock.calls) {
+				sessions = typeof updater === 'function' ? updater(sessions) : updater;
+			}
+			expect(sessions[0].aiCommandHistory).toContain('!npm test');
+		});
+
+		it('runs immediately even while the agent is busy', async () => {
+			const session = createMockSession({ state: 'busy' });
+			session.aiTabs[0].state = 'busy';
+			const deps = commandModeDeps({ activeSession: session, inputValue: 'ls' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).toHaveBeenCalledTimes(1);
+		});
+
+		it('does nothing at all on an empty command line', async () => {
+			// Must not fall through to the agent: the user is sitting at a shell
+			// prompt, not composing a message.
+			const deps = commandModeDeps({ inputValue: '   ' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('does not intercept in terminal mode', async () => {
+			const session = createMockSession({ inputMode: 'terminal' });
+			const deps = commandModeDeps({
+				activeSession: session,
+				inputValue: 'ls',
+				isAiMode: false,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+		});
+
+		it('does not intercept while the wizard is active', async () => {
+			const deps = commandModeDeps({ inputValue: 'ls', isWizardActive: true });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+		});
+
+		it('leaves ordinary messages alone when not in command mode', async () => {
+			const deps = createDeps({ inputValue: 'fix the bug' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+		});
+
+		it('sends a bare bang message to the agent when NOT in command mode', async () => {
+			// Without the mode flag a leading `!` is just text - nothing runs.
+			const deps = createDeps({ inputValue: '!not a command' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+		});
+
+		it('sends an escaped bang to the agent as a literal message', async () => {
+			const deps = createDeps({ inputValue: '\\!important note' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(runShellCommand).not.toHaveBeenCalled();
+
+			// The message is logged (and sent) without the escape backslash.
+			let sessions = [deps.activeSession!];
+			for (const [updater] of mockSetSessions.mock.calls) {
+				sessions = typeof updater === 'function' ? updater(sessions) : updater;
+			}
+			const logs = sessions[0].aiTabs.flatMap((t) => t.logs);
+			expect(logs.some((l) => l.source === 'user' && l.text === '!important note')).toBe(true);
 		});
 	});
 

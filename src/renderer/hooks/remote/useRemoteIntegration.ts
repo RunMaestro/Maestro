@@ -178,8 +178,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				receiptChannel?: string
 			) => {
+				// Delivery receipt for the web server's `executeCommand` promise.
+				// Every early return below must answer it, or the caller waits out
+				// the main-side timeout and reads the drop as a generic failure.
+				// The accept ack itself is sent further downstream, by
+				// handleRemoteCommand, once the prompt reaches the spawn logic.
+				const rejectDelivery = (reason: string) => {
+					if (receiptChannel) {
+						window.maestro.process.sendRemoteCommandReceipt(receiptChannel, false, reason);
+					}
+				};
 				// Log metadata only at info level - remote commands can carry
 				// secrets, proprietary code, or PII. Mirror the redaction the
 				// main process applies in web-server-factory; the truncated
@@ -207,6 +218,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				if (!targetSession) {
 					logger.warn('[useRemoteIntegration] Session not found, dropping command');
+					rejectDelivery('session-not-found');
 					return;
 				}
 
@@ -219,6 +231,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						undefined,
 						targetSession.state
 					);
+					rejectDelivery('session-busy');
 					return;
 				}
 				logger.info(
@@ -269,7 +282,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force, images },
+						detail: { sessionId, command, inputMode, tabId, force, images, receiptChannel },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -656,26 +669,30 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					queueLength?: number;
 					itemId?: string;
 					error?: string;
+					reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
 
 				try {
 					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 					if (!session) {
-						reply({ success: false, error: 'Session not found' });
+						reply({ success: false, error: 'Session not found', reason: 'session-not-found' });
 						return;
 					}
 
 					// Resolve the target tab. An explicit --tab that no longer exists is
 					// an error - never silently reroute to the active tab, which would
 					// mislead callers chaining the returned tabId. No --tab -> active tab.
+					// The `tab-not-found` reason is what lets a dispatch callback (which
+					// has no caller listening for the error) fall back to agent-level
+					// delivery instead of dropping the wake; see deliverCallback.
 					const requestedTab = tabId ? session.aiTabs?.find((t) => t.id === tabId) : undefined;
 					if (tabId && !requestedTab) {
-						reply({ success: false, error: `Tab not found: ${tabId}` });
+						reply({ success: false, error: `Tab not found: ${tabId}`, reason: 'tab-not-found' });
 						return;
 					}
 					const targetTab = requestedTab ?? getActiveTab(session);
 					if (!targetTab) {
-						reply({ success: false, error: 'Session has no AI tabs' });
+						reply({ success: false, error: 'Session has no AI tabs', reason: 'no-ai-tabs' });
 						return;
 					}
 					const resolvedTabId = targetTab.id;
@@ -1662,7 +1679,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prevSessionStatesRef.current.set(session.id, session.state);
 				}
 
-				if (!session.aiTabs || session.aiTabs.length === 0) return;
+				// An empty aiTabs array is a valid state and still has to be broadcast,
+				// otherwise remote clients keep rendering tabs the user already closed.
+				if (!session.aiTabs) return;
 
 				// Create a hash of tab properties that should trigger a broadcast when changed
 				const tabsHash = session.aiTabs

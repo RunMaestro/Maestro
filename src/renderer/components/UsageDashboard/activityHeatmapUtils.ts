@@ -2,7 +2,10 @@ import type { StatsTimeRange } from '../../hooks/stats/useStats';
 import type { Theme } from '../../types';
 import { COLORBLIND_HEATMAP_SCALE } from '../../constants/colorblindPalettes';
 
-export type MetricMode = 'count' | 'duration';
+import type { ChartMetricMode } from './MetricModeToggle';
+
+/** Heatmap measures. Re-exported from the shared toggle so both stay in step. */
+export type MetricMode = ChartMetricMode;
 
 export const TIME_BLOCK_LABELS = ['12a-4a', '4a-8a', '8a-12p', '12p-4p', '4p-8p', '8p-12a'];
 

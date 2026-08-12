@@ -162,7 +162,7 @@ export interface UseFileTreeManagementDeps {
 	 * as their cap. Disabled by default - local and remote share the same cap.
 	 */
 	sshReduceEntryCapEnabled?: boolean;
-	/** Fraction (0–1) applied to the entry cap for SSH sessions when scaling is enabled. */
+	/** Fraction (0-1) applied to the entry cap for SSH sessions when scaling is enabled. */
 	sshReduceEntryCapFraction?: number;
 }
 
@@ -824,7 +824,7 @@ export function useFileTreeManagement(
 
 			const maxEntriesForLoad = resolveMaxEntries(!!sshContext, effectiveMaxEntries);
 
-			// Full tree load. SSH uses the batched `find`-based loader (1–2 SSH
+			// Full tree load. SSH uses the batched `find`-based loader (1-2 SSH
 			// round-trips total instead of N-per-directory). Local uses the
 			// recursive readdir walk - fast enough on a local filesystem that
 			// we don't need the spawn overhead of `find`.

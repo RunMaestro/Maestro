@@ -395,6 +395,117 @@ describe('ui.panelPost', () => {
 	});
 });
 
+describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
+	// The plugin 'p' declares a modal panel 'flow' (summonable) and a docked
+	// panel 'side' (always mounted, so not summonable).
+	const getPanel = (pluginId: string, localId: string) => {
+		if (pluginId !== 'p') return null;
+		if (localId === 'flow') {
+			return {
+				id: 'p/flow',
+				localId: 'flow',
+				pluginId: 'p',
+				title: 'Agent Flow',
+				entry: 'panel.html',
+				placement: 'modal' as const,
+				size: 'full' as const,
+			};
+		}
+		if (localId === 'side') {
+			return {
+				id: 'p/side',
+				localId: 'side',
+				pluginId: 'p',
+				title: 'Side',
+				entry: 'side.html',
+				placement: 'right' as const,
+				size: 'default' as const,
+			};
+		}
+		return null;
+	};
+
+	const granted = (panelVisibility: ReturnType<typeof vi.fn>) =>
+		buildHostCallHandlers(
+			makeDeps({ panelVisibility, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+
+	it('is not registered at all when the sink dependency is absent (fail closed)', () => {
+		const h = buildHostCallHandlers(makeDeps());
+		expect(h['ui.openPanel']).toBeUndefined();
+		expect(h['ui.closePanel']).toBeUndefined();
+		expect(h['ui.togglePanel']).toBeUndefined();
+	});
+
+	it('denies when ui:panel is not granted', async () => {
+		const panelVisibility = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelVisibility, getPanel, broker: brokerFor(() => []) })
+		);
+		await expect(h['ui.togglePanel']!('p', { panelId: 'flow' })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(panelVisibility).not.toHaveBeenCalled();
+	});
+
+	it('forwards the namespaced id and the matching action for each verb', async () => {
+		const panelVisibility = vi.fn();
+		const h = granted(panelVisibility);
+		await expect(h['ui.openPanel']!('p', { panelId: 'flow' })).resolves.toEqual({ ok: true });
+		await expect(h['ui.closePanel']!('p', { panelId: 'flow' })).resolves.toEqual({ ok: true });
+		await expect(h['ui.togglePanel']!('p', { panelId: 'flow' })).resolves.toEqual({ ok: true });
+		expect(panelVisibility.mock.calls).toEqual([
+			['p', 'p/flow', 'open'],
+			['p', 'p/flow', 'close'],
+			['p', 'p/flow', 'toggle'],
+		]);
+	});
+
+	it("denies an undeclared or another plugin's panel id (own panels only)", async () => {
+		const panelVisibility = vi.fn();
+		const h = granted(panelVisibility);
+		await expect(h['ui.openPanel']!('p', { panelId: 'nope' })).rejects.toThrow(/not declared/);
+		// An already-namespaced or foreign id is treated as a local id and never
+		// resolves against this plugin's declarations.
+		await expect(h['ui.togglePanel']!('p', { panelId: 'other/flow' })).rejects.toThrow(
+			/not declared/
+		);
+		// A different calling plugin cannot reach 'p''s panel either.
+		await expect(h['ui.closePanel']!('other', { panelId: 'flow' })).rejects.toThrow(/not declared/);
+		expect(panelVisibility).not.toHaveBeenCalled();
+	});
+
+	it('denies a docked panel (only modal panels have a summonable host)', async () => {
+		const panelVisibility = vi.fn();
+		const h = granted(panelVisibility);
+		await expect(h['ui.openPanel']!('p', { panelId: 'side' })).rejects.toThrow(/not a modal panel/);
+		expect(panelVisibility).not.toHaveBeenCalled();
+	});
+
+	it('rejects a missing, blank, or untrimmed panelId', async () => {
+		const panelVisibility = vi.fn();
+		const h = granted(panelVisibility);
+		await expect(h['ui.openPanel']!('p', {})).rejects.toThrow(/panelId is required/);
+		await expect(h['ui.openPanel']!('p', { panelId: '   ' })).rejects.toThrow(
+			/panelId is required/
+		);
+		await expect(h['ui.openPanel']!('p', { panelId: ' flow' })).rejects.toThrow(
+			/panelId is required/
+		);
+		expect(panelVisibility).not.toHaveBeenCalled();
+	});
+
+	it('rejects a caller-supplied extra field (closed schema)', async () => {
+		const panelVisibility = vi.fn();
+		const h = granted(panelVisibility);
+		// No data may ride along on what is a pure show/hide signal.
+		await expect(h['ui.togglePanel']!('p', { panelId: 'flow', data: { n: 1 } })).rejects.toThrow(
+			/closed schema/
+		);
+		expect(panelVisibility).not.toHaveBeenCalled();
+	});
+});
+
 describe('events.subscribe / events.unsubscribe', () => {
 	it('delegate to the bus and filter to catalog topics', async () => {
 		const bus = new PluginEventBusImpl({ isPermitted: () => true, push: () => true });
@@ -974,6 +1085,57 @@ describe('brokered non-act host API breadth', () => {
 			makeDeps({ broker: brokerFor(() => [grant('sessions:create')]) })
 		);
 		await expect(disabled['sessions.create']!('p', {})).rejects.toThrow(/unavailable/);
+	});
+
+	it('focuses an existing session under sessions:focus and rejects stale or over-wide calls', async () => {
+		const focused: Array<{ sessionId: string; tabId?: string }> = [];
+		let grants: PermissionGrant[] = [grant('sessions:focus')];
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => grants),
+				sessionsGet: (id) => (id === 's1' ? { id: 's1', title: 'One' } : null),
+				sessionsFocus: async (sessionId, tabId) => {
+					if (tabId && tabId !== 't1') return false;
+					focused.push({ sessionId, tabId });
+					return true;
+				},
+			})
+		);
+
+		await expect(h['sessions.focus']!('p', { sessionId: 's1' })).resolves.toEqual({ ok: true });
+		await expect(h['sessions.focus']!('p', { sessionId: 's1', tabId: 't1' })).resolves.toEqual({
+			ok: true,
+		});
+		expect(focused).toEqual([{ sessionId: 's1' }, { sessionId: 's1', tabId: 't1' }]);
+
+		// Unknown session is rejected before the effect runs.
+		await expect(h['sessions.focus']!('p', { sessionId: 'nope' })).rejects.toThrow(
+			/unknown sessionId/
+		);
+		// A tab that is not the session's own resolves false main-side.
+		await expect(h['sessions.focus']!('p', { sessionId: 's1', tabId: 'other' })).rejects.toThrow(
+			/unknown focus target/
+		);
+		// Closed schema: focus is navigation, nothing else rides along.
+		await expect(
+			h['sessions.focus']!('p', { sessionId: 's1', patch: { title: 'x' } })
+		).rejects.toThrow();
+		expect(focused).toHaveLength(2);
+
+		grants = [];
+		await expect(h['sessions.focus']!('p', { sessionId: 's1' })).rejects.toThrow(
+			/permission denied/
+		);
+
+		const disabled = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [grant('sessions:focus')]),
+				sessionsGet: () => ({ id: 's1', title: 'One' }),
+			})
+		);
+		await expect(disabled['sessions.focus']!('p', { sessionId: 's1' })).rejects.toThrow(
+			/unavailable/
+		);
 	});
 
 	it('manages tabs through injected tab deps and denies stale tab ids cleanly', async () => {

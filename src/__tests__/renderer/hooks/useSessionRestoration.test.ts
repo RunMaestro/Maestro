@@ -624,6 +624,46 @@ describe('restoreSession - Corruption recovery', () => {
 		expect(restored!.state).toBe('error');
 	});
 
+	// Zero AI tabs is only survivable if some other tab actually comes back.
+	// A terminal with no startup command is dropped during restoration, so
+	// counting the raw array here would skip recovery and leave no tabs at all.
+	it('recovers when the only remaining tab is a non-persistent terminal', async () => {
+		const session = createMockSession({
+			aiTabs: [],
+			activeTabId: null,
+			terminalTabs: [{ id: 'term-1', name: 'Terminal', pid: 0, state: 'idle' }] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.aiTabs).toHaveLength(1);
+		expect(restored!.state).toBe('error');
+	});
+
+	it('leaves zero AI tabs alone when a terminal with a startup command persists', async () => {
+		const session = createMockSession({
+			aiTabs: [],
+			activeTabId: null,
+			terminalTabs: [
+				{ id: 'term-1', name: 'Terminal', pid: 0, state: 'idle', startupCommand: 'npm run dev' },
+			] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.aiTabs).toHaveLength(0);
+		expect(restored!.terminalTabs).toHaveLength(1);
+		expect(restored!.state).not.toBe('error');
+	});
+
 	it('sets up unifiedTabOrder for recovered session', async () => {
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());

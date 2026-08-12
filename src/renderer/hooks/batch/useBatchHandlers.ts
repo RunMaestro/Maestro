@@ -37,7 +37,7 @@ import { useBatchProcessor, type UseBatchProcessorProps } from './useBatchProces
 import { useBatchStore } from '../../stores/batchStore';
 import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
-import type { AgentSpawnResult } from '../agent/useAgentExecution';
+import type { AgentSpawnResult, SpawnAgentOptions } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
 import { logger } from '../../utils/logger';
 
@@ -85,9 +85,7 @@ export interface UseBatchHandlersDeps {
 		sessionId: string,
 		prompt: string,
 		cwdOverride?: string,
-		options?: {
-			isAutoRun?: boolean;
-		}
+		options?: SpawnAgentOptions
 	) => Promise<AgentSpawnResult>;
 	/**
 	 * Resume an existing provider session and run a prompt (threaded to the goal
@@ -229,8 +227,10 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				.getState()
 				.setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...updates } : s)));
 		},
-		onSpawnAgent: (sessionId, prompt, cwdOverride) =>
-			spawnAgentForSession(sessionId, prompt, cwdOverride, { isAutoRun: true }),
+		// `options` carries the run-scoped model/effort override from BatchRunConfig
+		// (undefined for runs that use the agent default).
+		onSpawnAgent: (sessionId, prompt, cwdOverride, options) =>
+			spawnAgentForSession(sessionId, prompt, cwdOverride, { ...options, isAutoRun: true }),
 		spawnBackgroundSynopsis,
 		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({

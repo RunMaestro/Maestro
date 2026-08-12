@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { isWindows } from '../../shared/platformDetection';
@@ -203,6 +203,104 @@ export async function execFileBufferNoThrow(
 	}
 }
 
+/** Which pipe a streamed chunk came from. */
+export type ExecStreamName = 'stdout' | 'stderr';
+
+export interface ExecStreamingOptions {
+	cwd?: string;
+	env?: NodeJS.ProcessEnv;
+	/** Called for every chunk as it arrives, decoded as utf8. */
+	onChunk: (chunk: string, stream: ExecStreamName) => void;
+}
+
+export interface ExecStreamingHandle {
+	/** Resolves once the process exits, with the full captured output. */
+	result: Promise<ExecResult>;
+	/** Terminate the running process. Resolves `result` with exitCode 'SIGTERM'. */
+	cancel: () => void;
+}
+
+/**
+ * Streaming sibling of `execFileNoThrow`: invokes `onChunk` as output arrives
+ * instead of only handing back the buffered result at exit.
+ *
+ * Use this for long-running commands whose progress the user should watch live
+ * (e.g. `git pull` / `git push` in the Git command modal). The full output is
+ * still captured and returned so callers don't have to re-assemble chunks.
+ */
+export function execFileStreaming(
+	command: string,
+	args: string[],
+	options: ExecStreamingOptions
+): ExecStreamingHandle {
+	const { cwd, env, onChunk } = options;
+	const useShell = isWindows() && needsWindowsShell(command);
+
+	const child = spawn(command, args, {
+		cwd,
+		env,
+		shell: useShell,
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+
+	let stdout = '';
+	let stderr = '';
+	let cancelled = false;
+
+	const collect = (stream: ExecStreamName) => (data: Buffer | string) => {
+		const chunk = data.toString();
+		if (stream === 'stdout') {
+			stdout += chunk;
+		} else {
+			stderr += chunk;
+		}
+		onChunk(chunk, stream);
+	};
+
+	child.stdout?.on('data', collect('stdout'));
+	child.stderr?.on('data', collect('stderr'));
+
+	const result = new Promise<ExecResult>((resolve) => {
+		// Spawn failures emit both 'error' and 'close'. Prefer the errno from
+		// 'error' (ENOENT, EACCES, ...) over close's platform-specific sentinel
+		// (null / -2 / 1), which would otherwise win the Promise race.
+		let spawnErr: NodeJS.ErrnoException | undefined;
+		let settled = false;
+
+		const settle = (payload: ExecResult) => {
+			if (settled) return;
+			settled = true;
+			resolve(payload);
+		};
+
+		child.on('error', (err) => {
+			spawnErr = err as NodeJS.ErrnoException;
+			settle({
+				stdout,
+				stderr: stderr || err.message,
+				// Node stamps spawn failures with a string code (ENOENT, EACCES, ...).
+				exitCode: spawnErr.code ?? 1,
+			});
+		});
+
+		child.on('close', (code) => {
+			settle({
+				stdout,
+				stderr: stderr || spawnErr?.message || '',
+				exitCode: cancelled ? 'SIGTERM' : (spawnErr?.code ?? code ?? 1),
+			});
+		});
+	});
+
+	return {
+		result,
+		cancel: () => {
+			cancelled = true;
+			child.kill();
+		},
+	};
+}
+
 /**
  * Execute a command with input written to stdin
  * Uses spawn to allow writing to the process stdin
@@ -268,4 +366,22 @@ async function execFileWithInput(
 			child.stdin.end();
 		}
 	});
+}
+
+/**
+ * Synchronous, never-throwing variant. Returns '' on any failure.
+ *
+ * Blocking the main thread is normally the wrong call, so this exists for one
+ * narrow case: reading state that becomes UNAVAILABLE if you wait. Killing a
+ * process tree is the motivating example - once the parent dies its children
+ * are re-parented to launchd/init, so a ppid snapshot taken asynchronously
+ * (even a few ms later) can no longer find them. The read has to complete
+ * before the kill, and it is only ever triggered by an explicit user action.
+ */
+export function execFileSyncNoThrow(command: string, args: string[] = [], timeout = 2000): string {
+	try {
+		return execFileSync(command, args, { timeout, encoding: 'utf-8' }).toString();
+	} catch {
+		return '';
+	}
 }

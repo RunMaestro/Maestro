@@ -29,6 +29,8 @@ import {
 	parseGitignoreContent,
 	LOCAL_IGNORE_DEFAULTS,
 } from '../../../shared/globUtils';
+import { isMediaFile } from '../../../shared/mediaTypes';
+import { buildLocalMediaStreamUrl } from '../../media/media-stream';
 import {
 	readDirRemote,
 	readFileRemote,
@@ -326,6 +328,15 @@ export function registerFilesystemHandlers(): void {
 					const base64 = buffer.toString('base64');
 					const mimeType = ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
 					return `data:${mimeType};base64,${base64}`;
+				} else if (isMediaFile(filePath)) {
+					// Audio/video never gets inlined the way images do - a long
+					// recording would blow up the IPC payload and pin the whole file
+					// in the renderer heap for as long as the tab is open. Hand back a
+					// stream URL instead; the <audio>/<video> element range-requests
+					// the bytes over the maestro-media:// protocol. Remote files fall
+					// through to the text read below and keep the existing binary
+					// download path - there is no SSH-backed range server.
+					return buildLocalMediaStreamUrl(filePath);
 				} else {
 					// Read text files as UTF-8
 					const content = await fs.readFile(filePath, 'utf-8');
@@ -353,7 +364,7 @@ export function registerFilesystemHandlers(): void {
 	// Enumerate a remote directory tree in a single SSH round-trip.
 	// Replaces N-per-directory `ls` recursion with two batched `find` calls
 	// bundled into one SSH command. Used by the file explorer to load remote
-	// trees in 1–2 round-trips total instead of one per directory.
+	// trees in 1-2 round-trips total instead of one per directory.
 	// SSH-only: local trees use direct fs recursion in the renderer.
 	ipcMain.handle(
 		'fs:listTreeRemote',

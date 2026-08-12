@@ -16,6 +16,13 @@ interface GoalRunOptions {
 	json?: boolean;
 	verbose?: boolean;
 	history?: boolean; // --no-history -> history: false
+	/**
+	 * Run-scoped model/effort overrides. When set they win over the agent's
+	 * configured `customModel` / `customEffort` for this run's spawns only and
+	 * are never written back to the stored session.
+	 */
+	model?: string;
+	effort?: string;
 }
 
 /**
@@ -122,12 +129,18 @@ export async function goalRun(
 					`Iterations: ${maxIterations === null ? '∞ (infinite)' : `max ${maxIterations}`}`
 				)
 			);
+			const runModel = options.model?.trim();
+			const runEffort = options.effort?.trim();
+			if (runModel) console.log(formatInfo(`Model: ${runModel} (this run only)`));
+			if (runEffort) console.log(formatInfo(`Effort: ${runEffort} (this run only)`));
 			console.log('');
 		}
 
 		const generator = runGoal(agent, goalConfig, {
 			writeHistory: options.history !== false, // --no-history sets history to false
 			verbose: options.verbose,
+			model: options.model?.trim() || undefined,
+			effort: options.effort?.trim() || undefined,
 		});
 
 		for await (const event of generator) {

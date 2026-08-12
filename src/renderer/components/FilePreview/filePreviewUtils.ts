@@ -1,5 +1,3 @@
-import GithubSlugger from 'github-slugger';
-import type { TocEntry } from './types';
 import { formatSize } from '../../../shared/formatters';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
@@ -357,30 +355,52 @@ export const countMarkdownTasks = (content: string): { open: number; closed: num
 	return { open, closed };
 };
 
-/** Extract headings from markdown content for table of contents */
-export const extractHeadings = (content: string): TocEntry[] => {
-	const headings: TocEntry[] = [];
+/**
+ * Re-exported from the shared TOC library, which owns heading extraction now
+ * that Director's Notes builds a jump list too. Kept here so existing File
+ * Preview imports keep resolving.
+ */
+export { extractHeadings } from '../Toc';
+
+/**
+ * A GFM task list marker at the start of a line: indent, bullet or ordered
+ * marker, then `[ ]` / `[x]` / `[X]`. Split into groups so a toggle can swap
+ * the state character without disturbing the author's spacing or bullet style.
+ */
+const TASK_MARKER_REGEX = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\])/;
+
+export interface TaskToggleResult {
+	/** Full document with the one task line rewritten. */
+	content: string;
+	/** The task's state AFTER the toggle. */
+	checked: boolean;
+}
+
+/**
+ * Flip the GFM task checkbox on 1-based `line`, returning the rewritten
+ * document. Returns null when that line holds no task marker, so a caller can
+ * treat a stale line number as a no-op instead of corrupting the file.
+ *
+ * Only the state character is rewritten - indentation, bullet style, and the
+ * task text are preserved byte for byte, and splitting on `\n` alone leaves a
+ * CRLF file's `\r` attached to its line so line endings round-trip unchanged.
+ */
+export const toggleTaskCheckboxAtLine = (
+	content: string,
+	line: number
+): TaskToggleResult | null => {
+	if (!Number.isInteger(line) || line < 1) return null;
 	const lines = content.split('\n');
-	let inCodeFence = false;
-	const slugger = new GithubSlugger();
+	const target = lines[line - 1];
+	if (target === undefined) return null;
 
-	for (const line of lines) {
-		if (/^ {0,3}(`{3,}|~{3,})/.test(line)) {
-			inCodeFence = !inCodeFence;
-			continue;
-		}
-		if (inCodeFence) continue;
+	const match = TASK_MARKER_REGEX.exec(target);
+	if (!match) return null;
 
-		const match = line.match(/^(#{1,6})\s+(.+)$/);
-		if (match) {
-			const level = match[1].length;
-			const text = match[2].trim();
-			const slug = slugger.slug(text);
-			headings.push({ level, text, slug });
-		}
-	}
+	const wasChecked = match[2] !== ' ';
+	lines[line - 1] = match[1] + (wasChecked ? ' ' : 'x') + match[3] + target.slice(match[0].length);
 
-	return headings;
+	return { content: lines.join('\n'), checked: !wasChecked };
 };
 
 /**

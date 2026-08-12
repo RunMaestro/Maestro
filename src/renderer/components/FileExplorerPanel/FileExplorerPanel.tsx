@@ -41,6 +41,7 @@ import { DeleteFileModal } from './components/DeleteFileModal';
 import { MultiDeleteModal } from './components/MultiDeleteModal';
 import { MoveConflictModal } from './components/MoveConflictModal';
 import { FileTreeRow } from './components/FileTreeRow';
+import { EscCloseButton } from '../ui/EscCloseButton';
 import { FileTreeContextMenu } from './components/FileTreeContextMenu';
 
 // Hooks
@@ -215,7 +216,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	// ── Filter ────────────────────────────────────────────────────────────────
 
-	useFileTreeFilter({
+	const { handleFilterEscape } = useFileTreeFilter({
 		fileTreeFilterOpen,
 		setFileTreeFilterOpen,
 		setFileTreeFilter,
@@ -351,6 +352,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenInExplorer,
 		handleOpenNewFile,
 		handleOpenNewFolder,
+		handleNewAgentHere,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
@@ -462,15 +464,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 							style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 						/>
-						<div
-							className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								color: theme.colors.textDim,
-							}}
-						>
-							ESC
-						</div>
+						<EscCloseButton
+							theme={theme}
+							variant="adornment"
+							label="Close filter (Esc)"
+							onClose={handleFilterEscape}
+						/>
 					</div>
 				</div>
 			)}
@@ -938,6 +937,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenInExplorer={handleOpenInExplorer}
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
+					onNewAgentHere={handleNewAgentHere}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					onPreviewMulti={handlePreviewMulti}

@@ -9,6 +9,7 @@ import { ForcedParallelWarningModal } from '../../../../ForcedParallelWarningMod
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
 import type { ForcedParallelWarningState, GeneralTabSettings } from '../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface InputBehaviorSectionProps {
 	theme: Theme;
@@ -40,16 +41,13 @@ export function InputBehaviorSection({
 		: formatShortcutKeys(['Meta', 'Shift', 'Enter']);
 
 	// "Always" mode makes every send a force-send, so the modifier shortcut is
-	// redundant — we ghost it out to signal that.
+	// redundant - we ghost it out to signal that.
 	const alwaysMode = forcedParallelExecution && forcedParallelAlways;
 
 	return (
 		<div data-setting-id="general-input-behavior">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Keyboard className="w-3 h-3" />
-				Input Send Behavior
-			</div>
-			<p className="text-xs opacity-50 mb-3">
+			<SettingsSectionHeading icon={Keyboard}>Input Send Behavior</SettingsSectionHeading>
+			<p className="text-xs opacity-70 mb-3">
 				Configure how to send messages. Choose between Enter or {formatMetaKey()}
 				+Enter.
 			</p>
@@ -72,12 +70,12 @@ export function InputBehaviorSection({
 						{formatEnterToSend(enterToSendAI)}
 					</button>
 				</div>
-				<p className="text-xs opacity-50">
+				<p className="text-xs opacity-70">
 					{enterToSendAI
 						? 'Press Enter to send. Use Shift+Enter for new line.'
 						: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 				</p>
-				<p className="text-[11px] opacity-40 mt-1">
+				<p className="text-[11px] opacity-55 mt-1">
 					Default for new tabs. Toggling the chip in an AI tab (or running &quot;Toggle Enter to
 					Send&quot; from the command palette) overrides this for that tab only.
 				</p>
@@ -103,7 +101,7 @@ export function InputBehaviorSection({
 						{formatEnterToSend(enterToSendAIExpanded)}
 					</button>
 				</div>
-				<p className="text-xs opacity-50">
+				<p className="text-xs opacity-70">
 					{enterToSendAIExpanded
 						? 'In the expanded Prompt Composer, press Enter to send. Use Shift+Enter for new line.'
 						: `In the expanded Prompt Composer, press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
@@ -182,7 +180,7 @@ export function InputBehaviorSection({
 							onChange={(value) => setForcedParallelAlways(value === 'always')}
 							theme={theme}
 						/>
-						<p className="text-xs opacity-50 mt-2">
+						<p className="text-xs opacity-70 mt-2">
 							{forcedParallelAlways
 								? 'Every send force-sends past a busy agent. No modifier required.'
 								: `Use ${forcedParallelShortcut} to force-send past a busy agent. A normal send queues as usual.`}

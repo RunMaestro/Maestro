@@ -34,9 +34,10 @@ import {
 } from '../../utils/statsCache';
 import { app } from 'electron';
 import { captureException } from '../../utils/sentry';
+import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
 	snapshotStarredTranscript,
-	deleteStarredMirror,
+	releaseTranscriptMirror,
 } from '../../storage/starred-transcript-mirror';
 
 /**
@@ -706,8 +707,16 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						isComplete: processedCount >= sessionsToProcess.length,
 					});
 				} catch (error) {
-					void captureException(error);
-					logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
+					// A transcript we merely discovered under `~/.claude/projects` can be
+					// unreadable or gone by the time we read it - environmental, not a
+					// Maestro fault, so warn locally and keep it out of Sentry
+					// (MAESTRO-YJ). Everything else still reports.
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Session file not readable: ${filename}`, LOG_CONTEXT, { error });
+					} else {
+						void captureException(error);
+						logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
+					}
 				}
 			}
 
@@ -970,8 +979,13 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const currentTotals = calculateGlobalTotals(newCache);
 					sendUpdate({ ...currentTotals, isComplete: processedCount >= sessionsToProcess.length });
 				} catch (error) {
-					void captureException(error);
-					logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
+					// See the per-project loop above (MAESTRO-YJ).
+					if (isExpectedSessionReadError(error)) {
+						logger.warn(`Global session file not readable: ${sessionKey}`, LOG_CONTEXT, { error });
+					} else {
+						void captureException(error);
+						logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
+					}
 				}
 			}
 
@@ -1737,7 +1751,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						sessionName: starSessionName,
 					});
 				} else {
-					void deleteStarredMirror({ agentId: 'claude-code', sessionId: agentSessionId });
+					void releaseTranscriptMirror({ agentId: 'claude-code', sessionId: agentSessionId });
 				}
 				return true;
 			}

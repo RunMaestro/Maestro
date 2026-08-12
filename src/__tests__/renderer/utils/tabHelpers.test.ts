@@ -465,6 +465,71 @@ describe('tabHelpers', () => {
 			expect(result!.session.aiTabs[0].id).toBe('tab-2');
 		});
 
+		// Main has no tab state of its own, so this notification is the ONLY way it
+		// learns a tab went away (W1: an armed dispatch callback bound to a closed
+		// tab used to sit armed until its hour-long timeout).
+		describe('main-process tab-close notification', () => {
+			const notify = () => window.maestro.tabs.notifyAiTabClosed as ReturnType<typeof vi.fn>;
+
+			it('notifies main when a tab is really closed', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).toHaveBeenCalledTimes(1);
+				expect(notify()).toHaveBeenCalledWith('agent-9', 'tab-1');
+			});
+
+			it('does not notify when the tab was not found', () => {
+				const session = createMockSession({ aiTabs: [createMockTab({ id: 'tab-1' })] });
+
+				closeTab(session, 'nope');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify for a busy tab - it survives as an orphan and stays a dispatch target', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify for a tab with queued items still to fire', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+					executionQueue: [{ id: 'q-1', tabId: 'tab-1' } as unknown as QueuedItem],
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify when the caller preserves tab-scoped work (snooze)', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1', false, { preserveTabScopedWork: true });
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+		});
+
 		it('selects previous tab (to the left) when active tab is closed', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });
@@ -520,6 +585,103 @@ describe('tabHelpers', () => {
 			expect(result!.session.aiTabs).toHaveLength(1);
 			expect(result!.session.aiTabs[0].id).toBe('mock-generated-id');
 			expect(result!.session.activeTabId).toBe('mock-generated-id');
+		});
+
+		it('leaves zero AI tabs when closing the only AI tab beside a terminal tab', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				terminalTabs: [{ id: 'term-1' }] as never,
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			// activeTabId must not keep pointing at the tab we just removed
+			expect(result!.session.activeTabId).toBe('');
+			// the surviving terminal tab takes over the view
+			expect(result!.session.activeTerminalTabId).toBe('term-1');
+			expect(result!.session.inputMode).toBe('terminal');
+			// no phantom AI ref is left behind in the unified order
+			expect(result!.session.unifiedTabOrder).toEqual([{ type: 'terminal', id: 'term-1' }]);
+		});
+
+		it('leaves zero AI tabs when closing the only AI tab beside a browser tab', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				browserTabs: [createMockBrowserTab()] as never,
+				unifiedTabOrder: [
+					{ type: 'browser', id: 'browser-tab-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			expect(result!.session.activeTabId).toBe('');
+			expect(result!.session.activeBrowserTabId).toBe('browser-tab-1');
+		});
+
+		it('does not crash closing the only AI tab beside a terminal tab in unread-filter mode', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				terminalTabs: [{ id: 'term-1' }] as never,
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1', true);
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			expect(result!.session.activeTabId).toBe('');
+		});
+
+		it('clears activeTabId when the closed sole AI tab was not the active tab', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				// User is focused on the terminal, so activeTabId is not the tab being closed
+				activeTabId: 'tab-1-stale',
+				inputMode: 'terminal',
+				terminalTabs: [{ id: 'term-1' }] as never,
+				activeTerminalTabId: 'term-1',
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			expect(result!.session.activeTabId).toBe('');
+		});
+
+		it('still creates a fresh tab when closing the only AI tab with no other tabs', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(1);
+			expect(result!.session.activeTabId).toBe('mock-generated-id');
+			expect(result!.session.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-generated-id' }]);
 		});
 
 		it('maintains max 25 items in closed tab history', () => {

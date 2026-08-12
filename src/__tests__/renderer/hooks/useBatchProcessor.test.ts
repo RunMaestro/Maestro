@@ -3740,8 +3740,14 @@ describe('useBatchProcessor hook', () => {
 				);
 			});
 
-			// Should have called spawn with cwd override
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/custom/worktree');
+			// Should have called spawn with cwd override. The 4th arg is the run-scoped
+			// model/effort override, undefined for a run that uses the agent default.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/custom/worktree',
+				undefined
+			);
 		});
 	});
 
@@ -4026,8 +4032,14 @@ describe('useBatchProcessor hook', () => {
 				undefined // sshRemoteId (undefined for local sessions)
 			);
 
-			// Should have spawned agent with worktree path
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/test/worktree');
+			// Should have spawned agent with worktree path. The 4th arg is the run-scoped
+			// model/effort override, undefined for a run that uses the agent default.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/test/worktree',
+				undefined
+			);
 		});
 
 		it('should handle worktree checkout failure with uncommitted changes', async () => {
@@ -6325,6 +6337,72 @@ describe('useBatchProcessor hook', () => {
 			const prEntry = prHistoryCall![0] as { fullResponse: string };
 			expect(prEntry.fullResponse).toContain('Pull Request Creation Failed');
 			expect(prEntry.fullResponse).toContain('gh: not authenticated');
+		});
+	});
+
+	describe('per-run model/effort override', () => {
+		// The override lives on the BatchRunConfig and has to survive the
+		// startBatchRun -> useBatchRunner -> useDocumentProcessor delegation chain
+		// to reach onSpawnAgent as the 4th argument.
+		const startRun = async (
+			extraConfig: Partial<{ model: string; effort: string }>
+		): Promise<void> => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						...extraConfig,
+					},
+					'/test/folder'
+				);
+			});
+		};
+
+		it('forwards config.model and config.effort to onSpawnAgent', async () => {
+			await startRun({ model: 'opus', effort: 'high' });
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'opus',
+				effortOverride: 'high',
+			});
+		});
+
+		it('forwards only the field that was set', async () => {
+			await startRun({ model: 'opus' });
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'opus',
+			});
+		});
+
+		it('passes no overrides at all when the config omits both fields', async () => {
+			await startRun({});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				undefined,
+				undefined
+			);
 		});
 	});
 });

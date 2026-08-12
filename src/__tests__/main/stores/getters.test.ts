@@ -217,5 +217,40 @@ describe('stores/getters', () => {
 
 			expect(result).toBeUndefined();
 		});
+
+		// electron-store only substitutes the `[]` default when the key is absent,
+		// so a hand-edited or sync-mangled settings.json can hand back a non-array.
+		// That used to throw `sshRemotes.find is not a function` and take down
+		// unrelated callers - git:status/git:numstat polls on agents with no SSH
+		// remote at all (MAESTRO-YB/YC).
+		it.each([
+			['an object', {}],
+			['a string', 'remote-1'],
+			['null', null],
+		])('should return undefined when sshRemotes is %s', (_label, stored) => {
+			mockStores.settingsStore.get.mockReturnValue(stored);
+
+			expect(() => getSshRemoteById('remote-1')).not.toThrow();
+			expect(getSshRemoteById('remote-1')).toBeUndefined();
+		});
+
+		// Same corruption, one level down: the value is an array but its entries
+		// are not objects, so reading `.id` off one throws the same way.
+		it.each([
+			['null entries', [null, { id: 'remote-1', name: 'Server 1' }]],
+			['string entries', ['remote-1', 'remote-2']],
+			['undefined entries', [undefined]],
+		])('should survive %s in sshRemotes', (_label, stored) => {
+			mockStores.settingsStore.get.mockReturnValue(stored);
+
+			expect(() => getSshRemoteById('remote-1')).not.toThrow();
+		});
+
+		it('should still find a valid remote alongside malformed entries', () => {
+			const valid = { id: 'remote-1', name: 'Server 1', host: 'server1.com', username: 'user1' };
+			mockStores.settingsStore.get.mockReturnValue([null, 'junk', valid]);
+
+			expect(getSshRemoteById('remote-1')).toEqual(valid);
+		});
 	});
 });

@@ -34,6 +34,17 @@ export interface OutputSearchSlot {
 	regex: boolean;
 }
 
+/**
+ * A request to scroll a specific transcript entry into view and flash it.
+ * Set by cross-tab message search (Opt+Cmd+F) after it switches tabs; consumed
+ * by the TerminalOutput instance whose agent+tab match, which clears it.
+ */
+export interface PendingLogJump {
+	sessionId: string;
+	tabId: string;
+	logId: string;
+}
+
 export interface UIStoreState {
 	// Sidebar - tri-state via two booleans: !hidden && open = full panel,
 	// !hidden && !open = collapsed status-dot strip, hidden = no panel at all.
@@ -64,6 +75,17 @@ export interface UIStoreState {
 		hover: { leafId: string; zone: import('../utils/panelLayout').DropZone } | null;
 	} | null;
 
+	// Tab tiling: one-shot request to move DOM FOCUS into the pane with this leaf
+	// id (the caret into its terminal / chat input), consumed and cleared by
+	// MainPanelContent. Fired ONLY by the keyboard pane commands - moving the focus
+	// ring alone leaves the user typing into whatever had focus before.
+	//
+	// Deliberately a request rather than an effect keyed on `focusedPaneId`: a mouse
+	// press anywhere in a pane also moves `focusedPaneId`, so a derived effect would
+	// yank the caret into the AI input mid-drag and break text selection in the
+	// conversation. Keyboard-only keeps the steal tied to explicit user intent.
+	paneFocusRequest: string | null;
+
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
 
@@ -88,6 +110,10 @@ export interface UIStoreState {
 	// outputSearchKeyFor in utils/outputSearch). Slots are pruned when a search is
 	// closed with an empty term, so the map only holds windows with an active find.
 	outputSearchByKey: Record<string, OutputSearchSlot>;
+
+	// Pending "jump to this message" request from cross-tab search. Null when no
+	// jump is in flight; the target transcript clears it once it has scrolled.
+	pendingLogJump: PendingLogJump | null;
 
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
@@ -137,6 +163,14 @@ export interface UIStoreState {
 	// settings write-through (mirrors hiddenQuotaAccounts) and hydrated by
 	// loadAllSettings on startup.
 	hiddenPluginPanels: string[];
+
+	// Namespaced id (`<pluginId>/<panelId>`) of the ONE `modal`-placement plugin
+	// panel currently open, or null. Deliberately global rather than local to
+	// Settings: the same mount serves the Settings -> Encore -> Plugins launch
+	// path and a plugin summoning its own panel via `ui.openPanel`/`togglePanel`,
+	// so the two can never fight over the panel's webview guest. Transient (not
+	// persisted) - a summoned overlay should not survive a restart.
+	openPluginPanelId: string | null;
 }
 
 export interface UIStoreActions {
@@ -157,6 +191,11 @@ export interface UIStoreActions {
 
 	// Tab tiling: set/clear the transient pane-rearrange drag state.
 	setPaneDrag: (drag: UIStore['paneDrag']) => void;
+
+	// Tab tiling: ask the panel to put DOM focus inside the pane with this leaf id,
+	// and clear that request once it has been acted on.
+	requestPaneFocus: (leafId: string) => void;
+	clearPaneFocusRequest: () => void;
 
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -196,6 +235,11 @@ export interface UIStoreActions {
 	setOutputSearchRegex: (key: string, regex: boolean | ((prev: boolean) => boolean)) => void;
 	toggleOutputSearchRegex: (key: string) => void;
 
+	// Cross-tab search jump target
+	setPendingLogJump: (jump: PendingLogJump | null) => void;
+	/** Clear only if the pending jump still points at this exact entry. */
+	clearPendingLogJump: (logId: string) => void;
+
 	// Session filter (sidebar agent search)
 	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 
@@ -231,6 +275,11 @@ export interface UIStoreActions {
 
 	// Toggle a docked plugin panel between shown and collapsed (reopen rail).
 	toggleHiddenPluginPanel: (panelId: string) => void;
+
+	/** Open (or, with null, close) the single modal plugin-panel mount. */
+	setOpenPluginPanelId: (panelId: string | null) => void;
+	/** Open the panel, or close it if that same panel is already open. */
+	toggleOpenPluginPanelId: (panelId: string) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -311,6 +360,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	activeRightTab: 'files',
 	zoomedPaneId: null,
 	paneDrag: null,
+	paneFocusRequest: null,
 	bookmarksCollapsed: false,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
@@ -320,6 +370,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	selectedSidebarIndex: 0,
 	sidebarExtraSelection: null,
 	outputSearchByKey: {},
+	pendingLogJump: null,
 	sessionFilterOpen: false,
 	historySearchFilterOpen: false,
 	groupChatHistorySearchFilterOpen: false,
@@ -332,6 +383,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
 	hiddenPluginPanels: [],
+	openPluginPanelId: null,
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
@@ -353,6 +405,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
 	setPaneDrag: (drag) => set({ paneDrag: drag }),
+
+	requestPaneFocus: (leafId) => set({ paneFocusRequest: leafId }),
+	clearPaneFocusRequest: () => set({ paneFocusRequest: null }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {
@@ -416,6 +471,11 @@ export const useUIStore = create<UIStore>()((set) => ({
 			}),
 		})),
 
+	setPendingLogJump: (jump) => set({ pendingLogJump: jump }),
+	// Guarded so a stale consumer can't wipe a newer jump the user just queued.
+	clearPendingLogJump: (logId) =>
+		set((s) => (s.pendingLogJump?.logId === logId ? { pendingLogJump: null } : s)),
+
 	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
 	setHistorySearchFilterOpen: (v) =>
 		set((s) => ({ historySearchFilterOpen: resolve(v, s.historySearchFilterOpen) })),
@@ -462,4 +522,12 @@ export const useUIStore = create<UIStore>()((set) => ({
 			persistHiddenPluginPanels(next);
 			return { hiddenPluginPanels: next };
 		}),
+
+	setOpenPluginPanelId: (panelId) => set({ openPluginPanelId: panelId }),
+
+	// Toggle by namespaced id: open it, or close it if that exact panel is already
+	// the open one. A DIFFERENT panel being open swaps to the requested one rather
+	// than closing, since only one modal panel mount exists.
+	toggleOpenPluginPanelId: (panelId) =>
+		set((s) => ({ openPluginPanelId: s.openPluginPanelId === panelId ? null : panelId })),
 }));

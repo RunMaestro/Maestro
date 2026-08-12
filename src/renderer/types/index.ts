@@ -300,6 +300,39 @@ export interface LogEntry {
 	// card collapses all subsequent auto-retry attempts into a single live stat
 	// readout (attempt count, elapsed, next-retry countdown, Retry now / Stop).
 	retryOutageId?: string;
+	// Command mode: anchors the live output card for a `!command` the user ran
+	// from the AI composer. The command never reaches the agent - Maestro runs
+	// it directly and streams stdout/stderr into `text`. See
+	// services/shellCommand.ts and components/ShellCommandCard.tsx.
+	shellCommand?: {
+		/** The command as typed, without the leading `!`. */
+		command: string;
+		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
+		cwd: string;
+		/** SSH remote name when the agent runs remotely, else undefined. */
+		remoteName?: string;
+		status: 'running' | 'finished' | 'cancelled';
+		exitCode?: number;
+		/** Wall-clock duration in ms, set on finish. */
+		durationMs?: number;
+		/** True when output hit the size cap and was cut short. */
+		truncated?: boolean;
+	};
+	// Anchors the "back from snooze" card marking where a snoozed tab returned to
+	// the conversation. Written once by `wakeSnoozedTab` and never updated, so it
+	// freezes into the transcript as a permanent record of the gap - including
+	// the note-to-self, which would otherwise live only in a toast that scrolls
+	// away. See components/SnoozeReturnCard.tsx.
+	snoozeReturn?: {
+		/** The note the user left themselves when snoozing, if any. */
+		note?: string;
+		/** When the tab was put away. */
+		snoozedAt: number;
+		/** When it was scheduled to come back. */
+		wakeAt: number;
+		/** Whether it returned on schedule or the user pulled it back early. */
+		resolution: 'woke' | 'unsnoozed';
+	};
 }
 
 // Queued item for the session-level execution queue
@@ -381,6 +414,11 @@ export interface BatchRunConfig {
 	taskSelectionMode?: TaskSelectionMode; // 'task' (default) or 'document' - controls {{TASK_SELECTION_BLOCK}}
 	worktree?: WorktreeConfig; // Optional worktree configuration
 	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
+	// Per-run model override. Wins over session.customModel for this run's spawns
+	// only - the session and its interactive tabs are never modified, and the
+	// override dies with the run. Absent means "use the agent default".
+	model?: string;
+	effort?: string; // Per-run reasoning effort override, same run-scoped rules as `model`
 	// Goal-Driven mode. Its presence is the discriminator that selects goal mode
 	// over the document/task-driven spec mode. When set, the run pursues a free-text
 	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
@@ -434,6 +472,11 @@ export interface BatchRunState {
 
 	// Prompt configuration
 	customPrompt?: string; // User's custom prompt if modified
+	// Per-run model override chosen in the launch modal (empty/absent = use the
+	// session's configured model). Scoped to this run only and never persisted to
+	// the session. Read by the exit-path synopsis so per-task synopses spawn under
+	// the same model as the run's tasks, matching the CLI batch processor.
+	runModelOverride?: string;
 	sessionIds: string[]; // Claude session IDs from each iteration
 	startTime?: number; // Timestamp when batch run started
 	cumulativeTaskTimeMs?: number; // Sum of actual task durations (most accurate work time measure)
@@ -450,7 +493,7 @@ export interface BatchRunState {
 	// meaningful when `goalMode` is true; in document/task mode they stay at their
 	// defaults and are ignored. See src/shared/goalDriven/types.ts.
 	goalMode?: boolean; // True when this run is pursuing a free-text goal (not documents)
-	goalProgress?: number; // Latest self-reported progress toward the goal (0–100)
+	goalProgress?: number; // Latest self-reported progress toward the goal (0-100)
 	goalRationale?: string; // One-line rationale accompanying the latest progress report
 	goalIteration?: number; // 1-based iteration number the goal loop is on
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
@@ -462,9 +505,23 @@ export interface BadgeUnlockRecord {
 	unlockedAt: number; // Timestamp when badge was unlocked
 }
 
+/**
+ * Which autonomous surface credited a block of Conductor time. Both accrue into
+ * `AutoRunStats.cumulativeTimeMs`; 'cue' additionally accrues into `cueTimeMs`
+ * so the About card can show the Cue subset of the total.
+ */
+export type AchievementTimeSource = 'autoRun' | 'cue';
+
 // Auto-run achievement statistics (survives app restarts)
 export interface AutoRunStats {
 	cumulativeTimeMs: number; // Total cumulative AutoRun time across all sessions
+	/**
+	 * Subset of `cumulativeTimeMs` credited by autonomous Maestro Cue runs
+	 * (the remainder came from Auto Run). Optional because it was added after
+	 * Cue credit already existed: stats persisted before this field report
+	 * `undefined`, which reads as 0 and attributes all prior time to Auto Run.
+	 */
+	cueTimeMs?: number;
 	longestRunMs: number; // Longest single AutoRun session
 	longestRunTimestamp: number; // When the longest run occurred
 	totalRuns: number; // Total number of AutoRun sessions completed
@@ -525,6 +582,11 @@ export interface AITab {
 	logs: LogEntry[]; // Conversation history
 	agentError?: AgentError; // Tab-specific agent error (shown in banner)
 	inputValue: string; // Pending input text for this tab
+	// When true, this tab's composer is in command mode (`!`) and `inputValue`
+	// is a shell command, not a message for the agent. Persisted alongside
+	// inputValue so a draft restored after a tab switch or restart is still
+	// routed the way the user intended - the text alone can't say which.
+	commandMode?: boolean;
 	stagedImages: string[]; // Staged images (base64) for this tab
 	usageStats?: UsageStats; // Token usage for this tab
 	createdAt: number; // Timestamp for ordering
@@ -643,6 +705,12 @@ export interface FilePreviewTab {
 	// FilePreview consumes it (flips to edit mode if needed, scrolls + places
 	// the caret) and then clears it.
 	pendingScrollToLine?: number;
+	// Transient request to start playing as soon as the media is ready. Set when
+	// the user opens an audio/video file (any open path: new tab, or an existing
+	// tab repurposed to a new file); consumed exactly once by the player, which
+	// then clears it. Absent on tabs restored from disk, which is what keeps a
+	// launch from replaying every podcast that happened to be open last time.
+	autoplayMedia?: boolean;
 }
 
 /**
@@ -786,15 +854,97 @@ export interface TabGroup {
 }
 
 /**
+ * Where a closed tab sat inside a tiled group, captured at close time so
+ * Cmd+Shift+T can put the pane back in its tile instead of appending a
+ * standalone chip to the end of the strip.
+ *
+ * The pane is described relative to an ANCHOR (its nearest sibling leaf's tab
+ * ref) rather than by leaf id or index: leaf ids are regenerated whenever the
+ * tree is rebuilt, and a bare index goes stale as soon as another pane moves.
+ * An anchor survives both, and is what the restore re-splits against.
+ *
+ * `groupName`/`groupEmoji` are kept so a group that AUTO-DISSOLVED on the way
+ * down to one pane can be recreated with its original identity intact.
+ */
+export interface ClosedTabTilePlacement {
+	/** Group the pane belonged to at close time (reused when recreating it). */
+	groupId: string;
+	groupName: string;
+	groupEmoji?: string;
+	/** Nearest sibling leaf's tab ref - the pane the restore splits against. */
+	anchorRef: UnifiedTabRef;
+	/** Direction of the split that held the closed pane and its anchor. */
+	direction: 'row' | 'column';
+	/** True when the closed pane sat before (left of / above) the anchor. */
+	before: boolean;
+}
+
+/**
  * Unified closed tab entry for undo functionality (Cmd+Shift+T).
  * Can hold an AITab, FilePreviewTab, or TerminalTab with type discrimination.
- * Uses unifiedIndex for restoring position in the unified tab order.
+ * Uses unifiedIndex for restoring position in the unified tab order, or
+ * `tilePlacement` when the tab was a pane in a tiled group.
  */
+type ClosedTabEntryBase = {
+	unifiedIndex: number;
+	closedAt: number;
+	/** Set only when the tab was tiled at close time; undefined for standalone tabs. */
+	tilePlacement?: ClosedTabTilePlacement;
+};
+
 export type ClosedTabEntry =
-	| { type: 'ai'; tab: AITab; unifiedIndex: number; closedAt: number }
-	| { type: 'file'; tab: FilePreviewTab; unifiedIndex: number; closedAt: number }
-	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number }
-	| { type: 'browser'; tab: BrowserTab; unifiedIndex: number; closedAt: number };
+	| ({ type: 'ai'; tab: AITab } & ClosedTabEntryBase)
+	| ({ type: 'file'; tab: FilePreviewTab } & ClosedTabEntryBase)
+	| ({ type: 'terminal'; tab: TerminalTab } & ClosedTabEntryBase)
+	| ({ type: 'browser'; tab: BrowserTab } & ClosedTabEntryBase);
+
+/**
+ * A snoozed AI tab, held out of the tab bar until `wakeAt`.
+ *
+ * Snoozing removes the tab from `aiTabs` entirely (rather than flagging it in
+ * place) so every consumer of the tab list - rendering, Cmd+1..9 navigation,
+ * cross-tab search, the thinking pill - hides it with no extra filtering. The
+ * shape mirrors {@link ClosedTabEntry} because waking reuses the same
+ * restore-at-original-position logic as reopening a closed tab.
+ *
+ * Unlike `unifiedClosedTabHistory` (a runtime-only undo stack), this list IS
+ * persisted: a snooze has to survive quitting the app.
+ */
+/**
+ * How a snooze ended. All three mean "no longer snoozed", but the distinction
+ * is what makes the history readable: a tab that came back on schedule reads
+ * very differently from one the user gave up on.
+ */
+export type SnoozeResolution = 'woke' | 'unsnoozed' | 'dismissed';
+
+/**
+ * A completed snooze, kept for the history log.
+ *
+ * Deliberately a flat record rather than a reference to the tab: the tab may
+ * since have been closed, renamed, or had its agent deleted, and the history
+ * should still read correctly. It stores what was true when the snooze ended.
+ */
+export interface SnoozeHistoryEntry {
+	id: string; // History entry ID
+	label: string; // Tab label at resolution time
+	sessionId: string; // Owning agent (may no longer exist)
+	sessionName: string; // Agent name at resolution time
+	tabId: string; // Restored tab ID (stale once that tab is closed)
+	note?: string; // The reminder message, the reason this mattered
+	snoozedAt: number; // When the user snoozed it
+	wakeAt: number; // When it was scheduled to return
+	resolvedAt: number; // When it actually returned or was discarded
+	resolution: SnoozeResolution;
+}
+
+export interface SnoozedTabEntry {
+	id: string; // Snooze ID (stable across edits, used for list keys and wake dedupe)
+	tab: AITab; // The full tab, restored verbatim on wake
+	unifiedIndex: number; // Position in unifiedTabOrder at snooze time (restore target)
+	snoozedAt: number; // When the user snoozed it
+	wakeAt: number; // When it should come back (ms epoch)
+	note?: string; // Optional note-to-self surfaced in the wake notification
+}
 
 export interface Session {
 	id: string;
@@ -935,6 +1085,9 @@ export interface Session {
 	// can surface them until the underlying agent process finishes. Runtime-only,
 	// not persisted. Entries are removed by the agent exit/error listeners.
 	orphanedThinkingTabs?: AITab[];
+	// AI tabs the user snoozed. Held out of aiTabs until their wakeAt passes, then
+	// restored by useSnoozeScheduler with a sticky notification. Persisted.
+	snoozedTabs?: SnoozedTabEntry[];
 
 	// File Preview Tabs - in-tab file viewing (coexists with AI tabs and terminal tabs)
 	// Tabs are interspersed visually but stored separately for type safety
@@ -1035,6 +1188,20 @@ export interface Session {
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
 	customContextWindow?: number; // Custom context window size (overrides agent-level)
+	/**
+	 * Provenance of `customContextWindow` (finding AD1).
+	 *
+	 * `'user-edited'` means a human deliberately set this number and it outranks
+	 * a provider-reported window. Anything else - including ABSENT, which is
+	 * every value stored before AD1 shipped - means the value cannot be
+	 * distinguished from a materialized creation-time default, so P1's
+	 * precedence stands and the provider's own report wins.
+	 *
+	 * Deliberately NOT inferred from the value: an orphaned `400000` looks
+	 * nothing like an agent default yet is not a choice either, so any
+	 * value-comparison heuristic gets exactly the codex case wrong.
+	 */
+	contextWindowSource?: 'user-edited';
 	documentGraphLayout?: 'mindmap' | 'radial' | 'hierarchical' | 'force'; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally
@@ -1286,6 +1453,16 @@ export interface DirectorNotesSettings {
 	defaultLookbackDays: number;
 	/** Default AI Overview reading mode (Rich widget dashboard vs Plain markdown). Defaults to 'rich'. */
 	defaultMode?: 'rich' | 'plain';
+	/**
+	 * Free-form description of where the fleet is trying to get to: the active
+	 * projects, which agents belong to each, and what "done" looks like.
+	 *
+	 * Optional and empty by default. When blank the synopsis prompt is byte-for-byte
+	 * what it has always been. When filled it is injected into the prompt, which
+	 * prioritizes the named projects when reading history and asks for an extra
+	 * `progress` narrative section measuring distance to the target.
+	 */
+	idealEndState?: string;
 	/** Custom path to the agent binary */
 	customPath?: string;
 	/** Custom arguments for the agent */

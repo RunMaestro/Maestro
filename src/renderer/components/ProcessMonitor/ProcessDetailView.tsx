@@ -58,7 +58,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 		<div
 			ref={containerRef}
 			tabIndex={-1}
-			className="flex flex-col h-full min-h-0 overflow-hidden outline-none"
+			className="flex flex-col h-full min-h-0 overflow-hidden outline-none select-text"
 		>
 			{/* Detail Header */}
 			<div

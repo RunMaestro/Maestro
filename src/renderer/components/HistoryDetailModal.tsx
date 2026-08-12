@@ -2,8 +2,6 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
 	X,
-	Bot,
-	User,
 	Copy,
 	Check,
 	CheckCircle,
@@ -34,10 +32,10 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
-import { DoubleCheck } from './History';
+import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
-import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -146,31 +144,11 @@ export function HistoryDetailModal({
 
 	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'datetime');
 
-	// Get pill color based on type
-	const getPillColor = () => {
-		if (entry.type === 'AUTO') {
-			return {
-				bg: theme.colors.warning + '20',
-				text: theme.colors.warning,
-				border: theme.colors.warning + '40',
-			};
-		}
-		if (entry.type === 'CUE') {
-			return {
-				bg: '#06b6d420',
-				text: '#06b6d4',
-				border: '#06b6d440',
-			};
-		}
-		return {
-			bg: theme.colors.accent + '20',
-			text: theme.colors.accent,
-			border: theme.colors.accent + '40',
-		};
-	};
-
-	const colors = getPillColor();
-	const Icon = entry.type === 'AUTO' ? Bot : entry.type === 'CUE' ? Zap : User;
+	// Pill color + icon come from the shared History helpers so this modal can
+	// never drift from the list rows behind it (it used to re-declare both,
+	// hardcoding CUE's hex, which is how AGENT would have been missed here).
+	const colors = getPillColor(entry.type, theme);
+	const Icon = getEntryIcon(entry.type);
 
 	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
 	// claude --print). Absent on non-Claude and older entries. Shares its label and
@@ -231,6 +209,8 @@ export function HistoryDetailModal({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -270,8 +250,8 @@ export function HistoryDetailModal({
 						)}
 
 						<div className="flex items-center gap-3 flex-wrap">
-							{/* Success/Failure Indicator for AUTO and CUE entries */}
-							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
+							{/* Success/Failure Indicator for dispatched work (AUTO / CUE / AGENT) */}
+							{hasRunOutcome(entry.type) && entry.success !== undefined && (
 								<span
 									className="flex items-center justify-center w-6 h-6 rounded-full"
 									style={{
@@ -433,8 +413,8 @@ export function HistoryDetailModal({
 								</span>
 							)}
 
-							{/* Validated toggle for AUTO and CUE entries */}
-							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success && onUpdate && (
+							{/* Validated toggle for dispatched work (AUTO / CUE / AGENT) */}
+							{hasRunOutcome(entry.type) && entry.success && onUpdate && (
 								<button
 									onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
 									className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
@@ -727,9 +707,8 @@ export function HistoryDetailModal({
 									<AlertTriangle className="w-5 h-5" style={{ color: theme.colors.error }} />
 								</div>
 								<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
-									Are you sure you want to delete this{' '}
-									{entry.type === 'AUTO' ? 'auto' : entry.type === 'CUE' ? 'cue' : 'user'} history
-									entry? This action cannot be undone.
+									Are you sure you want to delete this {entry.type.toLowerCase()} history entry?
+									This action cannot be undone.
 								</p>
 							</div>
 							<div className="mt-6 flex justify-end gap-2">

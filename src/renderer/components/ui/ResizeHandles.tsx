@@ -7,6 +7,14 @@ interface ResizeHandlesCommonProps {
 	/** Keep hit targets inside a clipping container instead of straddling its border. */
 	contained?: boolean;
 	testIdPrefix?: string;
+	/**
+	 * Forget the remembered size and snap back to the modal's declared default.
+	 * Wired to double-click on any handle. Omit to leave the gesture off (Settings
+	 * still offers a reset-every-modal button).
+	 */
+	onResetSize?: () => void;
+	/** Whether a size is actually remembered, so the tooltip can say so. */
+	canReset?: boolean;
 }
 
 type ResizeHandlesProps = ResizeHandlesCommonProps &
@@ -68,9 +76,19 @@ export function ResizeHandles({
 	accentColor,
 	contained = false,
 	testIdPrefix = 'modal-resize-handle',
+	onResetSize,
+	canReset = false,
 }: ResizeHandlesProps) {
 	if (disabled) return null;
 	const handleStyles = contained ? CONTAINED_HANDLE_STYLES : HANDLE_STYLES;
+	// The handles are invisible until hover, so the native tooltip is the only
+	// place the double-click gesture is discoverable. Only advertise the reset
+	// half of it when there is actually a remembered size to drop.
+	const tooltip = onResetSize
+		? canReset
+			? 'Drag to resize, double-click to reset'
+			: 'Drag to resize'
+		: undefined;
 
 	return (
 		<>
@@ -81,8 +99,10 @@ export function ResizeHandles({
 					data-resize-handle={direction}
 					data-modal-resize-handle={testIdPrefix === 'modal-resize-handle' ? direction : undefined}
 					data-testid={`${testIdPrefix}-${direction}`}
+					title={tooltip}
 					className={`absolute z-20 border-0 bg-transparent p-0 opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 ${handleStyles[direction]}`}
 					style={{ backgroundColor: resolveHandleBackground(accentColor) }}
+					onDoubleClick={onResetSize}
 					onMouseDown={
 						onPointerResizeStart || !onResizeStart
 							? undefined

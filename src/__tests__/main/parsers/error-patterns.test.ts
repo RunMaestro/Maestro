@@ -142,6 +142,38 @@ describe('error-patterns', () => {
 				}
 			});
 		});
+
+		describe('session_not_found patterns', () => {
+			// Verified: opencode-ai v1.18.15, run locally.
+			// `opencode run "hi" --session ses_<bad-id>` -> "Error: Session not found"
+			// `opencode export ses_<bad-id>` -> "Error: Session not found: ses_<bad-id>"
+			it('should match the bare "Error: Session not found"', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'Error: Session not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+				expect(result?.recoverable).toBe(true);
+			});
+
+			it('should match "Session not found: ses_<id>"', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'Session not found: ses_abc123def456'
+				);
+				expect(result?.type).toBe('session_not_found');
+			});
+
+			it('should NOT match unrelated lines that merely mention "session" and "not found" separately', () => {
+				const falsePositives = [
+					'the session config file was not found',
+					'session store connection lost; retry not found necessary',
+				];
+
+				for (const text of falsePositives) {
+					const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, text);
+					expect(result).toBeNull();
+				}
+			});
+		});
 	});
 
 	describe('CODEX_ERROR_PATTERNS', () => {

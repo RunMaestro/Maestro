@@ -125,6 +125,12 @@ export interface ManagedProcess {
 	streamedText?: string;
 	contextWindow?: number;
 	ompModelCatalogKey?: string;
+	/** Last omp usage payload that was emitted WITHOUT a catalog-resolved context
+	 *  window (the catalog prime had not landed yet, so the stats carry the static
+	 *  fallback). Kept so a prime that completes after the spawn cap can re-emit a
+	 *  corrected `usage` event immediately instead of the gauge staying wrong until
+	 *  the next turn. Cleared once resolved or pushed, so no double emit. */
+	pendingOmpUsagePush?: { model: string; stats: UsageStats };
 	tempImageFiles?: string[];
 	command?: string;
 	args?: string[];

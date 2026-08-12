@@ -2,6 +2,7 @@ import { Tag } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 type TabPlacement = 'end' | 'after-current';
 
@@ -34,10 +35,7 @@ export function TabBehaviorSection({
 }: TabBehaviorSectionProps) {
 	return (
 		<div data-setting-id="general-tab-behavior">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Tag className="w-3 h-3" />
-				Tab Behavior
-			</div>
+			<SettingsSectionHeading icon={Tag}>Tab Behavior</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -58,7 +56,7 @@ export function TabBehaviorSection({
 						<div className="font-medium" style={{ color: theme.colors.textMain }}>
 							Automatically name tabs based on first message
 						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs opacity-70 mt-0.5">
 							When you send your first message to a new tab, an AI will analyze it and generate a
 							descriptive tab name. The naming request runs in parallel and leaves no history.
 						</div>
@@ -75,7 +73,7 @@ export function TabBehaviorSection({
 					<div className="font-medium" style={{ color: theme.colors.textMain }}>
 						New tab placement
 					</div>
-					<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs opacity-70 mt-0.5 mb-2">
 						Where new AI tabs appear in the tab bar.
 					</div>
 					<ToggleButtonGroup
@@ -93,7 +91,7 @@ export function TabBehaviorSection({
 					<div className="font-medium" style={{ color: theme.colors.textMain }}>
 						New browser tab placement
 					</div>
-					<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs opacity-70 mt-0.5 mb-2">
 						Where new browser tabs appear in the tab bar.
 					</div>
 					<ToggleButtonGroup
@@ -111,7 +109,7 @@ export function TabBehaviorSection({
 					<div className="font-medium" style={{ color: theme.colors.textMain }}>
 						New terminal placement
 					</div>
-					<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs opacity-70 mt-0.5 mb-2">
 						Where new terminal tabs appear in the tab bar.
 					</div>
 					<ToggleButtonGroup
@@ -129,7 +127,7 @@ export function TabBehaviorSection({
 					<div className="font-medium" style={{ color: theme.colors.textMain }}>
 						Opened file placement
 					</div>
-					<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs opacity-70 mt-0.5 mb-2">
 						Where opened file preview tabs appear in the tab bar.
 					</div>
 					<ToggleButtonGroup

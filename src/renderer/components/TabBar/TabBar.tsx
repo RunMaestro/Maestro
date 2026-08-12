@@ -12,6 +12,8 @@ import {
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useStuckTabSignature } from '../../stores/retryStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useModalStore } from '../../stores/modalStore';
 import { AITab as AITabComponent } from './AITab';
 import { BrowserTabItem } from './BrowserTabItem';
 import { FileTab } from './FileTab';
@@ -55,12 +57,14 @@ function TabBarInner({
 	onSummarizeAndContinue,
 	onCopyContext,
 	onExportHtml,
+	onSnooze,
 	onPublishGist,
 	ghCliAvailable,
 	showUnreadOnly: showUnreadOnlyProp,
 	onToggleUnreadFilter,
 	onOpenTabSearch,
 	onOpenOutputSearch,
+	onOpenCrossTabSearch,
 	onCloseAllTabs,
 	onCloseOtherTabs,
 	onCloseTabsLeft,
@@ -126,6 +130,15 @@ function TabBarInner({
 
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	// Snoozed tabs are a cross-agent concept, so the count and the list opener
+	// come straight from the stores rather than through TabBar's prop surface.
+	const snoozedTabCount = useSessionStore((s) =>
+		s.sessions.reduce((total, session) => total + (session.snoozedTabs?.length ?? 0), 0)
+	);
+	const openSnoozedTabs = useCallback(() => {
+		useModalStore.getState().openModal('snoozedTabs');
+	}, []);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
 	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
@@ -310,7 +323,9 @@ function TabBarInner({
 			e.dataTransfer.setData('text/plain', tabId);
 			// ADD (never replace) the tiling payload so a drop onto the tiled panel can
 			// identify this tab. Resolve the tab's type from the unified list (legacy
-			// mode is AI-only). Group chips aren't draggable, so this is a leaf tab.
+			// mode is AI-only). A GROUP chip is deliberately excluded: a group drags for
+			// strip reordering (via text/plain) but carries no tile payload, so dropping
+			// it onto a tiled panel can't try to nest a group inside another group.
 			const unifiedType = unifiedTabs?.find((ut) => ut.id === tabId)?.type;
 			const ref: UnifiedTabRef | null =
 				unifiedType && unifiedType !== 'group'
@@ -570,6 +585,7 @@ function TabBarInner({
 			onSummarizeAndContinue && (tab.logs?.length ?? 0) >= 5 ? onSummarizeAndContinue : undefined,
 		onCopyContext: onCopyContext && (tab.logs?.length ?? 0) >= 1 ? onCopyContext : undefined,
 		onExportHtml: onExportHtml || undefined,
+		onSnooze: onSnooze || undefined,
 		onPublishGist:
 			onPublishGist && ghCliAvailable && (tab.logs?.length ?? 0) >= 1 ? onPublishGist : undefined,
 		onMoveToFirst:
@@ -619,9 +635,13 @@ function TabBarInner({
 						theme={theme}
 						onSearchTabs={onOpenTabSearch}
 						onSearchMessages={onOpenOutputSearch ?? onOpenTabSearch}
+						onSearchAllTabs={onOpenCrossTabSearch}
 						tabSwitcherKeys={tabShortcuts.tabSwitcher?.keys ?? ['Alt', 'Meta', 't']}
 						searchOutputKeys={shortcuts.searchOutput?.keys ?? ['Meta', 'f']}
+						searchAllTabsKeys={shortcuts.searchAllTabs?.keys ?? ['Alt', 'Meta', 'f']}
 						openTabCount={unifiedTabs?.length ?? tabs.length}
+						onShowSnoozedTabs={openSnoozedTabs}
+						snoozedTabCount={snoozedTabCount}
 					/>
 				)}
 				<button
@@ -853,6 +873,19 @@ function TabBarInner({
 										onRename={onGroupRename}
 										onSetEmoji={onGroupSetEmoji}
 										onBreakApart={onGroupBreakApart}
+										onDragStart={handleDragStart}
+										onDragOver={handleDragOver}
+										onDragEnd={handleDragEnd}
+										onDrop={handleDrop}
+										isDragging={draggingTabId === unifiedTab.id}
+										isDragOver={dragOverTabId === unifiedTab.id}
+										registerRef={(el) => registerTabRef(unifiedTab.id, el)}
+										onMoveToFirst={
+											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+										}
+										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
+										isFirstTab={isFirstTab}
+										isLastTab={isLastTab}
 									/>
 								</React.Fragment>
 							);

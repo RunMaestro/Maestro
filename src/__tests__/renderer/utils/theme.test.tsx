@@ -102,6 +102,15 @@ describe('theme utilities', () => {
 			it('returns error color at boundary 80.01%', () => {
 				expect(getContextColor(80.01, mockTheme)).toBe(mockTheme.colors.error);
 			});
+
+			it('saturates at error for over-limit usage above 100%', () => {
+				// Finding R1, Decision 4: no fourth "over" state is added to the ramp.
+				// Magnitude past the limit is conveyed by the timeline's geometry (the
+				// 100% tick plus the overflow extension), never by a new hue. Pinned
+				// here so the contract is written down rather than implied.
+				expect(getContextColor(147, mockTheme)).toBe(mockTheme.colors.error);
+				expect(getContextColor(1000, mockTheme)).toBe(mockTheme.colors.error);
+			});
 		});
 
 		describe('uses correct theme colors', () => {

@@ -39,8 +39,10 @@ import {
 	computeQueuedTabIds,
 	computeUnreadGroupIds,
 	focusAiTabInSession,
+	getTabDisplayName,
 } from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
+import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -158,7 +160,6 @@ export const MainPanel = React.memo(
 			isMobileLandscape = false,
 			showFlashNotification,
 			onOpenWorktreeConfig,
-			onOpenCreatePR,
 			isWorktreeChild,
 			onSummarizeAndContinue,
 			onMergeWith,
@@ -293,6 +294,7 @@ export const MainPanel = React.memo(
 			onToggleUnreadFilter,
 			onOpenTabSearch,
 			onOpenOutputSearch,
+			onOpenCrossTabSearch,
 			onCloseAllTabs,
 			onCloseOtherTabs,
 			onCloseTabsLeft,
@@ -346,6 +348,24 @@ export const MainPanel = React.memo(
 		// Prefer local derivation from the full session (includes live usage/cost).
 		const activeTab = useMemo(() => derivedActiveTab ?? null, [derivedActiveTab]);
 		const activeTabError = activeTab?.agentError;
+
+		// Whether the agent has any tab at all. An agent is allowed to have zero AI
+		// tabs as long as some other tab kind is still open, so the tab strip has to
+		// key off the union rather than aiTabs alone.
+		const hasAnyTab = useMemo(
+			() =>
+				(activeSession?.aiTabs?.length ?? 0) +
+					(activeSession?.filePreviewTabs?.length ?? 0) +
+					(activeSession?.terminalTabs?.length ?? 0) +
+					(activeSession?.browserTabs?.length ?? 0) >
+				0,
+			[
+				activeSession?.aiTabs,
+				activeSession?.filePreviewTabs,
+				activeSession?.terminalTabs,
+				activeSession?.browserTabs,
+			]
+		);
 
 		// SSH remote name for header display
 		const sshRemoteName = useSshRemoteName(
@@ -517,6 +537,19 @@ export const MainPanel = React.memo(
 			},
 			[activeTab, setTabEffort]
 		);
+
+		// Opening the snooze picker needs nothing from App.tsx, so it talks to the
+		// modal store directly instead of adding another link to the
+		// App -> useMainPanelProps -> MainPanel -> TabBar prop chain.
+		const handleOpenSnooze = useCallback((tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			const tab = session?.aiTabs.find((t) => t.id === tabId);
+			if (!tab) return;
+			useModalStore.getState().openModal('snoozeTab', {
+				tabId,
+				tabLabel: getTabDisplayName(tab, session?.agentSessionId),
+			});
+		}, []);
 
 		// Expose methods to parent via ref
 		// Holds the latest terminal/browser buffer-action handlers. The imperative
@@ -1077,7 +1110,6 @@ export const MainPanel = React.memo(
 								setActiveAgentSessionId={setActiveAgentSessionId}
 								onStopBatchRun={onStopBatchRun}
 								onOpenWorktreeConfig={onOpenWorktreeConfig}
-								onOpenCreatePR={onOpenCreatePR}
 								hasCapability={hasCapability}
 							/>
 						)}
@@ -1162,9 +1194,11 @@ export const MainPanel = React.memo(
 								/>
 							) : null
 						) : (
-							/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */
-							activeSession.aiTabs &&
-							activeSession.aiTabs.length > 0 &&
+							/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
+							   An agent can sit at zero AI tabs while terminal/file/browser tabs are
+							   open, so gating this on aiTabs alone would hide the whole strip (and
+							   the "+" button) and strand the user in whatever view was last active. */
+							hasAnyTab &&
 							onTabSelect &&
 							onTabClose &&
 							onNewTab && (
@@ -1187,6 +1221,7 @@ export const MainPanel = React.memo(
 									onSummarizeAndContinue={onSummarizeAndContinue}
 									onCopyContext={onCopyContext}
 									onExportHtml={onExportHtml}
+									onSnooze={handleOpenSnooze}
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
@@ -1194,6 +1229,7 @@ export const MainPanel = React.memo(
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
+									onOpenCrossTabSearch={onOpenCrossTabSearch}
 									onCloseAllTabs={onCloseAllTabs}
 									onCloseOtherTabs={onCloseOtherTabs}
 									onCloseTabsLeft={onCloseTabsLeft}

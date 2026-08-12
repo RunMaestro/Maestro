@@ -137,7 +137,7 @@ export function ExecutionQueueBrowser({
 			{/* Modal */}
 			<div
 				ref={modalRef}
-				className="relative rounded-lg border shadow-2xl flex flex-col"
+				className="relative rounded-lg border shadow-2xl flex flex-col select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
@@ -152,6 +152,8 @@ export function ExecutionQueueBrowser({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -515,10 +517,11 @@ function QueueItemRow({
 					)}
 
 					{/* Action buttons - a horizontal row justified to the bottom-right of
-					    the card, matching the inline queued-item footer in the AI chat.
-					    Stacking these vertically forced every card to reserve the height
-					    of the whole button column, which wasted space on short messages. */}
-					<div className="mt-1.5 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all">
+					    the card, always visible, matching the inline queued-item footer in
+					    the AI chat. Stacking these vertically forced every card to reserve
+					    the height of the whole button column, which wasted space on the
+					    short messages that make up most of the queue. */}
+					<div className="mt-1.5 flex items-center justify-end gap-1">
 						{onEdit && (
 							<button
 								onClick={(e) => {

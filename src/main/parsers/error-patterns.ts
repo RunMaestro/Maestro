@@ -366,13 +366,21 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 
 	session_not_found: [
 		{
-			pattern: /session.*not found/i,
+			// Verified: opencode-ai v1.18.15, run locally against a nonexistent
+			// session ID. `opencode run "hi" --session ses_<bad-id>` exits 1 with
+			// stderr "Error: Session not found" (bare). `opencode export
+			// ses_<bad-id>` exits 1 with stderr "Error: Session not found:
+			// ses_<bad-id>" (ID appended after a colon). Anchored to this literal
+			// phrase so unrelated lines that merely mention both words don't
+			// trigger a discard-and-respawn.
+			//
+			// Note: opencode itself surfaces this exact string for causes other
+			// than a truly deleted session (OPENCODE_SERVER_PASSWORD auth
+			// mismatches, corrupted session JSON) - Maestro can't distinguish
+			// those from a real deletion once opencode has collapsed them into
+			// the same message.
+			pattern: /\bsession not found\b/i,
 			message: 'Session not found. Starting fresh conversation.',
-			recoverable: true,
-		},
-		{
-			pattern: /invalid.*session/i,
-			message: 'Invalid session. Starting fresh conversation.',
 			recoverable: true,
 		},
 	],

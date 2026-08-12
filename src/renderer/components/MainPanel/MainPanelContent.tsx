@@ -6,6 +6,7 @@ import {
 	TerminalView,
 	createTabStateChangeHandler,
 	createTabPidChangeHandler,
+	type TerminalViewHandle,
 } from '../TerminalView';
 import { InputArea } from '../InputArea';
 import type { FilePreviewHandle } from '../FilePreview';
@@ -23,6 +24,8 @@ import {
 	splitPaneRectsByKind,
 } from '../../utils/panelLayout';
 import { updateSessionWith } from '../../stores/sessionStore';
+import { MediaViewportSlot } from '../MediaPlayback';
+import { getFileTabMediaKind } from '../../utils/mediaTabs';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -62,6 +65,15 @@ const FilePreview = React.lazy(() =>
 	import('../FilePreview').then((m) => ({ default: m.FilePreview }))
 );
 
+/**
+ * Delay before moving DOM focus into a newly focused tiled pane. Matches the
+ * 50ms the rest of the app waits before a post-commit `.focus()` (see
+ * FOCUS_AFTER_RENDER_DELAY_MS in useMainKeyboardHandler, and TerminalView's own
+ * focus-on-tab-change): the pane has to render and unhide before xterm will
+ * accept focus.
+ */
+const PANE_FOCUS_DELAY_MS = 50;
+
 export interface MainPanelContentProps {
 	// Core state (guaranteed by parent guard)
 	activeSession: Session;
@@ -93,9 +105,7 @@ export interface MainPanelContentProps {
 	browserViewRefs?: React.MutableRefObject<Map<string, BrowserTabViewHandle>>;
 
 	// Terminal mounting props
-	terminalViewRefs: React.MutableRefObject<
-		Map<string, { clearActiveTerminal: () => void; focusActiveTerminal: () => void }>
-	>;
+	terminalViewRefs: React.MutableRefObject<Map<string, TerminalViewHandle>>;
 	mountedTerminalSessionIds: string[];
 	mountedTerminalSessionsRef: React.MutableRefObject<Map<string, Session>>;
 	terminalSearchOpen: boolean;
@@ -596,11 +606,68 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		},
 		[activeGroup, activeSession.id]
 	);
+	// Keyboard pane commands move the focus RING via `focusedPaneId`, but the caret
+	// stays wherever it was - so switching to a terminal tile and typing sent the
+	// keystrokes to the previous pane. The tiling shortcuts publish a one-shot
+	// `paneFocusRequest` (leaf id) and this consumes it, putting DOM focus inside
+	// the pane's real input:
+	//   - terminal -> that tab's xterm, by id. `focusActiveTerminal()` is NOT usable
+	//     here: a tiled terminal pane never sets `activeTerminalTabId`.
+	//   - ai       -> the shared chat textarea, which is already scoped to the
+	//     focused pane's tab (focusPaneInSession syncs activeTabId for AI panes).
+	//   - browser  -> skipped; the webview takes Chromium input off
+	//     `groupFocusedBrowserTabId` on its own.
+	//   - file     -> skipped; a preview has no text input to land in.
+	// Deferred a frame: the request is published in the same tick as the session
+	// commit, so the newly focused pane has not rendered/unhidden yet.
+	const paneFocusRequest = useUIStore((s) => s.paneFocusRequest);
+	React.useEffect(() => {
+		if (!paneFocusRequest) return;
+		// Consume immediately so a stale request can never re-steal focus on a later
+		// remount, even if the lookups below bail out.
+		useUIStore.getState().clearPaneFocusRequest();
+		if (!activeGroup) return;
+		const leaf = findLeafById(activeGroup.layout, paneFocusRequest);
+		if (!leaf || leaf.kind !== 'leaf') return;
+		const tab = leaf.tab;
+		const sessionId = activeSession.id;
+		// The pane shortcuts are not gated on activeFocus, so they can fire while the
+		// Left Bar or Right Bar owns it. Land it back on 'main' for EVERY pane kind or
+		// the arrow keys keep navigating that other region while the caret sits in a
+		// pane. Set synchronously - it is plain state, nothing to wait for.
+		useUIStore.getState().setActiveFocus('main');
+		const timer = setTimeout(() => {
+			if (tab.type === 'terminal') {
+				terminalViewRefs.current.get(sessionId)?.focusTerminal(tab.id);
+			} else if (tab.type === 'ai') {
+				inputRef.current?.focus();
+			}
+		}, PANE_FOCUS_DELAY_MS);
+		return () => clearTimeout(timer);
+	}, [paneFocusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
 	// Number of open modal/overlay layers. When any layer is open over a browser
 	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
 	// focus so keyboard navigation lands in the modal instead of the page. Driving
 	// isActive off this re-blurs the webview the moment a layer opens.
 	const { layerCount } = useLayerStack();
+
+	// A playable audio/video tab is a player, not a document, so it skips
+	// FilePreview entirely: the panel is the player and nothing else. Routing it
+	// through FilePreview meant a filename header and a size/modified strip over
+	// what is functionally a transport - and the slot, a `flex-1` child of
+	// FilePreview's block-layout scroll container, measured zero tall, so the
+	// player had nowhere to dock and the tab rendered empty. Bypassing also keeps
+	// the heavy markdown/mermaid/syntax chunk out of memory for an MP3.
+	const mediaTabKind = React.useMemo(
+		() =>
+			activeFileTab
+				? getFileTabMediaKind(
+						`${activeFileTab.name}${activeFileTab.extension}`,
+						activeFileTab.content
+					)
+				: null,
+		[activeFileTab]
+	);
 	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
 	// point at the active (visible) tab's handle so resolveBrowserContent reads that webview.
 	const fallbackBrowserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
@@ -687,6 +754,18 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							</div>
 						</div>
 					</div>
+				</div>
+			) : activeSession.inputMode === 'ai' && activeFileTabId && mediaTabKind ? (
+				// Media goes straight to the player. The element itself lives in
+				// MediaPlaybackHost so playback survives this unmounting on every tab
+				// switch; the slot only reserves the area and reports where to park it.
+				<div
+					ref={filePreviewContainerRef}
+					tabIndex={-1}
+					className="flex-1 min-h-0 flex flex-col outline-none"
+					style={{ backgroundColor: theme.colors.bgMain }}
+				>
+					<MediaViewportSlot tabId={activeFileTabId} />
 				</div>
 			) : activeSession.inputMode === 'ai' &&
 			  activeFileTabId &&
@@ -845,6 +924,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								onScrollPositionChange={onScrollPositionChange}
 								onAtBottomChange={onAtBottomChange}
 								initialScrollTop={activeTab?.scrollTop}
+								initialIsAtBottom={activeTab?.isAtBottom}
 								markdownEditMode={chatRawTextMode}
 								setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 								onReplayMessage={onReplayMessage}

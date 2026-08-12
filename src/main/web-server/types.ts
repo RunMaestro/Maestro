@@ -210,7 +210,7 @@ export interface AutoRunState {
 	errorTaskDescription?: string;
 	/** True when this run pursues a free-text goal instead of documents */
 	goalMode?: boolean;
-	/** Latest self-reported progress toward the goal (0–100) */
+	/** Latest self-reported progress toward the goal (0-100) */
 	goalProgress?: number;
 	/** One-line rationale accompanying the latest goal progress report */
 	goalRationale?: string;
@@ -252,6 +252,18 @@ export interface WebClientMessage {
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
+	/**
+	 * `dispatch --notify-on-complete <agent>`: agent to wake with a real turn
+	 * when THIS dispatch finishes. Accepted on send_command,
+	 * new_ai_tab_with_prompt and enqueue_command.
+	 */
+	notifyOnComplete?: string;
+	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	callbackTab?: string;
+	/** Overrides the default callback prompt body. */
+	callbackPrompt?: string;
+	/** Give-up window for the callback, in seconds. */
+	callbackTimeout?: number;
 	[key: string]: unknown;
 }
 
@@ -366,6 +378,7 @@ export type NewAITabWithPromptCallback = (
  * dispatched immediately through the same path as a plain `dispatch`. Surfaced
  * so `maestro-cli dispatch --queue` can report the queue position to callers.
  */
+export type EnqueueCommandFailureReason = 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 export type EnqueueCommandResult = {
 	success: boolean;
 	tabId?: string;
@@ -378,6 +391,13 @@ export type EnqueueCommandResult = {
 	/** Id of the queued item, for later tracking or removal. */
 	itemId?: string;
 	error?: string;
+	/**
+	 * Machine-readable cause of a failure, so callers can react to a specific
+	 * one without parsing `error`. Dispatch callbacks use `tab-not-found` to
+	 * fall back to agent-level delivery when a `--callback-tab` has since been
+	 * closed (see `deliverCallback` in `dispatch-callbacks/`).
+	 */
+	reason?: EnqueueCommandFailureReason;
 };
 export type EnqueueCommandCallback = (
 	sessionId: string,
@@ -560,6 +580,13 @@ export type ConfigureAutoRunCallback = (
 		maxLoops?: number;
 		saveAsPlaybook?: string;
 		launch?: boolean;
+		/**
+		 * Per-run model/effort override (CLI `--model` / `--effort`). Wins over the
+		 * session's configured model for this run's spawns only; never written back
+		 * to the session. Absent means "use the agent default".
+		 */
+		model?: string;
+		effort?: string;
 		worktree?: {
 			enabled: boolean;
 			path: string;
@@ -856,6 +883,14 @@ export interface CreateSessionConfig {
 	customModel?: string;
 	customEffort?: string;
 	customContextWindow?: number;
+	/**
+	 * Provenance of {@link customContextWindow} (finding AD1). `'user-edited'`
+	 * only when a human deliberately chose the number - typing
+	 * `--context-window` on the CLI qualifies. The desktop New Agent modal does
+	 * NOT set it: its control is seeded from the agent-level config, so that
+	 * write is a materialization of the default rather than a choice.
+	 */
+	contextWindowSource?: 'user-edited';
 	customProviderPath?: string;
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

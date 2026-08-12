@@ -7,6 +7,7 @@ import { mockTheme } from '../../../../helpers/mockTheme';
 describe('QuickActionsSearchBar', () => {
 	it('renders the main placeholder and forwards search changes', () => {
 		const setSearch = vi.fn();
+		const onClose = vi.fn();
 		render(
 			<QuickActionsSearchBar
 				theme={mockTheme}
@@ -19,7 +20,7 @@ describe('QuickActionsSearchBar', () => {
 				setRenameValue={vi.fn()}
 				inputRef={{ current: null }}
 				onKeyDown={vi.fn()}
-				onClose={vi.fn()}
+				onClose={onClose}
 			/>
 		);
 
@@ -27,7 +28,10 @@ describe('QuickActionsSearchBar', () => {
 			target: { value: 'search' },
 		});
 		expect(setSearch).toHaveBeenCalledWith('search');
-		expect(screen.getByText('ESC')).toBeInTheDocument();
+
+		// The ESC pill is a real button: pointer-only surfaces need a way out.
+		fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
 	it('uses mode-specific placeholders and rename input', () => {

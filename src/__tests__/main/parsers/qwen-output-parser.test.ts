@@ -118,6 +118,8 @@ describe('QwenOutputParser', () => {
 			const usage = parser.extractUsage(event!);
 			expect(usage).not.toBeNull();
 			expect(usage?.contextWindow).toBeUndefined();
+			// Nothing was reported, so nothing may claim provider authority either.
+			expect(usage?.contextWindowReported).toBeUndefined();
 		});
 
 		it('preserves a genuinely larger reported context window', () => {
@@ -139,6 +141,8 @@ describe('QwenOutputParser', () => {
 
 			const usage = parser.extractUsage(event!);
 			expect(usage?.contextWindow).toBe(262144);
+			// Genuinely reported, so it outranks a stored per-session window (P1).
+			expect(usage?.contextWindowReported).toBe(true);
 		});
 		it('preserves a model-reported 200000 context window (not the Claude fallback)', () => {
 			// 200000 equals the injected Claude fallback, but here a model reports it
@@ -160,6 +164,9 @@ describe('QwenOutputParser', () => {
 
 			const usage = parser.extractUsage(event!);
 			expect(usage?.contextWindow).toBe(200000);
+			// Equal to the fallback constant, yet reported: exactly the case a
+			// value-comparison heuristic would get wrong (Decision D4).
+			expect(usage?.contextWindowReported).toBe(true);
 		});
 		it('preserves a model-reported context window below the Claude fallback', () => {
 			// A custom OpenAI-compatible model can report a window < 200000; the aggregator
