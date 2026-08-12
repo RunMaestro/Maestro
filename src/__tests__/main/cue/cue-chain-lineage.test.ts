@@ -1,5 +1,5 @@
 /**
- * Phase 01 — chain lineage write-path tests.
+ * Phase 01 - chain lineage write-path tests.
  *
  * Verifies that `cue-run-manager.execute(...)` snapshots the right
  * `pipeline_id` / `chain_root_id` / `parent_event_id` onto every
@@ -10,7 +10,7 @@
  * NODE_MODULE_VERSION and fails to load under vitest's plain-Node runtime
  * (the other Cue tests work around this the same way). Each test starts
  * with a fresh `vi.fn()` mock for `safeRecordCueEvent` and asserts on its
- * captured call args — the equivalent of "no disk writes, fresh state per
+ * captured call args - the equivalent of "no disk writes, fresh state per
  * test" the brief asks for.
  */
 
@@ -88,7 +88,7 @@ const defaultSettings: CueSettings = {
 	timeout_minutes: 30,
 	timeout_on_fail: 'break',
 	// max_concurrent set high so multiple execute() calls in one test all
-	// dispatch immediately rather than queueing — we want each call to record
+	// dispatch immediately rather than queueing - we want each call to record
 	// its event synchronously so we can assert on the lineage args without
 	// shuffling timer advancement around.
 	max_concurrent: 10,
@@ -180,8 +180,8 @@ describe('cue chain lineage write path', () => {
 			undefined, // command
 			undefined, // queuedAtOverride
 			undefined, // pipelineName
-			'run-1', // chainRootId — inherited from root
-			'run-1' // parentEventId — root's runId
+			'run-1', // chainRootId - inherited from root
+			'run-1' // parentEventId - root's runId
 		);
 		await vi.advanceTimersByTimeAsync(0);
 
@@ -216,7 +216,7 @@ describe('cue chain lineage write path', () => {
 		);
 		await vi.advanceTimersByTimeAsync(0);
 
-		// Grandchild — chainRootId stays at the root, parentEventId points at
+		// Grandchild - chainRootId stays at the root, parentEventId points at
 		// the direct child.
 		manager.execute(
 			'session-1',
@@ -230,8 +230,8 @@ describe('cue chain lineage write path', () => {
 			undefined,
 			undefined,
 			undefined,
-			'run-1', // chainRootId — still the original root, NOT the direct child
-			'run-2' // parentEventId — direct child's runId
+			'run-1', // chainRootId - still the original root, NOT the direct child
+			'run-2' // parentEventId - direct child's runId
 		);
 		await vi.advanceTimersByTimeAsync(0);
 
@@ -256,7 +256,7 @@ describe('cue chain lineage write path', () => {
 			undefined,
 			undefined,
 			undefined,
-			'my-pipeline', // pipelineName — would otherwise become pipeline_id
+			'my-pipeline', // pipelineName - would otherwise become pipeline_id
 			'parent-root',
 			'parent-run'
 		);

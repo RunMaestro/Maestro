@@ -10,6 +10,7 @@ import {
 	selectNextEndpoint,
 	shouldReturnToPrimary,
 	resolveFailoverEnv,
+	failoverUnsetEnvKeys,
 	validateEndpoint,
 	DEFAULT_RETURN_TO_PRIMARY_MINUTES,
 	type FailoverConfig,
@@ -107,7 +108,7 @@ describe('resolveFailoverEnv', () => {
 	it('layers the endpoint env over the agent’s own vars', () => {
 		const resolved = resolveFailoverEnv(
 			{ FOO: 'bar', ANTHROPIC_BASE_URL: 'https://api.anthropic.com' },
-			endpoint('a')
+			endpoint('a').env
 		);
 		expect(resolved).toEqual({
 			FOO: 'bar',
@@ -116,22 +117,80 @@ describe('resolveFailoverEnv', () => {
 		});
 	});
 
-	it('skips blank endpoint values so a half-filled row cannot clobber a working var', () => {
+	// The security property: a backup that redirects the base URL is a different
+	// operator, so a credential it does not supply is REMOVED, never inherited.
+	// A URL-only backup row is the most natural way to configure failover, and
+	// inheriting here presented the user's primary Anthropic key to a third party.
+	it('never passes the primary credential to an endpoint that supplies none', () => {
 		const resolved = resolveFailoverEnv(
-			{ ANTHROPIC_AUTH_TOKEN: 'primary-token' },
-			endpoint('a', {
-				env: { ANTHROPIC_BASE_URL: 'https://a.example.com', ANTHROPIC_AUTH_TOKEN: '' },
-			})
+			{ ANTHROPIC_AUTH_TOKEN: 'primary-token', ANTHROPIC_API_KEY: 'primary-key' },
+			{ ANTHROPIC_BASE_URL: 'https://a.example.com' }
 		);
-		expect(resolved?.ANTHROPIC_AUTH_TOKEN).toBe('primary-token');
+		expect(resolved?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+		expect(resolved?.ANTHROPIC_API_KEY).toBeUndefined();
 		expect(resolved?.ANTHROPIC_BASE_URL).toBe('https://a.example.com');
 	});
 
+	it('treats a blank endpoint credential as "supplies none" rather than "keep the primary"', () => {
+		const resolved = resolveFailoverEnv(
+			{ ANTHROPIC_AUTH_TOKEN: 'primary-token' },
+			{ ANTHROPIC_BASE_URL: 'https://a.example.com', ANTHROPIC_AUTH_TOKEN: '' }
+		);
+		expect(resolved?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+		expect(resolved?.ANTHROPIC_BASE_URL).toBe('https://a.example.com');
+	});
+
+	it('keeps non-credential vars when the endpoint redirects', () => {
+		const resolved = resolveFailoverEnv(
+			{ FOO: 'bar', HTTP_PROXY: 'http://proxy' },
+			{ ANTHROPIC_BASE_URL: 'https://a.example.com' }
+		);
+		expect(resolved?.FOO).toBe('bar');
+		expect(resolved?.HTTP_PROXY).toBe('http://proxy');
+	});
+
+	// An endpoint that only layers extra vars is still talking to the primary
+	// operator, so there is nothing to protect the credential from.
+	it('leaves the primary credential alone when the endpoint does not redirect', () => {
+		const resolved = resolveFailoverEnv(
+			{ ANTHROPIC_AUTH_TOKEN: 'primary-token' },
+			{ HTTP_PROXY: 'http://proxy' }
+		);
+		expect(resolved?.ANTHROPIC_AUTH_TOKEN).toBe('primary-token');
+	});
+
 	it('handles an agent with no env of its own', () => {
-		expect(resolveFailoverEnv(undefined, endpoint('a'))).toEqual({
+		expect(resolveFailoverEnv(undefined, endpoint('a').env)).toEqual({
 			ANTHROPIC_BASE_URL: 'https://a.example.com',
 			ANTHROPIC_AUTH_TOKEN: 'tok-a',
 		});
+	});
+});
+
+describe('failoverUnsetEnvKeys', () => {
+	it('lists the credentials a redirecting endpoint does not supply', () => {
+		expect(failoverUnsetEnvKeys({ ANTHROPIC_BASE_URL: 'https://a.example.com' })).toEqual([
+			'ANTHROPIC_AUTH_TOKEN',
+			'ANTHROPIC_API_KEY',
+		]);
+	});
+
+	it('does not list a credential the endpoint supplies itself', () => {
+		expect(
+			failoverUnsetEnvKeys({
+				ANTHROPIC_BASE_URL: 'https://a.example.com',
+				ANTHROPIC_AUTH_TOKEN: 'tok-a',
+			})
+		).toEqual(['ANTHROPIC_API_KEY']);
+	});
+
+	it('strips nothing when the endpoint does not redirect the base URL', () => {
+		expect(failoverUnsetEnvKeys({ HTTP_PROXY: 'http://proxy' })).toEqual([]);
+		expect(failoverUnsetEnvKeys(undefined)).toEqual([]);
+	});
+
+	it('treats a whitespace-only base URL as no redirect', () => {
+		expect(failoverUnsetEnvKeys({ ANTHROPIC_BASE_URL: '   ' })).toEqual([]);
 	});
 });
 

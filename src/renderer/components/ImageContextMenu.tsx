@@ -1,11 +1,12 @@
 /**
- * SvgContextMenu - right-click menu for inline <svg> diagrams rendered in AI
- * chat markdown. Offers "Copy Image" (rasterized PNG to the clipboard) and
- * "Save Image" (standalone .svg download).
+ * ImageContextMenu - right-click menu for any image rendered in AI chat: raster
+ * `<img>` (markdown embeds, pasted transcript attachments) and inline `<svg>`
+ * (agent-authored diagrams, mermaid). Offers "Copy Image" (to the clipboard) and
+ * "Save Image" (native save dialog).
  *
- * Mirrors LinkContextMenu / FileContextMenu: the shell (Markdown.tsx) owns the
- * menu state and renders this component; positioning is handled by
- * useContextMenuPosition.
+ * Mirrors LinkContextMenu / FileContextMenu: the surface owns the menu state
+ * (see useImageContextMenu) and renders this component; positioning is handled
+ * by useContextMenuPosition so the menu opens at the pointer.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -13,22 +14,30 @@ import { createPortal } from 'react-dom';
 import { Copy, Download } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
-import { copySvgToClipboard, downloadSvg } from '../utils/svgExport';
+import {
+	copyImageElementToClipboard,
+	saveImageElementToDisk,
+	isSvgElement,
+	type ExportableImage,
+} from '../utils/imageExport';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { notifyToast } from '../stores/notificationStore';
+import { getBasename } from '../../shared/formatters';
 
-export interface SvgContextMenuState {
+export interface ImageContextMenuState {
 	x: number;
 	y: number;
-	svg: SVGSVGElement;
+	target: ExportableImage;
 }
 
-interface SvgContextMenuProps {
-	menu: SvgContextMenuState;
+interface ImageContextMenuProps {
+	menu: ImageContextMenuState;
 	theme: Theme;
 	onDismiss: () => void;
 }
 
-export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) {
+export function ImageContextMenu({ menu, theme, onDismiss }: ImageContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
@@ -55,15 +64,30 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 	}, []);
 
 	const handleCopy = useCallback(async () => {
-		const ok = await copySvgToClipboard(menu.svg);
+		onDismiss();
+		const ok = await copyImageElementToClipboard(menu.target);
 		if (ok) flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
-		onDismiss();
-	}, [menu.svg, onDismiss]);
+		else
+			notifyToast({
+				color: 'red',
+				title: 'Copy Failed',
+				message: 'Could not read this image to copy it.',
+			});
+	}, [menu.target, onDismiss]);
 
-	const handleSave = useCallback(() => {
-		downloadSvg(menu.svg);
+	const handleSave = useCallback(async () => {
 		onDismiss();
-	}, [menu.svg, onDismiss]);
+		const result = await saveImageElementToDisk(menu.target);
+		if (result.saved) {
+			notifyCenterFlash({
+				message: 'Image Saved',
+				detail: result.path ? getBasename(result.path) : undefined,
+				color: 'green',
+			});
+		} else if (result.error) {
+			notifyToast({ color: 'red', title: 'Save Failed', message: result.error });
+		}
+	}, [menu.target, onDismiss]);
 
 	return createPortal(
 		<div
@@ -93,7 +117,7 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 				style={{ color: theme.colors.textMain }}
 			>
 				<Download className="w-3.5 h-3.5" />
-				Save Image (SVG)
+				{isSvgElement(menu.target) ? 'Save Image (SVG or PNG)...' : 'Save Image...'}
 			</button>
 		</div>,
 		document.body

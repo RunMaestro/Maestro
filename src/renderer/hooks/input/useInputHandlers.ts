@@ -1,5 +1,5 @@
 /**
- * useInputHandlers — extracted from App.tsx (Phase 2J)
+ * useInputHandlers - extracted from App.tsx (Phase 2J)
  *
  * Orchestrates all input-related state and handlers by:
  *   - Managing dual input state (AI per-tab + terminal per-session)
@@ -23,6 +23,7 @@ import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { setLiveDraft } from '../../utils/liveDraftStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
@@ -532,7 +533,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		conductorProfile,
 	});
 
-	// processInputRef — maintained for access in memoized callbacks without stale closures
+	// processInputRef - maintained for access in memoized callbacks without stale closures
 	const processInputRef = useRef<
 		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
 	>(() => {});
@@ -541,7 +542,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	}, [processInput]);
 
 	// ====================================================================
-	// useInputKeyDown (absorb — keyboard handler for input textarea)
+	// useInputKeyDown (absorb - keyboard handler for input textarea)
 	// ====================================================================
 
 	const { handleInputKeyDown } = useInputKeyDown({
@@ -630,6 +631,20 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
+			// Command mode is a shell prompt: the draft is piped to `sh`, never to
+			// the agent, so a staged image has nothing that could consume it. Say so
+			// rather than silently swallowing the paste - an image that vanishes with
+			// no feedback reads as a broken paste.
+			if (!isGroupChatActive && getCommandMode()) {
+				e.preventDefault();
+				notifyCenterFlash({
+					message: 'Images are not supported in command mode',
+					color: 'yellow',
+					detail: 'Press Esc to go back to the agent',
+				});
+				return;
+			}
+
 			for (let i = 0; i < items.length; i++) {
 				if (items[i].type.indexOf('image') !== -1) {
 					e.preventDefault();
@@ -665,7 +680,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[activeGroupChatId, activeSession, setInputValue, setStagedImages]
+		[activeGroupChatId, activeSession, setInputValue, setStagedImages, getCommandMode]
 	);
 
 	const appendMentionsToAiInput = useCallback(
@@ -711,6 +726,17 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const isGroupChatActive = !!activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
+			// Command mode has no agent to hand attachments (or @mentions) to - the
+			// draft goes straight to a shell. Drop is a no-op there.
+			if (!isGroupChatActive && getCommandMode()) {
+				notifyCenterFlash({
+					message: 'Attachments are not supported in command mode',
+					color: 'yellow',
+					detail: 'Press Esc to go back to the agent',
+				});
+				return;
+			}
+
 			// Files-panel drag: image files are staged as image attachments;
 			// other files/folders are inserted as @<path> in the AI input.
 			// AI mode only; group chat is excluded.
@@ -733,7 +759,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							internalPaths = parsed.filter((p): p is string => typeof p === 'string');
 						}
 					} catch {
-						// Malformed payload — fall back to the single path below.
+						// Malformed payload - fall back to the single path below.
 					}
 				}
 				if (internalPaths.length === 0 && internalSingle) internalPaths = [internalSingle];
@@ -843,6 +869,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			setStagedImages,
 			appendMentionsToAiInput,
 			appendMentionsToGroupChatDraft,
+			getCommandMode,
 		]
 	);
 

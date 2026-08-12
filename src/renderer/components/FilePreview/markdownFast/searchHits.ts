@@ -2,7 +2,7 @@
  * Pure search-matching for the Fast tier preview.
  *
  * The Fast tier virtualizes blocks, so most of the rendered HTML is not in
- * the DOM at any given time. Cmd+F can't rely on DOM scanning — instead we
+ * the DOM at any given time. Cmd+F can't rely on DOM scanning - instead we
  * search the SOURCE string and map each match to the index of the block it
  * lives in. Navigation then calls `virtuoso.scrollToIndex(blockIndex)`, and
  * the `offsetWithinBlock` field lets the caller scroll precisely to the
@@ -32,7 +32,7 @@ export interface FindHitsOptions {
  * are tagged with the block they START in.
  *
  * Block ranges must be sorted by `start` ascending and non-overlapping. The
- * pipeline's `buildBlocks` produces ranges that satisfy this — frontmatter
+ * pipeline's `buildBlocks` produces ranges that satisfy this - frontmatter
  * is at offset 0, followed by tokens in source order.
  */
 export function findHits(
@@ -54,7 +54,7 @@ export function findHits(
 		const blockIndex = blockIndexAtOffset(blockRanges, idx);
 		// Offset relative to the block's source start, so MarkdownPreviewFast can
 		// walk text nodes inside the mounted block and land on the exact match.
-		// Clamp at 0 — if the offset falls before the block (only possible when
+		// Clamp at 0 - if the offset falls before the block (only possible when
 		// blockIndexAtOffset clamped to 0 for a pre-frontmatter hit), we still
 		// want a non-negative within-block offset.
 		const blockStart = blockRanges[blockIndex]?.start ?? 0;

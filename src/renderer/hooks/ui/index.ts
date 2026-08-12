@@ -44,7 +44,12 @@ export { useContextMenuPosition } from './useContextMenuPosition';
 
 // Portaled dropdown positioning beneath an anchor element
 export { useAnchoredMenuPosition } from './useAnchoredMenuPosition';
-export type { AnchoredMenuPosition } from './useAnchoredMenuPosition';
+export type {
+	AnchoredMenuPosition,
+	AnchoredMenuOptions,
+	AnchoredMenuPlacement,
+	AnchoredMenuAlign,
+} from './useAnchoredMenuPosition';
 
 // Resizable panel drag behavior
 export { useResizablePanel } from './useResizablePanel';

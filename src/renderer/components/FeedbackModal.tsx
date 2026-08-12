@@ -85,7 +85,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 		requestAnimationFrame(() => {
 			const anchor = readMinimizeAnchor(cardRef.current);
 			if (!anchor) {
-				// No button to anchor to — fall back to instant minimize.
+				// No button to anchor to - fall back to instant minimize.
 				setMinimized(true);
 				return;
 			}

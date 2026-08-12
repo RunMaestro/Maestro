@@ -7,7 +7,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
-import { registerAgentSessionsHandlers } from '../../../../main/ipc/handlers/agentSessions';
+import {
+	registerAgentSessionsHandlers,
+	isExpectedSessionReadError,
+} from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
 
 // Mock electron's ipcMain
@@ -473,5 +476,42 @@ describe('agentSessions IPC handlers', () => {
 
 			expect(result).toEqual(['claude-code', 'opencode']);
 		});
+	});
+});
+
+describe('isExpectedSessionReadError', () => {
+	// The global-stats loops read provider transcripts that belong to the agent
+	// CLI, not to us. Failures rooted in the user's filesystem must not reach
+	// Sentry (MAESTRO-W9); a genuine parse fault still must.
+	it('treats an unreadable transcript as expected (MAESTRO-W9)', () => {
+		const error = Object.assign(
+			new Error("EACCES: permission denied, open '/Users/x/.claude/projects/a/b.jsonl'"),
+			{ code: 'EACCES' }
+		);
+		expect(isExpectedSessionReadError(error)).toBe(true);
+	});
+
+	it('treats a transcript deleted mid-scan as expected', () => {
+		const error = Object.assign(new Error('ENOENT: no such file or directory'), {
+			code: 'ENOENT',
+		});
+		expect(isExpectedSessionReadError(error)).toBe(true);
+	});
+
+	it.each(['EPERM', 'ENOTDIR', 'EISDIR', 'EBUSY'])('treats %s as expected', (code) => {
+		expect(isExpectedSessionReadError(Object.assign(new Error(code), { code }))).toBe(true);
+	});
+
+	it('still reports errors that are not filesystem conditions', () => {
+		expect(isExpectedSessionReadError(new Error('Unexpected token in JSON'))).toBe(false);
+		expect(isExpectedSessionReadError(new RangeError('Invalid string length'))).toBe(false);
+		expect(isExpectedSessionReadError(Object.assign(new Error('boom'), { code: 'EMFILE' }))).toBe(
+			false
+		);
+	});
+
+	it('handles non-Error throwables', () => {
+		expect(isExpectedSessionReadError(undefined)).toBe(false);
+		expect(isExpectedSessionReadError('EACCES')).toBe(false);
 	});
 });

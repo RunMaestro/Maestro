@@ -1,5 +1,5 @@
 /**
- * Tests for useSummarizeAndContinue — handleSummarizeAndContinue (Tier 3E)
+ * Tests for useSummarizeAndContinue - handleSummarizeAndContinue (Tier 3E)
  *
  * Tests the high-level handler that validates, runs summarization,
  * updates session state, and shows toast notifications.

@@ -5,10 +5,10 @@
  * Enables clickable OS notifications and external app integrations.
  *
  * URL scheme:
- *   maestro://focus                            — bring window to foreground
- *   maestro://session/{sessionId}              — navigate to agent
- *   maestro://session/{sessionId}/tab/{tabId}  — navigate to agent + tab
- *   maestro://group/{groupId}                  — expand group, focus first session
+ *   maestro://focus                            - bring window to foreground
+ *   maestro://session/{sessionId}              - navigate to agent
+ *   maestro://session/{sessionId}/tab/{tabId}  - navigate to agent + tab
+ *   maestro://group/{groupId}                  - expand group, focus first session
  *
  * Platform behavior:
  *   macOS:         app.on('open-url') delivers the URL
@@ -35,7 +35,7 @@ const IPC_CHANNEL = 'app:deepLink';
 // State
 // ============================================================================
 
-/** URL received before the window was ready — flushed after createWindow() */
+/** URL received before the window was ready - flushed after createWindow() */
 let pendingDeepLinkUrl: string | null = null;
 
 // ============================================================================
@@ -78,7 +78,7 @@ function processDeepLink(url: string, getMainWindow: () => BrowserWindow | null)
 
 	const win = getMainWindow();
 	if (!win) {
-		// Window not ready yet — buffer for later
+		// Window not ready yet - buffer for later
 		pendingDeepLinkUrl = url;
 		logger.debug('Window not ready, buffering deep link', 'DeepLink');
 		return;
@@ -149,7 +149,7 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 	// with the URL in argv, and second-instance event fires in the primary instance
 	const gotTheLock = app.requestSingleInstanceLock();
 	if (!gotTheLock) {
-		// Another instance is running — it will receive our argv via second-instance
+		// Another instance is running - it will receive our argv via second-instance
 		logger.info('Another instance is running, quitting', 'DeepLink');
 		return false;
 	}
@@ -162,7 +162,7 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 		if (deepLinkUrl) {
 			processDeepLink(deepLinkUrl, getMainWindow);
 		} else {
-			// No deep link, but user tried to open a second instance — bring existing window to front
+			// No deep link, but user tried to open a second instance - bring existing window to front
 			const win = getMainWindow();
 			if (win) {
 				if (win.isMinimized()) win.restore();

@@ -134,7 +134,7 @@ describe('chain source resolution by stable agent_id', () => {
 		// Regression guard for the "silent identity swap": if the user deleted an
 		// agent and recreated a DIFFERENT agent that happens to share the same
 		// visible name, resolving via the name would silently rewire the chain
-		// to the new agent — hiding the fact that the original reference is
+		// to the new agent - hiding the fact that the original reference is
 		// gone. Once an ID is present and fails to resolve, we stop and emit an
 		// error node. The user can then Reassign or Remove explicitly.
 		const subs: CueSubscription[] = [
@@ -167,7 +167,7 @@ describe('chain source resolution by stable agent_id', () => {
 			.filter((n) => n.type === 'agent')
 			.map((n) => (n.data as { sessionName: string }).sessionName);
 		// The live-session agent that happens to share the legacy name must
-		// NOT be wired into this pipeline — its identity is different from the
+		// NOT be wired into this pipeline - its identity is different from the
 		// deleted reference. It may still appear as a node because it owns its
 		// own trigger sub, but it must not be the resolved source of the
 		// chain edge.
@@ -182,7 +182,7 @@ describe('chain source resolution by stable agent_id', () => {
 		// no silent adoption of the StillPresent agent as the chain source.
 		expect(agentNames).toContain('Downstream');
 
-		// Topology guard: checking node presence alone isn't enough — a buggy
+		// Topology guard: checking node presence alone isn't enough - a buggy
 		// resolver could still render the error node AND wire the Downstream
 		// chain edge to the live StillPresent agent. Walk the downstream
 		// agent's incoming edges and verify none of them originates from the

@@ -25,7 +25,7 @@ import type { AutoRunState, UseWebSocketReturn } from '../hooks/useWebSocket';
 import { estimateTokenCount, formatTokens } from '../../shared/formatters';
 
 /**
- * Doc tree node — derived client-side from the flat doc list with the
+ * Doc tree node - derived client-side from the flat doc list with the
  * `folder` field. Mirrors the desktop `DocTreeNode` shape.
  */
 interface DocTreeNode {
@@ -122,7 +122,7 @@ export interface AutoRunInlineProps {
 	onOpenFolderPicker?: () => void;
 	/**
 	 * Open the Playbook Exchange (marketplace) sheet directly from the inline
-	 * panel — mirrors desktop's "Add Docs" / Docs Overview affordance which
+	 * panel - mirrors desktop's "Add Docs" / Docs Overview affordance which
 	 * surfaces both Create-doc and Marketplace as co-equal entry points. When
 	 * omitted, the empty-state Marketplace CTA is hidden so older callers and
 	 * tests keep working.
@@ -133,7 +133,7 @@ export interface AutoRunInlineProps {
 type EditorMode = 'preview' | 'edit';
 
 /**
- * AutoRunInline — single-document Auto Run editor with full desktop parity.
+ * AutoRunInline - single-document Auto Run editor with full desktop parity.
  */
 export function AutoRunInline({
 	sessionId,
@@ -199,7 +199,7 @@ export function AutoRunInline({
 	const canRedo = redoStackRef.current.length > 0;
 	void historyTick; // ensures re-render when ref-backed history changes
 
-	// Lock state — when a run is active the document being processed is read-only.
+	// Lock state - when a run is active the document being processed is read-only.
 	// We approximate desktop's `lockedDocuments` semantics by treating any active
 	// run as read-only for the *currently selected* document (the desktop checks
 	// the run's locked-documents list, but the web doesn't get that detail in
@@ -248,12 +248,12 @@ export function AutoRunInline({
 	}, [documents, selectedFile]);
 
 	// Notify the parent on selection changes so the launch sheet can pre-fill
-	// the active doc — desktop parity for `BatchRunnerModal`'s `currentDocument`.
+	// the active doc - desktop parity for `BatchRunnerModal`'s `currentDocument`.
 	useEffect(() => {
 		onSelectedDocumentChange?.(selectedFile);
 	}, [selectedFile, onSelectedDocumentChange]);
 
-	// Save toast helper — declared early so the document-load effect below can
+	// Save toast helper - declared early so the document-load effect below can
 	// surface load failures without falling into a TDZ.
 	const showSaveMessage = useCallback((text: string, type: 'success' | 'error') => {
 		setSaveMessage({ text, type });
@@ -281,7 +281,7 @@ export function AutoRunInline({
 				setHistoryTick((t) => t + 1);
 			} catch (err) {
 				if (cancelled) return;
-				// Don't clear the buffers on transient failure — wiping a valid
+				// Don't clear the buffers on transient failure - wiping a valid
 				// in-memory document on a network hiccup creates an
 				// accidental-overwrite path. Surface the error and keep what we have.
 				console.error('[AutoRunInline] get_auto_run_document failed', err);
@@ -756,7 +756,7 @@ export function AutoRunInline({
 							.maestro/playbooks/
 						</code>
 					</p>
-					{/* Docs Overview CTAs — mirrors desktop's "Add Docs" surface where both
+					{/* Docs Overview CTAs - mirrors desktop's "Add Docs" surface where both
 					    Create-doc and Browse Playbook Exchange are co-equal entry points.
 					    Without the marketplace CTA here, mobile users in the empty state
 					    have no path to discover existing playbooks (they can only create
@@ -856,7 +856,7 @@ export function AutoRunInline({
 				backgroundColor: colors.bgMain,
 			}}
 		>
-			{/* Top toolbar — Run/Stop, PlayBooks, Help */}
+			{/* Top toolbar - Run/Stop, PlayBooks, Help */}
 			<div style={{ padding: '8px 8px 0 8px', flexShrink: 0 }}>
 				<Toolbar
 					colors={colors}
@@ -888,7 +888,7 @@ export function AutoRunInline({
 				/>
 			</div>
 
-			{/* Error pause banner — uses the existing AutoRunIndicator's recovery UI
+			{/* Error pause banner - uses the existing AutoRunIndicator's recovery UI
 				when the consumer wires resume / skip / abort handlers. */}
 			{isErrorPaused && (onResumeAfterError || onSkipAfterError || onAbortAfterError) && (
 				<div style={{ padding: '0 8px 8px 8px', flexShrink: 0 }}>
@@ -1014,7 +1014,7 @@ export function AutoRunInline({
 				)}
 			</div>
 
-			{/* Bottom action bar — Expand / Search / Edit-toggle */}
+			{/* Bottom action bar - Expand / Search / Edit-toggle */}
 			{selectedFile && (
 				<div
 					style={{
@@ -1068,7 +1068,7 @@ export function AutoRunInline({
 				</div>
 			)}
 
-			{/* Footer — task count + token estimate + save / revert / reset */}
+			{/* Footer - task count + token estimate + save / revert / reset */}
 			{selectedFile && (taskCounts.total > 0 || (isDirty && !isLocked) || tokenCount !== null) && (
 				<Footer
 					colors={colors}

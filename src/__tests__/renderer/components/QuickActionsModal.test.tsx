@@ -10,6 +10,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { Z_LAYERS } from '../../../renderer/constants/zLayers';
 
 /**
  * The action rows, in render order. Scoped to `[data-action-label]` rather than
@@ -92,6 +93,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({
 		getBranchInfo: () => ({ branch: 'main', remote: '', ahead: 0, behind: 0 }),
 	}),
+	useGitFileStatus: () => ({ getFileCount: () => 0 }),
 }));
 
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
@@ -2132,7 +2134,7 @@ describe('QuickActionsModal', () => {
 			// Main mode keeps the per-row state subtext and does not show section headers.
 			expect(dialog.textContent).not.toContain('LIVE');
 			// 'IDLE' may legitimately appear as the per-row state subtext in main mode,
-			// but never as a standalone section header — we assert via class lookup.
+			// but never as a standalone section header - we assert via class lookup.
 			const headers = dialog.querySelectorAll('div[aria-hidden="true"]');
 			const headerTexts = Array.from(headers).map((h) => h.textContent ?? '');
 			expect(headerTexts.some((t) => t.trim() === 'LIVE')).toBe(false);
@@ -2264,7 +2266,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			// Browser tab is at index 1 (last) — should show Move to First but not Move to Last
+			// Browser tab is at index 1 (last) - should show Move to First but not Move to Last
 			expect(screen.getByText('Move to First Position')).toBeInTheDocument();
 			expect(screen.queryByText('Move to Last Position')).not.toBeInTheDocument();
 		});
@@ -2287,9 +2289,20 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			// Browser tab is at index 0 (first) — should show Move to Last but not Move to First
+			// Browser tab is at index 0 (first) - should show Move to Last but not Move to First
 			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
 			expect(screen.getByText('Move to Last Position')).toBeInTheDocument();
+		});
+	});
+
+	describe('Layering', () => {
+		it('renders the backdrop above the toast layer so notifications cannot cover the palette', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;
+			expect(backdrop.style.zIndex).toBe(String(Z_LAYERS.QUICK_ACTIONS));
+			expect(Z_LAYERS.QUICK_ACTIONS).toBeGreaterThan(Z_LAYERS.TOAST);
 		});
 	});
 });

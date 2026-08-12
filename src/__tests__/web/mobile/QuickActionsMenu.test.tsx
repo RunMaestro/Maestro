@@ -323,7 +323,7 @@ describe('QuickActionsMenu', () => {
 			fireEvent.keyDown(document, { key: 'ArrowDown' });
 			expect(options[1]).toHaveAttribute('aria-selected', 'true');
 
-			// Change search — selection should reset
+			// Change search - selection should reset
 			const input = screen.getByPlaceholderText('Search actions...');
 			fireEvent.change(input, { target: { value: 'Go' } });
 

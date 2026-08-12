@@ -109,7 +109,7 @@ describe('Notification Preload API', () => {
 
 			await api.speak('Hi', 'say');
 
-			// No trailing `undefined` vars arg — keeps back-compat with callers/tests.
+			// No trailing `undefined` vars arg - keeps back-compat with callers/tests.
 			expect(mockInvoke).toHaveBeenCalledWith('notification:speak', 'Hi', 'say');
 		});
 

@@ -1,5 +1,5 @@
 /**
- * Integration tests for UsageDashboardModal — Phase 04 Cue tab gating.
+ * Integration tests for UsageDashboardModal - Phase 04 Cue tab gating.
  *
  * Verifies:
  * - The "Cue" tab is visible when both encoreFeatures.maestroCue and
@@ -236,7 +236,7 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe('UsageDashboardModal — Cue tab gating', () => {
+describe('UsageDashboardModal - Cue tab gating', () => {
 	it('shows the "Cue" tab when both maestroCue and usageStats are enabled', async () => {
 		setEncoreFlags({ maestroCue: true, usageStats: true });
 
@@ -289,7 +289,7 @@ describe('UsageDashboardModal — Cue tab gating', () => {
 			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 		});
 
-		// Cue tab is not the default — switch to it explicitly.
+		// Cue tab is not the default - switch to it explicitly.
 		const cueTab = screen.getByRole('tab', { name: 'Cue' });
 		await act(async () => {
 			fireEvent.click(cueTab);
@@ -306,7 +306,7 @@ describe('UsageDashboardModal — Cue tab gating', () => {
 	});
 });
 
-describe('UsageDashboardModal — tab ordering', () => {
+describe('UsageDashboardModal - tab ordering', () => {
 	it('places the Cue tab immediately after Auto Run, before Shortcuts', async () => {
 		setEncoreFlags({ maestroCue: true, usageStats: true });
 
@@ -327,7 +327,7 @@ describe('UsageDashboardModal — tab ordering', () => {
 	});
 });
 
-describe('UsageDashboardModal — remembers last-selected tab', () => {
+describe('UsageDashboardModal - remembers last-selected tab', () => {
 	it('reopens on the previously selected tab (within the same session)', async () => {
 		setEncoreFlags({ maestroCue: true, usageStats: true });
 
@@ -361,7 +361,7 @@ describe('UsageDashboardModal — remembers last-selected tab', () => {
 	});
 });
 
-describe('UsageDashboardModal — provider quota tabs', () => {
+describe('UsageDashboardModal - provider quota tabs', () => {
 	it('shows Anthropic Usage and OpenAI Usage only when useful provider snapshots exist', async () => {
 		setEncoreFlags({ maestroCue: true, usageStats: true });
 		seedAnthropicUsageSnapshots();

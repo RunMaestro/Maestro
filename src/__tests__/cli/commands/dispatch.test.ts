@@ -120,7 +120,7 @@ describe('dispatch command', () => {
 			// --new-tab's contract is to surface a fresh tab id for chaining.
 			// If the desktop omits it (older build / race), we must fail loudly
 			// with a dedicated code rather than returning `tabId: null` from a
-			// "successful" response — downstream consumers (Maestro-Discord,
+			// "successful" response - downstream consumers (Maestro-Discord,
 			// Cue) need to distinguish this from a generic command failure.
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -271,7 +271,7 @@ describe('dispatch command', () => {
 		});
 
 		// MaestroClient throws three distinct error strings before any WebSocket
-		// activity. They must map to MAESTRO_NOT_RUNNING — not COMMAND_FAILED —
+		// activity. They must map to MAESTRO_NOT_RUNNING - not COMMAND_FAILED -
 		// so downstream consumers (Maestro-Discord, Cue) can distinguish "app
 		// down" from "command rejected" via the error code.
 		it.each([

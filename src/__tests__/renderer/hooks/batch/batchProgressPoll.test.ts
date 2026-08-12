@@ -61,7 +61,7 @@ describe('createProgressPoll', () => {
 		await vi.advanceTimersByTimeAsync(INTERVAL);
 		expect(stubReadDoc).toHaveBeenCalled();
 		// updater receives an empty prev; the inner branch returns prev unchanged when
-		// the new totals match the default state — so we only assert the call happened.
+		// the new totals match the default state - so we only assert the call happened.
 		expect(updateBatchState).toHaveBeenCalled();
 	});
 
@@ -84,7 +84,7 @@ describe('createProgressPoll', () => {
 
 		await vi.advanceTimersByTimeAsync(INTERVAL * 2);
 		// updateBatchState may have been called once during baseline if any tick had
-		// already fired before stop() — but here stop() is called immediately, so no
+		// already fired before stop() - but here stop() is called immediately, so no
 		// tick should have fired yet.
 		expect(updateBatchState).not.toHaveBeenCalled();
 	});

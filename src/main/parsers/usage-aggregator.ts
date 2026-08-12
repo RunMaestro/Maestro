@@ -16,7 +16,7 @@ import {
 import { capabilitySnapshots } from '../agents/capability-snapshot';
 
 // Re-export for consumers that import from this module. The local import
-// was dropped on migration to `getContextWindowForAgent` — the re-export
+// was dropped on migration to `getContextWindowForAgent` - the re-export
 // resolves directly from the source module without needing a binding.
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
 
@@ -101,7 +101,7 @@ export function estimateContextUsage(
 	agentId?: ToolType,
 	/**
 	 * SSH remote UUID when the session is running against a remote host.
-	 * Lets the snapshot lookup hit the `agentId:remoteId` key — otherwise
+	 * Lets the snapshot lookup hit the `agentId:remoteId` key - otherwise
 	 * remote sessions fall back to the local snapshot and then the static
 	 * table, which can mis-size the context window when the remote runs
 	 * a different model.

@@ -197,20 +197,24 @@ multi-GB recording never crosses IPC or lands in the renderer heap.
 | `MEDIA_PLAYBACK_RATES`                    | `readonly number[]`                        | Speed ladder shown in the transport.                                                                 |
 | `normalizePlaybackRate(value)`            | `(unknown) => number`                      | Clamp a persisted/CLI-supplied rate to 0.25-4, falling back to 1.                                    |
 
-### Media File Tabs (`src/renderer/utils/mediaTabs.ts` - Renderer)
+### Media Items (`src/renderer/utils/mediaItems.ts` - Renderer)
 
-| Function                              | Signature                                                        | Purpose                                                                     |
-| ------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `getFileTabMediaKind(name, content)`  | `(string, string) => MediaKind \| null`                          | The one predicate for "is this previewed file playable media".              |
-| `collectMediaTabs(sessions)`          | `(Session[]) => MediaTabRef[]`                                   | Every media tab across **all** agents, for the app-level playback host.     |
-| `getMediaTabLabel(ref)`               | `(MediaTabRef) => string`                                        | Display filename, extension included.                                       |
-| `stepMediaTab(refs, activeId, steps)` | `(MediaTabRef[], string \| null, number) => MediaTabRef \| null` | Prev/next target for the player. Open order, no wrapping; null at the ends. |
+| Function                                | Signature                                                    | Purpose                                                                     |
+| --------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `getOpenedMediaKind(name, content)`     | `(string, string) => MediaKind \| null`                      | The one predicate for "is this opened file playable media".                 |
+| `mediaItemId(sessionId, path)`          | `(string, string) => string`                                 | Queue identity. Same agent + path re-uses the entry, so re-opening resumes. |
+| `stepMediaItem(items, activeId, steps)` | `(MediaItem[], string \| null, number) => MediaItem \| null` | Prev/next target. Open order, no wrapping; null at the ends.                |
+| `resolveMediaHistory(items, history)`   | `(MediaItem[], string[]) => MediaItem[]`                     | History IDs -> items, newest first, dropping closed entries.                |
 
-`getFileTabMediaKind` takes the filename and content as separate scalars on
-purpose: a `FilePreviewTab` splits `name` from `extension` (`'song'` + `'.mp3'`)
-while the object handed to `FilePreview` joins them back. Passing either record
-shape directly classifies everything as non-media, which silently kills playback
-outright. Callers must pass a filename that still has its extension.
+**Media never becomes a file preview tab.** `handleOpenFileTab()` diverts it to
+`useMediaPlaybackStore.openMedia()` before a tab can be created, and the only
+surface it appears on is the floating player. Do not add an in-panel placement.
+
+`getOpenedMediaKind` takes the filename and content as separate scalars on
+purpose, and the filename must still carry its extension: a `FilePreviewTab`
+splits `name` from `extension` (`'song'` + `'.mp3'`), so passing `tab.name`
+directly classifies everything as non-media. The content check is what keeps a
+remote file (no local stream to serve) on the binary "open externally" path.
 
 Floating-widget geometry math lives in `src/renderer/utils/mediaFloatGeometry.ts`
 (`clampMediaFloatRect`, `initialMediaFloatRect`), split out of the component so

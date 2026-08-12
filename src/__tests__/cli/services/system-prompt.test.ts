@@ -1,6 +1,6 @@
 /**
  * @file system-prompt.test.ts
- * @description Tests for `prepareMaestroSystemPromptCli` — the CLI-side
+ * @description Tests for `prepareMaestroSystemPromptCli` - the CLI-side
  * builder that loads `maestro-system-prompt`, threads in branch / history /
  * conductor context, and returns the substituted template for use as
  * `appendSystemPrompt`. Mirrors the renderer's `prepareMaestroSystemPrompt`
@@ -26,7 +26,7 @@ vi.mock('../../../cli/services/git-utils', () => ({
 
 vi.mock('fs', async () => {
 	const actual = await vi.importActual<typeof import('fs')>('fs');
-	// `actual.constants` is a getter on the fs module — spreading `actual`
+	// `actual.constants` is a getter on the fs module - spreading `actual`
 	// drops it (only own enumerable data properties carry through), and
 	// production code reads `fs.constants.R_OK`. Inline the literal so the
 	// mock surface still exposes a usable constants object.
@@ -55,7 +55,7 @@ const mockSession = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
 
 describe('prepareMaestroSystemPromptCli', () => {
 	beforeEach(() => {
-		// Clear call history but keep implementations — explicit per-test
+		// Clear call history but keep implementations - explicit per-test
 		// defaults below so behavior is unambiguous.
 		vi.clearAllMocks();
 		// Re-establish the mocked storage default since resetAllMocks would
@@ -93,7 +93,7 @@ describe('prepareMaestroSystemPromptCli', () => {
 
 	it('re-throws unexpected errors so genuine bugs surface (not just "failed to load")', async () => {
 		// A non-"Failed to load…" error indicates a bug in the loader or a
-		// caller misuse — those must propagate so the user sees them rather
+		// caller misuse - those must propagate so the user sees them rather
 		// than silently spawning without a system prompt.
 		vi.mocked(getCliPrompt).mockRejectedValue(new TypeError('something is undefined'));
 

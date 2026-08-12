@@ -1,11 +1,11 @@
 /**
- * ThemedSelect — Themed custom dropdown replacement for native <select>.
+ * ThemedSelect - Themed custom dropdown replacement for native <select>.
  *
  * Renders a button that opens a positioned dropdown menu matching Maestro's
  * standard context menu aesthetic (bgSidebar, border, hover bgActivity).
  * Supports full keyboard navigation (Arrow keys, Home/End, Enter/Space, Escape).
  *
- * Pass `filterable` to add a search input at the top of the menu — useful when
+ * Pass `filterable` to add a search input at the top of the menu - useful when
  * the option list is long enough that scanning visually is painful.
  */
 

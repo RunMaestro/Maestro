@@ -130,7 +130,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 	}
 
 	if (topSessions.length === 0) {
-		return null; // Don't show table if no data — AutoRunStats already shows empty state
+		return null; // Don't show table if no data - AutoRunStats already shows empty state
 	}
 
 	return (

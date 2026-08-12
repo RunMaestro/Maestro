@@ -1,5 +1,5 @@
 /**
- * useInputKeyDown — extracted from App.tsx (Phase 2F)
+ * useInputKeyDown - extracted from App.tsx (Phase 2F)
  *
  * Owns the handleInputKeyDown keyboard event handler for the main input area.
  * Handles tab completion, @ mentions, slash commands, enter-to-send,
@@ -150,11 +150,35 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Leaving command mode. The composer holds no `!` to delete (the gesture
 			// consumed it), so the mode needs its own way out: Escape on an empty
 			// command line, and Backspace past the start of one - the same keys that
-			// would have removed the bang back when it was a character. Both are
-			// gated on an empty line so neither can strand a half-typed command.
-			if (isCommandMode && !inputValue && (e.key === 'Escape' || e.key === 'Backspace')) {
+			// would have removed the bang back when it was a character.
+			//
+			// Escape uses trim(): a line of spaces LOOKS empty, so Escape has to mean
+			// "get me out" there too. Without that it fell through to the generic
+			// Escape branch below, which blurs the composer - so a stray space turned
+			// the exit gesture into "lose command mode AND lose focus".
+			//
+			// Backspace stays on a strictly empty line: it is an editing key, and on
+			// "   " the user is deleting a space, not asking to leave.
+			if (
+				isCommandMode &&
+				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
+			) {
 				e.preventDefault();
+				// stopPropagation is what actually keeps the caret here, and it is not
+				// optional. `useKeyboardNavigation.handleEscapeInMain` is a WINDOW-level
+				// keydown listener that blurs the composer and focuses the transcript on
+				// any Escape pressed while the composer has focus. This handler is on
+				// the element, so it runs first - and without stopping the event, that
+				// window listener fires immediately afterwards and undoes the focus()
+				// below. Verified: with propagation the composer ends up blurred, with
+				// it stopped the caret stays put.
+				e.stopPropagation();
 				setCommandMode(false);
+				// Belt and braces alongside the line above: exiting hands the input back
+				// to the agent, so the user is still typing. Explicit rather than relying
+				// on React not remounting the textarea when the mode bar and `$` prefix
+				// unmount around it.
+				inputRef.current?.focus();
 				return;
 			}
 
@@ -273,7 +297,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			}
 
 			// Read enter-to-send settings at call time (not closure).
-			// A per-tab override wins over the global default — set when the user
+			// A per-tab override wins over the global default - set when the user
 			// clicks the chip or runs the palette toggle on a specific tab.
 			const settings = useSettingsStore.getState();
 			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);

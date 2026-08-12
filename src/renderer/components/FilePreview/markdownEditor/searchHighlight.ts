@@ -3,7 +3,7 @@ import { Decoration, type DecorationSet, EditorView } from '@codemirror/view';
 
 /**
  * CodeMirror extension that paints search matches driven by the host app's
- * shared search bar — NOT CM6's built-in search panel.
+ * shared search bar - NOT CM6's built-in search panel.
  *
  * The host dispatches `setSearchMatchesEffect` with the full match list and
  * the index of the "current" match. We render every match with class

@@ -2,7 +2,7 @@
  * AgentDetailModal
  *
  * Per-agent stats sub-modal opened by double-clicking an agent card on the
- * Usage Dashboard's Agents tab. Stays scoped to stats — no recent-queries
+ * Usage Dashboard's Agents tab. Stays scoped to stats - no recent-queries
  * list, no per-agent token/cost (those live in provider session files and
  * aren't aggregated per Maestro session yet).
  *
@@ -28,7 +28,7 @@ interface AgentDetailModalProps {
 	session: Session;
 	data: StatsAggregation;
 	theme: Theme;
-	/** All visible agent sessions — used to surface worktree relationships. */
+	/** All visible agent sessions - used to surface worktree relationships. */
 	allSessions: Session[];
 	onClose: () => void;
 }
@@ -65,7 +65,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		setEvents(null);
 		setAutoRuns(null);
 
-		// Raw query events scoped to this session — needed for median/p95 and the
+		// Raw query events scoped to this session - needed for median/p95 and the
 		// user/auto source split. The aggregated `bySessionByDay` only carries
 		// daily totals, not per-event durations, so we fetch raw rows here.
 		window.maestro.stats

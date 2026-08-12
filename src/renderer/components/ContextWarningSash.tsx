@@ -78,7 +78,7 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 
 	const isRed = warningLevel === 'red';
 
-	// Color values — light mode needs darker text/icon colors for contrast
+	// Color values - light mode needs darker text/icon colors for contrast
 	const backgroundColor = isRed
 		? isLight
 			? 'rgba(239, 68, 68, 0.12)'
@@ -125,7 +125,7 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 				<span style={{ color: textColor }}>
 					{isRed ? (
 						<>
-							Context window at <strong>{contextUsage}%</strong> — consider compacting to continue
+							Context window at <strong>{contextUsage}%</strong> - consider compacting to continue
 						</>
 					) : (
 						<>

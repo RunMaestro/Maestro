@@ -5,7 +5,7 @@
  * - Hook initialization and return shape
  * - Input state management (AI vs terminal mode)
  * - Staged images (get/set)
- * - (thinkingSessions removed — replaced by thinkingItems in App.tsx)
+ * - (thinkingSessions removed - replaced by thinkingItems in App.tsx)
  * - Completion suggestions (tab completion, @ mention)
  * - Tab switching effect (AI input persistence)
  * - Session switching effect (terminal input persistence)
@@ -117,7 +117,14 @@ import {
 	type UseInputHandlersDeps,
 } from '../../../renderer/hooks/input/useInputHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+vi.mock('../../../renderer/stores/centerFlashStore', () => ({
+	notifyCenterFlash: vi.fn(),
+}));
+
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
+import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
+
+const mockNotifyCenterFlash = vi.mocked(notifyCenterFlash);
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -218,7 +225,7 @@ const inputVal = (): string => {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.useFakeTimers();
-	useComposerInputStore.setState({ aiValue: '', terminalValue: '' });
+	useComposerInputStore.setState({ aiValue: '', terminalValue: '', aiCommandMode: false });
 	clearLiveDraft('tab-1');
 	clearLiveDraft('tab-2');
 
@@ -581,7 +588,7 @@ describe('useInputHandlers', () => {
 
 			expect(inputVal()).toBe('tab1 text');
 
-			// Switch to tab-2 — this triggers the effect
+			// Switch to tab-2 - this triggers the effect
 			act(() => {
 				useSessionStore.setState({
 					sessions: [
@@ -1122,6 +1129,97 @@ describe('useInputHandlers', () => {
 		});
 	});
 
+	describe('command mode blocks attachments', () => {
+		// Command mode pipes the draft to a shell. There is no agent on the other
+		// end, so a staged image would be silently discarded by the send path.
+		function imagePasteEvent() {
+			const item = {
+				type: 'image/png',
+				getAsFile: vi.fn().mockReturnValue(new Blob(['data'], { type: 'image/png' })),
+			};
+			return {
+				preventDefault: vi.fn(),
+				clipboardData: {
+					items: {
+						length: 1,
+						0: item,
+						[Symbol.iterator]: function* () {
+							yield item;
+						},
+					},
+					getData: vi.fn().mockReturnValue(''),
+				},
+			} as unknown as React.ClipboardEvent;
+		}
+
+		/**
+		 * Enter command mode the way the app does: mount first, THEN flip the flag.
+		 * The hook hydrates `aiCommandMode` from the active tab on mount, so a value
+		 * set before render is overwritten by that effect.
+		 */
+		function renderInCommandMode(commandMode = true) {
+			useSessionStore.setState({
+				sessions: [createMockSession({ inputMode: 'ai' })],
+				activeSessionId: 'session-1',
+			} as any);
+			const rendered = renderHook(() => useInputHandlers(createMockDeps()));
+			act(() => {
+				useComposerInputStore.setState({ aiCommandMode: commandMode });
+			});
+			return rendered;
+		}
+
+		it('does not stage a pasted image while in command mode', () => {
+			const { result } = renderInCommandMode();
+
+			act(() => {
+				result.current.handlePaste(imagePasteEvent());
+			});
+
+			expect(result.current.stagedImages).toEqual([]);
+			expect(mockNotifyCenterFlash).toHaveBeenCalled();
+		});
+
+		it('still stages a pasted image in ordinary AI mode', () => {
+			// Guard against over-blocking: the normal path must keep working.
+			const { result } = renderInCommandMode(false);
+
+			act(() => {
+				result.current.handlePaste(imagePasteEvent());
+			});
+
+			expect(mockNotifyCenterFlash).not.toHaveBeenCalled();
+		});
+
+		it('tells the user why the paste was ignored', () => {
+			const { result } = renderInCommandMode();
+
+			act(() => {
+				result.current.handlePaste(imagePasteEvent());
+			});
+
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith(
+				expect.objectContaining({ message: expect.stringMatching(/command mode/i) })
+			);
+		});
+
+		it('ignores a file drop while in command mode', () => {
+			const { result } = renderInCommandMode();
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: { getData: vi.fn().mockReturnValue(''), files: [], items: [] },
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.stagedImages).toEqual([]);
+			expect(mockNotifyCenterFlash).toHaveBeenCalled();
+		});
+	});
+
 	// ========================================================================
 	// handleDrop
 	// ========================================================================
@@ -1205,7 +1303,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			// The drop handler creates a FileReader — just verify it doesn't throw
+			// The drop handler creates a FileReader - just verify it doesn't throw
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
 		});
 	});
@@ -2211,7 +2309,7 @@ describe('useInputHandlers', () => {
 				result.current.handleDrop(dropEvent);
 			});
 
-			// Casing differs from projectRoot — relative match must NOT fire.
+			// Casing differs from projectRoot - relative match must NOT fire.
 			// The path is still emitted, just absolute, slash-normalised.
 			expect(inputVal()).toBe('@c:/users/alice/proj/src/index.ts ');
 		});

@@ -61,7 +61,7 @@ describe('subscriptionsToPipelines', () => {
 			config: { interval_minutes: 10 },
 		});
 
-		// Agent carries the session identity but NOT the prompt — trigger-fed
+		// Agent carries the session identity but NOT the prompt - trigger-fed
 		// prompts live on the edge (single source of truth for that path).
 		expect(agents[0].data).toMatchObject({
 			sessionName: 'worker',
@@ -391,7 +391,7 @@ describe('subscriptionsToPipelines', () => {
 	it('trusts explicit agent_id even when subscription name matches a different session', () => {
 		// Per-project-root YAML partitioning guarantees agent_id is the source
 		// of truth. A coincidental pipeline-name/session-name overlap must NOT
-		// flip the resolved agent — doing so caused the "Maestro swap reverts"
+		// flip the resolved agent - doing so caused the "Maestro swap reverts"
 		// bug where replacing an agent would snap back on reload.
 		const subs: CueSubscription[] = [
 			{
@@ -426,7 +426,7 @@ describe('subscriptionsToPipelines', () => {
 
 		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
 		expect(agents).toHaveLength(1);
-		// agent_id wins — resolves to Maestro despite the name match on Pedsidian.
+		// agent_id wins - resolves to Maestro despite the name match on Pedsidian.
 		expect((agents[0].data as { sessionName: string }).sessionName).toBe('Maestro');
 		expect((agents[0].data as { sessionId: string }).sessionId).toBe('maestro-uuid');
 	});
@@ -616,7 +616,7 @@ describe('subscriptionsToPipelines', () => {
 	});
 });
 
-describe('subscriptionsToPipelines — target_node_key dedup', () => {
+describe('subscriptionsToPipelines - target_node_key dedup', () => {
 	it('keeps two subs targeting the same agent_id but different target_node_key as separate nodes', () => {
 		const subs: CueSubscription[] = [
 			{
@@ -651,7 +651,7 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 		// expects when they dropped the same agent twice).
 		expect(agents).toHaveLength(2);
 		expect(triggers).toHaveLength(2);
-		// Each trigger has its own dedicated downstream agent node — no merge.
+		// Each trigger has its own dedicated downstream agent node - no merge.
 		const edgeTargets = pipelines[0].edges.map((e) => e.target).sort();
 		const agentIds = agents.map((a) => a.id).sort();
 		expect(edgeTargets).toEqual(agentIds);
@@ -747,7 +747,7 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 		const pipelines = subscriptionsToPipelines(subs, sessions);
 		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
 		// Two distinct fan-out positions resolve to two visual nodes even
-		// though both target the same session — the keys disambiguate.
+		// though both target the same session - the keys disambiguate.
 		expect(agents).toHaveLength(2);
 		const keys = agents.map((a) => (a.data as AgentNodeData).nodeKey).sort();
 		expect(keys).toEqual(['key-1', 'key-2']);
@@ -755,7 +755,7 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 
 	it('chain target with target_node_key creates an independent visual node for A → B → A shapes when keys differ', () => {
 		// When the same session appears at multiple chain positions with
-		// distinct keys, each occurrence renders as its own node — no
+		// distinct keys, each occurrence renders as its own node - no
 		// back-edge to the earlier occurrence.
 		const subs: CueSubscription[] = [
 			{
@@ -798,7 +798,7 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 
 		const pipelines = subscriptionsToPipelines(subs, sessions);
 		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
-		// 3 nodes: first-A, B, second-A — the keys keep the second-A
+		// 3 nodes: first-A, B, second-A - the keys keep the second-A
 		// distinct from the first.
 		expect(agents).toHaveLength(3);
 	});
@@ -859,7 +859,7 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 		// the loader computed `pos.y = baseY + branchRow * spacing` with
 		// `branchRow=0` for both, landing both targets at the same y.
 		// They rendered as one node visually even though the model held
-		// two — only the "(2)" instance label hinted otherwise. The fix
+		// two - only the "(2)" instance label hinted otherwise. The fix
 		// anchors target Y to the owning trigger's Y instead of a constant
 		// baseY, so distinct triggers produce distinct target rows.
 		const subs: CueSubscription[] = [
@@ -898,7 +898,7 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 	});
 
 	it('merges two trigger subs targeting one command node via shared target_node_key', () => {
-		// Explicit fan-in onto a command node — same shape as agent
+		// Explicit fan-in onto a command node - same shape as agent
 		// fan-in but for a `action: command` target. Both trigger subs
 		// reference the same `target_node_key`, so the loader returns
 		// the same command node for both, producing one node with two
@@ -944,7 +944,7 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 	});
 });
 
-describe('subscriptionsToPipelines — full round-trip via pipelineToYamlSubscriptions', () => {
+describe('subscriptionsToPipelines - full round-trip via pipelineToYamlSubscriptions', () => {
 	it('round-trips two distinct visual nodes (same agent_id, different nodeKey) without merging', async () => {
 		const { pipelineToYamlSubscriptions } =
 			await import('../../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml');
@@ -1016,7 +1016,7 @@ describe('subscriptionsToPipelines — full round-trip via pipelineToYamlSubscri
 		const agents = reloaded[0].nodes.filter((n) => n.type === 'agent');
 		const triggers = reloaded[0].nodes.filter((n) => n.type === 'trigger');
 		// The fix: two distinct visual agent nodes round-trip as two
-		// distinct visual agent nodes — exactly what the user expected.
+		// distinct visual agent nodes - exactly what the user expected.
 		expect(agents).toHaveLength(2);
 		expect(triggers).toHaveLength(2);
 		const reloadedKeys = agents.map((a) => (a.data as AgentNodeData).nodeKey).sort();
@@ -1152,7 +1152,7 @@ describe('graphSessionsToPipelines', () => {
 		// session is the only owner, but other unrelated sessions (e.g., a
 		// "Server" opencode session) appear earlier in the global sessions list.
 		// Without owner-aware fallback, findTargetSession would return
-		// sessions[0] — "Server" — instead of the Obsidian session that
+		// sessions[0] - "Server" - instead of the Obsidian session that
 		// actually owns the YAML.
 		const graphSessions: CueGraphSession[] = [
 			{
@@ -1520,7 +1520,7 @@ describe('auto-injected source output prefix stripping', () => {
 describe('trigger node subscriptionName population', () => {
 	// Regression guard for the "GitHub chain trigger Play button fires the
 	// wrong sub" bug. Every trigger node must carry the subscription name it
-	// represents so the UI can fire the correct sub — using pipeline.name
+	// represents so the UI can fire the correct sub - using pipeline.name
 	// alone only matched the first trigger, leaving chain triggers (GitHub
 	// PR/Issue polls, scheduled, etc.) unreachable from the editor.
 	it('stamps each trigger node with its owning subscription name', () => {
@@ -1602,11 +1602,11 @@ describe('trigger node subscriptionName population', () => {
 	});
 });
 
-describe('subscriptionsToPipelines — parallel branch subs share a trigger node', () => {
+describe('subscriptionsToPipelines - parallel branch subs share a trigger node', () => {
 	// The serializer emits `Schedule → [Cmd1, Cmd2]` as two independent
 	// subscriptions that share the trigger event config but name distinct
 	// targets. On load, those subs must collapse back onto a single visual
-	// trigger with two outgoing edges — otherwise the graph grows a phantom
+	// trigger with two outgoing edges - otherwise the graph grows a phantom
 	// trigger per reload and confuses the user.
 
 	it('groups command-branch subs under one trigger when event config matches', () => {
@@ -1651,7 +1651,7 @@ describe('subscriptionsToPipelines — parallel branch subs share a trigger node
 
 	it('keeps triggers separate when event config diverges', () => {
 		// A pipeline that legitimately has two independent triggers (different
-		// schedule times) must NOT be collapsed — the grouping is keyed on
+		// schedule times) must NOT be collapsed - the grouping is keyed on
 		// identical event config, not on pipeline name alone.
 		const subs: CueSubscription[] = [
 			{
@@ -1681,10 +1681,10 @@ describe('subscriptionsToPipelines — parallel branch subs share a trigger node
 	});
 });
 
-describe('subscriptionsToPipelines — chain subs resolve upstream via source_sub', () => {
+describe('subscriptionsToPipelines - chain subs resolve upstream via source_sub', () => {
 	// Regression guard for the `Cmd(owner=S) → Agent(S)` class of pipeline.
 	// Without source_sub-aware resolution, yamlToPipeline routed the chain's
-	// source via session-name lookup — which matched either the agent sharing
+	// source via session-name lookup - which matched either the agent sharing
 	// that session or invented a phantom agent node, producing a self-loop
 	// edge and leaving the Cmd → Agent connection missing on the canvas.
 
@@ -1819,7 +1819,7 @@ describe('subscriptionsToPipelines — chain subs resolve upstream via source_su
 	// the chain-index sort, chain-2's source_sub → chain-4 lookup fails to
 	// find the not-yet-created chain-4 target node and falls back to a
 	// session-name resolver that invents a phantom agent. Then chain-4's
-	// keyed target creates a SECOND agent for the same session — and the
+	// keyed target creates a SECOND agent for the same session - and the
 	// real chain-4 target ends up disconnected from chain-2 on the canvas.
 	// Reproduces the Obsidian Daily Pipe shape from the user bug report.
 	it('keeps fan-in wiring intact when chains carry target_node_key and chain-index ordering misranks dependencies', () => {
@@ -1901,7 +1901,7 @@ describe('subscriptionsToPipelines — chain subs resolve upstream via source_su
 		expect(errors).toHaveLength(0);
 		expect(triggers).toHaveLength(1);
 		expect(commands).toHaveLength(2);
-		// Exactly three agents: Cue Test 1, Cue Test 2, Cue Test Main —
+		// Exactly three agents: Cue Test 1, Cue Test 2, Cue Test Main -
 		// no phantom duplicates from premature creation.
 		expect(agents).toHaveLength(3);
 		const agentNames = agents.map((a) => (a.data as AgentNodeData).sessionName).sort();

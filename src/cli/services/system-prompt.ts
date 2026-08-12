@@ -2,8 +2,8 @@
 //
 // Mirrors `src/renderer/utils/spawnHelpers.ts:prepareMaestroSystemPrompt` so a
 // bot driving Maestro through `maestro-cli send` or Auto Run sees the same
-// Maestro context — agent identity, git branch, history-file pointer,
-// conductor profile, prompt customizations — that a desktop-spawned agent
+// Maestro context - agent identity, git branch, history-file pointer,
+// conductor profile, prompt customizations - that a desktop-spawned agent
 // receives. Without this, CLI-spawned agents are missing the entire "what is
 // Maestro and what can I do with it" preamble.
 
@@ -21,7 +21,7 @@ import { getGitBranch, isGitRepo } from './git-utils';
  * Resolve the absolute path of an existing per-session history file, mirroring
  * `HistoryManager.getHistoryFilePath` in `src/main/history-manager.ts`. Returns
  * undefined when the file does not yet exist (e.g. a brand-new session) so the
- * `{{AGENT_HISTORY_PATH}}` placeholder renders as an empty string — matching
+ * `{{AGENT_HISTORY_PATH}}` placeholder renders as an empty string - matching
  * the renderer-side helper, which also returns undefined in that case.
  */
 function getHistoryFilePath(sessionId: string): string | undefined {
@@ -57,7 +57,7 @@ export async function prepareMaestroSystemPromptCli(
 	} catch (err) {
 		// `getCliPrompt` throws a known "Failed to load prompt …" Error when no
 		// candidate file is readable. That's the only failure mode we want to
-		// treat as non-fatal — anything else (TypeError, parse bug, etc.) is a
+		// treat as non-fatal - anything else (TypeError, parse bug, etc.) is a
 		// real defect and should bubble up to the caller's error handler rather
 		// than masquerade as "prompt missing". Log the swallow so the user has
 		// a breadcrumb when their relay bot suddenly loses Maestro context.
@@ -71,7 +71,7 @@ export async function prepareMaestroSystemPromptCli(
 	const sessionIsGitRepo = isGitRepo(session.cwd);
 	const gitBranch = sessionIsGitRepo ? getGitBranch(session.cwd) : undefined;
 
-	// Skip the history-file pointer for SSH sessions — the path is local to the
+	// Skip the history-file pointer for SSH sessions - the path is local to the
 	// Maestro app's machine, not the remote where the agent will actually run.
 	const isSsh = !!session.sessionSshRemoteConfig?.enabled;
 	const historyFilePath = isSsh ? undefined : getHistoryFilePath(session.id);

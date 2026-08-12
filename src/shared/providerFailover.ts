@@ -86,6 +86,37 @@ export const ANTHROPIC_ENDPOINT_ENV_KEYS = [
 	'ANTHROPIC_API_KEY',
 ] as const;
 
+/**
+ * The subset of {@link ANTHROPIC_ENDPOINT_ENV_KEYS} that carries a SECRET rather
+ * than an address. These are the ones that must never outlive the endpoint they
+ * belong to.
+ */
+export const ANTHROPIC_CREDENTIAL_ENV_KEYS = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
+
+/**
+ * Credential keys that must be UNSET in the child environment while `endpointEnv`
+ * is live.
+ *
+ * Auth is all-or-nothing per endpoint. A backup that redefines
+ * `ANTHROPIC_BASE_URL` is pointing the agent at a DIFFERENT operator, so any
+ * credential it does not supply itself must be removed rather than inherited -
+ * otherwise the user's primary Anthropic key is presented to a third party, which
+ * is the most natural way to configure failover (a URL-only backup row) and the
+ * worst thing it could do.
+ *
+ * Returns the keys to strip, NOT the keys to set: a merge cannot express
+ * "remove this", and the value being removed may come from the global shell
+ * settings or the inherited `process.env` rather than from the agent's own vars.
+ *
+ * An endpoint that does not redirect the base URL is only layering extra vars
+ * onto the primary, so nothing is stripped.
+ */
+export function failoverUnsetEnvKeys(endpointEnv: Record<string, string> | undefined): string[] {
+	const env = endpointEnv ?? {};
+	if ((env.ANTHROPIC_BASE_URL ?? '').trim() === '') return [];
+	return ANTHROPIC_CREDENTIAL_ENV_KEYS.filter((key) => (env[key] ?? '').trim() === '');
+}
+
 /** True when the config has at least one usable endpoint and is armed. */
 export function failoverArmed(config: FailoverConfig | undefined): boolean {
 	return !!config?.enabled && (config.endpoints?.length ?? 0) > 0;
@@ -144,14 +175,22 @@ export function shouldReturnToPrimary(
  * Endpoint env wins over the agent's own vars deliberately - the whole point of
  * failing over is to override `ANTHROPIC_BASE_URL`/token that the agent config
  * may already set for its primary provider.
+ *
+ * Credentials the endpoint does not supply are DROPPED rather than inherited
+ * (see {@link failoverUnsetEnvKeys}). This handles the agent's own vars; the
+ * caller must also apply `failoverUnsetEnvKeys` to the spawn so the same keys
+ * are removed when they arrive from global settings or `process.env`.
  */
 export function resolveFailoverEnv(
 	baseEnv: Record<string, string> | undefined,
-	endpoint: FailoverEndpoint | undefined
+	endpointEnv: Record<string, string> | undefined
 ): Record<string, string> | undefined {
-	if (!endpoint) return baseEnv;
+	if (!endpointEnv) return baseEnv;
 	const merged: Record<string, string> = { ...(baseEnv ?? {}) };
-	for (const [key, value] of Object.entries(endpoint.env ?? {})) {
+	for (const key of failoverUnsetEnvKeys(endpointEnv)) {
+		delete merged[key];
+	}
+	for (const [key, value] of Object.entries(endpointEnv)) {
 		// Skip blank values so a half-filled row in the editor can't clobber a
 		// working var with an empty string.
 		if (value !== '') merged[key] = value;

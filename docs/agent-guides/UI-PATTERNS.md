@@ -600,6 +600,23 @@ Existing in-app callers using `type:` continue to work without changes.
 
 ---
 
+## Above-Modal Layering (`Z_LAYERS`)
+
+Ordinary modals use plain Tailwind classes: `z-[9999]` for the backdrop, `z-[10000]`/`z-[10001]` for menus and tooltips anchored inside one. Those numbers only ever compete with each other, so they stay inline.
+
+The handful of overlays that deliberately outrank a modal read their value from `Z_LAYERS` in `src/renderer/constants/zLayers.ts`. Their relative order is a product decision, so it lives in one file instead of being rediscovered as a magic number per component:
+
+| Layer                    | Surface                                                         |
+| ------------------------ | --------------------------------------------------------------- |
+| `Z_LAYERS.CONFETTI`      | Celebration particles - decorative, sits under real UI          |
+| `Z_LAYERS.TOAST`         | `ToastContainer` - visible over modals so results aren't missed |
+| `Z_LAYERS.QUICK_ACTIONS` | Command palette - owns the screen, including over toasts        |
+| `Z_LAYERS.CENTER_FLASH`  | Momentary ack - always the top-most pixel                       |
+
+Do NOT add a new hard-coded five-digit z-index. If a surface needs to sit above a modal, give it an entry here so the ordering stays reviewable. Note that a z-index only ranks within its stacking context: a portal to `document.body` (toasts, center flash) always compares against the root, while an inline overlay compares against its nearest ancestor that establishes a context.
+
+---
+
 ## Center Flash System (rapid temporary notifications)
 
 **Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system - they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.
@@ -851,9 +868,10 @@ Presets:
 
 - **`chat`** - richest surface (AI Terminal, Group Chat, History, Feedback,
   Director's Notes, Document Graph). Shiki code fences with copy button + language
-  picker, file links via `remarkFileLinks`, right-click link/file/SVG context
-  menus (inline `<svg>` diagrams get a Copy Image / Save Image menu via
-  `SvgContextMenu` + `utils/svgExport.ts`), IPC-loaded local images, chat line
+  picker, file links via `remarkFileLinks`, right-click link/file/image context
+  menus (raster `<img>` and inline `<svg>` diagrams both get a Copy Image / Save
+  Image menu via `ImageContextMenu` + `hooks/ui/useImageContextMenu.ts` +
+  `utils/imageExport.ts`), IPC-loaded local images, chat line
   breaks + KaTeX math, Bionify, raw-HTML + DOMPurify. `MarkdownRenderer` is a thin
   wrapper around `<Markdown preset="chat">`.
 - **`document`** - file/doc preview. Prism highlighting, search highlight, anchor
@@ -900,6 +918,18 @@ Portal-rendered toast notification stack. Rendered in `App.tsx`:
 ```tsx
 <ToastContainer theme={theme} onSessionClick={handleSessionClick} />
 ```
+
+---
+
+## Right-Click Image Menu (`ImageContextMenu` + `useImageContextMenu`)
+
+Every image rendered in chat gets the same two actions on right-click: **Copy Image** (clipboard) and **Save Image...** (native save dialog). Do NOT add a per-surface copy/save button pair or a second menu - wire the shared pieces:
+
+- `useImageContextMenu()` (`hooks/ui/useImageContextMenu.ts`) owns the menu state. Use `openImageMenu(target, x, y)` when React owns the element (a markdown `<img>`, an inline `<svg>`), and `openImageMenuFromEvent(e)` when the image is injected imperatively or when one handler covers a strip of thumbnails - it resolves the `<svg>`/`<img>` the click actually landed on.
+- `<ImageContextMenu menu={imageMenu} theme={theme} onDismiss={dismissImageMenu} />` renders the menu, portaled to `document.body` and positioned at the pointer via `useContextMenuPosition`.
+- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` and `saveImageElementToDisk()`. Both accept either element type. SVG targets save as `.svg` markup, or rasterize when the user picks `.png`; raster targets keep their encoding. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
+
+Wired surfaces: chat markdown (`Markdown` chat preset, covering `<img>` and inline `<svg>`), `MermaidRenderer` (the diagram `<svg>` is appended imperatively, so the handler lives on the container), transcript attachment thumbnails (`TerminalOutput`), and `LightboxModal`.
 
 ---
 

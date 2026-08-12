@@ -15,9 +15,19 @@ import { mockTheme } from '../../../helpers/mockTheme';
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 2, behind: 3 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
 const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
+const mockGetFileDetails = vi.fn(() => ({
+	totalAdditions: 206,
+	totalDeletions: 37,
+	modifiedCount: 5,
+}));
+const mockGetFileCount = vi.fn(() => 5);
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({ getBranchInfo: mockGetBranchInfo }),
-	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
+	useGitDetail: () => ({
+		getFileDetails: mockGetFileDetails,
+		refreshGitStatus: mockRefreshGitStatus,
+	}),
+	useGitFileStatus: () => ({ getFileCount: mockGetFileCount }),
 }));
 
 vi.mock('../../../../renderer/services/git', () => ({
@@ -77,6 +87,12 @@ describe('SessionContextMenu', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBranchInfo.mockReturnValue(DEFAULT_BRANCH_INFO);
+		mockGetFileDetails.mockReturnValue({
+			totalAdditions: 206,
+			totalDeletions: 37,
+			modifiedCount: 5,
+		});
+		mockGetFileCount.mockReturnValue(5);
 	});
 
 	it('renders the git actions for a git agent', () => {
@@ -103,6 +119,39 @@ describe('SessionContextMenu', () => {
 		renderMenu();
 		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
 		expect(screen.getByTestId('session-context-git-push')).toHaveTextContent('2');
+	});
+
+	// Without this the row offered a diff without saying whether there was one.
+	it('badges the diff row with the working-tree change counts', () => {
+		renderMenu();
+		const row = screen.getByTestId('session-context-git-diff');
+		expect(row).toHaveTextContent('206');
+		expect(row).toHaveTextContent('37');
+		expect(row).toHaveAttribute('title', '+206 −37 ~5 in 5 files');
+	});
+
+	it('falls back to a file count when only basic status was polled', () => {
+		// Non-active agents are polled without numstat, so they have no line counts.
+		mockGetFileDetails.mockReturnValue({
+			totalAdditions: 0,
+			totalDeletions: 0,
+			modifiedCount: 0,
+		});
+		mockGetFileCount.mockReturnValue(4);
+		renderMenu();
+
+		const row = screen.getByTestId('session-context-git-diff');
+		expect(row).toHaveTextContent('4');
+		expect(row).toHaveAttribute('title', '4 files changed');
+	});
+
+	it('leaves the diff row unbadged on a clean tree', () => {
+		mockGetFileCount.mockReturnValue(0);
+		renderMenu();
+
+		const row = screen.getByTestId('session-context-git-diff');
+		expect(row).toHaveTextContent(/^View Git Diff$/);
+		expect(row).toHaveAttribute('title', 'No uncommitted changes');
 	});
 
 	it('opens the git log for the right-clicked agent, not the active one', () => {

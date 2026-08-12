@@ -77,7 +77,7 @@ export interface TabBarProps {
 	// === Terminal Tab Props (Phase 8) ===
 	/** Currently active terminal tab ID (null if no terminal tab is active) */
 	activeTerminalTabId?: string | null;
-	/** Current input mode — used to determine which tab type shows as active */
+	/** Current input mode - used to determine which tab type shows as active */
 	inputMode?: 'ai' | 'terminal';
 	/** Handler to select a terminal tab */
 	onTerminalTabSelect?: (tabId: string) => void;
@@ -102,6 +102,6 @@ export interface TabBarProps {
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
 
-	/** True when the owning agent is running on an SSH remote — hides local-only OS actions in tab menus */
+	/** True when the owning agent is running on an SSH remote - hides local-only OS actions in tab menus */
 	sshRemote?: boolean;
 }

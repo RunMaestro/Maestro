@@ -1,5 +1,5 @@
 /**
- * Tests for CueStats component (Phase 04 — Cue Dashboard)
+ * Tests for CueStats component (Phase 04 - Cue Dashboard)
  *
  * Verifies:
  * - Loading skeleton renders before the IPC resolves
@@ -250,7 +250,7 @@ const populatedAggregation: CueStatsAggregation = {
 		},
 	],
 	byHourOfDay: emptyHourBuckets.map((b, i) => {
-		// Seed a couple of busy hours so the chart actually paints — others
+		// Seed a couple of busy hours so the chart actually paints - others
 		// stay zero. Hour 9 has a failure to exercise the warning color path.
 		if (i === 9) return { hour: 9, occurrences: 7, successCount: 5, failureCount: 2 };
 		if (i === 14) return { hour: 14, occurrences: 5, successCount: 5, failureCount: 0 };
@@ -348,7 +348,7 @@ describe('CueStats', () => {
 			const summary = screen.getByTestId('cue-stats-summary-cards');
 
 			// Summary cards expose each metric as a role="group" with aria-label
-			// "<label>: <value>" — match against those so we don't collide with
+			// "<label>: <value>" - match against those so we don't collide with
 			// the same labels used as table column headers below.
 			expect(within(summary).getByRole('group', { name: /Occurrences: 12/ })).toBeInTheDocument();
 			expect(within(summary).getByRole('group', { name: /Success Rate: 75%/ })).toBeInTheDocument();
@@ -491,7 +491,7 @@ describe('CueStats', () => {
 	});
 
 	describe('Coverage warnings', () => {
-		// The coverage-warning banner was removed from the Cue tab — the
+		// The coverage-warning banner was removed from the Cue tab - the
 		// upstream payload still includes the warnings, but we no longer
 		// surface them to users. Confirm the banner stays hidden even when
 		// the aggregation contains warnings.
@@ -510,7 +510,7 @@ describe('CueStats', () => {
 	});
 
 	describe('Disabled state', () => {
-		// Two cases: the bare sentinel (defensive — the main process *could*
+		// Two cases: the bare sentinel (defensive - the main process *could*
 		// surface it un-wrapped one day) and the Electron-wrapped form that
 		// `ipcRenderer.invoke` actually produces in production. The wrapped
 		// form is the one that previously slipped through equality checks.

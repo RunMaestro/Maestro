@@ -685,4 +685,64 @@ describe('envBuilder - Global Environment Variables', () => {
 			expect(result).toEqual({ ONLY_GLOBAL: 'g' });
 		});
 	});
+
+	// Provider Failover needs a credential GONE from the child, not overridden.
+	// The value can arrive from three independent layers, so removal has to run
+	// after all of them rather than being expressed as part of any single merge.
+	describe('unsetEnvKeys', () => {
+		it('removes a key inherited from process.env', () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'primary-token';
+
+			const env = buildChildProcessEnv(undefined, false, undefined, undefined, [
+				'ANTHROPIC_AUTH_TOKEN',
+			]);
+
+			expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+		});
+
+		it('removes a key set by the global shell vars', () => {
+			const env = buildChildProcessEnv(
+				undefined,
+				false,
+				{ ANTHROPIC_AUTH_TOKEN: 'from-settings' },
+				undefined,
+				['ANTHROPIC_AUTH_TOKEN']
+			);
+
+			expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+		});
+
+		it('removes a key set by the session custom vars', () => {
+			const env = buildChildProcessEnv({ ANTHROPIC_API_KEY: 'from-agent' }, false, undefined, [], [
+				'ANTHROPIC_API_KEY',
+			]);
+
+			expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+		});
+
+		it('leaves everything else in place', () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'primary-token';
+
+			const env = buildChildProcessEnv(
+				{ KEEP_ME: 'yes' },
+				false,
+				{ ALSO_KEEP: 'sure' },
+				undefined,
+				['ANTHROPIC_AUTH_TOKEN']
+			);
+
+			expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+			expect(env.KEEP_ME).toBe('yes');
+			expect(env.ALSO_KEEP).toBe('sure');
+		});
+
+		it('is a no-op when no keys are supplied', () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'primary-token';
+
+			expect(buildChildProcessEnv().ANTHROPIC_AUTH_TOKEN).toBe('primary-token');
+			expect(
+				buildChildProcessEnv(undefined, false, undefined, undefined, []).ANTHROPIC_AUTH_TOKEN
+			).toBe('primary-token');
+		});
+	});
 });

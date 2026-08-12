@@ -332,7 +332,7 @@ export class BroadcastService {
 				completedTasks: state.completedTasks,
 			});
 		} else {
-			// State cleared — remove tracking
+			// State cleared - remove tracking
 			this.previousAutoRunStates.delete(sessionId);
 		}
 	}

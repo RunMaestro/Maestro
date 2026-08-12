@@ -154,13 +154,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// PERF: Memoize derived state to avoid recalculation on every render
 	const isResumingSession = !!activeTab?.agentSessionId;
+	const commandMode = useComposerInputStore(selectAiCommandMode);
 	const canAttachImages = useMemo(() => {
+		// Command mode pipes the draft to a shell, which has nothing to do with an
+		// image. Hide the affordance rather than leaving a button that stages an
+		// attachment the send path will drop on the floor.
+		if (commandMode) return false;
 		// Check if images are supported - depends on whether we're resuming an existing session
 		// If the active tab has an agentSessionId, we're resuming and need to check supportsImageInputOnResume
 		return isResumingSession
 			? hasCapability('supportsImageInputOnResume')
 			: hasCapability('supportsImageInput');
-	}, [isResumingSession, hasCapability]);
+	}, [isResumingSession, hasCapability, commandMode]);
 
 	// PERF: Memoize mode-related derived state
 	const { isReadOnlyMode, showQueueingBorder } = useMemo(() => {
@@ -195,7 +200,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// completion over files, dirs, branches, tags, and prior commands). Read from
 	// the store rather than sniffed from the text - the `!` is consumed on entry,
 	// so the draft looks like any other string.
-	const commandMode = useComposerInputStore(selectAiCommandMode);
 	const isCommandModeDraft = !isTerminalMode && commandMode;
 	const isShellInput = isTerminalMode || isCommandModeDraft;
 

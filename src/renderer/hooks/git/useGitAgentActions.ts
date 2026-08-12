@@ -14,10 +14,10 @@
 import { useCallback, useMemo } from 'react';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useGitBranch, useGitDetail } from '../../contexts/GitStatusContext';
+import { useGitBranch, useGitDetail, useGitFileStatus } from '../../contexts/GitStatusContext';
 import { gitService } from '../../services/git';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
-import type { GitStreamingOperation } from '../../../shared/gitUtils';
+import type { GitChangeTotals, GitStreamingOperation } from '../../../shared/gitUtils';
 import type { Session } from '../../types';
 
 export interface GitAgentActions {
@@ -29,6 +29,12 @@ export interface GitAgentActions {
 	ahead: number;
 	/** Commits behind upstream (0 when unknown). */
 	behind: number;
+	/**
+	 * Uncommitted-change totals for this agent's tree, so every git surface can
+	 * badge "there is a diff here" instead of offering a diff that may be empty.
+	 * Line counts are zero for non-active agents - see `GitChangeTotals`.
+	 */
+	changes: GitChangeTotals;
 	/** Whether opening a PR makes sense for this agent (needs a branch). */
 	canCreatePR: boolean;
 	viewLog: () => void;
@@ -78,8 +84,26 @@ export function resolveGitSshRemoteId(session: Session): string | undefined {
 
 export function useGitAgentActions(session: Session | null | undefined): GitAgentActions {
 	const { getBranchInfo } = useGitBranch();
-	const { refreshGitStatus } = useGitDetail();
+	const { getFileDetails, refreshGitStatus } = useGitDetail();
+	const { getFileCount } = useGitFileStatus();
 	const branchInfo = session ? getBranchInfo(session.id) : undefined;
+	const fileDetails = session ? getFileDetails(session.id) : undefined;
+	const fileCount = session ? getFileCount(session.id) : 0;
+
+	const changes = useMemo<GitChangeTotals>(
+		() => ({
+			fileCount,
+			additions: fileDetails?.totalAdditions ?? 0,
+			deletions: fileDetails?.totalDeletions ?? 0,
+			modified: fileDetails?.modifiedCount ?? 0,
+		}),
+		[
+			fileCount,
+			fileDetails?.totalAdditions,
+			fileDetails?.totalDeletions,
+			fileDetails?.modifiedCount,
+		]
+	);
 
 	const target = useMemo(() => {
 		if (!session) return null;
@@ -173,6 +197,7 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		branch,
 		ahead: branchInfo?.ahead ?? 0,
 		behind: branchInfo?.behind ?? 0,
+		changes,
 		// A PR needs a source branch to push. Worktree children always have one;
 		// plain git agents get theirs from status polling.
 		canCreatePR: Boolean(session?.isGitRepo && branch),

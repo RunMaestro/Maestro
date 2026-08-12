@@ -10,7 +10,7 @@ import { COMBINED_CONTEXT_AGENTS, getContextWindowForAgent } from '../../shared/
 import { useAgentStore } from '../stores/agentStore';
 
 // Re-export for consumers that import from this module. The local import
-// was dropped on migration to `getContextWindowForAgent` — the re-export
+// was dropped on migration to `getContextWindowForAgent` - the re-export
 // resolves directly from the source module without needing a binding.
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
 
@@ -42,7 +42,7 @@ const MIN_PREV_CONTEXT_FRACTION = 0.05;
  *
  * Use this for per-entry / per-tab "input tokens" displays. For the context
  * window percentage gauge, use `calculateContextTokens` / `calculateContextDisplay`
- * — those also add `outputTokens` for OpenAI-style combined-limit models.
+ * - those also add `outputTokens` for OpenAI-style combined-limit models.
  *
  * @param stats - The usage statistics containing token counts
  * @param agentId - The agent identifier; defaults to the Claude formula
@@ -144,7 +144,7 @@ export function estimateContextUsage(
 	/**
 	 * SSH remote UUID when the session is running against a remote host.
 	 * Lets the snapshot lookup pick the per-remote `agentId:remoteId`
-	 * key — otherwise SSH sessions fall back to the local snapshot and
+	 * key - otherwise SSH sessions fall back to the local snapshot and
 	 * then the static table, which can be wrong when remote models differ.
 	 */
 	sshRemoteId?: string
@@ -273,7 +273,7 @@ export function calculateContextDisplay(
  * Growth is bounded to 1-3% per turn.
  *
  * IMPORTANT: The caller must cap the result below the compact warning threshold
- * so that estimates never trigger compact warnings — only real measurements can.
+ * so that estimates never trigger compact warnings - only real measurements can.
  *
  * @param currentUsage - Current context usage percentage (0-100)
  * @param outputTokens - Output tokens from this turn (accumulated across internal calls)

@@ -1,5 +1,5 @@
 /**
- * useSessionRecovery — in-place recovery for session_not_found errors.
+ * useSessionRecovery - in-place recovery for session_not_found errors.
  *
  * When the agent reports session_not_found, `useAgentErrorListener` clears the
  * stale `agentSessionId` and stamps a `recoveryAction` onto the system log
@@ -14,7 +14,7 @@
  *      `useInputProcessing` already knows how to prepend to the next message.
  *   4. Re-sends the failed prompt via `processInputRef`. Because the tab's
  *      `agentSessionId` is null, the existing spawn path starts a fresh
- *      session in place — tab id, tab name, and sidebar entry are preserved.
+ *      session in place - tab id, tab name, and sidebar entry are preserved.
  */
 
 import { useCallback, useState } from 'react';

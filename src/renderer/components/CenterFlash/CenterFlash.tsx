@@ -1,5 +1,5 @@
 /**
- * CenterFlash — single, app-wide center-screen flash overlay.
+ * CenterFlash - single, app-wide center-screen flash overlay.
  *
  * Mounted once near the app root. Subscribes to centerFlashStore and renders
  * the active flash with a theme-tinted frosted-glass card, color-coded icon,
@@ -13,7 +13,7 @@
  *   theme  → theme.colors.accent  (default; matches the active theme)
  *
  * Fire flashes via `notifyCenterFlash()` (or the `flashCopiedToClipboard()`
- * helper). Flashes are exclusive — a new one replaces the previous.
+ * helper). Flashes are exclusive - a new one replaces the previous.
  */
 
 import { memo, useEffect, useRef, useState } from 'react';
@@ -25,6 +25,7 @@ import {
 	type CenterFlash as CenterFlashData,
 	type CenterFlashColor,
 } from '../../stores/centerFlashStore';
+import { Z_LAYERS } from '../../constants/zLayers';
 
 interface CenterFlashProps {
 	theme: Theme;
@@ -38,7 +39,7 @@ const ICON_FOR_COLOR: Record<CenterFlashColor, LucideIcon> = {
 	theme: Sparkles,
 };
 
-/** Fallback orange — no theme defines this slot, so use a fixed warm orange. */
+/** Fallback orange - no theme defines this slot, so use a fixed warm orange. */
 const ORANGE_HEX = '#f97316';
 
 const ENTRANCE_MS = 180;
@@ -75,7 +76,7 @@ export const CenterFlash = memo(function CenterFlash({ theme }: CenterFlashProps
 			const raf = requestAnimationFrame(() => setPhase('visible'));
 			return () => cancelAnimationFrame(raf);
 		}
-		// Active cleared — play exit animation, then unmount
+		// Active cleared - play exit animation, then unmount
 		if (!renderedRef.current) return;
 		setPhase('exit');
 		const t = setTimeout(() => {
@@ -103,7 +104,7 @@ export const CenterFlash = memo(function CenterFlash({ theme }: CenterFlashProps
 			aria-live="polite"
 			aria-atomic="true"
 			className="fixed inset-0 flex items-center justify-center pointer-events-none"
-			style={{ zIndex: 100001 }}
+			style={{ zIndex: Z_LAYERS.CENTER_FLASH }}
 		>
 			<div
 				className="overflow-hidden rounded-2xl"

@@ -59,7 +59,7 @@ type SettingsTabId =
 	| 'prompts';
 
 // Alphabetized by label (case-insensitive) so the sidebar reads predictably
-// regardless of which tabs ship. Mount-time default is still 'general' —
+// regardless of which tabs ship. Mount-time default is still 'general' -
 // that's enforced by the useState init below, not by list position.
 const TAB_ITEMS: Array<{
 	id: SettingsTabId;
@@ -80,12 +80,12 @@ const TAB_ITEMS: Array<{
 	{ id: 'theme', label: 'Themes', icon: Palette },
 ];
 
-// In-memory only — last tab the user was on. Resets on app restart, so the
+// In-memory only - last tab the user was on. Resets on app restart, so the
 // modal still defaults to General on a fresh launch. Honors any explicit
 // `initialTab` prop (e.g. when a caller deep-links into a specific tab).
 let lastOpenSettingsTab: SettingsTabId | null = null;
 
-// In-memory only — last vertical scroll position per tab. Pairs with
+// In-memory only - last vertical scroll position per tab. Pairs with
 // lastOpenSettingsTab so the user can reopen Settings (or flip between tabs)
 // and land exactly where they were, instead of having to re-find the control
 // they were tweaking. Resets on app restart.
@@ -177,7 +177,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	} = useSettings();
 
 	// Lazy init reads the remembered tab on mount. Doing this in useState (rather
-	// than a restore effect) avoids racing with the persist effect below — under
+	// than a restore effect) avoids racing with the persist effect below - under
 	// React StrictMode a restore-via-effect double-fires and clobbers the saved
 	// value with the initial 'general' before the restored value lands.
 	const [activeTab, setActiveTab] = useState<SettingsTabId>(
@@ -210,7 +210,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const jumpAccentRef = useRef(theme.colors.accent);
 	jumpAccentRef.current = theme.colors.accent;
 
-	// Pending scroll target — set when the user picks a search result, consumed
+	// Pending scroll target - set when the user picks a search result, consumed
 	// by the effect below once the content panel is actually visible and the
 	// target tab has rendered. Doing this via state-driven effect (not RAF
 	// chains) avoids a race where scrollIntoView fires while the content div
@@ -265,7 +265,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	}, [isOpen, initialTab]);
 
 	// Persist the current tab in module memory so the next open lands here.
-	// In-memory only — resets on app restart by design.
+	// In-memory only - resets on app restart by design.
 	useEffect(() => {
 		lastOpenSettingsTab = activeTab;
 	}, [activeTab]);
@@ -274,7 +274,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// the modal reopens on a remembered tab). useLayoutEffect runs after the
 	// new tab's content has committed to the DOM but before paint, so the
 	// scroll lands without a visible flash at the top. `behavior: 'auto'` is
-	// intentional — smooth-scrolling on tab switch reads as sluggish.
+	// intentional - smooth-scrolling on tab switch reads as sluggish.
 	useLayoutEffect(() => {
 		if (!isOpen) return;
 		const el = contentRef.current;

@@ -36,6 +36,8 @@ export interface LocalImageProps {
 	width?: number;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
+	/** Right-click handler (chat surfaces open the Copy/Save image menu). */
+	onContextMenu?: React.MouseEventHandler<HTMLImageElement>;
 }
 
 // Helper to compute initial image state synchronously from cache.
@@ -69,100 +71,102 @@ function getLocalImageInitialState(src: string | undefined) {
 	return { dataUrl: null, loading: true };
 }
 
-export const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProps) => {
-	// Compute initial state synchronously from cache to prevent flicker
-	const initialState = useMemo(() => getLocalImageInitialState(src), [src]);
+export const LocalImage = memo(
+	({ src, alt, theme, width, sshRemoteId, onContextMenu }: LocalImageProps) => {
+		// Compute initial state synchronously from cache to prevent flicker
+		const initialState = useMemo(() => getLocalImageInitialState(src), [src]);
 
-	const [dataUrl, setDataUrl] = useState<string | null>(initialState.dataUrl);
-	const [error, setError] = useState<string | null>(null);
-	const [loading, setLoading] = useState(initialState.loading);
+		const [dataUrl, setDataUrl] = useState<string | null>(initialState.dataUrl);
+		const [error, setError] = useState<string | null>(null);
+		const [loading, setLoading] = useState(initialState.loading);
 
-	useEffect(() => {
-		// If we already have data from cache, skip loading
-		if (initialState.dataUrl) {
-			return;
-		}
+		useEffect(() => {
+			// If we already have data from cache, skip loading
+			if (initialState.dataUrl) {
+				return;
+			}
 
-		let isStale = false;
+			let isStale = false;
 
-		if (!src) {
-			setLoading(false);
-			return;
-		}
-
-		// For file:// URLs, extract the path and load via IPC
-		let filePath = src;
-		if (src.startsWith('file://')) {
-			filePath = decodeURIComponent(src.replace('file://', ''));
-		}
-
-		// Double-check cache
-		if (localImageCache.has(filePath)) {
-			setDataUrl(localImageCache.get(filePath)!);
-			setLoading(false);
-			return;
-		}
-
-		window.maestro.fs
-			.readFile(filePath, sshRemoteId)
-			.then((result) => {
-				if (isStale) return;
-				if (result && result.startsWith('data:')) {
-					cacheLocalImage(filePath, result);
-					setDataUrl(result);
-				} else {
-					setError('Invalid image data');
-				}
+			if (!src) {
 				setLoading(false);
-			})
-			.catch((err) => {
-				if (isStale) return;
-				setError(`Failed to load image: ${err.message || 'Unknown error'}`);
+				return;
+			}
+
+			// For file:// URLs, extract the path and load via IPC
+			let filePath = src;
+			if (src.startsWith('file://')) {
+				filePath = decodeURIComponent(src.replace('file://', ''));
+			}
+
+			// Double-check cache
+			if (localImageCache.has(filePath)) {
+				setDataUrl(localImageCache.get(filePath)!);
 				setLoading(false);
-			});
+				return;
+			}
 
-		return () => {
-			isStale = true;
-		};
-	}, [src, sshRemoteId, initialState.dataUrl]);
+			window.maestro.fs
+				.readFile(filePath, sshRemoteId)
+				.then((result) => {
+					if (isStale) return;
+					if (result && result.startsWith('data:')) {
+						cacheLocalImage(filePath, result);
+						setDataUrl(result);
+					} else {
+						setError('Invalid image data');
+					}
+					setLoading(false);
+				})
+				.catch((err) => {
+					if (isStale) return;
+					setError(`Failed to load image: ${err.message || 'Unknown error'}`);
+					setLoading(false);
+				});
 
-	if (loading) {
-		return (
-			<span
-				className="inline-flex items-center gap-2 px-3 py-2 rounded"
-				style={{ backgroundColor: theme.colors.bgActivity }}
-			>
-				<Spinner size={16} color={theme.colors.textDim} />
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
-					Loading image...
+			return () => {
+				isStale = true;
+			};
+		}, [src, sshRemoteId, initialState.dataUrl]);
+
+		if (loading) {
+			return (
+				<span
+					className="inline-flex items-center gap-2 px-3 py-2 rounded"
+					style={{ backgroundColor: theme.colors.bgActivity }}
+				>
+					<Spinner size={16} color={theme.colors.textDim} />
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						Loading image...
+					</span>
 				</span>
-			</span>
-		);
+			);
+		}
+
+		if (error) {
+			return (
+				<span
+					className="inline-flex items-center gap-2 px-3 py-2 rounded text-xs"
+					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					title={error}
+				>
+					<ImageOff className="w-4 h-4" />
+					<span>{alt || 'Image'}</span>
+				</span>
+			);
+		}
+
+		if (!dataUrl) {
+			return null;
+		}
+
+		// Build style based on whether width is specified
+		const imageStyle: React.CSSProperties = width
+			? { width: `${width}px`, height: 'auto', borderRadius: '4px' }
+			: { maxWidth: '100%', height: 'auto', borderRadius: '4px' };
+
+		return <img src={dataUrl} alt={alt || ''} style={imageStyle} onContextMenu={onContextMenu} />;
 	}
-
-	if (error) {
-		return (
-			<span
-				className="inline-flex items-center gap-2 px-3 py-2 rounded text-xs"
-				style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				title={error}
-			>
-				<ImageOff className="w-4 h-4" />
-				<span>{alt || 'Image'}</span>
-			</span>
-		);
-	}
-
-	if (!dataUrl) {
-		return null;
-	}
-
-	// Build style based on whether width is specified
-	const imageStyle: React.CSSProperties = width
-		? { width: `${width}px`, height: 'auto', borderRadius: '4px' }
-		: { maxWidth: '100%', height: 'auto', borderRadius: '4px' };
-
-	return <img src={dataUrl} alt={alt || ''} style={imageStyle} />;
-});
+);
 
 LocalImage.displayName = 'LocalImage';

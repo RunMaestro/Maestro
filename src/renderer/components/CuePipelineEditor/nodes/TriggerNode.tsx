@@ -5,6 +5,10 @@ import { CUE_COLOR, type CueEventType } from '../../../../shared/cue-pipeline-ty
 import { EVENT_COLORS, EVENT_ICONS } from '../cueEventConstants';
 import type { Theme } from '../../../types';
 
+/** Footprint of the Play button (14px icon + 4px padding each side). The hidden
+ *  placeholder and the live button share it so the node never changes width. */
+const PLAY_BUTTON_SIZE = 22;
+
 export interface TriggerNodeDataProps {
 	compositeId: string;
 	eventType: CueEventType;
@@ -13,12 +17,12 @@ export interface TriggerNodeDataProps {
 	onConfigure?: (compositeId: string) => void;
 	/** Callback to manually trigger the subscription owned by this trigger node. */
 	onTriggerPipeline?: (subscriptionName: string) => void;
-	/** The pipeline this node belongs to — shown in the Play button's aria-label. */
+	/** The pipeline this node belongs to - shown in the Play button's aria-label. */
 	pipelineName?: string;
 	/** The Cue subscription this specific trigger node owns. In multi-trigger
 	 *  pipelines, distinct trigger nodes map to distinct subscriptions
 	 *  (`pipeline.name`, `pipeline.name-chain-1`, etc.). The Play button MUST
-	 *  fire this sub name — firing the pipeline name only matches the first
+	 *  fire this sub name - firing the pipeline name only matches the first
 	 *  trigger, leaving chain triggers (e.g. GitHub PR polls) unreachable. */
 	subscriptionName?: string;
 	/** Whether the pipeline config is saved (play only works when saved) */
@@ -147,7 +151,7 @@ export const TriggerNode = memo(function TriggerNode({
 					gap: 2,
 				}}
 			>
-				{/* Play button — only when pipeline is saved. Fires THIS trigger's
+				{/* Play button - only when pipeline is saved. Fires THIS trigger's
 				 *  subscription (sub name populated by yamlToPipeline on load).
 				 *  Falls back to pipelineName only for legacy pipelines where the
 				 *  sub name wasn't stamped on the node; for post-fix data this
@@ -159,7 +163,21 @@ export const TriggerNode = memo(function TriggerNode({
 				 *  all use the same resolved target. */}
 				{(() => {
 					const fireTarget = data.subscriptionName || data.pipelineName;
-					if (!data.isSaved || !data.onTriggerPipeline || !fireTarget) return null;
+					if (!data.isSaved || !data.onTriggerPipeline || !fireTarget) {
+						// Hold the button's footprint even while it is hidden. The node
+						// is `width: max-content`, so letting the Play button add itself
+						// on Save would widen the node by its own size, eat the gap to
+						// the first target node, and force the edge router into hooks -
+						// the "my lines were clean until I hit Save" bug. Reserving the
+						// space keeps node geometry identical in both states.
+						return (
+							<div
+								data-testid="trigger-play-placeholder"
+								aria-hidden="true"
+								style={{ width: PLAY_BUTTON_SIZE, flexShrink: 0 }}
+							/>
+						);
+					}
 					return (
 						<button
 							type="button"
@@ -175,6 +193,10 @@ export const TriggerNode = memo(function TriggerNode({
 								display: 'flex',
 								alignItems: 'center',
 								justifyContent: 'center',
+								// Must match the hidden placeholder above exactly.
+								width: PLAY_BUTTON_SIZE,
+								boxSizing: 'border-box',
+								flexShrink: 0,
 								cursor: data.isRunning ? 'default' : 'pointer',
 								color: data.isRunning
 									? (theme?.colors.success ?? '#22c55e')

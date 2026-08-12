@@ -26,10 +26,10 @@ interface AgentEfficiencyChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-	/** Current sessions list — when provided, agents are labeled with their
+	/** Current sessions list - when provided, agents are labeled with their
 	 * user-assigned session names and worktree agents render with a striped pattern. */
 	sessions?: Session[];
-	/** Active drill-down filter key — when set, non-matching entries dim to 0.3 opacity. */
+	/** Active drill-down filter key - when set, non-matching entries dim to 0.3 opacity. */
 	activeFilterKey?: string | null;
 }
 

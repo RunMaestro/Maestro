@@ -97,7 +97,7 @@ function discoverCopilotSlashCommands(): { name: string; description: string }[]
  *    Windows: %LOCALAPPDATA%/opencode/)
  *
  * Built-in commands (init, review, undo, redo, share, help, models) are excluded
- * because they only work in OpenCode's interactive TUI mode — they have no prompt
+ * because they only work in OpenCode's interactive TUI mode - they have no prompt
  * .md file and cannot be executed via batch mode (`opencode run`).
  *
  * Unlike Claude Code (which emits commands via init event), OpenCode commands
@@ -144,7 +144,7 @@ async function readClaudeSkillDescriptions(cwd: string): Promise<Map<string, str
 		try {
 			entries = await fs.promises.readdir(dir, { withFileTypes: true });
 		} catch (error) {
-			// Missing skills directory is the norm — skip. Anything else
+			// Missing skills directory is the norm - skip. Anything else
 			// (permission errors, IO errors) should surface to Sentry.
 			if (isMissingEntryError(error)) continue;
 			throw error;
@@ -274,7 +274,7 @@ export interface AgentsHandlerDependencies {
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
 	settingsStore?: Store<MaestroSettings>;
 	/**
-	 * Sessions store — required for handlers that need to read or persist
+	 * Sessions store - required for handlers that need to read or persist
 	 * per-session state (e.g. resolving the Batch Mode usage snapshot for a
 	 * specific tab). Optional so registration doesn't break for legacy boot
 	 * paths that wire only the read-only handlers.
@@ -419,7 +419,7 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 
 			// Mirror remote detection into the snapshot store, keyed by the
 			// stable SSH remote UUID so each host has its own readiness pill.
-			// Skip when the observed state matches the existing snapshot —
+			// Skip when the observed state matches the existing snapshot -
 			// otherwise an `agents:reprobe` for a single agent would emit
 			// snapshot-updated broadcasts for every other agent on the host.
 			if (agentDef.id !== 'terminal') {
@@ -678,7 +678,7 @@ async function discoverModelsRemote(
 
 		return models;
 	} catch (error) {
-		// Timeout is an expected SSH failure — return empty gracefully
+		// Timeout is an expected SSH failure - return empty gracefully
 		if (error instanceof Error && error.message.includes('SSH model discovery timed out')) {
 			logger.warn(
 				`Timed out discovering models for "${agentDef.name}" on ${sshRemote.host}`,
@@ -1538,7 +1538,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Get the persisted capability snapshot for a single agent in a given
 	// environment (local or per-SSH-remote). Returns null when no snapshot
-	// has been written yet — callers should fall back to detection.
+	// has been written yet - callers should fall back to detection.
 	ipcMain.handle(
 		'agents:getSnapshot',
 		withIpcErrorLogging(
@@ -1551,7 +1551,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Auto-detected maestro-p binary path (bundled with the app). The renderer's
 	// AgentConfigPanel shows this as helper text for the Batch Mode path override.
-	// Returns null when no bundled script can be located — usually means the user
+	// Returns null when no bundled script can be located - usually means the user
 	// is running a dev build without `npm run build` having produced
 	// `dist/cli/maestro-p.js`.
 	ipcMain.handle(
@@ -1594,7 +1594,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
-	// Get every persisted snapshot — used by the renderer at startup to
+	// Get every persisted snapshot - used by the renderer at startup to
 	// hydrate the agents store before the first live detection completes.
 	ipcMain.handle(
 		'agents:getAllSnapshots',
@@ -1610,7 +1610,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	ipcMain.handle(
 		'agents:reprobe',
 		withIpcErrorLogging(handlerOpts('reprobe'), async (agentId: string, sshRemoteId?: string) => {
-			// `terminal` is internal — detection paths intentionally skip it,
+			// `terminal` is internal - detection paths intentionally skip it,
 			// so a probe call would leave the snapshot stuck at `probing` forever.
 			if (agentId === 'terminal') {
 				return null;
@@ -1673,11 +1673,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
 	// the boot path calls, so the dashboard / settings refresh button takes the
 	// exact same code path that populated the store on launch. Returns a count
-	// of how many account snapshots are now in the store after sampling — the
+	// of how many account snapshots are now in the store after sampling - the
 	// renderer surfaces this in the optimistic spinner state.
 	//
 	// Reports `{ refreshed: 0 }` (rather than throwing) when a required dep is
-	// missing on this boot path — keeps the renderer's optimistic refresh flow
+	// missing on this boot path - keeps the renderer's optimistic refresh flow
 	// from blowing up in dev/test contexts where the agents handler was wired
 	// without the full main dependency set.
 	ipcMain.handle(

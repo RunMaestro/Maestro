@@ -1,5 +1,5 @@
 /**
- * Tests for shared/agentIds.ts — Single Source of Truth for Agent IDs
+ * Tests for shared/agentIds.ts - Single Source of Truth for Agent IDs
  */
 
 import { describe, it, expect } from 'vitest';

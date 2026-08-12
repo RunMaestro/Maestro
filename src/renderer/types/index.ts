@@ -247,11 +247,11 @@ export interface LogEntry {
 	// How this turn was captured. 'structured' (default) is the normal JSON-stream
 	// pipeline from `claude --print`; 'text-stream' marks entries captured during
 	// maestro-p interactive-mode turns. The renderer uses the same tool-card /
-	// code-block / diff pipeline for both — the flag's only visible effect is the
+	// code-block / diff pipeline for both - the flag's only visible effect is the
 	// "Captured via interactive TUI" footer pill on non-user entries. Exists as
 	// forward-compatible metadata for any future divergence.
 	renderStyle?: 'structured' | 'text-stream';
-	// For session_not_found system entries — payload for the inline "Create new
+	// For session_not_found system entries - payload for the inline "Create new
 	// session from prior context" action. The button on the entry opens
 	// SessionRecoveryModal which re-spawns the agent in place on `tabId`,
 	// carrying the prior conversation as merged context and re-sending
@@ -284,6 +284,21 @@ export interface LogEntry {
 		durationMs?: number;
 		/** True when output hit the size cap and was cut short. */
 		truncated?: boolean;
+	};
+	// Anchors the "back from snooze" card marking where a snoozed tab returned to
+	// the conversation. Written once by `wakeSnoozedTab` and never updated, so it
+	// freezes into the transcript as a permanent record of the gap - including
+	// the note-to-self, which would otherwise live only in a toast that scrolls
+	// away. See components/SnoozeReturnCard.tsx.
+	snoozeReturn?: {
+		/** The note the user left themselves when snoozing, if any. */
+		note?: string;
+		/** When the tab was put away. */
+		snoozedAt: number;
+		/** When it was scheduled to come back. */
+		wakeAt: number;
+		/** Whether it returned on schedule or the user pulled it back early. */
+		resolution: 'woke' | 'unsnoozed';
 	};
 }
 
@@ -363,7 +378,7 @@ export interface BatchRunConfig {
 	prompt: string;
 	loopEnabled: boolean; // Loop back to first doc when done
 	maxLoops?: number | null; // Max loop iterations (null/undefined = infinite)
-	taskSelectionMode?: TaskSelectionMode; // 'task' (default) or 'document' — controls {{TASK_SELECTION_BLOCK}}
+	taskSelectionMode?: TaskSelectionMode; // 'task' (default) or 'document' - controls {{TASK_SELECTION_BLOCK}}
 	worktree?: WorktreeConfig; // Optional worktree configuration
 	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
 }
@@ -538,7 +553,7 @@ export interface AITab {
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
 }
 
-// A single "thinking item" — one busy tab within a session.
+// A single "thinking item" - one busy tab within a session.
 // Used by ThinkingStatusPill to show all active work across all agents.
 export interface ThinkingItem {
 	session: Session;
@@ -584,7 +599,7 @@ export interface FilePreviewTab {
 	// SSH remote support
 	sshRemoteId?: string; // SSH remote ID for re-fetching content if needed
 	isLoading?: boolean; // True while content is being loaded (for SSH remote files)
-	loadRequestId?: string; // While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load
+	loadRequestId?: string; // While isLoading, the in-flight fs:readFile requestId - cancelled if the tab is closed mid-load
 	// Navigation history for breadcrumb navigation (per-tab)
 	navigationHistory?: FilePreviewHistoryEntry[]; // Stack of visited files
 	navigationIndex?: number; // Current position in history (-1 or undefined = at end)
@@ -602,16 +617,10 @@ export interface FilePreviewTab {
 	// FilePreview consumes it (flips to edit mode if needed, scrolls + places
 	// the caret) and then clears it.
 	pendingScrollToLine?: number;
-	// Transient request to start playing as soon as the media is ready. Set when
-	// the user opens an audio/video file (any open path: new tab, or an existing
-	// tab repurposed to a new file); consumed exactly once by the player, which
-	// then clears it. Absent on tabs restored from disk, which is what keeps a
-	// launch from replaying every podcast that happened to be open last time.
-	autoplayMedia?: boolean;
 }
 
 /**
- * Terminal Tab — represents a PTY shell session with full terminal emulation via xterm.js.
+ * Terminal Tab - represents a PTY shell session with full terminal emulation via xterm.js.
  * Unlike AITab (which stores logs), TerminalTab relies on xterm.js to manage its own scrollback
  * buffer. The PTY process is identified by pid (0 = not yet spawned / lazy init).
  */
@@ -742,7 +751,7 @@ export interface Session {
 	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
 	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
-	// DEPRECATED: Legacy shell output logs — terminal tabs use xterm.js with direct PTY streaming
+	// DEPRECATED: Legacy shell output logs - terminal tabs use xterm.js with direct PTY streaming
 	shellLogs: LogEntry[];
 	workLog: WorkLogItem[];
 	contextUsage: number;
@@ -752,7 +761,7 @@ export interface Session {
 	// AI process PID (for agents with persistent processes)
 	// For batch mode agents, this is 0 since processes spawn per-message
 	aiPid: number;
-	// DEPRECATED: Replaced by terminalTabs[].pid — each terminal tab now has its own PTY pid
+	// DEPRECATED: Replaced by terminalTabs[].pid - each terminal tab now has its own PTY pid
 	terminalPid: number;
 	port: number;
 	// Live mode - makes session accessible via web interface
@@ -851,7 +860,7 @@ export interface Session {
 	activeTabId: string;
 	// Stack of recently closed tabs for undo (max 25, runtime-only, not persisted)
 	closedTabHistory: ClosedTab[];
-	// Tabs that were closed while still thinking — kept here so the thinking pill
+	// Tabs that were closed while still thinking - kept here so the thinking pill
 	// can surface them until the underlying agent process finishes. Runtime-only,
 	// not persisted. Entries are removed by the agent exit/error listeners.
 	orphanedThinkingTabs?: AITab[];
@@ -870,7 +879,7 @@ export interface Session {
 	// Currently active browser tab ID (null if an AI, file, or terminal tab is active)
 	activeBrowserTabId: string | null;
 
-	// Terminal tab management — each tab has its own PTY session with xterm.js rendering
+	// Terminal tab management - each tab has its own PTY session with xterm.js rendering
 	terminalTabs: TerminalTab[];
 	// Currently active terminal tab ID (null if an AI or file tab is active)
 	activeTerminalTabId: string | null;
@@ -979,7 +988,7 @@ export interface Session {
 	// in packaged builds, `dist/cli/maestro-p.js` in dev).
 	maestroPPath?: string;
 
-	// Agent Resilience (auto-retry). Both default ON — `undefined` reads as
+	// Agent Resilience (auto-retry). Both default ON - `undefined` reads as
 	// enabled via `resilienceEnabled` in shared/agentConstants, so existing
 	// agents get the behavior without a migration; only an explicit `false`
 	// opts out. `retryOnAvailabilityErrors` covers transient upstream failures

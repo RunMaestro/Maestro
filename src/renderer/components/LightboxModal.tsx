@@ -8,6 +8,8 @@ import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWriteImage } from '../utils/clipboard';
 import { logger } from '../utils/logger';
+import { ImageContextMenu } from './ImageContextMenu';
+import { useImageContextMenu } from '../hooks/ui/useImageContextMenu';
 
 interface LightboxModalProps {
 	image: string;
@@ -41,6 +43,7 @@ export function LightboxModal({
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
 	const [copied, setCopied] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+	const { imageMenu, dismissImageMenu, openImageMenuFromEvent } = useImageContextMenu();
 
 	const copyImageToClipboard = async () => {
 		try {
@@ -129,7 +132,7 @@ export function LightboxModal({
 
 	// Window-level keyboard handler. The div-level approach only fires when the
 	// lightbox div has focus, which is lost when the annotator (or any other
-	// transient modal layered above) closes — that leaked Cmd+E to the chat
+	// transient modal layered above) closes - that leaked Cmd+E to the chat
 	// behind. Capturing on `window` is focus-independent. Guarded by
 	// `getTopLayer` so the lightbox doesn't react while a higher-priority
 	// layer (annotator, etc.) is on top.
@@ -246,7 +249,15 @@ export function LightboxModal({
 				className="max-w-[90%] max-h-[90%] rounded shadow-2xl"
 				onMouseDown={(e) => e.stopPropagation()}
 				onClick={(e) => e.stopPropagation()}
+				onContextMenu={openImageMenuFromEvent}
 			/>
+			{imageMenu && (
+				<ImageContextMenu
+					menu={imageMenu}
+					theme={theme ?? defaultTheme}
+					onDismiss={dismissImageMenu}
+				/>
+			)}
 
 			{/* Top right buttons: Annotate, Copy, Delete (if available) */}
 			<div className="absolute top-4 right-4 flex gap-2">

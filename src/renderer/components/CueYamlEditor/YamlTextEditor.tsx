@@ -1,5 +1,5 @@
 /**
- * YamlTextEditor — YAML textarea with line numbers gutter and validation display.
+ * YamlTextEditor - YAML textarea with line numbers gutter and validation display.
  */
 
 import { useCallback } from 'react';

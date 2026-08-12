@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { GitBranch, Plus, Minus, FileEdit, FileDiff, History } from 'lucide-react';
+import { GitBranch, FileDiff, History } from 'lucide-react';
 import type { Theme } from '../types';
 import { useGitFileStatus, useGitDetail, type GitFileChange } from '../contexts/GitStatusContext';
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
+import { GitChangeCounts } from './ui/GitChangeCounts';
+import { formatGitChangeSummary, type GitChangeTotals } from '../../shared/gitUtils';
 
 interface GitStatusWidgetProps {
 	/** Session ID to look up git status from context */
@@ -85,6 +87,7 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 	const deletions = fileDetails?.totalDeletions ?? 0;
 	const modified = fileDetails?.modifiedCount ?? 0;
 	const totalChanges = additions + deletions + modified;
+	const totals: GitChangeTotals = { fileCount, additions, deletions, modified };
 
 	return (
 		<div
@@ -97,7 +100,7 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 				onClick={onViewDiff}
 				className="flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors hover:bg-white/5"
 				style={{ color: theme.colors.textMain }}
-				title={`+${additions} −${deletions} ~${modified}`}
+				title={formatGitChangeSummary(totals)}
 			>
 				{/* Compact mode: just show file count - shown at narrow widths via CSS */}
 				<span className="header-git-status-compact flex items-center gap-1" aria-hidden="true">
@@ -105,30 +108,11 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 					<span style={{ color: theme.colors.textDim }}>{fileCount}</span>
 				</span>
 
-				{/* Full mode: show breakdown by type - shown at wider widths via CSS */}
+				{/* Full mode: show breakdown by type - shown at wider widths via CSS.
+				    Same readout the git menus badge their diff row with. */}
 				<span className="header-git-status-full flex items-center gap-2">
 					<GitBranch className="w-3 h-3" />
-
-					{additions > 0 && (
-						<span className="flex items-center gap-0.5 text-green-500">
-							<Plus className="w-3 h-3" />
-							{additions}
-						</span>
-					)}
-
-					{deletions > 0 && (
-						<span className="flex items-center gap-0.5 text-red-500">
-							<Minus className="w-3 h-3" />
-							{deletions}
-						</span>
-					)}
-
-					{modified > 0 && (
-						<span className="flex items-center gap-0.5 text-orange-500">
-							<FileEdit className="w-3 h-3" />
-							{modified}
-						</span>
-					)}
+					<GitChangeCounts theme={theme} totals={totals} />
 				</span>
 			</button>
 

@@ -49,7 +49,7 @@ export class PtySpawner {
 
 			if (isTerminal) {
 				if (!shell) {
-					// No shell specified — use the explicit command/args directly (e.g. ssh for remote terminals)
+					// No shell specified - use the explicit command/args directly (e.g. ssh for remote terminals)
 					ptyCommand = command;
 					ptyArgs = args;
 				} else {
@@ -116,7 +116,13 @@ export class PtySpawner {
 				// For AI agents in PTY mode: use same env building logic as child processes
 				// This ensures tilde expansion (~/ paths), Electron var stripping, and consistent
 				// global shell environment variable handling across all spawner types
-				ptyEnv = buildChildProcessEnv(customEnvVars, false, shellEnvVars);
+				ptyEnv = buildChildProcessEnv(
+					customEnvVars,
+					false,
+					shellEnvVars,
+					config.extraPathDirs,
+					config.unsetEnvKeys
+				);
 			}
 
 			const ptyProcess = pty.spawn(ptyCommand, ptyArgs, {
@@ -156,7 +162,7 @@ export class PtySpawner {
 			// Handle output
 			ptyProcess.onData((data) => {
 				if (isTerminalTab) {
-					// Raw pass-through for xterm.js terminal tabs — no filtering
+					// Raw pass-through for xterm.js terminal tabs - no filtering
 					if (data.length > 0) {
 						logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
 							sessionId,

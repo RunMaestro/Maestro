@@ -101,7 +101,7 @@ export interface AutoRunState {
 	currentDocumentIndex?: number; // Current document being processed (0-based)
 	totalTasksAcrossAllDocs?: number; // Total tasks across all documents
 	completedTasksAcrossAllDocs?: number; // Completed tasks across all documents
-	// Error pause fields (Phase 5.10) — present when batch is paused awaiting resolution
+	// Error pause fields (Phase 5.10) - present when batch is paused awaiting resolution
 	errorPaused?: boolean;
 	errorMessage?: string;
 	errorType?: string;

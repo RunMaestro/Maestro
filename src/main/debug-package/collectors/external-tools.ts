@@ -33,7 +33,7 @@ export interface ExternalToolsInfo {
 
 /**
  * Collect information about external tools and dependencies.
- * No installation paths are included — only availability and versions.
+ * No installation paths are included - only availability and versions.
  */
 export async function collectExternalTools(): Promise<ExternalToolsInfo> {
 	const result: ExternalToolsInfo = {

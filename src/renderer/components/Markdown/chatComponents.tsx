@@ -39,8 +39,8 @@ export interface ChatMarkdownComponentsOptions {
 	/** Right-click handlers (owned by the shell so it can render the menus). */
 	onLinkContextMenu: (e: React.MouseEvent, url: string) => void;
 	onFileContextMenu: (e: React.MouseEvent, absPath: string, fileName: string) => void;
-	/** Right-click handler for inline <svg> diagrams (copy/save image). */
-	onSvgContextMenu: (e: React.MouseEvent<SVGSVGElement>) => void;
+	/** Right-click handler for images: raster <img> and inline <svg> diagrams. */
+	onImageContextMenu: (target: SVGSVGElement | HTMLImageElement, x: number, y: number) => void;
 }
 
 export function createChatMarkdownComponents(
@@ -57,7 +57,7 @@ export function createChatMarkdownComponents(
 		bionifyAlgorithm,
 		onLinkContextMenu,
 		onFileContextMenu,
-		onSvgContextMenu,
+		onImageContextMenu,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -92,7 +92,7 @@ export function createChatMarkdownComponents(
 			style,
 			...props
 		}: JSX.IntrinsicElements['code'] & ExtraProps) => (
-			// Inline code only — block code is handled by the pre component above
+			// Inline code only - block code is handled by the pre component above
 			<InlineCode className={className} style={style} passthrough={props}>
 				{children}
 			</InlineCode>
@@ -152,7 +152,17 @@ export function createChatMarkdownComponents(
 			const width = widthStr ? parseInt(widthStr, 10) : undefined;
 
 			return (
-				<LocalImage src={src} alt={alt} theme={theme} width={width} sshRemoteId={sshRemoteId} />
+				<LocalImage
+					src={src}
+					alt={alt}
+					theme={theme}
+					width={width}
+					sshRemoteId={sshRemoteId}
+					onContextMenu={(e) => {
+						e.preventDefault();
+						onImageContextMenu(e.currentTarget, e.clientX, e.clientY);
+					}}
+				/>
 			);
 		},
 		table: ({ node: _node, style, ...props }: JSX.IntrinsicElements['table'] & ExtraProps) => (
@@ -206,7 +216,7 @@ export function createChatMarkdownComponents(
 				{...props}
 				onContextMenu={(e) => {
 					e.preventDefault();
-					onSvgContextMenu(e);
+					onImageContextMenu(e.currentTarget, e.clientX, e.clientY);
 				}}
 			>
 				{children}

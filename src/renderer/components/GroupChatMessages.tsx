@@ -427,7 +427,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 									) : !markdownEditMode ? (
 										// Normal non-collapsed markdown view (#622: user
 										// messages get the same markdown treatment as
-										// assistant messages by default — toggle exposes
+										// assistant messages by default - toggle exposes
 										// the raw view consistently for both)
 										<div className="text-sm">
 											<MarkdownRenderer
@@ -439,7 +439,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 											/>
 										</div>
 									) : (
-										// Raw mode — user sees their literal input; for
+										// Raw mode - user sees their literal input; for
 										// assistant content we strip markdown so the raw
 										// view is readable as plain text.
 										<div className="text-sm whitespace-pre-wrap">

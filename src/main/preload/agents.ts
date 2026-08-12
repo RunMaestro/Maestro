@@ -186,7 +186,7 @@ export function createAgentsApi() {
 		/**
 		 * Get the persisted capability snapshot for an agent in a given
 		 * environment (local or per-SSH-remote). Returns null when no
-		 * snapshot exists yet — callers should fall back to detect().
+		 * snapshot exists yet - callers should fall back to detect().
 		 */
 		getSnapshot: (
 			agentId: string,
@@ -194,7 +194,7 @@ export function createAgentsApi() {
 		): Promise<AgentCapabilitiesSnapshot | null> =>
 			ipcRenderer.invoke('agents:getSnapshot', agentId, sshRemoteId),
 
-		/** Read every persisted snapshot — used to hydrate the renderer at startup. */
+		/** Read every persisted snapshot - used to hydrate the renderer at startup. */
 		getAllSnapshots: (): Promise<AgentCapabilitiesSnapshotMap> =>
 			ipcRenderer.invoke('agents:getAllSnapshots'),
 
@@ -209,7 +209,7 @@ export function createAgentsApi() {
 		/**
 		 * Subscribe to live snapshot mutations. Returns an unsubscribe fn.
 		 * The renderer mirror calls this once at startup and updates state
-		 * in place — no polling needed.
+		 * in place - no polling needed.
 		 */
 		onSnapshotUpdated: (callback: (payload: SnapshotUpdatedPayload) => void): (() => void) => {
 			const handler = (_: unknown, payload: SnapshotUpdatedPayload) => callback(payload);

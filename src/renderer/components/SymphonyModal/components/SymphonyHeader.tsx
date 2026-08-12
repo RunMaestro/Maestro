@@ -22,7 +22,7 @@ export interface SymphonyHeaderProps {
 }
 
 /**
- * Top header of the SymphonyModal — title, help popover, register-link,
+ * Top header of the SymphonyModal - title, help popover, register-link,
  * refresh button, close button.
  *
  * `forwardRef` exposes the help-button DOM node so the shell can manage focus

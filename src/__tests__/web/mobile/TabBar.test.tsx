@@ -1385,7 +1385,7 @@ describe('TabBar', () => {
 
 			const bell = screen.getByLabelText('Filter unread tabs');
 			// Indicator dot is absolutely-positioned, has no visible text, and
-			// is the only element with the accent background-color — so we
+			// is the only element with the accent background-color - so we
 			// detect it by querying for that style on a child span.
 			const dot = bell.querySelector('span[style*="border-radius: 50%"]');
 			expect(dot).toBeNull();

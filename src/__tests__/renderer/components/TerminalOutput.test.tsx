@@ -12,7 +12,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
@@ -360,6 +359,102 @@ describe('TerminalOutput', () => {
 			const combinedText = markdownBlocks.map((el) => el.textContent).join('|');
 			expect(combinedText).not.toContain('response.Unknown command');
 			expect(combinedText).not.toContain('/nonexistentStart of a later response.');
+		});
+	});
+
+	describe('command-mode cards are never merged into a response group', () => {
+		const lsOutput = '\u001b[1m\u001b[36mnode_modules\u001b[0m tailwind.config.mjs\n';
+
+		function commandCard(overrides: Partial<LogEntry> = {}): LogEntry {
+			return createLogEntry({
+				id: 'card-1',
+				// `source: 'stdout'` is correct - the body really is terminal output.
+				// That is precisely why grouping used to swallow it.
+				source: 'stdout',
+				text: lsOutput,
+				shellCommand: {
+					command: 'ls',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+				},
+				...overrides,
+			});
+		}
+
+		function renderLogs(logs: LogEntry[]) {
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		}
+
+		it('gives the command its own row instead of appending it to the agent reply', () => {
+			// The reported bug: `!ls` output was concatenated onto the tail of the
+			// preceding agent message and rendered as markdown, ANSI codes and all.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'rather than guess now.', source: 'stdout' }),
+				commandCard(),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(2);
+
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('guess now.node_modules');
+			expect(markdown).not.toContain('node_modules');
+		});
+
+		it('renders the card chrome rather than a markdown bubble', () => {
+			// NOTE: this file stubs ansi-to-html to a passthrough, so the ANSI ->
+			// colour conversion itself is asserted in ShellCommandCard.test.tsx
+			// (which uses the real converter). What matters here is that the entry
+			// reaches the card at all, instead of being flattened into markdown.
+			renderLogs([commandCard()]);
+
+			// Card-only chrome: the command in the header and its exit status.
+			expect(screen.getByText('ls')).toBeInTheDocument();
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			// The output must NOT have gone through the markdown renderer.
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('node_modules');
+		});
+
+		it('keeps a card between two replies from stitching them together', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'resp-1', text: 'Before.', source: 'stdout' }),
+				commandCard(),
+				createLogEntry({ id: 'resp-2', text: 'After.', source: 'stdout' }),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+			const markdown = screen
+				.queryAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(markdown).not.toContain('Before.After.');
+		});
+
+		it('gives each of several commands its own row', () => {
+			const logs: LogEntry[] = [
+				commandCard({ id: 'card-1' }),
+				commandCard({ id: 'card-2' }),
+				commandCard({ id: 'card-3' }),
+			];
+
+			const { container } = renderLogs(logs);
+
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
 		});
 	});
 
@@ -1041,7 +1136,7 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
 			expect(mockRegisterLayer).toHaveBeenCalled();
 
-			// Pull the most recent registerLayer call's onEscape — this is what the
+			// Pull the most recent registerLayer call's onEscape - this is what the
 			// layer stack fires when Escape is pressed on the topmost layer.
 			const layerConfig = mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
 			expect(typeof layerConfig.onEscape).toBe('function');
@@ -1082,7 +1177,7 @@ describe('TerminalOutput', () => {
 		});
 
 		it('keeps confirmation modal open when clicking the backdrop', async () => {
-			// Confirmation modals intentionally do not close on backdrop click — users
+			// Confirmation modals intentionally do not close on backdrop click - users
 			// must explicitly choose Cancel/Confirm or press Escape. This guards against
 			// accidental dismissal of destructive prompts.
 			const session = createDefaultSession({
@@ -1691,7 +1786,7 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// Toggle is now exposed on user messages too — consistent with
+			// Toggle is now exposed on user messages too - consistent with
 			// assistant messages so the user can flip between formatted and
 			// raw text views of their own input.
 			expect(screen.queryByTitle(/Show plain text/)).toBeInTheDocument();
@@ -2133,6 +2228,82 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Fix lint issues (2/2)')).toBeInTheDocument();
 		});
 
+		it('expands the task list card to show individual task items', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'TodoWrite',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								todos: [
+									{
+										content: 'Fix lint issues',
+										status: 'completed',
+										activeForm: 'Fixing lint issues',
+									},
+									{ content: 'Run tests', status: 'in_progress', activeForm: 'Running tests' },
+									{ content: 'Build project', status: 'pending', activeForm: 'Building project' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Collapsed by default - individual items are not rendered
+			expect(screen.queryByText('Fix lint issues')).not.toBeInTheDocument();
+			expect(screen.queryByText('Build project')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Expand task list' }));
+
+			expect(screen.getByText('Fix lint issues')).toBeInTheDocument();
+			expect(screen.getByText('Build project')).toBeInTheDocument();
+			// In-progress task uses its present-tense activeForm
+			expect(screen.getByText('Running tests')).toBeInTheDocument();
+		});
+
+		it('renders a task list card for Codex update_plan payloads', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'update_plan',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								plan: [
+									{ step: 'Read the failing spec', status: 'completed' },
+									{ step: 'Patch the parser', status: 'in_progress' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Patch the parser (1/2)')).toBeInTheDocument();
+			// Generic key/value fallback is suppressed for checklist payloads
+			expect(screen.queryByText('plan: [2]')).not.toBeInTheDocument();
+		});
+
 		it('renders Bash tool with command detail', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -2187,7 +2358,7 @@ describe('TerminalOutput', () => {
 
 			// Description shown separately
 			expect(screen.getByText('List comparison samples')).toBeInTheDocument();
-			// Full command shown without truncation — use regex since getByText struggles with newlines
+			// Full command shown without truncation - use regex since getByText struggles with newlines
 			expect(screen.getByText(/All comparison samples/)).toBeInTheDocument();
 			expect(screen.getByText(/compare_\* 2>\/dev\/null/)).toBeInTheDocument();
 			expect(screen.getByText(/Done ===/)).toBeInTheDocument();
@@ -2506,7 +2677,7 @@ describe('TerminalOutput', () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// scrollTo should have been called — user was at bottom, auto-scroll kicks in
+			// scrollTo should have been called - user was at bottom, auto-scroll kicks in
 			expect(scrollToSpy).toHaveBeenCalled();
 		});
 
@@ -2557,7 +2728,7 @@ describe('TerminalOutput', () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// scrollTo should NOT have been called — user scrolled up, auto-scroll paused
+			// scrollTo should NOT have been called - user scrolled up, auto-scroll paused
 			expect(scrollToSpy).not.toHaveBeenCalled();
 		});
 
@@ -2829,7 +3000,7 @@ describe('TerminalOutput', () => {
 			];
 
 			// Forced TUI: enableMaestroP on + maestroPMode 'interactive' is NOT
-			// adaptive — only Dynamic mode auto-switches, so the prefix must drop.
+			// adaptive - only Dynamic mode auto-switches, so the prefix must drop.
 			const session = createDefaultSession({
 				enableMaestroP: true,
 				maestroPMode: 'interactive',
@@ -2917,7 +3088,7 @@ describe('TerminalOutput', () => {
 
 			const indices = renderedIndices(container);
 			expect(indices.length).toBeLessThan(logs.length);
-			// The newest entry is what the user is looking at — it must be present.
+			// The newest entry is what the user is looking at - it must be present.
 			expect(screen.getByText('Message 399')).toBeInTheDocument();
 			// Ancient history is deferred, not dropped (see backfill test below).
 			expect(screen.queryByText('Message 0')).not.toBeInTheDocument();

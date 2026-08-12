@@ -111,7 +111,7 @@ describe('useBatchControlActions', () => {
 		expect(autorunLog).toHaveBeenCalled();
 	});
 
-	it('pauseBatchOnError is idempotent — does not replace an existing resolution promise', () => {
+	it('pauseBatchOnError is idempotent - does not replace an existing resolution promise', () => {
 		const { hook, errorResolutionRefs } = setupHook();
 		const error = mkError();
 

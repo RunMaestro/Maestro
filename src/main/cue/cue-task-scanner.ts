@@ -24,7 +24,7 @@ export interface CueTaskScannerConfig {
 	/**
 	 * Optional gate: when this returns `false`, the scanner skips its tick
 	 * (no directory walk, no file reads, no events). Used by the
-	 * visibility-aware pause — CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations".
+	 * visibility-aware pause - CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations".
 	 * Defaults to always-active when omitted.
 	 */
 	isActive?: () => boolean;
@@ -179,7 +179,7 @@ export function createCueTaskScanner(config: CueTaskScannerConfig): () => void {
 		if (stopped) return;
 		// Visibility-aware pause: skip the entire tick when inactive.
 		// The interval keeps firing so we resume cleanly on the next visible
-		// tick — no need to tear down and re-create timers.
+		// tick - no need to tear down and re-create timers.
 		if (!isActive()) return;
 
 		try {

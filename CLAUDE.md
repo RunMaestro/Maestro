@@ -6,18 +6,20 @@ Essential guidance for working with this codebase. For detailed architecture, se
 
 This guide has been split into focused sub-documents for progressive disclosure:
 
-| Document                             | Description                                                                                                  |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features)  |
-| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                              |
-| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                        |
-| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                            |
-| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                  |
-| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                            |
-| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                    |
-| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                  |
-| [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`) |
-| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                             |
+| Document                             | Description                                                                                                                                                              |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features)                                                              |
+| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                                                                                          |
+| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                                                                                    |
+| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                                                                                        |
+| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                                                                              |
+| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                                                                                        |
+| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                                                                                |
+| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                                                                              |
+| [[CLAUDE-CUE.md]]                    | Cue automation engine: architecture, dispatch flow, lifecycle, gotchas (read before editing `src/main/cue/`)                                                             |
+| [[CLAUDE-PLUGINS.md]]                | Plugin system architecture: tiers, sandbox, broker, capabilities, contributions, signing, trust model (read before editing `src/main/plugins/` or `src/shared/plugins/`) |
+| [[CLAUDE-SETTINGS.md]]               | Settings modal style guide: typography, color, dimming, spacing, primitives, registration checklist (read before editing `src/renderer/components/Settings/`)            |
+| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                                                                                         |
 
 ---
 
@@ -25,23 +27,25 @@ This guide has been split into focused sub-documents for progressive disclosure:
 
 **MANDATORY:** Before creating any new utility function, helper, hook, component, type, or constant, check the guide docs in `docs/agent-guides/` to see if it already exists. Duplicated code is the #1 source of maintenance burden in this codebase - there are already grep-verified instances of 20+ duplicate format helpers, 60+ ad-hoc mock factories, and 500+ manual modal-layer registrations. Don't add to the pile.
 
-| Before creating...                                 | Check this guide first                                         |
-| -------------------------------------------------- | -------------------------------------------------------------- |
-| Utility function (formatting, IDs, paths, strings) | [SHARED-UTILS.md](docs/agent-guides/SHARED-UTILS.md)           |
-| IPC handler or preload bridge                      | [IPC-PATTERNS.md](docs/agent-guides/IPC-PATTERNS.md)           |
-| Store action, selector, or hook                    | [STATE-PATTERNS.md](docs/agent-guides/STATE-PATTERNS.md)       |
-| Agent parser, storage, or error pattern            | [AGENT-INFRA.md](docs/agent-guides/AGENT-INFRA.md)             |
-| UI component, modal, or theme usage                | [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md)             |
-| Test mock, factory, or setup pattern               | [TEST-PATTERNS.md](docs/agent-guides/TEST-PATTERNS.md)         |
-| Renderer service or constant                       | [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md) |
-| Process spawning or listener                       | [PROCESS-SYSTEM.md](docs/agent-guides/PROCESS-SYSTEM.md)       |
-| Web/mobile hook or component                       | [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md)               |
-| CLI command or playbook feature                    | [CLI-PLAYBOOKS.md](docs/agent-guides/CLI-PLAYBOOKS.md)         |
-| Group chat or Symphony feature                     | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)               |
-| Stats, analytics, or dashboard                     | [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)     |
-| Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)         |
-| Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)           |
-| App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)       |
+| Before creating...                                 | Check this guide first                                           |
+| -------------------------------------------------- | ---------------------------------------------------------------- |
+| Utility function (formatting, IDs, paths, strings) | [SHARED-UTILS.md](docs/agent-guides/SHARED-UTILS.md)             |
+| IPC handler or preload bridge                      | [IPC-PATTERNS.md](docs/agent-guides/IPC-PATTERNS.md)             |
+| Store action, selector, or hook                    | [STATE-PATTERNS.md](docs/agent-guides/STATE-PATTERNS.md)         |
+| Agent parser, storage, or error pattern            | [AGENT-INFRA.md](docs/agent-guides/AGENT-INFRA.md)               |
+| UI component, modal, or theme usage                | [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md)               |
+| Test mock, factory, or setup pattern               | [TEST-PATTERNS.md](docs/agent-guides/TEST-PATTERNS.md)           |
+| Renderer service or constant                       | [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md)   |
+| Process spawning or listener                       | [PROCESS-SYSTEM.md](docs/agent-guides/PROCESS-SYSTEM.md)         |
+| Web/mobile hook or component                       | [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md)                 |
+| CLI command or playbook feature                    | [CLI-PLAYBOOKS.md](docs/agent-guides/CLI-PLAYBOOKS.md)           |
+| Group chat or Symphony feature                     | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)                 |
+| Stats, analytics, or dashboard                     | [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)       |
+| Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)           |
+| Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)             |
+| App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)         |
+| Stat card, chart, sparkline, or input control      | [WIDGET-LIBRARY.md](docs/agent-guides/WIDGET-LIBRARY.md)         |
+| Plugin, sandbox capability, or contribution        | [PLUGIN-DEVELOPMENT.md](docs/agent-guides/PLUGIN-DEVELOPMENT.md) |
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 
@@ -70,11 +74,12 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Per-agent git actions:** `useGitAgentActions(session)` in `src/renderer/hooks/git/useGitAgentActions.ts` - the shared View Git Log / View Git Diff / Pull / Push / Change Branch / Create PR / Configure Worktrees set behind ALL THREE surfaces that offer it: the header branch pill dropdown, the Left Bar right-click menu, and the command palette (`buildGitWorktreeCommands`). Also exports `resolveGitCwd()` / `resolveGitSshRemoteId()`. Adding a git action means extending this hook and surfacing it in all three, not re-deriving cwd + SSH id + modal calls. See [REMAINING-SYSTEMS.md](docs/agent-guides/REMAINING-SYSTEMS.md#usegitagentactions-srcrendererhooksgitusegitagentactionsts).
 - **Focus an AI tab:** `aiTabFocusFields(tabId?)` in `src/renderer/utils/tabHelpers.ts` - spread into a session patch (`{ ...s, ...aiTabFocusFields(tabId) }`) to land on an AI tab. It clears `activeFileTabId`/`activeTerminalTabId`/`activeBrowserTabId` and sets `inputMode: 'ai'`. Do NOT hand-roll the literal: those non-AI tab types outrank the AI tab in the render precedence, so omitting even one leaves the previous view on screen.
 - **Focus a file tab:** `fileTabFocusFields(tabId)` in `src/renderer/utils/tabHelpers.ts` - the file-tab counterpart to the above. Clears the terminal and browser selections (both outrank the file tab) and sets `inputMode: 'ai'`.
-- **Audio/video playback:** exactly ONE player exists app-wide, owned by `MediaPlaybackHost` (`src/renderer/components/MediaPlayback/`), mounted once in `App.tsx`, NOT by `FilePreview`. It renders docked over the `MediaViewportSlot` that `FilePreview` puts in place of its content, or as the `FloatingMediaPlayer` widget when the owning tab is off screen. Do NOT move the element into the tab: `MainPanelContent` unmounts `FilePreview` on every tab/agent switch, and removing a media element from the document pauses it. Do NOT mount a second player to play two files at once - the single-player invariant is what makes overlapping audio impossible; `stepMediaTab()` navigates between open media tabs instead. Classify media with `getFileTabMediaKind()` in `src/renderer/utils/mediaTabs.ts`.
+- **Audio/video playback:** media NEVER becomes a file preview tab. `handleOpenFileTab()` (`src/renderer/hooks/tabs/internal/useFilePreviewTabHandlers.ts`) is the single choke point every open path funnels through, and it diverts playable media to `useMediaPlaybackStore.openMedia()` before a tab can be created. The only surface media appears on is `FloatingMediaPlayer` - there is no docked/in-panel placement, so do NOT add one. Exactly ONE player exists app-wide, owned by `MediaPlaybackHost` (`src/renderer/components/MediaPlayback/`), mounted once in `App.tsx` and never unmounted: anything rendered per-tab or per-agent is torn down on switch, and removing a media element from the document pauses it. Do NOT mount a second player to play two files at once - the single-player invariant is what makes overlapping audio impossible; `stepMediaItem()` walks the queue in open order and the history menu jumps by recency. Classify media with `getOpenedMediaKind()` in `src/renderer/utils/mediaItems.ts`. User docs: [media-player.md](docs/media-player.md).
 - **Run a shell command from the chat:** `runShellCommand()` / `cancelShellCommand()` / `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`. This is command mode (`!command` in the AI composer). Any new surface that runs a one-off command and shows its output in a transcript should reuse this rather than calling `window.maestro.process.runCommand` directly - the synthetic `{sessionId}-shell-{runId}` id is what keeps the output out of the agent listeners. See [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md#shellcommandts-200-lines).
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`. A `LogEntry` is either an open stream (coalesce consecutive chunks into it) or a self-contained card that owns its own text (`shellCommand`, `retryOutageId`, `recoveryAction`, `aiCommand`, `metadata.hiddenProgress`, `metadata.toolState`). Cards keep a NATURAL source - a `!` command's card is `source: 'stdout'` because its body really is terminal output - so **never gate coalescing on `source` alone**; that's how agent replies ended up rendered inside a command's output box. Adding a new card kind means adding its marker to `isSelfContainedCard`, which fixes every coalescing site at once.
 - **Command mode (`!`) is STATE, not a text prefix:** the live flag is `composerInputStore.aiCommandMode`, persisted per tab as `AITab.commandMode`. The bang is consumed on entry and never appears in the draft, so NEVER test the text for a leading `!` to detect the mode - a real command can contain bangs, and the draft won't start with one. The invariant: the same string is a shell command or an agent message depending only on this flag, so any path that persists or restores `inputValue` MUST carry `commandMode` with it (`syncAiInputToSession` reads it from the store itself so a caller can't forget). Helpers: `detectCommandModeEntry()` and `stripShellCommandEscape()` in `src/renderer/utils/shellCommandInput.ts`. See [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md#command-mode-is-state-not-a-text-prefix).
 - **Shell tab completion:** `useTabCompletion()` in `src/renderer/hooks/input/useTabCompletion.ts` serves BOTH the terminal composer and command mode, told apart by its third `commandMode` argument (the text can't say which - a command line looks the same either way). Terminal mode completes against `shellCwd` + `shellCommandHistory`; command mode completes against the project root + the bang-prefixed entries in `aiCommandHistory`, because a command-mode command runs at the agent's `cwd` regardless of where a terminal tab has `cd`-ed. Suggestion values are plain command lines in both cases. Add completion sources here, not in a parallel hook.
+- **Right-click menu on an image:** `useImageContextMenu()` in `src/renderer/hooks/ui/useImageContextMenu.ts` + `<ImageContextMenu>` in `src/renderer/components/ImageContextMenu.tsx`, backed by `copyImageElementToClipboard()` / `saveImageElementToDisk()` in `src/renderer/utils/imageExport.ts`. Covers raster `<img>` AND inline `<svg>` (mermaid included). Any surface that renders an image should offer the same Copy Image / Save Image pair through these instead of hand-rolling buttons. See [UI-PATTERNS.md → Right-Click Image Menu](docs/agent-guides/UI-PATTERNS.md#right-click-image-menu-imagecontextmenu--useimagecontextmenu).
 - **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)
 - **Modal / find-bar ESC pill:** `<EscCloseButton>` in `src/renderer/components/ui/EscCloseButton.tsx`. Every modal, palette, and find bar needs a graphical exit - Escape alone strands users on remote desktop and tablets. Pass an `onClose` that does exactly what the Escape handler does (extract it into a shared `useCallback` rather than duplicating the body). Do NOT hand-roll the `px-2 py-0.5 rounded text-xs font-bold` pill; the inert `<div>` version used to be copy-pasted in nine places. See [UI-PATTERNS.md → Every Modal Needs a Graphical Exit](docs/agent-guides/UI-PATTERNS.md#every-modal-needs-a-graphical-exit-escclosebutton).
 - **Dropdown/tooltip anchored to a header element:** `useAnchoredMenuPosition(menuRef, anchorRef)` in `src/renderer/hooks/ui/useAnchoredMenuPosition.ts`, rendered via `createPortal(..., document.body)`. Anything anchored inside the Main Panel header MUST use this. `absolute top-full` is silently clipped: the header wraps its left cluster in `overflow-hidden` boxes only as tall as the pill, which is how the git pill's hover card and the git status tooltip were both invisible for months. Bare `position: fixed` doesn't help either, because `.header-container` sets `container-type: inline-size` (implying `contain: layout`), making the header a containing block for fixed descendants. Since jsdom has no layout engine, a test asserting `toBeInTheDocument()` passes while the element is invisible - assert it is NOT a descendant of the header subtree instead.
@@ -166,12 +171,12 @@ This codebase uses **tabs for indentation**, not spaces. Always match existing f
 
 ### Writing Style: No Em-Dashes or En-Dashes
 
-**NEVER use em-dashes (`—`, U+2014) or en-dashes (`–`, U+2013) anywhere.** This applies to everything you write: user docs (`docs/`), in-app documentation, system prompts (`src/prompts/`), UI copy, code comments, commit messages, PR descriptions, and your own responses. Em-dashes are a tell-tale sign of bot-authored text; humans almost never type them. Use one of these instead, whichever fits the sentence:
+**NEVER use U+2014 (em dash) or U+2013 (en dash) anywhere.** This applies to everything you write: user docs (`docs/`), in-app documentation, system prompts (`src/prompts/`), UI copy, code comments, commit messages, PR descriptions, and your own responses. Em dashes are a tell-tale sign of bot-authored text; humans almost never type them. Use one of these instead, whichever fits the sentence:
 
 - A spaced hyphen (`-`) for an aside or appositive.
 - A comma, colon, or parentheses to set off a clause.
 - Two separate sentences when the clauses stand on their own.
-- A plain hyphen (`-`) for numeric ranges (e.g. `10-20`, not `10–20`).
+- A plain hyphen (`-`) for numeric ranges (e.g. `10-20`; do not use U+2013 for ranges).
 
 This is non-negotiable. If you catch an em-dash or en-dash in anything you produce or edit, replace it.
 

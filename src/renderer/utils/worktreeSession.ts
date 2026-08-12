@@ -29,7 +29,7 @@ export interface BuildWorktreeSessionParams {
 	gitRefsCacheTime?: number;
 	defaultSaveToHistory: boolean;
 	defaultShowThinking: ThinkingMode;
-	/** Legacy worktreeParentPath to inherit — presence triggers legacy mode. */
+	/** Legacy worktreeParentPath to inherit - presence triggers legacy mode. */
 	worktreeParentPath?: string;
 }
 

@@ -1,5 +1,5 @@
 /**
- * usePipelineState — Composition hook for the pipeline editor.
+ * usePipelineState - Composition hook for the pipeline editor.
  *
  * Owns the pipeline data (state + shared refs), dirty tracking, cueDirtyStore
  * sync, and the safety-net effect that resets a stale selectedPipelineId.
@@ -11,7 +11,7 @@
  *   - usePipelineMutations  → node/edge mutations scoped to selected pipeline
  *   - usePipelinePersistence → save / discard / validation
  *
- * Public return shape (`UsePipelineStateReturn`) is a load-bearing contract —
+ * Public return shape (`UsePipelineStateReturn`) is a load-bearing contract -
  * preserved byte-for-byte so existing consumers (CuePipelineEditor shell and
  * its tests) continue to compile without changes.
  */
@@ -65,7 +65,7 @@ export interface UsePipelineStateParams {
 	// Drawer toggles (selectPipeline closes drawers on null):
 	setTriggerDrawerOpen: (open: boolean) => void;
 	setAgentDrawerOpen: (open: boolean) => void;
-	/** Optional callback fired after a successful save — wired by CueModal to
+	/** Optional callback fired after a successful save - wired by CueModal to
 	 *  refresh dashboard graph data so saved state is visible immediately. */
 	onSaveSuccess?: () => void;
 }
@@ -95,7 +95,7 @@ export interface UsePipelineStateReturn {
 	/**
 	 * Per-pipeline set of exact subscription names that currently have at
 	 * least one active run. Used to animate ONLY the trigger node whose
-	 * subscription actually fired — rather than every trigger in a pipeline
+	 * subscription actually fired - rather than every trigger in a pipeline
 	 * where any sub is running.
 	 *
 	 * Key: `pipeline.id`. Value: set of full `subscriptionName` strings
@@ -111,7 +111,7 @@ export interface UsePipelineStateReturn {
 	 *
 	 * Unioned into `runningPipelineIds` and (per-sub) into
 	 * `runningSubscriptionsByPipeline` so existing UI consumers light up
-	 * automatically — callers don't need a parallel branch.
+	 * automatically - callers don't need a parallel branch.
 	 */
 	optimisticTriggeredPipelineIds: Set<string>;
 	/** Mark a pipeline as just-triggered to drive the optimistic-window UI. */
@@ -164,7 +164,7 @@ export function usePipelineState({
 		selectedPipelineId: null,
 	});
 	// Mirror of pipelineState.pipelines updated during render so handleSave can
-	// read the latest value after flushing debounced edits — React's setState
+	// read the latest value after flushing debounced edits - React's setState
 	// from a flush callback is batched and NOT visible in handleSave's closure,
 	// so reading through this ref after yielding to the microtask queue is the
 	// only way to observe the freshly-flushed prompt writes in the save path.
@@ -224,7 +224,7 @@ export function usePipelineState({
 	// returns a new object identity every render, so adding it to deps (which
 	// we previously did, to reach `setValidationErrors`) caused this effect to
 	// fire on every re-render. The moment `handleSave` surfaced validation
-	// errors, the resulting re-render immediately wiped them — the banner
+	// errors, the resulting re-render immediately wiped them - the banner
 	// flashed for one frame and was gone. Errors are re-computed on the next
 	// save attempt; leaving them visible until then is the intended UX.
 	useEffect(() => {
@@ -242,7 +242,7 @@ export function usePipelineState({
 	// Safety net: if `selectedPipelineId` ever points at a pipeline that no
 	// longer exists in `pipelines`, reset to "All Pipelines" so the canvas
 	// stays populated. This was the user-visible "pipeline vanished after
-	// save" symptom — `convertToReactFlowNodes` skips every pipeline whose id
+	// save" symptom - `convertToReactFlowNodes` skips every pipeline whose id
 	// doesn't match the selected id, so a stale selection caused the entire
 	// canvas to render empty until the editor was remounted (tab switch).
 	//
@@ -356,7 +356,7 @@ export function usePipelineState({
 
 	// Per-pipeline set of exact subscription names with active runs. Used by
 	// `convertToReactFlowNodes` to animate only the trigger node whose
-	// subscription fired — not every trigger in a multi-trigger pipeline
+	// subscription fired - not every trigger in a multi-trigger pipeline
 	// when any sub is running. We store the FULL subscription name (e.g.
 	// "Pipeline 1-chain-2") so trigger nodes can match exactly via their
 	// own `subscriptionName` field (populated by yamlToPipeline on load).

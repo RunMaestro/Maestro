@@ -260,7 +260,7 @@ export interface UseInlineWizardReturn {
 	) => Promise<void>;
 	/**
 	 * End the wizard and restore previous UI state.
-	 * @param explicitTabId - Optional tab ID to end. Pass when the caller knows which tab to evict —
+	 * @param explicitTabId - Optional tab ID to end. Pass when the caller knows which tab to evict -
 	 *   the hook's internal currentTabId only tracks the last-touched wizard, so closing a non-active
 	 *   wizard tab (e.g. via the tab strip's X button) without this leaves a stale tabStates entry
 	 *   that keeps the Left Bar wand indicator stuck on.
@@ -272,7 +272,7 @@ export interface UseInlineWizardReturn {
 	 * @param images - Optional base64-encoded image data URLs to attach
 	 * @param callbacks - Optional callbacks for streaming progress
 	 * @param explicitTabId - Optional tab ID to send to. Pass when multiple wizards may be active
-	 *   concurrently and the caller knows which tab is in focus — the hook's internal currentTabId
+	 *   concurrently and the caller knows which tab is in focus - the hook's internal currentTabId
 	 *   only tracks the last-touched wizard, so without this the message can land on the wrong tab.
 	 */
 	sendMessage: (
@@ -597,7 +597,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 			try {
 				// Step 0: Fetch history file path for task recall (if session ID is available)
-				// Skip for SSH sessions — the local path is unreachable from the remote host
+				// Skip for SSH sessions - the local path is unreachable from the remote host
 				let historyFilePath: string | undefined;
 				const isSSH = sessionSshRemoteConfig?.enabled;
 				if (sessionId && !isSSH) {
@@ -749,7 +749,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 	 */
 	const endWizard = useCallback(
 		async (explicitTabId?: string): Promise<PreviousUIState | null> => {
-			// Prefer an explicit tab id from the caller — currentTabId tracks the last-touched wizard
+			// Prefer an explicit tab id from the caller - currentTabId tracks the last-touched wizard
 			// and can point at the wrong tab when a non-active wizard is being closed (tab strip X).
 			const tabId = explicitTabId || currentTabId || 'default';
 
@@ -769,7 +769,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				return newMap;
 			});
 
-			// Clean up conversation session for this tab (async — kills underlying process)
+			// Clean up conversation session for this tab (async - kills underlying process)
 			const session = conversationSessionsMap.current.get(tabId);
 			if (session) {
 				try {
@@ -801,7 +801,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			callbacks?: ConversationCallbacks,
 			explicitTabId?: string
 		): Promise<void> => {
-			// Prefer the caller's explicit tabId — currentTabId only tracks the last-touched wizard
+			// Prefer the caller's explicit tabId - currentTabId only tracks the last-touched wizard
 			// and goes stale when multiple wizards run concurrently across tabs.
 			const tabId = explicitTabId || currentTabId || 'default';
 			if (tabId !== currentTabId) {
@@ -1317,7 +1317,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				// Call the document generation service with the effective Auto Run folder path.
 				// Prefer the AI-extracted project name from the conversation so the playbook
 				// folder reflects the feature (e.g. "HTML Chat Interface") rather than the
-				// agent's tab name (e.g. "rc" — typically a worktree/branch identifier).
+				// agent's tab name (e.g. "rc" - typically a worktree/branch identifier).
 				const projectNameForGeneration =
 					currentState.extractedProjectName?.trim() || currentState.sessionName || 'Project';
 				const result = await generateInlineDocuments({

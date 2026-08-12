@@ -1,6 +1,6 @@
 /**
  * Tests for the shared lazy-Shiki observer factory. Both markdownFast and
- * textFast tier highlighters delegate to this module — testing it directly
+ * textFast tier highlighters delegate to this module - testing it directly
  * keeps regression coverage in one place while the tier-specific tests stay
  * thin smoke tests of the wrapper contract.
  */
@@ -196,7 +196,7 @@ describe('createLazyShikiObserver', () => {
 		handle.observe(root);
 		FakeIntersectionObserver.instances[0].trigger([root.querySelector('code')!]);
 		// Yield one tick so any spurious continuation could flush. Negative
-		// assertion — use setTimeout(0), NOT vi.waitFor (which would succeed
+		// assertion - use setTimeout(0), NOT vi.waitFor (which would succeed
 		// immediately since the innerHTML never changed).
 		await new Promise((r) => setTimeout(r, 0));
 		expect(root.querySelector('code')!.innerHTML).toBe('+++');
@@ -218,7 +218,7 @@ describe('createLazyShikiObserver', () => {
 		const originalIO = (
 			globalThis as typeof globalThis & { IntersectionObserver: typeof IntersectionObserver }
 		).IntersectionObserver;
-		// @ts-expect-error — simulate old environment.
+		// @ts-expect-error - simulate old environment.
 		delete globalThis.IntersectionObserver;
 		try {
 			const root = makeRoot('<pre><code class="language-ts">x</code></pre>');

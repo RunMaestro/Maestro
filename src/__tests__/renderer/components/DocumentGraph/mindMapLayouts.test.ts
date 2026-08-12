@@ -567,7 +567,7 @@ describe('mindMapLayouts', () => {
 			);
 			const siblings = result.nodes.filter((n) => n.id !== 'center');
 			const ys = new Set(siblings.map((n) => n.y));
-			// Star graph has all neighbors at depth 1 — they should share a single row Y.
+			// Star graph has all neighbors at depth 1 - they should share a single row Y.
 			expect(ys.size).toBe(1);
 		});
 	});

@@ -1,5 +1,5 @@
 /**
- * Tests for shared/retryClassification.ts — Agent Resilience retry strategy.
+ * Tests for shared/retryClassification.ts - Agent Resilience retry strategy.
  */
 
 import { describe, it, expect } from 'vitest';

@@ -1,5 +1,5 @@
 /**
- * usePromptComposerHandlers — extracted from App.tsx
+ * usePromptComposerHandlers - extracted from App.tsx
  *
  * Provides stable callbacks for the Prompt Composer modal:
  *   - Submit/send to AI or group chat

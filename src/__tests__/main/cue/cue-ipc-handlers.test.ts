@@ -395,7 +395,7 @@ describe('Cue IPC Handlers', () => {
 
 		it('adds fan_out_prompt_files entries to the prune keep-set', async () => {
 			// Regression guard: without this, per-agent fan-out prompt files
-			// would be deleted by pruneOrphanedPromptFiles on every save —
+			// would be deleted by pruneOrphanedPromptFiles on every save -
 			// only `prompt_file` and `output_prompt_file` were kept.
 			vi.mocked(yaml.load).mockReturnValue({
 				subscriptions: [
@@ -452,11 +452,11 @@ describe('Cue IPC Handlers', () => {
 
 		// Security-hardening tests: reject malformed prompt-file keys that
 		// could write outside the .maestro/prompts/ directory. The handler
-		// validates and throws synchronously from inside the async callback —
+		// validates and throws synchronously from inside the async callback -
 		// vi.mock's `withIpcErrorLogging` preserves the rejection.
 		//
 		// Every negative case must also assert that writeCueConfigFile was
-		// NOT called — rejecting the promptFile loop must abort the whole
+		// NOT called - rejecting the promptFile loop must abort the whole
 		// save, otherwise the YAML would land on disk while referencing a
 		// prompt file that was never written.
 		describe('prompt-file path hardening', () => {
@@ -526,7 +526,7 @@ describe('Cue IPC Handlers', () => {
 			});
 
 			it('rejects paths with mixed-in parent segments that pre-normalize to a valid location', async () => {
-				// 'prompts/../../escape.md' — .split('/') catches the '..'
+				// 'prompts/../../escape.md' - .split('/') catches the '..'
 				// segment before path.resolve normalizes it away.
 				const handler = registerAndGetHandler('cue:writeYaml');
 				await expect(
@@ -593,14 +593,14 @@ describe('Cue IPC Handlers', () => {
 
 		it('prunes all .md prompt files and removes the empty prompts dir', async () => {
 			// The "Remove Cue configuration" button must collapse the project's
-			// `.maestro` footprint — deleting the yaml alone used to leave
+			// `.maestro` footprint - deleting the yaml alone used to leave
 			// orphaned prompt files behind forever.
 			vi.mocked(deleteCueConfigFile).mockReturnValue(true);
 
 			const handler = registerAndGetHandler('cue:deleteYaml');
 			await handler(null, { projectRoot: '/projects/test' });
 
-			// Keep-set is empty — everything in .maestro/prompts/ is orphaned.
+			// Keep-set is empty - everything in .maestro/prompts/ is orphaned.
 			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
 			// Then collapse the now-empty prompts directory, then .maestro/ itself.
 			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');

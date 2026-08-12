@@ -138,7 +138,7 @@ describe('useContextWindow', () => {
 			const { unmount } = renderHook(() => useContextWindow(session, null));
 			unmount();
 
-			// Advance past the async delay — should not throw or set state after unmount
+			// Advance past the async delay - should not throw or set state after unmount
 			await vi.advanceTimersByTimeAsync(150);
 		} finally {
 			vi.useRealTimers();

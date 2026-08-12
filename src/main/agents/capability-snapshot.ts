@@ -48,7 +48,7 @@ export { SNAPSHOT_UPDATED_CHANNEL, type SnapshotUpdatedPayload };
 /** Broadcaster fn: usually `safeSend.bind(null, SNAPSHOT_UPDATED_CHANNEL)`. */
 export type SnapshotBroadcaster = (payload: SnapshotUpdatedPayload) => void;
 
-/** Minimal store contract — narrower than electron-store so tests can fake it. */
+/** Minimal store contract - narrower than electron-store so tests can fake it. */
 export interface SnapshotStoreLike {
 	get<K extends keyof AgentCapabilitiesData>(
 		key: K,
@@ -85,7 +85,7 @@ export class CapabilitySnapshotManager {
 		}
 	}
 
-	/** For tests only — drop all state so each test starts clean. */
+	/** For tests only - drop all state so each test starts clean. */
 	__resetForTests(): void {
 		this.store = null;
 		this.broadcaster = null;
@@ -97,7 +97,7 @@ export class CapabilitySnapshotManager {
 		return this.cache[buildSnapshotKey(agentId, remoteId)];
 	}
 
-	/** Read every known snapshot — used for hydrating the renderer at startup. */
+	/** Read every known snapshot - used for hydrating the renderer at startup. */
 	getAll(): AgentCapabilitiesSnapshotMap {
 		return { ...this.cache };
 	}
@@ -124,7 +124,7 @@ export class CapabilitySnapshotManager {
 
 	/** Binary wasn't on PATH and no usable custom path. */
 	markNotInstalled(agentId: string, remoteId?: string | null): AgentCapabilitiesSnapshot {
-		// Wipe path/version/models from a previous `ok` snapshot — otherwise
+		// Wipe path/version/models from a previous `ok` snapshot - otherwise
 		// the UI would show a stale binary path beneath the red pill.
 		return this.write(
 			agentId,
@@ -164,7 +164,7 @@ export class CapabilitySnapshotManager {
 	}
 
 	/**
-	 * Transient — used by `reprobe` so the UI can show a spinner.
+	 * Transient - used by `reprobe` so the UI can show a spinner.
 	 * Intentionally does NOT persist: if the app exits mid-probe we never
 	 * want to hydrate a stuck `probing` pill on next launch.
 	 */
@@ -199,7 +199,7 @@ export class CapabilitySnapshotManager {
 		try {
 			this.store.set('snapshots', this.cache);
 		} catch (err) {
-			// Persistence failure is non-fatal — the in-memory cache still serves
+			// Persistence failure is non-fatal - the in-memory cache still serves
 			// the current process. Log so disk errors are visible.
 			logger.warn('Failed to persist agent capability snapshots', LOG_CONTEXT, {
 				error: String(err),

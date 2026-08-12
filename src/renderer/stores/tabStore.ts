@@ -4,10 +4,10 @@
  * Tab DATA (aiTabs, filePreviewTabs, unifiedTabOrder, etc.) lives inside Session
  * objects in sessionStore. This store provides:
  *
- * 1. Tab operation actions — wrap tabHelpers.ts pure functions + sessionStore mutations,
+ * 1. Tab operation actions - wrap tabHelpers.ts pure functions + sessionStore mutations,
  *    replacing ~43 callbacks currently threaded through App.tsx props
- * 2. Tab-specific UI state — gist content/URLs (the only tab state still in App.tsx)
- * 3. Selectors — derived tab state (activeTab, activeFileTab, unifiedTabs)
+ * 2. Tab-specific UI state - gist content/URLs (the only tab state still in App.tsx)
+ * 3. Selectors - derived tab state (activeTab, activeFileTab, unifiedTabs)
  *
  * Why tab data stays in sessionStore:
  * - Tab arrays are deeply embedded in the Session type (200+ call sites)
@@ -357,8 +357,6 @@ export interface TabStoreActions {
 	setFileTabHtmlRenderMode: (tabId: string, value: boolean) => void;
 	/** Clear the transient deep-link line jump after FilePreview has consumed it. */
 	clearFileTabPendingScrollToLine: (tabId: string) => void;
-	/** Clear the one-shot media autoplay request once the player has acted on it. */
-	clearFileTabAutoplayMedia: (tabId: string) => void;
 }
 
 export type TabStore = TabStoreState & TabStoreActions;
@@ -578,7 +576,8 @@ export const useTabStore = create<TabStore>()((set) => ({
 	unsnoozeTab: (sessionId, snoozeId) => {
 		const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 		if (!session) return null;
-		const result = wakeSnoozedTabHelper(session, snoozeId);
+		// 'unsnoozed': the user pulled this back early rather than it coming due.
+		const result = wakeSnoozedTabHelper(session, snoozeId, 'unsnoozed');
 		if (!result) return null;
 		updateSessionWith(sessionId, () => result.session);
 		return result;
@@ -740,6 +739,4 @@ export const useTabStore = create<TabStore>()((set) => ({
 	setFileTabHtmlRenderMode: (tabId, value) => updateFileTab(tabId, { htmlRenderMode: value }),
 	clearFileTabPendingScrollToLine: (tabId) =>
 		updateFileTab(tabId, { pendingScrollToLine: undefined }),
-
-	clearFileTabAutoplayMedia: (tabId) => updateFileTab(tabId, { autoplayMedia: undefined }),
 }));

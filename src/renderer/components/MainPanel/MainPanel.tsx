@@ -223,6 +223,24 @@ export const MainPanel = React.memo(
 		);
 		const activeTabError = activeTab?.agentError;
 
+		// Whether the agent has any tab at all. An agent is allowed to have zero AI
+		// tabs as long as some other tab kind is still open, so the tab strip has to
+		// key off the union rather than aiTabs alone.
+		const hasAnyTab = useMemo(
+			() =>
+				(activeSession?.aiTabs?.length ?? 0) +
+					(activeSession?.filePreviewTabs?.length ?? 0) +
+					(activeSession?.terminalTabs?.length ?? 0) +
+					(activeSession?.browserTabs?.length ?? 0) >
+				0,
+			[
+				activeSession?.aiTabs,
+				activeSession?.filePreviewTabs,
+				activeSession?.terminalTabs,
+				activeSession?.browserTabs,
+			]
+		);
+
 		// SSH remote name for header display
 		const sshRemoteName = useSshRemoteName(
 			activeSession?.sessionSshRemoteConfig?.enabled,
@@ -263,7 +281,7 @@ export const MainPanel = React.memo(
 		);
 
 		// Fetch available models, effort levels, and agent defaults when agent type changes.
-		// Uses a stale flag to prevent race conditions when switching between agents —
+		// Uses a stale flag to prevent race conditions when switching between agents -
 		// without this, a slow response (e.g., `opencode models` subprocess) from the
 		// previous agent can overwrite the current agent's model list.
 		useEffect(() => {
@@ -280,7 +298,7 @@ export const MainPanel = React.memo(
 					if (!stale) setPillModels([]);
 				});
 			// Fetch effort options. Agents use either `effort` (Claude Code) or
-			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) — probe both
+			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both
 			// and use whichever the agent defines, so this stays correct as new
 			// agents are added without touching this file.
 			Promise.all([
@@ -449,7 +467,7 @@ export const MainPanel = React.memo(
 					tabElement.focus({ preventScroll: true });
 				},
 				reloadBrowserTab: () => {
-					// Same stale-closure caveat as `focusBrowserAddressBar` — read fresh.
+					// Same stale-closure caveat as `focusBrowserAddressBar` - read fresh.
 					const session = selectActiveSession(useSessionStore.getState());
 					if (!session?.activeBrowserTabId) return;
 					const host = document.querySelector('[data-testid="browser-tab-host"]');
@@ -499,7 +517,7 @@ export const MainPanel = React.memo(
 			[refreshGitStatus, activeSession?.id]
 		);
 
-		// Terminal buffer action wrappers — resolve the terminal tab's scrollback to text,
+		// Terminal buffer action wrappers - resolve the terminal tab's scrollback to text,
 		// then delegate to the App-level text handlers (copy / gist / send to agent).
 		const resolveBuffer = useCallback(
 			(tabId: string): { content: string; displayName: string } | null => {
@@ -553,7 +571,7 @@ export const MainPanel = React.memo(
 			[props.onCopyText]
 		);
 
-		// Right-click "Send to Agent" on highlighted text — resolve the tab's display name
+		// Right-click "Send to Agent" on highlighted text - resolve the tab's display name
 		// so the Send-to-Agent modal shows e.g. "Terminal 2 Selection" as the source.
 		const handleSendTerminalSelectionToAgent = useCallback(
 			(tabId: string, text: string) => {
@@ -568,7 +586,7 @@ export const MainPanel = React.memo(
 			[activeSession, props.onSendTextToAgent]
 		);
 
-		// Browser content action wrappers — extract the rendered text of a browser tab
+		// Browser content action wrappers - extract the rendered text of a browser tab
 		// (activating it first if necessary) and delegate to the App-level text handlers.
 		const resolveBrowserContent = useCallback(
 			async (
@@ -695,7 +713,7 @@ export const MainPanel = React.memo(
 				setGitDiffPreview(diff.diff);
 			} else {
 				notifyCenterFlash({ message: 'No diff to examine', color: 'theme' });
-				// Polling cache said there were changes but `git diff` is empty —
+				// Polling cache said there were changes but `git diff` is empty -
 				// repo state changed since the last poll. Re-sync so the widget
 				// stops advertising stale stats.
 				void refreshGitStatus();
@@ -832,80 +850,79 @@ export const MainPanel = React.memo(
 							/>
 						)}
 
-						{/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */}
-						{activeSession.aiTabs &&
-							activeSession.aiTabs.length > 0 &&
-							onTabSelect &&
-							onTabClose &&
-							onNewTab && (
-								<TabBar
-									tabs={activeSession.aiTabs}
-									activeTabId={activeSession.activeTabId}
-									theme={theme}
-									sessionId={activeSession.id}
-									sessionAgentSessionId={activeSession.agentSessionId}
-									onTabSelect={onTabSelect}
-									onTabClose={onTabClose}
-									onNewTab={onNewTab}
-									onRequestRename={onRequestTabRename}
-									onTabReorder={onTabReorder}
-									onUnifiedTabReorder={onUnifiedTabReorder}
-									onTabStar={onTabStar}
-									onTabMarkUnread={onTabMarkUnread}
-									onMergeWith={onMergeWith}
-									onSendToAgent={onSendToAgent}
-									onSummarizeAndContinue={onSummarizeAndContinue}
-									onCopyContext={onCopyContext}
-									onExportHtml={onExportHtml}
-									onSnooze={handleOpenSnooze}
-									onPublishGist={props.onPublishTabGist}
-									ghCliAvailable={props.ghCliAvailable}
-									showUnreadOnly={showUnreadOnly}
-									onToggleUnreadFilter={onToggleUnreadFilter}
-									onOpenTabSearch={onOpenTabSearch}
-									onOpenOutputSearch={onOpenOutputSearch}
-									onOpenCrossTabSearch={onOpenCrossTabSearch}
-									onCloseAllTabs={onCloseAllTabs}
-									onCloseOtherTabs={onCloseOtherTabs}
-									onCloseTabsLeft={onCloseTabsLeft}
-									onCloseTabsRight={onCloseTabsRight}
-									// Unified tab system props (Phase 4)
-									unifiedTabs={unifiedTabs}
-									activeFileTabId={activeFileTabId}
-									activeBrowserTabId={activeBrowserTabId}
-									onFileTabSelect={onFileTabSelect}
-									onFileTabClose={onFileTabClose}
-									onNewFileTab={onNewFileTab}
-									onNewBrowserTab={onNewBrowserTab}
-									onBrowserTabSelect={onBrowserTabSelect}
-									onBrowserTabClose={onBrowserTabClose}
-									onBrowserTabRename={onBrowserTabRename}
-									onBrowserTabResetName={onBrowserTabResetName}
-									// Terminal tab props (Phase 8)
-									onNewTerminalTab={onNewTerminalTab}
-									activeTerminalTabId={activeSession.activeTerminalTabId}
-									inputMode={activeSession.inputMode}
-									onTerminalTabSelect={onTerminalTabSelect}
-									onTerminalTabClose={onTerminalTabClose}
-									onTerminalTabRename={onTerminalTabRename}
-									onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
-									onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
-									onPublishTerminalBufferGist={
-										props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
-									}
-									onSendTerminalBufferToAgent={
-										props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
-									}
-									onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
-									onSendBrowserContentToAgent={
-										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
-									}
-									// Accessibility
-									colorBlindMode={colorBlindMode}
-									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
-									sshRemote={Boolean(filePreviewSshRemoteId)}
-								/>
-							)}
+						{/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
+						    An agent can sit at zero AI tabs while terminal/file/browser tabs are
+						    open, so gating this on aiTabs alone would hide the whole strip (and
+						    the "+" button) and strand the user in whatever view was last active. */}
+						{hasAnyTab && onTabSelect && onTabClose && onNewTab && (
+							<TabBar
+								tabs={activeSession.aiTabs}
+								activeTabId={activeSession.activeTabId}
+								theme={theme}
+								sessionId={activeSession.id}
+								sessionAgentSessionId={activeSession.agentSessionId}
+								onTabSelect={onTabSelect}
+								onTabClose={onTabClose}
+								onNewTab={onNewTab}
+								onRequestRename={onRequestTabRename}
+								onTabReorder={onTabReorder}
+								onUnifiedTabReorder={onUnifiedTabReorder}
+								onTabStar={onTabStar}
+								onTabMarkUnread={onTabMarkUnread}
+								onMergeWith={onMergeWith}
+								onSendToAgent={onSendToAgent}
+								onSummarizeAndContinue={onSummarizeAndContinue}
+								onCopyContext={onCopyContext}
+								onExportHtml={onExportHtml}
+								onSnooze={handleOpenSnooze}
+								onPublishGist={props.onPublishTabGist}
+								ghCliAvailable={props.ghCliAvailable}
+								showUnreadOnly={showUnreadOnly}
+								onToggleUnreadFilter={onToggleUnreadFilter}
+								onOpenTabSearch={onOpenTabSearch}
+								onOpenOutputSearch={onOpenOutputSearch}
+								onOpenCrossTabSearch={onOpenCrossTabSearch}
+								onCloseAllTabs={onCloseAllTabs}
+								onCloseOtherTabs={onCloseOtherTabs}
+								onCloseTabsLeft={onCloseTabsLeft}
+								onCloseTabsRight={onCloseTabsRight}
+								// Unified tab system props (Phase 4)
+								unifiedTabs={unifiedTabs}
+								activeFileTabId={activeFileTabId}
+								activeBrowserTabId={activeBrowserTabId}
+								onFileTabSelect={onFileTabSelect}
+								onFileTabClose={onFileTabClose}
+								onNewFileTab={onNewFileTab}
+								onNewBrowserTab={onNewBrowserTab}
+								onBrowserTabSelect={onBrowserTabSelect}
+								onBrowserTabClose={onBrowserTabClose}
+								onBrowserTabRename={onBrowserTabRename}
+								onBrowserTabResetName={onBrowserTabResetName}
+								// Terminal tab props (Phase 8)
+								onNewTerminalTab={onNewTerminalTab}
+								activeTerminalTabId={activeSession.activeTerminalTabId}
+								inputMode={activeSession.inputMode}
+								onTerminalTabSelect={onTerminalTabSelect}
+								onTerminalTabClose={onTerminalTabClose}
+								onTerminalTabRename={onTerminalTabRename}
+								onTerminalTabConfigureStartupCommand={onTerminalTabConfigureStartupCommand}
+								onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
+								onPublishTerminalBufferGist={
+									props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
+								}
+								onSendTerminalBufferToAgent={
+									props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
+								}
+								onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
+								onSendBrowserContentToAgent={
+									props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
+								}
+								// Accessibility
+								colorBlindMode={colorBlindMode}
+								// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH
+								sshRemote={Boolean(filePreviewSshRemoteId)}
+							/>
+						)}
 
 						{/* Agent Error Banner */}
 						{activeTabError && (

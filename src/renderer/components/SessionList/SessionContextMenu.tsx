@@ -23,6 +23,8 @@ import {
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
+import { GitChangeCounts } from '../ui/GitChangeCounts';
+import { formatGitChangeSummary } from '../../../shared/gitUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 
@@ -356,12 +358,22 @@ export function SessionContextMenu({
 							void gitActions.viewDiff();
 							onDismiss();
 						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-4"
 						style={{ color: theme.colors.textMain }}
 						data-testid="session-context-git-diff"
+						title={formatGitChangeSummary(gitActions.changes)}
 					>
-						<FileDiff className="w-3.5 h-3.5" />
-						View Git Diff
+						<span className="flex items-center gap-2">
+							<FileDiff className="w-3.5 h-3.5" />
+							View Git Diff
+						</span>
+						{/* Same badge language as the ahead/behind counts below: the row
+						    itself says whether there is anything to open. */}
+						<GitChangeCounts
+							theme={theme}
+							totals={gitActions.changes}
+							className="flex items-center gap-1.5 text-[10px]"
+						/>
 					</button>
 					<button
 						type="button"

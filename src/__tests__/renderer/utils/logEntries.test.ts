@@ -40,6 +40,16 @@ describe('isSelfContainedCard', () => {
 		['custom AI command chip', { aiCommand: { command: '/commit', description: 'commit' } }],
 		['hidden progress placeholder', { metadata: { hiddenProgress: { kind: 'tool' as const } } }],
 		['tool call card', { metadata: { toolState: { status: 'running' as const } } }],
+		[
+			'back-from-snooze card',
+			{
+				snoozeReturn: {
+					snoozedAt: 1,
+					wakeAt: 2,
+					resolution: 'woke' as const,
+				},
+			},
+		],
 	])('is true for a %s', (_label, overrides) => {
 		expect(isSelfContainedCard(entry(overrides as Partial<LogEntry>))).toBe(true);
 	});
@@ -89,6 +99,12 @@ describe('canAppendToLogEntry', () => {
 			entry({ source: 'stdout', shellCommand: { command: 'ls', cwd: '/', status: 'finished' } }),
 			entry({ source: 'stdout', retryOutageId: 'o1' }),
 			entry({ source: 'stderr', metadata: { toolState: { status: 'error' } } }),
+			// A system-source card: the snooze marker shares its source with plain
+			// system chatter, so only the marker can tell them apart.
+			entry({
+				source: 'system',
+				snoozeReturn: { snoozedAt: 1, wakeAt: 2, resolution: 'woke' },
+			}),
 		];
 
 		for (const card of cards) {

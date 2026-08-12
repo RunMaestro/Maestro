@@ -13,7 +13,7 @@
  * passed to addEventListener was later passed to removeEventListener with
  * matching identity. Per DOM spec, only the `capture` flag from the options
  * bag (or the legacy boolean `useCapture`) participates in listener identity
- * — `passive`, `once`, `signal` do not. Anonymous-handler leaks are caught
+ * - `passive`, `once`, `signal` do not. Anonymous-handler leaks are caught
  * because we compare listener references by identity, not by name.
  */
 
@@ -65,11 +65,11 @@ function getCaptureFlag(options: unknown): boolean {
  * Throw if any (eventType, listener, capture) triple added via
  * addEventListener was not later passed to removeEventListener with matching
  * identity. A listener registered with `{ capture: true }` and removed
- * without options is correctly reported as a leak — the spec treats those
+ * without options is correctly reported as a leak - the spec treats those
  * as two different listener registrations.
  *
  * If the same triple was added more than once (rare but legal), each add
- * needs a matching remove — this is a count-aware multiset comparison.
+ * needs a matching remove - this is a count-aware multiset comparison.
  */
 export function expectAllListenersRemoved(
 	addSpy: AddListenerSpy,

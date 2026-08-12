@@ -19,7 +19,7 @@ export async function safeClipboardWrite(text: string): Promise<boolean> {
 		return true;
 	} catch {
 		// NotAllowedError when document not focused, or other clipboard failures.
-		// Not actionable — the user can retry when the window is focused.
+		// Not actionable - the user can retry when the window is focused.
 		return false;
 	}
 }
