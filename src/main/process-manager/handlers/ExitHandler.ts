@@ -95,6 +95,23 @@ export class ExitHandler {
 		// with (not the stale planning narration our parent saw last).
 		await this.awaitCopilotShutdown(sessionId, managedProcess);
 
+		// THE guard. This await is the only suspension point in handleExit, so it
+		// is the only place a replacement can claim the session id mid-flight -
+		// which makes right here the earliest point the question can be asked, and
+		// the only one that covers everything downstream. Every step below emits
+		// into shared per-session state (batch-mode result text, the stream-json
+		// remainder, the streamedText fallback, usage, agent-error, query-complete,
+		// the final flush, exit), so a guard placed any lower silently lets some of
+		// this process's output land in the successor's turn.
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing all exit side effects',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
+
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
 			this.handleBatchModeExit(sessionId, managedProcess);
@@ -230,25 +247,6 @@ export class ExitHandler {
 		// Clean up temp image files if any
 		if (managedProcess.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
 			cleanupTempFiles(managedProcess.tempImageFiles);
-		}
-
-		// `awaitCopilotShutdown` above can park this handler for SECONDS. A
-		// replacement can claim this session id inside that window, and from here
-		// on every remaining step writes into shared per-session state:
-		// `query-complete` settles a turn, `flushDataBuffer` pushes buffered bytes
-		// into the session's stream, and `exit` + `delete` settle and untrack it.
-		//
-		// Suppressing only the final emit would still let this process's buffered
-		// output appear inside the successor's reply and would still record its
-		// duration against the successor's turn. So the check runs BEFORE the
-		// side effects, not just before the emit.
-		if (this.isSuperseded(sessionId, managedProcess)) {
-			logger.warn(
-				'[ProcessManager] Session re-spawned during exit handling, suppressing exit side effects',
-				'ProcessManager',
-				{ sessionId, code }
-			);
-			return;
 		}
 
 		// Emit query-complete event for batch mode processes (for stats tracking)
