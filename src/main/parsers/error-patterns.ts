@@ -384,7 +384,7 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 			// prompt identically and the session is unusable (issue #307).
 			// Classify as session_not_found: the stored provider session is dead,
 			// and retrying it can never succeed - only a fresh session can.
-			pattern: /request contains an invalid argument|\bINVALID_ARGUMENT\b/i,
+			pattern: /\brequest contains an invalid argument\b/i,
 			message:
 				'The provider rejected this conversation (400 INVALID_ARGUMENT). The stored session history is unusable - start a new session to continue.',
 			recoverable: true,

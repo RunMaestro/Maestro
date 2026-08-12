@@ -185,6 +185,19 @@ describe('error-patterns', () => {
 					expect(result).toBeNull();
 				}
 			});
+
+			// Regression: a bare INVALID_ARGUMENT status describes any rejected
+			// request, not just a corrupted stored session - e.g. an invalid model
+			// id. Classifying every occurrence as session_not_found would tell the
+			// user to abandon their conversation for a problem a fresh session
+			// can't fix, since the same bad model id fails identically again.
+			it('should NOT match an unrelated INVALID_ARGUMENT caused by something other than a dead session', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'{ "error": { "code": 400, "message": "Model \'foo-bar\' is not a valid model", "status": "INVALID_ARGUMENT" } }'
+				);
+				expect(result).toBeNull();
+			});
 		});
 	});
 
