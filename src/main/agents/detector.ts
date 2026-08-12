@@ -204,9 +204,22 @@ export class AgentDetector {
 					const found = await findAllBinaryPaths(agentDef.binaryName);
 					// Always include the active path (custom or detected) so the
 					// chooser reflects what is currently in use, even if it isn't
-					// one of the auto-probed locations.
+					// one of the auto-probed locations. Compared by canonical path, not
+					// raw string, so a symlink alias (or a Windows casing difference)
+					// that resolves to an entry already in `found` doesn't show up as a
+					// second, phantom install.
 					const active = detection.path;
-					const merged = active && !found.includes(active) ? [active, ...found] : found;
+					let isActiveAlreadyFound = false;
+					if (active) {
+						const normalize = async (p: string): Promise<string> => {
+							const resolved = await fs.promises.realpath(p).catch(() => p);
+							return isWindows() ? resolved.toLowerCase() : resolved;
+						};
+						const activeKey = await normalize(active);
+						const foundKeys = await Promise.all(found.map(normalize));
+						isActiveAlreadyFound = foundKeys.includes(activeKey);
+					}
+					const merged = active && !isActiveAlreadyFound ? [active, ...found] : found;
 					if (merged.length > 1) {
 						allPaths = merged;
 					}

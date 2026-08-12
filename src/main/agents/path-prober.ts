@@ -26,6 +26,9 @@ import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = 'PathProber';
 
+/** Bound on the `which -a` / `where` lookup in {@link findAllBinaryPaths}. */
+const WHICH_LOOKUP_TIMEOUT_MS = 5000;
+
 // ============ Types ============
 
 export interface BinaryDetectionResult {
@@ -676,7 +679,15 @@ export async function findAllBinaryPaths(binaryName: string): Promise<string[]> 
 		// On Unix, `which -a` returns every match in PATH. On Windows, `where`
 		// returns every match by default.
 		const args = isWindows() ? [binaryName] : ['-a', binaryName];
-		const result = await execFileNoThrow(command, args, undefined, env);
+		// Bounded: env passed bare (the legacy signature) skips the timeout
+		// entirely, since execFileNoThrow only honors it on the ExecOptions
+		// form. A broken PATH entry pointing at an unresponsive network mount
+		// could otherwise hang this indefinitely - doDetectAgents awaits it
+		// once per detected agent, sequentially.
+		const result = await execFileNoThrow(command, args, undefined, {
+			env,
+			timeout: WHICH_LOOKUP_TIMEOUT_MS,
+		});
 		if (result.exitCode === 0 && result.stdout.trim()) {
 			const matches = result.stdout
 				.trim()

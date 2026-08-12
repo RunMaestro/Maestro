@@ -5,6 +5,7 @@
  * Regression test for: MAESTRO_SESSION_RESUMED env var display in group chat moderator customization
  */
 
+import { useState, useCallback } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
@@ -590,5 +591,48 @@ describe('AgentConfigPanel - detected installation chooser', () => {
 		renderWithPaths({ isSshEnabled: true });
 
 		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
+	});
+
+	// Regression: a blur handler wired the way real call sites do it (reading
+	// its own committed value back out of React state, e.g. the wizard's
+	// useAgentConfigurationPanel.ts) used to see the PREVIOUS path, not the one
+	// just picked - onCustomPathChange only schedules a state update, and
+	// onCustomPathBlur fired synchronously right after it, before that update
+	// committed. The bare vi.fn() mocks above can't catch this since they have
+	// no real state to go stale. This wraps the panel in that exact pattern.
+	it('a stateful onCustomPathBlur receives the newly selected path, not the stale one', () => {
+		const persisted: (string | undefined)[] = [];
+
+		function StatefulWrapper() {
+			const [customPath, setCustomPath] = useState('');
+			// Mirrors the real bug shape: falls back to the stale closure value
+			// when no value is passed, but should receive the fresh one directly.
+			const handleBlur = useCallback(
+				(value?: string) => {
+					persisted.push(value ?? customPath);
+				},
+				[customPath]
+			);
+
+			const props = createDefaultProps({
+				agent: createMockAgent({
+					id: 'codex',
+					name: 'Codex',
+					binaryName: 'codex',
+					path: CODEX_PATHS[0],
+					allPaths: CODEX_PATHS,
+				}),
+				customPath,
+				onCustomPathChange: setCustomPath,
+				onCustomPathBlur: handleBlur,
+			});
+			return <AgentConfigPanel {...props} />;
+		}
+
+		render(<StatefulWrapper />);
+		const select = screen.getByRole('combobox');
+		fireEvent.change(select, { target: { value: CODEX_PATHS[1] } });
+
+		expect(persisted).toEqual([CODEX_PATHS[1]]);
 	});
 });

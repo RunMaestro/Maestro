@@ -293,7 +293,16 @@ export interface AgentConfigPanelProps {
 	// Custom path
 	customPath: string;
 	onCustomPathChange: (value: string) => void;
-	onCustomPathBlur: () => void;
+	/**
+	 * Called to persist the path. Optionally receives the value to persist -
+	 * the chooser below passes its selection directly, since onCustomPathChange
+	 * and this call happen back to back in the same handler and React batches
+	 * state updates, so a blur handler reading customPath back out of its own
+	 * closure would still see the PREVIOUS value at that point. Plain blur
+	 * (typing then tabbing away) calls this with no argument, since the input
+	 * is already controlled and current by the time it fires.
+	 */
+	onCustomPathBlur: (value?: string) => void;
 	// Custom arguments
 	customArgs: string;
 	onCustomArgsChange: (value: string) => void;
@@ -543,7 +552,7 @@ export function AgentConfigPanel({
 						// Locally the field pre-fills with the detected path so it can be overridden.
 						value={customPath || (isSshEnabled ? '' : agent.path) || ''}
 						onChange={(e) => onCustomPathChange(e.target.value)}
-						onBlur={onCustomPathBlur}
+						onBlur={() => onCustomPathBlur()}
 						onClick={(e) => e.stopPropagation()}
 						placeholder={isSshEnabled ? agent.binaryName : `/path/to/${agent.binaryName}`}
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
@@ -572,8 +581,12 @@ export function AgentConfigPanel({
 								const next = e.target.value;
 								if (next === CUSTOM_PATH_OPTION) return;
 								onCustomPathChange(next);
-								// Persist immediately - selecting from the chooser is an explicit commit
-								onCustomPathBlur();
+								// Persist immediately - selecting from the chooser is an explicit commit.
+								// Pass the value directly rather than relying on onCustomPathBlur to read
+								// it back out of state: onCustomPathChange above only schedules a state
+								// update, so a blur handler reading its own closure would still see the
+								// path from before this click, not the one just selected.
+								onCustomPathBlur(next);
 							}}
 							onClick={(e) => e.stopPropagation()}
 							className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono cursor-pointer"
