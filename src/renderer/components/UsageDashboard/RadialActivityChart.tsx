@@ -44,7 +44,7 @@ interface SliceDatum {
 }
 
 /**
- * 12-hour clock-style hour formatter — matches the inner-ring callout
+ * 12-hour clock-style hour formatter - matches the inner-ring callout
  * label "17" by exposing both the 24h slot (used internally) and the
  * 12h-with-suffix presentation (used in tooltips and the center hero).
  */
@@ -122,7 +122,7 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 	const totalCount = useMemo(() => slices.reduce((sum, s) => sum + s.count, 0), [slices]);
 
 	// Geometry. SVG uses a 0-360° polar layout; slot 0 is at 12 o'clock,
-	// proceeding clockwise. The math is the same for both modes — only the
+	// proceeding clockwise. The math is the same for both modes - only the
 	// slot count changes.
 	const slotCount = slices.length;
 	const sliceAngle = 360 / slotCount;
@@ -170,8 +170,8 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 		return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
 	};
 
-	// Center hero text — bottom line of metric / "peak hr" / "peak day" label.
-	const heroValue = peak ? (mode === 'hours' ? String(peak.index % 12 || 12) : peak.label) : '—';
+	// Center hero text - bottom line of metric / "peak hr" / "peak day" label.
+	const heroValue = peak ? (mode === 'hours' ? String(peak.index % 12 || 12) : peak.label) : '-';
 	const heroSuffix = mode === 'hours' ? 'peak hr' : 'peak day';
 
 	const hovered = hoveredIndex != null ? slices[hoveredIndex] : null;
@@ -188,7 +188,7 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 		setTooltipPos(null);
 	};
 
-	// Footer summary — different per mode.
+	// Footer summary - different per mode.
 	const footer = peak ? (
 		mode === 'hours' ? (
 			<>
@@ -240,7 +240,7 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 						role="img"
 						aria-label={`${mode === 'hours' ? 'Hourly' : 'Weekday'} activity radial chart`}
 					>
-						{/* Background rim — gives structure when most slots are near zero. */}
+						{/* Background rim - gives structure when most slots are near zero. */}
 						<circle
 							cx={cx}
 							cy={cy}

@@ -7,7 +7,7 @@ export interface OverlayPosition {
 }
 
 export interface UseTabHoverOverlayOptions {
-	/** Optional guard — return false to skip opening the overlay on hover */
+	/** Optional guard - return false to skip opening the overlay on hover */
 	shouldOpen?: () => boolean;
 	/** Optional parent ref registration callback (merged with internal tabRef) */
 	registerRef?: (el: HTMLDivElement | null) => void;
@@ -26,7 +26,7 @@ export interface UseTabHoverOverlayReturn {
 	setOverlayRef: (el: HTMLDivElement | null) => void;
 	/** False until the overlay has been measured and clamped to the viewport */
 	positionReady: boolean;
-	/** Combined ref callback — sets internal tabRef and calls parent registerRef */
+	/** Combined ref callback - sets internal tabRef and calls parent registerRef */
 	setTabRef: (el: HTMLDivElement | null) => void;
 	handleMouseEnter: () => void;
 	handleMouseLeave: () => void;

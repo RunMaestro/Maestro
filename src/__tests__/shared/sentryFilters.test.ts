@@ -1,10 +1,10 @@
 /**
- * Tests for shouldDropSentryEvent — the shared classifier used by both the
+ * Tests for shouldDropSentryEvent - the shared classifier used by both the
  * main and renderer Sentry initializers to suppress noise events we cannot
  * fix from inside the app.
  *
  * Strategy: one representative event per documented category gets dropped,
- * and a "real bug" exception passes through. Don't enumerate every regex —
+ * and a "real bug" exception passes through. Don't enumerate every regex -
  * the file's comment block is authoritative on which categories exist; we
  * just confirm the dispatch table works.
  */
@@ -28,6 +28,17 @@ describe('shouldDropSentryEvent', () => {
 			expect(shouldDropSentryEvent(exceptionEvent('Error', 'EPIPE: broken pipe, write'))).toBe(
 				true
 			);
+		});
+
+		// The libuv `EPIPE: broken pipe` spelling above is not what Node emits for a
+		// stream/socket write to a dead pipe - that surfaces as a bare `write EPIPE`,
+		// which slipped past the filter and was the single noisiest issue in the field.
+		it('drops bare `write EPIPE` stream errors (Node stream spelling)', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'write EPIPE'))).toBe(true);
+		});
+
+		it('drops bare `read EPIPE` stream errors', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'read EPIPE'))).toBe(true);
 		});
 
 		it('drops Windows rename races (EPERM rename)', () => {
@@ -100,12 +111,36 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		it('drops EACCES on the sessions file bubbling up through sessions:setMany', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'sessions:setMany': Error: EACCES: permission denied, open '/Users/x/Library/Application Support/maestro/maestro-sessions.json'"
+					)
+				)
+			).toBe(true);
+		});
+
 		it('does NOT drop a generic IPC failure that is not a known noise pattern', () => {
 			expect(
 				shouldDropSentryEvent(
 					exceptionEvent(
 						'Error',
 						"Error invoking remote method 'sessions:create': TypeError: Cannot read properties of undefined (reading 'name')"
+					)
+				)
+			).toBe(false);
+		});
+
+		// A write failure that is *not* an environment/permissions problem still needs to
+		// reach us - the EACCES carve-out above must not swallow real persistence bugs.
+		it('does NOT drop a non-environment failure on the same sessions:setMany method', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'sessions:setMany': TypeError: sessions.map is not a function"
 					)
 				)
 			).toBe(false);

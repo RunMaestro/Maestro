@@ -4,11 +4,11 @@
  * Worktree-focused analytics section in the Agents tab. Surfaces the
  * relationship between parent agents and their worktree children:
  *
- *   1. Summary row — Parent vs Worktree agent counts plus a ratio badge.
- *   2. Activity split bar — horizontal stacked bar of parent vs worktree
+ *   1. Summary row - Parent vs Worktree agent counts plus a ratio badge.
+ *   2. Activity split bar - horizontal stacked bar of parent vs worktree
  *      query proportion (worktree segment uses the dashed/striped pattern
  *      established in Doc 1's visual language for worktree differentiation).
- *   3. Per-branch breakdown — one row per worktree session showing the
+ *   3. Per-branch breakdown - one row per worktree session showing the
  *      branch name, query count, and a 7-day Sparkline, sorted by activity.
  *
  * The component is gated upstream so it only renders when at least one
@@ -28,7 +28,7 @@ const SPARKLINE_DAYS = 7;
 interface WorktreeAnalyticsProps {
 	/** All known sessions (terminal-only sessions are filtered out). */
 	sessions: Session[];
-	/** Aggregated stats — worktree counts come from `worktreeQueries` / `parentQueries`. */
+	/** Aggregated stats - worktree counts come from `worktreeQueries` / `parentQueries`. */
 	data: StatsAggregation;
 	/** Current theme for color-aware styling. */
 	theme: Theme;
@@ -116,7 +116,7 @@ function buildSessionSparkline(sessionByDay: Array<{ count: number }> | undefine
  * otherwise `(worktrees / parents).toFixed(2)×`.
  */
 function formatRatio(parents: number, worktrees: number): string {
-	if (parents === 0 && worktrees === 0) return '—';
+	if (parents === 0 && worktrees === 0) return '-';
 	if (parents === 0) return '∞×';
 	return `${(worktrees / parents).toFixed(2)}×`;
 }
@@ -126,7 +126,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 	data,
 	theme,
 }: WorktreeAnalyticsProps) {
-	// Terminal-only sessions are not "agents" — exclude them so counts match
+	// Terminal-only sessions are not "agents" - exclude them so counts match
 	// the rest of the dashboard (SessionStats / AgentOverviewCards).
 	const agentSessions = useMemo(
 		() => sessions.filter((s) => s.toolType !== 'terminal'),

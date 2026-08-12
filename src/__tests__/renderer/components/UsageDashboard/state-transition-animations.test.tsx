@@ -568,7 +568,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 			await waitFor(() => {
 				// ArrowRight from Overview now lands on "Agent Overview" (it
 				// was inserted between Overview and Agents). Look up by exact
-				// name — `/agents/i` matches both tabs.
+				// name - `/agents/i` matches both tabs.
 				const nextTab = screen.getByRole('tab', { name: 'Agent Overview' });
 				expect(nextTab).toHaveAttribute('aria-selected', 'true');
 			});

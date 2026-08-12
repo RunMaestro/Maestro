@@ -33,7 +33,7 @@ function writeStoredViewType(value: GitDiffViewType): void {
 	try {
 		window.localStorage.setItem(VIEW_TYPE_STORAGE_KEY, value);
 	} catch {
-		// Ignore quota / privacy-mode errors — preference just won't persist.
+		// Ignore quota / privacy-mode errors - preference just won't persist.
 	}
 }
 

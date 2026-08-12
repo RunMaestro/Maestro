@@ -1,5 +1,5 @@
 /**
- * useRemoteHandlers — extracted from App.tsx (Phase 2K)
+ * useRemoteHandlers - extracted from App.tsx (Phase 2K)
  *
  * Handles remote command processing from the web interface:
  *   - handleRemoteCommand event listener (terminal + AI mode dispatching)
@@ -92,7 +92,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	);
 
 	// ====================================================================
-	// sessionSshRemoteNames — memoized map for group chat participant cards
+	// sessionSshRemoteNames - memoized map for group chat participant cards
 	// ====================================================================
 
 	const sessionSshRemoteNames = useMemo(() => {
@@ -111,7 +111,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	}, [sessions, sshRemoteConfigs]);
 
 	// ====================================================================
-	// handleRemoteCommand — processes commands from web interface
+	// handleRemoteCommand - processes commands from web interface
 	// ====================================================================
 
 	useEffect(() => {
@@ -123,7 +123,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				/** Optional explicit tab target (from `maestro-cli dispatch --session
 				 *  <tabId>`). When unset, falls back to the active tab. When set
 				 *  but unknown, the command is dropped (we never silently re-route
-				 *  to the active tab — callers chaining `--session <tabId>` would
+				 *  to the active tab - callers chaining `--session <tabId>` would
 				 *  otherwise believe the command landed in the requested tab). */
 				tabId?: string;
 				/** When true, bypass the renderer's busy-state guard. Mirrors the
@@ -256,7 +256,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}
 
 			// Check if session is busy. `force: true` (from `dispatch --force`)
-			// bypasses this guard — without that escape hatch, the renderer would
+			// bypasses this guard - without that escape hatch, the renderer would
 			// silently drop forced dispatches and the server-side allow-list
 			// would be moot.
 			if (session.state === 'busy' && !force) {
@@ -364,7 +364,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						promptToSend.substring(0, 100)
 					);
 				} else {
-					// Unknown slash command — route the error log to the targeted
+					// Unknown slash command - route the error log to the targeted
 					// tab (not whichever tab happens to be active) so the caller
 					// sees the error in the conversation they dispatched into.
 					logger.info('[Remote] Unknown slash command:', undefined, commandText);

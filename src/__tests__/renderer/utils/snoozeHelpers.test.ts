@@ -158,6 +158,40 @@ describe('wakeSnoozedTab', () => {
 		expect(woken.session.snoozedTabs).toHaveLength(0);
 	});
 
+	it('marks the surviving tab unread when it absorbs a duplicate wake', () => {
+		// The restored copy is discarded here, so the unread flag has to move to
+		// the tab the user actually lands on or the return goes unmarked.
+		const session = buildSession({
+			aiTabs: [
+				createMockAITab({ id: 'a' }),
+				createMockAITab({ id: 'b', agentSessionId: 'agent-1' }),
+			],
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'a' },
+				{ type: 'ai', id: 'b' },
+			],
+			activeTabId: 'b',
+		});
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR)!;
+		const withReopened: Session = {
+			...snoozed.session,
+			aiTabs: [
+				...snoozed.session.aiTabs,
+				createMockAITab({ id: 'z', agentSessionId: 'agent-1', hasUnread: false }),
+			],
+		};
+
+		const woken = wakeSnoozedTab(withReopened, snoozed.entry.id)!;
+		expect(woken.session.aiTabs.find((t) => t.id === 'z')?.hasUnread).toBe(true);
+	});
+
+	it('marks the tab unread on an early manual return too', () => {
+		const session = buildSession();
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR)!;
+		const woken = wakeSnoozedTab(snoozed.session, snoozed.entry.id, 'unsnoozed')!;
+		expect(woken.session.aiTabs.find((t) => t.id === 'b')?.hasUnread).toBe(true);
+	});
+
 	it('returns null for an unknown snooze', () => {
 		expect(wakeSnoozedTab(buildSession(), 'nope')).toBeNull();
 	});
@@ -270,5 +304,102 @@ describe('getSnoozedTabLabel', () => {
 			Date.now() + HOUR
 		)!;
 		expect(getSnoozedTabLabel(bare.entry)).toBe('abcdef12');
+	});
+});
+
+describe('back-from-snooze transcript card', () => {
+	/** The snoozeReturn-marked entry on a tab, if any. */
+	function returnLog(session: Session, tabId: string) {
+		return session.aiTabs.find((t) => t.id === tabId)?.logs.find((l) => l.snoozeReturn);
+	}
+
+	it('appends a card to the restored tab carrying the note', () => {
+		const session = buildSession();
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR, 'check the build')!;
+		const woken = wakeSnoozedTab(snoozed.session, snoozed.entry.id)!;
+
+		const log = returnLog(woken.session, 'b');
+		expect(log).toBeDefined();
+		expect(log!.source).toBe('system');
+		expect(log!.snoozeReturn).toMatchObject({
+			note: 'check the build',
+			wakeAt: snoozed.entry.wakeAt,
+			snoozedAt: snoozed.entry.snoozedAt,
+			resolution: 'woke',
+		});
+	});
+
+	it('puts the note in the plain text too, so cross-tab search can find it', () => {
+		const session = buildSession();
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR, 'ship the migration')!;
+		const woken = wakeSnoozedTab(snoozed.session, snoozed.entry.id)!;
+
+		expect(returnLog(woken.session, 'b')!.text).toBe('Back from snooze: ship the migration');
+	});
+
+	it('still marks the return when no note was left', () => {
+		const session = buildSession();
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR)!;
+		const woken = wakeSnoozedTab(snoozed.session, snoozed.entry.id)!;
+
+		const log = returnLog(woken.session, 'b')!;
+		expect(log.text).toBe('Back from snooze');
+		expect(log.snoozeReturn!.note).toBeUndefined();
+		expect(log.snoozeReturn!.resolution).toBe('woke');
+	});
+
+	it('records an early return distinctly from a scheduled one', () => {
+		const session = buildSession();
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR)!;
+		const woken = wakeSnoozedTab(snoozed.session, snoozed.entry.id, 'unsnoozed')!;
+
+		expect(returnLog(woken.session, 'b')!.snoozeReturn!.resolution).toBe('unsnoozed');
+	});
+
+	it('keeps the conversation that was there before the snooze', () => {
+		const session = buildSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'b',
+					logs: [{ id: 'old', timestamp: 1, source: 'user', text: 'earlier message' }],
+				}),
+			],
+			unifiedTabOrder: [{ type: 'ai', id: 'b' }],
+			activeTabId: 'b',
+		});
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR)!;
+		const woken = wakeSnoozedTab(snoozed.session, snoozed.entry.id)!;
+
+		const logs = woken.session.aiTabs.find((t) => t.id === 'b')!.logs;
+		expect(logs[0].text).toBe('earlier message');
+		// The card lands at the end, so it survives the persistence log cap and
+		// reads as the seam it is.
+		expect(logs[logs.length - 1].snoozeReturn).toBeDefined();
+	});
+
+	it('lands the card on the surviving tab when an equivalent one is already open', () => {
+		const session = buildSession({
+			aiTabs: [
+				createMockAITab({ id: 'a' }),
+				createMockAITab({ id: 'b', agentSessionId: 'agent-1' }),
+			],
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'a' },
+				{ type: 'ai', id: 'b' },
+			],
+			activeTabId: 'b',
+		});
+		const snoozed = snoozeTab(session, 'b', Date.now() + HOUR, 'still relevant')!;
+		const withReopened: Session = {
+			...snoozed.session,
+			aiTabs: [...snoozed.session.aiTabs, createMockAITab({ id: 'z', agentSessionId: 'agent-1' })],
+		};
+
+		const woken = wakeSnoozedTab(withReopened, snoozed.entry.id)!;
+
+		expect(woken.wasDuplicate).toBe(true);
+		// The duplicate tab is discarded, so the note has to follow the user to
+		// the tab they actually land on or it is lost entirely.
+		expect(returnLog(woken.session, 'z')!.snoozeReturn!.note).toBe('still relevant');
 	});
 });

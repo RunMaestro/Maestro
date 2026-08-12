@@ -28,6 +28,8 @@ import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from
 import type { FileNode } from '../types/fileTree';
 import Convert from 'ansi-to-html';
 import { useLayerStack } from '../contexts/LayerStackContext';
+import { ImageContextMenu } from './ImageContextMenu';
+import { useImageContextMenu } from '../hooks/ui/useImageContextMenu';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
 import { useDebouncedValue, useThrottledCallback, useProgressiveRenderWindow } from '../hooks';
@@ -44,6 +46,7 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { ShellCommandCard } from './ShellCommandCard';
+import { isSelfContainedCard } from '../utils/logEntries';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { linkifyNode } from '../utils/linkify';
@@ -55,7 +58,10 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { jumpToElement } from '../utils/jumpHighlight';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { AgentTaskListCard } from './AgentTaskListCard';
+import { extractAgentTaskList } from '../utils/agentTaskList';
 import { RetryStatusCard } from './RetryStatusCard';
+import { SnoozeReturnCard } from './SnoozeReturnCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
@@ -83,27 +89,16 @@ const safeCommand = (v: unknown): string | null => {
 	return null;
 };
 
-/** Summarize TodoWrite todos array — shows in-progress task and progress count */
-const summarizeTodos = (v: unknown): string | null => {
-	if (!Array.isArray(v) || v.length === 0) return null;
-	const todos = v as Array<{ content?: string; status?: string; activeForm?: string }>;
-	const completed = todos.filter((t) => t.status === 'completed').length;
-	const inProgress = todos.find((t) => t.status === 'in_progress');
-	const label = inProgress?.activeForm || inProgress?.content || todos[0]?.content;
-	if (!label) return `${todos.length} tasks`;
-	return `${label} (${completed}/${todos.length})`;
-};
-
 /** Structured result from summarizeToolInput for richer rendering */
 interface ToolSummary {
 	/** Human-readable description (e.g. Bash description field) */
 	description?: string;
-	/** Primary content — command text or generic summary */
+	/** Primary content - command text or generic summary */
 	detail: string;
 }
 
 /**
- * Summarize tool input generically — no per-tool extractors needed.
+ * Summarize tool input generically - no per-tool extractors needed.
  * Returns structured data so the renderer can display description and command
  * with proper visual hierarchy.
  *
@@ -112,7 +107,7 @@ interface ToolSummary {
  */
 const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	// Some agents (notably Copilot/Codex apply_patch) deliver the tool argument
-	// as a raw string instead of an object — Object.entries on a string would
+	// as a raw string instead of an object - Object.entries on a string would
 	// iterate it character-by-character and produce garbled, space-separated
 	// output, so surface the string as-is.
 	if (typeof input === 'string') {
@@ -122,10 +117,6 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 		return null;
 	}
 	const inputRecord = input as Record<string, unknown>;
-
-	// Special case: TodoWrite todos array
-	const todosResult = summarizeTodos(inputRecord.todos);
-	if (todosResult) return { detail: todosResult };
 
 	// Extract description field separately for structured display
 	const description =
@@ -137,7 +128,7 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	const parts: string[] = [];
 	for (const [key, val] of Object.entries(inputRecord)) {
 		if (val === undefined || val === null || val === '') continue;
-		// Skip description — rendered separately
+		// Skip description - rendered separately
 		if (key === 'description') continue;
 		// Command arrays (Codex)
 		const cmd = safeCommand(val);
@@ -299,14 +290,14 @@ interface LogItemProps {
 	ghCliAvailable?: boolean;
 	onPublishGist?: (text: string, messageId?: string) => void;
 	publishedGistUrl?: string;
-	// Fork conversation from this message (AI mode only, user messages and AI responses — source 'user' | 'ai' | 'stdout')
+	// Fork conversation from this message (AI mode only, user messages and AI responses - source 'user' | 'ai' | 'stdout')
 	onForkConversation?: (logId: string) => void;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
-	// Claude mode pill — both passed as primitives so LogItem memo equality stays cheap.
+	// Claude mode pill - both passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
 	// Session recovery (session_not_found inline card). Only consumed when
@@ -375,6 +366,9 @@ const LogItemComponent = memo(
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
+
+		// Right-click menu for this entry's attached image thumbnails.
+		const { imageMenu, dismissImageMenu, openImageMenuFromEvent } = useImageContextMenu();
 
 		// Handle expand toggle with scroll adjustment
 		const handleExpandToggle = useCallback(() => {
@@ -514,6 +508,25 @@ const LogItemComponent = memo(
 			);
 		}
 
+		// A snoozed tab that came back marks the gap with its own card, carrying
+		// the note the user left themselves. Same clean row as the other cards.
+		if (log.snoozeReturn) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-6 py-2"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 80px' }}
+				>
+					<div className="w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<SnoozeReturnCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
 		// Agent Resilience: an outage marker renders as a live status card in a
 		// clean row (no error-tinted bubble chrome), left gutter kept for alignment.
 		if (log.retryOutageId) {
@@ -614,26 +627,35 @@ const LogItemComponent = memo(
 						</div>
 					)}
 					{log.images && log.images.length > 0 && (
-						<div
-							className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
-							style={{ overscrollBehavior: 'contain' }}
-						>
-							{log.images.map((img, imgIdx) => (
-								<button
-									key={`${img}-${imgIdx}`}
-									type="button"
-									className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
-									onClick={() => setLightboxImage(img, log.images, 'history')}
-								>
-									<img
-										src={img}
-										alt={`Terminal output image ${imgIdx + 1}`}
-										className="h-20 rounded border cursor-zoom-in block"
-										style={{ objectFit: 'contain', maxWidth: '200px' }}
-									/>
-								</button>
-							))}
-						</div>
+						<>
+							<div
+								className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
+								style={{ overscrollBehavior: 'contain' }}
+								// Right-click any thumbnail for Copy Image / Save Image. The
+								// handler resolves which <img> the click landed on, so one
+								// listener covers the whole strip.
+								onContextMenu={openImageMenuFromEvent}
+							>
+								{log.images.map((img, imgIdx) => (
+									<button
+										key={`${img}-${imgIdx}`}
+										type="button"
+										className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
+										onClick={() => setLightboxImage(img, log.images, 'history')}
+									>
+										<img
+											src={img}
+											alt={`Terminal output image ${imgIdx + 1}`}
+											className="h-20 rounded border cursor-zoom-in block"
+											style={{ objectFit: 'contain', maxWidth: '200px' }}
+										/>
+									</button>
+								))}
+							</div>
+							{imageMenu && (
+								<ImageContextMenu menu={imageMenu} theme={theme} onDismiss={dismissImageMenu} />
+							)}
+						</>
 					)}
 					{log.source === 'stderr' && (
 						<div className="mb-2">
@@ -781,8 +803,12 @@ const LogItemComponent = memo(
 						(() => {
 							// Extract tool input details for display
 							const toolInput = log.metadata?.toolState?.input;
+							// Checklist-shaped payloads (Claude Code/OpenCode TodoWrite,
+							// Codex update_plan) get the richer inline card instead of the
+							// generic key/value summary.
+							const taskList = extractAgentTaskList(toolInput);
 							const toolSummary =
-								toolInput !== undefined && toolInput !== null
+								!taskList && toolInput !== undefined && toolInput !== null
 									? summarizeToolInput(toolInput)
 									: null;
 							// Show the tool result once it has finished. Without this the
@@ -839,6 +865,7 @@ const LogItemComponent = memo(
 											</span>
 										)}
 									</div>
+									{taskList && <AgentTaskListCard theme={theme} taskList={taskList} />}
 									{toolSummary?.detail && (
 										<div
 											className="mt-1 ml-1 pl-2 opacity-70 break-words whitespace-pre-wrap border-l"
@@ -1106,7 +1133,7 @@ const LogItemComponent = memo(
 							onRecover={(opts) => onSessionRecover?.(opts)}
 						/>
 					)}
-					{/* Mode pill — shows which CLI captured this Claude turn (TUI Wrapper =
+					{/* Mode pill - shows which CLI captured this Claude turn (TUI Wrapper =
 					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
 					    session has Dynamic Mode enabled (auto-switching between the two). */}
 					{isClaudeCode &&
@@ -1141,7 +1168,7 @@ const LogItemComponent = memo(
 						className="absolute bottom-2 right-2 flex items-center gap-1"
 						style={{ transition: 'opacity 0.15s ease-in-out' }}
 					>
-						{/* Markdown toggle button — available on both user and assistant
+						{/* Markdown toggle button - available on both user and assistant
 						    messages in AI mode for consistent UX (#622). */}
 						{isAIMode && (
 							<button
@@ -1188,7 +1215,7 @@ const LogItemComponent = memo(
 								<Save className="w-3.5 h-3.5" />
 							</button>
 						)}
-						{/* Fork conversation — user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
+						{/* Fork conversation - user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
 						{(log.source === 'user' || log.source === 'ai' || log.source === 'stdout') &&
 							isAIMode &&
 							onForkConversation && (
@@ -1740,8 +1767,8 @@ export const TerminalOutput = memo(
 					const combinedText = currentResponseGroup.map((l) => l.text).join('');
 					// The token-source pill keys off `renderStyle === 'text-stream'`
 					// (maestro-p TUI capture). A response group can lead with a
-					// non-stream entry — e.g. the "Adaptive Mode: switched ..." system
-					// banner — and basing the combined entry only on `[0]` would inherit
+					// non-stream entry - e.g. the "Adaptive Mode: switched ..." system
+					// banner - and basing the combined entry only on `[0]` would inherit
 					// that entry's missing renderStyle and mislabel an interactive turn
 					// as "API". Preserve text-stream if ANY grouped entry carries it.
 					const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
@@ -1769,12 +1796,22 @@ export const TerminalOutput = memo(
 					log.source === 'tool' ||
 					log.source === 'thinking' ||
 					log.source === 'error' ||
-					log.retryOutageId
+					isSelfContainedCard(log)
 				) {
-					// Flush response group before tool/thinking/error and Agent
-					// Resilience outage markers, then add them standalone. The outage
-					// marker must not merge into a text group - it renders as a live
-					// status card.
+					// Flush response group before tool/thinking/error entries and any
+					// self-contained card, then add them standalone.
+					//
+					// A card MUST NOT be merged into a text group. Grouping concatenates
+					// `text` and renders the result with the FIRST entry's props, so a
+					// card swallowed by a group loses its marker (`shellCommand`,
+					// `retryOutageId`, ...) and its body gets pasted onto the preceding
+					// agent reply as plain markdown - which is how `!ls` output ended up
+					// inside a chat bubble with its ANSI codes showing as literal text.
+					//
+					// This used to name `retryOutageId` alone; every new card kind hit
+					// the same bug until it was added here too. isSelfContainedCard is
+					// the shared rule (see utils/logEntries.ts), so new kinds are
+					// standalone by construction.
 					flushResponseGroup();
 					renderedIds.set(log.id, log.id);
 					result.push(log);
@@ -1793,7 +1830,7 @@ export const TerminalOutput = memo(
 		// PERF: Debounce search query so the highlight pass doesn't run on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
 
-		// Search no longer filters logs — all logs stay visible. Matches are highlighted and
+		// Search no longer filters logs - all logs stay visible. Matches are highlighted and
 		// navigated inline via CSS Custom Highlight API (see highlight effect below).
 		const filteredLogs = collapsedLogs;
 
@@ -1951,7 +1988,7 @@ export const TerminalOutput = memo(
 			const container = scrollContainerRef.current;
 			if (!container) return;
 
-			// Build the match regex — plain text is escaped; regex mode is validated.
+			// Build the match regex - plain text is escaped; regex mode is validated.
 			let regex: RegExp;
 			try {
 				if (outputSearchRegex) {
@@ -2101,13 +2138,13 @@ export const TerminalOutput = memo(
 				}
 			} else {
 				if (isProgrammaticScrollRef.current) {
-					// This scroll event was triggered by our own scrollTo() call —
+					// This scroll event was triggered by our own scrollTo() call -
 					// consume the guard flag here inside the throttled handler to avoid
 					// the race where queueMicrotask clears the flag before a deferred
 					// throttled invocation fires (throttle delay is 16ms > microtask).
 					isProgrammaticScrollRef.current = false;
 				} else {
-					// Genuine user scroll away from bottom — pause auto-scroll
+					// Genuine user scroll away from bottom - pause auto-scroll
 					setAutoScrollPaused(true);
 				}
 			}
@@ -2198,7 +2235,7 @@ export const TerminalOutput = memo(
 		}, [filteredLogs.length, isAtBottom, activeTabId]);
 
 		// Auto-scroll to bottom when DOM content changes in the scroll container.
-		// Uses MutationObserver to detect ALL content mutations — new nodes (log entries),
+		// Uses MutationObserver to detect ALL content mutations - new nodes (log entries),
 		// text changes (thinking stream growth), and attribute changes (tool status updates).
 		// This replaces the previous filteredLogs.length dependency, which missed in-place
 		// text updates during thinking/tool streaming (GitHub issue #402).
@@ -2213,7 +2250,7 @@ export const TerminalOutput = memo(
 				if (!scrollContainerRef.current) return;
 				requestAnimationFrame(() => {
 					if (scrollContainerRef.current) {
-						// Set guard flag BEFORE scrollTo — the throttled scroll handler
+						// Set guard flag BEFORE scrollTo - the throttled scroll handler
 						// checks this flag and consumes it (clears it) when it fires,
 						// preventing the programmatic scroll from being misinterpreted
 						// as a user scroll-up that should pause auto-scroll.
@@ -2354,7 +2391,7 @@ export const TerminalOutput = memo(
 						return;
 					}
 					// Shift+Arrow: jump message-by-message. Skip when the user is typing in
-					// an input/textarea inside the region — those handle their own
+					// an input/textarea inside the region - those handle their own
 					// arrow-key cursor movement.
 					if (
 						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
@@ -2427,7 +2464,7 @@ export const TerminalOutput = memo(
 					}
 				}}
 			>
-				{/* CSS for Custom Highlight API — paints matches without mutating DOM */}
+				{/* CSS for Custom Highlight API - paints matches without mutating DOM */}
 				<style>{`
 					::highlight(terminal-search-all) {
 						background-color: ${theme.colors.warning};
@@ -2558,7 +2595,7 @@ export const TerminalOutput = memo(
 				>
 					{/* Log entries */}
 					{visibleLogs.map((log, visibleIndex) => {
-						// Absolute index into filteredLogs — sibling lookups (echo stripping)
+						// Absolute index into filteredLogs - sibling lookups (echo stripping)
 						// and jump-to-message targeting must not see the window offset.
 						const index = logStartIndex + visibleIndex;
 						return (

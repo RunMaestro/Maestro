@@ -265,7 +265,7 @@ export async function startContribution(options: SymphonyRunnerOptions): Promise
 			return { success: false, error: 'Branch creation failed' };
 		}
 
-		// 2.5. Fork setup — detect if user needs a fork for push access
+		// 2.5. Fork setup - detect if user needs a fork for push access
 		logger.info('Checking fork requirements', LOG_CONTEXT, { repoSlug });
 		const forkResult = await ensureForkSetup(localPath, repoSlug);
 		if (forkResult.error) {
@@ -423,7 +423,7 @@ export async function cancelContribution(
 	const ghCommand = await resolveGhPath();
 	const closeArgs = ['pr', 'close', prNumber.toString()];
 	if (!upstreamSlug) {
-		// Only delete branch for non-fork PRs — cross-fork delete-branch fails due to permissions
+		// Only delete branch for non-fork PRs - cross-fork delete-branch fails due to permissions
 		closeArgs.push('--delete-branch');
 	} else {
 		closeArgs.push('--repo', upstreamSlug);

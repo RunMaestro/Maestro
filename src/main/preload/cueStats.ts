@@ -1,7 +1,7 @@
 /**
  * Preload API for Cue Stats operations.
  *
- * Exposes `window.maestro.cueStats` — the renderer-side bridge to the Phase 03
+ * Exposes `window.maestro.cueStats` - the renderer-side bridge to the Phase 03
  * aggregation handler (`cue-stats:get-aggregation`). The handler throws
  * `'CueStatsDisabled'` when either `encoreFeatures.usageStats` or
  * `encoreFeatures.maestroCue` is off; consumers should catch that to render
@@ -19,7 +19,7 @@ export function createCueStatsApi() {
 		// Throws an Error with message exactly 'CueStatsDisabled' when either
 		// Encore flag is off. Electron's IPC layer wraps thrown errors into
 		// `Error invoking remote method '...': Error: <original>`, so we
-		// detect that wrapper here and rethrow the bare sentinel — keeps the
+		// detect that wrapper here and rethrow the bare sentinel - keeps the
 		// preload contract stable for renderer consumers.
 		getAggregation: async (range: CueStatsTimeRange): Promise<CueStatsAggregation> => {
 			try {

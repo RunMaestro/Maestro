@@ -47,7 +47,7 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 }
 
 // ============================================================================
-// Mock IPC handlers — capture registered listeners
+// Mock IPC handlers - capture registered listeners
 // ============================================================================
 
 type ListenerCallback = (...args: any[]) => any;
@@ -704,13 +704,13 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Claude returns a DIFFERENT session ID — expected fork, not a failure.
+			// Claude returns a DIFFERENT session ID - expected fork, not a failure.
 			onSessionIdHandler?.('sess-1-ai-tab-1', 'fork-session-id');
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
 
-			// Original ID preserved on tab — fork ID has no backing JSONL.
+			// Original ID preserved on tab - fork ID has no backing JSONL.
 			expect(updatedTab?.agentSessionId).toBe('old-session-id');
 			// Session-level ID also preserved.
 			expect(updated?.agentSessionId).toBe('old-session-id');
@@ -893,7 +893,7 @@ describe('useAgentListeners', () => {
 
 		it('does not cross-bind when closed tab had awaitingSessionId and another tab also awaits', () => {
 			const deps = createMockDeps();
-			// Tab B is awaiting its own session ID — must not receive Tab A's
+			// Tab B is awaiting its own session ID - must not receive Tab A's
 			const tabB = createMockTab({
 				id: 'tab-b',
 				agentSessionId: null,
@@ -926,7 +926,7 @@ describe('useAgentListeners', () => {
 
 		it('still binds correctly to existing tab when tab ID matches', () => {
 			const deps = createMockDeps();
-			// Tab A exists and is awaiting — should receive its session ID normally
+			// Tab A exists and is awaiting - should receive its session ID normally
 			const tabA = createMockTab({
 				id: 'tab-a',
 				agentSessionId: null,
@@ -1321,7 +1321,7 @@ describe('useAgentListeners', () => {
 		});
 
 		// Copilot-CLI emits paired `tool.execution_start` and `tool.execution_complete`
-		// events. Without correlation, each appended a separate LogEntry — the second
+		// events. Without correlation, each appended a separate LogEntry - the second
 		// rendered as an empty bubble because the complete event omits `input`.
 		// With toolCallId, both events collapse into a single bubble that gains
 		// `output`/status while preserving `input`.
@@ -1514,7 +1514,7 @@ describe('useAgentListeners', () => {
 	});
 
 	// ========================================================================
-	// onExit handler (basic tests — full behavior is very complex)
+	// onExit handler (basic tests - full behavior is very complex)
 	// ========================================================================
 
 	describe('onExit', () => {
@@ -1535,7 +1535,7 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Simulate exit event — AI format
+			// Simulate exit event - AI format
 			await onExitHandler?.('sess-1-ai-tab-1');
 
 			// Allow async operations to complete
@@ -1585,7 +1585,7 @@ describe('useAgentListeners', () => {
 			expect(updated?.aiTabs[0]?.logs).toEqual([]);
 		});
 
-		// ThinkingMode contract — exit-time clearing.
+		// ThinkingMode contract - exit-time clearing.
 		// `'on'` is temporary: thinking/tool entries are scratch state for the
 		// active turn and must disappear when the agent process exits.
 		// `'sticky'` is pinned and opts out so users can review reasoning.
@@ -1913,7 +1913,7 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Tab A exits, but Tab B is still busy — queued write must NOT run
+			// Tab A exits, but Tab B is still busy - queued write must NOT run
 			await onExitHandler?.('sess-1-ai-tab-a');
 			await new Promise((r) => setTimeout(r, 50));
 
@@ -2032,12 +2032,12 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Tab A exits — tab B still busy, so queue stays
+			// Tab A exits - tab B still busy, so queue stays
 			await onExitHandler?.('sess-1-ai-tab-a');
 			await new Promise((r) => setTimeout(r, 50));
 			expect(processQueuedItem).not.toHaveBeenCalled();
 
-			// Now tab B also exits — no more busy tabs, queue should drain
+			// Now tab B also exits - no more busy tabs, queue should drain
 			// Update store to reflect tab-a is now idle (from the first exit)
 			const midState = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			expect(midState?.aiTabs.find((t) => t.id === 'tab-a')?.state).toBe('idle');
@@ -2062,7 +2062,7 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Terminal exit format — just sessionId (no -ai suffix)
+			// Terminal exit format - just sessionId (no -ai suffix)
 			await onExitHandler?.('sess-1');
 
 			await new Promise((r) => setTimeout(r, 50));
@@ -2073,7 +2073,7 @@ describe('useAgentListeners', () => {
 
 		it('transitions session to idle when exiting process tab was already closed', async () => {
 			const deps = createMockDeps();
-			// Tab B is the only remaining tab — Tab A was closed while its process ran
+			// Tab B is the only remaining tab - Tab A was closed while its process ran
 			const tabB = createMockTab({ id: 'tab-b', state: 'idle', agentSessionId: null });
 			const session = createMockSession({
 				id: 'sess-1',
@@ -2089,7 +2089,7 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Tab A's process exits — tab-a no longer in aiTabs
+			// Tab A's process exits - tab-a no longer in aiTabs
 			await onExitHandler?.('sess-1-ai-tab-a');
 			await new Promise((r) => setTimeout(r, 50));
 
@@ -2120,7 +2120,7 @@ describe('useAgentListeners', () => {
 
 			renderHook(() => useAgentListeners(deps));
 
-			// Tab A's orphaned process exits — should not affect Tab B
+			// Tab A's orphaned process exits - should not affect Tab B
 			await onExitHandler?.('sess-1-ai-tab-a');
 			await new Promise((r) => setTimeout(r, 50));
 

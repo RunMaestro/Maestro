@@ -44,6 +44,12 @@ export interface BarDatum {
 	label: string;
 	value: number;
 	color?: string;
+	/**
+	 * Set when `value` is a floor rather than an exact count, because the source
+	 * data was capped before it reached the chart. Rendered as a `+` suffix so a
+	 * saturated bar cannot be misread as a precise figure.
+	 */
+	atLeast?: boolean;
 }
 
 /** One activity time-slice split by entry source. */

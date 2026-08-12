@@ -1,5 +1,5 @@
 /**
- * useAgentClaudeModeResolvedListener — registers
+ * useAgentClaudeModeResolvedListener - registers
  * `window.maestro.process.onClaudeModeResolved`.
  *
  * Mirrors the spawner's headless-mode decision back into the renderer:
@@ -11,8 +11,8 @@
  * resolver reads one usage snapshot per Anthropic account (`configDirKey`), so
  * when the Max-plan quota is hit every agent on that account cascades to API on
  * its next turn. We therefore announce a switch (toast + a one-line system
- * banner in the agent that tripped it) only ONCE per provider transition —
- * tracked in `announcedProviderMode` keyed by `configDirKey` — instead of once
+ * banner in the agent that tripped it) only ONCE per provider transition -
+ * tracked in `announcedProviderMode` keyed by `configDirKey` - instead of once
  * per agent. Other agents on the same provider cut over silently.
  *
  * Pure TUI / pure API agents never switch, so they neither announce nor seed
@@ -133,7 +133,7 @@ export function useAgentClaudeModeResolvedListener(): void {
 						if (s.id !== actualSessionId) return s;
 						const current = s.claudeInteractive;
 						// Nothing to do when the pill state already matches and there's
-						// no banner to splice — avoids gratuitous re-renders.
+						// no banner to splice - avoids gratuitous re-renders.
 						if (
 							!bannerEntry &&
 							current &&
@@ -181,7 +181,7 @@ export function useAgentClaudeModeResolvedListener(): void {
 				}
 
 				// The mode resolver may have re-sampled usage as part of its
-				// decision — pull the latest snapshot map so the popover bars
+				// decision - pull the latest snapshot map so the popover bars
 				// reflect the same numbers the spawner just acted on.
 				void useClaudeUsageStore.getState().refresh();
 			}

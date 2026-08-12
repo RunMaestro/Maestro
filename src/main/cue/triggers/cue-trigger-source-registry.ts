@@ -4,12 +4,12 @@
  * Replaces the imperative if/else ladder that previously lived in
  * `cue-session-runtime-service.ts:131-146`. The runtime now iterates a
  * subscription list, calls `createTriggerSource(eventType, ctx)`, and pushes
- * the returned source onto the session's `triggerSources` array — no more
+ * the returned source onto the session's `triggerSources` array - no more
  * per-event-type setup functions.
  *
  * Returns `null` when:
  *  - the event type has no corresponding source (e.g. `agent.completed`,
- *    `app.startup` — those are handled directly by the runtime, not via a
+ *    `app.startup` - those are handled directly by the runtime, not via a
  *    timer/watcher)
  *  - the subscription is missing required fields (e.g. `time.heartbeat`
  *    without `interval_minutes`, `file.changed` without `watch`)
@@ -47,7 +47,7 @@ export function createTriggerSource(
 		case 'agent.completed':
 		case 'app.startup':
 		case 'cli.trigger':
-			// These are not timer/watcher-driven — the runtime handles them
+			// These are not timer/watcher-driven - the runtime handles them
 			// directly via the completion service / startup loop / CLI command.
 			return null;
 		default: {

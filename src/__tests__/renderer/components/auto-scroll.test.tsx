@@ -65,7 +65,7 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
 }));
 
-// Mock MutationObserver for JSDOM — store callback on observe() so tests
+// Mock MutationObserver for JSDOM - store callback on observe() so tests
 // can trigger it manually to simulate DOM mutations.
 class MockMutationObserver {
 	private callback: MutationCallback;
@@ -279,7 +279,7 @@ describe('Auto-scroll feature', () => {
 				vi.advanceTimersByTime(50);
 			});
 
-			// Badge should NOT appear — no new entries were added
+			// Badge should NOT appear - no new entries were added
 			expect(screen.queryByText('1')).not.toBeInTheDocument();
 		});
 

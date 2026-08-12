@@ -2,7 +2,7 @@
  * RightPanel component for Maestro web interface
  *
  * An inline panel (not overlay) that sits alongside the main content area.
- * Provides Files, History, Auto Run, and Git tabs — same content as RightDrawer
+ * Provides Files, History, Auto Run, and Git tabs - same content as RightDrawer
  * but rendered as a persistent, toggleable side panel for desktop-like UX.
  */
 
@@ -57,7 +57,7 @@ const TABS: { id: RightDrawerTab; label: string }[] = [
 ];
 
 /**
- * Inline right panel — renders as a flex child alongside main content.
+ * Inline right panel - renders as a flex child alongside main content.
  */
 export function RightPanel({
 	sessionId,

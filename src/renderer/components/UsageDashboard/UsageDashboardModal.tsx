@@ -120,11 +120,11 @@ interface UsageDashboardModalProps {
 	defaultTimeRange?: StatsTimeRange;
 	/** Sessions for displaying session statistics in Agents tab */
 	sessions?: Session[];
-	/** Cumulative AutoRun stats — required for the achievement share button. */
+	/** Cumulative AutoRun stats - required for the achievement share button. */
 	autoRunStats?: AutoRunStatsType;
-	/** Optional global stats — drives the Sessions/Tokens row in the share image. */
+	/** Optional global stats - drives the Sessions/Tokens row in the share image. */
 	globalStats?: AchievementShareGlobalStats | null;
-	/** Maestro peak-usage stats — drives the bottom row of the share image. */
+	/** Maestro peak-usage stats - drives the bottom row of the share image. */
 	usageStats?: MaestroUsageStats | null;
 	/** Global hands-on time, in ms, sourced from settings. */
 	handsOnTimeMs?: number;
@@ -159,7 +159,7 @@ const TIME_RANGE_OPTIONS: { value: StatsTimeRange; label: string }[] = [
 	{ value: 'all', label: 'All Time' },
 ];
 
-// View mode tabs (base list — Cue is appended dynamically when the Encore flag is on)
+// View mode tabs (base list - Cue is appended dynamically when the Encore flag is on)
 const BASE_VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'overview', label: 'Overview' },
 	{ value: 'agent-overview', label: 'Agent Overview' },
@@ -187,7 +187,7 @@ export function UsageDashboardModal({
 	// The Achievement share image (in this modal's header) needs cross-provider
 	// session/token totals. About Modal fetches them on mount via the shared
 	// hook; mirror that here so callers don't have to thread the prop through.
-	// Only fetch while the modal is actually open — the lazy-loaded modal
+	// Only fetch while the modal is actually open - the lazy-loaded modal
 	// stays mounted across opens once the user opens it the first time.
 	const { globalStats: fetchedGlobalStats } = useGlobalAgentStats(isOpen && !globalStatsProp);
 	const globalStats = globalStatsProp ?? fetchedGlobalStats;
@@ -824,7 +824,7 @@ export function UsageDashboardModal({
 							Export CSV
 						</button>
 
-						{/* Share Achievements — sits next to Export CSV. Only renders when
+						{/* Share Achievements - sits next to Export CSV. Only renders when
 						    we have AutoRun stats (the achievement system requires them);
 						    if the parent didn't thread them in, the button is hidden so
 						    we don't ship a visibly-broken affordance. */}
@@ -1028,7 +1028,7 @@ export function UsageDashboardModal({
 							{/* View-specific content based on viewMode */}
 							{viewMode === 'overview' && (
 								<>
-									{/* Year-in-pixels hero strip — single-row signature graphic
+									{/* Year-in-pixels hero strip - single-row signature graphic
 									    showing the past 365 days at a glance. Self-hides when the
 									    user has no activity in the lookback window. */}
 									<div
@@ -1145,7 +1145,7 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
-									{/* Provider Trends Over Time — stacked bars per day so drift
+									{/* Provider Trends Over Time - stacked bars per day so drift
 									    between providers (e.g. Claude Code → Codex) is visible. */}
 									<div
 										ref={setSectionRef('provider-trends')}
@@ -1237,7 +1237,7 @@ export function UsageDashboardModal({
 										</div>
 									</div>
 
-									{/* Radial activity pair — replaces the flat Peak Hours bar chart.
+									{/* Radial activity pair - replaces the flat Peak Hours bar chart.
 									    Two side-by-side polar charts: one for hour-of-day, one for
 									    day-of-week. Stacks to a single column on narrow viewports. */}
 									<div
@@ -1352,7 +1352,7 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 
-									{/* Worktree Analytics — only shown when at least one worktree
+									{/* Worktree Analytics - only shown when at least one worktree
 									    session exists. WorktreeAnalytics provides its own role="region"
 									    + aria-label, so it sits outside the keyboard-navigable sections
 									    (same pattern as AgentOverviewCards in the Overview tab). */}

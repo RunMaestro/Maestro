@@ -64,7 +64,7 @@ const mockDb = {
 				{ name: 'parent_event_id' },
 			];
 		}
-		// Same idea for cue_event_queue — Phase 01 added chain_root_id /
+		// Same idea for cue_event_queue - Phase 01 added chain_root_id /
 		// parent_event_id so persisted queue rows survive restart with
 		// lineage intact. Returning the full column set keeps the additive
 		// migration a no-op under the mock.
@@ -85,7 +85,7 @@ const mockDb = {
 				{ name: 'parent_event_id' },
 			];
 		}
-		// cue_github_seen — the GitHub re-trigger feature added `last_revision`
+		// cue_github_seen - the GitHub re-trigger feature added `last_revision`
 		// and `fire_count` columns. Returning the full column set keeps the
 		// additive migration a no-op under the mock.
 		if (query.startsWith('table_info(cue_github_seen)')) {

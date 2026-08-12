@@ -30,12 +30,12 @@ export interface AutoRunSetupSheetProps {
 	loadGitBranches?: () => Promise<{ branches: string[]; currentBranch?: string }>;
 	/** Lazy loader for existing worktrees list (informational). */
 	loadWorktrees?: () => Promise<WorktreeSummary[]>;
-	/** WebSocket sendRequest — required so the sheet can list/save/delete playbooks. */
+	/** WebSocket sendRequest - required so the sheet can list/save/delete playbooks. */
 	sendRequest: UseWebSocketReturn['sendRequest'];
-	/** WebSocket send — passed through to useAutoRun (unused inside the sheet directly). */
+	/** WebSocket send - passed through to useAutoRun (unused inside the sheet directly). */
 	send: UseWebSocketReturn['send'];
 	/**
-	 * The document currently focused in the inline panel — used as the initial
+	 * The document currently focused in the inline panel - used as the initial
 	 * single-document selection so the sheet opens like desktop's BatchRunnerModal
 	 * (which pre-fills `currentDocument`) rather than checking every document. The
 	 * user can still add more from the document list. Falls back to the first
@@ -44,7 +44,7 @@ export interface AutoRunSetupSheetProps {
 	currentDocument?: string | null;
 	/**
 	 * Open the Playbook Exchange sheet. When omitted, the entry point is
-	 * hidden — keeps tests / older callers working without the marketplace.
+	 * hidden - keeps tests / older callers working without the marketplace.
 	 */
 	onOpenMarketplace?: () => void;
 }
@@ -95,13 +95,13 @@ export function AutoRunSetupSheet({
 	// behind an "Add documents" expander so the sheet doesn't open with the
 	// entire library on screen.
 	const [showAddDocs, setShowAddDocs] = useState(false);
-	// Toggles the inline template-variable reference under the prompt textarea —
+	// Toggles the inline template-variable reference under the prompt textarea -
 	// matches desktop's collapsible "Template Variables" section.
 	const [showTemplateVars, setShowTemplateVars] = useState(false);
 	const sheetRef = useRef<HTMLDivElement>(null);
 	const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-	// Playbook state — loaded once when the sheet opens, plus the id of the
+	// Playbook state - loaded once when the sheet opens, plus the id of the
 	// currently-loaded playbook (used to disambiguate "Save" vs. "Update").
 	const {
 		playbooks,
@@ -157,7 +157,7 @@ export function AutoRunSetupSheet({
 		if (!activePlaybook) return false;
 		// Apply the same stale-doc filter handleSelectPlaybook uses so a playbook
 		// referencing a now-deleted file doesn't light up the Update button just
-		// from the load. The playbook itself hasn't changed — only the world has.
+		// from the load. The playbook itself hasn't changed - only the world has.
 		const availableKeys = new Set(documents.map((d) => d.path || d.filename));
 		const playbookDocs = activePlaybook.documents
 			.map((d) => d.filename)
@@ -211,14 +211,14 @@ export function AutoRunSetupSheet({
 
 	// Handle documents list changes within a session.
 	//   - First non-empty docs arrival for this session: seed `selectedFiles`
-	//     with `currentDocument` (or the first doc as fallback) — matches
+	//     with `currentDocument` (or the first doc as fallback) - matches
 	//     desktop `BatchRunnerModal`'s `currentDocument` semantics. Covers the
 	//     async-load case where the parent initially renders with empty docs;
 	//     without this, the useState initializer above runs against an empty
 	//     `documents` array and the user opens the sheet with nothing selected.
 	//   - Subsequent changes (rename, delete, refresh): intersect current
 	//     selections with what still exists. Leave prompt / loop / playbook id
-	//     untouched — a new `documents` reference must not wipe a loaded draft.
+	//     untouched - a new `documents` reference must not wipe a loaded draft.
 	useEffect(() => {
 		const available = new Set(documents.map((d) => d.path || d.filename));
 		if (initializedForSessionRef.current !== sessionId && available.size > 0) {
@@ -256,7 +256,7 @@ export function AutoRunSetupSheet({
 		requestAnimationFrame(() => setIsVisible(true));
 	}, []);
 
-	// Escape handling — route to the top-most overlay first so pressing Escape
+	// Escape handling - route to the top-most overlay first so pressing Escape
 	// inside the playbook-name prompt or the delete-confirmation dialog only
 	// dismisses that modal, not the whole setup sheet. Without this, the
 	// document-level listener would unconditionally tear the sheet down.
@@ -576,7 +576,7 @@ export function AutoRunSetupSheet({
 					</button>
 				</div>
 
-				{/* Transient error banner for failed save/delete — haptics alone
+				{/* Transient error banner for failed save/delete - haptics alone
 				    aren't enough feedback on mobile (may be disabled), so surface
 				    the failure visibly for a few seconds. */}
 				{playbookActionError && (
@@ -680,7 +680,7 @@ export function AutoRunSetupSheet({
 						</div>
 					)}
 
-					{/* Playbooks section — collapsible. Surfaces saved configurations
+					{/* Playbooks section - collapsible. Surfaces saved configurations
 					    so the mobile launch flow has parity with the desktop's playbook
 					    list (load / save / update / delete). */}
 					<div style={{ marginBottom: '20px' }}>
@@ -912,7 +912,7 @@ export function AutoRunSetupSheet({
 						)}
 					</div>
 
-					{/* Documents section — desktop BatchRunnerModal parity:
+					{/* Documents section - desktop BatchRunnerModal parity:
 						the active document(s) get prominent rows with a remove (X)
 						affordance, while the rest are tucked behind an "Add documents"
 						expander so the sheet doesn't open with the entire library
@@ -948,7 +948,7 @@ export function AutoRunSetupSheet({
 							</span>
 						</div>
 
-						{/* Selected docs — prominent rows with remove button */}
+						{/* Selected docs - prominent rows with remove button */}
 						<div
 							style={{
 								display: 'flex',
@@ -1044,7 +1044,7 @@ export function AutoRunSetupSheet({
 								})}
 						</div>
 
-						{/* Add documents expander — toggles a list of unselected docs */}
+						{/* Add documents expander - toggles a list of unselected docs */}
 						{documents.some((doc) => !selectedFiles.has(doc.path || doc.filename)) && (
 							<>
 								<button
@@ -1169,7 +1169,7 @@ export function AutoRunSetupSheet({
 						)}
 					</div>
 
-					{/* Run-in-Worktree section — hidden for non-git repos. */}
+					{/* Run-in-Worktree section - hidden for non-git repos. */}
 					{loadGitBranches && loadWorktrees && (
 						<AutoRunWorktreeSection
 							isGitRepo={isGitRepo}
@@ -1180,7 +1180,7 @@ export function AutoRunSetupSheet({
 						/>
 					)}
 
-					{/* Prompt input section — desktop BatchRunnerModal exposes a
+					{/* Prompt input section - desktop BatchRunnerModal exposes a
 						"Template Variables" collapsible reference here that lets the
 						user click to insert. Mirror that on web so the user doesn't
 						have to memorize variable names. */}
@@ -1449,7 +1449,7 @@ export function AutoRunSetupSheet({
 					</div>
 				</div>
 
-				{/* Worktree validation warning — rendered above the action row so
+				{/* Worktree validation warning - rendered above the action row so
 					it shows as a full-width banner instead of squeezing the
 					Cancel/Launch buttons sideways on narrow screens. */}
 				{worktreeState.status === 'enabled-invalid' && (
@@ -1466,7 +1466,7 @@ export function AutoRunSetupSheet({
 					</div>
 				)}
 
-				{/* Footer — Cancel + Launch (mirrors desktop's Cancel/Save/Go).
+				{/* Footer - Cancel + Launch (mirrors desktop's Cancel/Save/Go).
 					Save lives in the Playbook section above; this footer is just
 					the dismiss + go pair. */}
 				<div
@@ -1650,7 +1650,7 @@ export function AutoRunSetupSheet({
 				</div>
 			)}
 
-			{/* Delete-confirmation overlay. Same rationale as the prompt overlay —
+			{/* Delete-confirmation overlay. Same rationale as the prompt overlay -
 			    avoids `window.confirm`, which gets blocked on iOS Safari after
 			    repeated use and is stubbed to a no-op in some embedded WebViews. */}
 			{confirmDeletePlaybookState && (

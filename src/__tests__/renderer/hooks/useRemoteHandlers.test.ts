@@ -42,7 +42,7 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
-// Mock hasCapabilityCached — agents with batch mode support
+// Mock hasCapabilityCached - agents with batch mode support
 const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 	hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
@@ -762,7 +762,7 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleRemoteCommand – Terminal mode edge cases
+	// handleRemoteCommand - Terminal mode edge cases
 	// ========================================================================
 
 	describe('handleRemoteCommand – terminal mode edge cases', () => {
@@ -902,7 +902,7 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleRemoteCommand – AI mode edge cases
+	// handleRemoteCommand - AI mode edge cases
 	// ========================================================================
 
 	describe('handleRemoteCommand – AI mode edge cases', () => {
@@ -1014,7 +1014,7 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			// Should NOT spawn — unknown slash command is early-returned
+			// Should NOT spawn - unknown slash command is early-returned
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 
 			// addLogToTab should have been called with an error log about the unknown command
@@ -1368,7 +1368,7 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleQuickActionsToggleRemoteControl – edge cases
+	// handleQuickActionsToggleRemoteControl - edge cases
 	// ========================================================================
 
 	describe('handleQuickActionsToggleRemoteControl – edge cases', () => {
@@ -1430,7 +1430,7 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// sessionSshRemoteNames – edge cases
+	// sessionSshRemoteNames - edge cases
 	// ========================================================================
 
 	describe('sessionSshRemoteNames – edge cases', () => {

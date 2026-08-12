@@ -3,7 +3,7 @@
  *
  * Disk-backed (with in-memory hot path) cache for activity-graph bucket
  * aggregations. The graph view in the History panels needs to be
- * "all-encompassing" — it always covers the full history, regardless of how
+ * "all-encompassing" - it always covers the full history, regardless of how
  * the entry list below is paginated. Recomputing those buckets on every
  * lookback flip or fresh load gets expensive once a project's history grows
  * past tens of thousands of entries (especially the unified view across all
@@ -28,7 +28,7 @@ const LOG_CONTEXT = '[HistoryBucketCache]';
 export const HISTORY_BUCKET_CACHE_VERSION = 2;
 
 /**
- * Single bucket of the activity graph — counts of each entry type within the
+ * Single bucket of the activity graph - counts of each entry type within the
  * bucket's time slice. Mirrors `GraphBucket` in director-notes / ActivityGraph
  * so all three layers (cache, IPC, renderer) share the same shape.
  */
@@ -109,7 +109,7 @@ export class HistoryBucketCache {
 
 	/**
 	 * Returns cached data only if `expectedFingerprint` matches what was stored.
-	 * Otherwise returns null — caller should recompute and call `set()`.
+	 * Otherwise returns null - caller should recompute and call `set()`.
 	 *
 	 * Warm path (in-memory hit): returns synchronously-resolved promise; no
 	 * disk I/O. Cold path: reads via fs/promises so it doesn't block other
@@ -191,7 +191,7 @@ export class HistoryBucketCache {
 			);
 		} catch (err) {
 			const code = (err as NodeJS.ErrnoException).code;
-			if (code === 'ENOENT') return; // cache dir doesn't exist yet — nothing to clear
+			if (code === 'ENOENT') return; // cache dir doesn't exist yet - nothing to clear
 			logger.warn(`Failed to clear cache dir: ${err}`, LOG_CONTEXT);
 		}
 	}
@@ -231,7 +231,7 @@ export function getHistoryBucketCache(): HistoryBucketCache {
 	return instance;
 }
 
-/** Test seam — replace the singleton. */
+/** Test seam - replace the singleton. */
 export function setHistoryBucketCacheForTest(cache: HistoryBucketCache | null): void {
 	instance = cache;
 }

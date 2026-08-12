@@ -339,7 +339,7 @@ describe('SummaryCards', () => {
 		});
 	});
 
-	// Interactive Ratio tests removed — the Interactive % card is no longer
+	// Interactive Ratio tests removed - the Interactive % card is no longer
 	// rendered. Top Agent / Peak Hour still surface N/A when their inputs are
 	// empty, which the existing "Most Active Agent Calculation > shows N/A"
 	// test already covers.
@@ -429,7 +429,7 @@ describe('SummaryCards', () => {
 		});
 
 		it('renders an empty (dashed-baseline) sparkline when byDay is empty', () => {
-			// emptyData has byDay: [] — left-padded to seven zeros, the Sparkline
+			// emptyData has byDay: [] - left-padded to seven zeros, the Sparkline
 			// collapses to its empty/dashed baseline state.
 			render(<SummaryCards data={emptyData} theme={theme} />);
 

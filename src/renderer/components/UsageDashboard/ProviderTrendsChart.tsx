@@ -24,7 +24,7 @@ interface ProviderTrendsChartProps {
 }
 
 // Mirrors `getAgentColor` in AgentComparisonChart so the two charts use the
-// same color per provider — important when reading them side-by-side.
+// same color per provider - important when reading them side-by-side.
 function getProviderColor(index: number, theme: Theme, colorBlindMode: boolean): string {
 	if (colorBlindMode) {
 		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];

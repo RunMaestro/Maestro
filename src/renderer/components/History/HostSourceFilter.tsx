@@ -9,7 +9,7 @@ export const LOCAL_HOST_KEY = '__local__';
 export interface HostSourceFilterProps {
 	/**
 	 * Counts of entries by host key. Use `LOCAL_HOST_KEY` for entries
-	 * without a `hostname`. Order is preserved when rendering — pass an
+	 * without a `hostname`. Order is preserved when rendering - pass an
 	 * already-sorted Map for stable display.
 	 */
 	hostCounts: Map<string, number>;
@@ -27,7 +27,7 @@ function labelForHost(host: string): string {
  * Source picker rendered at the bottom of the History panel. Defaults
  * to "All Sources"; click to expand a popover anchored above the
  * button. Only rendered by the parent when more than one host is
- * present in the loaded window — see `HistoryPanel`.
+ * present in the loaded window - see `HistoryPanel`.
  */
 export const HostSourceFilter = memo(function HostSourceFilter({
 	hostCounts,

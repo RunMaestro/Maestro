@@ -6,7 +6,7 @@
  * - App.tsx useState (flatFileList, graph view state)
  *
  * Per-session file tree DATA (fileTree, fileExplorerExpanded, etc.) stays
- * in sessionStore — deeply embedded in the Session type with 200+ call sites.
+ * in sessionStore - deeply embedded in the Session type with 200+ call sites.
  *
  * Can be used outside React via useFileExplorerStore.getState().
  */

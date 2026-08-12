@@ -44,7 +44,7 @@ export function useResizableWebPanel({
 		};
 	}, []);
 
-	// Persist to localStorage when width changes (not during drag — only on commit)
+	// Persist to localStorage when width changes (not during drag - only on commit)
 	const commitWidth = useCallback(
 		(w: number) => {
 			const clamped = Math.max(minWidth, Math.min(maxWidth, w));

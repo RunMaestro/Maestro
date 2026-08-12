@@ -165,12 +165,31 @@ describe('codex-usage-sampler', () => {
 		expect(captureMessageMock).not.toHaveBeenCalled();
 	});
 
+	it.each([408, 429, 500, 502, 503, 504])(
+		'does not report a throttled or degraded upstream (HTTP %i) to Sentry (MAESTRO-RR)',
+		async (status) => {
+			await fs.writeFile(
+				path.join(TEST_ROOT, 'auth.json'),
+				JSON.stringify({ tokens: { access_token: 'redacted-token' } })
+			);
+			// The sampler runs on a timer, so one ChatGPT outage would otherwise
+			// report once per tick per install - the dominant MAESTRO-RR volume.
+			vi.mocked(globalThis.fetch).mockResolvedValue(new Response('Upstream error', { status }));
+
+			const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+			expect(snapshot.authState).toBe('error');
+			expect(captureMessageMock).not.toHaveBeenCalled();
+		}
+	);
+
 	it('reports unexpected HTTP errors to Sentry (MAESTRO-RR)', async () => {
 		await fs.writeFile(
 			path.join(TEST_ROOT, 'auth.json'),
 			JSON.stringify({ tokens: { access_token: 'redacted-token' } })
 		);
-		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('Server error', { status: 500 }));
+		// A 400 implies we sent a malformed request - that would be our bug.
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('Bad request', { status: 400 }));
 
 		const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
 
@@ -178,7 +197,7 @@ describe('codex-usage-sampler', () => {
 		expect(captureMessageMock).toHaveBeenCalledWith(
 			'codex usage sample failed',
 			'warning',
-			expect.objectContaining({ reason: 'http 500' })
+			expect.objectContaining({ reason: 'http 400' })
 		);
 	});
 });

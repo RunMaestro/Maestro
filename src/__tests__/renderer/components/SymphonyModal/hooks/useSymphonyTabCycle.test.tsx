@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/hooks/useSymphonyTabCycle — Cmd+Shift+[/] tab cycle
+ * Tests for SymphonyModal/hooks/useSymphonyTabCycle - Cmd+Shift+[/] tab cycle
  * across the 4 SymphonyModal tabs, wrap behavior, isOpen gating.
  */
 import { describe, it, expect, vi } from 'vitest';

@@ -50,7 +50,7 @@ interface UnifiedHistoryEntry extends HistoryEntry {
 
 interface UnifiedHistoryTabProps {
 	theme: Theme;
-	/** Navigate to a session tab — receives (sourceSessionId, agentSessionId) */
+	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
 	fileTree?: FileNode[];
 	onFileClick?: (path: string) => void;
@@ -75,7 +75,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		);
 
 		// Stable, ordered array of the active types. Pushed to the server so
-		// pagination operates over the *filtered* dataset — otherwise the
+		// pagination operates over the *filtered* dataset - otherwise the
 		// 100-entry page can be all one type (e.g. CUE heartbeats), and
 		// deselecting that type would empty the visible list even though
 		// thousands of other-typed entries exist deeper in history. Memoized
@@ -91,7 +91,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const [searchQuery, setSearchQuery] = useState('');
 
 		// Pre-computed graph buckets from backend (covers all entries in
-		// the lookback window — server-cached). Independent from the
+		// the lookback window - server-cached). Independent from the
 		// paginated entry list below.
 		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
@@ -174,7 +174,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const pendingEntriesRef = useRef<UnifiedHistoryEntry[]>([]);
 		const rafIdRef = useRef<number | null>(null);
 
-		// Stable ref for session names — avoids making the streaming effect depend on session state
+		// Stable ref for session names - avoids making the streaming effect depend on session state
 		const sessionsRef = useRef(useSessionStore.getState().sessions);
 		useEffect(() => {
 			return useSessionStore.subscribe((s) => {
@@ -319,7 +319,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			}
 		}, [isLoading]);
 
-		// Lookback change — the hook reloads the entry list automatically
+		// Lookback change - the hook reloads the entry list automatically
 		// when its `loadPage` identity changes (loadPage is memoized on
 		// `lookbackHours`). We just clear stats so the bar reflects the new
 		// scope until the next response lands.
@@ -385,7 +385,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		}, []);
 
 		// Virtualization. Use the worst-case-aware estimate so the initial
-		// paint never positions a row higher than its content needs —
+		// paint never positions a row higher than its content needs -
 		// adjacent rows would otherwise overlap until ResizeObserver caught up.
 		const estimateSize = useCallback(
 			(index: number) => {
@@ -516,7 +516,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					);
 					await jumpToOffset(targetOffset);
 					// After the window slides, the virtualizer's bookkeeping
-					// has new indices — let the next render flush before
+					// has new indices - let the next render flush before
 					// scrolling. Scroll-to-top is the right default; the
 					// target lives near it because we anchored the page.
 					requestAnimationFrame(() => {
@@ -568,7 +568,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			[listNavKeyDown, searchExpanded, openSearch]
 		);
 
-		// Navigate to a session tab — looks up sourceSessionId from the unified entry
+		// Navigate to a session tab - looks up sourceSessionId from the unified entry
 		const handleOpenSessionAsTab = useCallback(
 			(agentSessionId: string) => {
 				if (!onResumeSession) return;
@@ -695,7 +695,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						onBarClick={handleGraphBarClick}
 						activeFilters={activeFilters}
 					/>
-					{/* Entry count badge — shows window position when jumped, total otherwise */}
+					{/* Entry count badge - shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (
 						<span
 							className="text-[10px] font-mono whitespace-nowrap flex-shrink-0 mt-1"
@@ -708,7 +708,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 									: `${totalEntries}`}
 						</span>
 					)}
-					{/* Back-to-top affordance — only visible after a jump */}
+					{/* Back-to-top affordance - only visible after a jump */}
 					{!isAtTop && !isJumping && (
 						<button
 							onClick={() => void jumpToTop()}
@@ -729,7 +729,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					onKeyDown={handleKeyDown}
 					onScroll={handleScroll}
 				>
-					{/* Stats bar — scrolls with entries */}
+					{/* Stats bar - scrolls with entries */}
 					{!isLoading && enrichedStats && enrichedStats.totalCount > 0 && (
 						<HistoryStatsBar stats={enrichedStats} theme={theme} />
 					)}

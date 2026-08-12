@@ -267,7 +267,7 @@ describe('graphDataBuilder', () => {
 				},
 			});
 
-			// The call must complete — depth cap prevents runaway recursion
+			// The call must complete - depth cap prevents runaway recursion
 			const result = await buildGraphData({
 				rootPath: '/test',
 				focusFile: 'entry.md',
@@ -532,7 +532,7 @@ describe('graphDataBuilder', () => {
 			}
 
 			// Cumulatively the partial updates should produce the same node set as
-			// the final return — that's the contract the renderer relies on.
+			// the final return - that's the contract the renderer relies on.
 			const result = await buildGraphData({
 				rootPath: '/test',
 				focusFile: 'readme.md',
@@ -574,7 +574,7 @@ describe('graphDataBuilder', () => {
 				onPartialUpdate: (u) => updates.push(u),
 			});
 
-			// standalone.md links to nothing — only the focus emit should fire
+			// standalone.md links to nothing - only the focus emit should fire
 			expect(updates.length).toBe(1);
 			expect(updates[0].phase).toBe('focus');
 			expect(updates[0].newNodes[0].id).toBe('doc-standalone.md');

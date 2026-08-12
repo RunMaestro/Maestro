@@ -184,7 +184,7 @@ describe('parseArgs', () => {
 		// `--print --verbose --output-format stream-json --dangerously-skip-permissions <prompt>`.
 		// Before the flag-guard in consumeValue(), --print greedily consumed
 		// --verbose as its prompt value and the real positional prompt was
-		// dropped into passthrough — the TUI then received "--verbose" as the
+		// dropped into passthrough - the TUI then received "--verbose" as the
 		// user message.
 		it('does not consume a flag-looking next token as the prompt value for --print', () => {
 			const result = callArgs([

@@ -210,6 +210,37 @@ describe('AgentActivityBars', () => {
 		render(<AgentActivityBars theme={mockTheme} data={[]} />);
 		expect(screen.getByText('No agent activity in this window')).toBeInTheDocument();
 	});
+
+	it('spells out the unit so a bare count is not left to guesswork', () => {
+		const data: BarDatum[] = [{ label: 'alpha', value: 5000 }];
+		render(<AgentActivityBars theme={mockTheme} data={data} unitLabel="history entries" />);
+		expect(screen.getByText('history entries')).toBeInTheDocument();
+	});
+
+	it('marks a capped value as a floor with a "+" and an explanatory title', () => {
+		// Without this, an agent pinned at the retention limit renders the exact
+		// same "5.0K" as one that genuinely stopped there, and the two tie.
+		const data: BarDatum[] = [
+			{ label: 'capped', value: 5000, atLeast: true },
+			{ label: 'exact', value: 5000 },
+		];
+		render(<AgentActivityBars theme={mockTheme} data={data} atLeastHint="Older runs discarded." />);
+		expect(screen.getByText('5.0K+')).toBeInTheDocument();
+		expect(screen.getByTitle('Older runs discarded.')).toBeInTheDocument();
+		// The uncapped row keeps the plain number.
+		expect(screen.getByText('5.0K')).toBeInTheDocument();
+	});
+
+	it('marks the overflow sum as a floor when any collapsed agent was capped', () => {
+		const data: BarDatum[] = Array.from({ length: 10 }, (_, i) => ({
+			label: `agent-${i}`,
+			value: 10 - i,
+			atLeast: i === 9, // the smallest, so it lands in the overflow row
+		}));
+		render(<AgentActivityBars theme={mockTheme} data={data} topN={8} />);
+		// Collapsed values 2 + 1 = 3, and one of them is a floor.
+		expect(screen.getByText('3+')).toBeInTheDocument();
+	});
 });
 
 describe('SuccessFailureWidget', () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 import { rehypeSourceLine } from '../../../../renderer/components/FilePreview/rehypeSourceLine';
 
 const MD = `# Title
@@ -43,6 +44,55 @@ describe('rehypeSourceLine (rendered DOM)', () => {
 		expect(byText('Section 2')?.getAttribute('data-source-line')).toBe('5');
 		expect(byText('Section 5')?.getAttribute('data-source-line')).toBe('10');
 		expect(container.querySelector('h1')?.getAttribute('data-source-line')).toBe('1');
+	});
+
+	it('stamps task checkboxes with their list item line', () => {
+		const { container } = render(
+			<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSourceLine, rehypeRaw]}>
+				{'# Tasks\n\n- [ ] first\n- [x] second\n'}
+			</ReactMarkdown>
+		);
+		const boxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
+		expect(boxes.map((b) => b.getAttribute('data-source-line'))).toEqual(['3', '4']);
+	});
+
+	it('stamps task checkboxes in a loose list, where the box sits inside a paragraph', () => {
+		const { container } = render(
+			<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSourceLine, rehypeRaw]}>
+				{'- [ ] first\n\n- [ ] second\n'}
+			</ReactMarkdown>
+		);
+		const boxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
+		expect(boxes.map((b) => b.getAttribute('data-source-line'))).toEqual(['1', '3']);
+	});
+
+	it('delivers the line to a custom input component (what makes a click editable)', () => {
+		const seen: Array<Record<string, unknown>> = [];
+		render(
+			<ReactMarkdown
+				remarkPlugins={[remarkGfm]}
+				rehypePlugins={[rehypeSourceLine, rehypeRaw]}
+				components={{
+					input: ({ node: _node, ...props }: any) => {
+						seen.push(props);
+						return <input {...props} readOnly />;
+					},
+				}}
+			>
+				{'intro\n\n- [ ] first\n- [x] second\n'}
+			</ReactMarkdown>
+		);
+		// Arrives as the DOM attribute string, so consumers must coerce it.
+		expect(seen.map((p) => p['data-source-line'])).toEqual(['3', '4']);
+	});
+
+	it('leaves an ordinary list item without a checkbox', () => {
+		const { container } = render(
+			<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSourceLine, rehypeRaw]}>
+				{'- plain item\n'}
+			</ReactMarkdown>
+		);
+		expect(container.querySelector('input')).toBeNull();
 	});
 
 	it('does not tag inline marks (keeps the attribute query block-level)', () => {

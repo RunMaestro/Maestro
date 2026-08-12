@@ -8,11 +8,6 @@ export interface FileStats {
 
 export interface FilePreviewProps {
 	file: { name: string; content: string; path: string } | null;
-	/**
-	 * ID of the file preview tab rendering this content. Required for media
-	 * files, whose player is hosted app-level and matched to the tab by this ID.
-	 */
-	fileTabId?: string;
 	onClose: () => void;
 	theme: any;
 	markdownEditMode: boolean;
@@ -59,7 +54,7 @@ export interface FilePreviewProps {
 	onOpenInGraph?: () => void;
 	/**
 	 * Callback to open the current file in a new Maestro browser tab. Wired only
-	 * for HTML files — the sandboxed preview iframe can't run JS-heavy local
+	 * for HTML files - the sandboxed preview iframe can't run JS-heavy local
 	 * dashboards, but the full webview can.
 	 */
 	onOpenInBrowser?: () => void;
@@ -79,7 +74,7 @@ export interface FilePreviewProps {
 	onSearchQueryChange?: (query: string) => void;
 	/** When true, disables click-outside-to-close and layer registration (for tab-based rendering) */
 	isTabMode?: boolean;
-	/** Timestamp (ms) when file was last modified on disk — used for change detection polling */
+	/** Timestamp (ms) when file was last modified on disk - used for change detection polling */
 	lastModified?: number;
 	/** Callback to reload file content from disk (called when user clicks Reload in the change banner) */
 	onReloadFile?: () => void;

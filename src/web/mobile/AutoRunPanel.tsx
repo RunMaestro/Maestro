@@ -33,12 +33,12 @@ export interface AutoRunPanelProps {
 	onSelectedDocumentChange?: (filename: string | null) => void;
 	/** Open the server-driven folder picker (desktop parity for `dialog.selectFolder`). */
 	onOpenFolderPicker?: () => void;
-	/** Open the Playbook Exchange (marketplace) sheet — surfaced as a Docs Overview CTA in the empty state. */
+	/** Open the Playbook Exchange (marketplace) sheet - surfaced as a Docs Overview CTA in the empty state. */
 	onOpenMarketplace?: () => void;
 }
 
 /**
- * AutoRunPanel — full-screen wrapper around {@link AutoRunInline}.
+ * AutoRunPanel - full-screen wrapper around {@link AutoRunInline}.
  */
 export function AutoRunPanel({
 	sessionId,
@@ -67,7 +67,7 @@ export function AutoRunPanel({
 		onOpenSetup?.();
 	}, [onOpenSetup]);
 
-	// Close on Escape — but only when no nested overlay is intercepting the key.
+	// Close on Escape - but only when no nested overlay is intercepting the key.
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
@@ -156,7 +156,7 @@ export function AutoRunPanel({
 				</button>
 			</header>
 
-			{/* Inline panel — same component used by the right-drawer Auto Run tab */}
+			{/* Inline panel - same component used by the right-drawer Auto Run tab */}
 			<div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
 				<AutoRunInline
 					sessionId={sessionId}

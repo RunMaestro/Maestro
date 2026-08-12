@@ -64,7 +64,11 @@ const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
 const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({ getBranchInfo: mockGetBranchInfo }),
-	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
+	useGitDetail: () => ({
+		getFileDetails: () => undefined,
+		refreshGitStatus: mockRefreshGitStatus,
+	}),
+	useGitFileStatus: () => ({ getFileCount: () => 0 }),
 }));
 
 const mockOpenModal = vi.fn();

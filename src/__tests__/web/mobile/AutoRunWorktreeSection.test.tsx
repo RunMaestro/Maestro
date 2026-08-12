@@ -1,5 +1,5 @@
 /**
- * Tests for AutoRunWorktreeSection — the mobile counterpart to desktop's
+ * Tests for AutoRunWorktreeSection - the mobile counterpart to desktop's
  * WorktreeRunSection. Verifies the toggle gating (isGitRepo + basePath),
  * branch loading, and the shape of the LaunchWorktreeConfig emitted via
  * the onChange callback.
@@ -233,7 +233,7 @@ describe('AutoRunWorktreeSection', () => {
 		);
 		expect(validWithEmptyTarget).toBeUndefined();
 
-		// And no `enabled-invalid` banner fires during the loading window — that
+		// And no `enabled-invalid` banner fires during the loading window - that
 		// would surface "Branch name is required" / "Base branch is required"
 		// warnings the user can't act on yet.
 		const invalidDuringLoading = onChange.mock.calls.find(

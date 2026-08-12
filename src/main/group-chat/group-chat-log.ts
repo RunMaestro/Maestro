@@ -162,7 +162,7 @@ export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
 					if (pipeIndices.length === 3) {
 						const trailingField = line.substring(pipeIndices[2] + 1);
 						if (trailingField !== 'readOnly' && !trailingField.startsWith('images:')) {
-							// Not a known flag — re-parse as content extending to end
+							// Not a known flag - re-parse as content extending to end
 							escapedContent = line.substring(pipeIndices[1] + 1);
 							readOnly = false;
 							imageFilenames = undefined;

@@ -38,15 +38,15 @@ function getTerminalNavSequence(e: KeyboardEvent): string | null {
 
 	// Option (Alt) + Arrow → word navigation
 	if (e.altKey && !e.metaKey && !e.ctrlKey) {
-		if (e.key === 'ArrowLeft') return '\x1bb'; // ESC b — backward word
-		if (e.key === 'ArrowRight') return '\x1bf'; // ESC f — forward word
-		if (e.key === 'Backspace') return '\x1b\x7f'; // ESC DEL — backward kill word
+		if (e.key === 'ArrowLeft') return '\x1bb'; // ESC b - backward word
+		if (e.key === 'ArrowRight') return '\x1bf'; // ESC f - forward word
+		if (e.key === 'Backspace') return '\x1b\x7f'; // ESC DEL - backward kill word
 	}
 
 	// Cmd (Meta) + Arrow → line navigation
 	if (e.metaKey && !e.altKey && !e.ctrlKey) {
-		if (e.key === 'ArrowLeft') return '\x01'; // Ctrl-A — beginning of line
-		if (e.key === 'ArrowRight') return '\x05'; // Ctrl-E — end of line
+		if (e.key === 'ArrowLeft') return '\x01'; // Ctrl-A - beginning of line
+		if (e.key === 'ArrowRight') return '\x05'; // Ctrl-E - end of line
 	}
 
 	return null;
@@ -537,7 +537,7 @@ export const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(funct
 			},
 		});
 
-		// Custom key event handler — matches desktop behavior
+		// Custom key event handler - matches desktop behavior
 		// Navigation sequences are written directly; Meta/Ctrl+Shift combos pass through
 		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
 			// Clipboard shortcuts in terminal:

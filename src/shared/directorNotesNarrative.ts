@@ -65,7 +65,18 @@ export type ParseNarrativeResult =
  * explains what had to be salvaged so the UI can say so out loud.
  */
 export type RecoverNarrativeResult =
-	| { ok: true; narrative: DirectorNotesNarrative; reason: string }
+	| {
+			ok: true;
+			narrative: DirectorNotesNarrative;
+			reason: string;
+			/**
+			 * True when the repair cost the report NOTHING: every section and bullet
+			 * the agent wrote survived and only syntax was rebuilt. Callers use this
+			 * to decide whether the user needs to see a failure banner at all - a
+			 * complete report should not be presented as a damaged one.
+			 */
+			lossless: boolean;
+	  }
 	| { ok: false; error: string };
 
 const VALID_KINDS: ReadonlySet<string> = new Set<NarrativeSectionKind>([
@@ -278,7 +289,16 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 
 	const jsonText = extractFirstJsonObject(raw);
 	if (jsonText === null) {
-		return { ok: false, error: 'No JSON object found in the response.' };
+		// An unterminated object is the common failure (an agent stopping at its
+		// output limit), and it is NOT the same as prose with no object at all.
+		// Saying "no JSON object found" about a response that visibly starts with
+		// one sends the reader hunting for the wrong problem.
+		return {
+			ok: false,
+			error: raw.includes('{')
+				? 'The JSON object was never closed - the response was cut off before it finished.'
+				: 'No JSON object found in the response.',
+		};
 	}
 
 	let parsed: unknown;
@@ -319,10 +339,19 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
  * still open. Cutting at a completed `}`/`]` is what makes this safe: it drops
  * any half-written string, dangling key, or trailing comma along with it.
  *
+ * `lossless` distinguishes the two very different shapes of "truncated". An
+ * agent writing right up against its output limit routinely finishes the whole
+ * structure and loses only the final `}`: every section and bullet is present,
+ * `sections` closed on its own, and the repair is pure punctuation. That is a
+ * COMPLETE report and must not be shown to the user as a damaged one. A cut in
+ * the middle of the bullet list is the real thing - content is gone - and
+ * `lossless` is false. The test is exact: the cut discarded nothing but
+ * whitespace, and the only frame left to close was the top-level object.
+ *
  * Returns `null` when the input is not truncated (the top-level object closes on
  * its own, so the strict path already had its shot) or when nothing completed.
  */
-function closeTruncatedJsonObject(raw: string): string | null {
+function closeTruncatedJsonObject(raw: string): { text: string; lossless: boolean } | null {
 	const start = raw.indexOf('{');
 	if (start === -1) return null;
 
@@ -357,11 +386,12 @@ function closeTruncatedJsonObject(raw: string): string | null {
 
 	if (cutIndex === -1) return null;
 
+	const lossless = cutStack.length === 1 && raw.slice(cutIndex + 1).trim().length === 0;
 	const closers = cutStack
 		.reverse()
 		.map((open) => (open === '{' ? '}' : ']'))
 		.join('');
-	return raw.slice(start, cutIndex + 1) + closers;
+	return { text: raw.slice(start, cutIndex + 1) + closers, lossless };
 }
 
 /**
@@ -461,9 +491,12 @@ function validateNarrativeLenient(
  * off mid-stream and raw control characters inside strings - then validates
  * leniently, dropping individual malformed bullets instead of the document.
  *
- * Recovery is never silent: `reason` states what was salvaged so the surfaces
- * can show it next to the narrative. When nothing usable survives, this returns
- * `{ ok: false }` and the caller shows the strict parse error instead.
+ * Recovery reports what it did: `reason` states what was repaired, and
+ * `lossless` says whether that repair cost the report any content. A lossless
+ * repair (only syntax rebuilt) yields a COMPLETE report, so callers should not
+ * dress it up as a failure; anything else should be surfaced next to the
+ * narrative. When nothing usable survives, this returns `{ ok: false }` and the
+ * caller shows the strict parse error instead.
  */
 export function recoverDirectorNotesNarrative(raw: string): RecoverNarrativeResult {
 	if (typeof raw !== 'string' || raw.trim().length === 0) {
@@ -473,16 +506,23 @@ export function recoverDirectorNotesNarrative(raw: string): RecoverNarrativeResu
 	// Ordered by fidelity: the untouched object first, then each repair. Each
 	// candidate remembers which repairs produced it so the reason we report is
 	// the one that actually applied.
-	const candidates: Array<{ text: string; wasTruncated: boolean; wasEscaped: boolean }> = [];
-	for (const [text, wasTruncated] of [
-		[extractFirstJsonObject(raw), false],
-		[closeTruncatedJsonObject(raw), true],
+	const truncationRepair = closeTruncatedJsonObject(raw);
+	const candidates: Array<{
+		text: string;
+		wasTruncated: boolean;
+		lostContent: boolean;
+		wasEscaped: boolean;
+	}> = [];
+	for (const [text, wasTruncated, lostContent] of [
+		[extractFirstJsonObject(raw), false, false],
+		[truncationRepair?.text ?? null, true, truncationRepair ? !truncationRepair.lossless : false],
 	] as const) {
 		if (text === null) continue;
-		candidates.push({ text, wasTruncated, wasEscaped: false });
+		candidates.push({ text, wasTruncated, lostContent, wasEscaped: false });
 		candidates.push({
 			text: escapeControlCharsInStrings(text),
 			wasTruncated,
+			lostContent,
 			wasEscaped: true,
 		});
 	}
@@ -500,7 +540,11 @@ export function recoverDirectorNotesNarrative(raw: string): RecoverNarrativeResu
 
 		const reasons: string[] = [];
 		if (candidate.wasTruncated) {
-			reasons.push('the response was cut off before it finished');
+			reasons.push(
+				candidate.lostContent
+					? 'the response was cut off before it finished'
+					: 'the response was missing its closing punctuation'
+			);
 		}
 		if (candidate.wasEscaped) {
 			reasons.push('the response contained line breaks that are not valid inside JSON');
@@ -512,10 +556,18 @@ export function recoverDirectorNotesNarrative(raw: string): RecoverNarrativeResu
 		}
 		if (reasons.length === 0) reasons.push('the response did not match the expected shape exactly');
 
+		// Only a mid-report cut or a dropped bullet actually costs content.
+		// Rebuilding syntax - closing punctuation, escaping a stray line break -
+		// leaves every word the agent wrote intact.
+		const lossless = !candidate.lostContent && lenient.dropped === 0;
+
 		return {
 			ok: true,
 			narrative: lenient.narrative,
-			reason: `Recovered what could be read: ${reasons.join(', and ')}.`,
+			lossless,
+			reason: lossless
+				? `Repaired the response before reading it: ${reasons.join(', and ')}. No report content was lost.`
+				: `Recovered what could be read: ${reasons.join(', and ')}.`,
 		};
 	}
 

@@ -537,7 +537,7 @@ describe('CueEngine multi-hop completion chains', () => {
 		// The chain ran but was stopped by MAX_CHAIN_DEPTH
 		expect(onCueRun).toHaveBeenCalled();
 		const callCount = onCueRun.mock.calls.length;
-		// Should be bounded — heartbeat(1) + chain hops limited by depth 10
+		// Should be bounded - heartbeat(1) + chain hops limited by depth 10
 		expect(callCount).toBeLessThanOrEqual(12);
 
 		// Verify the chain alternated between A and B sessions
@@ -703,11 +703,11 @@ describe('CueEngine multi-hop completion chains', () => {
 
 		vi.clearAllMocks();
 
-		// First source completes — fan-in should wait
+		// First source completes - fan-in should wait
 		engine.notifyAgentCompleted('source-a', { sessionName: 'SourceA', stdout: 'output-a' });
 		expect(deps.onCueRun).not.toHaveBeenCalled();
 
-		// Second source completes — fan-in should fire, then fan-out dispatches
+		// Second source completes - fan-in should fire, then fan-out dispatches
 		engine.notifyAgentCompleted('source-b', { sessionName: 'SourceB', stdout: 'output-b' });
 		await vi.advanceTimersByTimeAsync(0);
 

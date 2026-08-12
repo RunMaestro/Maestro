@@ -1,47 +1,36 @@
 /**
  * Media Playback Store
  *
- * Transient state for the app's single audio/video player.
+ * State for the app's single audio/video player.
  *
- * Exactly one media file plays at a time. Several media tabs can be open, but
- * only the **active** one has a mounted player; the widget navigates between
- * them rather than stacking one control per file. Switching pauses whatever was
+ * Media never becomes a file preview tab. Opening an audio or video file adds
+ * it to this queue and shows the floating player - that widget is the only
+ * surface media appears on, and it can be dragged anywhere, minimized to a
+ * pill, or hidden without stopping playback. Nothing takes over the main panel,
+ * so a podcast plays while the user keeps working.
+ *
+ * Exactly one item plays at a time. Several can be queued, but only the
+ * **active** one has a mounted player; the transport's prev/next move between
+ * them and the history menu jumps by recency. Switching pauses whatever was
  * playing, which is what keeps two audio streams from ever overlapping.
  *
- * The player has two placements, both driven from here:
- *  - **Docked** - the owning tab is on screen, so the player fills the
- *    `MediaViewportSlot` that `FilePreview` renders in place of its content.
- *  - **Floating** - the owning tab is not on screen, so the player becomes a
- *    draggable, resizable now-playing widget that survives switching tabs and
- *    agents.
+ * The element itself lives in `MediaPlaybackHost`, mounted once in `App.tsx`
+ * and never unmounted: removing a media element from the document runs the HTML
+ * spec's internal pause steps, so anything that renders per-tab or per-agent
+ * would kill playback on every switch.
  *
- * Why the element cannot live in FilePreview: `MainPanelContent` renders it only
- * for the active file tab of the active session, so switching tabs or agents
- * unmounts it, and removing a media element from the document runs the HTML
- * spec's internal pause steps. The element therefore lives in
- * `MediaPlaybackHost`, mounted once in `App.tsx`; this store is how the in-tab
- * slot and that host talk to each other.
+ * Only the float geometry persists (via settings). The queue does not survive a
+ * restart, and `maestro-media://` stream URLs are re-minted per boot anyway.
  *
- * Only the float geometry persists (via settings). Which file was playing does
- * not survive a restart, and `maestro-media://` stream URLs are re-minted per
- * boot anyway.
- *
- * Multi-window note: each renderer holds its own copy of this store. On a build
- * with multiple windows, two windows each showing a media tab would each mount a
- * player. Single-window builds cannot hit this.
+ * Multi-window note: each renderer holds its own copy of this store, so on a
+ * multi-window build two windows can each own a player.
  */
 
 import { create } from 'zustand';
 
-/** Viewport rect (CSS pixels, viewport-relative) of a media tab's docked slot. */
-export interface MediaSlotRect {
-	top: number;
-	left: number;
-	width: number;
-	height: number;
-}
+import { mediaItemId, type MediaItem } from '../utils/mediaItems';
 
-/** Position and size of the floating widget. */
+/** Position and size of the floating player. */
 export interface MediaFloatRect {
 	top: number;
 	left: number;
@@ -49,107 +38,140 @@ export interface MediaFloatRect {
 	height: number;
 }
 
-export interface MediaSlotState {
-	/**
-	 * Last known rect of the in-tab slot. Retained even while hidden so a docked
-	 * player keeps non-zero dimensions - a zero-sized video can get its decode
-	 * pipeline torn down, the same failure `visibility: hidden` (rather than
-	 * unmounting) exists to avoid for terminals and browser tabs.
-	 */
-	rect: MediaSlotRect;
-	/** Whether the owning tab is currently on screen. */
-	visible: boolean;
-}
+/** Everything needed to queue a file, minus the derived ID. */
+export type MediaOpenRequest = Omit<MediaItem, 'id'>;
+
+/**
+ * Entries kept in the history menu. Deep enough to cover a listening session,
+ * shallow enough that the menu stays scannable.
+ */
+export const MEDIA_HISTORY_LIMIT = 20;
 
 interface MediaPlaybackStoreState {
-	/** File tab whose player is mounted. Null when no media is loaded. */
-	activeTabId: string | null;
+	/** Play queue, in open order. */
+	items: MediaItem[];
+	/** Item whose player is mounted. Null when nothing is loaded. */
+	activeItemId: string | null;
+	/** Item IDs in most-recently-played order, newest first. */
+	history: string[];
 	/** Whether the active player is currently playing. */
 	playing: boolean;
 	/**
-	 * User closed the floating widget. Playback continues - dismissing hides a
-	 * control, it does not stop media. Cleared by opening a media file or by the
-	 * "Show Floating Media Player" command.
+	 * User hid the player. Playback continues - hiding a control does not stop
+	 * media. Cleared by opening a media file or by the "Show Floating Media
+	 * Player" command.
 	 */
 	dismissed: boolean;
-	/** Floating widget collapsed to a compact pill. */
+	/** Player collapsed to a compact pill. */
 	minimized: boolean;
-	/** One-shot: start playing once the active file is ready. */
+	/** One-shot: start playing once the active item is ready. */
 	pendingAutoplay: boolean;
 	/**
 	 * Incremented to ask the player to toggle play/pause. A nonce rather than a
 	 * function in state, so the minimized pill's button can drive the element
-	 * without anyone holding a ref across the floating frame boundary.
+	 * without anyone holding a ref across the frame boundary.
 	 */
 	toggleRequest: number;
-	/** File tab ID -> where to park a docked player. */
-	slots: Record<string, MediaSlotState>;
-	/** File tab ID -> last playback position, so navigating back resumes. */
+	/** Item ID -> last playback position, so coming back resumes. */
 	resumeTimes: Record<string, number>;
-	/** Floating widget geometry. Null until the user moves or resizes it. */
+	/** Floating player geometry. Null until the user moves or resizes it. */
 	floatRect: MediaFloatRect | null;
 
 	/**
-	 * Make a tab the active player, un-dismissing the widget.
+	 * Queue a file the user just opened and play it.
 	 *
-	 * @param tabId - Media file tab to activate.
-	 * @param opts.autoplay - Start playing when ready. Set when the user opened
-	 *   the file or navigated here with the widget's own controls.
+	 * Re-opening a file already in the queue reuses its entry rather than
+	 * stacking a duplicate, so it resumes where it left off.
 	 */
-	setActiveTab: (tabId: string, opts?: { autoplay?: boolean }) => void;
+	openMedia: (request: MediaOpenRequest) => void;
+	/**
+	 * Make a queued item the active player, un-hiding the widget.
+	 *
+	 * @param itemId - Queue entry to activate.
+	 * @param opts.autoplay - Start playing when ready. Set when the user opened
+	 *   the file or navigated here with the player's own controls.
+	 */
+	setActiveItem: (itemId: string, opts?: { autoplay?: boolean }) => void;
 	setPlaying: (playing: boolean) => void;
 	/** Consume the one-shot autoplay request. */
 	consumeAutoplay: () => void;
 	/** Ask the active player to toggle play/pause. */
 	requestToggle: () => void;
-	/** Publish the docked slot rect and mark the tab visible. */
-	setSlotRect: (tabId: string, rect: MediaSlotRect) => void;
-	/** Mark a slot off screen, keeping its last rect. */
-	hideSlot: (tabId: string) => void;
-	/** Drop everything for a tab. Called when the tab itself goes away. */
-	clearTab: (tabId: string) => void;
-	/** Hide the floating widget without stopping playback. */
+	/** Drop an item from the queue. Releases the player if it was active. */
+	closeItem: (itemId: string) => void;
+	/** Hide the player without stopping playback. */
 	dismiss: () => void;
-	/** Bring the floating widget back. */
+	/** Bring the player back. */
 	restore: () => void;
 	setMinimized: (minimized: boolean) => void;
 	setFloatRect: (rect: MediaFloatRect) => void;
-	/** Remember where a tab was paused, so returning to it resumes. */
-	rememberTime: (tabId: string, seconds: number) => void;
+	/** Remember where an item was paused, so returning to it resumes. */
+	rememberTime: (itemId: string, seconds: number) => void;
 }
 
 function persistFloatRect(rect: MediaFloatRect): void {
 	window.maestro?.settings?.set('mediaPlayerFloatRect', rect);
 }
 
+/** Push an ID to the front of the history list, deduped and capped. */
+function pushHistory(history: string[], itemId: string): string[] {
+	return [itemId, ...history.filter((id) => id !== itemId)].slice(0, MEDIA_HISTORY_LIMIT);
+}
+
 export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set) => ({
-	activeTabId: null,
+	items: [],
+	activeItemId: null,
+	history: [],
 	playing: false,
 	dismissed: false,
 	minimized: false,
 	pendingAutoplay: false,
 	toggleRequest: 0,
-	slots: {},
 	resumeTimes: {},
 	floatRect: null,
 
-	setActiveTab: (tabId, opts) =>
+	openMedia: (request) =>
 		set((state) => {
+			const id = mediaItemId(request.sessionId, request.path);
+			const existing = state.items.find((item) => item.id === id);
+			const item: MediaItem = { ...request, id };
+			const items = existing
+				? // Keep its queue position (prev/next order is open order) but refresh
+					// the metadata, since the agent may have been renamed since.
+					state.items.map((current) => (current.id === id ? item : current))
+				: [...state.items, item];
+
+			return {
+				items,
+				activeItemId: id,
+				history: pushHistory(state.history, id),
+				// Opening is an explicit request to hear it, even if it was already
+				// active and paused.
+				pendingAutoplay: true,
+				dismissed: false,
+				// Switching items unmounts the outgoing player, which pauses it. Only
+				// one element is ever mounted, so overlapping audio is structurally
+				// impossible rather than something we have to remember to prevent.
+				...(state.activeItemId === id ? {} : { playing: false }),
+			};
+		}),
+
+	setActiveItem: (itemId, opts) =>
+		set((state) => {
+			if (!state.items.some((item) => item.id === itemId)) return state;
 			const autoplay = opts?.autoplay ?? false;
-			if (state.activeTabId === tabId) {
-				// Already active. Still honor a fresh autoplay request (re-opening a
-				// paused file should play it) and un-dismiss, but do not restart.
+			if (state.activeItemId === itemId) {
+				// Already active. Honor a fresh autoplay request and un-hide, but do
+				// not restart something mid-listen.
 				if (!autoplay && !state.dismissed) return state;
 				return {
 					dismissed: false,
 					pendingAutoplay: state.pendingAutoplay || autoplay,
 				};
 			}
-			// Switching files: the outgoing player unmounts, which pauses it. Only
-			// one media element is ever mounted, so overlapping audio is structurally
-			// impossible rather than something we have to remember to prevent.
 			return {
-				activeTabId: tabId,
+				activeItemId: itemId,
+				history: pushHistory(state.history, itemId),
 				playing: false,
 				dismissed: false,
 				pendingAutoplay: autoplay,
@@ -163,48 +185,22 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set) => 
 
 	requestToggle: () => set((state) => ({ toggleRequest: state.toggleRequest + 1 })),
 
-	setSlotRect: (tabId, rect) =>
+	closeItem: (itemId) =>
 		set((state) => {
-			const prev = state.slots[tabId];
-			if (
-				prev?.visible &&
-				prev.rect.top === rect.top &&
-				prev.rect.left === rect.left &&
-				prev.rect.width === rect.width &&
-				prev.rect.height === rect.height
-			) {
-				// Identical rect: bail out so ResizeObserver churn does not re-render
-				// the host and with it the media element.
-				return state;
-			}
-			return { slots: { ...state.slots, [tabId]: { rect, visible: true } } };
-		}),
-
-	hideSlot: (tabId) =>
-		set((state) => {
-			const prev = state.slots[tabId];
-			if (!prev || !prev.visible) return state;
-			return { slots: { ...state.slots, [tabId]: { ...prev, visible: false } } };
-		}),
-
-	clearTab: (tabId) =>
-		set((state) => {
-			const hasSlot = state.slots[tabId] !== undefined;
-			const hasTime = state.resumeTimes[tabId] !== undefined;
-			const isActive = state.activeTabId === tabId;
-			if (!hasSlot && !hasTime && !isActive) return state;
-
-			const slots = { ...state.slots };
+			if (!state.items.some((item) => item.id === itemId)) return state;
+			const items = state.items.filter((item) => item.id !== itemId);
 			const resumeTimes = { ...state.resumeTimes };
-			delete slots[tabId];
-			delete resumeTimes[tabId];
+			delete resumeTimes[itemId];
 
 			return {
-				slots,
+				items,
 				resumeTimes,
-				// Closing the playing tab releases the player. The host picks a
-				// remaining media tab on its next pass if there is one.
-				...(isActive ? { activeTabId: null, playing: false, pendingAutoplay: false } : {}),
+				history: state.history.filter((id) => id !== itemId),
+				// Closing the playing item releases the player rather than
+				// auto-advancing: closing is "stop", not "skip".
+				...(state.activeItemId === itemId
+					? { activeItemId: null, playing: false, pendingAutoplay: false }
+					: {}),
 			};
 		}),
 
@@ -220,23 +216,24 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set) => 
 		set({ floatRect: rect });
 	},
 
-	rememberTime: (tabId, seconds) =>
-		set((state) => ({ resumeTimes: { ...state.resumeTimes, [tabId]: seconds } })),
+	rememberTime: (itemId, seconds) =>
+		set((state) => ({ resumeTimes: { ...state.resumeTimes, [itemId]: seconds } })),
 }));
 
 /** Non-React access, for callers outside the component tree. */
 export function getMediaPlaybackActions() {
 	const state = useMediaPlaybackStore.getState();
 	return {
-		setActiveTab: state.setActiveTab,
+		openMedia: state.openMedia,
+		setActiveItem: state.setActiveItem,
 		setPlaying: state.setPlaying,
 		dismiss: state.dismiss,
 		restore: state.restore,
-		clearTab: state.clearTab,
+		closeItem: state.closeItem,
 	};
 }
 
-/** Whether a floating widget could be restored right now. */
+/** Whether a hidden player could be brought back right now. */
 export function selectCanRestoreFloatingPlayer(state: MediaPlaybackStoreState): boolean {
-	return state.dismissed && state.activeTabId !== null;
+	return state.dismissed && state.activeItemId !== null;
 }

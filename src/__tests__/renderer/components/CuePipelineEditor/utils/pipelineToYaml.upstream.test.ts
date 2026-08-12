@@ -107,7 +107,7 @@ function makeFanInPipeline(
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('pipelineToYamlSubscriptions — per-edge upstream output', () => {
+describe('pipelineToYamlSubscriptions - per-edge upstream output', () => {
 	describe('include_output_from', () => {
 		it('does not emit include_output_from when all edges are included (default)', () => {
 			const pipeline = makeFanInPipeline();

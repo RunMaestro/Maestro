@@ -251,14 +251,15 @@ $ git status
 
 You will know you are in command mode: a `$` appears at the left of the input, and a **COMMAND MODE** strip above it names the directory the command will run in.
 
-**Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
+**Getting back to the agent:** press `Esc` on an empty command line (or `Backspace`, same thing). The composer keeps focus, so you can carry straight on typing your message. Command mode sticks around between commands, so you can run several in a row without retyping `!`, and you leave deliberately when you are done.
 
 **How it behaves:**
 
 - **The agent is bypassed entirely.** It is never spawned, never written to, and never sees the command or its output. Nothing you run this way enters the agent's context - if you want the agent to see the result, copy it into a message.
 - **It runs immediately, even while the agent is working.** Command mode does not queue and does not interrupt the turn in progress, so you can check `git log` while the agent is mid-edit.
 - **It runs in the agent's working directory** (on the agent's SSH remote, if it has one). Each command is independent - there is no persistent shell, so `cd src` on its own does nothing. Chain instead: `cd src && ls`.
-- **Output streams into the transcript** as a card showing the command, where it ran, and a live spinner while it works. When it finishes, the card shows the exit code and how long it took, with a button to copy the output.
+- **Every command gets its own card**, never merged into the surrounding conversation. The card shows the command, where it ran, and a live spinner while it works; when it finishes, the exit code and how long it took.
+- **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
 ### Tab Completion in Command Mode
@@ -278,10 +279,11 @@ One match completes in place. Several open a picker: `↑` / `↓` to move, `Ent
 
 Completion resolves from the **agent's working directory**, which is where the command will actually run. This is deliberately not the Command Terminal's directory - `cd`-ing in a terminal tab does not move where your commands run, so it must not move where completion looks either.
 
-Two chat affordances stand down in command mode, because a shell line means different things by the same characters:
+Chat affordances stand down in command mode, because a shell line means different things by the same characters:
 
 - **`@` file mentions** - an `@` here is an `scp` target or an email in a commit message, not a file reference for the agent.
 - **Slash commands** - a leading `/` here is an absolute path (`/usr/bin/env`), not `/history`.
+- **Image attachments** - pasting or dropping an image is ignored, and the attach button is hidden. A shell command has nothing to do with an image, and the agent (which is the thing that reads them) never sees this input.
 
 **Stopping a command:** a running command's card has a **Stop** button. Reach for it if you start something long or something that waits for input.
 
@@ -726,6 +728,8 @@ Every snooze takes an optional note, and that note becomes the body of the notif
 The tab disappears from the tab bar and from tab navigation. The conversation is preserved exactly as you left it, and the tab returns to its original position when it wakes. If you snooze an agent's only tab, a fresh empty tab takes its place so you're never left staring at an empty workspace.
 
 When the time arrives, the tab reappears and Maestro raises a notification that stays until you dismiss it, so a reminder can't scroll past unseen. Click it to jump straight to the tab.
+
+The returning tab also gets a **Back from snooze** card at the end of its conversation, showing how long it was away, when it was due, and the note you left yourself. The notification is momentary, but this card stays in the transcript, so weeks later the tab still explains why it came back.
 
 <Note>
 Wakes are delivered by the running app. If Maestro is closed when a snooze comes due, the tab returns the next time you launch - overdue reminders are never silently dropped.

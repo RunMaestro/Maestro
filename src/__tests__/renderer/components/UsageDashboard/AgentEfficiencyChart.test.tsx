@@ -185,7 +185,7 @@ describe('AgentEfficiencyChart', () => {
 
 			// Two providers: claude-code (matches) and factory-droid (dimmed).
 			// Sort by efficiency: data has claude-code at 2000000/30 ≈ 66667ms,
-			// factory-droid at 1600000/20 = 80000ms — claude-code is faster, so
+			// factory-droid at 1600000/20 = 80000ms - claude-code is faster, so
 			// it renders first. We don't depend on order; instead, find the row
 			// whose label is "Claude Code" vs "Factory Droid".
 			const claudeRow = Array.from(rows).find((r) => r.textContent?.includes('Claude Code'));

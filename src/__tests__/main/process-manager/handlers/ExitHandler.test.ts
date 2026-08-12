@@ -398,7 +398,7 @@ describe('ExitHandler', () => {
 
 		it('should NOT false-positive when agent response text contains SSH error keywords', async () => {
 			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
-			// Return null — no SSH error in stderr
+			// Return null - no SSH error in stderr
 			mockedMatchSsh.mockReturnValue(null);
 
 			const proc = createMockProcess({

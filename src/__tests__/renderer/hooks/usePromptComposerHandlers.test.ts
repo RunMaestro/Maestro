@@ -326,7 +326,7 @@ describe('usePromptComposerHandlers', () => {
 
 				// setInputValue is called synchronously
 				expect(deps.setInputValue).toHaveBeenCalledWith('send this message');
-				// processInput is scheduled via setTimeout — not called yet
+				// processInput is scheduled via setTimeout - not called yet
 				expect(deps.processInput).not.toHaveBeenCalled();
 
 				// Advance timers to flush the setTimeout

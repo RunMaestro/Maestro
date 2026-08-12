@@ -1,9 +1,9 @@
 /**
- * AnnotatorSettingsDrawer — Slide-in right-side panel with brush configuration.
+ * AnnotatorSettingsDrawer - Slide-in right-side panel with brush configuration.
  *
  * Bound directly to the persisted settings via `useSettingsStore` selectors so
  * `AnnotatorCanvas` re-renders strokes live as sliders move (the canvas reads
- * the same selectors). Mirror values from `src/main/stores/defaults.ts` —
+ * the same selectors). Mirror values from `src/main/stores/defaults.ts` -
  * keep ANNOTATOR_DEFAULTS in sync there.
  */
 
@@ -168,7 +168,7 @@ export function AnnotatorSettingsDrawer({
 	const textEditingSelection = !!selectedText;
 
 	const handleResetDefaults = () => {
-		// Reset always operates on the global defaults — never the live selection.
+		// Reset always operates on the global defaults - never the live selection.
 		setDefPenColor(ANNOTATOR_DEFAULTS.annotatorPenColor);
 		setDefPenSize(ANNOTATOR_DEFAULTS.annotatorPenSize);
 		setThinning(ANNOTATOR_DEFAULTS.annotatorThinning);
@@ -211,7 +211,7 @@ export function AnnotatorSettingsDrawer({
 					pointerEvents: open ? 'auto' : 'none',
 					// The top 40px of the window is the Electron drag region
 					// (`-webkit-app-region: drag`). Without explicit no-drag,
-					// the OS hijacks clicks on the drawer header — including
+					// the OS hijacks clicks on the drawer header - including
 					// the Close button. Opt out for the whole drawer.
 					WebkitAppRegion: 'no-drag',
 				} as React.CSSProperties
@@ -473,7 +473,7 @@ interface ColorPaletteProps {
 
 /**
  * Swatch grid + native color picker + hex readout. Used three times in the
- * drawer (pen color, text foreground, text background) — extracted so the
+ * drawer (pen color, text foreground, text background) - extracted so the
  * "None" variant for backgrounds stays a single-prop change rather than a
  * forked copy.
  */
@@ -531,7 +531,7 @@ function ColorPalette({
 				<span style={{ color: theme.colors.textDim }}>Custom</span>
 				<input
 					type="color"
-					// Native color inputs don't accept empty string — fall back to a
+					// Native color inputs don't accept empty string - fall back to a
 					// neutral placeholder when the value is "None" so the swatch
 					// preview stays readable.
 					value={isNone ? '#000000' : value}

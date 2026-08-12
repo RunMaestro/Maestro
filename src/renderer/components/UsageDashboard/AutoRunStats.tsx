@@ -87,7 +87,7 @@ function MetricCard({ icon, label, value, subValue, theme }: MetricCardProps) {
  *
  * `count` here is **attempted** task total (kept for the tooltip's "%
  * successful" math) and `successCount` is the actual number of completed
- * checkboxes. We drop a day only when *both* are zero — earlier we filtered
+ * checkboxes. We drop a day only when *both* are zero - earlier we filtered
  * on `count > 0`, which silently hid recent days where `tasksTotal` was 0/
  * null (e.g. ad-hoc autoruns added mid-session) even when work was completed.
  */
@@ -194,7 +194,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 		return groupSessionsByDate(sessions);
 	}, [sessions]);
 
-	// Max for bar height calculation — driven by tasks completed (the chart's
+	// Max for bar height calculation - driven by tasks completed (the chart's
 	// titular metric), not tasks attempted, so days where `tasksTotal` is 0
 	// but real completions exist still scale correctly.
 	const maxCount = useMemo(() => {
@@ -203,7 +203,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 	}, [tasksByDate]);
 
 	// Handle mouse events for tooltip. Anchor to the cursor (not the bar's
-	// bounding rect) so the tooltip stays close to the user's pointer — short
+	// bounding rect) so the tooltip stays close to the user's pointer - short
 	// bars used to leave the tooltip stranded near the chart's bottom edge.
 	const handleMouseEnter = useCallback(
 		(
@@ -412,7 +412,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 							})}
 						</div>
 
-						{/* X-axis labels — must mirror the bar grid (flex-1 +
+						{/* X-axis labels - must mirror the bar grid (flex-1 +
 						    gap-1) so each label slot lines up with its bar. We previously
 						    used `flex justify-between` across the full container width,
 						    which floated the middle/last labels into the empty space on

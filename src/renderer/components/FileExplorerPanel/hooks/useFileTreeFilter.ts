@@ -46,7 +46,7 @@ export function useFileTreeFilter({
 	// Closing the filter via Escape: if the user clicked a result first, expand
 	// its ancestor folders and queue a scroll-into-view so the search payoff
 	// actually lands on something they can see and act on. Move DOM focus to
-	// the tree container — otherwise the browser restores focus to whatever
+	// the tree container - otherwise the browser restores focus to whatever
 	// was focused before the filter opened (typically FilePreview), and that
 	// component's onKeyDown swallows Cmd+F before our window-level shortcut
 	// handler can route it back to the file panel.
@@ -103,7 +103,7 @@ export function useFileTreeFilter({
 			layerIdRef.current = id;
 			return () => unregisterLayer(id);
 		}
-		// handleFilterEscape intentionally omitted — updateLayerHandler effect below
+		// handleFilterEscape intentionally omitted - updateLayerHandler effect below
 		// keeps the registered callback fresh without re-registering the layer.
 	}, [fileTreeFilterOpen, registerLayer, unregisterLayer]);
 
@@ -115,7 +115,7 @@ export function useFileTreeFilter({
 	}, [fileTreeFilterOpen, handleFilterEscape, updateLayerHandler]);
 
 	// After Escape expanded ancestor folders, the flattened tree includes the
-	// previously-hidden row — select it, focus the file pane, and scroll it into
+	// previously-hidden row - select it, focus the file pane, and scroll it into
 	// view. Defer the scroll to the next frame so the virtualizer has measured
 	// the new row count.
 	useEffect(() => {

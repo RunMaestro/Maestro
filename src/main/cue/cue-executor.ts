@@ -1,5 +1,5 @@
 /**
- * Cue Executor — orchestrates background agent process execution when Cue
+ * Cue Executor - orchestrates background agent process execution when Cue
  * triggers fire.
  *
  * Thin orchestrator that composes three single-responsibility modules:
@@ -122,7 +122,7 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
  * surfaces (the `result` event is authoritative and emitted last). Returns null
  * for plain-text agents, command runs with no parser, or output that never
  * carried a session id. This is what lets the Cue stats dashboard attribute
- * token usage — the on-disk session files are keyed by this id, not by the
+ * token usage - the on-disk session files are keyed by this id, not by the
  * Maestro agent id stored on the event row.
  */
 function extractProviderSessionId(rawStdout: string, toolType: string): string | null {
@@ -186,14 +186,14 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	// common cause is a downstream prompt like just `{{CUE_SOURCE_OUTPUT}}`
 	// where the upstream run produced no parseable stdout (for example Claude
 	// outputting stream-json with no `result` or `text` events). The spawn
-	// still proceeds — `forceBatchMode` on the Cue spawn builder keeps the
+	// still proceeds - `forceBatchMode` on the Cue spawn builder keeps the
 	// agent in batch mode so it doesn't fall into interactive TUI and die with
-	// "stdin is not a terminal" — but the log line is what tells the user to
+	// "stdin is not a terminal" - but the log line is what tells the user to
 	// look at their upstream prompt rather than at the downstream agent.
 	if (!substitutedPrompt.trim()) {
 		onLog(
 			'warn',
-			`[CUE] "${subscription.name}" prompt resolved to empty after template substitution — check the upstream agent's output and your prompt_file references (e.g. {{CUE_SOURCE_OUTPUT}})`
+			`[CUE] "${subscription.name}" prompt resolved to empty after template substitution - check the upstream agent's output and your prompt_file references (e.g. {{CUE_SOURCE_OUTPUT}})`
 		);
 	}
 

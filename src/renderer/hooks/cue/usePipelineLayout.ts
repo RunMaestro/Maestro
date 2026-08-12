@@ -1,5 +1,5 @@
 /**
- * usePipelineLayout — Layout persistence and restoration for the pipeline editor.
+ * usePipelineLayout - Layout persistence and restoration for the pipeline editor.
  *
  * Handles debounced layout saving (node positions + viewport) and one-time
  * layout restoration on mount by merging saved positions with live graph data.
@@ -106,7 +106,7 @@ export interface UsePipelineLayoutReturn {
 	 *
 	 * Owning the viewport-apply step in the component (rather than scheduling
 	 * `setViewport` on a timeout here) eliminates the race against ReactFlow's
-	 * node measurement — the previous implementation could set or fit the
+	 * node measurement - the previous implementation could set or fit the
 	 * viewport before nodes were measured, leaving the canvas appearing empty
 	 * on first open.
 	 */
@@ -160,7 +160,7 @@ export function usePipelineLayout({
 		const state = pipelineStateRef.current;
 		// Normalize the selection BEFORE computing the project key or
 		// writing. A `selectedPipelineId` that doesn't point at any live
-		// pipeline must never be persisted — on next load it would bypass
+		// pipeline must never be persisted - on next load it would bypass
 		// the merge fallback via `pickProjectViewState` and blank the
 		// canvas (`convertToReactFlowNodes` filters out every pipeline
 		// whose id doesn't match the selection). This can happen when
@@ -223,7 +223,7 @@ export function usePipelineLayout({
 
 	// On unmount: if a debounced write is still pending, flush it before
 	// tearing down. Cancelling the timer outright (the previous behavior)
-	// dropped writes that landed during the modal-close window — most
+	// dropped writes that landed during the modal-close window - most
 	// painfully the post-save `writtenRoots` update, which left the next
 	// mount unable to clear orphaned cue.yaml files.
 	useEffect(() => {
@@ -237,7 +237,7 @@ export function usePipelineLayout({
 	}, [writeLayoutNow]);
 
 	// Reseed lastWrittenRootsRef from the persisted writtenRoots set as early
-	// as possible — independent of graphSessions / livePipelines availability.
+	// as possible - independent of graphSessions / livePipelines availability.
 	// The main load-layout effect below ALSO rebuilds the ref, but it's gated
 	// on graphSessions being non-empty; without this early seed, opening the
 	// editor with no live sessions (engine disabled, no registered sessions)
@@ -270,7 +270,7 @@ export function usePipelineLayout({
 	}, [lastWrittenRootsRef]);
 
 	// Load pipelines once on mount from saved layout merged with live graph data.
-	// The pipeline editor is the primary editor — we don't re-sync from disk
+	// The pipeline editor is the primary editor - we don't re-sync from disk
 	// while the user is working. Save writes back to disk.
 	//
 	// Uses a request-id guard so that if props change during an in-flight load,
@@ -295,7 +295,7 @@ export function usePipelineLayout({
 			try {
 				savedLayout = (await cueService.loadPipelineLayout()) as PipelineLayoutState | null;
 			} catch (err: unknown) {
-				// loadPipelineLayout may fail if no layout has been saved yet — that's expected.
+				// loadPipelineLayout may fail if no layout has been saved yet - that's expected.
 				// Report anything else to Sentry.
 				const message = err instanceof Error ? err.message : String(err);
 				if (!message.includes('no saved layout') && !message.includes('ENOENT')) {
@@ -318,7 +318,7 @@ export function usePipelineLayout({
 				const projectView = pickProjectViewState(savedLayout, merged.pipelines, sessions);
 				if (projectView) {
 					// Validate projectView.selectedPipelineId against live
-					// pipelines before assigning — pickProjectViewState returns
+					// pipelines before assigning - pickProjectViewState returns
 					// the stored value verbatim and has no view onto the
 					// just-loaded pipelines. A stale id (e.g. a pre-upgrade
 					// timestamp id, or a perProject entry written under an
@@ -345,7 +345,7 @@ export function usePipelineLayout({
 
 				// Stash the saved viewport for the editor to apply once ReactFlow
 				// has measured the restored nodes. Applying it here on a timeout
-				// raced against `fitView` and — more importantly — against node
+				// raced against `fitView` and - more importantly - against node
 				// measurement, which caused the initial canvas to appear empty.
 				if (projectView?.viewport) {
 					pendingSavedViewportRef.current = projectView.viewport;
@@ -359,7 +359,7 @@ export function usePipelineLayout({
 			}
 
 			// Seed lastWrittenRootsRef from two sources, unioned:
-			//   1. The persisted writtenRoots set from the previous save —
+			//   1. The persisted writtenRoots set from the previous save -
 			//      authoritative even when the originating agent has since been
 			//      renamed or deleted (the session lookup below would miss it
 			//      in that case, leaving stale YAML at that root uncleared).
@@ -367,7 +367,7 @@ export function usePipelineLayout({
 			//      via the same rules handleSave uses to partition pipelines by
 			//      project root. This is the cross-directory fix for #847: when
 			//      a pipeline's agents span subdirectories, its YAML lives at
-			//      their common ancestor — we seed that ancestor here so the
+			//      their common ancestor - we seed that ancestor here so the
 			//      next delete+save can clear it. Seeding each individual agent
 			//      root (as this loop used to) would both miss the ancestor AND
 			//      create stray empty cue.yaml files at sub-paths on delete.

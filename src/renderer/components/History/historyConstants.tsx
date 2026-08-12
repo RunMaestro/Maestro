@@ -94,7 +94,7 @@ export const getEntryIcon = (type: HistoryEntryType) => {
 // Estimated row heights for virtualization. Used by the row virtualizer
 // before measureElement reports the actual rendered size. If these
 // underestimate, adjacent rows briefly overlap in the moment between the
-// initial render and the ResizeObserver callback — pick values that match
+// initial render and the ResizeObserver callback - pick values that match
 // the worst-case rendered height for each variant so that any correction
 // from measureElement only ever shrinks the row.
 //

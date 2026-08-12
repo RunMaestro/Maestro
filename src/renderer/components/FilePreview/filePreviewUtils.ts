@@ -53,7 +53,7 @@ export const FAST_TIER_LINES = 5_000;
  * Bumped from the original plan's 4 MB to 8 MB so the Fast tier still owns
  * the common "huge markdown" case (e.g. the user-reported 300k-line / ~15 MB
  * file would otherwise lose rendered tables to CM6's source view). Giant
- * kicks in only when markdown-it parse becomes the dominant latency — past
+ * kicks in only when markdown-it parse becomes the dominant latency - past
  * ~8 MB, parse routinely exceeds 2 s on a modern Mac.
  */
 export const GIANT_TIER_BYTES = 8 * 1024 * 1024; // 8MB
@@ -80,14 +80,14 @@ export type PreviewTier = 'rich' | 'fast' | 'giant';
 /**
  * Pick a preview tier based on file size shape. Pass `bytes` (content length),
  * `lines` (newline count + 1), and `maxLineLength` (longest single line).
- * The Giant-friendliest condition wins — a file with a single 500k-char line
+ * The Giant-friendliest condition wins - a file with a single 500k-char line
  * routes to Giant even if its total bytes are under 8 MB.
  *
  * Tier landings:
  *   - Phase 1: Fast tier (markdown).
  *   - Phase 3: Fast tier (plain text + code).
  *   - Phase 4: Giant tier (CodeMirror 6) for files over GIANT_TIER_BYTES /
- *     GIANT_TIER_LINES — used for markdown, text, and code alike.
+ *     GIANT_TIER_LINES - used for markdown, text, and code alike.
  *   - Long-line escalation: lines above LINE_LENGTH_GIANT_THRESHOLD jump to
  *     Giant regardless of byte / line count to avoid wide-layer freeze.
  */
@@ -185,7 +185,7 @@ export const getLanguageFromFilename = (filename: string): string => {
  * tell apart `.ts` / `.py` / `.css` files (Shiki-eligible code) from `.txt`
  * / `.log` / `README` (plain prose).
  *
- * `'markdown'` is intentionally NOT considered code — markdown has its own
+ * `'markdown'` is intentionally NOT considered code - markdown has its own
  * Fast-tier renderer.
  */
 export const isCodeFile = (language: string): boolean => {
@@ -342,6 +342,47 @@ export const countMarkdownTasks = (content: string): { open: number; closed: num
 	}
 
 	return { open, closed };
+};
+
+/**
+ * A GFM task list marker at the start of a line: indent, bullet or ordered
+ * marker, then `[ ]` / `[x]` / `[X]`. Split into groups so a toggle can swap
+ * the state character without disturbing the author's spacing or bullet style.
+ */
+const TASK_MARKER_REGEX = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\])/;
+
+export interface TaskToggleResult {
+	/** Full document with the one task line rewritten. */
+	content: string;
+	/** The task's state AFTER the toggle. */
+	checked: boolean;
+}
+
+/**
+ * Flip the GFM task checkbox on 1-based `line`, returning the rewritten
+ * document. Returns null when that line holds no task marker, so a caller can
+ * treat a stale line number as a no-op instead of corrupting the file.
+ *
+ * Only the state character is rewritten - indentation, bullet style, and the
+ * task text are preserved byte for byte, and splitting on `\n` alone leaves a
+ * CRLF file's `\r` attached to its line so line endings round-trip unchanged.
+ */
+export const toggleTaskCheckboxAtLine = (
+	content: string,
+	line: number
+): TaskToggleResult | null => {
+	if (!Number.isInteger(line) || line < 1) return null;
+	const lines = content.split('\n');
+	const target = lines[line - 1];
+	if (target === undefined) return null;
+
+	const match = TASK_MARKER_REGEX.exec(target);
+	if (!match) return null;
+
+	const wasChecked = match[2] !== ' ';
+	lines[line - 1] = match[1] + (wasChecked ? ' ' : 'x') + match[3] + target.slice(match[0].length);
+
+	return { content: lines.join('\n'), checked: !wasChecked };
 };
 
 /** Extract headings from markdown content for table of contents */

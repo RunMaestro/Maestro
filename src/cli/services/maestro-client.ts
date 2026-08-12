@@ -68,7 +68,7 @@ export class MaestroClient {
 			throw new Error('Maestro discovery file is stale (app may have crashed)');
 		}
 
-		// Use 127.0.0.1 instead of `localhost` — Node 18's default DNS resolution
+		// Use 127.0.0.1 instead of `localhost` - Node 18's default DNS resolution
 		// resolves `localhost` to IPv6 (::1) first, but the desktop app binds to
 		// 0.0.0.0 (IPv4 only), so `localhost` yields ECONNREFUSED on ::1.
 		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws`;
@@ -263,7 +263,7 @@ export function resolveSessionId(options: { session?: string }): string {
  *
  * Only the known `resolveAgentId` errors (ambiguous / not-found) get the
  * friendly stderr + exit(1) treatment. Anything else (e.g. corrupted store
- * read in `readSessions`) re-throws so it surfaces as a stack trace — per the
+ * read in `readSessions`) re-throws so it surfaces as a stack trace - per the
  * codebase's "let exceptions bubble up" rule for unexpected failures.
  */
 export function resolveTargetSessionId(agent?: string): string {

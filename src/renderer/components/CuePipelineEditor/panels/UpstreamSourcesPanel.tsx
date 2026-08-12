@@ -1,11 +1,11 @@
 /**
- * UpstreamSourcesPanel — per-source output controls for an agent that has
+ * UpstreamSourcesPanel - per-source output controls for an agent that has
  * one or more upstream sources (direct or forwarded).
  *
  * Direct and forwarded sources render as uniform rows in one table so users
  * see every data stream arriving at this agent without having to navigate
  * upstream. Direct rows carry Include/Forward toggles bound to the direct
- * edge; forwarded rows are informational — they expose the available
+ * edge; forwarded rows are informational - they expose the available
  * `{{CUE_FORWARDED_<NAME>}}` variable, and if the user wants to stop the
  * forwarding they do so on the upstream relay agent itself.
  */
@@ -30,14 +30,14 @@ interface UpstreamSourcesPanelProps {
 	 * computation. This lets callers (AgentConfigPanel) share one
 	 * `computeTransitiveUpstream` result across the panel and any sibling
 	 * logic that also needs `hasAnyUpstream`, instead of running the graph
-	 * walk twice per render. Omit for isolated storybook/test mounts — the
+	 * walk twice per render. Omit for isolated storybook/test mounts - the
 	 * panel falls back to computing from `pipeline` + `targetNodeId` below.
 	 */
 	forwardedSources?: TransitiveUpstream[];
 	/** Full pipeline graph for forwarded-source discovery when
 	 *  `forwardedSources` is not supplied. */
 	pipeline?: CuePipeline;
-	/** Target node id — the agent whose upstream is being configured.
+	/** Target node id - the agent whose upstream is being configured.
 	 *  Required together with `pipeline` for the fallback computation. */
 	targetNodeId?: string;
 }
@@ -99,7 +99,7 @@ export function UpstreamSourcesPanel({
 				below anywhere in the prompt to position them.
 			</div>
 
-			{/* Direct edges — editable Include / Forward */}
+			{/* Direct edges - editable Include / Forward */}
 			{incomingAgentEdges.map((edge) => {
 				const varSuffix = sanitizeVarName(edge.sourceSessionName);
 				return (
@@ -235,7 +235,7 @@ export function UpstreamSourcesPanel({
 				);
 			})}
 
-			{/* Forwarded sources — same row shape, informational (no edge to toggle at this node) */}
+			{/* Forwarded sources - same row shape, informational (no edge to toggle at this node) */}
 			{forwardedSources.map((row) => {
 				const varSuffix = sanitizeVarName(row.source);
 				const relayLabel = row.path.slice(1).join(' → ');

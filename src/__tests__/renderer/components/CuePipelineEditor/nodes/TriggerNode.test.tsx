@@ -243,7 +243,7 @@ describe('TriggerNode', () => {
 			// GitHub PR all under "Pipeline 1") produce subscriptions named
 			// "Pipeline 1", "Pipeline 1-chain-1", "Pipeline 1-chain-2".
 			// Before this fix, every Play button sent "Pipeline 1" regardless
-			// of which trigger was clicked — chain triggers (including
+			// of which trigger was clicked - chain triggers (including
 			// GitHub PR/Issue polls) were unreachable from the UI.
 			const onTriggerPipeline = vi.fn();
 			const { container } = renderTriggerNode({
@@ -275,6 +275,37 @@ describe('TriggerNode', () => {
 			playButton.click();
 
 			expect(onTriggerPipeline).toHaveBeenCalledWith('legacy-pipeline');
+		});
+
+		it('reserves the button footprint while hidden so Save cannot widen the node', () => {
+			// Regression: the node is `width: max-content`, so a Play button that
+			// only appears once the pipeline is saved grew the node by its own
+			// width, ate the gap to the first target node, and forced the edge
+			// router into hooks - clean lines before Save, tangled after.
+			const { container: unsaved } = renderTriggerNode({
+				onTriggerPipeline: vi.fn(),
+				pipelineName: 'my-pipeline',
+				isSaved: false,
+			});
+			const { container: saved } = renderTriggerNode({
+				onTriggerPipeline: vi.fn(),
+				pipelineName: 'my-pipeline',
+				isSaved: true,
+			});
+
+			const placeholder = unsaved.querySelector(
+				'[data-testid="trigger-play-placeholder"]'
+			) as HTMLElement;
+			const playButton = saved.querySelector('[title="Run now"]') as HTMLElement;
+			expect(placeholder).not.toBeNull();
+			expect(playButton).not.toBeNull();
+			expect(placeholder.style.width).toBe('22px');
+			expect(playButton.style.width).toBe(placeholder.style.width);
+			// The action row must contain the same number of children in both
+			// states, so the flex gap contributes identically too.
+			expect(placeholder.parentElement?.children.length).toBe(
+				playButton.parentElement?.children.length
+			);
 		});
 
 		it('aria-label uses the subscription name so screen readers announce the correct trigger', () => {

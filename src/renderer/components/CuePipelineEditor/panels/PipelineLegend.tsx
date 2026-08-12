@@ -1,9 +1,9 @@
 /**
- * PipelineLegend — Phase 14B extraction from PipelineCanvas.
+ * PipelineLegend - Phase 14B extraction from PipelineCanvas.
  *
  * Renders the clickable pipeline color swatches overlay shown in All Pipelines
  * view. Pure presentational, wrapped in React.memo so it only re-renders when
- * `pipelines` / `selectedPipelineId` / `theme` change — previously re-rendered
+ * `pipelines` / `selectedPipelineId` / `theme` change - previously re-rendered
  * on every node drag because it lived inline in PipelineCanvas.
  */
 
@@ -72,7 +72,7 @@ function PipelineLegendInner({
 						padding: '2px 4px',
 						borderRadius: 4,
 						transition: 'background-color 0.15s',
-						// Don't let chips shrink or wrap — scroll the row instead.
+						// Don't let chips shrink or wrap - scroll the row instead.
 						flexShrink: 0,
 						whiteSpace: 'nowrap',
 					}}

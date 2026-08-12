@@ -1,5 +1,5 @@
 /**
- * ActiveRunsList — Displays currently running Cue tasks with stop controls
+ * ActiveRunsList - Displays currently running Cue tasks with stop controls
  * and an expandable live-logs panel that polls the in-flight stdout/stderr
  * buffer of the running process.
  */
@@ -150,7 +150,7 @@ interface LiveOutputPanelProps {
  * Polls the main process for the in-flight stdout/stderr buffer of a running
  * Cue run and renders the tail in a scrollable monospace panel. Polling
  * stops automatically when the panel unmounts (parent toggles expansion off
- * or the run leaves activeRuns) — see `ActiveRunsList`'s cleanup effect.
+ * or the run leaves activeRuns) - see `ActiveRunsList`'s cleanup effect.
  */
 function LiveOutputPanel({ runId, theme }: LiveOutputPanelProps) {
 	const [stdout, setStdout] = useState('');
@@ -168,7 +168,7 @@ function LiveOutputPanel({ runId, theme }: LiveOutputPanelProps) {
 				const out = await cueService.getRunLiveOutput(runId);
 				if (cancelled) return;
 				if (out === null) {
-					// Run is no longer active — keep whatever was last shown but
+					// Run is no longer active - keep whatever was last shown but
 					// flag it as stale so the user knows it's frozen.
 					setStale(true);
 					return;

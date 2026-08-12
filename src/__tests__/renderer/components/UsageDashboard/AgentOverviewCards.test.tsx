@@ -102,7 +102,7 @@ describe('AgentOverviewCards', () => {
 
 		render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-		// Cards sort alphabetically by name — look up by content rather than
+		// Cards sort alphabetically by name - look up by content rather than
 		// index so the test isn't coupled to the ordering.
 		const cardByName = (name: string) =>
 			(screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement) ?? null;

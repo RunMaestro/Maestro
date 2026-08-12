@@ -84,7 +84,7 @@ describe('SessionItem Cue Indicator', () => {
 	beforeEach(() => {
 		// CueIndicator is gated on both the Encore Feature flag and the
 		// per-user Left Bar toggle. Default settings have maestroCue=false,
-		// which would hide the indicator under test — enable both here.
+		// which would hide the indicator under test - enable both here.
 		useSettingsStore.setState({
 			encoreFeatures: {
 				...useSettingsStore.getState().encoreFeatures,

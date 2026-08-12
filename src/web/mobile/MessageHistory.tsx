@@ -45,12 +45,12 @@ export interface MessageHistoryProps {
 	onMessageTap?: (entry: LogEntry) => void;
 	/** Current thinking display mode */
 	thinkingMode?: 'off' | 'on' | 'sticky';
-	/** Session state (e.g. 'busy', 'idle') — needed for 'on' mode */
+	/** Session state (e.g. 'busy', 'idle') - needed for 'on' mode */
 	sessionState?: string;
 	/** Whether to apply Bionify reading mode to long-form AI output */
 	enableBionifyReadingMode?: boolean;
 	/**
-	 * Max output lines per message before collapsing — mirrors the desktop
+	 * Max output lines per message before collapsing - mirrors the desktop
 	 * "Max Output Lines per Response" setting. Pass `Infinity` (or omit) for
 	 * "All": no truncation regardless of length.
 	 */
@@ -447,7 +447,7 @@ export function MessageHistory({
 									textAlign: 'left',
 								}}
 							>
-								{/* Pasted-image attachments — only meaningful on user messages
+								{/* Pasted-image attachments - only meaningful on user messages
 								    in AI mode. Rendered inline so the optimistic local chat
 								    shows the same thumbnails the user staged before send,
 								    matching the desktop transcript. */}
