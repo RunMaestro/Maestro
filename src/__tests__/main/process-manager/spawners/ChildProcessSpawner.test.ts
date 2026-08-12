@@ -602,7 +602,7 @@ describe('ChildProcessSpawner', () => {
 	// Regression (issue #1044): ProcessManager.spawn() kills the process holding a
 	// sessionId before registering the replacement under the same key. The killed
 	// process drains stdio and fires `close` afterwards, and every downstream
-	// handler is keyed by sessionId alone — so those late events used to be
+	// handler is keyed by sessionId alone - so those late events used to be
 	// attributed to the live successor, surfacing "Agent exited with code 143"
 	// (SIGTERM) on a healthy turn and deleting the successor's tracking entry.
 	describe('late events from a superseded generation', () => {
@@ -634,7 +634,7 @@ describe('ChildProcessSpawner', () => {
 
 			// Predecessor finally reports its SIGTERM death (128 + 15).
 			firstHandlers.get('close')?.(143);
-			// handleExit is async — give the (suppressed) exit path room to run.
+			// handleExit is async - give the (suppressed) exit path room to run.
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			expect(onExit).not.toHaveBeenCalled();
@@ -682,7 +682,7 @@ describe('ChildProcessSpawner', () => {
 			emitter.on('exit', onExit);
 
 			handlers.get('close')?.(0);
-			// handleExit is async (post-exit reconciliation) — let it settle.
+			// handleExit is async (post-exit reconciliation) - let it settle.
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 
 			expect(onExit).toHaveBeenCalledWith(baseConfig.sessionId, 0);
