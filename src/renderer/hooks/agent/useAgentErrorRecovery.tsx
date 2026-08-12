@@ -153,6 +153,23 @@ function getRecoveryActionsForError(
 			}
 			break;
 
+		case 'session_not_found':
+			// The provider session is gone or its stored history is unusable (e.g.
+			// a Gemini 400 INVALID_ARGUMENT on a session whose transcript was left
+			// malformed by an aborted turn). Retrying replays the same broken
+			// history, so a fresh session is the only way forward - lead with it.
+			if (options.onNewSession) {
+				actions.push({
+					id: 'new-session',
+					label: 'Start New Session',
+					description: 'Begin a fresh conversation in a new tab',
+					primary: true,
+					icon: <MessageSquarePlus className="w-4 h-4" />,
+					onClick: options.onNewSession,
+				});
+			}
+			break;
+
 		case 'permission_denied':
 			// Permission denied - offer retry or new session
 			if (options.onRetry) {
