@@ -25,7 +25,7 @@ import { groomContext, cancelAllGroomingSessions } from '../../utils/context-gro
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
-import type { AgentConfigsData } from '../../stores/types';
+import type { AgentConfigsData, MaestroSettings } from '../../stores/types';
 import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[ContextMerge]';
@@ -51,6 +51,7 @@ export interface ContextHandlerDependencies {
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
+	settingsStore: Store<MaestroSettings>;
 }
 
 /**
@@ -81,7 +82,7 @@ const GROOMING_TIMEOUT_MS = 5 * 60 * 1000;
  * - cleanupGroomingSession: Clean up a temporary grooming session
  */
 export function registerContextHandlers(deps: ContextHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore } = deps;
+	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;
 
 	logger.info('Registering context IPC handlers', LOG_CONTEXT);
 	logger.info('[ContextMerge] Registering context IPC handlers (v2 with response collection)');
@@ -155,21 +156,40 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
+				// Resolve the agent: use the utility agent if configured, otherwise the
+				// requested agent. Null/empty leaves behavior unchanged (session agent).
+				const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
+				const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
+				const effectiveAgentType = utilityAgentId || agentType;
+
 				// Look up agent-level config values for override resolution
 				const allConfigs = agentConfigsStore.get('configs', {});
-				const agentConfigValues = allConfigs[agentType] || {};
+				const agentConfigValues = allConfigs[effectiveAgentType] || {};
+
+				// The session's executable overrides describe the SESSION's agent: a
+				// pinned binary path, its CLI flags, its env. Carrying them onto a
+				// different utility agent would launch the wrong executable, or feed
+				// one agent's flags to another. The utility agent's own settings come
+				// from `agentConfigValues`, which is already keyed by the effective id.
+				//
+				// `sshRemoteConfig` is deliberately NOT dropped: it says WHERE the work
+				// runs, not WHICH binary runs it, and grooming a remote agent's context
+				// on the local machine would look at the wrong filesystem.
+				const usingUtilityAgent = !!utilityAgentId && effectiveAgentType !== agentType;
 
 				// Use the shared groomContext utility
 				const result = await groomContext(
 					{
 						projectRoot,
-						agentType,
+						agentType: effectiveAgentType,
 						prompt,
+						// Only apply the model override when a utility agent is actually in use.
+						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 						// Pass SSH and custom config for remote execution support
 						sessionSshRemoteConfig: options?.sshRemoteConfig,
-						sessionCustomPath: options?.customPath,
-						sessionCustomArgs: options?.customArgs,
-						sessionCustomEnvVars: options?.customEnvVars,
+						sessionCustomPath: usingUtilityAgent ? undefined : options?.customPath,
+						sessionCustomArgs: usingUtilityAgent ? undefined : options?.customArgs,
+						sessionCustomEnvVars: usingUtilityAgent ? undefined : options?.customEnvVars,
 						agentConfigValues,
 					},
 					processManager,

@@ -293,6 +293,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
 	});
 	// Register marketplace handlers
 	registerMarketplaceHandlers({

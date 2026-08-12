@@ -389,6 +389,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		// Grooming reads the utility-agent selection at spawn time.
+		settingsStore: deps.settingsStore,
 	});
 
 	// Register Marketplace handlers for fetching and importing playbooks
