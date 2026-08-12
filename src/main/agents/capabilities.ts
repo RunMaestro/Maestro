@@ -53,6 +53,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // "result" event type
 		supportsModelSelection: true, // --model flag (aliases: sonnet, opus, haiku, or full model names)
 		supportsStreamJsonInput: true, // --input-format stream-json for images via stdin
+		supportsPromptViaStdin: true, // `claude -p` reads the prompt from stdin
 		supportsThinkingDisplay: true, // Emits streaming assistant messages
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -86,6 +87,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false,
 		supportsModelSelection: false,
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: false, // Terminal sessions have no prompt to deliver
 		supportsThinkingDisplay: false, // Terminal is not an AI agent
 		supportsContextMerge: false, // Terminal is not an AI agent
 		supportsContextExport: false, // Terminal has no AI context
@@ -122,6 +124,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false, // All messages are agent_message type (no distinct result) - Verified
 		supportsModelSelection: true, // -m, --model flag - Documented
 		supportsStreamJsonInput: false, // Uses -i, --image flag instead
+		supportsPromptViaStdin: true, // `codex exec` reads the prompt from stdin
 		supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -158,6 +161,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false,
 		supportsModelSelection: false, // Not yet investigated
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: true, // Gemini CLI reads the prompt from stdin
 		supportsThinkingDisplay: false, // Not yet investigated
 		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
 		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
@@ -195,6 +199,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true,
 		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: true, // Gemini CLI fork - same stdin prompt handling
 		supportsThinkingDisplay: true,
 		supportsContextMerge: true,
 		supportsContextExport: false,
@@ -229,6 +234,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false,
 		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
 		supportsThinkingDisplay: false,
 		supportsContextMerge: true,
 		supportsContextExport: false,
@@ -263,6 +269,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true,
 		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
 		supportsThinkingDisplay: true,
 		supportsContextMerge: true,
 		supportsContextExport: false,
@@ -289,7 +296,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInput: true,
 		supportsImageInputOnResume: true,
 		supportsSlashCommands: false,
-		supportsSessionStorage: false,
+		supportsSessionStorage: true, // ~/.omp/agent/sessions/<cwd-slug>/*.jsonl (local; SSH is a follow-up)
 		supportsCostTracking: true,
 		supportsUsageStats: true,
 		supportsBatchMode: true,
@@ -298,6 +305,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true,
 		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
+		supportsPromptViaStdin: false, // VERIFIED: omp takes the prompt as a positional arg only; piping it to stdin makes the run exit 0 with no output
 		supportsThinkingDisplay: true,
 		supportsContextMerge: true,
 		supportsContextExport: false,
@@ -338,6 +346,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // step_finish with part.reason:"stop" - Verified
 		supportsModelSelection: true, // --model provider/model (e.g., 'ollama/qwen3:8b') - Verified
 		supportsStreamJsonInput: false, // Uses positional arguments for prompt
+		supportsPromptViaStdin: true, // `opencode run` reads the prompt from stdin
 		supportsThinkingDisplay: true, // Emits streaming text chunks
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -373,6 +382,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // Can detect end of conversation
 		supportsModelSelection: true, // -m, --model flag - Verified
 		supportsStreamJsonInput: true, // --input-format stream-json - Verified
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
 		supportsThinkingDisplay: true, // Emits thinking content in messages - Verified
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session files are exportable
@@ -409,6 +419,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: true, // assistant.message with phase=final_answer
 		supportsModelSelection: true, // --model <model>
 		supportsStreamJsonInput: false, // Not verified
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
 		supportsThinkingDisplay: true, // assistant.reasoning events are rendered through Maestro's thinking-chunk pipeline
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
@@ -419,6 +430,44 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAdditionalDirectories: true, // --add-dir <directory>, repeatable (verified against the installed CLI)
 		usesJsonLineOutput: true, // --output-format json produces JSONL
 		usesCombinedContextWindow: true, // Copilot's own usage layer reports cumulative input (includes cache) regardless of underlying model, so the gauge math must follow the combined formula
+	},
+
+	/**
+	 * Grok CLI - xAI's Grok coding agent CLI
+	 *
+	 * Capabilities verified against captured output from grok v0.2.93
+	 * (streaming-json fixtures). Notable: the streaming-json stdout stream
+	 * carries NO tool events and NO token usage/cost; the session ID arrives
+	 * only on the final "end" event.
+	 */
+	grok: {
+		supportsResume: true, // Verified: -r/--resume <sessionId>; resume turn preserved the same sessionId in the end event
+		supportsReadOnlyMode: true, // Verified: --permission-mode plan (grok --help v0.2.93)
+		supportsJsonOutput: true, // Verified: --output-format streaming-json emits one JSON object per line
+		supportsSessionId: true, // Verified: camelCase sessionId (UUIDv7) on the final end event (no init event exists)
+		supportsImageInput: false, // Conservative default: no image flag observed in grok --help
+		supportsImageInputOnResume: false, // Conservative default: follows supportsImageInput
+		supportsSlashCommands: false, // Conservative default: not investigated in headless mode
+		supportsSessionStorage: true, // Verified: GrokSessionStorage reads ~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/
+		supportsCostTracking: false, // Verified absent: no cost fields anywhere in the stream or on-disk session files
+		supportsUsageStats: false, // Verified absent: no token usage in the streaming-json stream (counts exist only in on-disk signals.json/updates.jsonl)
+		supportsBatchMode: true, // Verified: -p/--single <PROMPT> headless mode
+		requiresPromptToStart: true, // Verified: headless runs require -p <prompt>; no interactive PTY integration
+		supportsStreaming: true, // Verified: token-sized thought/text deltas stream on stdout
+		supportsResultMessages: true, // Verified: distinct final end event with stopReason/sessionId/requestId
+		supportsModelSelection: true, // Verified: -m/--model flag; grok models lists grok-4.5 and grok-composer-2.5-fast
+		supportsStreamJsonInput: false, // Conservative default: no --input-format stream-json equivalent in grok --help
+		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
+		supportsThinkingDisplay: true, // Verified: thought delta events precede text deltas
+		supportsContextMerge: false, // Conservative default: not yet exercised
+		supportsContextExport: true, // Verified: session storage reads full transcripts (chat_history.jsonl), same export path as siblings
+		supportsWizard: true, // Streaming-json text deltas carry structured JSON wizard replies; discovery uses --always-approve + --max-turns 8 + --no-subagents (not plan - plan blocks read/fetch needed for discovery)
+		supportsGroupChatModeration: false, // Conservative default: moderation flow not yet exercised
+		usesJsonLineOutput: true, // Verified: streaming-json is JSONL (one JSON object per line); also gates CLI batch spawning (spawnJsonLineAgent)
+		usesCombinedContextWindow: false, // Conservative default: on-disk signals.json reports a single contextTokensUsed but gauge math is unverified
+		supportsAppendSystemPrompt: false, // Verified absent: no --append-system-prompt equivalent in grok --help
+		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
+		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
 	},
 };
 

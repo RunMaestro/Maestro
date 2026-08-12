@@ -66,7 +66,7 @@ export function ExecutionQueueBrowser({
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
 	// The queued item currently being edited (with its owning session), or null.
 	// While set, this browser suspends its own Escape layer so the edit modal's
-	// layer stack (edit < lightbox < annotator) resolves Escape correctly — the
+	// layer stack (edit < lightbox < annotator) resolves Escape correctly - the
 	// browser sits at a much higher priority (670) than the edit modal (145).
 	const [editing, setEditing] = useState<{ sessionId: string; item: QueuedItem } | null>(null);
 	// Drag-to-reorder orchestration shared with the inline queued-items list.
@@ -137,7 +137,7 @@ export function ExecutionQueueBrowser({
 			{/* Modal */}
 			<div
 				ref={modalRef}
-				className="relative rounded-lg border shadow-2xl flex flex-col"
+				className="relative rounded-lg border shadow-2xl flex flex-col select-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
@@ -152,6 +152,8 @@ export function ExecutionQueueBrowser({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -316,7 +318,7 @@ export function ExecutionQueueBrowser({
 				</div>
 			</div>
 
-			{/* Edit modal — rendered outside the card so a click inside it doesn't
+			{/* Edit modal - rendered outside the card so a click inside it doesn't
 			    bubble to the backdrop's onClick (which would close the browser).
 			    Stops propagation so backdrop clicks behind it are also contained. */}
 			{editing && onEditItem && (
@@ -385,10 +387,9 @@ function QueueItemRow({
 	const { showDragReady, showGrabbed, isDimmed } = visual;
 
 	const isCommand = item.type === 'command';
-	// Read up to the first 4k characters and let CSS line-clamp truncate to
-	// whatever fits the card's height (the 3-button action stack reserves the
-	// vertical room). The native ellipsis fills the space without wrapping past
-	// the card, so longer messages show as much as fits rather than a hard 100-char cut.
+	// Read up to the first 4k characters and let CSS line-clamp cap the card at
+	// three lines. The native ellipsis fills the space without wrapping past the
+	// card, so longer messages show as much as fits rather than a hard 100-char cut.
 	const displayText = isCommand ? item.command : item.text?.slice(0, 4000);
 
 	const timeSinceQueued = Date.now() - item.timestamp;
@@ -514,68 +515,72 @@ function QueueItemRow({
 							+ {item.images.length} image{item.images.length > 1 ? 's' : ''}
 						</div>
 					)}
-				</div>
 
-				{/* Action buttons */}
-				<div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all">
-					{onEdit && (
+					{/* Action buttons - a horizontal row justified to the bottom-right of
+					    the card, always visible, matching the inline queued-item footer in
+					    the AI chat. Stacking these vertically forced every card to reserve
+					    the height of the whole button column, which wasted space on the
+					    short messages that make up most of the queue. */}
+					<div className="mt-1.5 flex items-center justify-end gap-1">
+						{onEdit && (
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									onEdit();
+								}}
+								className="p-1.5 rounded hover:bg-black/20 transition-all"
+								style={{ color: theme.colors.textDim }}
+								title="Edit message and images"
+							>
+								<Pencil className="w-4 h-4" />
+							</button>
+						)}
+						{onTogglePause && (
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									onTogglePause();
+								}}
+								className="p-1.5 rounded hover:bg-black/20 transition-all"
+								style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
+								title={isPaused ? 'Resume this message' : 'Hold this message (skip until resumed)'}
+							>
+								{isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+							</button>
+						)}
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onEdit();
+								onRemove();
 							}}
-							className="p-1.5 rounded hover:bg-black/20 transition-all"
-							style={{ color: theme.colors.textDim }}
-							title="Edit message and images"
+							className="p-1.5 rounded hover:bg-red-500/20 transition-all"
+							style={{ color: theme.colors.error }}
+							title="Remove from queue"
 						>
-							<Pencil className="w-4 h-4" />
+							<Trash2 className="w-4 h-4" />
 						</button>
-					)}
-					{onTogglePause && (
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onTogglePause();
+								const text =
+									item.type === 'command'
+										? [item.command, item.commandArgs].filter(Boolean).join(' ')
+										: (item.text ?? '');
+								safeClipboardWrite(text).then((ok) => {
+									if (ok) {
+										setCopied(true);
+										if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+										copyResetTimerRef.current = setTimeout(() => setCopied(false), 1500);
+									}
+								});
 							}}
 							className="p-1.5 rounded hover:bg-black/20 transition-all"
-							style={{ color: isPaused ? theme.colors.warning : theme.colors.textDim }}
-							title={isPaused ? 'Resume this message' : 'Hold this message (skip until resumed)'}
+							style={{ color: copied ? theme.colors.success : theme.colors.textDim }}
+							title="Copy to clipboard"
 						>
-							{isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+							{copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
 						</button>
-					)}
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							onRemove();
-						}}
-						className="p-1.5 rounded hover:bg-red-500/20 transition-all"
-						style={{ color: theme.colors.error }}
-						title="Remove from queue"
-					>
-						<Trash2 className="w-4 h-4" />
-					</button>
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							const text =
-								item.type === 'command'
-									? [item.command, item.commandArgs].filter(Boolean).join(' ')
-									: (item.text ?? '');
-							safeClipboardWrite(text).then((ok) => {
-								if (ok) {
-									setCopied(true);
-									if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
-									copyResetTimerRef.current = setTimeout(() => setCopied(false), 1500);
-								}
-							});
-						}}
-						className="p-1.5 rounded hover:bg-black/20 transition-all"
-						style={{ color: copied ? theme.colors.success : theme.colors.textDim }}
-						title="Copy to clipboard"
-					>
-						{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-					</button>
+					</div>
 				</div>
 			</div>
 

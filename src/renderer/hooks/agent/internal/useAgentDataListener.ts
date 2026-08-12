@@ -1,5 +1,5 @@
 /**
- * useAgentDataListener — registers `window.maestro.process.onData`
+ * useAgentDataListener - registers `window.maestro.process.onData`
  *
  * High-frequency listener for process stdout. Behaviour:
  *  - Routes terminal output through `batchedUpdater.appendLog(_, null, false)`.
@@ -7,7 +7,7 @@
  *    plus `markDelivered` + `updateCycleBytes` on every chunk.
  *  - Removes the hidden-progress placeholder log on first visible chunk.
  *  - Clears any lingering `session.agentError` (and its matching error log)
- *    when fresh data arrives — the agent is visibly recovered.
+ *    when fresh data arrives - the agent is visibly recovered.
  *  - Marks the target tab unread when it isn't the active tab / the user
  *    has scrolled away.
  *

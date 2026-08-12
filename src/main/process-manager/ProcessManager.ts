@@ -14,10 +14,12 @@ import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { DataBufferManager } from './handlers/DataBufferManager';
+import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
+import { isPidAlive } from './utils/childProcessInfo';
 import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -29,6 +31,7 @@ import {
 } from '../coworking/coworking-types';
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
+import { killPty } from './utils/commandKill';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -79,8 +82,8 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Spawn a new process for a session.
 	 *
-	 * If a process already exists for the given sessionId, it is killed first
-	 * to prevent orphaned PTY/child processes that are no longer tracked.
+	 * Live AI processes own their sessionId until they exit. Terminal processes
+	 * retain replacement semantics so shell restarts continue to work.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
 		// Expand a leading `~` in the working directory before spawning. node-pty
@@ -99,16 +102,84 @@ export class ProcessManager extends EventEmitter {
 			}
 		}
 
-		// Kill any existing process for this sessionId to prevent orphans.
-		// This guards against double-spawn race conditions where a second spawn
-		// overwrites the map entry and the first process becomes untracked.
+		// Never replace an AI process while it still owns the session entry. Node's
+		// `exit` event can set exitCode before `close` drains stdout, so exitCode is
+		// not enough to prove that the final response has been reconciled. The exit
+		// handler removes the entry before emitting `exit`, which lets replay flows
+		// start the next process without racing the old process's trailing output.
+		// Terminals intentionally keep their existing restart behavior.
 		const existing = this.processes.get(config.sessionId);
 		if (existing) {
-			logger.warn('[ProcessManager] Killing existing process before re-spawn', 'ProcessManager', {
-				sessionId: config.sessionId,
-				existingPid: existing.pid,
-			});
-			this.kill(config.sessionId);
+			const childProcessRunning =
+				existing.childProcess !== undefined &&
+				existing.childProcess.exitCode === null &&
+				(existing.childProcess.signalCode === null ||
+					existing.childProcess.signalCode === undefined);
+			const existingProcessRunning =
+				childProcessRunning ||
+				existing.ptyProcess !== undefined ||
+				existing.sdkController !== undefined;
+
+			if (!existing.isTerminal) {
+				// An agent entry is only ever removed by the exit handler, so an entry
+				// that is still here while its OS process is gone means `close` never
+				// arrived and never will (reported after the machine idled for hours:
+				// the child died without us seeing the event). Left alone, that entry
+				// owns the session id forever and every later turn throws, with no way
+				// back short of restarting the app. See issue #1339.
+				//
+				// The reconciliation is deliberately narrow so it cannot reopen the
+				// lost-response race from #1249. There, node HAD seen the child exit
+				// (`exitCode` is set) while `close` was still draining trailing stdout
+				// microseconds later, so anything node knows has exited stays refused.
+				// We only reclaim the opposite state: node still believes the child is
+				// running, yet the OS says the PID is gone. The two are disjoint, so
+				// the drain window keeps its protection.
+				//
+				// SDK-backed turns have no OS child of their own, so a liveness probe
+				// would be meaningless (and could match an unrelated recycled PID);
+				// they keep the strict refusal.
+				const nodeObservedExit = existing.childProcess !== undefined && !childProcessRunning;
+				const isStaleEntry =
+					!nodeObservedExit && existing.sdkController === undefined && !isPidAlive(existing.pid);
+
+				if (!isStaleEntry) {
+					logger.warn(
+						'[ProcessManager] Refusing to replace owned agent process',
+						'ProcessManager',
+						{
+							sessionId: config.sessionId,
+							existingPid: existing.pid,
+							existingToolType: existing.toolType,
+							requestedToolType: config.toolType,
+						}
+					);
+					throw new Error(`Agent process already running for session ${config.sessionId}`);
+				}
+
+				logger.warn(
+					'[ProcessManager] Reclaiming stale agent process entry (PID no longer exists)',
+					'ProcessManager',
+					{
+						sessionId: config.sessionId,
+						stalePid: existing.pid,
+						existingToolType: existing.toolType,
+						requestedToolType: config.toolType,
+					}
+				);
+				// Drop the dead entry and let the spawn below take the session id. No
+				// kill() here: there is no process left to signal, and kill() would
+				// emit a spurious exit for a turn that ended long ago.
+				this.processes.delete(config.sessionId);
+			} else if (existingProcessRunning) {
+				logger.warn('[ProcessManager] Restarting existing terminal process', 'ProcessManager', {
+					sessionId: config.sessionId,
+					existingPid: existing.pid,
+				});
+				this.kill(config.sessionId);
+			} else {
+				this.processes.delete(config.sessionId);
+			}
 		}
 
 		// Decide the OpenCode SDK-serve path on the RAW config, before any coworking
@@ -192,7 +263,7 @@ export class ProcessManager extends EventEmitter {
 	private shouldUseOpencodeServer(config: ProcessConfig): boolean {
 		return (
 			// Default-off plugin gate (encoreFeatures.opencodeServer). While it is
-			// off, OpenCode stays on the CLI path — which keeps the Coworking MCP
+			// off, OpenCode stays on the CLI path - which keeps the Coworking MCP
 			// working, since the serve transport can't inject per-session env.
 			this.isOpencodeServerEnabled() &&
 			config.toolType === 'opencode' &&
@@ -269,6 +340,13 @@ export class ProcessManager extends EventEmitter {
 	interrupt(sessionId: string): boolean {
 		const process = this.processes.get(sessionId);
 		if (!process) return false;
+
+		// Mark the turn as user-interrupted BEFORE signalling. `interrupt()` (unlike
+		// `kill()`) leaves the process in the map, so its `close` still reaches
+		// ExitHandler - which coerces the null signal code to 0. Without this flag,
+		// an instant stop (no output yet) would look identical to a clean silent
+		// crash and trip the "exited without producing a response" guard.
+		process.interrupted = true;
 
 		try {
 			if (process.sdkController) {
@@ -348,7 +426,7 @@ export class ProcessManager extends EventEmitter {
 	 * `shutdown: true` switches PTYs to SIGKILL with no escalation timer or
 	 * onExit listener. This collapses the window in which node-pty's worker
 	 * thread is still posting via napi_threadsafe_function while Electron
-	 * begins tearing down the Node environment — that race aborts inside
+	 * begins tearing down the Node environment - that race aborts inside
 	 * `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock` on macOS
 	 * (Sentry MAESTRO-3B). A SIGTERM grace period serves no purpose during
 	 * shutdown anyway since the user has already confirmed quit.
@@ -382,7 +460,7 @@ export class ProcessManager extends EventEmitter {
 					// reaches EOF, node-pty's worker thread exits, and its TSFN releases
 					// before Electron's environment teardown runs CleanupHandles.
 					try {
-						proc.ptyProcess.kill('SIGKILL');
+						killPty(proc.ptyProcess, 'SIGKILL');
 					} catch {
 						// Process may already be dead
 					}
@@ -392,7 +470,7 @@ export class ProcessManager extends EventEmitter {
 
 					// Use SIGTERM (not the default SIGHUP which shells may survive on macOS)
 					try {
-						ptyProc.kill('SIGTERM');
+						killPty(ptyProc, 'SIGTERM');
 					} catch {
 						// Process may already be dead
 					}
@@ -400,14 +478,14 @@ export class ProcessManager extends EventEmitter {
 					// Escalate to SIGKILL if the process doesn't exit promptly.
 					const escalationTimer = setTimeout(() => {
 						try {
-							ptyProc.kill('SIGKILL');
+							killPty(ptyProc, 'SIGKILL');
 							logger.warn(
 								'[ProcessManager] PTY did not exit after SIGTERM, escalated to SIGKILL',
 								'ProcessManager',
 								{ sessionId, pid }
 							);
 						} catch {
-							// Process already exited — expected after normal SIGTERM
+							// Process already exited - expected after normal SIGTERM
 						}
 					}, PTY_KILL_ESCALATION_MS);
 
@@ -513,6 +591,18 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
+	 * Re-emit a corrected `usage` event for a local omp process whose model
+	 * context window could not be resolved when its first usage arrived, because
+	 * the catalog prime was still running. Called by the spawn handler when a
+	 * prime that exceeded the spawn cap finally lands.
+	 *
+	 * @returns true when a corrected event was emitted.
+	 */
+	pushResolvedOmpContextWindow(sessionId: string, catalogKey: string): boolean {
+		return pushResolvedOmpContextWindow(this.processes, this, sessionId, catalogKey);
+	}
+
+	/**
 	 * Look up the *owning Maestro session id* for a given OS PID, or null if
 	 * the PID does not match any tracked agent-CLI process. Used by the
 	 * coworking bridge to bind a connection when an agent CLI (e.g. Codex)
@@ -602,5 +692,13 @@ export class ProcessManager extends EventEmitter {
 			return this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars);
 		}
 		return this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
+	}
+
+	/**
+	 * Terminate an in-flight `runCommand()` for a sessionId (local or SSH).
+	 * Returns false when nothing is running under that id.
+	 */
+	cancelCommand(sessionId: string): boolean {
+		return this.localCommandRunner.cancel(sessionId) || this.sshCommandRunner.cancel(sessionId);
 	}
 }

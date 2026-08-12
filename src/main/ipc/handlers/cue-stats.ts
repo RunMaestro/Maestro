@@ -2,19 +2,20 @@
  * Cue Stats IPC Handlers
  *
  * Exposes the Phase 03 aggregation query (`getCueStatsAggregation`) to the
- * renderer over a single IPC channel. Mirrors the structure of `stats.ts` —
+ * renderer over a single IPC channel. Mirrors the structure of `stats.ts` -
  * thin transport that delegates to domain code.
  *
  * Gated at the handler on BOTH Encore flags (`encoreFeatures.usageStats` AND
  * `encoreFeatures.maestroCue`). The dashboard fuses Cue lineage with token
  * data, so disabling either feature must hide it. Failure mode is throwing
- * `'CueStatsDisabled'` rather than returning an empty payload — the renderer
+ * `'CueStatsDisabled'` rather than returning an empty payload - the renderer
  * needs to distinguish "feature off" from "no data in window".
  */
 
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getCueStatsAggregation } from '../../cue/stats/cue-stats-query';
+import { getHistoricalConductorCreditMs } from '../../cue/cue-db';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../../../shared/cue-stats-types';
 import type { CueEngine } from '../../cue/cue-engine';
 
@@ -43,7 +44,7 @@ export interface CueStatsHandlerDependencies {
 
 /**
  * Build a `subscriptionName → pipelineName` lookup from the engine's current
- * graph data. Subscriptions without a `pipeline_name` field are skipped — they
+ * graph data. Subscriptions without a `pipeline_name` field are skipped - they
  * legitimately don't belong to a pipeline. When the engine isn't available
  * (or has no sessions registered yet), returns an empty map.
  */
@@ -112,5 +113,18 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 			}
 			return wrappedAggregation(event, range);
 		}
+	);
+
+	// Deliberately NOT behind `isCueStatsEnabled`: this feeds the one-time
+	// `cueTimeMs` backfill, which reads durations the Cue engine already
+	// credited toward the Conductor level. That credit accrues regardless of the
+	// usageStats dashboard flag, so gating the read would leave users who never
+	// turned that flag on with a permanently blank Cue subtotal.
+	ipcMain.handle(
+		'cue-stats:get-historical-conductor-credit',
+		withIpcErrorLogging(
+			handlerOpts('getHistoricalConductorCredit'),
+			async (): Promise<number> => getHistoricalConductorCreditMs()
+		)
 	);
 }

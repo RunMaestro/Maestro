@@ -29,6 +29,18 @@ export interface AgentMentionSuggestion {
 	memberSessionIds?: string[];
 	/** For agents: the tool type, used to pick the row icon. */
 	toolType?: ToolType;
+	/**
+	 * For agents: true when the target runs on an SSH remote rather than this
+	 * machine. Drives the picker's SSH pill so the sender can tell where the
+	 * message is about to land. Absent/false means local.
+	 */
+	isSshRemote?: boolean;
+	/**
+	 * For SSH agents: the remote's config id. The picker resolves it to a display
+	 * name (see `useSshRemoteNames`); ids are carried instead of names so this
+	 * builder stays pure and synchronous.
+	 */
+	sshRemoteId?: string | null;
 	/** Relevance score for sorting (higher is better). */
 	score: number;
 }
@@ -89,6 +101,8 @@ export function buildAgentMentionSuggestions(
 			kind: 'agent',
 			targetSessionId: s.id,
 			toolType: s.toolType,
+			isSshRemote: Boolean(s.sessionSshRemoteConfig?.enabled),
+			sshRemoteId: s.sessionSshRemoteConfig?.remoteId ?? null,
 			score: 0,
 		});
 	}

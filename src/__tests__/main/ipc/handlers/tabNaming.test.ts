@@ -12,6 +12,10 @@ import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
 // Mock the logger
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -132,6 +136,9 @@ describe('Tab Naming IPC Handlers', () => {
 		],
 		batchModeArgs: ['--print'],
 		readOnlyArgs: ['--permission-mode', 'plan'],
+		capabilities: {
+			supportsPromptViaStdin: true,
+		},
 	};
 
 	beforeEach(async () => {
@@ -668,6 +675,62 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Leaderboard Endpoint');
 		});
 
+		it('ignores reasoning deltas when extracting from Grok streaming-json output', async () => {
+			// Grok streams `thought` deltas BEFORE the answer's `text` deltas, and
+			// the grok parser forwards them as text events with isReasoning=true.
+			// Without filtering those out, the accumulated response text would be
+			// the thinking fragment glued to the answer ("The user wants a nameAuth
+			// Bug Fix") and that garbage would pass extractTabName's filters.
+			const mockGrokAgent: AgentConfig = {
+				id: 'grok',
+				name: 'Grok CLI',
+				command: 'grok',
+				path: '/usr/local/bin/grok',
+				args: [],
+				promptArgs: (p: string) => ['-p', p],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockGrokAgent);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the authentication bug',
+				agentType: 'grok',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Real grok v0.2.93 stream shape (thoughts, then text, then end):
+			const streamJson = [
+				JSON.stringify({ type: 'thought', data: 'The user wants a name' }),
+				JSON.stringify({ type: 'text', data: 'Auth Bug' }),
+				JSON.stringify({ type: 'text', data: ' Fix' }),
+				JSON.stringify({
+					type: 'end',
+					stopReason: 'EndTurn',
+					sessionId: '019f47fb-2316-7f21-98db-55907d4ddb60',
+					requestId: 'req-1',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Auth Bug Fix');
+		});
+
 		it('returns null for empty output', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
@@ -906,6 +969,47 @@ describe('Tab Naming IPC Handlers', () => {
 
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({ sendPromptViaStdinRaw: true })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw for agents that never read stdin', async () => {
+			// omp takes the prompt positionally; stdin delivery would name nothing.
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				id: 'omp',
+				command: 'omp',
+				path: '/home/user/.bun/bin/omp',
+				capabilities: { supportsPromptViaStdin: false },
+			} as AgentConfig);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'long first message',
+				agentType: 'omp',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
 			);
 
 			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
@@ -1456,6 +1560,60 @@ describe('Tab Naming IPC Handlers', () => {
 
 			finish();
 			await resultPromise;
+		});
+	});
+
+	describe('spawn failures (MAESTRO-X4)', () => {
+		// child_process.spawn throws synchronously for an unusable binary. The
+		// call sits in the naming Promise's executor, and the enclosing
+		// try/catch returns that promise rather than awaiting it, so the throw
+		// escaped as a hard IPC rejection for a purely cosmetic feature.
+		async function spawnThrowing(error: unknown) {
+			const { captureException } = await import('../../../../main/utils/sentry');
+			(captureException as Mock).mockClear();
+			mockProcessManager.spawn.mockImplementation(() => {
+				throw error;
+			});
+
+			const result = await invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			return { result, captureException: captureException as Mock };
+		}
+
+		function errnoError(message: string, code: string): NodeJS.ErrnoException {
+			const err = new Error(message) as NodeJS.ErrnoException;
+			err.code = code;
+			return err;
+		}
+
+		it('resolves to null instead of rejecting when spawn throws EFTYPE', async () => {
+			const { result } = await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(result).toBeNull();
+		});
+
+		it('does not page Sentry for an unusable agent binary', async () => {
+			for (const code of ['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']) {
+				const { result, captureException } = await spawnThrowing(errnoError(`spawn ${code}`, code));
+				expect(result).toBeNull();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		});
+
+		it('still reports an unexpected spawn error to Sentry', async () => {
+			const { result, captureException } = await spawnThrowing(
+				new TypeError('spawnCommand is not a string')
+			);
+			expect(result).toBeNull();
+			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+
+		it('removes its process listeners when the spawn fails', async () => {
+			await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
 		});
 	});
 });

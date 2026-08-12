@@ -5,7 +5,7 @@
  *   Even with `EditorView.lineWrapping` + `overflow-wrap: anywhere`, CM6
  *   must MEASURE every logical line before it can virtualize the viewport.
  *   A single 500 KB line forces the browser to lay out and measure the
- *   entire line — Chromium's main thread freezes for seconds.
+ *   entire line - Chromium's main thread freezes for seconds.
  *
  *   The cheapest reliable workaround is to insert hard newlines into the
  *   content BEFORE handing it to CM6 when a line crosses the threshold.
@@ -27,7 +27,7 @@
 
 /**
  * Maximum logical-line length before soft-wrap kicks in. Sized to comfortably
- * fit CM6's measurement budget on a modern Electron renderer — empirically
+ * fit CM6's measurement budget on a modern Electron renderer - empirically
  * lines up to a few thousand characters render fine; the freeze is dominated
  * by single-line lengths in the 10s of KB and up. We pick 1000 to give a
  * generous safety margin without changing display for any sane source file.
@@ -43,7 +43,7 @@ export interface SoftWrapResult {
 	 * search hits (computed against the original content) into CM6 doc
 	 * positions (which see the wrapped content).
 	 *
-	 * Empty when no wrapping was needed — callers should treat the wrapped
+	 * Empty when no wrapping was needed - callers should treat the wrapped
 	 * string as identical to the original in that case.
 	 */
 	insertionsAt: Uint32Array;
@@ -61,7 +61,7 @@ export interface SoftWrapResult {
  */
 export function softWrapLongLines(content: string, maxLineLength: number): SoftWrapResult {
 	if (!content) return { wrapped: content, insertionsAt: new Uint32Array(0) };
-	// Guard against a non-positive threshold — `p += maxLineLength` would
+	// Guard against a non-positive threshold - `p += maxLineLength` would
 	// loop forever on a zero step. Treat invalid input as a no-op so callers
 	// don't have to validate before delegating.
 	if (!Number.isFinite(maxLineLength) || maxLineLength <= 0) {

@@ -1,4 +1,4 @@
-// Cue pipeline commands — list / get / export / add / replace / remove
+// Cue pipeline commands - list / get / export / add / replace / remove
 // pipeline entries from `cue-pipeline-layout.json`. Goes through the running
 // Maestro daemon so layout edits are atomic and don't race with the desktop
 // app's own writes.
@@ -143,7 +143,7 @@ export async function cuePipelineGet(name: string, options: CommonOptions): Prom
 			reportError(`Pipeline "${name}" not found`, options);
 		}
 
-		// `get` always emits JSON to stdout — pipelines have no readable
+		// `get` always emits JSON to stdout - pipelines have no readable
 		// non-JSON form, and this output is meant to be consumed by tooling
 		// or piped into `add`/`replace --from -`.
 		console.log(JSON.stringify(pipeline, null, 2));
@@ -152,7 +152,7 @@ export async function cuePipelineGet(name: string, options: CommonOptions): Prom
 	}
 }
 
-/** `export` is just `get` — kept as a separate entry point so the help text
+/** `export` is just `get` - kept as a separate entry point so the help text
  *  reads naturally for users coming from "I want to back this pipeline up". */
 export async function cuePipelineExport(name: string, options: CommonOptions): Promise<void> {
 	return cuePipelineGet(name, options);

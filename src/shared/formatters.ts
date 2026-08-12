@@ -315,7 +315,9 @@ export function formatElapsedTime(ms: number): string {
 export function formatCost(cost: number): string {
 	if (cost === 0) return '$0.00';
 	if (cost < 0.01) return '<$0.01';
-	return '$' + cost.toFixed(2);
+	// Thousands separators: large all-time totals (e.g. $40,950.60) are unreadable
+	// as an undelimited digit run.
+	return '$' + cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /**

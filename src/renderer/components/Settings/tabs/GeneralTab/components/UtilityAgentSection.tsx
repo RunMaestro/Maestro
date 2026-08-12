@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Bot } from 'lucide-react';
 import type { Theme } from '../../../../../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface UtilityAgentSectionProps {
 	theme: Theme;
@@ -53,17 +54,24 @@ export function UtilityAgentSection({
 		};
 	}, [isOpen, agentsLoaded]);
 
+	// Only meaningful once detection has actually run - before that, an empty
+	// list would flag every configured agent as missing.
+	const staleAgentId =
+		agentsLoaded && utilityAgentId && !availableAgents.some((a) => a.id === utilityAgentId)
+			? utilityAgentId
+			: null;
+
 	return (
 		<div data-setting-id="general-utility-agent">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Bot className="w-3 h-3" />
-				Utility Agent
-			</div>
+			<SettingsSectionHeading icon={Bot}>Utility Agent</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<div className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
+				{/* Opacity alone, no textDim override: stacking the two multiplies the
+				    dimming and drops contrast below 3:1 in most themes
+				    (CLAUDE-SETTINGS.md rule 1). Descriptions inherit textMain. */}
+				<div className="text-xs opacity-50">
 					Route auxiliary tasks (tab naming, context grooming) to a cheaper or faster agent instead
 					of the session agent. Leave as Default to keep using each tab's own agent.
 				</div>
@@ -88,7 +96,22 @@ export function UtilityAgentSection({
 								{agent.name}
 							</option>
 						))}
+						{/*
+						 * A persisted id whose agent is no longer installed matches no
+						 * option, and a <select> with an unmatched value renders as its
+						 * FIRST option - so the UI would read "Default" while auxiliary
+						 * tasks kept routing to a missing binary and failing. Surface it
+						 * instead, so the setting the user is actually running is the
+						 * setting they can see.
+						 */}
+						{staleAgentId && <option value={staleAgentId}>{staleAgentId} (not installed)</option>}
 					</select>
+					{staleAgentId && (
+						<div className="text-xs mt-1" style={{ color: theme.colors.warning }}>
+							This agent is no longer available. Auxiliary tasks will fail until you pick another
+							agent or return to Default.
+						</div>
+					)}
 				</div>
 				{utilityAgentId && (
 					<div>

@@ -1,5 +1,5 @@
 /**
- * CueModalHeader — Title row + tab row, master toggle, help button, close button.
+ * CueModalHeader - Title row + tab row, master toggle, help button, close button.
  *
  * Pure presentational; all state lives in the parent CueModal. React.memo
  * wrapped so shallow-stable props avoid re-render (tab switches and toggles

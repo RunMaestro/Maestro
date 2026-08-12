@@ -75,6 +75,12 @@ Auto Run supports running multiple documents in sequence:
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
 
+## Model Override
+
+The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.
+
+The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`. See [CLI](cli.md#per-run-model-override).
+
 ## Fresh Context: Task vs Document
 
 The run configuration modal has a **Fresh context per** toggle that controls how context is scoped as the runner works through a document. This is distinct from [task granularity](#task-granularity-two-approaches) above - granularity is how you _structure_ a document, while this is how Maestro _executes_ it.

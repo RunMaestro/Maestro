@@ -298,7 +298,7 @@ describe('useDragToMove', () => {
 		act(() => {
 			result.current.handleFolderDrop(e, 'dest');
 		});
-		// Both files should be queued — rename called once after performMoves resolves
+		// Both files should be queued - rename called once after performMoves resolves
 		await act(async () => {});
 		expect(mockMaestro.fs.rename).toHaveBeenCalledTimes(2);
 	});

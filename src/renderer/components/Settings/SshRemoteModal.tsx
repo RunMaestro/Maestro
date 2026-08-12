@@ -514,7 +514,7 @@ export function SshRemoteModal({
 						<div className="min-w-0">
 							<div className="whitespace-pre-wrap break-words">{testResult.message}</div>
 							{testResult.hostname && (
-								<div className="text-xs mt-1 opacity-80">
+								<div className="text-xs mt-1 opacity-70">
 									Remote hostname: {testResult.hostname}
 								</div>
 							)}

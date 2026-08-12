@@ -4,6 +4,7 @@ import {
 	AutoResumeSection,
 	BrowserSection,
 	ConductorProfileSection,
+	CrossAgentMentionsSection,
 	GitHubCliSection,
 	GlobalHotkeySection,
 	HistorySection,
@@ -82,8 +83,15 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				enterToSendAIExpanded={settings.enterToSendAIExpanded}
 				setEnterToSendAIExpanded={settings.setEnterToSendAIExpanded}
 				forcedParallelExecution={settings.forcedParallelExecution}
+				forcedParallelAlways={settings.forcedParallelAlways}
+				setForcedParallelAlways={settings.setForcedParallelAlways}
 				shortcuts={settings.shortcuts}
 				forcedParallelWarning={forcedParallelWarning}
+			/>
+			<CrossAgentMentionsSection
+				theme={theme}
+				crossAgentMentionsWritable={settings.crossAgentMentionsWritable}
+				setCrossAgentMentionsWritable={settings.setCrossAgentMentionsWritable}
 			/>
 			<AutoRunInactivitySection
 				theme={theme}
@@ -112,6 +120,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				defaultShowThinking={settings.defaultShowThinking}
 				setDefaultShowThinking={settings.setDefaultShowThinking}
+				showToolCalls={settings.showToolCalls}
+				setShowToolCalls={settings.setShowToolCalls}
 			/>
 			<TabBehaviorSection
 				theme={theme}

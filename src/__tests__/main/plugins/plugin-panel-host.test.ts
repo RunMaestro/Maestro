@@ -140,7 +140,7 @@ describe('hardenPluginPanelSession', () => {
 		expect(provider).not.toHaveBeenCalled();
 	});
 
-	it('404s an unknown/ungranted panel (provider returns null — default deny)', () => {
+	it('404s an unknown/ungranted panel (provider returns null - default deny)', () => {
 		const ses = fakeSession();
 		hardenPluginPanelSession('plugin:acme.tools', () => ses);
 		const handler = ses.protocol.handle.mock.calls[0][1];
@@ -210,7 +210,7 @@ describe('attachPluginPanelGuestSecurity', () => {
 			const preventDefault = vi.fn();
 			handlers.get(eventName)!({ preventDefault }, 'https://evil.example/?d=secret');
 			expect(preventDefault, eventName).toHaveBeenCalled();
-			// Even a same-scheme panel URL is denied — the guest lives on its
+			// Even a same-scheme panel URL is denied - the guest lives on its
 			// initial document forever.
 			const preventOwn = vi.fn();
 			handlers.get(eventName)!({ preventDefault: preventOwn }, pluginPanelUrl('acme.tools/board'));

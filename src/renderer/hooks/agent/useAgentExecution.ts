@@ -1,17 +1,13 @@
 import { useCallback, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
-import type {
-	Session,
-	SessionState,
-	UsageStats,
-	QueuedItem,
-	LogEntry,
-	ToolType,
-} from '../../types';
-import { getActiveTab, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
+import {
+	getActiveTab,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
-import { generateId } from '../../utils/ids';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
@@ -37,6 +33,28 @@ export interface AgentSpawnResult {
 	errorKind?: AgentSpawnErrorKind;
 }
 
+/**
+ * Per-spawn options for `spawnAgentForSession`.
+ *
+ * The model/effort overrides are run-scoped: an Auto Run can use a different
+ * model than the agent's configured default without writing anything back to
+ * the session. They win over `session.customModel` / `session.customEffort`
+ * because the Auto Run spawn path has no active tab to consult.
+ */
+export interface SpawnAgentOptions {
+	isAutoRun?: boolean;
+	/** Overrides session.customModel for this spawn only */
+	modelOverride?: string;
+	/** Overrides session.customEffort for this spawn only */
+	effortOverride?: string;
+}
+
+/**
+ * The subset of spawn options the batch/goal runners forward from a
+ * `BatchRunConfig`. `isAutoRun` is supplied by the wiring layer, not the runner.
+ */
+export type SpawnAgentRunOverrides = Pick<SpawnAgentOptions, 'modelOverride' | 'effortOverride'>;
+
 export type AgentSpawnErrorKind =
 	| 'watchdog-stalled'
 	| 'watchdog-timeout'
@@ -50,8 +68,8 @@ const BATCH_WATCHDOG_CHECK_MS = 15 * 1000; // Check every 15 seconds
  * Dependencies for the useAgentExecution hook.
  */
 export interface UseAgentExecutionDeps {
-	/** Current active session (null if none selected) */
-	activeSession: Session | null;
+	/** Active session id (null if none selected). Session fields are read from sessionsRef at call time. */
+	activeSessionId: string | null;
 	/** Ref to sessions for accessing latest state without re-renders */
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Session state setter */
@@ -75,9 +93,7 @@ export interface UseAgentExecutionReturn {
 		sessionId: string,
 		prompt: string,
 		cwdOverride?: string,
-		options?: {
-			isAutoRun?: boolean;
-		}
+		options?: SpawnAgentOptions
 	) => Promise<AgentSpawnResult>;
 	/** Spawn an agent with a prompt for the active session */
 	spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
@@ -156,7 +172,7 @@ export interface UseAgentExecutionReturn {
  */
 export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutionReturn {
 	const {
-		activeSession,
+		activeSessionId,
 		sessionsRef,
 		setSessions,
 		processQueuedItemRef,
@@ -199,15 +215,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * @param sessionId - The session ID to spawn the agent for
 	 * @param prompt - The prompt to send to the agent
 	 * @param cwdOverride - Optional override for working directory (e.g., for worktree mode)
+	 * @param options - Per-spawn options, including the run-scoped model/effort overrides
 	 */
 	const spawnAgentForSession = useCallback(
 		async (
 			sessionId: string,
 			prompt: string,
 			cwdOverride?: string,
-			options?: {
-				isAutoRun?: boolean;
-			}
+			options?: SpawnAgentOptions
 		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -235,7 +250,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				// This prevents batch output from appearing in the interactive AI terminal
 				const targetSessionId = `${sessionId}-batch-${Date.now()}`;
 
-				// Batch tasks always spawn fresh sessions — prepare Maestro system prompt
+				// Batch tasks always spawn fresh sessions - prepare Maestro system prompt
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: getActiveTab(session)?.id,
@@ -390,33 +405,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 												};
 											}
 
-											const logEntry: LogEntry | null =
-												nextItem.type === 'message' && nextItem.text
-													? {
-															id: generateId(),
-															timestamp: Date.now(),
-															source: 'user',
-															text: nextItem.text,
-															images: nextItem.images,
-														}
-													: null;
-
 											// Orphan target: the user closed this tab while the message was
-											// still queued. Route the user log to orphanedThinkingTabs and
-											// leave the active tab untouched - the send is fire-and-forget.
+											// still queued. Route the busy state + user log to
+											// orphanedThinkingTabs and leave the active tab untouched - the
+											// send is fire-and-forget.
 											if (target.location === 'orphan') {
 												return {
 													...s,
 													state: 'busy' as SessionState,
 													busySource: 'ai',
-													...(logEntry &&
-														s.orphanedThinkingTabs && {
-															orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
-																tab.id === target.tabId
-																	? { ...tab, logs: [...tab.logs, logEntry] }
-																	: tab
-															),
-														}),
+													...(s.orphanedThinkingTabs && {
+														orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
+															tab.id === target.tabId
+																? markTabRunningQueuedItem(tab, nextItem)
+																: tab
+														),
+													}),
 													executionQueue: remainingQueue,
 													thinkingStartTime: Date.now(),
 													currentCycleTokens: 0,
@@ -425,14 +429,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 												};
 											}
 
-											// Foreground target: append the user log and bring the tab into view.
-											const updatedAiTabs = logEntry
-												? s.aiTabs.map((tab) =>
-														tab.id === target.tabId
-															? { ...tab, logs: [...tab.logs, logEntry] }
-															: tab
-													)
-												: s.aiTabs;
+											// Foreground target: mark the tab busy (so its chip keeps the
+											// in-progress indicator while the dequeued turn runs), append the
+											// user log, and bring the tab into view. Shares
+											// markTabRunningQueuedItem with the other dispatch paths so the
+											// busy-state + log construction stays identical.
+											const updatedAiTabs = s.aiTabs.map((tab) =>
+												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem) : tab
+											);
 
 											return {
 												...s,
@@ -448,24 +452,20 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											};
 										}
 
-										// No queued items - set to idle
-										// Set ALL busy tabs to 'idle' for write-mode tracking
-										const updatedAiTabs =
-											s.aiTabs?.length > 0
-												? s.aiTabs.map((tab) =>
-														tab.state === 'busy'
-															? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-															: tab
-													)
-												: s.aiTabs;
+										// No queued items. This spawn ran under its own `-batch-` process id
+										// and deliberately never marked a tab busy (see the spawn site), so
+										// its exit must not clear tabs whose own `-ai-{tabId}` agents are
+										// still running in parallel - that drops the in-progress indicator
+										// from threads that are very much still working. Each of those tabs
+										// is cleared by its own onExit handler.
+										const anyTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
 
 										return {
 											...s,
-											state: 'idle' as SessionState,
-											busySource: undefined,
-											thinkingStartTime: undefined,
+											state: anyTabStillBusy ? ('busy' as SessionState) : ('idle' as SessionState),
+											busySource: anyTabStillBusy ? s.busySource : undefined,
+											thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
 											pendingAICommandForSynopsis: undefined,
-											aiTabs: updatedAiTabs,
 										};
 									})
 								);
@@ -584,14 +584,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						}
 					}
 
-					// Spawn the agent for batch processing
-					// Use effectiveCwd which may be a worktree path for parallel execution
-					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-						isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Batch/Auto Run does not send images
-					});
-
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
 					window.maestro.process
 						.spawn({
@@ -615,18 +607,20 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomArgs: session.customArgs,
 							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
-							sessionCustomModel: session.customModel,
+							// A per-run override (Auto Run model picker, CLI --model) wins over the
+							// session's configured model. There is no active tab in this path, so
+							// the override sits directly above session.customModel and never
+							// touches the session itself - it dies when the run ends.
+							sessionCustomModel: options?.modelOverride ?? session.customModel,
 							// Auto Run is session-level (no active tab), so the session's effort
 							// is the source. Interactive spawns pass this too; omitting it here
 							// dropped the user's configured reasoning effort in Auto Run, which for
 							// Codex meant no reasoning summary was streamed (Thought Stream stayed
 							// stuck on "Waiting for the agent to start thinking...") - see #1147.
-							sessionCustomEffort: session.customEffort,
+							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
 						})
 						.catch((err: unknown) => {
 							resolveOnce({
@@ -650,10 +644,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 */
 	const spawnAgentWithPrompt = useCallback(
 		async (prompt: string): Promise<AgentSpawnResult> => {
-			if (!activeSession) return { success: false };
-			return spawnAgentForSession(activeSession.id, prompt, undefined, { isAutoRun: false });
+			if (!activeSessionId) return { success: false };
+			return spawnAgentForSession(activeSessionId, prompt, undefined, { isAutoRun: false });
 		},
-		[activeSession, spawnAgentForSession]
+		[activeSessionId, spawnAgentForSession]
 	);
 
 	/**
@@ -678,6 +672,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
+				customEffort?: string;
 				customContextWindow?: number;
 				// Claude token-source selection. The synopsis spawns under a synthetic
 				// sessionId, so the process:spawn handler can't resolve the token mode
@@ -785,11 +780,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							effectiveSessionSshRemoteConfig = mainSession.sessionSshRemoteConfig;
 						}
 					}
-					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
-						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						hasImages: false, // Resume path does not send images
-					});
 					window.maestro.process
 						.spawn({
 							sessionId: targetSessionId,
@@ -811,6 +801,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomArgs: sessionConfig?.customArgs,
 							sessionCustomEnvVars: sessionConfig?.customEnvVars,
 							sessionCustomModel: sessionConfig?.customModel,
+							sessionCustomEffort: sessionConfig?.customEffort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the
@@ -820,8 +811,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							...getClaudeTokenSourceFields(sessionConfig),
 							// Always use effective SSH remote config if available
 							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
 						})
 						.catch(() => {
 							cleanup();

@@ -166,6 +166,17 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				const allConfigs = agentConfigsStore.get('configs', {});
 				const agentConfigValues = allConfigs[effectiveAgentType] || {};
 
+				// The session's executable overrides describe the SESSION's agent: a
+				// pinned binary path, its CLI flags, its env. Carrying them onto a
+				// different utility agent would launch the wrong executable, or feed
+				// one agent's flags to another. The utility agent's own settings come
+				// from `agentConfigValues`, which is already keyed by the effective id.
+				//
+				// `sshRemoteConfig` is deliberately NOT dropped: it says WHERE the work
+				// runs, not WHICH binary runs it, and grooming a remote agent's context
+				// on the local machine would look at the wrong filesystem.
+				const usingUtilityAgent = !!utilityAgentId && effectiveAgentType !== agentType;
+
 				// Use the shared groomContext utility
 				const result = await groomContext(
 					{
@@ -176,9 +187,9 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 						// Pass SSH and custom config for remote execution support
 						sessionSshRemoteConfig: options?.sshRemoteConfig,
-						sessionCustomPath: options?.customPath,
-						sessionCustomArgs: options?.customArgs,
-						sessionCustomEnvVars: options?.customEnvVars,
+						sessionCustomPath: usingUtilityAgent ? undefined : options?.customPath,
+						sessionCustomArgs: usingUtilityAgent ? undefined : options?.customArgs,
+						sessionCustomEnvVars: usingUtilityAgent ? undefined : options?.customEnvVars,
 						agentConfigValues,
 					},
 					processManager,

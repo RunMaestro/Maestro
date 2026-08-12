@@ -34,16 +34,31 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Platform Detection
 
-### Main Process (`src/shared/platformDetection.ts` - usable in both processes)
+### Both Processes (`src/shared/platformDetection.ts`)
 
-| Function            | Signature       | Purpose                                                                |
-| ------------------- | --------------- | ---------------------------------------------------------------------- |
-| `isWindows()`       | `() => boolean` | Returns `process.platform === 'win32'`. Reads at call time (mockable). |
-| `isMacOS()`         | `() => boolean` | Returns `process.platform === 'darwin'`.                               |
-| `isLinux()`         | `() => boolean` | Returns `process.platform === 'linux'`.                                |
-| `getWhichCommand()` | `() => string`  | Returns `'where'` on Windows, `'which'` on Unix.                       |
+| Function            | Signature       | Purpose                                                       |
+| ------------------- | --------------- | ------------------------------------------------------------- |
+| `isWindows()`       | `() => boolean` | Platform is `win32`. Resolved at call time (mockable).        |
+| `isMacOS()`         | `() => boolean` | Platform is `darwin`.                                         |
+| `isLinux()`         | `() => boolean` | Platform is `linux`. Also the fallback when nothing resolves. |
+| `getWhichCommand()` | `() => string`  | Returns `'where'` on Windows, `'which'` on Unix.              |
+
+Resolution order: `globalThis.process.platform` first, then the preload bridge at
+`globalThis.maestro.platform`, then `'linux'`. The bare `process` identifier is
+never touched (that throws a `ReferenceError` in the renderer sandbox).
+
+**The `'browser'` sentinel.** The renderer loads a `process` polyfill
+(`src/renderer/public/process-shim.js`) so vendor libs reading `process.env` /
+`process.platform` don't throw. It reports `platform: 'browser'`, which is NOT a
+real platform - `platformDetection.ts` explicitly rejects that value and falls
+through to the preload bridge. Treating it as real is how every macOS renderer
+started looking non-Mac and Settings rendered "Ctrl+0" on a Mac. Do not add a
+new `process.platform` read in renderer code.
 
 ### Renderer Process (`src/renderer/utils/platformUtils.ts`)
+
+Prefer these in renderer-only code - they read the preload bridge directly and
+never see the shim.
 
 | Function                   | Signature                      | Purpose                                                        |
 | -------------------------- | ------------------------------ | -------------------------------------------------------------- |
@@ -52,6 +67,10 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 | `isLinuxPlatform()`        | `() => boolean`                | Uses `window.maestro.platform`.                                |
 | `getRevealLabel(platform)` | `(platform: string) => string` | Platform-appropriate "Reveal in Finder/Explorer/File Manager". |
 | `getOpenInLabel(platform)` | `(platform: string) => string` | Platform-appropriate "Open in Finder/Explorer/File Manager".   |
+
+For user-visible modifier keys, don't branch on the platform yourself - use the
+[Shortcut Formatter](#shortcut-formatter-srcrendererutilsshortcutformatterts)
+helpers below.
 
 ### WSL Detection (`src/main/utils/wslDetector.ts` - Main only)
 
@@ -82,9 +101,10 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ### Shared (`src/shared/stringUtils.ts` - Both)
 
-| Function               | Signature            | Purpose                                                                                                     |
-| ---------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `stripAnsiCodes(text)` | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases. |
+| Function                        | Signature            | Purpose                                                                                                                                                                                                                                    |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `stripAnsiCodes(text)`          | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases.                                                                                                                                |
+| `safeDecodeURIComponent(value)` | `(string) => string` | Percent-decode, returning the raw input on malformed escapes (`%`, `%ZZ`) instead of throwing `URIError`. Use for ANY untrusted path/href - agent output and Windows/non-ASCII paths routinely carry a bare `%`. Swallows only `URIError`. |
 
 ## Font Utilities (`src/shared/fontStack.ts` - Both)
 
@@ -101,6 +121,12 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | ------------------ | --------------------------------- | ------------------------------------------------------------------------- |
 | `stripJsonBom`     | `(value: string) => string`       | Remove a leading UTF-8 BOM from JSON text before parsing.                 |
 | `parseJsonWithBom` | `<T = unknown>(value: string): T` | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text. |
+
+### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
+
+| Function                                     | Signature                               | Purpose                                                                                                                          |
+| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal. |
 
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
@@ -160,6 +186,46 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `sanitizeGitBranchName(input)`     | `(string, options?) => string` | Sanitize user input into a git branch name. Use `{ allowIncomplete: true }` for controlled inputs before final validation. |
 | `isImageFile(filePath)`            | `(string) => boolean`          | Check extension against known image types.                                                                                 |
 | `getImageMimeType(ext)`            | `(string) => string`           | Get MIME type for image extension.                                                                                         |
+
+---
+
+## Media Types (`src/shared/mediaTypes.ts` - Both)
+
+Audio/video detection plus the `maestro-media://` stream URL format used by the
+file preview's `MediaViewer`. Unlike images (which `fs:readFile` inlines as a
+base64 data URL), media is streamed: the main process returns a short stream URL
+and `src/main/media/media-stream.ts` serves range requests off disk, so a
+multi-GB recording never crosses IPC or lands in the renderer heap.
+
+| Function / Constant                       | Signature                                  | Purpose                                                                                              |
+| ----------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `getMediaKind(filePath)`                  | `(string) => 'audio' \| 'video' \| null`   | Classify a path. Only formats Chromium can decode; mkv/avi stay null so they keep the binary path.   |
+| `isMediaFile(filePath)`                   | `(string) => boolean`                      | Whether the path names playable media.                                                               |
+| `getMediaMimeType(filePath)`              | `(string) => string \| null`               | MIME type for the `content-type` header.                                                             |
+| `buildMediaStreamUrl(token, absPath)`     | `(string, string) => string`               | Build a stream URL. Main process only - use `buildLocalMediaStreamUrl()` so the boot token is right. |
+| `parseMediaStreamUrl(url, expectedToken)` | `(string, string) => string \| null`       | Validate token/host/extension and recover the path.                                                  |
+| `isMediaStreamUrl(value)`                 | `(string \| null \| undefined) => boolean` | Cheap check for "is this `fs:readFile` result a stream URL".                                         |
+| `MEDIA_PLAYBACK_RATES`                    | `readonly number[]`                        | Speed ladder shown in the transport.                                                                 |
+| `normalizePlaybackRate(value)`            | `(unknown) => number`                      | Clamp a persisted/CLI-supplied rate to 0.25-4, falling back to 1.                                    |
+
+### Media File Tabs (`src/renderer/utils/mediaTabs.ts` - Renderer)
+
+| Function                              | Signature                                                        | Purpose                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `getFileTabMediaKind(name, content)`  | `(string, string) => MediaKind \| null`                          | The one predicate for "is this previewed file playable media".              |
+| `collectMediaTabs(sessions)`          | `(Session[]) => MediaTabRef[]`                                   | Every media tab across **all** agents, for the app-level playback host.     |
+| `getMediaTabLabel(ref)`               | `(MediaTabRef) => string`                                        | Display filename, extension included.                                       |
+| `stepMediaTab(refs, activeId, steps)` | `(MediaTabRef[], string \| null, number) => MediaTabRef \| null` | Prev/next target for the player. Open order, no wrapping; null at the ends. |
+
+`getFileTabMediaKind` takes the filename and content as separate scalars on
+purpose: a `FilePreviewTab` splits `name` from `extension` (`'song'` + `'.mp3'`)
+while the object handed to `FilePreview` joins them back. Passing either record
+shape directly classifies everything as non-media, which silently kills playback
+outright. Callers must pass a filename that still has its extension.
+
+Floating-widget geometry math lives in `src/renderer/utils/mediaFloatGeometry.ts`
+(`clampMediaFloatRect`, `initialMediaFloatRect`), split out of the component so
+the off-screen-recovery cases are testable without a DOM.
 
 ---
 
@@ -225,16 +291,35 @@ UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - d
 
 ---
 
+## Director's Notes Narrative (`src/shared/directorNotesNarrative.ts` - Both)
+
+The Director's Notes synopsis agent emits a structured JSON narrative. This module is the ONLY place that turns that raw string into a `DirectorNotesNarrative` or back into prose. Do not hand-roll JSON extraction, repair, or markdown conversion at a call site.
+
+| Function / Constant                  | Signature                            | Purpose                                                                                                                                                                         |
+| ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parseDirectorNotesNarrative(raw)`   | `(string) => ParseNarrativeResult`   | Strict parse. Tolerates a code fence or stray prose around the object; rejects any structural deviation with a precise error. Never throws.                                     |
+| `recoverDirectorNotesNarrative(raw)` | `(string) => RecoverNarrativeResult` | Best-effort salvage, called ONLY after a strict failure: repairs a cut-off response and raw control characters, drops malformed items, and returns a `reason` the UI must show. |
+| `narrativeToMarkdown(narrative)`     | `(DirectorNotesNarrative) => string` | Render the narrative as markdown prose (`##` section headings + bullets). Used by Plain Mode, Copy, Save, and the CLI's markdown/text output.                                   |
+
+Rendering rule: no surface may display the raw structured output as if it were the report. Show the narrative (or the salvaged one plus `NarrativeParseError`'s recovery banner); on total failure show the banner with the raw text behind its disclosure.
+
+---
+
 ## History Utilities (`src/shared/history.ts` - Both)
 
-| Function / Constant                  | Signature                                            | Purpose                                                      |
-| ------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------ |
-| `HISTORY_VERSION`                    | `number` (1)                                         | Current history file format version.                         |
-| `MAX_ENTRIES_PER_SESSION`            | `number` (5000)                                      | Max history entries per session file.                        |
-| `ORPHANED_SESSION_ID`                | `string` (`'_orphaned'`)                             | Session ID for entries without associated sessions.          |
-| `sanitizeSessionId(sessionId)`       | `(string) => string`                                 | Replace non-safe chars with underscore for filesystem.       |
-| `paginateEntries(entries, options?)` | `<T>(T[], PaginationOptions?) => PaginatedResult<T>` | Apply limit/offset pagination. Default: limit 100, offset 0. |
-| `sortEntriesByTimestamp(entries)`    | `(HistoryEntry[]) => HistoryEntry[]`                 | Immutable sort by descending timestamp.                      |
+| Function / Constant                  | Signature                                            | Purpose                                                                                                                                                         |
+| ------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HISTORY_VERSION`                    | `number` (1)                                         | Current history file format version.                                                                                                                            |
+| `MAX_ENTRIES_PER_SESSION`            | `number` (5000)                                      | Max history entries per session file.                                                                                                                           |
+| `ORPHANED_SESSION_ID`                | `string` (`'_orphaned'`)                             | Session ID for entries without associated sessions.                                                                                                             |
+| `sanitizeSessionId(sessionId)`       | `(string) => string`                                 | Replace non-safe chars with underscore for filesystem.                                                                                                          |
+| `paginateEntries(entries, options?)` | `<T>(T[], PaginationOptions?) => PaginatedResult<T>` | Apply limit/offset pagination. Default: limit 100, offset 0.                                                                                                    |
+| `sortEntriesByTimestamp(entries)`    | `(HistoryEntry[]) => HistoryEntry[]`                 | Immutable sort by descending timestamp.                                                                                                                         |
+| `ALL_HISTORY_ENTRY_TYPES`            | `readonly HistoryEntryType[]`                        | The ONE list of entry types (`USER`, `AGENT`, `AUTO`, `CUE`), in filter-display order. Iterate it - never re-declare a local copy.                              |
+| `isHistoryEntryType(value)`          | `(unknown) => value is HistoryEntryType`             | Type guard for IPC/CLI/plugin payload validation.                                                                                                               |
+| `visibleHistoryEntryTypes(cueOn)`    | `(boolean) => HistoryEntryType[]`                    | Types a filter UI should offer; drops `CUE` when the Cue Encore Feature is off.                                                                                 |
+| `normalizeHistoryEntryType(entry)`   | `(HistoryEntry) => HistoryEntryType`                 | Re-maps legacy cross-agent consults (`AUTO` + `sourceAgentName`) to `AGENT`.                                                                                    |
+| `normalizeHistoryEntries(entries)`   | `(HistoryEntry[]) => HistoryEntry[]`                 | Batch form of the above; returns the same array when nothing changed. Applied at both read chokepoints (`HistoryManager.getEntries`, CLI `readSessionHistory`). |
 
 ---
 
@@ -321,10 +406,11 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ### execFile (`src/main/utils/execFile.ts`)
 
-| Function                                          | Signature                                                                              | Purpose                                                                                                                                                    |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `execFileNoThrow(command, args?, cwd?, options?)` | `(string, string[], string?, ExecOptions \| NodeJS.ProcessEnv) => Promise<ExecResult>` | Safe command execution. No shell injection. Returns `{ stdout, stderr, exitCode }` - never throws. Handles Windows batch files, stdin input, and timeouts. |
-| `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                             |
+| Function                                          | Signature                                                                              | Purpose                                                                                                                                                                                                                                            |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `execFileNoThrow(command, args?, cwd?, options?)` | `(string, string[], string?, ExecOptions \| NodeJS.ProcessEnv) => Promise<ExecResult>` | Safe command execution. No shell injection. Returns `{ stdout, stderr, exitCode }` - never throws. Handles Windows batch files, stdin input, and timeouts.                                                                                         |
+| `execFileStreaming(command, args, options)`       | `(string, string[], ExecStreamingOptions) => ExecStreamingHandle`                      | Streaming sibling of `execFileNoThrow`: calls `onChunk(chunk, 'stdout' \| 'stderr')` as output arrives, plus `{ result, cancel }`. Use for long commands the user watches live (`git pull`/`git push`). Cancel resolves with exitCode `'SIGTERM'`. |
+| `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                                                                                                                     |
 
 ### Safe IPC Send (`src/main/utils/safe-send.ts`)
 
@@ -417,8 +503,15 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------ |
 | `formatKey(key)`                       | `(string) => string`            | Platform-aware key symbol (Mac: `"Meta"` -> `"command"`, Win: `"Meta"` -> `"Ctrl"`). |
 | `formatShortcutKeys(keys, separator?)` | `(string[], string?) => string` | Format key array: Mac `"command shift K"`, Win `"Ctrl+Shift+K"`.                     |
-| `formatMetaKey()`                      | `() => string`                  | `"command"` on Mac, `"Ctrl"` on Win/Linux.                                           |
+| `formatMetaKey()`                      | `() => string`                  | Symbol form: `"command"` on Mac, `"Ctrl"` on Win/Linux.                              |
+| `formatMetaKeyName()`                  | `() => string`                  | Prose form: `"Command"` on Mac, `"Ctrl"` on Win/Linux. For sentences and tooltips.   |
 | `formatEnterToSend(enterToSend)`       | `(boolean) => string`           | `"Enter"` or `"command + Enter"` / `"Ctrl + Enter"`.                                 |
+
+**Never hard-code a modifier key in UI copy.** Literal `⌘`, `Cmd+`, or `Ctrl+`
+in a tooltip, setting description, or help table renders the wrong key on the
+other platform. Pass `''` as the separator when you want the tight macOS form
+(`formatShortcutKeys(['Meta', 'f'], '')` -> `⌘F`); pass `'+'` (the default) for
+the spelled-out platforms.
 
 ### Context Usage (`src/renderer/utils/contextUsage.ts`)
 
@@ -429,6 +522,34 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | `calculateContextDisplay(usageStats, contextWindow, agentId?, fallbackPercentage?)`     | Returns `{ tokens, percentage, contextWindow }` | Single source of truth for context gauge rendering.                                  |
 | `estimateAccumulatedGrowth(currentUsage, outputTokens, cacheReadTokens, contextWindow)` | `(number, number, number, number) => number`    | Conservative growth estimate during tool-heavy turns. Bounded to 1-3% per turn.      |
 
+### Context Window Precedence (`src/renderer/utils/contextWindowPrecedence.ts`)
+
+**The canonical ranking for "which context window do we divide by".** Any new
+surface that needs the effective window MUST resolve through this rather than
+re-deriving the order - a divergent copy is how the header gauge and the Context
+Timeline disagreed before PR #1221, and findings P1/AD1 exist to keep them in
+step.
+
+| Function                                    | Signature                                        | Purpose                                                                |
+| ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
+| `resolveContextWindow(inputs)`              | `(ContextWindowInputs) => ResolvedContextWindow` | Effective window PLUS the `source` rank that supplied it.              |
+| `isStoredContextWindowOverridden(resolved)` | `(ResolvedContextWindow) => boolean`             | True when a stored `customContextWindow` exists but a higher rank won. |
+
+Precedence: `[1m]` model marker > user-edited `customContextWindow` > provider-resolved
+report > stored `customContextWindow` of unknown provenance > agent config > raw report.
+
+It returns the winning SOURCE, not just the number, because "is the stored value
+overridden?" is unanswerable from the figure alone - a stored 200k and a
+provider-reported 200k are numerically identical and opposite in meaning.
+
+Known consumers: `useContextWindow` (header gauge) and `EditAgentModal`'s
+override note. `useAgentUsageListener` mirrors the shared ranks for the Context
+Timeline with two timeline-only extras interleaved below rank 4; keep the shared
+ranks positionally identical there. A THIRD list exists in
+`resolveConfiguredContextWindow` (`contextWindowResolver.ts`, Auto Run's
+fresh-context picker) which ranks the stored value first unconditionally - it
+predates P1/AD1, serves a different purpose, and is deliberately NOT kept in sync.
+
 ### Session Helpers (`src/renderer/utils/sessionHelpers.ts`)
 
 | Function                                  | Signature                                                                        | Purpose                                                                                 |
@@ -438,6 +559,19 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | `agentSupportsContextTransfer(agentType)` | `(ToolType) => Promise<boolean>`                                                 | Check if agent supports receiving merged context.                                       |
 | `getSessionSshRemoteId(session)`          | `(SessionSshInfo?) => string \| undefined`                                       | Get effective SSH remote ID. Handles the sshRemoteId vs sessionSshRemoteConfig pitfall. |
 | `isSessionRemote(session)`                | `(SessionSshInfo?) => boolean`                                                   | Check if session is SSH remote. Works for both AI and terminal-only sessions.           |
+
+### Session Attention Filter (`src/renderer/utils/sessionAttention.ts`)
+
+Single source of truth for the Left Bar "unread agents only" (a.k.a. "needs attention") filter. Every surface that filters by unread MUST route through these so they never diverge: categorization (`useSessionCategories`), the bell badge + rendered worktree children (`SessionList`), the jump-badge / nav projection (`computeSortedSessions` via `SidebarNavSync`), the collapsed rail (`SkinnySidebar`), and keyboard cycling (`useCycleSession`). Do NOT re-inline the checks - a partial copy is how an auto-running worktree child ends up hidden while its parent stays visible. The active-session carve-out is intentionally NOT here: each surface keeps its own "always show the active agent (or its parent)" rule, since an active idle agent does not itself need attention.
+
+| Function / Type                                          | Signature                                                                       | Purpose                                                                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AttentionContext`                                       | `{ batchSessionIds: ReadonlySet<string>; stuckOutageIds: ReadonlySet<string> }` | Store-derived inputs the predicate can't read off the Session: Auto Run batch ids (batchStore) + stuck outage ids (retryStore).                 |
+| `sessionNeedsAttention(session, ctx)`                    | `(Session, AttentionContext) => boolean`                                        | True when an agent has an unread AI tab, is busy, is in an error state, is auto-running an Auto Run batch, or is stuck auto-retrying an outage. |
+| `sessionOrChildrenNeedAttention(session, children, ctx)` | `(Session, readonly Session[] \| undefined, AttentionContext) => boolean`       | Keep a parent visible when it or any worktree child needs attention.                                                                            |
+| `outageIdsFromSignature(signature)`                      | `(string) => Set<string>`                                                       | Parse the comma-joined outage signature (`useActiveOutageSessionSignature`) into a lookup set; guards the empty-string case.                    |
+
+For the event-time (non-reactive) path - `useCycleSession`'s `getState()` reads - build the outage set with `getActiveOutageSessionIds()` from `src/renderer/stores/retryStore.ts` and the batch set with `selectActiveBatchSessionIds(useBatchStore.getState())`.
 
 ### Sentry (`src/renderer/utils/sentry.ts`)
 
@@ -480,3 +614,23 @@ The desktop renderer also runs on phones (web-desktop build). These are the cano
 | `THEMES`                      | `Record<ThemeId, Theme>` - All 17 theme definitions. |
 | `DEFAULT_CUSTOM_THEME_COLORS` | Dracula colors as default for custom theme.          |
 | `getThemeById(themeId)`       | Look up a theme, returns null if not found.          |
+
+### Color Math & Contrast (`src/shared/colorContrast.ts` - Both)
+
+Use these instead of hand-rolling hex math. **Any time you compute a foreground
+color for a themed surface, run it through `readableTextOn()`** - a theme whose
+accent sits close to its text color will otherwise paint near-identical colors
+on top of each other (this is exactly how Mermaid ER attribute rows became
+unreadable).
+
+| Export                                               | Purpose                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `readableTextOn(preferred, backgrounds, threshold?)` | Returns `preferred` when it clears WCAG AA on **every** background; otherwise nudges it toward white/black until it does. |
+| `isReadableOn(fg, backgrounds, threshold?)`          | Boolean form - assert contrast in tests without recomputing ratios.                                                       |
+| `contrastRatio(a, b)`                                | WCAG 2.1 ratio (1-21). Returns 21 for unparseable colors so exotic custom-theme values are left alone.                    |
+| `relativeLuminance(hex)`                             | WCAG relative luminance, or null if unparseable.                                                                          |
+| `hexToRgb(hex)`                                      | `#rrggbb` -> `{r,g,b}` or null (3-digit, `rgb()`, and named colors return null).                                          |
+| `adjustBrightness(hex, percent)`                     | Shift toward white (+) or black (-), hue broadly preserved.                                                               |
+| `blendColors(c1, c2, ratio)`                         | Mix two colors; `ratio` is how much of `c2` lands in the result.                                                          |
+| `transparentize(color, bg, alpha)`                   | Flatten a tint into an opaque color, for renderers that only accept solid fills (SVG/canvas).                             |
+| `AA_CONTRAST` / `AA_LARGE_CONTRAST`                  | 4.5 (normal text) and 3 (large text) thresholds.                                                                          |

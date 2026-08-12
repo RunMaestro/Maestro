@@ -1,5 +1,5 @@
 /**
- * useOwnedSessionGate — window-scoping for incoming `process:*` events.
+ * useOwnedSessionGate - window-scoping for incoming `process:*` events.
  *
  * The main process BROADCASTS every `process:*` event (data, exit, status, ...)
  * to ALL windows (see the MULTI-WINDOW INVARIANT in `safe-send.ts`). Each

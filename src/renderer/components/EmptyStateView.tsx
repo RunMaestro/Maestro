@@ -19,6 +19,7 @@ import { useClickOutside } from '../hooks';
 import { WelcomeContent } from './WelcomeContent';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
+import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 
 interface EmptyStateViewProps {
 	theme: Theme;
@@ -296,6 +297,8 @@ export function EmptyStateView({
 						Create your first agent
 					</button>
 				</div>
+
+				<PluginUiItemsSlot surface="emptyState" className="mt-3 justify-center" />
 			</div>
 		</div>
 	);

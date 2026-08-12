@@ -41,7 +41,7 @@ export function createPluginsApi() {
 		 * Enable/disable a first-party Encore feature through its host-owned
 		 * lifecycle bridge (grant mint + supervised-service reconcile/stop), not a
 		 * bare settings write. Returns the settled bridge state. NOT gated on the
-		 * `plugins` subsystem flag — first-party features are independent of it.
+		 * `plugins` subsystem flag - first-party features are independent of it.
 		 */
 		setFirstPartyEnabled: (
 			flag: FirstPartyEncoreFlag,
@@ -89,6 +89,16 @@ export function createPluginsApi() {
 		revokeGrants: (id: string): Promise<PluginGrantsSnapshot> =>
 			ipcRenderer.invoke('plugins:revoke-grants', id),
 
+		/**
+		 * Host-managed dispatch allowlist (issue #1250): replace which agents a
+		 * plugin's already-consented agents:dispatch grant may target. The main
+		 * process re-mints the grant SCOPE into the sealed ledger; the plugin is
+		 * never involved. Only the trusted main renderer may call it. Returns the
+		 * refreshed requested/granted snapshot.
+		 */
+		setAgentAllowlist: (id: string, agentIds: string[]): Promise<PluginGrantsSnapshot> =>
+			ipcRenderer.invoke('plugins:set-agent-allowlist', id, agentIds),
+
 		/** Invoke a contributed command (`<pluginId>/<localId>`) in its sandbox. */
 		invokeCommand: (commandId: string, args?: unknown): Promise<{ dispatched: boolean }> =>
 			ipcRenderer.invoke('plugins:invoke-command', commandId, args),
@@ -123,6 +133,50 @@ export function createPluginsApi() {
 			ipcRenderer.on('plugins:changed', handler);
 			return () => {
 				ipcRenderer.removeListener('plugins:changed', handler);
+			};
+		},
+
+		/**
+		 * Subscribe to host-to-panel data pushes (`ui.panelPost`). The main process
+		 * broadcasts `plugins:panel-data` with the already-namespaced panel id and
+		 * validated, size-capped JSON data; the panel frame forwards it into the
+		 * matching webview guest. Read-only signal - there is no reply channel.
+		 */
+		onPanelData: (
+			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
+		): (() => void) => {
+			const handler = (
+				_event: unknown,
+				payload: { pluginId: string; panelId: string; data: unknown }
+			): void => callback(payload);
+			ipcRenderer.on('plugins:panel-data', handler);
+			return () => {
+				ipcRenderer.removeListener('plugins:panel-data', handler);
+			};
+		},
+
+		/**
+		 * Subscribe to plugin-requested modal-panel show/hide (`ui.openPanel` /
+		 * `ui.closePanel` / `ui.togglePanel`). The main process broadcasts
+		 * `plugins:panel-visibility` with the already-namespaced panel id (resolved
+		 * against the calling plugin's OWN declarations) and the requested action;
+		 * the renderer's single modal-panel mount applies it. Read-only signal -
+		 * there is no reply channel and no payload data.
+		 */
+		onPanelVisibility: (
+			callback: (payload: {
+				pluginId: string;
+				panelId: string;
+				action: 'open' | 'close' | 'toggle';
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_event: unknown,
+				payload: { pluginId: string; panelId: string; action: 'open' | 'close' | 'toggle' }
+			): void => callback(payload);
+			ipcRenderer.on('plugins:panel-visibility', handler);
+			return () => {
+				ipcRenderer.removeListener('plugins:panel-visibility', handler);
 			};
 		},
 

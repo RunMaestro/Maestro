@@ -14,6 +14,7 @@ import {
 	Share2,
 	GitGraph,
 	ExternalLink,
+	FolderOpen,
 	WrapText,
 } from 'lucide-react';
 import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
@@ -22,6 +23,7 @@ import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { getRevealLabel } from '../../utils/platformUtils';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
@@ -204,7 +206,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									</button>
 								</HoverTooltip>
 							)}
-						{/* Word-wrap toggle — edit mode only. Switches between soft-wrap
+						{/* Word-wrap toggle - edit mode only. Switches between soft-wrap
 						    (default; long lines wrap at whitespace) and no-wrap
 						    (horizontal scroll). */}
 						{toolbarVisibility.wordWrap && isEditableText && markdownEditMode && (
@@ -250,6 +252,23 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									data-testid="html-render-toggle"
 								>
 									<Globe className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
+						{/* Open in Maestro Browser - HTML files only, not over SSH
+						    (file:// can't reach the remote host). Mirrors the file-tree
+						    right-click action so JS-heavy local HTML renders in the full
+						    webview instead of the sandboxed preview iframe. Sits next to the
+						    HTML render toggle since both are "view this in a browser" actions. */}
+						{toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser && (
+							<HoverTooltip theme={theme} label="Open in Maestro Browser">
+								<button
+									onClick={onOpenInBrowser}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="open-in-maestro-browser"
+								>
+									<AppWindow className={headerIconClass} />
 								</button>
 							</HoverTooltip>
 						)}
@@ -353,22 +372,6 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								</button>
 							</HoverTooltip>
 						)}
-						{/* Open in Maestro Browser — HTML files only, not over SSH
-						    (file:// can't reach the remote host). Mirrors the file-tree
-						    right-click action so JS-heavy local HTML renders in the full
-						    webview instead of the sandboxed preview iframe. */}
-						{toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser && (
-							<HoverTooltip theme={theme} label="Open in Maestro Browser">
-								<button
-									onClick={onOpenInBrowser}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-									data-testid="open-in-maestro-browser"
-								>
-									<AppWindow className={headerIconClass} />
-								</button>
-							</HoverTooltip>
-						)}
 						{/* "Open in Default App" hands the file to the HOST machine's OS
 						    opener via the shell bridge. In the web-desktop build the host is
 						    not the browser user's device, so hide it there (as we already do
@@ -381,6 +384,19 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 									style={{ color: theme.colors.textDim }}
 								>
 									<ExternalLink className={headerIconClass} />
+								</button>
+							</HoverTooltip>
+						)}
+						{/* Reveal in Finder / Explorer / File Manager - local files only */}
+						{toolbarVisibility.revealInFolder && !sshRemoteId && (
+							<HoverTooltip theme={theme} label={getRevealLabel(window.maestro?.platform ?? '')}>
+								<button
+									onClick={() => window.maestro?.shell?.showItemInFolder(file.path)}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
+									data-testid="reveal-in-folder-button"
+								>
+									<FolderOpen className={headerIconClass} />
 								</button>
 							</HoverTooltip>
 						)}

@@ -46,7 +46,7 @@ afterEach(() => {
 	}
 });
 
-describe('pipeline-layout-store — v1 → v2 migration', () => {
+describe('pipeline-layout-store - v1 → v2 migration', () => {
 	it('returns null when no layout file exists', () => {
 		expect(loadPipelineLayout()).toBeNull();
 	});
@@ -80,7 +80,7 @@ describe('pipeline-layout-store — v1 → v2 migration', () => {
 
 	it('returns null for JSON that parses to non-object values', () => {
 		// Ensures corrupt-but-valid JSON (null / array / primitive) doesn't
-		// crash the migrator on property access — we treat them as absent.
+		// crash the migrator on property access - we treat them as absent.
 		for (const contents of ['null', '[]', '"just a string"', '42', 'true']) {
 			fs.writeFileSync(path.join(scratchDir, 'cue-pipeline-layout.json'), contents, 'utf-8');
 			expect(loadPipelineLayout()).toBeNull();
@@ -137,7 +137,7 @@ describe('pipeline-layout-store — v1 → v2 migration', () => {
 	});
 });
 
-describe('pipeline-layout-store — save', () => {
+describe('pipeline-layout-store - save', () => {
 	it('stamps version 2 on every write', () => {
 		savePipelineLayout({
 			pipelines: [],
@@ -172,7 +172,7 @@ describe('pipeline-layout-store — save', () => {
 	});
 
 	it('initializes perProject to an empty object when not provided', () => {
-		// Simulates a caller that omits perProject — the store should coerce
+		// Simulates a caller that omits perProject - the store should coerce
 		// it rather than leaving it undefined on disk.
 		savePipelineLayout({
 			pipelines: [],
@@ -185,7 +185,7 @@ describe('pipeline-layout-store — save', () => {
 	it('deduplicates pipelines by id (last write wins)', () => {
 		// Defensive backstop: a race between two persistLayout calls could in
 		// theory produce duplicate IDs in the in-memory list. The on-disk
-		// layout must never carry duplicates — dedup keeps the LAST occurrence
+		// layout must never carry duplicates - dedup keeps the LAST occurrence
 		// of each id (matching in-memory "last write wins" semantics) while
 		// preserving the relative order of the entries we keep.
 		savePipelineLayout({
@@ -204,7 +204,7 @@ describe('pipeline-layout-store — save', () => {
 		expect(p1.color).toBe('#333333');
 		// Order invariant: the kept entries keep their relative positions from
 		// the input (p2 came between the two p1s, and the surviving p1 is the
-		// latter). So the output must be [p2, p1] — not [p1, p2].
+		// latter). So the output must be [p2, p1] - not [p1, p2].
 		expect(parsed.pipelines.map((p: { id: string }) => p.id)).toEqual(['p2', 'p1']);
 	});
 

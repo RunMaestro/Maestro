@@ -1,5 +1,5 @@
 /**
- * Tests for {@link CueIndicator} — the Maestro Cue pill rendered next to a
+ * Tests for {@link CueIndicator} - the Maestro Cue pill rendered next to a
  * session name when the session has registered subscriptions. Extracted from
  * SessionItem in Tier 3.3 so the icon can be memoized independently of the
  * row.

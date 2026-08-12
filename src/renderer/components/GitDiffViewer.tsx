@@ -33,7 +33,7 @@ function writeStoredViewType(value: GitDiffViewType): void {
 	try {
 		window.localStorage.setItem(VIEW_TYPE_STORAGE_KEY, value);
 	} catch {
-		// Ignore quota / privacy-mode errors — preference just won't persist.
+		// Ignore quota / privacy-mode errors - preference just won't persist.
 	}
 }
 
@@ -207,6 +207,8 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 					<ResizeHandles
 						onResizeStart={resizableModal.onResizeStart}
 						accentColor={theme.colors.accent}
+						onResetSize={resizableModal.onResetSize}
+						canReset={resizableModal.canReset}
 					/>
 
 					<div
@@ -262,6 +264,8 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -282,7 +286,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						>
 							{cwd}
 						</span>
-						{/* File counter hidden on narrow viewports — the per-file tab bar
+						{/* File counter hidden on narrow viewports - the per-file tab bar
 						    below already shows which file is active and the total count. */}
 						<span
 							className="hidden md:inline text-xs shrink-0"
@@ -292,7 +296,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						</span>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
-						{/* Layout toggle hidden on narrow viewports — unified is the only
+						{/* Layout toggle hidden on narrow viewports - unified is the only
 						    practical view at small widths. */}
 						<button
 							onClick={() => setViewType((v) => (v === 'unified' ? 'split' : 'unified'))}

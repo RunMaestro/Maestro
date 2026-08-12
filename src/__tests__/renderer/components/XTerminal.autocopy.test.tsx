@@ -263,7 +263,7 @@ describe('XTerminal tap-to-focus (mobile keyboard)', () => {
 		const el = viewport(container);
 		act(() => {
 			fireTouch(el, 'touchstart', 100, 100);
-			// Scrolled ~80px down the scrollback — not a tap.
+			// Scrolled ~80px down the scrollback - not a tap.
 			fireTouch(el, 'touchend', 102, 180);
 		});
 

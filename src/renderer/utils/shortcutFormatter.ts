@@ -8,7 +8,7 @@
 
 import { isMacOSPlatform } from './platformUtils';
 
-// Detect if running on macOS — uses window.maestro.platform (Electron preload bridge)
+// Detect if running on macOS - uses window.maestro.platform (Electron preload bridge)
 function isMac(): boolean {
 	return isMacOSPlatform();
 }
@@ -102,6 +102,15 @@ export function formatShortcutKeys(keys: string[], separator?: string): string {
  */
 export function formatMetaKey(): string {
 	return isMac() ? '⌘' : 'Ctrl';
+}
+
+/**
+ * Spelled-out name of the platform meta/command key, for prose in settings
+ * copy, help text, and tooltips. Returns 'Command' on macOS, 'Ctrl' on
+ * Windows/Linux. Use `formatMetaKey()` when the compact symbol reads better.
+ */
+export function formatMetaKeyName(): string {
+	return isMac() ? 'Command' : 'Ctrl';
 }
 
 /**

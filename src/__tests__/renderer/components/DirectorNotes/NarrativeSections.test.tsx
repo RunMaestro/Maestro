@@ -1,5 +1,5 @@
 /**
- * Tests for NarrativeSections — the Rich-Mode renderer for the parsed
+ * Tests for NarrativeSections - the Rich-Mode renderer for the parsed
  * Director's Notes narrative.
  *
  * Verifies it:
@@ -164,6 +164,38 @@ describe('NarrativeSections', () => {
 			expect(screen.getByTestId('checkcircle2-icon')).toHaveStyle({ color: '#11aa11' });
 			expect(screen.getByTestId('alerttriangle-icon')).toHaveStyle({ color: '#aa8800' });
 			expect(screen.getByTestId('arrowright-icon')).toHaveStyle({ color: '#3333ff' });
+		});
+	});
+
+	// The fourth section only appears when the conductor configured an Ideal End
+	// State, so it arrives through the same props as the other three and must not
+	// fall through to an unstyled default.
+	describe('the optional progress section', () => {
+		it('renders it with the target icon, the accent color, and its bullets', () => {
+			render(
+				<NarrativeSections
+					theme={sentinelTheme}
+					narrative={{
+						...NARRATIVE,
+						sections: [
+							...NARRATIVE.sections,
+							{
+								kind: 'progress',
+								title: 'Progress Toward Ideal End State',
+								items: [
+									{ text: 'Ingest pipeline cleared milestone 3', agent: 'parser-a' },
+									{ text: 'No movement on the docs rewrite', severity: 'warn' },
+								],
+							},
+						],
+					}}
+				/>
+			);
+
+			expect(screen.getByText('Progress Toward Ideal End State')).toBeInTheDocument();
+			expect(screen.getByText('Ingest pipeline cleared milestone 3')).toBeInTheDocument();
+			expect(screen.getByText('parser-a')).toBeInTheDocument();
+			expect(screen.getByTestId('target-icon')).toHaveStyle({ color: '#3333ff' });
 		});
 	});
 });

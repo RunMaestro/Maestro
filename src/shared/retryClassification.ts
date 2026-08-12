@@ -5,12 +5,12 @@
  * automatically resend the same prompt instead of making the user re-type it.
  * Two distinct failure modes get two distinct retry strategies:
  *
- *  - `'availability'` — transient upstream trouble (Anthropic/OpenAI/etc.
+ *  - `'availability'` - transient upstream trouble (Anthropic/OpenAI/etc.
  *    "Overloaded", HTTP 529/5xx, "too many requests", rate-limit throttling).
  *    These clear on their own in seconds-to-minutes, so we use exponential
  *    backoff: 30s, 1m, 2m, 4m, 8m, 16m, then 30m repeating forever.
  *
- *  - `'token-exhaustion'` — the account's plan quota is depleted ("usage limit
+ *  - `'token-exhaustion'` - the account's plan quota is depleted ("usage limit
  *    reached", "quota exceeded", "resets at …"). Backing off in seconds is
  *    pointless; the quota resets on a clock. If we can parse a reset time from
  *    the error we wait until then; otherwise we wait 1h and retry every hour.
@@ -40,7 +40,7 @@ export const RESET_TIME_BUFFER_MS = 5 * 1000;
  * Error types we NEVER auto-retry: these need human action (re-auth, new
  * session, granting permission) and silently retrying them either loops
  * forever or hides a real problem. `token_exhaustion` here is Maestro's
- * context-window-full type — resending the same oversized prompt can't help.
+ * context-window-full type - resending the same oversized prompt can't help.
  */
 const NON_RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>([
 	'auth_expired',
@@ -78,7 +78,7 @@ export interface ClassifiableError {
 /**
  * Decide which retry strategy (if any) applies to an error. Returns `null` when
  * the error should NOT be auto-retried (non-recoverable, needs human action, or
- * doesn't match a known transient pattern) — the caller then falls back to the
+ * doesn't match a known transient pattern) - the caller then falls back to the
  * normal recovery modal.
  */
 export function classifyRetryableError(error: ClassifiableError): RetryStrategy | null {
@@ -99,7 +99,7 @@ export function classifyRetryableError(error: ClassifiableError): RetryStrategy 
 export function availabilityDelayMs(attempt: number): number {
 	const safeAttempt = Math.max(0, Math.floor(attempt));
 	// Guard the shift against absurd attempt counts (2 ** 31 overflows to a
-	// negative int32 via `<<`, but ** stays a float — still clamp for sanity).
+	// negative int32 via `<<`, but ** stays a float - still clamp for sanity).
 	if (safeAttempt >= 31) return AVAILABILITY_MAX_DELAY_MS;
 	return Math.min(AVAILABILITY_BASE_DELAY_MS * 2 ** safeAttempt, AVAILABILITY_MAX_DELAY_MS);
 }
@@ -110,7 +110,7 @@ export function availabilityDelayMs(attempt: number): number {
  * Best-effort: reads a structured retry/reset hint from `parsedJson`, then falls
  * back to a `retry after N seconds/minutes` phrase in the message. When nothing
  * parseable is found returns `now + 1h` (the hourly fallback). We deliberately
- * do NOT parse wall-clock phrases like "resets at 3pm" — timezone/locale
+ * do NOT parse wall-clock phrases like "resets at 3pm" - timezone/locale
  * ambiguity makes a wrong guess worse than the reliable hourly poll.
  *
  * @param error the failing error

@@ -2,34 +2,25 @@
  * useSessionListProps Hook
  *
  * Assembles handler props for the SessionList component.
- * Data/state props are now read directly from Zustand stores inside SessionList.
- * This hook only passes computed values that aren't raw store fields, plus
+ * Data/state props (including sort/nav/starred) are read from Zustand stores
+ * inside SessionList. This hook only passes theme, live-mode flags, and
  * domain-logic handlers.
  */
 
 import { useMemo } from 'react';
 import type { Session, Theme } from '../../types';
-import type { StarredItem } from '../session/useStarredItems';
 
 /**
  * Dependencies for computing SessionList props.
- * Only computed values and domain handlers remain — stores are read directly inside the component.
+ * Only computed values and domain handlers remain - stores are read directly inside the component.
  */
 export interface UseSessionListPropsDeps {
-	// Theme (computed from settingsStore by App.tsx — not a raw store value)
+	// Theme (computed from settingsStore by App.tsx - not a raw store value)
 	theme: Theme;
 
-	// Computed values (not raw store fields)
-	sortedSessions: Session[];
 	isLiveMode: boolean;
 	webInterfaceUrl: string | null;
 	showSessionJumpNumbers: boolean;
-	visibleSessions: Session[];
-	navIndexMap: Map<string, number>;
-
-	// Starred Sessions (computed in App via useStarredItems, shared with cycling)
-	starredItems: StarredItem[];
-	activateStarredItem: (item: StarredItem) => void | Promise<void>;
 
 	// Ref
 	sidebarContainerRef: React.RefObject<HTMLDivElement>;
@@ -62,13 +53,6 @@ export interface UseSessionListPropsDeps {
 	handleConfigureCue: (session: Session) => void;
 	/** Whether the Maestro Cue Encore Feature is enabled. Gates the "Configure Maestro Cue" context-menu action. */
 	maestroCueEnabled: boolean;
-	handleJumpToStarredSession: (
-		agentId: string,
-		projectPath: string,
-		agentSessionId: string,
-		sessionName: string,
-		parentSessionId: string
-	) => Promise<boolean>;
 	openWizardModal: () => void;
 	handleOpenFeedbackModal: () => void;
 	handleStartTour: () => void;
@@ -92,21 +76,13 @@ export interface UseSessionListPropsDeps {
 export function useSessionListProps(deps: UseSessionListPropsDeps) {
 	return useMemo(
 		() => ({
-			// Theme & computed values
 			theme: deps.theme,
-			sortedSessions: deps.sortedSessions,
-			navIndexMap: deps.navIndexMap,
 			isLiveMode: deps.isLiveMode,
 			webInterfaceUrl: deps.webInterfaceUrl,
 			showSessionJumpNumbers: deps.showSessionJumpNumbers,
-			visibleSessions: deps.visibleSessions,
-			starredItems: deps.starredItems,
-			activateStarredItem: deps.activateStarredItem,
 
-			// Ref
 			sidebarContainerRef: deps.sidebarContainerRef,
 
-			// Domain handlers
 			toggleGlobalLive: deps.toggleGlobalLive,
 			restartWebServer: deps.restartWebServer,
 			toggleGroup: deps.toggleGroup,
@@ -132,16 +108,11 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			onQuickCreateWorktree: deps.handleQuickCreateWorktree,
 			onOpenWorktreeConfig: deps.handleOpenWorktreeConfigSession,
 			onDeleteWorktree: deps.handleDeleteWorktreeSession,
-			// Gate on the Encore Feature flag: when Cue is disabled, leave this
-			// undefined so the "Configure Maestro Cue" context-menu item is hidden
-			// (the item renders only when onConfigureCue is defined).
 			onConfigureCue: deps.maestroCueEnabled ? deps.handleConfigureCue : undefined,
-			onJumpToStarredSession: deps.handleJumpToStarredSession,
 			openWizard: deps.openWizardModal,
 			openFeedback: deps.handleOpenFeedbackModal,
 			startTour: deps.handleStartTour,
 
-			// Group Chat handlers
 			onOpenGroupChat: deps.handleOpenGroupChat,
 			onNewGroupChat: deps.handleNewGroupChat,
 			onEditGroupChat: deps.handleEditGroupChat,
@@ -152,16 +123,10 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 		}),
 		[
 			deps.theme,
-			deps.sortedSessions,
-			deps.navIndexMap,
 			deps.isLiveMode,
 			deps.webInterfaceUrl,
 			deps.showSessionJumpNumbers,
-			deps.visibleSessions,
-			deps.starredItems,
-			deps.activateStarredItem,
 			deps.sidebarContainerRef,
-			// Stable callbacks
 			deps.toggleGlobalLive,
 			deps.restartWebServer,
 			deps.toggleGroup,
@@ -187,7 +152,6 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.handleDeleteWorktreeSession,
 			deps.handleConfigureCue,
 			deps.maestroCueEnabled,
-			deps.handleJumpToStarredSession,
 			deps.handleToggleWorktreeExpanded,
 			deps.openWizardModal,
 			deps.handleOpenFeedbackModal,

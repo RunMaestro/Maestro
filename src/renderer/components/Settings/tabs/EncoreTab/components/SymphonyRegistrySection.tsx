@@ -11,7 +11,7 @@ interface SymphonyRegistrySectionProps {
 
 /**
  * Symphony config BODY (rendered in the extension detail pane's Settings tab).
- * No card chrome / enable toggle — the detail-pane header owns those; this is
+ * No card chrome / enable toggle - the detail-pane header owns those; this is
  * pure configuration. The data-setting-id stays for settings-search jumps.
  */
 export function SymphonyRegistrySection({

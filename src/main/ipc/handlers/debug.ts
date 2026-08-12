@@ -177,7 +177,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				: [];
 
 			// Try to attach RSS for each managed PID using `ps` on macOS/Linux.
-			// Windows: leave rssBytes undefined (would require wmic/tasklist — not worth the dependency).
+			// Windows: leave rssBytes undefined (would require wmic/tasklist - not worth the dependency).
 			const memoryByPid = new Map<number, number>();
 			if (process.platform !== 'win32' && managedProcesses.length > 0) {
 				const pids = managedProcesses.map((p) => p.pid).filter((pid): pid is number => !!pid);

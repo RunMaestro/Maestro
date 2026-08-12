@@ -61,15 +61,15 @@ Autopilot/autonomous-manager behavior must be an Encore Feature from the first c
 
 Relevant files/docs:
 
-- `CLAUDE-PATTERNS.md` § “Encore Features (Feature Gating)” — canonical checklist.
+- `CLAUDE-PATTERNS.md` § “Encore Features (Feature Gating)” - canonical checklist.
 - `docs/agent-guides/UI-PATTERNS.md` § “Encore Features”.
-- `docs/encore-features.md` — user-facing documentation.
-- `src/renderer/types/index.ts` — `EncoreFeatureFlags` interface.
-- `src/renderer/stores/settingsStore.ts` — `DEFAULT_ENCORE_FEATURES` source of truth in the current codebase.
-- `src/renderer/hooks/settings/useSettings.ts` — exposes `encoreFeatures` to app surfaces.
-- `src/renderer/App.tsx` — reference cleanup/gating when an Encore flag is turned off.
-- `src/cli/commands/encore.ts` and `src/cli/index.ts` — `maestro-cli encore list|set` support.
-- `src/main/cue/cue-telemetry.ts` — reference for runtime gating through an injected `isEncoreEnabled()` predicate.
+- `docs/encore-features.md` - user-facing documentation.
+- `src/renderer/types/index.ts` - `EncoreFeatureFlags` interface.
+- `src/renderer/stores/settingsStore.ts` - `DEFAULT_ENCORE_FEATURES` source of truth in the current codebase.
+- `src/renderer/hooks/settings/useSettings.ts` - exposes `encoreFeatures` to app surfaces.
+- `src/renderer/App.tsx` - reference cleanup/gating when an Encore flag is turned off.
+- `src/cli/commands/encore.ts` and `src/cli/index.ts` - `maestro-cli encore list|set` support.
+- `src/main/cue/cue-telemetry.ts` - reference for runtime gating through an injected `isEncoreEnabled()` predicate.
 
 Current Encore flags are:
 
@@ -88,14 +88,14 @@ Default must be `false` in `DEFAULT_ENCORE_FEATURES`.
 
 Gating requirements:
 
-1. **Type/default** — add `autopilot` to `EncoreFeatureFlags` and `DEFAULT_ENCORE_FEATURES` with `false`.
-2. **Settings UI** — add an Encore Features toggle labelled something like “Autopilot / Manager Agent”. Because this feature can send messages automatically, the description should explicitly say it can auto-answer low-risk prompts and escalate uncertain/high-risk prompts.
-3. **CLI management** — add `autopilot` to `src/cli/commands/encore.ts` `FEATURES` and aliases such as `manager`, `manager-agent`, and `auto-pilot`.
-4. **CLI command hard gate** — every `maestro-cli autopilot ...` command must check `readSettingValue('encoreFeatures.autopilot')` before doing work. If disabled, return a clear error such as: `Autopilot is not enabled. Enable it with: maestro-cli encore set autopilot on`.
-5. **Main-process hard gate** — any future in-app daemon/service must receive an `isEncoreEnabled` predicate or read settings at the boundary before starting watchers or dispatching. Treat this like Cue telemetry: read on every start/dispatch-relevant path so toggles apply live.
-6. **Renderer/UI gate** — no panel, modal, right-bar item, shortcut, hamburger menu item, or command-palette entry should render unless `encoreFeatures.autopilot` is true. If the flag is turned off while surfaces/watchers are open, close/stop them like App.tsx currently does for Symphony, Usage Dashboard, and Cue.
-7. **No background work when off** — do not poll `session show`, do not classify, do not write decision memory, do not record telemetry, and do not register webhook/Cue recipe runtime surfaces when disabled.
-8. **Tests** — include tests for disabled behavior at the CLI/service boundary, not just hidden UI.
+1. **Type/default** - add `autopilot` to `EncoreFeatureFlags` and `DEFAULT_ENCORE_FEATURES` with `false`.
+2. **Settings UI** - add an Encore Features toggle labelled something like “Autopilot / Manager Agent”. Because this feature can send messages automatically, the description should explicitly say it can auto-answer low-risk prompts and escalate uncertain/high-risk prompts.
+3. **CLI management** - add `autopilot` to `src/cli/commands/encore.ts` `FEATURES` and aliases such as `manager`, `manager-agent`, and `auto-pilot`.
+4. **CLI command hard gate** - every `maestro-cli autopilot ...` command must check `readSettingValue('encoreFeatures.autopilot')` before doing work. If disabled, return a clear error such as: `Autopilot is not enabled. Enable it with: maestro-cli encore set autopilot on`.
+5. **Main-process hard gate** - any future in-app daemon/service must receive an `isEncoreEnabled` predicate or read settings at the boundary before starting watchers or dispatching. Treat this like Cue telemetry: read on every start/dispatch-relevant path so toggles apply live.
+6. **Renderer/UI gate** - no panel, modal, right-bar item, shortcut, hamburger menu item, or command-palette entry should render unless `encoreFeatures.autopilot` is true. If the flag is turned off while surfaces/watchers are open, close/stop them like App.tsx currently does for Symphony, Usage Dashboard, and Cue.
+7. **No background work when off** - do not poll `session show`, do not classify, do not write decision memory, do not record telemetry, and do not register webhook/Cue recipe runtime surfaces when disabled.
+8. **Tests** - include tests for disabled behavior at the CLI/service boundary, not just hidden UI.
 
 Security/safety note: an Encore flag is necessary but not sufficient. Autopilot still needs per-tab/session policy, risk classification, audit logs, and user-visible controls. The flag only controls feature availability.
 

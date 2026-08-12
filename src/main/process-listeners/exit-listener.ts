@@ -10,6 +10,22 @@ import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
 import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
 
 /**
+ * True when routing a participant's response failed only because the group chat
+ * no longer exists.
+ *
+ * Participants keep running after the user deletes their group chat, so the exit
+ * that fires minutes later routes into a chat `loadGroupChat` can no longer
+ * find. The listener already handles it (the participant is marked done and the
+ * buffer is cleared), so it is an expected outcome of a normal user action
+ * rather than a defect worth reporting (MAESTRO-M4). Any other routing failure
+ * still reaches Sentry.
+ */
+export function isDeletedGroupChatFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /^Group chat not found: /i.test(message);
+}
+
+/**
  * Sets up the exit listener for process termination.
  * Handles:
  * - Power management cleanup
@@ -188,7 +204,7 @@ export function setupExitListener(
 							debugLog('GroupChat:Debug', ` Read-only state: ${readOnly}`);
 							const pm = getProcessManager();
 							const ad = getAgentDetector();
-							// Await routing — it manages state transitions internally
+							// Await routing - it manages state transitions internally
 							await groupChatRouter.routeModeratorResponse(
 								groupChatId,
 								parsedText,
@@ -282,7 +298,7 @@ export function setupExitListener(
 
 			// Refresh on-disk usage for copilot-cli participants. Copilot in batch
 			// mode only writes the session.shutdown event (the sole carrier of
-			// per-turn token counts) to events.jsonl on disk — it never appears
+			// per-turn token counts) to events.jsonl on disk - it never appears
 			// on stdout, so the streaming usage path can't see it. Without this,
 			// the participant's context gauge stays at 0% forever.
 			void refreshCopilotUsageAfterExit(groupChatId, participantName);
@@ -459,7 +475,7 @@ export function setupExitListener(
 							markAndMaybeSynthesize();
 						}
 					} catch (err) {
-						void captureException(err);
+						if (!isDeletedGroupChatFailure(err)) void captureException(err);
 						debugLog('GroupChat:Debug', ` ERROR loading chat for participant:`, err);
 						logger.error(
 							'[GroupChat] Failed to load chat for participant output parsing',
@@ -483,7 +499,7 @@ export function setupExitListener(
 								markAndMaybeSynthesize();
 							}
 						} catch (routeErr) {
-							void captureException(routeErr);
+							if (!isDeletedGroupChatFailure(routeErr)) void captureException(routeErr);
 							debugLog('GroupChat:Debug', ` ERROR routing agent response (fallback):`, routeErr);
 							logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
 								error: String(routeErr),
@@ -523,7 +539,7 @@ export function setupExitListener(
 		//   - Cue's agent.completed subscriptions (which would fire spuriously
 		//     on every group-chat turn, since group-chat agents are driven by
 		//     the router, not the user's pipeline)
-		// We do not rely on early-return ordering of the branches above — this
+		// We do not rely on early-return ordering of the branches above - this
 		// guard is load-bearing and must stay here.
 		if (isGroupChatSession) {
 			logger.warn(

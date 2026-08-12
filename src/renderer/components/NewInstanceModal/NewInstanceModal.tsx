@@ -6,6 +6,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentResilienceSection } from './AgentResilienceSection';
@@ -32,6 +33,7 @@ export function NewInstanceModal({
 	existingSessions,
 	sourceSession,
 	presetGroupId,
+	presetWorkingDir,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [selectedAgent, setSelectedAgent] = useState('');
@@ -224,8 +226,11 @@ export function NewInstanceModal({
 				configs[agent.id] = config;
 
 				// Extract per-agent settings from the loaded config
-				if (config.customPath) {
-					paths[agent.id] = config.customPath;
+				// Local detection validates and recovers rotating binary paths. SSH paths
+				// belong to the remote host and must not be validated against the local filesystem.
+				const customPath = sshRemoteId ? config.customPath : agent.customPath;
+				if (customPath) {
+					paths[agent.id] = customPath;
 				}
 				if (config.customArgs) {
 					args[agent.id] = config.customArgs;
@@ -277,7 +282,7 @@ export function NewInstanceModal({
 			// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
 			if (source) {
 				handleWorkingDirChange(source.cwd);
-				// Clone the grants, don't alias them — the rows are edited in place and
+				// Clone the grants, don't alias them - the rows are edited in place and
 				// would otherwise mutate the source agent's persisted array.
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
 				setInstanceName(`${source.name} (Copy)`);
@@ -364,12 +369,12 @@ export function NewInstanceModal({
 		return config?.remoteId || undefined;
 	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs]);
 
-	// Debounced git repo detection — checks if the selected working dir is
+	// Debounced git repo detection - checks if the selected working dir is
 	// already a git repo so we can offer to `git init` it if not.
 	useEffect(() => {
 		const trimmed = workingDir.trim();
 		// Reset stale state from a previous directory before the async check
-		// resolves — otherwise the previous "not-repo" panel keeps rendering
+		// resolves - otherwise the previous "not-repo" panel keeps rendering
 		// (with a clickable Init button) against the new, unvalidated path
 		// during the 500ms debounce window.
 		setGitRepoStatus('unknown');
@@ -548,7 +553,7 @@ export function NewInstanceModal({
 						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 					};
 
-		// The dropdown's selected value wins — it was seeded from the source
+		// The dropdown's selected value wins - it was seeded from the source
 		// session's group (when duplicating) or the caller's preset (e.g. "New
 		// Agent in Group" from the group context menu), so explicit user
 		// selection naturally overrides those defaults.
@@ -743,8 +748,16 @@ export function NewInstanceModal({
 			// Seed group selection: duplicate inherits source's group; otherwise
 			// honor any presetGroupId from the caller.
 			setSelectedGroupId(sourceSession?.groupId ?? presetGroupId ?? '');
+			// Seed the working directory from the caller (e.g. "New Agent Here" on a
+			// folder in the Files panel). Skipped when duplicating - loadAgents fills
+			// the working dir from the source session instead. The folder's basename
+			// is a sensible default name, and both fields stay editable.
+			if (!sourceSession && presetWorkingDir) {
+				handleWorkingDirChange(presetWorkingDir);
+				setInstanceName(getBasename(presetWorkingDir));
+			}
 		}
-	}, [isOpen, sourceSession?.id, presetGroupId]);
+	}, [isOpen, sourceSession?.id, presetGroupId, presetWorkingDir, handleWorkingDirChange]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails
@@ -1061,7 +1074,7 @@ export function NewInstanceModal({
 					/>
 				)}
 
-				{/* Git repo hint — offer to `git init` when the selected dir isn't a repo */}
+				{/* Git repo hint - offer to `git init` when the selected dir isn't a repo */}
 				{workingDir.trim() && gitRepoStatus === 'not-repo' && (
 					<div
 						className="flex items-center gap-3 p-3 rounded border"
@@ -1152,7 +1165,7 @@ export function NewInstanceModal({
 
 				{/* SSH Remote Execution - Top Level.
 				    Always rendered, even when no remotes are configured, so the
-				    "remote-controlled" toggle is reachable — it mirrors history
+				    "remote-controlled" toggle is reachable - it mirrors history
 				    to the local project dir for a Maestro SSH'd into this
 				    machine, independent of local SSH remote setup.
 				    Uses '_pending_' key when no agent selected, transfers to
@@ -1186,6 +1199,7 @@ export function NewInstanceModal({
 					label="New Session Message"
 					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
 					placeholder="Instructions sent with the first message of every new session..."
+					sizeKey="new-session-message"
 				/>
 
 				{/* Nudge Message */}

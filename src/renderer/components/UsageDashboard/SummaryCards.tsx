@@ -34,6 +34,7 @@ import {
 	Trophy,
 	CalendarCheck,
 	PenLine,
+	Coins,
 } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -41,7 +42,10 @@ import {
 	formatDurationHuman as formatDuration,
 	formatNumber,
 	formatCost,
+	formatTokensCompact,
 } from '../../../shared/formatters';
+import { aggregateUsage } from '../../../shared/usageStats';
+import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { Sparkline } from './Sparkline';
 
 type ByDayEntry = StatsAggregation['byDay'][number];
@@ -51,7 +55,7 @@ const SPARKLINE_DAYS = 7;
 /**
  * Build a fixed last-7-days window indexing the byDay series by its YYYY-MM-DD
  * date string and falling back to zero for absent days. This keeps the
- * sparkline geometrically faithful — sparse byDay rows would otherwise compress
+ * sparkline geometrically faithful - sparse byDay rows would otherwise compress
  * gaps and overstate momentum.
  *
  * The window ends on the latest date present in byDay (or today if byDay is
@@ -99,7 +103,7 @@ export function getLast7Days(byDay: ByDayEntry[]): number[] {
 /**
  * Walk a `byDay` series newest → oldest and return both:
  *   - `current`: consecutive days *up to and including today* with non-zero
- *     activity. Today missing? Streak is 0 (we don't pad — a streak that
+ *     activity. Today missing? Streak is 0 (we don't pad - a streak that
  *     hasn't been touched today is broken, period).
  *   - `max`: longest run of consecutive non-zero days anywhere in the series.
  *
@@ -117,7 +121,7 @@ export function computeStreaks(byDay: ByDayEntry[]): { current: number; max: num
 	}
 	if (activeDays.size === 0) return { current: 0, max: 0 };
 
-	// Local YYYY-MM-DD formatter — matches what the aggregation emits and
+	// Local YYYY-MM-DD formatter - matches what the aggregation emits and
 	// avoids the UTC-shift trap of `.toISOString().slice(0,10)`.
 	const ymd = (d: Date) =>
 		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -165,7 +169,7 @@ export function findBestDay(byDay: ByDayEntry[]): { date: string; count: number 
 
 /**
  * Count days with at least one query inside the byDay series. This is the
- * "active days in range" stat — different from the streak because gaps are
+ * "active days in range" stat - different from the streak because gaps are
  * allowed.
  */
 export function countActiveDays(byDay: ByDayEntry[]): number {
@@ -270,7 +274,7 @@ export function getCardStyles(
  * (the formats produced by `formatNumber` and percentage formatters).
  *
  * Returns `null` for strings like durations (`"12h 34m"`), peak hour
- * (`"9 AM"`), agent names, or `"N/A"` — these display immediately.
+ * (`"9 AM"`), agent names, or `"N/A"` - these display immediately.
  */
 function parseAnimatedValue(
 	value: string
@@ -348,7 +352,7 @@ export const AnimatedNumber = memo(function AnimatedNumber({
 });
 
 interface BouncingDotsProps {
-	/** Color for the dots — defaults to `currentColor` so callers can tint via CSS */
+	/** Color for the dots - defaults to `currentColor` so callers can tint via CSS */
 	color?: string;
 	/** Optional ARIA label; defaults to `"Loading"` for screen readers */
 	label?: string;
@@ -392,7 +396,7 @@ interface MetricCardProps {
 	animationIndex?: number;
 	/** Optional content rendered below the value (e.g. status breakdown) */
 	extra?: React.ReactNode;
-	/** Visual variant — defaults to `'elevated'` */
+	/** Visual variant - defaults to `'elevated'` */
 	variant?: CardVariant;
 	/** Optional accent color override for `outlined` / `filled` variants */
 	accentColor?: string;
@@ -536,15 +540,16 @@ export const ContextUsageBar = memo(function ContextUsageBar({
 	);
 });
 
-// Placeholder per-1K-token rates for current-cycle cost estimation.
-// `currentCycleTokens` does not split input vs output, so we apply a blended
-// rate that approximates Claude pricing ($3/M input, $15/M output).
-// TODO: replace with provider-specific rates and split when the parser exposes
-// input/output token counts for the in-flight cycle.
-const CURRENT_CYCLE_INPUT_RATE_PER_1K = 0.003;
-const CURRENT_CYCLE_OUTPUT_RATE_PER_1K = 0.015;
-const CURRENT_CYCLE_BLENDED_RATE_PER_1K =
-	(CURRENT_CYCLE_INPUT_RATE_PER_1K + CURRENT_CYCLE_OUTPUT_RATE_PER_1K) / 2;
+/**
+ * Blended $/token estimate for a live cycle. `currentCycleTokens` carries no
+ * input/output split, so we average the model's per-million input and output
+ * rates. Model-aware via `resolveModelPricing` - Opus is priced as Opus, Haiku
+ * as Haiku - instead of the previous single hardcoded Claude-ish constant.
+ */
+function blendedCycleRatePerToken(model?: string | null): number {
+	const p = resolveModelPricing(model);
+	return (p.INPUT_PER_MILLION + p.OUTPUT_PER_MILLION) / 2 / TOKENS_PER_MILLION;
+}
 
 interface TokenCostBadgeProps {
 	sessions: Session[];
@@ -553,7 +558,7 @@ interface TokenCostBadgeProps {
 
 /**
  * Aggregates `currentCycleTokens` across busy sessions and renders the total
- * with a blended-rate cost estimate plus a per-session breakdown.
+ * with a model-aware blended-rate cost estimate plus a per-session breakdown.
  */
 export const TokenCostBadge = memo(function TokenCostBadge({
 	sessions,
@@ -562,16 +567,18 @@ export const TokenCostBadge = memo(function TokenCostBadge({
 	const { totalTokens, estimatedCost, breakdown } = useMemo(() => {
 		const busy = sessions.filter((s) => s.state === 'busy');
 		let total = 0;
+		let cost = 0;
 		const items: Array<{ id: string; name: string; tokens: number }> = [];
 		for (const s of busy) {
 			const tokens = s.currentCycleTokens ?? 0;
 			if (tokens > 0) {
 				total += tokens;
+				// Price each session's cycle by its own model, then sum.
+				cost += tokens * blendedCycleRatePerToken(s.customModel);
 				items.push({ id: s.id, name: s.name, tokens });
 			}
 		}
 		items.sort((a, b) => b.tokens - a.tokens);
-		const cost = (total / 1000) * CURRENT_CYCLE_BLENDED_RATE_PER_1K;
 		return { totalTokens: total, estimatedCost: cost, breakdown: items };
 	}, [sessions]);
 
@@ -773,6 +780,15 @@ export const SummaryCards = memo(function SummaryCards({
 		return data.totalSessions;
 	}, [sessions, data.totalSessions]);
 
+	// Token & cost usage summed across the loaded agents' persisted usageStats.
+	const usageAgg = useMemo(
+		() =>
+			aggregateUsage(
+				(sessions ?? []).map((s) => ({ usageStats: s.usageStats, model: s.customModel }))
+			),
+		[sessions]
+	);
+
 	// Count open tabs across all sessions (AI + file preview)
 	const openTabCount = useMemo(() => {
 		if (!sessions) return 0;
@@ -894,6 +910,29 @@ export const SummaryCards = memo(function SummaryCards({
 			value: queriesPerSession,
 		},
 		{
+			icon: <Coins className="w-4 h-4" />,
+			label: 'Tokens',
+			value: usageAgg.totalTokens > 0 ? formatTokensCompact(usageAgg.totalTokens) : '—',
+			extra:
+				usageAgg.totalTokens > 0 ? (
+					<div
+						className="text-[10px] mt-1 uppercase tracking-wide"
+						style={{ color: theme.colors.textDim }}
+					>
+						{formatTokensCompact(usageAgg.inputTokens)} in /{' '}
+						{formatTokensCompact(usageAgg.outputTokens)} out
+					</div>
+				) : undefined,
+		},
+		{
+			icon: <DollarSign className="w-4 h-4" />,
+			label: usageAgg.costEstimated ? 'Est. Cost' : 'Cost',
+			value:
+				usageAgg.costUsd > 0
+					? `${usageAgg.costEstimated ? '~' : ''}${formatCost(usageAgg.costUsd)}`
+					: '—',
+		},
+		{
 			icon: <Clock className="w-4 h-4" />,
 			label: 'Total Time',
 			value: formatDuration(data.totalDuration),
@@ -914,13 +953,13 @@ export const SummaryCards = memo(function SummaryCards({
 			label: 'Top Agent',
 			value: mostActiveAgent,
 		},
-		// Streak / momentum row — replaces the always-stable Local% and
+		// Streak / momentum row - replaces the always-stable Local% and
 		// Interactive% cards, which were context-free numbers that never
 		// changed. Streak tells the user something they actually want to know.
 		{
 			icon: <Flame className="w-4 h-4" />,
 			label: 'Current Streak',
-			value: streaks.current === 0 ? '—' : `${streaks.current}d`,
+			value: streaks.current === 0 ? '-' : `${streaks.current}d`,
 			extra:
 				streaks.max > 0 ? (
 					<div
@@ -934,7 +973,7 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <Trophy className="w-4 h-4" />,
 			label: 'Best Day',
-			value: bestDay ? formatNumber(bestDay.count) : '—',
+			value: bestDay ? formatNumber(bestDay.count) : '-',
 			extra: bestDay ? (
 				<div
 					className="text-[10px] mt-1 uppercase tracking-wide"
@@ -952,7 +991,7 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <PenLine className="w-4 h-4" />,
 			label: 'Image Annotations',
-			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '—',
+			value: data.imageAnnotations > 0 ? formatNumber(data.imageAnnotations) : '-',
 		},
 	];
 

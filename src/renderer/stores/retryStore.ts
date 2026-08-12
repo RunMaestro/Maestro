@@ -1,5 +1,5 @@
 /**
- * retryStore — Agent Resilience auto-retry engine (renderer).
+ * retryStore - Agent Resilience auto-retry engine (renderer).
  *
  * When an agent turn fails with a recoverable upstream error and the agent has
  * resilience enabled, this store schedules an automatic resend of the exact
@@ -12,7 +12,7 @@
  *   - Keyed per `${sessionId}:${tabId}` so parallel tabs retry independently.
  *   - The prompt to resend is the exact `QueuedItem` + `ProcessQueuedItemDeps`
  *     snapshotted at dispatch time (see `noteDispatch`) and replayed through
- *     `agentStore.processQueuedItem` — same spawn path, so images and slash
+ *     `agentStore.processQueuedItem` - same spawn path, so images and slash
  *     commands survive unchanged, across every provider.
  *   - Entry status is its own state machine: `'scheduled'` (timer pending) →
  *     `'in-flight'` (resend dispatched, awaiting outcome). Because agent-error
@@ -20,7 +20,7 @@
  *     entry back to `'scheduled'` before exit fires; so the exit listener
  *     clears an entry only when it is still `'in-flight'` (== clean completion).
  *   - Timers live at module scope (not React state) so re-renders never disturb
- *     a pending retry. Retries do NOT survive an app quit — intentional: a
+ *     a pending retry. Retries do NOT survive an app quit - intentional: a
  *     closed app should not silently burn quota/hours in the background.
  */
 
@@ -48,9 +48,9 @@ export type RetryStatus = 'scheduled' | 'in-flight';
 
 /**
  * How the retry re-runs the failed work:
- *  - `resend` — interactive turn: replay the snapshotted QueuedItem through
+ *  - `resend` - interactive turn: replay the snapshotted QueuedItem through
  *    `processQueuedItem`.
- *  - `batch-resume` — an Auto Run batch owns the turn: the batch loop is parked
+ *  - `batch-resume` - an Auto Run batch owns the turn: the batch loop is parked
  *    at its error-resolution await, so we resume it (goal-based or spec-driven
  *    alike) via the registered resumer instead of resending a prompt.
  */
@@ -83,7 +83,7 @@ export type OutageStatus = 'active' | 'recovered' | 'stopped';
  * Persistent record of a single Agent Resilience outage, powering the collapsed
  * status card in the transcript. Unlike `RetryEntry` (which exists only while a
  * retry is pending and is keyed per tab), an `OutageRecord` is keyed by a stable
- * `outageId` and survives resolution — so the card can show a final "recovered"
+ * `outageId` and survives resolution - so the card can show a final "recovered"
  * or "stopped" summary, and multiple historical outages on the same tab each
  * keep their own card. Kept in the reactive store so the card ticks live.
  */
@@ -118,9 +118,9 @@ interface RetryStoreState {
 }
 
 interface RetryStoreActions {
-	/** Internal setter — callers use the exported functions below. */
+	/** Internal setter - callers use the exported functions below. */
 	setEntry: (key: string, entry: RetryEntry | null) => void;
-	/** Internal upsert/patch for an outage record — callers use exported helpers. */
+	/** Internal upsert/patch for an outage record - callers use exported helpers. */
 	patchOutage: (outageId: string, patch: Partial<OutageRecord> | null) => void;
 }
 
@@ -252,12 +252,12 @@ export function scheduleRetryForError(
 	const key = keyFor(sessionId, tabId);
 
 	if (mode === 'resend' && !snapshots.has(key)) {
-		// No captured prompt — we can't reliably resend, so let the modal handle it.
+		// No captured prompt - we can't reliably resend, so let the modal handle it.
 		logger.warn('[retry] No prompt snapshot to resend; falling back to modal', undefined, { key });
 		return false;
 	}
 	if (mode === 'batch-resume' && !batchResumer) {
-		// No resume hook wired — fall back to the batch's manual error controls.
+		// No resume hook wired - fall back to the batch's manual error controls.
 		logger.warn('[retry] No batch resumer registered; falling back', undefined, { key });
 		return false;
 	}
@@ -401,7 +401,7 @@ function resolveOutage(outageId: string, status: Exclude<OutageStatus, 'active'>
 /**
  * Called from the process-exit listener. If the entry is still `'in-flight'` at
  * exit time, no retryable agent-error re-scheduled it, so the resent turn
- * completed (successfully, or with a non-retryable error the modal now owns) —
+ * completed (successfully, or with a non-retryable error the modal now owns) -
  * clear it. A rescheduled entry (status back to `'scheduled'`) is left alone.
  */
 export function clearRetryIfSettled(sessionId: string, tabId: string): void {
@@ -434,6 +434,29 @@ export function sessionHasActiveOutage(sessionId: string): boolean {
 	return false;
 }
 
+/**
+ * Collect the agent ids that currently have at least one active outage. Shared
+ * by the reactive signature and the non-reactive event-time getter so the two
+ * never diverge.
+ */
+function collectActiveOutageSessionIds(outages: Record<string, OutageRecord>): Set<string> {
+	const ids = new Set<string>();
+	for (const id in outages) {
+		const o = outages[id];
+		if (o.status === 'active') ids.add(o.sessionId);
+	}
+	return ids;
+}
+
+/**
+ * Non-reactive: all agent ids with at least one active outage. For event-time
+ * reads (e.g. keyboard cycling) that need the set outside React; the reactive
+ * `useActiveOutageSessionSignature` covers render-time subscribers.
+ */
+export function getActiveOutageSessionIds(): Set<string> {
+	return collectActiveOutageSessionIds(useRetryStore.getState().outages);
+}
+
 /** Reactive: whether a specific agent currently has an active outage (Left Bar light). */
 export function useSessionHasActiveOutage(sessionId: string): boolean {
 	return useRetryStore((s) => {
@@ -462,14 +485,9 @@ export function useTabHasActiveOutage(sessionId: string, tabId: string): boolean
  * Bar filter memo only recomputes when the set of stuck agents actually changes.
  */
 export function useActiveOutageSessionSignature(): string {
-	return useRetryStore((s) => {
-		const ids = new Set<string>();
-		for (const id in s.outages) {
-			const o = s.outages[id];
-			if (o.status === 'active') ids.add(o.sessionId);
-		}
-		return Array.from(ids).sort().join(',');
-	});
+	return useRetryStore((s) =>
+		Array.from(collectActiveOutageSessionIds(s.outages)).sort().join(',')
+	);
 }
 
 /**

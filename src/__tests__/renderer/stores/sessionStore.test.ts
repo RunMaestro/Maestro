@@ -622,7 +622,7 @@ describe('sessionStore', () => {
 			// Mutate
 			useSessionStore.getState().updateSession('a', { name: 'Updated' });
 
-			// Re-read — always gets the latest (no stale closure)
+			// Re-read - always gets the latest (no stale closure)
 			const updated = useSessionStore.getState().sessions;
 			expect(updated[0].name).toBe('Updated');
 		});
@@ -675,7 +675,7 @@ describe('sessionStore', () => {
 			useSessionStore.getState().toggleGroupCollapsed('g1');
 			expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
 
-			// Remove group (sessions keep their groupId — that's handled by business logic)
+			// Remove group (sessions keep their groupId - that's handled by business logic)
 			useSessionStore.getState().removeGroup('g1');
 			expect(useSessionStore.getState().groups).toHaveLength(0);
 		});
@@ -1122,7 +1122,7 @@ describe('sessionStore', () => {
 				expect(active?.filePreviewTabs[0].searchQuery).toBe('const');
 				expect(active?.filePreviewTabs[0].editMode).toBe(true);
 
-				// Switch back to session 1 — state preserved
+				// Switch back to session 1 - state preserved
 				useSessionStore.getState().setActiveSessionId('session-1');
 				active = selectActiveSession(useSessionStore.getState());
 				expect(active?.filePreviewTabs[0].scrollTop).toBe(0);
@@ -1187,7 +1187,7 @@ describe('sessionStore', () => {
 					expect(active?.filePreviewTabs[0].scrollTop).toBe(i * 100);
 				}
 
-				// Switch back to first session — state preserved
+				// Switch back to first session - state preserved
 				useSessionStore.getState().setActiveSessionId('session-0');
 				const first = selectActiveSession(useSessionStore.getState());
 				expect(first?.id).toBe('session-0');

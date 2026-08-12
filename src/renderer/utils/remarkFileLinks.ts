@@ -15,6 +15,7 @@
 
 import { visit } from 'unist-util-visit';
 import type { Root, Text, Link, Image } from 'mdast';
+import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import type { FileNode } from '../types/fileTree';
 import {
 	buildFileTreeIndices,
@@ -78,7 +79,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 		visit(tree, 'text', (node: Text, index, parent) => {
 			if (!parent || index === undefined) return;
 
-			// Skip text nodes inside link nodes — the link visitor handles those
+			// Skip text nodes inside link nodes - the link visitor handles those
 			if (parent.type === 'link') return;
 
 			const text = node.value;
@@ -240,7 +241,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							type: 'link',
 						});
 					} else {
-						// Outside projectRoot — use file:// URL to open in system default app
+						// Outside projectRoot - use file:// URL to open in system default app
 						matches.push({
 							start: tildeMatch.index,
 							end: tildeMatch.index + tildePath.length,
@@ -333,7 +334,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 						},
 					} as Image);
 				} else if (match.absoluteUrl) {
-					// External file link (outside projectRoot) — use file:// URL
+					// External file link (outside projectRoot) - use file:// URL
 					// MarkdownRenderer's <a> handler calls shell.openPath for file:// URLs
 					replacements.push({
 						type: 'link',
@@ -377,7 +378,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 		visit(tree, 'inlineCode', (node: any, index, parent) => {
 			if (!parent || index === undefined) return;
 
-			// Skip inline code inside link nodes — the link visitor handles those
+			// Skip inline code inside link nodes - the link visitor handles those
 			if (parent.type === 'link') return;
 
 			const code = node.value;
@@ -451,7 +452,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 						parent.children.splice(index, 1, link);
 						return index + 1;
 					} else {
-						// Outside projectRoot — open via file:// URL
+						// Outside projectRoot - open via file:// URL
 						const link: Link = {
 							type: 'link',
 							url: `file://${absolutePath}`,
@@ -502,12 +503,15 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				return;
 			}
 
-			// Decode URL-encoded characters (e.g., %20 -> space)
-			const decodedHref = decodeURIComponent(href);
+			// Decode URL-encoded characters (e.g., %20 -> space). Must not throw:
+			// this runs inside the unified transform, so a URIError from a stray
+			// '%' in a link target ("[see](100% done.md)") propagates out of
+			// react-markdown's render and blanks the whole message. (MAESTRO-XS)
+			const decodedHref = safeDecodeURIComponent(href);
 
 			let resolvedPath: string | null = null;
 
-			// Handle absolute paths first — agents (e.g. Codex) emit [file.tsx](/Users/name/Project/src/file.tsx)
+			// Handle absolute paths first - agents (e.g. Codex) emit [file.tsx](/Users/name/Project/src/file.tsx)
 			// These should be resolved directly, not searched via filename index
 			if (projectRoot && decodedHref.startsWith('/')) {
 				resolvedPath = toRelativePath(decodedHref);
@@ -520,7 +524,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				if (relativePath) {
 					resolvedPath = relativePath;
 				} else {
-					// Outside projectRoot — use file:// URL
+					// Outside projectRoot - use file:// URL
 					node.url = `file://${absolutePath}`;
 					return;
 				}

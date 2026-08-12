@@ -24,6 +24,7 @@ export interface BucketAggregateResult {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	/**
 	 * Per-host entry counts within the same window the buckets cover. Key
 	 * is the entry's `hostname`, or `LOCAL_HOST_AGG_KEY` for entries with no
@@ -38,7 +39,7 @@ export interface BucketAggregateOptions {
 	 * Lookback window in milliseconds. When provided, the bucket range
 	 * spans `[end - lookbackMs, end]` and entries outside the window are
 	 * dropped. When omitted (or `null`), the range spans the entries'
-	 * actual `[earliest, latest]` — i.e. "all time".
+	 * actual `[earliest, latest]` - i.e. "all time".
 	 */
 	lookbackMs?: number | null;
 	/**
@@ -54,7 +55,7 @@ export interface BucketAggregateOptions {
  * - With no `lookbackMs`: buckets span the entries' full time range (the
  *   "all-encompassing" / "All time" view).
  * - With `lookbackMs`: buckets span `[endTime - lookbackMs, endTime]` and
- *   entries outside that window are excluded — the renderer's lookback
+ *   entries outside that window are excluded - the renderer's lookback
  *   selector hits this path.
  *
  * If no entries fall in range, returns a zero-filled bucket array with the
@@ -81,13 +82,19 @@ export function buildBucketAggregate(
 		const fallbackEnd = endTime;
 		const fallbackStart = windowStart ?? endTime;
 		return {
-			buckets: Array.from({ length: safeBucketCount }, () => ({ auto: 0, user: 0, cue: 0 })),
+			buckets: Array.from({ length: safeBucketCount }, () => ({
+				auto: 0,
+				user: 0,
+				cue: 0,
+				agent: 0,
+			})),
 			earliestTimestamp: fallbackStart,
 			latestTimestamp: fallbackEnd,
 			totalCount: 0,
 			autoCount: 0,
 			userCount: 0,
 			cueCount: 0,
+			agentCount: 0,
 			hostCounts: {},
 		};
 	}
@@ -97,6 +104,7 @@ export function buildBucketAggregate(
 	let autoCount = 0;
 	let userCount = 0;
 	let cueCount = 0;
+	let agentCount = 0;
 	const hostCounts: Record<string, number> = {};
 
 	for (const entry of filtered) {
@@ -105,12 +113,13 @@ export function buildBucketAggregate(
 		if (entry.type === 'AUTO') autoCount++;
 		else if (entry.type === 'USER') userCount++;
 		else if (entry.type === 'CUE') cueCount++;
+		else if (entry.type === 'AGENT') agentCount++;
 		const hostKey = entry.hostname || LOCAL_HOST_AGG_KEY;
 		hostCounts[hostKey] = (hostCounts[hostKey] ?? 0) + 1;
 	}
 
 	// For windowed mode the range is fixed by the lookback, not the
-	// observed entries — keeps the axis labels stable as entries arrive
+	// observed entries - keeps the axis labels stable as entries arrive
 	// or get filtered out.
 	const rangeStart = windowStart ?? earliest;
 	const rangeEnd = windowStart !== null ? endTime : latest;
@@ -121,6 +130,7 @@ export function buildBucketAggregate(
 		auto: 0,
 		user: 0,
 		cue: 0,
+		agent: 0,
 	}));
 
 	for (const entry of filtered) {
@@ -130,6 +140,7 @@ export function buildBucketAggregate(
 		if (entry.type === 'AUTO') bucket.auto++;
 		else if (entry.type === 'USER') bucket.user++;
 		else if (entry.type === 'CUE') bucket.cue++;
+		else if (entry.type === 'AGENT') bucket.agent++;
 	}
 
 	return {
@@ -140,6 +151,7 @@ export function buildBucketAggregate(
 		autoCount,
 		userCount,
 		cueCount,
+		agentCount,
 		hostCounts,
 	};
 }

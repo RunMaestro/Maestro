@@ -27,7 +27,7 @@ export function MaxLogBufferSection({
 				onChange={setMaxLogBuffer}
 				theme={theme}
 			/>
-			<p className="text-xs opacity-50 mt-2">
+			<p className="text-xs opacity-70 mt-2">
 				Maximum number of entries to retain for history and system log viewer. Older entries are
 				automatically discarded as new ones arrive.
 			</p>

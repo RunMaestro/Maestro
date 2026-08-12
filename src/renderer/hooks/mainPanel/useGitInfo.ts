@@ -14,7 +14,7 @@ export interface GitInfo {
  * Consolidates git status from focused contexts into a single gitInfo object.
  *
  * Uses separate context hooks (branch, file status, detail) to minimize
- * cascade re-renders — branch info rarely changes, file counts change on
+ * cascade re-renders - branch info rarely changes, file counts change on
  * file operations, detail info is only for the active session.
  */
 export function useGitInfo(activeSession: Session | null) {

@@ -1,5 +1,5 @@
 /**
- * KeyCaptureButton — generic primitive for recording a single keyboard
+ * KeyCaptureButton - generic primitive for recording a single keyboard
  * shortcut. Click to enter "recording" mode, then press a key combo to
  * capture it. Press Escape to cancel without changes. Provides an explicit
  * clear button when a value is set.

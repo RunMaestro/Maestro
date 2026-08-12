@@ -493,10 +493,10 @@ describe('groomContext', () => {
 	it('uses custom timeout when provided', async () => {
 		const detector = createMockAgentDetector(agent);
 
-		// Override spawn to never complete — the timeout will fire
+		// Override spawn to never complete - the timeout will fire
 		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
 			(mockPM as any)._lastSpawnConfig = config;
-			// Don't emit any events — will timeout
+			// Don't emit any events - will timeout
 			return { pid: 12345, success: true };
 		});
 

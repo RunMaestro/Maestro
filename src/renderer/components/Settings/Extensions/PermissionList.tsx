@@ -34,7 +34,7 @@ interface PermissionListProps {
 /**
  * Renders one risk-colored row per requested capability. Static disclosure:
  * first-party grants are minted host-side by the lifecycle bridge on enable,
- * so there is no per-row grant state — only the shared `statusLabel`.
+ * so there is no per-row grant state - only the shared `statusLabel`.
  */
 export function PermissionList({
 	theme,

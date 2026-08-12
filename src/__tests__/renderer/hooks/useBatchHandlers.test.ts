@@ -220,7 +220,7 @@ describe('useBatchHandlers', () => {
 			expect(result.current).toHaveProperty('handleSyncAutoRunStats');
 		});
 
-		it('calls useBatchProcessor with sessions and groups from stores', () => {
+		it('calls useBatchProcessor with groups from the store (sessions via getState)', () => {
 			const session = createMockSession();
 			useSessionStore.setState({
 				sessions: [session],
@@ -232,7 +232,7 @@ describe('useBatchHandlers', () => {
 
 			expect(useBatchProcessor).toHaveBeenCalled();
 			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
-			expect(callArgs.sessions).toEqual([session]);
+			expect(callArgs.sessions).toBeUndefined();
 			expect(callArgs.groups).toEqual([{ id: 'g1', name: 'Group 1' }]);
 		});
 
@@ -1403,7 +1403,7 @@ describe('useBatchHandlers', () => {
 			expect(stats.currentBadgeLevel).toBe(5);
 		});
 
-		it('does not preserve existing higher badge level — synced value overwrites', () => {
+		it('does not preserve existing higher badge level - synced value overwrites', () => {
 			// The sync function unconditionally sets badge tracking to the synced level.
 			// This tests that existing higher values are overwritten (server is source of truth).
 			useSettingsStore.setState({
@@ -1622,7 +1622,7 @@ describe('useBatchHandlers', () => {
 
 			// IPC history.add should still be called
 			expect(window.maestro.history.add).toHaveBeenCalled();
-			// Should not throw — no crash from null ref
+			// Should not throw - no crash from null ref
 		});
 	});
 

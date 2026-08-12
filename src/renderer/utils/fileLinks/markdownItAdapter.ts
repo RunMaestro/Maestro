@@ -5,6 +5,7 @@ import {
 	validatePathReference,
 	type FileTreeIndices,
 } from './matcher';
+import { safeDecodeURIComponent } from '../../../shared/stringUtils';
 import {
 	IMAGE_EMBED_PATTERN,
 	MAESTRO_DEEP_LINK_PATTERN,
@@ -18,7 +19,7 @@ type ParserToken = ReturnType<MarkdownIt['parse']>[number];
  * Options for the markdown-it file-link adapter. Mirrors RemarkFileLinksOptions
  * (in remarkFileLinks.ts) so callers can use either tier with the same config.
  *
- * Use pre-built indices for performance — `FilePreview` already memoizes
+ * Use pre-built indices for performance - `FilePreview` already memoizes
  * `buildFileTreeIndices(fileTree)` so the Fast tier inherits zero extra cost.
  */
 export interface MarkdownItFileLinksOptions {
@@ -32,10 +33,10 @@ export interface MarkdownItFileLinksOptions {
  * Apply file-link resolution to a markdown-it token stream in place.
  *
  * Two passes:
- *   1. `link_open` href rewriter — converts `[label](path)` to `maestro-file://`
+ *   1. `link_open` href rewriter - converts `[label](path)` to `maestro-file://`
  *      when `path` resolves in the file tree. Adds `data-maestro-file` for
  *      DOMPurify-safe carriage of the resolved path.
- *   2. `inline` text rewriter — splits text children on `![[…]]` / `[[…]]`
+ *   2. `inline` text rewriter - splits text children on `![[…]]` / `[[…]]`
  *      patterns and replaces them with synthetic `image`/`link_open` tokens.
  *
  * Pure (no DOM, no network). Mirrors the Rich-tier remarkFileLinks behavior
@@ -91,7 +92,7 @@ function rewriteStandardLinks(
 			continue;
 		}
 
-		const decoded = safeDecode(hrefAttr);
+		const decoded = safeDecodeURIComponent(hrefAttr);
 		let resolved: string | null = null;
 
 		if (projectRoot && decoded.startsWith('/')) {
@@ -103,7 +104,7 @@ function rewriteStandardLinks(
 			if (relative) {
 				resolved = relative;
 			} else {
-				// Outside projectRoot — emit a file:// URL so the click handler can
+				// Outside projectRoot - emit a file:// URL so the click handler can
 				// hand it to shell.openPath.
 				token.attrSet('href', `file://${absolute}`);
 				continue;
@@ -116,18 +117,6 @@ function rewriteStandardLinks(
 
 		token.attrSet('href', `maestro-file://${resolved}`);
 		token.attrSet('data-maestro-file', resolved);
-	}
-}
-
-function safeDecode(s: string): string {
-	try {
-		return decodeURIComponent(s);
-	} catch (err) {
-		// Only swallow URIError (malformed percent-encoding, e.g. "%E0%A4%A").
-		// Any other error is unexpected and should surface — masking it would
-		// hide bugs (out-of-memory, polyfill regressions, etc.).
-		if (err instanceof URIError) return s;
-		throw err;
 	}
 }
 
@@ -151,7 +140,7 @@ function rewriteInlineWikiAndImageEmbeds(
 
 		const rewritten: ParserToken[] = [];
 		// Track nesting inside `<a>` so we don't rewrite the label text of an
-		// existing link (e.g. `[some src/x.ts text](url)`) — that would produce
+		// existing link (e.g. `[some src/x.ts text](url)`) - that would produce
 		// nested anchors, which is invalid HTML and breaks the parent link's
 		// click handling. The Rich-tier remarkFileLinks plugin already skips
 		// link descendants; this keeps Fast tier behavior in lockstep.
@@ -282,7 +271,7 @@ function expandTextToken(
 function collectInlineMatches(text: string, indices: FileTreeIndices, cwd: string): InlineMatch[] {
 	const matches: InlineMatch[] = [];
 
-	// Bare `maestro://` deep link URLs — auto-linkify so they are clickable.
+	// Bare `maestro://` deep link URLs - auto-linkify so they are clickable.
 	for (const deepLinkMatch of text.matchAll(MAESTRO_DEEP_LINK_PATTERN)) {
 		const url = deepLinkMatch[0];
 		const start = deepLinkMatch.index ?? 0;
@@ -334,7 +323,7 @@ function collectInlineMatches(text: string, indices: FileTreeIndices, cwd: strin
 		});
 	}
 
-	// Plain path references (e.g. `Folder/File.md` in running text) — but only
+	// Plain path references (e.g. `Folder/File.md` in running text) - but only
 	// when they validate exactly against the file tree. Use the shared
 	// PATH_PATTERN from patterns.ts so this stays in lockstep with the Rich-tier
 	// remark plugin (the shared pattern also catches single-file references

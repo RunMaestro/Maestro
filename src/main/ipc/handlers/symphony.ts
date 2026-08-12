@@ -389,7 +389,7 @@ function parseDocumentPaths(body: string): DocumentReference[] {
  * Returns null on failure instead of throwing (isolated error handling per URL).
  */
 /**
- * Redact a URL for safe logging — strips credentials, query params, and fragments.
+ * Redact a URL for safe logging - strips credentials, query params, and fragments.
  */
 function redactUrlForLog(rawUrl: string): string {
 	try {
@@ -431,7 +431,7 @@ async function fetchSingleRegistry(url: string): Promise<SymphonyRegistry | null
 /**
  * Fetch and merge symphony registries from all configured URLs.
  * Default URL always fetched first (wins on slug conflicts).
- * Custom URL failures are isolated — other registries still load.
+ * Custom URL failures are isolated - other registries still load.
  */
 async function fetchRegistries(customUrls: string[]): Promise<SymphonyRegistry> {
 	logger.info(
@@ -1113,7 +1113,7 @@ export function registerSymphonyHandlers({
 			};
 		}
 
-		// Fetch fresh star counts (non-critical — fall back to stale cache or undefined)
+		// Fetch fresh star counts (non-critical - fall back to stale cache or undefined)
 		try {
 			const counts = await fetchStarCounts(slugs);
 
@@ -1166,7 +1166,7 @@ export function registerSymphonyHandlers({
 					? rawCustomUrls.filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
 					: [];
 
-				// Skip cache when custom sources are configured — cache doesn't track
+				// Skip cache when custom sources are configured - cache doesn't track
 				// which source URLs produced it, so URL changes would serve stale data.
 				const hasCustomSources = customUrls.length > 0;
 

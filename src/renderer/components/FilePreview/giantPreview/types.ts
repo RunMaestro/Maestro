@@ -9,7 +9,7 @@ import type { SearchHit, SearchHitOptions } from '../search/types';
  * `findInContent` enumerates every match in the loaded document; pure scan
  * over the source string is acceptable up to the Giant tier's size ceiling
  * (one full pass per query, gated by useFilePreviewSearch's count effect).
- * `scrollToMatch` selects the matched range and scrolls the CM6 viewport —
+ * `scrollToMatch` selects the matched range and scrolls the CM6 viewport -
  * CM6's selection rendering paints the active match indicator for free.
  */
 export interface GiantPreviewHandle {
@@ -26,7 +26,7 @@ export interface GiantPreviewHandle {
 /**
  * Public props of the Giant tier preview component.
  *
- * The component is intentionally read-only — Giant tier is for viewing huge
+ * The component is intentionally read-only - Giant tier is for viewing huge
  * files, not editing them. Edit mode in FilePreview takes precedence and
  * never routes to Giant.
  */

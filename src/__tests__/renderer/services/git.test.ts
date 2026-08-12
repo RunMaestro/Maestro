@@ -17,6 +17,10 @@ const mockGit = {
 	remote: vi.fn(),
 	branches: vi.fn(),
 	tags: vi.fn(),
+	runCommand: vi.fn(),
+	cancelCommand: vi.fn(),
+	onCommandOutput: vi.fn(),
+	checkoutBranch: vi.fn(),
 };
 
 // Setup mock before each test
@@ -463,6 +467,97 @@ invalid_line`;
 
 			expect(result).toEqual([]);
 			expect(logger.error).toHaveBeenCalledWith('Git tags error:', undefined, expect.any(Error));
+		});
+	});
+
+	describe('runCommand', () => {
+		test('forwards the run options to the preload bridge', async () => {
+			const success = { success: true, exitCode: 0, cancelled: false };
+			mockGit.runCommand.mockResolvedValue(success);
+
+			const result = await gitService.runCommand({
+				runId: 'run-1',
+				operation: 'push',
+				cwd: '/path/to/repo',
+				sshRemoteId: 'ssh-1',
+				setUpstream: true,
+			});
+
+			expect(result).toEqual(success);
+			expect(mockGit.runCommand).toHaveBeenCalledWith({
+				runId: 'run-1',
+				operation: 'push',
+				cwd: '/path/to/repo',
+				sshRemoteId: 'ssh-1',
+				setUpstream: true,
+			});
+		});
+
+		test('returns a failed result when the IPC call throws', async () => {
+			mockGit.runCommand.mockRejectedValue(new Error('IPC error'));
+
+			const result = await gitService.runCommand({
+				runId: 'run-2',
+				operation: 'pull',
+				cwd: '/path/to/repo',
+			});
+
+			expect(result).toEqual({
+				success: false,
+				exitCode: 1,
+				cancelled: false,
+				error: 'git pull failed',
+			});
+		});
+	});
+
+	describe('onCommandOutput', () => {
+		test('returns the unsubscribe handed back by the bridge', () => {
+			const unsubscribe = vi.fn();
+			mockGit.onCommandOutput.mockReturnValue(unsubscribe);
+			const callback = vi.fn();
+
+			const result = gitService.onCommandOutput(callback);
+
+			expect(mockGit.onCommandOutput).toHaveBeenCalledWith(callback);
+			expect(result).toBe(unsubscribe);
+		});
+	});
+
+	describe('checkoutBranch', () => {
+		test('checks out a branch and returns the result', async () => {
+			mockGit.checkoutBranch.mockResolvedValue({ success: true, output: "Switched to branch 'x'" });
+
+			const result = await gitService.checkoutBranch('/path/to/repo', 'x');
+
+			expect(result.success).toBe(true);
+			expect(mockGit.checkoutBranch).toHaveBeenCalledWith(
+				'/path/to/repo',
+				'x',
+				undefined,
+				undefined
+			);
+		});
+
+		test('passes createTracking and sshRemoteId through', async () => {
+			mockGit.checkoutBranch.mockResolvedValue({ success: true });
+
+			await gitService.checkoutBranch('/remote/path', 'feature/y', true, 'ssh-1');
+
+			expect(mockGit.checkoutBranch).toHaveBeenCalledWith(
+				'/remote/path',
+				'feature/y',
+				true,
+				'ssh-1'
+			);
+		});
+
+		test('returns a failure result when the IPC call throws', async () => {
+			mockGit.checkoutBranch.mockRejectedValue(new Error('IPC error'));
+
+			const result = await gitService.checkoutBranch('/path/to/repo', 'x');
+
+			expect(result).toEqual({ success: false, error: 'git checkout failed' });
 		});
 	});
 });

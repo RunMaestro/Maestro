@@ -27,6 +27,7 @@ describe('P0 host RPC contract additions', () => {
 		expect(HOST_METHOD_CAPABILITY['background.unregister']).toBe('background:service');
 		expect(HOST_METHOD_CAPABILITY['ui.hostViewUpdate']).toBe('ui:hostView');
 		expect(HOST_METHOD_CAPABILITY['ui.hostViewRemove']).toBe('ui:hostView');
+		expect(HOST_METHOD_CAPABILITY['ui.panelPost']).toBe('ui:panel');
 	});
 
 	it('includes the P0 methods in the runtime method catalog', () => {
@@ -43,9 +44,17 @@ describe('P0 host RPC contract additions', () => {
 			'background.register',
 			'ui.hostViewUpdate',
 			'ui.hostViewRemove',
+			'ui.panelPost',
 		] as const) {
 			expect(HOST_METHODS).toContain(method);
 		}
+	});
+
+	it('maps sessions.focus to its own narrow navigation capability', () => {
+		// Deliberately NOT tabs:manage: focusing must not require the power to
+		// create or destroy the user's tabs.
+		expect(HOST_METHOD_CAPABILITY['sessions.focus']).toBe('sessions:focus');
+		expect(HOST_METHODS).toContain('sessions.focus');
 	});
 
 	it('maps the net:connect methods to the net:connect capability', () => {

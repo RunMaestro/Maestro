@@ -104,7 +104,7 @@ describe('migrateApiModeDefault', () => {
 		expect(settingsStore.data[API_MODE_DEFAULT_MIGRATION_MARKER]).toBe(true);
 	});
 
-	it('is idempotent — does nothing once the marker is set', () => {
+	it('is idempotent - does nothing once the marker is set', () => {
 		const sessionsStore = makeStore({
 			sessions: [{ id: 'a', toolType: 'claude-code', name: 'Claude', enableMaestroP: true }],
 		});

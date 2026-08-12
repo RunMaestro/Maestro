@@ -1,17 +1,19 @@
 /**
- * Tests for shared/agentMetadata.ts — Display names and classification sets
+ * Tests for shared/agentMetadata.ts - Display names and classification sets
  */
 
 import { describe, it, expect } from 'vitest';
 import {
 	getAgentDisplayName,
 	isBetaAgent,
+	getAgentLoginCommand,
 	getReadOnlyModeLabel,
 	getReadOnlyModeTooltip,
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
 	AGENT_DISPLAY_NAMES,
+	AGENT_LOGIN_COMMANDS,
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
 import { AGENT_IDS } from '../../shared/agentIds';
@@ -202,6 +204,28 @@ describe('agentMetadata', () => {
 			expect(getPermissionModeTooltip('readonly', 'claude-code')).toContain('plan mode');
 			expect(getPermissionModeTooltip('readonly', 'codex')).toContain('Read-Only');
 			expect(getPermissionModeTooltip('readonly', 'factory-droid')).toContain('Read-Only');
+		});
+	});
+
+	describe('getAgentLoginCommand', () => {
+		it('returns known CLI login commands for agents that have them', () => {
+			expect(getAgentLoginCommand('claude-code')).toBe('claude login');
+			expect(getAgentLoginCommand('codex')).toBe('codex login');
+			expect(getAgentLoginCommand('copilot-cli')).toBe('gh auth login');
+			expect(getAgentLoginCommand('grok')).toBe('grok login');
+		});
+
+		it('returns undefined for agents without a known CLI login command', () => {
+			expect(getAgentLoginCommand('opencode')).toBeUndefined();
+			expect(getAgentLoginCommand('factory-droid')).toBeUndefined();
+			expect(getAgentLoginCommand('terminal')).toBeUndefined();
+			expect(getAgentLoginCommand('unknown-agent')).toBeUndefined();
+		});
+
+		it('only maps valid agent IDs', () => {
+			for (const id of Object.keys(AGENT_LOGIN_COMMANDS)) {
+				expect(AGENT_IDS).toContain(id);
+			}
 		});
 	});
 

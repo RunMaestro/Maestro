@@ -120,6 +120,7 @@ export function applyCadenzaPayload(p: CadenzaPayload): void {
 		// Patch only the fields the caller actually sent, so an update that only
 		// changes `body` (the common "living tracker" case) leaves title/path intact.
 		const patch: Partial<Omit<CadenzaView, 'id'>> = {};
+		const existing = store.cadenzas.find((v) => v.id === p.id);
 		if (p.viewType !== undefined) patch.viewType = p.viewType;
 		if (p.title !== undefined) patch.title = p.title;
 		if (p.body !== undefined) patch.body = p.body;
@@ -127,6 +128,9 @@ export function applyCadenzaPayload(p: CadenzaPayload): void {
 		if (p.options !== undefined) patch.options = p.options;
 		if (p.color !== undefined) patch.color = p.color;
 		if (p.sessionId !== undefined) patch.sessionId = p.sessionId;
+		if (p.body !== undefined || p.viewType !== undefined) {
+			patch.timestamp = Math.max(Date.now(), (existing?.timestamp ?? 0) + 1);
+		}
 		store.patchCadenza(p.id, patch);
 		return;
 	}

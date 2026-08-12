@@ -1,5 +1,5 @@
 /**
- * PipelineContextMenu — Right-click context menu for pipeline nodes.
+ * PipelineContextMenu - Right-click context menu for pipeline nodes.
  *
  * Purely presentational: renders Configure, Duplicate (triggers only), and Delete actions.
  */

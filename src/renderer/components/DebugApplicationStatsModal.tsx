@@ -1,5 +1,5 @@
 /**
- * DebugApplicationStatsModal — runtime memory / footprint breakdown for every
+ * DebugApplicationStatsModal - runtime memory / footprint breakdown for every
  * loaded agent. Used to verify that session data is loaded opportunistically
  * (cold on launch, warm as the user switches between agents).
  */
@@ -42,7 +42,7 @@ interface SessionFootprint {
 
 type SortKey = 'name' | 'state' | 'tabs' | 'logs' | 'fileTree' | 'data' | 'rss';
 
-// Cheap estimator — summing `.length` of strings roughly approximates the
+// Cheap estimator - summing `.length` of strings roughly approximates the
 // JS engine's byte footprint for text-heavy data without the perf cost of
 // JSON.stringify across every session. Numbers/booleans are ignored.
 function estimateStringBytes(obj: unknown, depth = 0): number {
@@ -277,7 +277,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 			footer={
 				<div className="flex items-center justify-between w-full">
 					<p className="text-xs" style={{ color: theme.colors.textDim }}>
-						State reflects lazy-loaded runtime only — logs and file/browser tabs are restored from
+						State reflects lazy-loaded runtime only - logs and file/browser tabs are restored from
 						disk at launch, so agents look "cold" until their file tree or process spawns. Data
 						bytes are rough UTF-16 estimates for relative comparison.
 					</p>
@@ -320,13 +320,13 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 										<td className="px-2 py-1 font-mono">{p.pid}</td>
 										<td className="px-2 py-1">{p.type}</td>
 										<td className="px-2 py-1 truncate max-w-[200px]">
-											{p.name || p.serviceName || '—'}
+											{p.name || p.serviceName || '-'}
 										</td>
 										<td className="px-2 py-1 text-right font-mono">
-											{p.workingSetBytes !== undefined ? formatSize(p.workingSetBytes) : '—'}
+											{p.workingSetBytes !== undefined ? formatSize(p.workingSetBytes) : '-'}
 										</td>
 										<td className="px-2 py-1 text-right font-mono">
-											{p.cpuPercent !== undefined ? `${p.cpuPercent.toFixed(1)}%` : '—'}
+											{p.cpuPercent !== undefined ? `${p.cpuPercent.toFixed(1)}%` : '-'}
 										</td>
 									</tr>
 								))}
@@ -353,7 +353,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 				<SummaryCard
 					theme={theme}
 					label="Agent Processes"
-					primary={snapshot ? formatSize(totals.rssBytes) : '—'}
+					primary={snapshot ? formatSize(totals.rssBytes) : '-'}
 					secondary={
 						snapshot
 							? `${snapshot.managedProcesses.filter((p) => p.pid).length} PIDs tracked`
@@ -363,7 +363,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 				<SummaryCard
 					theme={theme}
 					label="Electron"
-					primary={snapshot ? formatSize(electronRss) : '—'}
+					primary={snapshot ? formatSize(electronRss) : '-'}
 					secondary={
 						snapshot
 							? `main heap ${formatSize(snapshot.main.heapUsed)} / ${formatSize(snapshot.main.heapTotal)}`
@@ -439,7 +439,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 										{f.terminalTabCount > 0 && `${f.terminalTabCount} term · `}
 										{f.filePreviewTabCount > 0 && `${f.filePreviewTabCount} file · `}
 										{f.browserTabCount > 0 && `${f.browserTabCount} web`}
-										{f.terminalTabCount + f.filePreviewTabCount + f.browserTabCount === 0 && '—'}
+										{f.terminalTabCount + f.filePreviewTabCount + f.browserTabCount === 0 && '-'}
 									</div>
 								</td>
 								<td className="px-2 py-1.5">
@@ -466,7 +466,7 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 											</div>
 										</>
 									) : (
-										<span style={{ color: theme.colors.textDim }}>—</span>
+										<span style={{ color: theme.colors.textDim }}> - </span>
 									)}
 								</td>
 							</tr>

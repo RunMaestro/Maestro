@@ -93,17 +93,31 @@ describe('fileExplorer utils', () => {
 		});
 
 		describe('media files', () => {
-			it('returns true for video files', () => {
-				expect(shouldOpenExternally('video.mp4')).toBe(true);
-				expect(shouldOpenExternally('video.avi')).toBe(true);
-				expect(shouldOpenExternally('video.mov')).toBe(true);
-				expect(shouldOpenExternally('video.mkv')).toBe(true);
+			// Maestro plays these itself, so returning true here would send the
+			// double-click into the "open externally?" modal and the built-in player
+			// would be unreachable.
+			it('returns false for video Maestro can play', () => {
+				expect(shouldOpenExternally('video.mp4')).toBe(false);
+				expect(shouldOpenExternally('video.mov')).toBe(false);
+				expect(shouldOpenExternally('video.webm')).toBe(false);
+				expect(shouldOpenExternally('video.m4v')).toBe(false);
 			});
 
-			it('returns true for audio files', () => {
-				expect(shouldOpenExternally('audio.mp3')).toBe(true);
-				expect(shouldOpenExternally('audio.wav')).toBe(true);
-				expect(shouldOpenExternally('audio.flac')).toBe(true);
+			it('returns false for audio Maestro can play', () => {
+				expect(shouldOpenExternally('audio.mp3')).toBe(false);
+				expect(shouldOpenExternally('audio.wav')).toBe(false);
+				expect(shouldOpenExternally('audio.flac')).toBe(false);
+				expect(shouldOpenExternally('audio.m4a')).toBe(false);
+				expect(shouldOpenExternally('audio.MP3')).toBe(false);
+			});
+
+			it('still returns true for containers Chromium cannot decode', () => {
+				// No internal player can help with these, so the system app is right.
+				expect(shouldOpenExternally('video.avi')).toBe(true);
+				expect(shouldOpenExternally('video.mkv')).toBe(true);
+				expect(shouldOpenExternally('video.wmv')).toBe(true);
+				expect(shouldOpenExternally('video.flv')).toBe(true);
+				expect(shouldOpenExternally('audio.wma')).toBe(true);
 			});
 		});
 
@@ -178,7 +192,7 @@ describe('fileExplorer utils', () => {
 			});
 
 			it('handles uppercase extensions', () => {
-				expect(shouldOpenExternally('video.MP4')).toBe(true);
+				expect(shouldOpenExternally('video.MKV')).toBe(true);
 				expect(shouldOpenExternally('archive.ZIP')).toBe(true);
 				expect(shouldOpenExternally('code.TS')).toBe(false);
 			});
@@ -454,7 +468,7 @@ describe('fileExplorer utils', () => {
 				])
 				.mockResolvedValue([]);
 
-			// No localOptions — should use defaults (node_modules, __pycache__)
+			// No localOptions - should use defaults (node_modules, __pycache__)
 			const result = await loadFileTree('/project');
 
 			// .git should be included (not in defaults), node_modules and __pycache__ excluded
@@ -482,7 +496,7 @@ describe('fileExplorer utils', () => {
 				ignorePatterns: ['.git'],
 			});
 
-			// .git should NOT be ignored — SSH uses its own ignorePatterns, not localOptions
+			// .git should NOT be ignored - SSH uses its own ignorePatterns, not localOptions
 			expect(result).toHaveLength(2);
 			expect(result.find((n) => n.name === '.git')).toBeDefined();
 			expect(result.find((n) => n.name === 'src')).toBeDefined();
@@ -690,7 +704,7 @@ describe('fileExplorer utils', () => {
 						{ name: 'd.txt', isFile: true, isDirectory: false },
 						{ name: 'e.txt', isFile: true, isDirectory: false },
 					])
-					// .maestro contents — 4 files, more than the cap
+					// .maestro contents - 4 files, more than the cap
 					.mockResolvedValueOnce([
 						{ name: 'cue.yaml', isFile: true, isDirectory: false },
 						{ name: 'p1.md', isFile: true, isDirectory: false },
@@ -736,7 +750,7 @@ describe('fileExplorer utils', () => {
 						{ name: 'e.md', isFile: true, isDirectory: false },
 					])
 					.mockResolvedValueOnce([
-						// src contents — should still be reachable
+						// src contents - should still be reachable
 						{ name: 'index.ts', isFile: true, isDirectory: false },
 						{ name: 'app.ts', isFile: true, isDirectory: false },
 					]);
@@ -763,7 +777,7 @@ describe('fileExplorer utils', () => {
 						{ name: 'three.md', isFile: true, isDirectory: false },
 					]);
 
-				// Cap of 1 — without propagation, only one playbook would survive
+				// Cap of 1 - without propagation, only one playbook would survive
 				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 1);
 
 				const maestro = result.tree.find((n) => n.name === '.maestro');
@@ -774,7 +788,7 @@ describe('fileExplorer utils', () => {
 	});
 
 	// ============================================================================
-	// buildTreeFromPaths — pure tree builder used by the batched SSH loader
+	// buildTreeFromPaths - pure tree builder used by the batched SSH loader
 	// ============================================================================
 	describe('buildTreeFromPaths', () => {
 		it('builds a hierarchical tree from flat directory and file lists', () => {
@@ -825,7 +839,7 @@ describe('fileExplorer utils', () => {
 	});
 
 	// ============================================================================
-	// spliceMaestroIntoTree — merge .maestro subtree (loaded in its own phase)
+	// spliceMaestroIntoTree - merge .maestro subtree (loaded in its own phase)
 	// into the rest-of-tree result.
 	// ============================================================================
 	describe('spliceMaestroIntoTree', () => {
@@ -867,7 +881,7 @@ describe('fileExplorer utils', () => {
 	});
 
 	// ============================================================================
-	// loadFileTreeRemoteBatched — phased SSH loader
+	// loadFileTreeRemoteBatched - phased SSH loader
 	// ============================================================================
 	describe('loadFileTreeRemoteBatched', () => {
 		beforeEach(() => {

@@ -20,6 +20,7 @@ import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import { getTabDerivedState } from '../../hooks/tabs/useTabHandlers';
 import {
 	breakApartGroup,
 	collectLeafTabRefs,
@@ -33,8 +34,15 @@ import { useCoworkingBufferResponder } from '../../hooks/coworking/useCoworkingB
 import { useCoworkingRegistrySync } from '../../hooks/coworking/useCoworkingRegistrySync';
 import { useCoworkingBrowserResponder } from '../../hooks/coworking/useCoworkingBrowserResponder';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
-import { aiTabFocusFields, computeUnreadGroupIds } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	computeQueuedTabIds,
+	computeUnreadGroupIds,
+	focusAiTabInSession,
+	getTabDisplayName,
+} from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
+import { useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -76,12 +84,15 @@ function EmptyMainPanel({ theme }: { theme: Theme }) {
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
 	forwardRef<MainPanelHandle, MainPanelProps>(function MainPanel(props, ref) {
+		// PERF: Self-source the full active Session so streaming log/token updates
+		// re-render MainPanel without requiring MaestroConsoleInner to re-render.
+		const activeSession = useSessionStore(selectActiveSession);
+
 		const {
 			logViewerOpen,
 			agentSessionsOpen,
 			memoryViewerOpen,
 			activeAgentSessionId,
-			activeSession,
 			theme,
 			stagedImages,
 			commandHistoryOpen,
@@ -149,7 +160,6 @@ export const MainPanel = React.memo(
 			isMobileLandscape = false,
 			showFlashNotification,
 			onOpenWorktreeConfig,
-			onOpenCreatePR,
 			isWorktreeChild,
 			onSummarizeAndContinue,
 			onMergeWith,
@@ -284,15 +294,12 @@ export const MainPanel = React.memo(
 			onToggleUnreadFilter,
 			onOpenTabSearch,
 			onOpenOutputSearch,
+			onOpenCrossTabSearch,
 			onCloseAllTabs,
 			onCloseOtherTabs,
 			onCloseTabsLeft,
 			onCloseTabsRight,
-			// Unified tab system props (Phase 4)
-			unifiedTabs,
-			activeFileTabId,
-			activeFileTab,
-			activeBrowserTabId,
+			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
 			onFileTabRename,
@@ -313,6 +320,24 @@ export const MainPanel = React.memo(
 			onTerminalTabConfigureStartupCommand,
 		} = props;
 
+		// PERF: Tab strip / file-nav paint derived here from the full session this
+		// panel already subscribes to - not from App chrome equality (which would
+		// wake MaestroConsoleInner on every busy/tab-state flip).
+		const {
+			activeTab: derivedActiveTab,
+			unifiedTabs,
+			activeFileTab,
+			fileTabBackHistory,
+			fileTabForwardHistory,
+			fileTabCanGoBack,
+			fileTabCanGoForward,
+			activeFileTabNavIndex,
+		} = useMemo(() => getTabDerivedState(activeSession), [activeSession]);
+		const activeFileTabId = activeSession?.activeFileTabId ?? null;
+		const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
+		const fileGistUrls = useTabStore((s) => s.fileGistUrls);
+		const hasGist = activeFileTab ? !!fileGistUrls[activeFileTab.path] : false;
+
 		// Coworking browser responder - answers browser-op requests by resolving
 		// the target tab's live (or kept-alive hidden) webview handle. It never
 		// switches the user's visible tab. No-ops when the `coworking` Encore flag
@@ -320,17 +345,27 @@ export const MainPanel = React.memo(
 		useCoworkingBrowserResponder(browserViewRefs);
 
 		// Get the active tab for header display
-		// The header should show the active tab's data (UUID, name, cost, context), not session-level data
-		// PERF: Memoize the lookup to avoid O(n) search on every render - will still update when
-		// aiTabs array or activeTabId changes (which happens when tabs change, not on every keystroke)
-		const activeTab = useMemo(
-			() =>
-				activeSession?.aiTabs?.find((tab) => tab.id === activeSession.activeTabId) ??
-				activeSession?.aiTabs?.[0] ??
-				null,
-			[activeSession?.aiTabs, activeSession?.activeTabId]
-		);
+		// Prefer local derivation from the full session (includes live usage/cost).
+		const activeTab = useMemo(() => derivedActiveTab ?? null, [derivedActiveTab]);
 		const activeTabError = activeTab?.agentError;
+
+		// Whether the agent has any tab at all. An agent is allowed to have zero AI
+		// tabs as long as some other tab kind is still open, so the tab strip has to
+		// key off the union rather than aiTabs alone.
+		const hasAnyTab = useMemo(
+			() =>
+				(activeSession?.aiTabs?.length ?? 0) +
+					(activeSession?.filePreviewTabs?.length ?? 0) +
+					(activeSession?.terminalTabs?.length ?? 0) +
+					(activeSession?.browserTabs?.length ?? 0) >
+				0,
+			[
+				activeSession?.aiTabs,
+				activeSession?.filePreviewTabs,
+				activeSession?.terminalTabs,
+				activeSession?.browserTabs,
+			]
+		);
 
 		// SSH remote name for header display
 		const sshRemoteName = useSshRemoteName(
@@ -411,6 +446,10 @@ export const MainPanel = React.memo(
 			},
 			[activeSession, renameGroupAction]
 		);
+
+		// Set a group chip's emoji from the shared emoji selector. Empty string clears
+		// it back to the default grid glyph. The tab-store action persists it.
+		const setGroupEmojiAction = useTabStore((s) => s.setGroupEmoji);
 
 		// Break a group apart into standalone tabs (the confirm dialog lives in the
 		// group chip). Promotes every pane back to the tab bar in left-to-right order,
@@ -498,6 +537,19 @@ export const MainPanel = React.memo(
 			},
 			[activeTab, setTabEffort]
 		);
+
+		// Opening the snooze picker needs nothing from App.tsx, so it talks to the
+		// modal store directly instead of adding another link to the
+		// App -> useMainPanelProps -> MainPanel -> TabBar prop chain.
+		const handleOpenSnooze = useCallback((tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			const tab = session?.aiTabs.find((t) => t.id === tabId);
+			if (!tab) return;
+			useModalStore.getState().openModal('snoozeTab', {
+				tabId,
+				tabLabel: getTabDisplayName(tab, session?.agentSessionId),
+			});
+		}, []);
 
 		// Expose methods to parent via ref
 		// Holds the latest terminal/browser buffer-action handlers. The imperative
@@ -850,25 +902,37 @@ export const MainPanel = React.memo(
 			[showUnreadOnly, activeSession]
 		);
 
+		// Ids of AI tabs with queued execution items, so the TabBar keeps them visible under
+		// the unread filter (pending queued work needs attention). Undefined outside the filter.
+		// Depend on the executionQueue array (not the full session) so streaming/token updates
+		// that leave the queue untouched preserve the Set identity and TabBar's memoization.
+		const executionQueue = activeSession?.executionQueue;
+		const queuedTabIds = useMemo(
+			() => (showUnreadOnly && executionQueue ? computeQueuedTabIds(executionQueue) : undefined),
+			[showUnreadOnly, executionQueue]
+		);
+
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
+			props.onComposerFocus?.();
 			if (activeSession) {
 				setActiveSessionId(activeSession.id);
 				useUIStore.getState().setActiveFocus('main');
 			}
-		}, [activeSession, setActiveSessionId]);
+		}, [activeSession, setActiveSessionId, props.onComposerFocus]);
 
-		// Memoized session click handler for InputArea's ThinkingStatusPill
-		// Avoids creating new function reference on every render
+		// Memoized session click handler for InputArea's ThinkingStatusPill.
+		// Targets the clicked session by ID rather than routing through onTabSelect
+		// (which resolves whichever agent is active at event time) - the pill lists
+		// thinking tabs across ALL agents, so a cross-agent jump must not depend on
+		// the active-session switch having landed first.
 		const handleSessionClick = useCallback(
 			(sessionId: string, tabId?: string) => {
 				setActiveSessionId(sessionId);
-				if (tabId && onTabSelect) {
-					onTabSelect(tabId);
-				}
+				updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 			},
-			[setActiveSessionId, onTabSelect]
+			[setActiveSessionId]
 		);
 
 		// File preview handlers (memos + callbacks)
@@ -1012,7 +1076,7 @@ export const MainPanel = React.memo(
 			return (
 				<ErrorBoundary>
 					<div
-						className="flex-1 flex flex-col relative isolate"
+						className="flex-1 h-full min-h-0 max-h-full flex flex-col relative isolate overflow-hidden"
 						style={{
 							minWidth: '400px',
 							backgroundColor: theme.colors.bgMain,
@@ -1046,7 +1110,6 @@ export const MainPanel = React.memo(
 								setActiveAgentSessionId={setActiveAgentSessionId}
 								onStopBatchRun={onStopBatchRun}
 								onOpenWorktreeConfig={onOpenWorktreeConfig}
-								onOpenCreatePR={onOpenCreatePR}
 								hasCapability={hasCapability}
 							/>
 						)}
@@ -1078,6 +1141,7 @@ export const MainPanel = React.memo(
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
@@ -1130,9 +1194,11 @@ export const MainPanel = React.memo(
 								/>
 							) : null
 						) : (
-							/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */
-							activeSession.aiTabs &&
-							activeSession.aiTabs.length > 0 &&
+							/* Tab Bar - shown in AI and terminal modes when we have tabs of any kind.
+							   An agent can sit at zero AI tabs while terminal/file/browser tabs are
+							   open, so gating this on aiTabs alone would hide the whole strip (and
+							   the "+" button) and strand the user in whatever view was last active. */
+							hasAnyTab &&
 							onTabSelect &&
 							onTabClose &&
 							onNewTab && (
@@ -1155,12 +1221,15 @@ export const MainPanel = React.memo(
 									onSummarizeAndContinue={onSummarizeAndContinue}
 									onCopyContext={onCopyContext}
 									onExportHtml={onExportHtml}
+									onSnooze={handleOpenSnooze}
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
+									queuedTabIds={queuedTabIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
+									onOpenCrossTabSearch={onOpenCrossTabSearch}
 									onCloseAllTabs={onCloseAllTabs}
 									onCloseOtherTabs={onCloseOtherTabs}
 									onCloseTabsLeft={onCloseTabsLeft}
@@ -1203,6 +1272,7 @@ export const MainPanel = React.memo(
 									activeGroupId={activeSession.activeGroupId}
 									onGroupSelect={handleGroupSelect}
 									onGroupRename={handleGroupRename}
+									onGroupSetEmoji={setGroupEmojiAction}
 									onGroupBreakApart={handleGroupBreakApart}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
@@ -1361,19 +1431,19 @@ export const MainPanel = React.memo(
 									refreshFileTree={props.refreshFileTree}
 									onOpenSavedFileInTab={props.onOpenSavedFileInTab}
 									onShowAgentErrorModal={props.onShowAgentErrorModal}
-									canGoBack={props.canGoBack}
-									canGoForward={props.canGoForward}
+									canGoBack={fileTabCanGoBack}
+									canGoForward={fileTabCanGoForward}
 									onNavigateBack={props.onNavigateBack}
 									onNavigateForward={props.onNavigateForward}
-									backHistory={props.backHistory}
-									forwardHistory={props.forwardHistory}
-									currentHistoryIndex={props.currentHistoryIndex}
+									backHistory={fileTabBackHistory}
+									forwardHistory={fileTabForwardHistory}
+									currentHistoryIndex={activeFileTabNavIndex}
 									onNavigateToIndex={props.onNavigateToIndex}
 									onOpenFuzzySearch={props.onOpenFuzzySearch}
 									onShortcutUsed={props.onShortcutUsed}
 									ghCliAvailable={props.ghCliAvailable}
 									onPublishGist={props.onPublishGist}
-									hasGist={props.hasGist}
+									hasGist={hasGist}
 									onOpenInGraph={props.onOpenInGraph}
 									onOpenInBrowser={props.onOpenInBrowser}
 									onPublishMessageGist={props.onPublishMessageGist}

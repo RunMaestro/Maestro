@@ -48,6 +48,11 @@ describe('isHostApiCompatible', () => {
 		expect(r.reason).toMatch(/host API version/);
 	});
 
+	it('keeps 1.8 plugins compatible while requiring 1.9 for new UI surfaces', () => {
+		expect(isHostApiCompatible('1.8.0', '1.9.0').compatible).toBe(true);
+		expect(isHostApiCompatible('1.9.0', '1.8.0').compatible).toBe(false);
+	});
+
 	it('uses HOST_API_VERSION as the default host', () => {
 		expect(isHostApiCompatible(HOST_API_VERSION).compatible).toBe(true);
 	});

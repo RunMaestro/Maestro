@@ -23,7 +23,7 @@ const AUSTIN_FACTS = [
 	'The Texas State Capitol building is actually 14 feet taller than the U.S. Capitol in Washington, D.C.',
 	"Austin is known as the 'Live Music Capital of the World' with over 250 live music venues.",
 	'Barton Springs Pool stays a constant 68-70°F year-round, fed by underground springs.',
-	'The Congress Avenue Bridge is home to the largest urban bat colony in North America—1.5 million Mexican free-tailed bats.',
+	'The Congress Avenue Bridge is home to the largest urban bat colony in North America - 1.5 million Mexican free-tailed bats.',
 	'Lady Bird Lake was renamed in 2007 to honor Lady Bird Johnson, former First Lady and Austin native.',
 	'Mount Bonnell, at 775 feet, is one of the highest points in Austin and has been a tourist destination since the 1850s.',
 	"The Driskill Hotel, built in 1886, is Austin's oldest operating hotel and is reportedly haunted.",
@@ -31,7 +31,7 @@ const AUSTIN_FACTS = [
 	'The University of Texas tower was the first building in the U.S. to be lit orange for a sports victory, starting in 1930.',
 
 	// Food & Drink
-	'Franklin Barbecue has been named the best BBQ in Texas multiple times—lines regularly exceed 3 hours.',
+	'Franklin Barbecue has been named the best BBQ in Texas multiple times - lines regularly exceed 3 hours.',
 	"Austin invented the frozen margarita machine in 1971 at Mariano's Mexican Cuisine.",
 	"The breakfast taco is so beloved in Austin that there's an unofficial 'Taco Trail' with over 50 stops.",
 	"Torchy's Tacos started as a food trailer in 2006 on South First Street before becoming a Texas empire.",
@@ -43,7 +43,7 @@ const AUSTIN_FACTS = [
 	'The original Whole Foods Market opened in Austin in 1980 with just 19 employees.',
 
 	// Music & Culture
-	'SXSW (South by Southwest) started in 1987 with just 700 attendees—now it draws over 400,000.',
+	'SXSW (South by Southwest) started in 1987 with just 700 attendees - now it draws over 400,000.',
 	'Austin City Limits is the longest-running music series in American television history, starting in 1974.',
 	"Stevie Ray Vaughan's bronze statue on Lady Bird Lake was erected in 1993, three years after his death.",
 	'The Continental Club on South Congress has hosted live music every night since 1957.',
@@ -84,7 +84,7 @@ const AUSTIN_FACTS = [
 	"Austin's Moonlight Towers are the only remaining examples of this Victorian-era lighting technology in the world.",
 	"Only 17 of the original 31 Moonlight Towers remain, and they're all listed on the National Register of Historic Places.",
 	"The Moonlight Tower from the movie 'Dazed and Confused' still stands in Zilker Park.",
-	'Austin was home to the first-ever registered historic district in Texas—Hyde Park in 1990.',
+	'Austin was home to the first-ever registered historic district in Texas - Hyde Park in 1990.',
 	'The O. Henry Museum is the former home of William Sydney Porter, who wrote his famous short stories here.',
 	'Treaty Oak is an estimated 500-year-old tree that survived a poisoning attempt in 1989.',
 	"The Texas Chili Parlor has been serving 'XXX' hot chili since 1976 and appeared in the Texas legislature's official history.",
@@ -104,7 +104,7 @@ const AUSTIN_FACTS = [
 
 	// Weird Austin
 	'The Cathedral of Junk in South Austin is a 60-ton art installation made entirely of discarded items.',
-	"Austin's Eeyore's Birthday Party has been held annually since 1963—it's the city's oldest tradition.",
+	"Austin's Eeyore's Birthday Party has been held annually since 1963 - it's the city's oldest tradition.",
 	'The HOPE Outdoor Gallery (now closed) was a famous graffiti park that attracted artists worldwide.',
 	'Uncommon Objects on South Congress has been selling oddities and antiques since 1991.',
 	'Austin hosts the annual O. Henry Pun-Off World Championships.',

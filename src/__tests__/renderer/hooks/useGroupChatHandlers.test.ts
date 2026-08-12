@@ -9,7 +9,7 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 
-// Mock notifyToast (module-level export can't be spied — must vi.mock)
+// Mock notifyToast (module-level export can't be spied - must vi.mock)
 vi.mock('../../../renderer/stores/notificationStore', async () => {
 	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
 	return { ...actual, notifyToast: vi.fn() };
@@ -1327,7 +1327,7 @@ describe('useGroupChatHandlers', () => {
 				type: 'message' as const,
 			};
 
-			// Start with idle state and a queued item — the effect should fire
+			// Start with idle state and a queued item - the effect should fire
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
 				groupChatState: 'idle',
@@ -1377,7 +1377,7 @@ describe('useGroupChatHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
-	// handleGroupChatRightTabChange — no active chat
+	// handleGroupChatRightTabChange - no active chat
 	// -----------------------------------------------------------------------
 	describe('handleGroupChatRightTabChange edge cases', () => {
 		it('does not persist to settings when no active group chat', () => {

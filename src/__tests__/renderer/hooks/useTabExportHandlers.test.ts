@@ -15,7 +15,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
-// Mocks — must be declared before importing the hook
+// Mocks - must be declared before importing the hook
 // ============================================================================
 
 // Mock tabStore
@@ -928,7 +928,7 @@ describe('useTabExportHandlers', () => {
 			const { result } = renderHook(() => useTabExportHandlers(createDeps()));
 
 			act(() => {
-				result.current.handlePublishTextAsGist('contents', 'zsh — /foo/bar');
+				result.current.handlePublishTextAsGist('contents', 'zsh \u2014 /foo/bar');
 			});
 
 			expect(mockSetTabGistContent).toHaveBeenCalledWith({

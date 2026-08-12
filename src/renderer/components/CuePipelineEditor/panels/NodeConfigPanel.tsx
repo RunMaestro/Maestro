@@ -1,5 +1,5 @@
 /**
- * NodeConfigPanel — Bottom panel for configuring selected trigger or agent nodes.
+ * NodeConfigPanel - Bottom panel for configuring selected trigger or agent nodes.
  *
  * Thin dispatcher shell: routes to TriggerConfig or AgentConfigPanel based on
  * node type, and provides header chrome (expand/collapse, delete).
@@ -30,7 +30,7 @@ interface NodeConfigPanelProps {
 	selectedNode: PipelineNode | null;
 	theme: Theme;
 	pipelines: CuePipeline[];
-	/** Available sessions — used by CommandConfigPanel's owning-session picker when
+	/** Available sessions - used by CommandConfigPanel's owning-session picker when
 	 *  the command node was dropped without a pre-bound session. */
 	sessions?: SessionInfo[];
 	hasOutgoingEdge?: boolean;
@@ -108,7 +108,7 @@ function NodeConfigPanelInner({
 	const hasMultipleTriggers = triggerEdgeCount > 1;
 
 	// Collapsed-height policy:
-	//   - Single trigger, no upstream agents: tight (~280) — input + output prompts
+	//   - Single trigger, no upstream agents: tight (~280) - input + output prompts
 	//     have plenty of room and the panel doesn't dominate the canvas.
 	//   - Single trigger with upstream agents: a bit taller for the
 	//     "auto-include upstream output" checkbox row.
@@ -121,7 +121,7 @@ function NodeConfigPanelInner({
 	// single-trigger collapsed mode.
 	const collapsedHeight = (() => {
 		if (isTrigger) return 'auto' as const;
-		// Collapsed mode stays compact — the content wrapper scrolls when
+		// Collapsed mode stays compact - the content wrapper scrolls when
 		// upstream-sources / fan-in cards don't fit. Expanded mode (80%) is
 		// where the user gets full breathing room.
 		if (isCommand) return commandData?.mode === 'cli' ? 320 : 280;
@@ -217,7 +217,7 @@ function NodeConfigPanelInner({
 									// when multiple visual instances share a sessionId
 									// within the owning pipeline (see pipelineGraph.ts:254-257).
 									// Without this, the panel header shows just "Pedsidian"
-									// while the canvas node shows "Pedsidian (5)" — making
+									// while the canvas node shows "Pedsidian (5)" - making
 									// it ambiguous which instance the user is editing.
 									const owningPipeline = pipelines.find((p) =>
 										p.nodes.some((n) => n.id === selectedNode.id)
@@ -334,7 +334,7 @@ function NodeConfigPanelInner({
 				</div>
 			</div>
 
-			{/* Content — scrollable for both triggers and agents. Agents need
+			{/* Content - scrollable for both triggers and agents. Agents need
 			 *  `overflow: auto` so upstream-sources and fan-in cards below the
 			 *  prompts row are reachable even when the panel is collapsed. */}
 			<div
@@ -383,5 +383,5 @@ function NodeConfigPanelInner({
 	);
 }
 
-// Phase 14B — memoized so the panel does not re-render on unrelated canvas ticks.
+// Phase 14B - memoized so the panel does not re-render on unrelated canvas ticks.
 export const NodeConfigPanel = React.memo(NodeConfigPanelInner);

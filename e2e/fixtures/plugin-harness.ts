@@ -141,7 +141,7 @@ export async function launch(env: NodeJS.ProcessEnv): Promise<LaunchedApp> {
 }
 
 /** Close the running app and boot a FRESH Maestro process against the SAME
- * seeded demo dir — the e2e equivalent of quitting and reopening the app.
+ * seeded demo dir - the e2e equivalent of quitting and reopening the app.
  * Nothing is re-seeded: whatever persisted (ledger, enable-state, plugin
  * files, keyring anchor) is exactly what the new process sees. */
 export async function relaunch(launched: LaunchedApp, seeded: SeededEnv): Promise<LaunchedApp> {
@@ -294,7 +294,7 @@ function signInstalledPlugin(destDir: string, keys: SigningKeys): string {
 }
 
 /** Re-sign the INSTALLED fixture with the SAME per-instance key after a
- * mid-test edit — the exact-file-set check makes a stale signature `invalid`,
+ * mid-test edit - the exact-file-set check makes a stale signature `invalid`,
  * and a NEW key would be an identity change (force-disable at next refresh). */
 export function resignFixture(seeded: SeededEnv): void {
 	signPluginDir(pluginDestDir(seeded.demoDir), seeded.signingKeys);
@@ -316,7 +316,7 @@ function seedTrustedKey(demoDir: string, publicKeyB64: string): void {
  * trusted) sign it and register its key in the trusted set.
  *
  * `untrusted: true` signs with a STRANGER key that is NOT seeded into
- * pluginTrustedKeys — a signed-but-untrusted plugin, which the Option-B gate
+ * pluginTrustedKeys - a signed-but-untrusted plugin, which the Option-B gate
  * must treat exactly like an unsigned one (never runs code). Stronger than
  * leaving it unsigned: proves untrusted ≠ unsigned both never run.
  */
@@ -361,7 +361,7 @@ export function cleanup(seeded: SeededEnv): void {
 // <userData>/plugin-authorization.bin and anchors its freshness in the OS
 // credential store under service 'com.maestro.plugin-authorization'. In demo
 // mode the account is scoped per demo dir ('freshness:<sha256(demoDir)[:16]>')
-// so isolated e2e instances never touch the developer's real anchor slot —
+// so isolated e2e instances never touch the developer's real anchor slot -
 // which is also what makes DELETING the anchor (scenario: lost/corrupt
 // keyring) safe to exercise here.
 // ---------------------------------------------------------------------------
@@ -403,7 +403,7 @@ export function readAnchor(seeded: SeededEnv): string | null {
 	}
 }
 
-/** Delete this demo instance's freshness anchor — simulates a lost/corrupt
+/** Delete this demo instance's freshness anchor - simulates a lost/corrupt
  * OS keyring entry while the sealed ledger file still exists on disk. */
 export function deleteAnchor(seeded: SeededEnv): boolean {
 	try {
@@ -419,7 +419,7 @@ export function deleteAnchor(seeded: SeededEnv): boolean {
  * closed (whether the mint succeeded or was rejected, e.g. on a conflict).
  *
  * Act verbs (agents:dispatch / process:spawn) render in the SEPARATE high-risk
- * section, default UNCHECKED, on the `.cap-check-high-risk` channel — a plain
+ * section, default UNCHECKED, on the `.cap-check-high-risk` channel - a plain
  * approve leaves them ungranted. Pass `highRisk` to opt them in, and
  * `unattended` (subset of `highRisk`) to also check the nested no-user-present
  * consent, which is disabled until its parent act-verb row is checked.

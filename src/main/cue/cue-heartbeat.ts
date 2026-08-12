@@ -15,7 +15,7 @@ export const HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
 
 /**
  * Report to Sentry after this many consecutive heartbeat write failures. Tuned
- * so transient DB locks (WAL-busy, macOS sleep-wake races) don't spam — but a
+ * so transient DB locks (WAL-busy, macOS sleep-wake races) don't spam - but a
  * persistent failure surfaces within ~90 seconds.
  */
 export const HEARTBEAT_FAILURE_REPORT_THRESHOLD = 3;
@@ -98,7 +98,7 @@ export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => vo
 					hooks.onFailure?.({ type: 'heartbeatFailure', consecutiveFailures });
 				}
 			} else {
-				// Unexpected shape — surface immediately, but deduplicate by error
+				// Unexpected shape - surface immediately, but deduplicate by error
 				// signature within a single failure streak to avoid a Sentry storm.
 				// Each distinct signature gets one Sentry event (Set tracks reported ones).
 				// hooks.onFailure fires at most once per streak (onFailureEmitted gate).
@@ -133,7 +133,7 @@ export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => vo
 			clearInterval(heartbeatInterval);
 			heartbeatInterval = null;
 		}
-		// Counter resets on stop so a subsequent start() gets a fresh window —
+		// Counter resets on stop so a subsequent start() gets a fresh window -
 		// matches the engine re-enable semantics elsewhere in the codebase.
 		consecutiveFailures = 0;
 		reportedUnknownSignatures = new Set<string>();

@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { MainPanelContent } from '../../../../renderer/components/MainPanel/MainPanelContent';
 import type { Session, Theme, AITab, FilePreviewTab } from '../../../../renderer/types';
 
@@ -26,16 +26,31 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	),
 }));
 
+// Pane-focus plumbing: `paneFocusRequest` is the one-shot leaf id the tiling
+// shortcuts publish, and the component is expected to consume (clear) it and put
+// DOM focus in that pane. Held in hoisted state so a test can seed a request
+// before render and assert on the store calls the effect makes.
+const uiState = vi.hoisted(() => ({
+	paneFocusRequest: null as string | null,
+	clearPaneFocusRequest: vi.fn(),
+	setActiveFocus: vi.fn(),
+}));
 vi.mock('../../../../renderer/stores/uiStore', () => ({
 	useUIStore: Object.assign(
 		vi.fn((selector) =>
-			selector({ activeFocus: 'main', outputSearchOpen: false, outputSearchQuery: '' })
+			selector({
+				activeFocus: 'main',
+				outputSearchOpen: false,
+				outputSearchQuery: '',
+				paneFocusRequest: uiState.paneFocusRequest,
+			})
 		),
 		{
 			getState: () => ({
 				setOutputSearchOpen: vi.fn(),
 				setOutputSearchQuery: vi.fn(),
-				setActiveFocus: vi.fn(),
+				setActiveFocus: uiState.setActiveFocus,
+				clearPaneFocusRequest: uiState.clearPaneFocusRequest,
 			}),
 		}
 	),
@@ -83,13 +98,23 @@ vi.mock('../../../../renderer/components/MainPanel/BrowserTabView', () => ({
 		}),
 }));
 
-vi.mock('../../../../renderer/components/TerminalView', () => {
-	const TerminalView = React.forwardRef((props: any, ref: any) =>
-		React.createElement('div', {
+// The real TerminalView publishes a TerminalViewHandle into `terminalViewRefs`
+// via its ref. The mock must do the same (not hand back a bare DOM node) or
+// MainPanelContent's ref callback overwrites the map entry and the pane-focus
+// lookup finds an element with no focusTerminal method.
+const terminalHandle = vi.hoisted(() => ({
+	focusTerminal: vi.fn(),
+	focusActiveTerminal: vi.fn(),
+	clearActiveTerminal: vi.fn(),
+}));
+vi.mock('../../../../renderer/components/TerminalView', async () => {
+	const ReactMod = (await import('react')).default;
+	const TerminalView = ReactMod.forwardRef((props: any, ref: any) => {
+		ReactMod.useImperativeHandle(ref, () => terminalHandle, []);
+		return ReactMod.createElement('div', {
 			'data-testid': `terminal-view-${props.session.id}`,
-			ref,
-		})
-	);
+		});
+	});
 	TerminalView.displayName = 'TerminalView';
 	return {
 		TerminalView,
@@ -183,6 +208,7 @@ describe('MainPanelContent', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		layerState.count = 0;
+		uiState.paneFocusRequest = null;
 	});
 
 	it('renders TerminalOutput in AI mode', () => {
@@ -224,6 +250,52 @@ describe('MainPanelContent', () => {
 		render(<MainPanelContent {...props} />);
 		// FilePreview is lazy-loaded behind a Suspense boundary, so it resolves
 		// asynchronously - await it rather than asserting synchronously.
+		expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
+	});
+
+	it('sends a media tab straight to the player, skipping FilePreview', async () => {
+		const props = makeDefaultProps();
+		props.activeFileTabId = 'file-1';
+		props.activeFileTab = {
+			id: 'file-1',
+			name: 'podcast',
+			extension: '.mp3',
+			content: 'maestro-media://stream/tok3n/2f746573742f706f64636173742e6d7033',
+			path: '/test/podcast.mp3',
+			editMode: false,
+		} as FilePreviewTab;
+		props.memoizedFilePreviewFile = {
+			name: 'podcast.mp3',
+			content: 'maestro-media://stream/tok3n/2f746573742f706f64636173742e6d7033',
+			path: '/test/podcast.mp3',
+		};
+		const { container } = render(<MainPanelContent {...props} />);
+
+		// The slot the app-level player docks into, rendered as the whole panel.
+		expect(container.querySelector('[data-media-slot="file-1"]')).toBeInTheDocument();
+		// No filename header, no size/modified strip - a player is not a document.
+		expect(screen.queryByTestId('file-preview')).not.toBeInTheDocument();
+	});
+
+	it('still previews a remote media file, which has no playable stream', async () => {
+		// Only local files get a maestro-media:// URL, so a remote .mp3 keeps the
+		// binary "download and open externally" path inside FilePreview.
+		const props = makeDefaultProps();
+		props.activeFileTabId = 'file-1';
+		props.activeFileTab = {
+			id: 'file-1',
+			name: 'podcast',
+			extension: '.mp3',
+			content: '<binary>',
+			path: '/test/podcast.mp3',
+			editMode: false,
+		} as FilePreviewTab;
+		props.memoizedFilePreviewFile = {
+			name: 'podcast.mp3',
+			content: '<binary>',
+			path: '/test/podcast.mp3',
+		};
+		render(<MainPanelContent {...props} />);
 		expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
 	});
 
@@ -336,5 +408,125 @@ describe('MainPanelContent', () => {
 	it('renders data-tour attribute on input area', () => {
 		const { container } = render(<MainPanelContent {...makeDefaultProps()} />);
 		expect(container.querySelector('[data-tour="input-area"]')).toBeInTheDocument();
+	});
+});
+
+// Switching tiles with a keyboard shortcut must carry the CARET, not just the
+// focus ring: the tiling shortcuts publish a one-shot `paneFocusRequest` (leaf
+// id) and MainPanelContent routes DOM focus into that pane's real input.
+describe('MainPanelContent tiled pane focus routing', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+		layerState.count = 0;
+		uiState.paneFocusRequest = null;
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	const GROUP_ID = 'group-1';
+
+	/** A two-pane group: leaf-term (terminal) beside leaf-ai (AI). */
+	function makeGroupSession(): Session {
+		return makeSession({
+			terminalTabs: [{ id: 'term-1', name: null }],
+			activeGroupId: GROUP_ID,
+			tabGroups: [
+				{
+					id: GROUP_ID,
+					name: 'Group',
+					focusedPaneId: 'leaf-term',
+					createdAt: 0,
+					layout: {
+						kind: 'split',
+						id: 'split-1',
+						direction: 'row',
+						sizes: [0.5, 0.5],
+						children: [
+							{ kind: 'leaf', id: 'leaf-term', tab: { type: 'terminal', id: 'term-1' } },
+							{ kind: 'leaf', id: 'leaf-ai', tab: { type: 'ai', id: 'tab-1' } },
+						],
+					},
+				},
+			],
+		} as Partial<Session>);
+	}
+
+	function renderWithRequest(leafId: string | null) {
+		const inputFocus = vi.fn();
+		uiState.paneFocusRequest = leafId;
+
+		const session = makeGroupSession();
+		const props = makeDefaultProps();
+		props.activeSession = session;
+		// Mount the TerminalView so it publishes its handle into terminalViewRefs,
+		// exactly as it does in the app.
+		props.mountedTerminalSessionIds = ['session-1'];
+		props.mountedTerminalSessionsRef = { current: new Map([['session-1', session]]) } as any;
+		props.inputRef = { current: { focus: inputFocus } } as any;
+
+		render(<MainPanelContent {...props} />);
+		return { focusTerminal: terminalHandle.focusTerminal, inputFocus };
+	}
+
+	it('focuses the requested terminal pane by TAB id', () => {
+		const { focusTerminal, inputFocus } = renderWithRequest('leaf-term');
+
+		act(() => {
+			vi.runAllTimers();
+		});
+
+		// By tab id, not the leaf id - and never the AI input.
+		expect(focusTerminal).toHaveBeenCalledWith('term-1');
+		expect(inputFocus).not.toHaveBeenCalled();
+	});
+
+	it('focuses the chat input when the requested pane is an AI tile', () => {
+		const { focusTerminal, inputFocus } = renderWithRequest('leaf-ai');
+
+		act(() => {
+			vi.runAllTimers();
+		});
+
+		expect(inputFocus).toHaveBeenCalled();
+		expect(focusTerminal).not.toHaveBeenCalled();
+	});
+
+	it('does nothing when no focus has been requested', () => {
+		const { focusTerminal, inputFocus } = renderWithRequest(null);
+
+		act(() => {
+			vi.runAllTimers();
+		});
+
+		expect(focusTerminal).not.toHaveBeenCalled();
+		expect(inputFocus).not.toHaveBeenCalled();
+		expect(uiState.clearPaneFocusRequest).not.toHaveBeenCalled();
+	});
+
+	it('consumes the request so a later remount cannot re-steal focus', () => {
+		renderWithRequest('leaf-term');
+
+		expect(uiState.clearPaneFocusRequest).toHaveBeenCalled();
+	});
+
+	it('clears a request that points at a pane which no longer exists', () => {
+		const { focusTerminal, inputFocus } = renderWithRequest('leaf-gone');
+
+		act(() => {
+			vi.runAllTimers();
+		});
+
+		expect(uiState.clearPaneFocusRequest).toHaveBeenCalled();
+		expect(focusTerminal).not.toHaveBeenCalled();
+		expect(inputFocus).not.toHaveBeenCalled();
+	});
+
+	it('returns activeFocus to the main panel (pane shortcuts are not gated on it)', () => {
+		renderWithRequest('leaf-term');
+
+		expect(uiState.setActiveFocus).toHaveBeenCalledWith('main');
 	});
 });

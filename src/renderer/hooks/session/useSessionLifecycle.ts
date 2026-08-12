@@ -1,5 +1,5 @@
 /**
- * useSessionLifecycle — extracted from App.tsx (Phase 2H)
+ * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
  * Owns session operation callbacks and session-level effects:
  *   - handleSaveEditAgent: persist agent config changes
@@ -100,7 +100,9 @@ export interface SessionLifecycleReturn {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[]
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited'
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -127,7 +129,8 @@ const selectRenameTabId = (s: ReturnType<typeof useModalStore.getState>) =>
 const selectGroups = (s: ReturnType<typeof useSessionStore.getState>) => s.groups;
 const selectInitialLoadComplete = (s: ReturnType<typeof useSessionStore.getState>) =>
 	s.initialLoadComplete;
-const selectActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) => s.activeSessionId;
+const selectResolvedActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) =>
+	selectActiveSession(s)?.id;
 
 // ============================================================================
 // Hook
@@ -137,11 +140,19 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const { flushSessionPersistence, setRemovedWorktreePaths, pushNavigation } = deps;
 
 	// --- Store subscriptions ---
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Rename handlers resolve via getState(); nav tracking
+	// uses narrow focus fields only.
 	const renameTabId = useModalStore(selectRenameTabId);
 	const groups = useSessionStore(selectGroups);
 	const initialLoadComplete = useSessionStore(selectInitialLoadComplete);
-	const activeSessionId = useSessionStore(selectActiveSessionId);
+	const activeSessionId = useSessionStore(selectResolvedActiveSessionId);
+	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
+	const activeFileTabId = useSessionStore((s) => selectActiveSession(s)?.activeFileTabId);
+	const activeBrowserTabId = useSessionStore((s) => selectActiveSession(s)?.activeBrowserTabId);
+	const activeTerminalTabId = useSessionStore((s) => selectActiveSession(s)?.activeTerminalTabId);
+	const activeInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
+	const activeAiTabCount = useSessionStore((s) => selectActiveSession(s)?.aiTabs?.length);
 
 	// ====================================================================
 	// Callbacks
@@ -172,7 +183,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
-			additionalDirectories?: AdditionalDirectory[]
+			additionalDirectories?: AdditionalDirectory[],
+			/** Provenance of `customContextWindow` (finding AD1). */
+			contextWindowSource?: 'user-edited'
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -191,6 +204,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customModel,
 						customEffort,
 						customContextWindow,
+						contextWindowSource,
 						sessionSshRemoteConfig,
 						enableMaestroP,
 						maestroPPath,
@@ -229,6 +243,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							customModel: undefined,
 							customEffort: undefined,
 							customContextWindow: undefined,
+							// Provenance describes the value cleared above, so it must not
+							// outlive it: a stale 'user-edited' would make the new
+							// provider's window look deliberate (finding AD1).
+							contextWindowSource: undefined,
 							enableMaestroP: undefined,
 							maestroPPath: undefined,
 							maestroPMode: undefined,
@@ -245,7 +263,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 						// Kill the existing AI process for this session
 						window.maestro.process.kill(`${sessionId}-ai`).catch(() => {
-							// Process may not exist — that's fine
+							// Process may not exist - that's fine
 						});
 					}
 
@@ -258,6 +276,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 	const handleRenameTab = useCallback(
 		(newName: string) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession || !renameTabId) return;
 
 			// If this is a tiled tab group, rename the group. Resolve the auto-name
@@ -405,10 +424,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				})
 			);
 		},
-		[activeSession, renameTabId]
+		[renameTabId]
 	);
 
 	const handleAutoNameTab = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession || !renameTabId) return;
 
 		const tab = activeSession.aiTabs.find((t) => t.id === renameTabId);
@@ -463,7 +483,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			})
 		);
 
-		// Fire and forget — generate name via ephemeral agent
+		// Fire and forget - generate name via ephemeral agent
 		window.maestro.tabNaming
 			.generateTabName({
 				userMessage: summary,
@@ -521,7 +541,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					})
 				);
 			});
-	}, [activeSession, renameTabId]);
+	}, [renameTabId]);
 
 	const performDeleteSession = useCallback(
 		async (session: Session, eraseWorkingDirectory: boolean) => {
@@ -547,7 +567,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				});
 			}
 
-			// Kill terminal tab PTYs — each tab has its own PTY with ID {sessionId}-terminal-{tabId}
+			// Kill terminal tab PTYs - each tab has its own PTY with ID {sessionId}-terminal-{tabId}
 			for (const tab of session.terminalTabs || []) {
 				try {
 					await window.maestro.process.kill(getTerminalSessionId(id, tab.id));
@@ -611,7 +631,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const toggleTabStar = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
-		// Star toggle only applies when an AI tab is the visible view — not when a
+		// Star toggle only applies when an AI tab is the visible view - not when a
 		// terminal, file preview, or browser tab is focused.
 		if (session.inputMode !== 'ai' || session.activeFileTabId || session.activeBrowserTabId) {
 			return;
@@ -657,7 +677,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const { showUnreadOnly } = useUIStore.getState();
 
 		if (!showUnreadOnly) {
-			// Entering filter mode: save current active tab (only if in AI mode —
+			// Entering filter mode: save current active tab (only if in AI mode -
 			// if the user is on a terminal/file tab we shouldn't force an AI restore on exit)
 			const wasAiMode =
 				session?.inputMode === 'ai' && !session?.activeTerminalTabId && !session?.activeFileTabId;
@@ -701,7 +721,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		// Group chat navigation takes precedence when a group chat is open
 		if (activeGroupChatId) {
 			pushNavigation({ groupChatId: activeGroupChatId });
-		} else if (activeSession) {
+		} else {
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			if (!activeSession) return;
 			// Resolve the active tab across all kinds using the same priority as
 			// findActiveUnifiedTabIndex (terminal > file > browser > ai) so the
 			// breadcrumb tracks whichever tab the user actually sees.
@@ -710,12 +732,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		}
 	}, [
 		activeSessionId,
-		activeSession?.activeTabId,
-		activeSession?.activeFileTabId,
-		activeSession?.activeBrowserTabId,
-		activeSession?.activeTerminalTabId,
-		activeSession?.inputMode,
-		activeSession?.aiTabs?.length,
+		activeTabId,
+		activeFileTabId,
+		activeBrowserTabId,
+		activeTerminalTabId,
+		activeInputMode,
+		activeAiTabCount,
 		activeGroupChatId,
 	]);
 

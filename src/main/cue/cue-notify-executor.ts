@@ -1,5 +1,5 @@
 /**
- * Cue Notify Executor — runs an `action: notify` subscription.
+ * Cue Notify Executor - runs an `action: notify` subscription.
  *
  * Notify subscriptions surface a toast through the owning agent instead of
  * spawning a process. The bridge ({@link emitCueNotifyToast}) reuses the same
@@ -9,7 +9,7 @@
  *
  * The executor synthesizes a `completed` {@link CueRunResult} so the same
  * terminal-status pipeline runs (history entry, chain propagation, `time.once`
- * self-destruct). The toast send is fire-and-forget at the IPC layer — a
+ * self-destruct). The toast send is fire-and-forget at the IPC layer - a
  * dropped send logs a warning but never fails the run, mirroring the bridge's
  * advisory contract.
  */
@@ -24,15 +24,15 @@ export interface CueNotifyExecutionConfig {
 	session: SessionInfo;
 	subscription: CueSubscription;
 	event: CueEvent;
-	/** Owning agent id — receives the toast and is the jump target on click. */
+	/** Owning agent id - receives the toast and is the jump target on click. */
 	agentId: string;
 	/** Pre-resolved toast body (after the message fallback chain). */
 	message: string;
-	/** Sticky toast — disables auto-dismiss, requires explicit click-to-close. */
+	/** Sticky toast - disables auto-dismiss, requires explicit click-to-close. */
 	sticky?: boolean;
 	/** Override the default click intent (defaults to jump-session for the agent). */
 	clickAction?: CueNotifyClickAction;
-	/** Toast title — typically the agent display name. */
+	/** Toast title - typically the agent display name. */
 	title: string;
 	mainWindow: BrowserWindow | null;
 	onLog: (level: string, message: string) => void;
@@ -40,7 +40,7 @@ export interface CueNotifyExecutionConfig {
 
 /**
  * Execute a Cue-triggered notify action. Emits a toast via the bridge and
- * returns a synthesized `completed` `CueRunResult`. Never throws — toast send
+ * returns a synthesized `completed` `CueRunResult`. Never throws - toast send
  * failures degrade to a warning log so the completion path still runs (and
  * `time.once` notify subs self-destruct on the first attempt regardless).
  */
@@ -71,13 +71,13 @@ export async function executeCueNotify(config: CueNotifyExecutionConfig): Promis
 		subscriptionName: subscription.name,
 		pipelineName: subscription.pipeline_name,
 		event,
-		// Notify is advisory — even when the renderer is unavailable we report
+		// Notify is advisory - even when the renderer is unavailable we report
 		// `completed` so the terminal-status pipeline (history, self-destruct,
 		// chain propagation) runs. The warn log from the bridge captures the
 		// drop for triage.
 		status: 'completed',
 		stdout: message,
-		stderr: sent ? '' : 'mainWindow unavailable — toast not delivered',
+		stderr: sent ? '' : 'mainWindow unavailable - toast not delivered',
 		exitCode: 0,
 		durationMs: 0,
 		startedAt,

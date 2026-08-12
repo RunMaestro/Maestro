@@ -20,7 +20,7 @@ import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutHint } from './ShortcutHint';
 
 /**
  * Props for the FileTab component.
@@ -68,7 +68,7 @@ export interface FileTabProps {
 	colorBlindMode?: boolean;
 	/** Shortcut hint badge number (1-9 for Cmd+1-9, 0 for Cmd+0/last tab) */
 	shortcutHint?: number | null;
-	/** True when the owning agent is running on an SSH remote — hides local-only OS actions */
+	/** True when the owning agent is running on an SSH remote - hides local-only OS actions */
 	sshRemote?: boolean;
 	/**
 	 * Disambiguated label to show instead of the bare filename, e.g. `ioc/service`
@@ -141,15 +141,6 @@ export const FileTab = memo(function FileTab({
 	} = useTabHoverOverlay({ registerRef });
 
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
-
-	const ShortcutHint = ({ keys }: { keys: string[] }) => (
-		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
-			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-		>
-			{formatShortcutKeys(keys)}
-		</span>
-	);
 
 	// Event handlers using stable tabId to avoid inline closure captures
 	const handleMouseDown = useCallback(
@@ -488,7 +479,7 @@ export const FileTab = memo(function FileTab({
 											<Edit2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 											Rename Tab
 											{tabShortcuts.renameTab && (
-												<ShortcutHint keys={tabShortcuts.renameTab.keys} />
+												<ShortcutHint keys={tabShortcuts.renameTab.keys} theme={theme} />
 											)}
 										</button>
 										<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -526,7 +517,7 @@ export const FileTab = memo(function FileTab({
 									Open in Default App
 								</button>
 
-								{/* Reveal in Finder / Explorer — local-only, hidden over SSH */}
+								{/* Reveal in Finder / Explorer - local-only, hidden over SSH */}
 								{!sshRemote && (
 									<button
 										onClick={handleRevealInFinder}
@@ -553,7 +544,7 @@ export const FileTab = memo(function FileTab({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
 										{tabShortcuts.moveTabToStart && (
-											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -571,7 +562,7 @@ export const FileTab = memo(function FileTab({
 										/>
 										Move to Last Position
 										{tabShortcuts.moveTabToEnd && (
-											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -587,7 +578,9 @@ export const FileTab = memo(function FileTab({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
-									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
+									{tabShortcuts.closeTab && (
+										<ShortcutHint keys={tabShortcuts.closeTab.keys} theme={theme} />
+									)}
 								</button>
 
 								{/* Close Other Tabs */}
@@ -603,7 +596,7 @@ export const FileTab = memo(function FileTab({
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
 										{tabShortcuts.closeOtherTabs && (
-											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -621,7 +614,7 @@ export const FileTab = memo(function FileTab({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
 										{tabShortcuts.closeTabsLeft && (
-											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -644,7 +637,7 @@ export const FileTab = memo(function FileTab({
 										/>
 										Close Tabs to Right
 										{tabShortcuts.closeTabsRight && (
-											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} theme={theme} />
 										)}
 									</button>
 								)}

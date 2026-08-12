@@ -10,11 +10,12 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
+import { isWebContentsAvailable } from '../../utils/safe-send';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 import {
@@ -44,16 +45,34 @@ function cliActivityChanged(
 	prev: SessionCliActivity | null | undefined,
 	curr: SessionCliActivity | null | undefined
 ): boolean {
-	// Existence change (one is null/undefined, the other isn't) — broadcast.
+	// Existence change (one is null/undefined, the other isn't) - broadcast.
 	if (!prev !== !curr) return true;
-	// Both are nullish — no change.
+	// Both are nullish - no change.
 	if (!prev || !curr) return false;
-	// Both present — compare known fields.
+	// Both present - compare known fields.
 	return (
 		prev.playbookId !== curr.playbookId ||
 		prev.playbookName !== curr.playbookName ||
 		prev.startedAt !== curr.startedAt
 	);
+}
+
+/**
+ * Tell every OTHER window that settings changed on disk.
+ *
+ * The settings file watcher deliberately ignores writes the app makes itself
+ * (see stores/write-tracker.ts): echoing a renderer's own write back to it
+ * triggers an async `loadAllSettings()` that overwrites whatever the user is
+ * typing, which is how the Conductor Profile textarea kept losing characters
+ * and snapping the caret to the end. Peer windows still have to hear about it,
+ * so route that here - immediately, and only to windows that did not write.
+ */
+function notifyPeerWindows(senderWebContentsId: number | undefined): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!isWebContentsAvailable(win)) continue;
+		if (win.webContents.id === senderWebContentsId) continue;
+		win.webContents.send('settings:externalChange');
+	}
 }
 
 /**
@@ -70,22 +89,32 @@ export interface PersistenceHandlerDependencies {
 	 * plugin subsystem is absent (emits are then simply skipped).
 	 */
 	emitPluginEvent?: (event: PluginEvent) => void;
+}
+
+/**
+ * Handles exposed by {@link registerPersistenceHandlers} for callers that emit
+ * `session.activated` outside the debounced `setActiveSessionId` flush.
+ */
+export interface PersistenceHandlers {
 	/**
-	 * Broadcast an IPC message to EVERY open window. Used so a settings change
-	 * cascades to all windows in unison: settings are global, so a UI-driven
-	 * edit in one window must reload settings in every other window immediately.
-	 * (The file watcher covers external/CLI edits; this covers in-app edits
-	 * deterministically instead of relying on fs.watch + debounce.)
+	 * Record that a session was activated through a path OTHER than this module's
+	 * debounced flush - specifically the plugin focus verbs in index.ts, which
+	 * emit `session.activated` directly onto the same plugin event bus. Without
+	 * this, the two emit paths keep separate dedupe state: the plugin emits B
+	 * while `flushSessionActivated` still believes the last emitted id is A, so a
+	 * later user navigation back to A is wrongly suppressed and subscribers stay
+	 * stuck on B. Call this AFTER emitting so both paths share one last-emitted id.
 	 */
-	safeSend: (channel: string, ...args: unknown[]) => void;
+	noteSessionActivated: (sessionId: string) => void;
 }
 
 /**
  * Register all persistence-related IPC handlers.
  */
-export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies): void {
-	const { settingsStore, sessionsStore, groupsStore, getWebServer, emitPluginEvent, safeSend } =
-		deps;
+export function registerPersistenceHandlers(
+	deps: PersistenceHandlerDependencies
+): PersistenceHandlers {
+	const { settingsStore, sessionsStore, groupsStore, getWebServer, emitPluginEvent } = deps;
 
 	// PERF: coalesce activeSessionId disk writes.
 	//
@@ -128,6 +157,55 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	// before windows close; the write is synchronous so it completes in-line.
 	app.on('before-quit', flushActiveSessionId);
 
+	// Metadata-only `session.activated` for subscribed plugins (events:subscribe).
+	// Its own debounce, deliberately much shorter than the 400ms disk debounce
+	// above: that one exists to avoid re-serializing the sessions store and is too
+	// slow to feel live in a plugin surface, while emitting on every raw call would
+	// spray events as the user arrow-keys down the Left Bar. Trailing-edge, so a
+	// burst of navigation yields one event for the session actually landed on.
+	const SESSION_ACTIVATED_DEBOUNCE_MS = 100;
+	let pendingActivatedSessionId: string | null = null;
+	let lastEmittedActivatedSessionId: string | null = null;
+	let sessionActivatedTimer: NodeJS.Timeout | null = null;
+
+	const flushSessionActivated = (): void => {
+		sessionActivatedTimer = null;
+		const id = pendingActivatedSessionId;
+		pendingActivatedSessionId = null;
+		if (!id || !emitPluginEvent) return;
+		// Re-focusing the session the plugins were last told about is a no-op.
+		if (id === lastEmittedActivatedSessionId) return;
+		lastEmittedActivatedSessionId = id;
+		emitPluginEvent({
+			topic: 'session.activated',
+			at: new Date().toISOString(),
+			// `tabId` is intentionally omitted: the renderer only reports which
+			// SESSION is focused here, and the stored session record's tab state can
+			// lag the live one. The field stays optional for a future caller that
+			// does know the tab.
+			payload: { sessionId: id },
+		});
+	};
+
+	// Shared dedupe hook for the plugin focus path (see PersistenceHandlers).
+	// The plugin verbs emit `session.activated` themselves, bypassing the flush
+	// above, so they must record the id here or the two paths desync.
+	const noteSessionActivated = (sessionId: string): void => {
+		if (!sessionId) return;
+		lastEmittedActivatedSessionId = sessionId;
+		// Supersede any pending debounced flush: a queued activation for a DIFFERENT
+		// session (e.g. the user navigated to A and its 100ms timer is still armed)
+		// would otherwise fire after this direct plugin emit for B and re-announce
+		// A, leaving subscribers on the wrong session - the same desync class this
+		// hook exists to prevent, just via the timer path. Drop the queued id and
+		// cancel the timer so the direct emit is authoritative.
+		pendingActivatedSessionId = null;
+		if (sessionActivatedTimer) {
+			clearTimeout(sessionActivatedTimer);
+			sessionActivatedTimer = null;
+		}
+	};
+
 	// Settings management
 	ipcMain.handle('settings:get', async (_, key: string) => {
 		const value = settingsStore.get(key);
@@ -135,11 +213,11 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		return value;
 	});
 
-	ipcMain.handle('settings:set', async (_, key: string, value: any) => {
+	ipcMain.handle('settings:set', async (event, key: string, value: any) => {
 		try {
 			settingsStore.set(key, value);
 		} catch (err) {
-			// ENOSPC / ENFILE errors are transient disk issues — log and return false
+			// ENOSPC / ENFILE errors are transient disk issues - log and return false
 			// so the renderer doesn't see an unhandled rejection.
 			const code = (err as NodeJS.ErrnoException).code;
 			logger.warn(
@@ -152,12 +230,10 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 
 		// Settings are global: cascade this change to every OTHER window so all
 		// windows stay in unison (e.g. a theme switch applies everywhere at once).
-		// The originating renderer already updated its own store optimistically, so
-		// a reload there is a harmless no-op (shallow compare); broadcasting to all
-		// is simpler and matches the app-wide safeSend pattern. This is the
-		// deterministic in-app path; the settings file watcher handles external
-		// (maestro-cli) edits.
-		safeSend('settings:externalChange');
+		// This is the deterministic in-app path; the settings file watcher handles
+		// external (maestro-cli) edits. The sender is skipped deliberately - see
+		// notifyPeerWindows.
+		notifyPeerWindows(event?.sender?.id);
 
 		const webServer = getWebServer();
 		// Broadcast theme changes to connected web clients
@@ -258,13 +334,20 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
 		activeSessionIdTimer = setTimeout(flushActiveSessionId, ACTIVE_SESSION_ID_DEBOUNCE_MS);
+
+		// Separate, shorter debounce for the plugin event (see flushSessionActivated).
+		if (emitPluginEvent && typeof id === 'string' && id) {
+			pendingActivatedSessionId = id;
+			if (sessionActivatedTimer) clearTimeout(sessionActivatedTimer);
+			sessionActivatedTimer = setTimeout(flushSessionActivated, SESSION_ACTIVATED_DEBOUNCE_MS);
+		}
 	});
 
 	/**
 	 * Incremental session persistence: merge a subset of dirty sessions into
 	 * the existing stored sessions, optionally removing some by id.
 	 *
-	 * This is the preferred path for the renderer's debounced persistence —
+	 * This is the preferred path for the renderer's debounced persistence -
 	 * it avoids cloning + serializing the entire sessions tree on every
 	 * change. `sessions:setAll` remains as the bootstrap path and as a
 	 * fallback when no diff baseline is available.
@@ -379,14 +462,14 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 				sessionsStore.set('sessions', merged);
 			} catch (err) {
 				const code = (err as NodeJS.ErrnoException).code;
-				// Recoverable filesystem errors — the next debounced flush will
+				// Recoverable filesystem errors - the next debounced flush will
 				// retry when conditions improve. Log warn and return false so
 				// the renderer's flush path can mark the write as unconfirmed.
 				if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
 					logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
 					return false;
 				}
-				// Anything else is unexpected — log error and rethrow so
+				// Anything else is unexpected - log error and rethrow so
 				// withIpcErrorLogging surfaces it to Sentry. Per CLAUDE.md
 				// §"Error Handling & Sentry", silent swallows hide bugs from
 				// production telemetry.
@@ -497,7 +580,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		try {
 			sessionsStore.set('sessions', sessions);
 		} catch (err) {
-			// ENOSPC, ENFILE, or JSON serialization failures are recoverable —
+			// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
 			// the next debounced write will succeed when conditions improve.
 			// Log but don't throw so the renderer doesn't see an unhandled rejection.
 			const code = (err as NodeJS.ErrnoException).code;
@@ -545,4 +628,6 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			return [];
 		}
 	});
+
+	return { noteSessionActivated };
 }

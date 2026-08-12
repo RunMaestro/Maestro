@@ -15,11 +15,20 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { runClaudeMock, runCodexMock, loggerInfoMock, loggerWarnMock } = vi.hoisted(() => ({
+const {
+	runClaudeMock,
+	runCodexMock,
+	loggerInfoMock,
+	loggerWarnMock,
+	claudeSnapshotsMock,
+	codexSnapshotsMock,
+} = vi.hoisted(() => ({
 	runClaudeMock: vi.fn(),
 	runCodexMock: vi.fn(),
 	loggerInfoMock: vi.fn(),
 	loggerWarnMock: vi.fn(),
+	claudeSnapshotsMock: vi.fn(),
+	codexSnapshotsMock: vi.fn(),
 }));
 
 vi.mock('../../../main/agents/claude-usage-startup', () => ({
@@ -28,6 +37,15 @@ vi.mock('../../../main/agents/claude-usage-startup', () => ({
 
 vi.mock('../../../main/agents/codex-usage-startup', () => ({
 	runCodexUsageSampling: runCodexMock,
+}));
+
+// Snapshot stores are electron-store backed; the warm-up path only reads them.
+vi.mock('../../../main/stores/claudeUsageStore', () => ({
+	getAllSnapshots: claudeSnapshotsMock,
+}));
+
+vi.mock('../../../main/stores/codexUsageStore', () => ({
+	getAllCodexUsageSnapshots: codexSnapshotsMock,
 }));
 
 vi.mock('../../../main/utils/logger', () => ({
@@ -91,6 +109,8 @@ describe('UsageRefreshScheduler', () => {
 		runCodexMock.mockReset().mockResolvedValue(undefined);
 		loggerInfoMock.mockReset();
 		loggerWarnMock.mockReset();
+		claudeSnapshotsMock.mockReset().mockReturnValue({});
+		codexSnapshotsMock.mockReset().mockReturnValue({});
 	});
 
 	afterEach(() => {
@@ -217,6 +237,110 @@ describe('UsageRefreshScheduler', () => {
 		await vi.advanceTimersByTimeAsync(MIN_INTERVAL_MS);
 		expect(runClaudeMock).toHaveBeenCalledTimes(2);
 		scheduler.stop();
+	});
+
+	describe('warmUp()', () => {
+		const usefulClaudeSnapshot = {
+			claude: {
+				sampledAt: new Date(0).toISOString(),
+				configDirKey: '/home/u/.claude',
+				authState: 'authenticated',
+				session: { percent: 12, resetsAt: '2026-01-01T00:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-01-05T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 8, resetsAt: '2026-01-05T00:00:00.000Z' },
+			},
+		};
+		const usefulCodexSnapshot = {
+			codex: {
+				sampledAt: new Date(0).toISOString(),
+				codexHomeKey: '/home/u/.codex',
+				authState: 'authenticated',
+				session: { percent: 40, resetsAt: '2026-01-01T00:00:00.000Z' },
+			},
+		};
+
+		it('samples both providers when neither has a usable snapshot', async () => {
+			const s = makeSettingsStore({});
+			const scheduler = new UsageRefreshScheduler(makeDeps(s.store));
+
+			await scheduler.warmUp();
+
+			expect(runClaudeMock).toHaveBeenCalledTimes(1);
+			expect(runClaudeMock.mock.calls[0][0]).toMatchObject({ mode: 'manual' });
+			expect(runCodexMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('samples only the cold provider', async () => {
+			claudeSnapshotsMock.mockReturnValue(usefulClaudeSnapshot);
+			const s = makeSettingsStore({});
+			const scheduler = new UsageRefreshScheduler(makeDeps(s.store));
+
+			await scheduler.warmUp();
+
+			expect(runClaudeMock).not.toHaveBeenCalled();
+			expect(runCodexMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('no-ops when both providers already have usable snapshots', async () => {
+			claudeSnapshotsMock.mockReturnValue(usefulClaudeSnapshot);
+			codexSnapshotsMock.mockReturnValue(usefulCodexSnapshot);
+			const s = makeSettingsStore({});
+			const scheduler = new UsageRefreshScheduler(makeDeps(s.store));
+
+			await scheduler.warmUp();
+
+			expect(runClaudeMock).not.toHaveBeenCalled();
+			expect(runCodexMock).not.toHaveBeenCalled();
+		});
+
+		it('treats an unauthenticated/empty snapshot as cold', async () => {
+			claudeSnapshotsMock.mockReturnValue({
+				claude: { ...usefulClaudeSnapshot.claude, authState: 'unauthenticated' },
+			});
+			codexSnapshotsMock.mockReturnValue({
+				codex: { sampledAt: '', codexHomeKey: '/home/u/.codex', authState: 'missing_auth' },
+			});
+			const s = makeSettingsStore({});
+			const scheduler = new UsageRefreshScheduler(makeDeps(s.store));
+
+			await scheduler.warmUp();
+
+			expect(runClaudeMock).toHaveBeenCalledTimes(1);
+			expect(runCodexMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not throw when a sampler fails', async () => {
+			runClaudeMock.mockRejectedValueOnce(new Error('boom'));
+			const s = makeSettingsStore({});
+			const scheduler = new UsageRefreshScheduler(makeDeps(s.store));
+
+			await expect(scheduler.warmUp()).resolves.toBeUndefined();
+			expect(loggerWarnMock).toHaveBeenCalled();
+		});
+
+		it('does not stack with an in-flight scheduled tick', async () => {
+			let resolveSample: (() => void) | undefined;
+			runClaudeMock.mockImplementation(
+				() =>
+					new Promise<void>((resolve) => {
+						resolveSample = resolve;
+					})
+			);
+			const s = makeSettingsStore({ 'claude-code': MIN_INTERVAL_MS });
+			const scheduler = new UsageRefreshScheduler(makeDeps(s.store));
+			scheduler.start();
+
+			await vi.advanceTimersByTimeAsync(MIN_INTERVAL_MS);
+			expect(runClaudeMock).toHaveBeenCalledTimes(1);
+
+			// Warm-up while that sample is still running must be skipped, not queued.
+			void scheduler.warmUp();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(runClaudeMock).toHaveBeenCalledTimes(1);
+
+			resolveSample?.();
+			scheduler.stop();
+		});
 	});
 
 	it('stop() clears timers and unsubscribes from settings changes', async () => {

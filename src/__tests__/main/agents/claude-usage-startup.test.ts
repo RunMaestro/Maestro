@@ -527,7 +527,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 		it('skips sessions with no explicit CLAUDE_CONFIG_DIR (no default fallback)', async () => {
 			// User's directive: never sample a "guessed" account. If neither
 			// the session nor the agent sets CLAUDE_CONFIG_DIR, claude would
-			// inherit the host default (~/.claude) — but that default may not
+			// inherit the host default (~/.claude) - but that default may not
 			// match the user's Keychain tokens and would trigger an OAuth
 			// browser prompt. Better to skip than to pop a browser.
 			sampleUsageMock.mockResolvedValue(makeSnapshot({ configDirKey: '/Users/test/.claude' }));
@@ -858,7 +858,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 		it('samples agent-level CLAUDE_CONFIG_DIR when sessions inherit it', async () => {
 			// User has set a project-wide CLAUDE_CONFIG_DIR on the claude-code
 			// agent. Sessions that don't override it inherit. We sample with the
-			// agent-level value — that's explicit configuration.
+			// agent-level value - that's explicit configuration.
 			sampleUsageMock.mockResolvedValue(
 				makeSnapshot({ configDirKey: '/Users/test/.claude-agent' })
 			);

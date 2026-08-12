@@ -23,6 +23,11 @@ describe('modalSizing', () => {
 		expect(normalizeModalSize({ width: '400', height: 300 })).toBeNull();
 	});
 
+	it('rejects fractional dimensions that round down to zero', () => {
+		expect(normalizeModalSize({ width: 0.1, height: 0.1 })).toBeNull();
+		expect(normalizeModalSize({ width: 0.4, height: 400 })).toBeNull();
+	});
+
 	it('sanitizes a persisted modal size map', () => {
 		expect(
 			sanitizeModalSizes({

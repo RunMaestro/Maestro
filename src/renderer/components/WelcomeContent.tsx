@@ -60,7 +60,7 @@ export function WelcomeContent({
 						<strong style={{ color: theme.colors.textMain }}>
 							Manage multiple AI agents in parallel
 						</strong>{' '}
-						— Run several coding assistants simultaneously, each in their own session, switching
+						- Run several coding assistants simultaneously, each in their own session, switching
 						between them effortlessly.
 					</p>
 				</div>
@@ -79,7 +79,7 @@ export function WelcomeContent({
 						<strong style={{ color: theme.colors.textMain }}>
 							Enable unattended automation via Auto Run
 						</strong>{' '}
-						— Queue up task lists in markdown documents and let your agents execute them while you
+						- Queue up task lists in markdown documents and let your agents execute them while you
 						step away.
 					</p>
 				</div>

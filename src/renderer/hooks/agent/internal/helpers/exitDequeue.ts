@@ -27,7 +27,7 @@ export function chooseNextQueuedItem(
 	session: Pick<Session, 'executionQueue' | 'state' | 'agentError' | 'aiTabs'>,
 	exitingTabId: string | undefined
 ): QueueDecision {
-	// Paused items are held by the user — skip them and run the first runnable
+	// Paused items are held by the user - skip them and run the first runnable
 	// item. If everything is held (or the queue is empty), there's nothing to do.
 	const nextItem = nextRunnableQueueItem(session.executionQueue);
 	if (!nextItem) {

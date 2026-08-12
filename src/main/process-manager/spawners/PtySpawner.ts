@@ -49,7 +49,7 @@ export class PtySpawner {
 
 			if (isTerminal) {
 				if (!shell) {
-					// No shell specified — use the explicit command/args directly (e.g. ssh for remote terminals)
+					// No shell specified - use the explicit command/args directly (e.g. ssh for remote terminals)
 					ptyCommand = command;
 					ptyArgs = args;
 				} else {
@@ -133,7 +133,7 @@ export class PtySpawner {
 				ptyProcess,
 				cwd,
 				pid: ptyProcess.pid,
-				isTerminal: true,
+				isTerminal,
 				startTime: Date.now(),
 				command: ptyCommand,
 				args: ptyArgs,
@@ -156,14 +156,14 @@ export class PtySpawner {
 			// Handle output
 			ptyProcess.onData((data) => {
 				if (isTerminalTab) {
-					// Raw pass-through for xterm.js terminal tabs — no filtering
+					// Raw pass-through for xterm.js terminal tabs - no filtering
 					if (data.length > 0) {
 						logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
 							sessionId,
 							pid: ptyProcess.pid,
 							dataLength: data.length,
 						});
-						this.bufferManager.emitDataBuffered(sessionId, data);
+						this.bufferManager.emitDataBuffered(sessionId, data, managedProcess);
 					}
 				} else {
 					const managedProc = this.processes.get(sessionId);
@@ -175,14 +175,14 @@ export class PtySpawner {
 					});
 					// Only emit if there's actual content after filtering
 					if (cleanedData.trim()) {
-						this.bufferManager.emitDataBuffered(sessionId, cleanedData);
+						this.bufferManager.emitDataBuffered(sessionId, cleanedData, managedProcess);
 					}
 				}
 			});
 
 			ptyProcess.onExit(({ exitCode, signal }) => {
 				// Flush any remaining buffered data before exit
-				this.bufferManager.flushDataBuffer(sessionId);
+				this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
 				logger.debug('[ProcessManager] PTY onExit', 'ProcessManager', {
 					sessionId,
@@ -191,8 +191,10 @@ export class PtySpawner {
 				});
 				// Forward `signal` so consumers can tell a shell the user exited from
 				// one that was killed out from under them (OOM killer, SIGHUP, crash).
+				const currentProcess = this.processes.get(sessionId);
+				if (currentProcess && currentProcess !== managedProcess) return;
+				if (currentProcess === managedProcess) this.processes.delete(sessionId);
 				this.emitter.emit('exit', sessionId, exitCode, signal);
-				this.processes.delete(sessionId);
 			});
 
 			logger.debug('[ProcessManager] PTY process created', 'ProcessManager', {

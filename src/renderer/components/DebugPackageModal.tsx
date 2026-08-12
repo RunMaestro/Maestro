@@ -231,8 +231,9 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 				}}
 			>
 				<p style={{ color: theme.colors.textMain }}>
-					<strong>Privacy:</strong> This package does NOT include your conversations, API keys, or
-					file contents. All paths are sanitized to remove usernames.
+					<strong>Privacy:</strong> This package is safe to attach to a public issue. It does NOT
+					include your conversations, API keys, or file contents, and it carries no username,
+					computer name, file paths, or project names.
 				</p>
 			</div>
 

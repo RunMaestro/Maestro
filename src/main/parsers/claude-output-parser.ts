@@ -35,7 +35,25 @@ interface ClaudeContentBlock {
 	name?: string;
 	id?: string;
 	input?: unknown;
+	// Tool result fields (delivered inside user-role messages)
+	tool_use_id?: string;
+	content?: string | Array<{ type?: string; text?: string }>;
+	is_error?: boolean;
 }
+
+/**
+ * Token usage as Claude reports it, both per API call (on `assistant` messages)
+ * and as the turn total (on `result` messages).
+ */
+interface ClaudeCallUsage {
+	input_tokens?: number;
+	output_tokens?: number;
+	cache_read_input_tokens?: number;
+	cache_creation_input_tokens?: number;
+}
+
+/** Absolute context-occupancy snapshot, in the shape `UsageStats.absoluteUsage` expects. */
+type OccupancySnapshot = NonNullable<NonNullable<ParsedEvent['usage']>['absoluteUsage']>;
 
 /**
  * Raw message structure from Claude Code stream-json output
@@ -44,21 +62,72 @@ interface ClaudeRawMessage {
 	type: string;
 	subtype?: string;
 	session_id?: string;
+	/**
+	 * Set on assistant/user messages produced by a Task subagent; references the
+	 * tool_use id of the Task call that spawned it. Absent on main-transcript
+	 * messages.
+	 */
+	parent_tool_use_id?: string;
 	result?: string;
 	message?: {
 		id?: string;
 		role?: string;
 		content?: string | ClaudeContentBlock[];
+		/**
+		 * Per-call token usage, present on every `assistant` message. This is the
+		 * usage of ONE internal API call, unlike the result message's `modelUsage`
+		 * which is the CLI's own sum across every call of the turn.
+		 */
+		usage?: ClaudeCallUsage;
 	};
 	slash_commands?: string[];
 	modelUsage?: Record<string, ModelStats>;
-	usage?: {
-		input_tokens?: number;
-		output_tokens?: number;
-		cache_read_input_tokens?: number;
-		cache_creation_input_tokens?: number;
-	};
+	usage?: ClaudeCallUsage;
 	total_cost_usd?: number;
+}
+
+/**
+ * Upper bound on outstanding tool_use id -> name entries. Well above any
+ * realistic number of concurrently-running tools; exists purely so a stream
+ * that never delivers results cannot leak memory.
+ */
+const MAX_TOOL_NAME_ENTRIES = 500;
+
+/**
+ * Maximum tool_result output length forwarded over IPC. Tool output can be
+ * megabytes (a full file read); the badge only shows a preview.
+ */
+const MAX_TOOL_OUTPUT_CHARS = 4000;
+
+/**
+ * Flatten a tool_result `content` field into display text.
+ * Claude sends either a plain string or an array of `{ type: 'text', text }`
+ * blocks. Output is truncated to MAX_TOOL_OUTPUT_CHARS.
+ */
+function flattenToolResultContent(content: ClaudeContentBlock['content']): string {
+	let text: string;
+	if (typeof content === 'string') {
+		text = content;
+	} else if (Array.isArray(content)) {
+		text = content
+			.filter((block) => block?.type === 'text' && typeof block.text === 'string')
+			.map((block) => block.text!)
+			.join('');
+	} else {
+		text = '';
+	}
+
+	return text.length > MAX_TOOL_OUTPUT_CHARS ? `${text.slice(0, MAX_TOOL_OUTPUT_CHARS)}...` : text;
+}
+
+/**
+ * Read the top-level `parent_tool_use_id` off a message, normalizing the
+ * non-subagent cases (absent, null, empty string) to undefined so downstream
+ * consumers only ever see a real id.
+ */
+function normalizeParentToolUseId(msg: ClaudeRawMessage): string | undefined {
+	const id = msg.parent_tool_use_id;
+	return typeof id === 'string' && id.length > 0 ? id : undefined;
 }
 
 /**
@@ -68,6 +137,33 @@ interface ClaudeRawMessage {
  */
 export class ClaudeOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'claude-code';
+
+	/**
+	 * Correlates a tool_use id (from an assistant message) with its tool name so
+	 * the matching tool_result (which arrives later, in a user-role message and
+	 * carries no name) can be emitted with the right label. Mirrors the
+	 * `lastToolName` correlation in the Codex parser, but keyed by id since
+	 * Claude runs tools in parallel.
+	 */
+	private readonly toolNamesById = new Map<string, string>();
+
+	/**
+	 * Occupancy snapshot taken from the most recent main-transcript `assistant`
+	 * message of the CURRENT turn, attached to that turn's usage event as
+	 * `absoluteUsage` and cleared at the `result` message (the turn boundary) so
+	 * a snapshot can never leak into the next turn.
+	 *
+	 * Why the LAST call and not the turn total: the result message's `modelUsage`
+	 * is the CLI's own sum across every internal API call of the turn, which is
+	 * token SPEND. A tool-heavy turn therefore reports far more than the window
+	 * holds (a captured two-call turn summed to 49,063 against a real occupancy
+	 * of 24,586), which is what pinned the context gauge at 0% (finding Q1). A
+	 * single call's input is what was physically sent to the model, so it cannot
+	 * exceed the window, and it grows across a turn as each call re-reads the
+	 * prior context from cache - making the last call the end-of-turn occupancy.
+	 * It also tracks auto-compaction correctly, which no accumulated figure can.
+	 */
+	private lastCallOccupancy: OccupancySnapshot | undefined = undefined;
 
 	/**
 	 * Parse a single JSON line from Claude Code output.
@@ -146,11 +242,17 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				event.usage = usage;
 			}
 
+			// The result message ends the turn, so the next turn starts without a
+			// snapshot rather than inheriting this one.
+			this.lastCallOccupancy = undefined;
+
 			return event;
 		}
 
 		// Handle assistant messages (streaming partial responses)
 		if (msg.type === 'assistant') {
+			this.trackCallOccupancy(msg);
+
 			const text = this.extractTextFromMessage(msg);
 			const thinkingText = this.extractThinkingFromMessage(msg);
 			const toolUseBlocks = this.extractToolUseBlocks(msg);
@@ -167,8 +269,19 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				isPartial: true,
 				isReasoning: thinkingText.length > 0 || undefined,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
+				parentToolUseId: normalizeParentToolUseId(msg),
 				raw: msg,
 			};
+		}
+
+		// Handle user messages carrying tool_result blocks. These are how Claude
+		// Code reports tool completion; without them every tool badge would stay
+		// stuck in the "running" state forever.
+		if (msg.type === 'user') {
+			const resultEvent = this.extractToolResultEvent(msg);
+			if (resultEvent) {
+				return resultEvent;
+			}
 		}
 
 		// Handle messages with only usage stats (no content type)
@@ -210,13 +323,92 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return [];
 		}
 
-		return msg.message.content
+		const blocks = msg.message.content
 			.filter((block) => block.type === 'tool_use' && block.name)
 			.map((block) => ({
 				name: block.name!,
 				id: block.id,
 				input: block.input,
 			}));
+
+		for (const block of blocks) {
+			if (block.id) {
+				this.rememberToolName(block.id, block.name);
+			}
+		}
+
+		return blocks;
+	}
+
+	/**
+	 * Record a tool_use id -> name mapping for later tool_result correlation.
+	 * Evicts the oldest entry past MAX_TOOL_NAME_ENTRIES so a long session with
+	 * results we never see cannot grow the map without bound.
+	 */
+	private rememberToolName(id: string, name: string): void {
+		if (this.toolNamesById.size >= MAX_TOOL_NAME_ENTRIES) {
+			const oldest = this.toolNamesById.keys().next();
+			if (!oldest.done) {
+				this.toolNamesById.delete(oldest.value);
+			}
+		}
+		this.toolNamesById.set(id, name);
+	}
+
+	/**
+	 * Build a terminal-state tool_use event from the tool_result blocks in a user
+	 * message. Returns null when the message carries no tool_result blocks
+	 * (ordinary user prompts fall through to the default system event).
+	 *
+	 * Claude Code returns parallel tool calls as several tool_result blocks in a
+	 * single user message. The first result populates the top-level tool_use
+	 * fields; any remaining results ride along in `toolResultBlocks` so
+	 * StdoutHandler can emit a terminal event for every one - otherwise the
+	 * second and later parallel calls would stay stuck in the 'running' state.
+	 */
+	private extractToolResultEvent(msg: ClaudeRawMessage): ParsedEvent | null {
+		if (!msg.message?.content || typeof msg.message.content === 'string') {
+			return null;
+		}
+
+		const blocks = msg.message.content.filter(
+			(candidate) => candidate.type === 'tool_result' && candidate.tool_use_id
+		);
+		if (blocks.length === 0) {
+			return null;
+		}
+
+		const parentToolUseId = normalizeParentToolUseId(msg);
+		const toResult = (block: (typeof blocks)[number]) => {
+			const toolCallId = block.tool_use_id!;
+			// StdoutHandler drops tool_use events without a toolName, so an unknown
+			// id (parser started mid-stream, or the map was evicted) still needs a
+			// label.
+			const toolName = this.toolNamesById.get(toolCallId) || 'Tool';
+			this.toolNamesById.delete(toolCallId);
+			return {
+				toolName,
+				toolCallId,
+				toolState: {
+					status: block.is_error ? ('failed' as const) : ('completed' as const),
+					output: flattenToolResultContent(block.content),
+				},
+			};
+		};
+
+		const [primary, ...rest] = blocks.map(toResult);
+
+		return {
+			type: 'tool_use',
+			toolName: primary.toolName,
+			toolCallId: primary.toolCallId,
+			toolState: primary.toolState,
+			// Extra parallel results (empty for the common single-result case).
+			toolResultBlocks: rest.length ? rest.map((r) => ({ ...r, parentToolUseId })) : undefined,
+			sessionId: msg.session_id,
+			parentToolUseId,
+			raw: msg,
+		};
 	}
 
 	/**
@@ -274,6 +466,34 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Record an `assistant` message's per-call usage as the turn's running
+	 * occupancy snapshot (see `lastCallOccupancy`). Last-wins, which is also what
+	 * makes it idempotent under stream-json's habit of emitting each assistant
+	 * message twice.
+	 *
+	 * Subagent messages are skipped: a Task subagent runs in its own context
+	 * window, so its calls say nothing about the main transcript's occupancy.
+	 */
+	private trackCallOccupancy(msg: ClaudeRawMessage): void {
+		if (normalizeParentToolUseId(msg)) {
+			return;
+		}
+
+		const usage = msg.message?.usage;
+		if (!usage) {
+			return;
+		}
+
+		this.lastCallOccupancy = {
+			inputTokens: usage.input_tokens || 0,
+			outputTokens: usage.output_tokens || 0,
+			cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+			cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+			reasoningTokens: 0,
+		};
+	}
+
+	/**
 	 * Extract usage statistics from raw Claude message
 	 */
 	private extractUsageFromRaw(msg: ClaudeRawMessage): ParsedEvent['usage'] | null {
@@ -294,7 +514,13 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			cacheReadTokens: aggregated.cacheReadInputTokens,
 			cacheCreationTokens: aggregated.cacheCreationInputTokens,
 			contextWindow: aggregated.contextWindow,
+			// The aggregator flags the window as resolved only when a model actually
+			// reported one; the untouched FALLBACK_CONTEXT_WINDOW seed leaves it off.
+			...(aggregated.contextWindowResolved ? { contextWindowReported: true } : {}),
 			costUsd: aggregated.totalCostUsd,
+			// The fields above are the turn's summed SPEND and can exceed the window;
+			// this is the same turn's real occupancy, when the stream gave us one.
+			...(this.lastCallOccupancy ? { absoluteUsage: this.lastCallOccupancy } : {}),
 		};
 	}
 
@@ -428,7 +654,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Structured error event that didn't match a known pattern —
+		// Structured error event that didn't match a known pattern -
 		// still report it rather than silently dropping
 		if (parsedJson) {
 			return {

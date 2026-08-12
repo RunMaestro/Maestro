@@ -1,5 +1,5 @@
 /**
- * useAgentCommandExitListener — registers `window.maestro.process.onCommandExit`
+ * useAgentCommandExitListener - registers `window.maestro.process.onCommandExit`
  *
  * Fires when a shell command spawned via `runCommand` finishes. If any AI
  * tab is still busy the session stays busy (the exit code only governs the

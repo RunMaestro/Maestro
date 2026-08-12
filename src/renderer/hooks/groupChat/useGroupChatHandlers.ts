@@ -1,9 +1,9 @@
 /**
- * useGroupChatHandlers — extracted from App.tsx (Phase 2B)
+ * useGroupChatHandlers - extracted from App.tsx (Phase 2B)
  *
  * Owns all group chat lifecycle callbacks, IPC event listeners,
  * execution queue processing, error recovery, and refs.
- * Reads from Zustand stores directly — no parameters needed.
+ * Reads from Zustand stores directly - no parameters needed.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
@@ -169,7 +169,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 	});
 
 	// =======================================================================
-	// IPC Event Listeners — Global (session-agnostic, registered once)
+	// IPC Event Listeners - Global (session-agnostic, registered once)
 	// =======================================================================
 
 	useEffect(() => {
@@ -320,10 +320,10 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			unsubModeratorSessionId?.();
 			unsubBatchComplete?.();
 		};
-	}, []); // Mount once — global listeners read activeGroupChatId from store at call time
+	}, []); // Mount once - global listeners read activeGroupChatId from store at call time
 
 	// =======================================================================
-	// IPC Event Listeners — Active chat (re-registered on chat switch)
+	// IPC Event Listeners - Active chat (re-registered on chat switch)
 	// =======================================================================
 
 	useEffect(() => {
@@ -582,7 +582,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 						: 'Failed to create group chat',
 				});
 				if (!isValidationError) {
-					throw err; // Unexpected — let Sentry capture via unhandledrejection
+					throw err; // Unexpected - let Sentry capture via unhandledrejection
 				}
 			}
 		},

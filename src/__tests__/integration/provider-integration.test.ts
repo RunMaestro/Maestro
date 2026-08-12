@@ -373,7 +373,7 @@ const PROVIDERS: ProviderConfig[] = [
 		buildInitialArgs: (prompt: string, options?: { images?: string[] }) => {
 			// Codex arg order from process.ts IPC handler:
 			// 1. workingDirArgs: ['-C', dir] (must precede the `exec` subcommand
-			//    because Codex treats `-C` as a root-level global flag — see #959)
+			//    because Codex treats `-C` as a root-level global flag - see #959)
 			// 2. batchModePrefix: ['exec']
 			// 3. base args: [] (empty for Codex)
 			// 4. batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check']
@@ -783,7 +783,7 @@ const PROVIDERS: ProviderConfig[] = [
 			const capabilities = getAgentCapabilities('copilot-cli');
 			if (options?.images && options.images.length > 0 && capabilities.supportsStreamJsonInput) {
 				throw new Error(
-					'Copilot-CLI should not support stream-json input — capability misconfigured'
+					'Copilot-CLI should not support stream-json input - capability misconfigured'
 				);
 			}
 			return ['--allow-all', '--output-format', 'json', '-p', prompt];
@@ -842,7 +842,7 @@ const PROVIDERS: ProviderConfig[] = [
 		},
 		isSuccessful: (output: string, exitCode: number) => {
 			if (exitCode !== 0) return false;
-			// Require a final result event — bare exit 0 with no result means
+			// Require a final result event - bare exit 0 with no result means
 			// the session was interrupted before completion.
 			return output.includes('"type":"result"');
 		},

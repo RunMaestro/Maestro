@@ -86,7 +86,7 @@ Check if `.specify/extensions.yml` exists in the project root.
   - If the hook has no `condition` field, or it is null/empty, treat the hook as executable
   - If the hook defines a non-empty `condition`, skip the hook and leave condition evaluation to the HookExecutor implementation
 - For each executable hook, output the following based on its `optional` flag:
-  - **Mandatory hook** (`optional: false`) — **You MUST emit `EXECUTE_COMMAND:` for each mandatory hook**:
+  - **Mandatory hook** (`optional: false`) - **You MUST emit `EXECUTE_COMMAND:` for each mandatory hook**:
 
     ```
     ## Extension Hooks

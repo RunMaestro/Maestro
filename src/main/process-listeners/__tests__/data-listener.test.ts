@@ -215,7 +215,7 @@ describe('Data Listener', () => {
 		// unknown variant, or a regex tightening rejecting a legacy format),
 		// the data MUST be dropped, NOT forwarded to the regular process:data
 		// channel or the web broadcast path. Otherwise group-chat transcript
-		// bytes leak into the renderer/web-client stream — the suspected root
+		// bytes leak into the renderer/web-client stream - the suspected root
 		// cause of "group chat bled into cue pipeline output".
 		it('drops unrecognized group-chat session data instead of forwarding', () => {
 			// Moderator regex won't match (no "-moderator-" anywhere).

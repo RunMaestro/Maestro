@@ -526,7 +526,7 @@ describe('useSessionCrud', () => {
 			});
 
 			const session = useSessionStore.getState().sessions[0];
-			// New sessions start with only an AI tab — terminal tabs are created on demand
+			// New sessions start with only an AI tab - terminal tabs are created on demand
 			expect(session.unifiedTabOrder).toHaveLength(1);
 			const aiRef = session.unifiedTabOrder.find((r) => r.type === 'ai');
 			const termRef = session.unifiedTabOrder.find((r) => r.type === 'terminal');

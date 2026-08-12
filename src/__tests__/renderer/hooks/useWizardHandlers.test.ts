@@ -2583,7 +2583,7 @@ describe('useWizardHandlers', () => {
 					result.current.handleWizardResume();
 				});
 
-				// restoreState should NOT have been called — no state to restore
+				// restoreState should NOT have been called - no state to restore
 				expect(deps.wizardContext.restoreState).not.toHaveBeenCalled();
 				expect(deps.wizardContext.openWizard).not.toHaveBeenCalled();
 			});

@@ -385,7 +385,7 @@ async function processNextNotification(): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, delayNeeded));
 	}
 
-	// Execute the notification command — resolve the IPC call immediately
+	// Execute the notification command - resolve the IPC call immediately
 	// with the notificationId, then await completion for queue spacing
 	const { response, completed } = executeNotificationCommand(item.text, item.command, item.vars);
 	item.resolve(response);

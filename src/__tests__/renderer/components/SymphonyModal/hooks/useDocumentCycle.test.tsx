@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/hooks/useDocumentCycle — Cmd+Shift+[/] document
+ * Tests for SymphonyModal/hooks/useDocumentCycle - Cmd+Shift+[/] document
  * cycling, wrap behavior, no-op guards, cleanup.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

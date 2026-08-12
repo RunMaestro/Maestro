@@ -1,5 +1,5 @@
 /**
- * PatternPicker — Grid of available Cue YAML patterns for quick start.
+ * PatternPicker - Grid of available Cue YAML patterns for quick start.
  */
 
 import type { CuePattern } from '../../constants/cuePatterns';

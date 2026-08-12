@@ -2,7 +2,6 @@ import { useAITabHandlers } from './internal/useAITabHandlers';
 import { useBrowserTabHandlers } from './internal/useBrowserTabHandlers';
 import { useFilePreviewTabHandlers } from './internal/useFilePreviewTabHandlers';
 import { useScrollLogHandlers } from './internal/useScrollLogHandlers';
-import { useTabDerivedState } from './internal/useTabDerivedState';
 import { useUnifiedTabHandlers } from './internal/useUnifiedTabHandlers';
 import type { TabHandlersReturn } from './internal/types';
 
@@ -10,12 +9,17 @@ export type {
 	CloseCurrentTabResult,
 	FileTabOpenParams,
 	TabHandlersReturn,
+	TabDerivedState,
 	TerminalTabHandlersReturn,
 } from './internal/types';
 export { useTerminalTabHandlers } from './internal/useTerminalTabHandlers';
+export { getTabDerivedState, useTabDerivedState } from './internal/useTabDerivedState';
 
+/**
+ * Tab action callbacks only. Paint/derived tab strip state lives in MainPanel via
+ * {@link getTabDerivedState} so MaestroConsoleInner is not on the chrome equality path.
+ */
 export function useTabHandlers(): TabHandlersReturn {
-	const derivedState = useTabDerivedState();
 	const aiHandlers = useAITabHandlers();
 	const filePreviewHandlers = useFilePreviewTabHandlers();
 	const browserHandlers = useBrowserTabHandlers();
@@ -25,7 +29,6 @@ export function useTabHandlers(): TabHandlersReturn {
 	const scrollLogHandlers = useScrollLogHandlers();
 
 	return {
-		...derivedState,
 		...aiHandlers,
 		...filePreviewHandlers,
 		...browserHandlers,

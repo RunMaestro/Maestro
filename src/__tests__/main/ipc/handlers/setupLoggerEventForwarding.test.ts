@@ -91,7 +91,7 @@ describe('setupLoggerEventForwarding', () => {
 		(logger as unknown as EventEmitter).emit('newLog', { id: 2 });
 		(logger as unknown as EventEmitter).emit('newLog', { id: 3 });
 
-		// Buffer is still pending — no IPC sends yet.
+		// Buffer is still pending - no IPC sends yet.
 		expect(mainWindow.webContents.send).not.toHaveBeenCalled();
 
 		vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
@@ -112,7 +112,7 @@ describe('setupLoggerEventForwarding', () => {
 			(logger as unknown as EventEmitter).emit('newLog', { id: i });
 		}
 
-		// Hit the 100-entry cap — flush must happen synchronously, no timer needed.
+		// Hit the 100-entry cap - flush must happen synchronously, no timer needed.
 		expect(mainWindow.webContents.send).toHaveBeenCalledTimes(1);
 		const [channel, batch] = mainWindow.webContents.send.mock.calls[0];
 		expect(channel).toBe('logger:newLogBatch');

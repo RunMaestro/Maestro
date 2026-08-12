@@ -48,7 +48,7 @@ describe('group-chat/session-parser', () => {
 			});
 
 			it('should return null for non-UUID groupChatId', () => {
-				// Legacy non-UUID groupChatIds are rejected — production ALWAYS
+				// Legacy non-UUID groupChatIds are rejected - production ALWAYS
 				// uses uuidv4() for group-chat IDs, so a non-UUID shape is
 				// either a bug or an adversarial input.
 				expect(
@@ -89,7 +89,7 @@ describe('group-chat/session-parser', () => {
 				// Production never combines a UUID suffix with -recovery (see
 				// group-chat-router.respawnParticipantWithRecovery, which uses
 				// Date.now()). The UUID branch must therefore take the participant
-				// name verbatim — stripping -recovery here would silently truncate
+				// name verbatim - stripping -recovery here would silently truncate
 				// a legitimate name that happens to end with "-recovery".
 				const result = parseParticipantSessionId(
 					`group-chat-${GC_ID}-participant-Claude-recovery-${GC_ID_2}`

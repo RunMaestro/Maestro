@@ -33,6 +33,48 @@
  * // Returns: 'Hello'
  * ```
  */
+/**
+ * Percent-decode a string, falling back to the raw input when the escapes are
+ * malformed.
+ *
+ * `decodeURIComponent` throws `URIError: URI malformed` on any lone or
+ * truncated escape (`%`, `%ZZ`, `%E0%A4%A`). Markdown and file paths reaching
+ * us from agents, Windows shells, and non-ASCII locales routinely contain a
+ * bare `%`, so callers that decode untrusted text need this instead of the
+ * bare built-in. Only `URIError` is swallowed - anything else is unexpected and
+ * rethrown, since masking it would hide real bugs. (MAESTRO-XS)
+ *
+ * @param value - Possibly percent-encoded string
+ * @returns The decoded string, or `value` unchanged if it isn't valid encoding
+ *
+ * @example
+ * ```typescript
+ * safeDecodeURIComponent('my%20file.ts'); // 'my file.ts'
+ * safeDecodeURIComponent('100% done');    // '100% done' (no throw)
+ * ```
+ */
+export function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch (err) {
+		if (err instanceof URIError) return value;
+		throw err;
+	}
+}
+
+/**
+ * Escape special regex characters so a literal string can be embedded in a
+ * `RegExp` without being interpreted as a pattern.
+ *
+ * @example
+ * ```typescript
+ * new RegExp(escapeRegExp('file (1).txt'), 'g'); // matches the literal name
+ * ```
+ */
+export function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function stripAnsiCodes(text: string): string {
 	// Matches ANSI CSI sequences, including DEC private modes like ESC[?1h.
 	let result = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');

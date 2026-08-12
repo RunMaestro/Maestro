@@ -190,7 +190,7 @@ describe('synopsis', () => {
 		describe('Details-headline rescue', () => {
 			it('should promote bolded Details headline when Summary ends with "Task complete."', () => {
 				const response =
-					'**Summary:** The playbook file is gitignored — no commit needed for that. Task complete.\n\n**Details:** **Added maestro-p session-id discovery (session-watcher.ts)** — phase 1, task 6 of the maestro-p playbook.';
+					'**Summary:** The playbook file is gitignored - no commit needed for that. Task complete.\n\n**Details:** **Added maestro-p session-id discovery (session-watcher.ts)** - phase 1, task 6 of the maestro-p playbook.';
 				const result = parseSynopsis(response);
 
 				expect(result.shortSummary).toBe(
@@ -245,12 +245,12 @@ describe('synopsis', () => {
 				expect(result.fullSynopsis).toContain('**Some secondary heading**');
 			});
 
-			it('should skip bolded labels like "**Note:**" — not headlines', () => {
+			it('should skip bolded labels like "**Note:**" - not headlines', () => {
 				const response =
 					'**Summary:** Task complete.\n\n**Details:** **Note:** all tests pass after the migration.';
 				const result = parseSynopsis(response);
 
-				// "Note:" is a label, not a headline — no promotion
+				// "Note:" is a label, not a headline - no promotion
 				expect(result.shortSummary).toBe('Task complete.');
 			});
 		});

@@ -1,6 +1,6 @@
 /**
  * Pianola through the generalized first-party bridge
- * (src/main/plugins/first-party-bridge.ts — the successor of the old
+ * (src/main/plugins/first-party-bridge.ts - the successor of the old
  * pianola-plugin-bridge). Kept at this path so Pianola's lifecycle contract
  * stays pinned: enable mints + reconciles, disable/revoke stop supervised
  * work, grants-gone forces the feature off.

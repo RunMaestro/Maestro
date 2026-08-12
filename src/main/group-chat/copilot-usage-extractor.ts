@@ -2,7 +2,7 @@
  * Copilot CLI usage extractor.
  *
  * Copilot CLI in batch mode (`-p --output-format json`) does NOT emit
- * `session.shutdown` events to stdout — it only writes them to
+ * `session.shutdown` events to stdout - it only writes them to
  * `~/.copilot/session-state/{sessionId}/events.jsonl` on disk. The
  * shutdown event is the ONLY place per-turn token counts and the
  * authoritative `currentTokens` (live context window usage) appear.
@@ -37,7 +37,7 @@ interface CopilotEventEntry {
  * usage info derived from the LAST `session.shutdown` event.
  *
  * Returns null when the file is unreadable or the shutdown event is
- * missing — callers should treat null as "no update available" and leave
+ * missing - callers should treat null as "no update available" and leave
  * any prior usage value untouched.
  */
 export async function extractCopilotUsageFromDisk(
@@ -82,7 +82,7 @@ function findLastShutdown(content: string): CopilotShutdownData | null {
 				latest = evt.data;
 			}
 		} catch {
-			// Malformed line — skip.
+			// Malformed line - skip.
 		}
 	}
 	return latest;

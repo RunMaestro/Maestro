@@ -1,7 +1,7 @@
 // Session-id discovery for maestro-p run mode (fresh sessions).
 //
 // When a brand-new claude TUI spawn happens (no `--resume`), the wrapper
-// can't know the session id ahead of time — claude assigns it and writes
+// can't know the session id ahead of time - claude assigns it and writes
 // the corresponding `*.jsonl` file under
 // `$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<session-id>.jsonl` shortly
 // after startup. `discoverSessionId()` watches that directory for the
@@ -10,7 +10,7 @@
 // and the absolute path so the runner can hand both straight to the
 // `JsonlTailer` without re-deriving.
 //
-// `--resume` flow does NOT use this — the path is fully determined from
+// `--resume` flow does NOT use this - the path is fully determined from
 // the resume id and the cwd-slug rule, so the runner can skip discovery.
 //
 // Polling, not fs.watch
@@ -19,7 +19,7 @@
 // is unsupported on Linux until newer Node versions; events can fire
 // before the file is fully visible to stat; macOS coalesces rapid
 // changes). The cwd-specific projects directory may not even exist yet
-// — claude creates it lazily on the first session for that cwd, which
+// - claude creates it lazily on the first session for that cwd, which
 // means we'd also have to handle the parent-dir-watch race. A short
 // poll loop on readdir is simpler, deterministic, and tolerates the
 // directory not existing yet.
@@ -120,7 +120,7 @@ async function findExpectedJsonl(
 		const stat = await fsp.stat(jsonlPath);
 		if (!stat.isFile()) return null;
 	} catch (err) {
-		// Not created yet (ENOENT) — keep polling. Anything else is unexpected.
+		// Not created yet (ENOENT) - keep polling. Anything else is unexpected.
 		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
 		throw err;
 	}
@@ -135,7 +135,7 @@ async function findEarliestNewJsonl(
 	try {
 		entries = await fsp.readdir(projectsDir);
 	} catch (err) {
-		// Directory not yet created by claude — keep polling.
+		// Directory not yet created by claude - keep polling.
 		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
 		throw err;
 	}

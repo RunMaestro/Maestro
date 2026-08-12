@@ -221,10 +221,10 @@ afterEach(() => {
 });
 
 // ============================================================================
-// processQueuedItem — delegation to agentStore
+// processQueuedItem - delegation to agentStore
 // ============================================================================
 
-describe('processQueuedItem — delegation to agentStore', () => {
+describe('processQueuedItem - delegation to agentStore', () => {
 	it('calls agentStore.processQueuedItem with sessionId, item, and config', async () => {
 		const deps = createDeps({ conductorProfile: 'my-profile' });
 		const { result } = renderHook(() => useQueueProcessing(deps));
@@ -355,7 +355,7 @@ describe('processQueuedItem — delegation to agentStore', () => {
 });
 
 // ============================================================================
-// processQueuedItemRef — always reflects latest closure
+// processQueuedItemRef - always reflects latest closure
 // ============================================================================
 
 describe('processQueuedItemRef', () => {
@@ -396,10 +396,10 @@ describe('processQueuedItemRef', () => {
 });
 
 // ============================================================================
-// Startup recovery — skipping conditions
+// Startup recovery - skipping conditions
 // ============================================================================
 
-describe('startup recovery — skipping conditions', () => {
+describe('startup recovery - skipping conditions', () => {
 	it('does not process queues when sessionsLoaded is false', () => {
 		vi.useFakeTimers();
 
@@ -508,10 +508,10 @@ describe('startup recovery — skipping conditions', () => {
 });
 
 // ============================================================================
-// Startup recovery — happy path
+// Startup recovery - happy path
 // ============================================================================
 
-describe('startup recovery — happy path', () => {
+describe('startup recovery - happy path', () => {
 	it('calls setSessions to set session and tab to busy after 500ms delay', () => {
 		vi.useFakeTimers();
 
@@ -782,7 +782,7 @@ describe('startup recovery — happy path', () => {
 			executionQueue: [item1],
 		});
 
-		// Second session is busy at mount — not in the startup snapshot.
+		// Second session is busy at mount - not in the startup snapshot.
 		const tab2 = createTab({ id: 'tab-2' });
 		const item2 = createQueuedItem({ id: 'item-late', tabId: 'tab-2' });
 		const session2Busy = createSession({
@@ -875,10 +875,10 @@ describe('startup recovery — happy path', () => {
 });
 
 // ============================================================================
-// Startup recovery — error handling
+// Startup recovery - error handling
 // ============================================================================
 
-describe('startup recovery — error handling', () => {
+describe('startup recovery - error handling', () => {
 	it('calls the second setSessions to re-queue item and reset to idle on processQueuedItem failure', async () => {
 		vi.useFakeTimers();
 
@@ -1132,10 +1132,10 @@ describe('startup recovery — error handling', () => {
 });
 
 // ============================================================================
-// Startup recovery — timer cleanup
+// Startup recovery - timer cleanup
 // ============================================================================
 
-describe('startup recovery — timer cleanup', () => {
+describe('startup recovery - timer cleanup', () => {
 	it('cancels the startup timer when the component unmounts before 500ms', () => {
 		vi.useFakeTimers();
 
@@ -1172,7 +1172,7 @@ describe('startup recovery — timer cleanup', () => {
 // ============================================================================
 
 // ============================================================================
-// Runtime queue recovery — dispatches stuck items after error recovery
+// Runtime queue recovery - dispatches stuck items after error recovery
 // ============================================================================
 
 describe('runtime queue recovery', () => {
@@ -1266,7 +1266,7 @@ describe('runtime queue recovery', () => {
 		const tab = createTab({ id: 'tab-1' });
 		const item = createQueuedItem({ tabId: 'tab-1' });
 
-		// Sessions loaded with queued items — startup recovery should handle this, not runtime
+		// Sessions loaded with queued items - startup recovery should handle this, not runtime
 		mockSessionStoreState.sessionsLoaded = true;
 		mockSessionStoreState.sessions = [
 			createSession({
@@ -1283,7 +1283,7 @@ describe('runtime queue recovery', () => {
 		// because startupRecoveryComplete is still false
 		expect(mockSetSessions).not.toHaveBeenCalled();
 
-		// After startup timer fires — startup recovery dispatches the items
+		// After startup timer fires - startup recovery dispatches the items
 		act(() => {
 			vi.advanceTimersByTime(500);
 		});
@@ -1305,7 +1305,7 @@ describe('runtime queue recovery', () => {
 
 		mockSetSessions.mockClear();
 
-		// Session is busy with queued items — should NOT dispatch
+		// Session is busy with queued items - should NOT dispatch
 		mockSessionStoreState.sessions = [
 			createSession({
 				state: 'busy',
@@ -1334,7 +1334,7 @@ describe('runtime queue recovery', () => {
 
 		mockSetSessions.mockClear();
 
-		// Session in error state with queued items — should NOT dispatch
+		// Session in error state with queued items - should NOT dispatch
 		mockSessionStoreState.sessions = [
 			createSession({
 				state: 'error',

@@ -123,7 +123,7 @@ describe('mapToWrappedOffset', () => {
 		// our mapping placed us at the right wrapped index).
 		const substring = out.wrapped.slice(wrappedOffset, wrappedOffset + 5);
 		// Substring could be 'lorem' or contain a synthetic newline if the
-		// match straddles a wrap boundary — either way, stripping newlines
+		// match straddles a wrap boundary - either way, stripping newlines
 		// yields the original substring's prefix.
 		expect(substring.replace(/\n/g, '')).toContain('l');
 	});

@@ -17,10 +17,12 @@ import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
+import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { abbreviateGroupName } from '../../shared/formatters';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -30,7 +32,7 @@ import type { Session, Group, Theme } from '../types';
 /**
  * True when a Claude Code agent has not bound to any provider session yet.
  *
- * `Session.agentSessionId` was deprecated by commit 505ce17c6 — Claude Code
+ * `Session.agentSessionId` was deprecated by commit 505ce17c6 - Claude Code
  * stopped writing it to avoid storing throwaway fork IDs that break `--resume`.
  * Per-tab `aiTabs[].agentSessionId` is now the source of truth, so check both:
  * the agent is only "unbound" when no tab has an ID either.
@@ -220,9 +222,16 @@ export const SessionItem = memo(function SessionItem({
 	const startupCommandIndicatorActive =
 		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
 
-	// Parent agents (sessions with worktreeConfig) get an inline chevron toggle.
+	// Parent agents get an inline chevron toggle. Keyed off worktreeConfig OR an
+	// actual child count: several spawn paths (Auto Run worktree dispatch in
+	// worktreeSpawn.ts, quick-create, watcher discovery) attach children via
+	// parentSessionId without ever writing worktreeConfig on the parent. Gating
+	// on worktreeConfig alone left those parents with a permanently expanded,
+	// uncollapsible subtree. SessionList renders children off the same child
+	// count, so this keeps the toggle present whenever a subtree is visible.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
-	const isWorktreeParent = variant !== 'worktree' && Boolean(session.worktreeConfig);
+	const isWorktreeParent =
+		variant !== 'worktree' && (Boolean(session.worktreeConfig) || (worktreeChildCount ?? 0) > 0);
 	const worktreesExpanded = session.worktreesExpanded ?? true;
 	const showCollapsedCountBadge =
 		isWorktreeParent && !worktreesExpanded && (worktreeChildCount ?? 0) > 0;
@@ -300,7 +309,7 @@ export const SessionItem = memo(function SessionItem({
 						onBlur={(e) => onFinishRename(e.target.value)}
 						onKeyDown={(e) => {
 							e.stopPropagation();
-							// Commit through onBlur only — calling onFinishRename here AND
+							// Commit through onBlur only - calling onFinishRename here AND
 							// letting blur fire would double-fire the IPC. Forcing blur on
 							// Enter funnels both code paths through the single handler.
 							if (e.key === 'Enter') {
@@ -424,10 +433,12 @@ export const SessionItem = memo(function SessionItem({
 								{jumpNumber}
 							</div>
 						)}
-						<Activity className="w-3 h-3" /> {session.toolType}
+						<Activity className="w-3 h-3" /> {getAgentDisplayName(session.toolType)}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 					</div>
 				)}
+				{/* Host-owned secondary actions stay outside session identity and SSH/status indicators. */}
+				{variant !== 'worktree' && <PluginUiItemsSlot surface="sessionRowBadge" className="mt-1" />}
 			</div>
 
 			{/* Right side: Indicators and actions */}

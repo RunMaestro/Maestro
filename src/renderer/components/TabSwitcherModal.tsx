@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -20,10 +21,10 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
-import { EscCloseHint } from './ui/EscCloseHint';
 import { getBrowserTabLabel } from '../utils/browserTabPersistence';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { EscCloseButton } from './ui/EscCloseButton';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -103,7 +104,7 @@ function getTabLastActivity(tab: AITab): number | undefined {
  * Returns `null` when no trustworthy reading is available (no usage yet, or
  * accumulated tokens overflow the window without a preserved fallback). Callers
  * should treat `null` as "no gauge to show" rather than rendering a misleading
- * 0% — see issue #762.
+ * 0% - see issue #762.
  */
 function getContextPercentage(tab: AITab, agentId?: ToolType): number | null {
 	if (!tab.usageStats) return null;
@@ -151,7 +152,11 @@ function ContextGauge({
 	const strokeWidth = 3;
 	const radius = (size - strokeWidth) / 2;
 	const circumference = 2 * Math.PI * radius;
-	const strokeDashoffset = circumference - (percentage / 100) * circumference;
+	// The arc fill clamps at a full circle while the readout below stays true:
+	// `calculateContextDisplay` can now return a percentage above 100 (finding
+	// R1), and an unclamped fraction would drive `strokeDashoffset` negative,
+	// wrapping the dash pattern instead of reading as "full".
+	const strokeDashoffset = circumference - Math.min(1, percentage / 100) * circumference;
 	const color = getContextColor(percentage, theme);
 
 	return (
@@ -254,10 +259,7 @@ export function TabSwitcherModal({
 	useModalLayer(MODAL_PRIORITIES.TAB_SWITCHER, 'Tab Switcher', () => onCloseRef.current());
 
 	// Focus input on mount
-	useEffect(() => {
-		const timer = setTimeout(() => inputRef.current?.focus(), 50);
-		return () => clearTimeout(timer);
-	}, []);
+	useFocusOnMount(inputRef);
 
 	// On mount: sync any named tabs to the origins store, then load named sessions
 	// This ensures tabs that were named before persistence was added get saved
@@ -625,6 +627,8 @@ export function TabSwitcherModal({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Search Header */}
@@ -657,7 +661,7 @@ export function TabSwitcherModal({
 								{formatShortcutKeys(shortcut.keys)}
 							</span>
 						)}
-						<EscCloseHint theme={theme} onClose={onClose} />
+						<EscCloseButton theme={theme} onClose={onClose} />
 					</div>
 				</div>
 
@@ -832,7 +836,7 @@ export function TabSwitcherModal({
 										</div>
 									</div>
 
-									{/* Context Gauge — hidden when no trustworthy reading is available
+									{/* Context Gauge - hidden when no trustworthy reading is available
 									    (overflow without a preserved fallback) so we don't surface a
 									    misleading 0%. */}
 									{contextPct !== null && (

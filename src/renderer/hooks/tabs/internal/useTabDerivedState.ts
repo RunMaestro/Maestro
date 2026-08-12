@@ -1,76 +1,77 @@
 import { useMemo } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
+import type { Session } from '../../../types';
 import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
-import type { BrowserTab, FilePreviewTab, UnifiedTab } from '../../../types';
+import { activeSessionChromeEquality } from '../../../stores/sessionEquality';
 import { buildUnifiedTabs, getActiveTab } from '../../../utils/tabHelpers';
 import type { TabDerivedState } from './types';
 
-export function useTabDerivedState(): TabDerivedState {
-	const activeSession = useSessionStore(selectActiveSession);
+const EMPTY_TAB_DERIVED_STATE: TabDerivedState = {
+	activeTab: undefined,
+	unifiedTabs: [],
+	activeFileTab: null,
+	activeBrowserTab: null,
+	isResumingSession: false,
+	fileTabBackHistory: [],
+	fileTabForwardHistory: [],
+	fileTabCanGoBack: false,
+	fileTabCanGoForward: false,
+	activeFileTabNavIndex: -1,
+};
 
-	const activeFileTabHistory = useMemo(() => {
-		if (!activeSession?.activeFileTabId) return [];
-		const tab = activeSession.filePreviewTabs.find((t) => t.id === activeSession.activeFileTabId);
-		return tab?.navigationHistory ?? [];
-	}, [activeSession?.activeFileTabId, activeSession?.filePreviewTabs]);
+/**
+ * Pure derivation of tab-strip / file-nav paint state from a Session.
+ * Leaves that already subscribe to the active session (e.g. MainPanel) should
+ * call this instead of mounting another store subscription.
+ */
+export function getTabDerivedState(activeSession: Session | null | undefined): TabDerivedState {
+	if (!activeSession) return EMPTY_TAB_DERIVED_STATE;
 
-	const activeFileTabNavIndex = useMemo(() => {
-		if (!activeSession?.activeFileTabId) return -1;
-		const tab = activeSession.filePreviewTabs.find((t) => t.id === activeSession.activeFileTabId);
-		return tab?.navigationIndex ?? (tab?.navigationHistory?.length ?? 0) - 1;
-	}, [activeSession?.activeFileTabId, activeSession?.filePreviewTabs]);
+	const activeFileTab =
+		activeSession.activeFileTabId != null
+			? (activeSession.filePreviewTabs.find((tab) => tab.id === activeSession.activeFileTabId) ??
+				null)
+			: null;
 
-	const fileTabBackHistory = useMemo(
-		() => activeFileTabHistory.slice(0, activeFileTabNavIndex),
-		[activeFileTabHistory, activeFileTabNavIndex]
-	);
-	const fileTabForwardHistory = useMemo(
-		() => activeFileTabHistory.slice(activeFileTabNavIndex + 1),
-		[activeFileTabHistory, activeFileTabNavIndex]
-	);
+	const activeFileTabHistory = activeFileTab?.navigationHistory ?? [];
+	const activeFileTabNavIndex =
+		activeFileTab?.navigationIndex ??
+		(activeFileTabHistory.length > 0 ? activeFileTabHistory.length - 1 : -1);
 
-	const activeTab = useMemo(
-		() => (activeSession ? getActiveTab(activeSession) : undefined),
-		[activeSession?.aiTabs, activeSession?.activeTabId]
-	);
-
-	const unifiedTabs = useMemo((): UnifiedTab[] => {
-		if (!activeSession) return [];
-		return buildUnifiedTabs(activeSession);
-	}, [
-		activeSession?.aiTabs,
-		activeSession?.filePreviewTabs,
-		activeSession?.terminalTabs,
-		activeSession?.browserTabs,
-		activeSession?.unifiedTabOrder,
-		// tabGroups gates which tabs are hidden (tiled members fold into the group chip),
-		// so a group create/dissolve must recompute the strip.
-		activeSession?.tabGroups,
-	]);
-
-	const activeFileTab = useMemo((): FilePreviewTab | null => {
-		if (!activeSession?.activeFileTabId) return null;
-		return (
-			activeSession.filePreviewTabs.find((tab) => tab.id === activeSession.activeFileTabId) ?? null
-		);
-	}, [activeSession?.activeFileTabId, activeSession?.filePreviewTabs]);
-
-	const activeBrowserTab = useMemo((): BrowserTab | null => {
-		if (!activeSession?.activeBrowserTabId) return null;
-		return (
-			activeSession.browserTabs?.find((tab) => tab.id === activeSession.activeBrowserTabId) ?? null
-		);
-	}, [activeSession?.activeBrowserTabId, activeSession?.browserTabs]);
+	const activeTab = getActiveTab(activeSession);
+	const activeBrowserTab =
+		activeSession.activeBrowserTabId != null
+			? (activeSession.browserTabs?.find((tab) => tab.id === activeSession.activeBrowserTabId) ??
+				null)
+			: null;
 
 	return {
 		activeTab,
-		unifiedTabs,
+		unifiedTabs: buildUnifiedTabs(activeSession),
 		activeFileTab,
 		activeBrowserTab,
 		isResumingSession: !!activeTab?.agentSessionId,
-		fileTabBackHistory,
-		fileTabForwardHistory,
+		fileTabBackHistory: activeFileTabHistory.slice(0, activeFileTabNavIndex),
+		fileTabForwardHistory: activeFileTabHistory.slice(activeFileTabNavIndex + 1),
 		fileTabCanGoBack: activeFileTabNavIndex > 0,
 		fileTabCanGoForward: activeFileTabNavIndex < activeFileTabHistory.length - 1,
 		activeFileTabNavIndex,
 	};
+}
+
+/**
+ * Store-subscribed variant for hosts that do not already hold the active session.
+ * Uses chrome equality so log/token flushes do not wake the host.
+ *
+ * Prefer {@link getTabDerivedState} inside MainPanel (already full-session subscribed).
+ * Do not mount this from MaestroConsoleInner / App - that reintroduces the chrome wake.
+ */
+export function useTabDerivedState(): TabDerivedState {
+	const activeSession = useStoreWithEqualityFn(
+		useSessionStore,
+		selectActiveSession,
+		activeSessionChromeEquality
+	);
+
+	return useMemo(() => getTabDerivedState(activeSession), [activeSession]);
 }

@@ -1,7 +1,7 @@
 /**
  * Pure matching logic shared by both the remark plugin (Rich tier) and the
  * markdown-it plugin (Fast tier). All functions here are framework-agnostic
- * — no mdast, no markdown-it tokens, just strings and indices.
+ * - no mdast, no markdown-it tokens, just strings and indices.
  *
  * The Rich-path remarkFileLinks plugin and the Fast-tier markdownItAdapter
  * both import these helpers so that link resolution behavior is byte-for-byte
@@ -52,7 +52,7 @@ function buildFilenameIndex(entries: FilePathEntry[]): Map<string, string[]> {
 }
 
 /**
- * Calculate path proximity — how "close" a candidate file is to the cwd.
+ * Calculate path proximity - how "close" a candidate file is to the cwd.
  * Lower score = closer. Used as the tiebreaker when multiple files share
  * a basename (e.g. multiple README.md across the tree).
  */
@@ -77,8 +77,8 @@ export function calculateProximity(filePath: string, cwd: string): number {
  *
  * Algorithm:
  *   1. Exact path match (with or without `.md`).
- *   2. Filename-only match — if unique, return it.
- *   3. Filename-only match with multiple candidates — filter by partial path,
+ *   2. Filename-only match - if unique, return it.
+ *   3. Filename-only match with multiple candidates - filter by partial path,
  *      then break ties using cwd proximity.
  */
 export function findClosestMatch(
@@ -123,7 +123,7 @@ export function findClosestMatch(
 
 /**
  * Resolve a plain path reference (e.g. `Folder/File.md`) to a path in the
- * file tree. Stricter than findClosestMatch — only exact path matches succeed.
+ * file tree. Stricter than findClosestMatch - only exact path matches succeed.
  */
 export function validatePathReference(reference: string, indices: FileTreeIndices): string | null {
 	if (indices.allPaths.has(reference)) return reference;

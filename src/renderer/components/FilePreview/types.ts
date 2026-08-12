@@ -54,7 +54,7 @@ export interface FilePreviewProps {
 	onOpenInGraph?: () => void;
 	/**
 	 * Callback to open the current file in a new Maestro browser tab. Wired only
-	 * for HTML files — the sandboxed preview iframe can't run JS-heavy local
+	 * for HTML files - the sandboxed preview iframe can't run JS-heavy local
 	 * dashboards, but the full webview can.
 	 */
 	onOpenInBrowser?: () => void;
@@ -74,7 +74,7 @@ export interface FilePreviewProps {
 	onSearchQueryChange?: (query: string) => void;
 	/** When true, disables click-outside-to-close and layer registration (for tab-based rendering) */
 	isTabMode?: boolean;
-	/** Timestamp (ms) when file was last modified on disk — used for change detection polling */
+	/** Timestamp (ms) when file was last modified on disk - used for change detection polling */
 	lastModified?: number;
 	/** Callback to reload file content from disk (called when user clicks Reload in the change banner) */
 	onReloadFile?: () => void;
@@ -107,8 +107,9 @@ export interface FilePreviewHandle {
 	focus: () => void;
 }
 
-export interface TocEntry {
-	level: number; // 1-6 for h1-h6
-	text: string;
-	slug: string;
-}
+/**
+ * Re-exported from the shared TOC library so existing File Preview imports keep
+ * working. The canonical definition lives in `components/Toc/types` because
+ * Director's Notes builds entries of the same shape.
+ */
+export type { TocEntry } from '../Toc/types';

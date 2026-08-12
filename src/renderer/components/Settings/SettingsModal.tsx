@@ -21,6 +21,7 @@ import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import { jumpToElement } from '../../utils/jumpHighlight';
 import { AICommandsPanel } from '../AICommandsPanel';
 import { MaestroPromptsTab } from './tabs/MaestroPromptsTab';
 import { SpecKitCommandsPanel } from '../SpecKitCommandsPanel';
@@ -59,7 +60,7 @@ type SettingsTabId =
 	| 'prompts';
 
 // Alphabetized by label (case-insensitive) so the sidebar reads predictably
-// regardless of which tabs ship. Mount-time default is still 'general' —
+// regardless of which tabs ship. Mount-time default is still 'general' -
 // that's enforced by the useState init below, not by list position.
 const TAB_ITEMS: Array<{
 	id: SettingsTabId;
@@ -121,12 +122,12 @@ function SettingsTabButton({
 	);
 }
 
-// In-memory only — last tab the user was on. Resets on app restart, so the
+// In-memory only - last tab the user was on. Resets on app restart, so the
 // modal still defaults to General on a fresh launch. Honors any explicit
 // `initialTab` prop (e.g. when a caller deep-links into a specific tab).
 let lastOpenSettingsTab: SettingsTabId | null = null;
 
-// In-memory only — last vertical scroll position per tab. Pairs with
+// In-memory only - last vertical scroll position per tab. Pairs with
 // lastOpenSettingsTab so the user can reopen Settings (or flip between tabs)
 // and land exactly where they were, instead of having to re-find the control
 // they were tweaking. Resets on app restart.
@@ -218,7 +219,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	} = useSettings();
 
 	// Lazy init reads the remembered tab on mount. Doing this in useState (rather
-	// than a restore effect) avoids racing with the persist effect below — under
+	// than a restore effect) avoids racing with the persist effect below - under
 	// React StrictMode a restore-via-effect double-fires and clobbers the saved
 	// value with the initial 'general' before the restored value lands.
 	const [activeTab, setActiveTab] = useState<SettingsTabId>(
@@ -233,6 +234,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		resizeKey: 'settings',
 		defaultSize: { width: 980, height: 900 },
 		minSize: { width: 720, height: 480 },
+		enabled: isOpen,
 	});
 	// Search state
 	const [searchActive, setSearchActive] = useState(false);
@@ -255,7 +257,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const jumpAccentRef = useRef(theme.colors.accent);
 	jumpAccentRef.current = theme.colors.accent;
 
-	// Pending scroll target — set when the user picks a search result, consumed
+	// Pending scroll target - set when the user picks a search result, consumed
 	// by the effect below once the content panel is actually visible and the
 	// target tab has rendered. Doing this via state-driven effect (not RAF
 	// chains) avoids a race where scrollIntoView fires while the content div
@@ -272,38 +274,21 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		const targetId = pendingScrollIdRef.current;
 		if (!targetId || searchActive) return;
 
-		let cancelled = false;
-		let attempts = 0;
-		const MAX_ATTEMPTS = 30; // ~500ms at 60fps — enough for tab content + lazy renders
-
-		const tryScroll = () => {
-			if (cancelled) return;
-			const el = contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`);
-			// offsetParent is null while any ancestor is display:none — the most
-			// common reason scroll fails right after exiting search mode.
-			if (el && el.offsetParent !== null) {
-				pendingScrollIdRef.current = null;
-				el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-				// Themed arrow indicator + outline flash; duration must match the
-				// 3s animations in .settings-search-highlight / ::before.
-				el.style.setProperty('--settings-search-jump-color', jumpAccentRef.current);
-				el.classList.add('settings-search-highlight');
-				setTimeout(() => {
-					el.classList.remove('settings-search-highlight');
-					el.style.removeProperty('--settings-search-jump-color');
-				}, 3000);
-				return;
-			}
-			if (attempts++ < MAX_ATTEMPTS) {
-				requestAnimationFrame(tryScroll);
-			} else {
-				pendingScrollIdRef.current = null;
-			}
+		// Scroll + themed arrow/outline flash. The retry loop inside jumpToElement
+		// covers the race where the target tab's content is still display:none from
+		// search mode, which would otherwise make scrollIntoView silently no-op.
+		const clearPending = () => {
+			pendingScrollIdRef.current = null;
 		};
-		requestAnimationFrame(tryScroll);
-		return () => {
-			cancelled = true;
-		};
+		return jumpToElement(
+			() => contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`),
+			{
+				color: jumpAccentRef.current,
+				arrow: true,
+				onFound: clearPending,
+				onTimeout: clearPending,
+			}
+		);
 	}, [searchActive, activeTab]);
 
 	const search = useSettingsSearch({
@@ -327,7 +312,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	}, [isOpen, initialTab]);
 
 	// Persist the current tab in module memory so the next open lands here.
-	// In-memory only — resets on app restart by design.
+	// In-memory only - resets on app restart by design.
 	useEffect(() => {
 		lastOpenSettingsTab = activeTab;
 	}, [activeTab]);
@@ -336,7 +321,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// the modal reopens on a remembered tab). useLayoutEffect runs after the
 	// new tab's content has committed to the DOM but before paint, so the
 	// scroll lands without a visible flash at the top. `behavior: 'auto'` is
-	// intentional — smooth-scrolling on tab switch reads as sluggish.
+	// intentional - smooth-scrolling on tab switch reads as sluggish.
 	useLayoutEffect(() => {
 		if (!isOpen) return;
 		const el = contentRef.current;
@@ -566,6 +551,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Search Bar + Close Button */}
@@ -703,7 +690,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 												placeholder="sk-..."
 											/>
 										</div>
-										<p className="text-[10px] mt-2 opacity-50">
+										<p className="text-[10px] mt-2 opacity-55">
 											Keys are stored locally in ~/.maestro/settings.json
 										</p>
 									</div>
@@ -742,7 +729,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										</div>
 									)}
 
-									<p className="text-[10px] mt-3 opacity-50 text-center">
+									<p className="text-[10px] mt-3 opacity-55 text-center">
 										Test sends a simple prompt to verify connectivity and configuration
 									</p>
 								</div>

@@ -1,8 +1,8 @@
 /**
  * @file PluginPanelFrame.test.ts
- * @description The panel frame renders an isolated <webview> surface — a
+ * @description The panel frame renders an isolated <webview> surface - a
  * per-plugin partition (`plugin:<id>`) and the panel's own `plugin-panel://`
- * document URL, never srcdoc/inline HTML — under the non-suppressible
+ * document URL, never srcdoc/inline HTML - under the non-suppressible
  * provenance line. The bridge accepts ONLY the guest preload's
  * `maestro:invokeCommand` ipc-message, namespaces the command to the owning
  * plugin, and forwards it over the broker-gated invokeCommand RPC. A failed
@@ -53,12 +53,12 @@ describe('PluginPanelFrame render isolation', () => {
 
 		const webview = container.querySelector('webview');
 		expect(webview).not.toBeNull();
-		// Per-plugin in-memory session — never persist:, never the app session.
+		// Per-plugin in-memory session - never persist:, never the app session.
 		expect(webview?.getAttribute('partition')).toBe('plugin:acme.tools');
 		// The document comes from the main-process protocol handler, never inline.
 		expect(webview?.getAttribute('src')).toBe('plugin-panel://panel/acme.tools%2Fboard');
 		expect(webview?.getAttribute('srcdoc')).toBeNull();
-		// The renderer never supplies webPreferences — main forces them all in
+		// The renderer never supplies webPreferences - main forces them all in
 		// will-attach-webview; anything set here would be untrusted anyway.
 		expect(webview?.getAttribute('webpreferences')).toBeNull();
 		expect(webview?.getAttribute('allowpopups')).toBeNull();

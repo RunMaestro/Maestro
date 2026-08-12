@@ -11,6 +11,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
+import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -63,12 +64,16 @@ import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
+	movementBegin,
 	movementAdd,
 	movementUpdate,
 	movementMove,
 	movementRemove,
 	movementClear,
+	movementProgress,
 	movementState,
+	movementInspect,
+	movementInteract,
 } from './commands/movement';
 import { stats, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
@@ -138,7 +143,7 @@ program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();
 	setVerbosity({ quiet: Boolean(opts.quiet), verbose: Boolean(opts.verbose) });
 });
-// AgentRun and campaign commands — neutral ledger/read-model spine for external
+// AgentRun and campaign commands - neutral ledger/read-model spine for external
 // agent work. Pianola remains the authoritative orchestrator; these commands
 // record and inspect runs/campaigns without replacing `pianola plan`.
 const agentRun = program.command('agent-run').description('Record and inspect agent runs');
@@ -261,6 +266,14 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
@@ -275,6 +288,14 @@ program
 	.option('--no-history', 'Do not write history entries')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {
 		const { goalRun } = await import('./commands/goal-run');
 		return goalRun(agentId, goal, options);
@@ -302,6 +323,14 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(async (docs: string[], options: Record<string, unknown>) => {
 		const { runDoc } = await import('./commands/run-doc');
 		return runDoc(docs, options as never);
@@ -346,13 +375,60 @@ program
 	)
 	.option(
 		'-f, --force',
-		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab — a fresh tab is never busy)'
+		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab - a fresh tab is never busy)'
+	)
+	.option(
+		'--focus',
+		'Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)'
+	)
+	.option(
+		'--queue',
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab or --force. Returns the queue position.'
+	)
+	.option('--wait', 'Alias for --queue')
+	.option(
+		'--notify-on-complete <agent-id>',
+		'Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.'
+	)
+	.option(
+		'--callback-tab <id>',
+		'Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)'
+	)
+	.option(
+		'--callback-prompt <text>',
+		'Override the callback prompt body. {{DISPATCH_STATUS}}, {{DISPATCH_TAB_ID}}, {{DISPATCH_TARGET_ID}}, {{DISPATCH_OUTPUT}}, {{DISPATCH_DURATION}}, {{DISPATCH_TASKS_COMPLETED}}, {{DISPATCH_TASKS_TOTAL}}, {{DISPATCH_PROMPT}} and {{DISPATCH_CALLBACK_ID}} are substituted.'
+	)
+	.option(
+		'--callback-timeout <seconds>',
+		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
 	)
 	.action(dispatch);
 
+// Queue commands - inspect and manage the desktop execution queue populated by
+// `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
+// cleanup/debugging. The queue lives authoritatively in the desktop renderer.
+const queue = program
+	.command('queue')
+	.description('Inspect and manage the desktop execution queue (from dispatch --queue)');
+
+queue
+	.command('list')
+	.description('List queued execution items as JSON (all agents, or one with --agent)')
+	.option(
+		'-a, --agent <id>',
+		'Only list items for this agent (default: every agent with queued items)'
+	)
+	.action(queueList);
+
+queue
+	.command('remove <item-id>')
+	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueRemove);
+
 // Session inspection commands - read-only access to desktop conversation state.
 // Lets external pollers (Maestro-Discord, Cue follow-ups) pick up where Maestro
-// left off without owning a persistent channel — pair with `dispatch` to write
+// left off without owning a persistent channel - pair with `dispatch` to write
 // and `session show` to follow up.
 const session = program
 	.command('session')
@@ -448,6 +524,14 @@ program
 		'--pr-target-branch <branch>',
 		'Target branch for the PR (defaults to the repo default branch)'
 	)
+	.option(
+		'--model <model>',
+		"Model to use for this run only, overriding the agent's configured default"
+	)
+	.option(
+		'--effort <effort>',
+		"Reasoning effort for this run only, overriding the agent's configured default"
+	)
 	.action(autoRun);
 
 // Auto Run control commands - stop a run and recover from an error pause. These
@@ -511,8 +595,8 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
 
-// Cue schedule — author / inspect / cancel one-shot `time.once` subscriptions.
-// Primary agent surface for "in 20 minutes do X" or "remind me at 4pm…" — writes
+// Cue schedule - author / inspect / cancel one-shot `time.once` subscriptions.
+// Primary agent surface for "in 20 minutes do X" or "remind me at 4pm…" - writes
 // directly to the agent's `.maestro/cue.yaml` so it works without the desktop
 // app running. See `cue-schedule.ts` for the full flag matrix.
 cue
@@ -538,7 +622,7 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueSchedule);
 
-// Cue pipeline subcommands — manage entries in cue-pipeline-layout.json.
+// Cue pipeline subcommands - manage entries in cue-pipeline-layout.json.
 // Designed for batch scaffolding (e.g. PowerShell scripts that bootstrap
 // a fleet of project agents with a templated pipeline). All mutations go
 // through the daemon so they don't race with the desktop app's own writes.
@@ -596,7 +680,7 @@ directorNotes
 	.description('Show unified history across all agents')
 	.option('-d, --days <n>', 'Lookback period in days (default: from app settings)')
 	.option('-f, --format <type>', 'Output format: json, markdown, text (default: text)')
-	.option('--filter <type>', 'Filter by entry type: auto, user, cue')
+	.option('--filter <type>', 'Filter by entry type: auto, user, cue, agent')
 	.option('-l, --limit <n>', 'Maximum entries to show (default: 100)')
 	.option('--json', 'Output as JSON (shorthand for --format json)')
 	.action(directorNotesHistory);
@@ -1181,7 +1265,7 @@ pianolaSupervise
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((id, options) => pianolaSuperviseSetEnabled(id, false, options));
 
-// Prompts command — read Maestro's bundled or user-customized system prompts.
+// Prompts command - read Maestro's bundled or user-customized system prompts.
 // Designed for agent self-fetch: parent prompts reference includes via `{{REF:_name}}`
 // and the agent retrieves the full content on demand with `prompts get _name`.
 const prompts = program.command('prompts').description('Read Maestro system prompts');
@@ -1198,7 +1282,7 @@ prompts
 	.option('--json', 'Output as JSON object with metadata + content')
 	.action(promptsGet);
 
-// Gist commands — publish agent session transcripts to GitHub gists via the
+// Gist commands - publish agent session transcripts to GitHub gists via the
 // running Maestro desktop app. Grouped as a subcommand so we can add more gist
 // operations (list, show, delete, etc.) later.
 const gist = program.command('gist').description('Publish session context to GitHub gists');
@@ -1212,7 +1296,7 @@ gist
 	.option('-p, --public', 'Create a public gist (default: private)')
 	.action(gistCreate);
 
-// Notify commands — surface notifications in the Maestro desktop app
+// Notify commands - surface notifications in the Maestro desktop app
 const notify = program
 	.command('notify')
 	.description('Show notifications in the Maestro desktop app');
@@ -1227,7 +1311,7 @@ notify
 	)
 	.option(
 		'--dismissible',
-		'Sticky toast — no auto-dismiss; user must click to close. Cannot combine with --timeout'
+		'Sticky toast - no auto-dismiss; user must click to close. Cannot combine with --timeout'
 	)
 	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
 	.option(
@@ -1236,7 +1320,7 @@ notify
 	)
 	.option(
 		'--tab <id>',
-		'AI tab ID within the agent — clicking jumps to that tab (requires --agent)'
+		'AI tab ID within the agent - clicking jumps to that tab (requires --agent)'
 	)
 	.option(
 		'--action-url <url>',
@@ -1256,7 +1340,7 @@ notify
 
 notify
 	.command('flash <message>')
-	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
+	.description('Show a center-screen flash (momentary, exclusive - replaces any active flash)')
 	.option('-c, --color <color>', 'green | yellow | orange | red | theme (default: theme)')
 	.option('-D, --detail <text>', 'Optional second line shown beneath the message')
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
@@ -1299,16 +1383,16 @@ cadenza
 	.description('Open (or replace by id) a cadenza view')
 	.option(
 		'--type <type>',
-		'tracker | file | markdown | image | code | view | decision (default: tracker)'
+		'tracker | file | markdown | image | code | view | html | decision (default: tracker)'
 	)
 	.option('--title <text>', 'Header label for the panel')
 	.option(
 		'--body <text>',
-		'Body content - tracker line, markdown/code source, JSON block spec (--type view), or the prompt (--type decision)'
+		'Body content - tracker line, markdown/code source, JSON block spec (--type view), HTML document, or decision prompt'
 	)
 	.option(
 		'--body-file <path>',
-		'Read body content from a file (large markdown or a view JSON spec)'
+		'Read body content from a file (markdown, view JSON, code, or HTML)'
 	)
 	.option(
 		'--path <path>',
@@ -1350,7 +1434,8 @@ cadenza
 	.action(cadenzaClose);
 
 // Movement commands - compose the roomy, agent-driven "living view" in the main
-// window. Each item is free-placed at (x, y) and renders a BlockView JSON spec.
+// window. Each item is free-placed at (x, y) and renders a native BlockView or
+// an isolated single-page HTML mockup.
 const movement = program
 	.command('movement')
 	.description(
@@ -1358,31 +1443,46 @@ const movement = program
 	);
 
 movement
+	.command('begin <id>')
+	.description('Immediately show a host-rendered Concerto shell before its HTML is ready')
+	.requiredOption('--title <text>', 'Concerto title shown in its frame')
+	.option('--x <px>', 'X position (px from the Concerto stage left)')
+	.option('--y <px>', 'Y position (px from the Concerto stage top)')
+	.option('--width <px>', 'Shell width in px (default: 880)')
+	.option('--height <px>', 'Shell height in px (default: 560)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementBegin);
+
+movement
 	.command('add <id>')
-	.description('Add (or replace by id) a movement item rendering a JSON block spec')
+	.description('Add (or replace by id) a native data view or interactive HTML mockup')
+	.option('--type <type>', 'view | html (default: view)')
 	.option('--x <px>', 'X position (px from movement left)')
 	.option('--y <px>', 'Y position (px from movement top)')
-	.option('--width <px>', 'Item width in px (default 320)')
+	.option('--width <px>', 'Item width in px (default: 500 view, 880 html)')
 	.option('--height <px>', 'Optional fixed item height in px (default: fit content)')
 	.option('--title <text>', 'Item header title')
 	.option(
-		'--body <json>',
-		'Block spec JSON, e.g. {"blocks":[{"kind":"stat","label":"Tests","value":8}]}'
+		'--body <content>',
+		'Block spec JSON for --type view, or a complete document for --type html'
 	)
-	.option('--body-file <path>', 'Read the block spec JSON from a file')
+	.option('--body-file <path>', 'Read the view JSON or HTML document from a file')
+	.option('--html-file <path>', 'Read an HTML document from a file (implies --type html)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementAdd);
 
 movement
 	.command('update <id>')
 	.description('Update fields of an existing movement item in place')
+	.option('--type <type>', 'Switch or confirm the item type: view | html')
 	.option('--x <px>', 'New X position')
 	.option('--y <px>', 'New Y position')
 	.option('--width <px>', 'New width')
 	.option('--height <px>', 'New fixed height')
 	.option('--title <text>', 'New title')
-	.option('--body <json>', 'New block spec JSON')
-	.option('--body-file <path>', 'Read the new block spec JSON from a file')
+	.option('--body <content>', 'New block spec JSON or HTML document')
+	.option('--body-file <path>', 'Read the new view JSON or HTML document from a file')
+	.option('--html-file <path>', 'Read a new HTML document from a file (implies --type html)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementUpdate);
 
@@ -1407,10 +1507,40 @@ movement
 	.action(movementClear);
 
 movement
+	.command('progress <id>')
+	.description("Report one Concerto track's current design phase and subdivision")
+	.requiredOption('--title <text>', 'Concerto title shown in the pipeline')
+	.requiredOption('--phase <phase>', 'composing | refining | arranging | reviewing | testing')
+	.option('--step <n>', 'Active one-based substep (default: 1)')
+	.option('--steps <n>', 'Planned substeps in this phase, 1 through 8 (default: 1)')
+	.option(
+		'--notes <pattern>',
+		'Comma-separated quarter/eighth/sixteenth notes with optional +dotted, +triad, or +tie'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementProgress);
+
+movement
 	.command('state')
 	.description('Read the current movement layout (items + size) to compose around it')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementState);
+
+movement
+	.command('inspect <id>')
+	.description('Capture a live HTML Movement preview and report its runtime diagnostics')
+	.requiredOption('--output <png>', 'Write the live mockup screenshot to this PNG path')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementInspect);
+
+movement
+	.command('interact <id>')
+	.description('Interact with a live HTML Movement by CSS selector')
+	.option('--click <selector>', 'Click the matching element')
+	.option('--type <selector>', 'Enter text into the matching input or editable element')
+	.option('--value <text>', 'Text used with --type')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(movementInteract);
 
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).

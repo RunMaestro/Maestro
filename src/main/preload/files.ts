@@ -8,15 +8,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-
-/**
- * Single bucket in the activity-graph aggregate.
- */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
+import type { HistoryEntryType } from '../../shared/types';
+import type { GraphBucket } from '../../shared/history';
 
 /**
  * All-time graph data returned by `history:getGraphData` and
@@ -41,7 +34,7 @@ export interface HistoryGraphData {
  */
 export interface HistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -99,7 +92,7 @@ export function createHistoryApi() {
 			pagination?: { limit?: number; offset?: number };
 			lookbackHours?: number | null;
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
-			types?: ('AUTO' | 'USER' | 'CUE')[];
+			types?: HistoryEntryType[];
 			hostKey?: string | null;
 		}) => ipcRenderer.invoke('history:getAllPaginated', options),
 
@@ -122,7 +115,7 @@ export function createHistoryApi() {
 		listSessions: () => ipcRenderer.invoke('history:listSessions'),
 
 		// Cached graph buckets for a single session. The lookback parameter
-		// controls the window — `null` for "all time", or hours back from
+		// controls the window - `null` for "all time", or hours back from
 		// "now". Each (bucketCount, lookback) pair gets its own cached
 		// aggregate keyed by source-file fingerprint.
 		getGraphData: (
@@ -149,7 +142,7 @@ export function createHistoryApi() {
 			sessionId: string,
 			timestamp: number,
 			lookbackHours?: number | null,
-			types?: ('AUTO' | 'USER' | 'CUE')[]
+			types?: HistoryEntryType[]
 		): Promise<number> =>
 			ipcRenderer.invoke(
 				'history:getOffsetForTimestamp',

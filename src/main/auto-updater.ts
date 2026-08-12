@@ -140,7 +140,7 @@ function getAutoUpdater(): AppUpdater {
 /**
  * @internal Test-only: inject a mock autoUpdater. The real implementation is
  * loaded via dynamic `require` to defer electron.app access, which sidesteps
- * vitest's module mocker — this hook lets tests provide a stand-in.
+ * vitest's module mocker - this hook lets tests provide a stand-in.
  *
  * Hard-gated to non-production builds: the symbol still exists in production
  * bundles (TS can't conditionally export) but the body is a no-op there, so
@@ -158,8 +158,8 @@ export interface InitAutoUpdaterOptions {
 	/**
 	 * Called immediately before `autoUpdater.quitAndInstall()` runs (i.e. when the
 	 * user clicks "Install Update"). Lets the host bypass the busy-agent quit
-	 * confirmation gate so the Windows installer — which spawns waiting on our PID
-	 * — isn't orphaned by `before-quit` preventDefault.
+	 * confirmation gate so the Windows installer - which spawns waiting on our PID
+	 * - isn't orphaned by `before-quit` preventDefault.
 	 */
 	onBeforeQuitAndInstall?: () => void;
 }
@@ -298,7 +298,7 @@ function setupIpcHandlers(): void {
 
 			if (!checkResult || !checkResult.updateInfo) {
 				logger.error(
-					'No update found during pre-download check — electron-updater found nothing to download',
+					'No update found during pre-download check - electron-updater found nothing to download',
 					'AutoUpdater',
 					{ allowPrerelease: autoUpdater.allowPrerelease }
 				);
@@ -336,10 +336,10 @@ function setupIpcHandlers(): void {
 
 	// Install update (quit and install)
 	ipcMain.handle('updates:install', () => {
-		logger.info('Installing update — quitting and restarting app', 'AutoUpdater');
+		logger.info('Installing update - quitting and restarting app', 'AutoUpdater');
 		// Bypass the busy-agent quit confirmation gate. The user already opted in
 		// via the update modal, and on Windows quitAndInstall spawns the NSIS
-		// installer bound to our PID — if before-quit preventDefaults the quit, the
+		// installer bound to our PID - if before-quit preventDefaults the quit, the
 		// installer is orphaned waiting for a parent exit that may never come.
 		try {
 			onBeforeQuitAndInstall?.();

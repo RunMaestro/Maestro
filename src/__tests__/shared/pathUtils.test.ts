@@ -256,7 +256,8 @@ describe('buildExpandedPath', () => {
 		it('should prepend detected Node version manager bin paths', () => {
 			process.env.PATH = '/usr/bin';
 			const originalNvmDir = process.env.NVM_DIR;
-			const tempNvmDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-nvm-'));
+			const realTempParent = fs.realpathSync(process.env.TEMP ?? process.env.TMP ?? process.cwd());
+			const tempNvmDir = fs.mkdtempSync(path.join(realTempParent, 'maestro-nvm-'));
 			process.env.NVM_DIR = tempNvmDir;
 			fs.mkdirSync(path.join(tempNvmDir, 'current', 'bin'), { recursive: true });
 			fs.mkdirSync(path.join(tempNvmDir, 'versions', 'node', 'v22.10.0', 'bin'), {

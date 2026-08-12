@@ -11,7 +11,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import type { Theme } from '../../../../renderer/types';
 import { PianolaDashboardTab } from '../../../../renderer/components/PianolaDashboard/PianolaTabControls';
 
-// Minimal stub — only the color keys the two controls read. Cast like other
+// Minimal stub - only the color keys the two controls read. Cast like other
 // renderer tests (see PianolaDashboard.test.tsx) rather than spelling out the
 // full Theme/ThemeColors shape.
 const theme = {

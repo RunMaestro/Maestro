@@ -59,7 +59,7 @@ const modelSelectorContent = (
 	<div className="text-xs leading-relaxed space-y-1.5">
 		<div>
 			<TourIcon icon={Sparkles} label="Model" /> Click this pill to switch between available AI
-			models (e.g., Sonnet, Opus, Haiku). Different models have different strengths — pick the right
+			models (e.g., Sonnet, Opus, Haiku). Different models have different strengths - pick the right
 			one for the task.
 		</div>
 		<div>
@@ -76,14 +76,14 @@ const modelSelectorContent = (
 const toolbarTogglesContent = (
 	<div className="text-xs leading-relaxed space-y-1.5">
 		<div>
-			These are <strong>buttons</strong>, not just labels — click them to toggle:
+			These are <strong>buttons</strong>, not just labels - click them to toggle:
 		</div>
 		<div>
 			<TourIcon icon={History} label="History" /> Controls whether this tab's interactions are saved
 			to your history. Toggle per-tab as needed.
 		</div>
 		<div>
-			<TourIcon icon={Eye} label="Plan / Read-only" /> Prevents the agent from modifying files —
+			<TourIcon icon={Eye} label="Plan / Read-only" /> Prevents the agent from modifying files -
 			great for asking questions, reviewing code, or planning without risk.
 		</div>
 		<div>
@@ -163,9 +163,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'history-tab',
 		title: 'History & Tracking',
 		description:
-			'The History tab tracks all AI interactions in your session. Auto Run entries are tracked automatically, and separate from manual interactions. You can toggle history per-message using the "History" bubble (with the clock icon) in the input area. Configure the default value under Settings → General.\n\nSwitch between the list view and the details view to drill into any entry. From the details view you can also resume the session where that entry took place.\n\nHistory also serves as memory for all Maestro agents—they know how to locate and parse the history file, giving them context about prior work. Press {{goToHistory}} to jump here.',
+			'The History tab tracks all AI interactions in your session. Auto Run entries are tracked automatically, and separate from manual interactions. You can toggle history per-message using the "History" bubble (with the clock icon) in the input area. Configure the default value under Settings → General.\n\nSwitch between the list view and the details view to drill into any entry. From the details view you can also resume the session where that entry took place.\n\nHistory also serves as memory for all Maestro agents - they know how to locate and parse the history file, giving them context about prior work. Press {{goToHistory}} to jump here.',
 		descriptionGeneric:
-			'The History tab tracks all AI interactions in your session. Auto Run entries are tracked automatically, and separate from manual interactions. You can toggle history per-message using the "History" bubble (with the clock icon) in the input area. Configure the default value under Settings → General.\n\nSwitch between the list view and the details view to drill into any entry. From the details view you can also resume the session where that entry took place.\n\nHistory also serves as memory for all Maestro agents—they know how to locate and parse the history file, giving them context about prior work. Press {{goToHistory}} to jump here.',
+			'The History tab tracks all AI interactions in your session. Auto Run entries are tracked automatically, and separate from manual interactions. You can toggle history per-message using the "History" bubble (with the clock icon) in the input area. Configure the default value under Settings → General.\n\nSwitch between the list view and the details view to drill into any entry. From the details view you can also resume the session where that entry took place.\n\nHistory also serves as memory for all Maestro agents - they know how to locate and parse the history file, giving them context about prior work. Press {{goToHistory}} to jump here.',
 		wide: true,
 		selector: '[data-tour="history-tab"]',
 		position: 'left',
@@ -187,9 +187,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'remote-control',
 		title: 'Remote Control',
 		description:
-			'The LIVE/OFFLINE indicator controls a built-in web interface for remote control. Toggle it on to generate a local URL and QR code—scan it with your phone to control Maestro from the couch, the kitchen, or anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel—no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
+			'The LIVE/OFFLINE indicator controls a built-in web interface for remote control. Toggle it on to generate a local URL and QR code - scan it with your phone to control Maestro from the couch, the kitchen, or anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel - no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
 		descriptionGeneric:
-			'The LIVE/OFFLINE indicator controls a built-in web interface for remote control. Toggle it on to generate a local URL and QR code—scan it with your phone to control Maestro from anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel—no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
+			'The LIVE/OFFLINE indicator controls a built-in web interface for remote control. Toggle it on to generate a local URL and QR code - scan it with your phone to control Maestro from anywhere on your network.\n\nIf you have Cloudflare Tunnel (cloudflared) installed, one click opens a secure tunnel - no API keys, no login, no configuration. Access Maestro from anywhere, even outside your home network.',
 		wide: true,
 		selector: '[data-tour="remote-control"]',
 		position: 'right',
@@ -199,9 +199,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'session-list',
 		title: 'Agents & Groups',
 		description:
-			'The agent list shows all your AI coding agents. Each agent is backed by a provider like Claude Code, Codex, or OpenCode. You can run multiple agents simultaneously on different projects and quickly switch between them. A red indicator dot marks unread messages.\n\nOrganize agents into groups, and with two or more agents you can start a group chat—even across different providers. Press {{focusSidebar}} to focus the agent list.',
+			'The agent list shows all your AI coding agents. Each agent is backed by a provider like Claude Code, Codex, or OpenCode. You can run multiple agents simultaneously on different projects and quickly switch between them. A red indicator dot marks unread messages.\n\nOrganize agents into groups, and with two or more agents you can start a group chat - even across different providers. Press {{focusSidebar}} to focus the agent list.',
 		descriptionGeneric:
-			'The agent list shows all your AI coding agents. Each agent is backed by a provider like Claude Code, Codex, or OpenCode. You can run multiple agents simultaneously on different projects and quickly switch between them. A red indicator dot marks unread messages.\n\nOrganize agents into groups, and with two or more agents you can start a group chat—even across different providers. Press {{focusSidebar}} to focus the agent list.',
+			'The agent list shows all your AI coding agents. Each agent is backed by a provider like Claude Code, Codex, or OpenCode. You can run multiple agents simultaneously on different projects and quickly switch between them. A red indicator dot marks unread messages.\n\nOrganize agents into groups, and with two or more agents you can start a group chat - even across different providers. Press {{focusSidebar}} to focus the agent list.',
 		wide: true,
 		selector: '[data-tour="session-list"]',
 		position: 'right',
@@ -249,9 +249,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'model-selector',
 		title: 'Model & Effort',
 		description:
-			'These pills let you change your AI model and effort level on the fly — no need to dig through settings.',
+			'These pills let you change your AI model and effort level on the fly - no need to dig through settings.',
 		descriptionGeneric:
-			'These pills let you change your AI model and effort level on the fly — no need to dig through settings.',
+			'These pills let you change your AI model and effort level on the fly - no need to dig through settings.',
 		descriptionContent: modelSelectorContent,
 		descriptionContentGeneric: modelSelectorContent,
 		wide: true,
@@ -263,9 +263,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'toolbar-toggles',
 		title: 'Session Controls',
 		description:
-			"These aren't just status indicators — they're clickable buttons that control your session behavior.",
+			"These aren't just status indicators - they're clickable buttons that control your session behavior.",
 		descriptionGeneric:
-			"These aren't just status indicators — they're clickable buttons that control your session behavior.",
+			"These aren't just status indicators - they're clickable buttons that control your session behavior.",
 		descriptionContent: toolbarTogglesContent,
 		descriptionContentGeneric: toolbarTogglesContent,
 		wide: true,
@@ -277,9 +277,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'additional-tabs',
 		title: 'Additional Tabs',
 		description:
-			'Beyond AI chat tabs, you can open other tab types right alongside your conversations.\n\nPress {{toggleMode}} to open a Terminal tab — a full shell for running commands yourself. Press {{newBrowserTab}} to open a Browser tab for web previews and research without leaving Maestro.\n\nWorking with multiple terminals? Press {{jumpToTerminal}} to instantly jump to the nearest terminal tab.',
+			'Beyond AI chat tabs, you can open other tab types right alongside your conversations.\n\nPress {{toggleMode}} to open a Terminal tab - a full shell for running commands yourself. Press {{newBrowserTab}} to open a Browser tab for web previews and research without leaving Maestro.\n\nWorking with multiple terminals? Press {{jumpToTerminal}} to instantly jump to the nearest terminal tab.',
 		descriptionGeneric:
-			'Beyond AI chat tabs, you can open other tab types right alongside your conversations.\n\nPress {{toggleMode}} to open a Terminal tab — a full shell for running commands yourself. Press {{newBrowserTab}} to open a Browser tab for web previews and research without leaving Maestro.\n\nWorking with multiple terminals? Press {{jumpToTerminal}} to instantly jump to the nearest terminal tab.',
+			'Beyond AI chat tabs, you can open other tab types right alongside your conversations.\n\nPress {{toggleMode}} to open a Terminal tab - a full shell for running commands yourself. Press {{newBrowserTab}} to open a Browser tab for web previews and research without leaving Maestro.\n\nWorking with multiple terminals? Press {{jumpToTerminal}} to instantly jump to the nearest terminal tab.',
 		selector: '[data-tour="input-area"]',
 		position: 'top',
 		uiActions: [],

@@ -102,7 +102,7 @@ describe('useAgentSshRemoteListener', () => {
 		useSessionStore.setState({ sessions: [session] } as any);
 
 		renderHook(() => useAgentSshRemoteListener());
-		// Same remote ID arrives again — could be a reconnect or a duplicate
+		// Same remote ID arrives again - could be a reconnect or a duplicate
 		// IPC event. The store already has remote 'r-1' attached and the
 		// previous probe already returned non-git, so re-probing would burn
 		// 3 IPC calls for nothing.

@@ -23,7 +23,7 @@ export const AUTO_REFRESH_OPTIONS = [
 	{ label: 'Every 3 minutes', value: 180 },
 ];
 
-/** Flattened node for virtualization — one entry per visible tree row. */
+/** Flattened node for virtualization - one entry per visible tree row. */
 export interface FlattenedNode {
 	node: FileNode;
 	path: string;
@@ -135,7 +135,7 @@ export interface FileExplorerPanelProps {
 		sessionId: string,
 		options?: { maxEntriesOverride?: number }
 	) => Promise<FileTreeChanges | undefined>;
-	/** Cancel the in-flight file tree load — useful when SSH scans monopolize connections. */
+	/** Cancel the in-flight file tree load - useful when SSH scans monopolize connections. */
 	cancelFileTreeLoad?: (sessionId: string) => void;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	onAutoRefreshChange?: (interval: number) => void;

@@ -1335,6 +1335,41 @@ describe('NewInstanceModal', () => {
 	});
 
 	describe('Custom agent paths', () => {
+		it('should prefer the validated local custom path over stale stored config', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'codex',
+					name: 'Codex',
+					binaryName: 'codex',
+					path: '/detected/codex',
+					customPath: '/current/codex',
+				}),
+			]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				customPath: '/stale/codex',
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Codex')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Codex'));
+
+			await waitFor(() => {
+				expect(screen.getByDisplayValue('/current/codex')).toBeInTheDocument();
+			});
+			expect(screen.queryByDisplayValue('/stale/codex')).not.toBeInTheDocument();
+		});
+
 		it('should display path input for Claude Code agent', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
@@ -3261,6 +3296,94 @@ describe('NewInstanceModal', () => {
 			await waitFor(() => {
 				expect(trigger).toHaveTextContent(/Preset/);
 			});
+		});
+	});
+
+	describe('presetWorkingDir', () => {
+		it('seeds the working directory and derives the agent name from its basename', async () => {
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/project/src/renderer"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByLabelText('Working Directory')).toHaveValue('/project/src/renderer');
+			});
+			expect(screen.getByLabelText('Agent Name')).toHaveValue('renderer');
+		});
+
+		it('leaves the seeded fields editable', async () => {
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/project/docs"
+				/>
+			);
+
+			const nameInput = await screen.findByLabelText('Agent Name');
+			await waitFor(() => expect(nameInput).toHaveValue('docs'));
+			fireEvent.change(nameInput, { target: { value: 'my agent' } });
+			expect(nameInput).toHaveValue('my agent');
+		});
+
+		it('ignores presetWorkingDir when duplicating so the source cwd wins', async () => {
+			const source: Session = {
+				id: 'src-1',
+				name: 'Source',
+				toolType: 'claude-code',
+				cwd: '/source/project',
+				projectRoot: '/source/project',
+				fullPath: '/source/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 1,
+				terminalPid: 2,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[source]}
+					sourceSession={source}
+					presetWorkingDir="/project/docs"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByLabelText('Working Directory')).toHaveValue('/source/project');
+			});
+			expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)');
 		});
 	});
 });

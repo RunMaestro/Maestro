@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
@@ -330,7 +331,9 @@ describe('EditAgentModal', () => {
 				undefined,
 				true,
 				true,
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				undefined // contextWindowSource: the window was not touched, so no
+				// provenance is recorded and P1 precedence stands (finding AD1)
 			);
 		});
 
@@ -425,7 +428,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -598,7 +603,7 @@ describe('EditAgentModal', () => {
 			sessionSshRemoteConfig: {
 				enabled: true,
 				remoteId: 'remote-1',
-				// No workingDirOverride — this is the regression scenario
+				// No workingDirOverride - this is the regression scenario
 			},
 		});
 
@@ -657,7 +662,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 	});
 
@@ -729,7 +736,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 	});
 
@@ -778,7 +787,7 @@ describe('EditAgentModal', () => {
 		// Wait for the SSH dropdown to render with the remote selected
 		const dropdown = (await screen.findByDisplayValue(/Dev Server/)) as HTMLSelectElement;
 
-		// Switch the dropdown to Local Execution — this is the action that used
+		// Switch the dropdown to Local Execution - this is the action that used
 		// to wipe shareHistoryToProjectDir.
 		fireEvent.change(dropdown, { target: { value: 'local' } });
 
@@ -807,7 +816,9 @@ describe('EditAgentModal', () => {
 			undefined, // maestroPMode
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
-			undefined // additionalDirectories
+			undefined, // additionalDirectories
+			undefined // contextWindowSource: the window was not touched, so no
+			// provenance is recorded and P1 precedence stands (finding AD1)
 		);
 	});
 
@@ -839,6 +850,332 @@ describe('EditAgentModal', () => {
 		// SSH selector should appear after SSH configs load
 		await waitFor(() => {
 			expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
+		});
+	});
+
+	// Finding AD1: provenance for `customContextWindow`.
+	describe('context window provenance (finding AD1)', () => {
+		const agentWithWindow = {
+			id: 'claude-code',
+			name: 'Claude Code',
+			available: true,
+			path: '/usr/local/bin/claude',
+			binaryName: 'claude',
+			hidden: false,
+			configOptions: [
+				{ key: 'model', type: 'text', label: 'Model', default: '' },
+				{
+					key: 'contextWindow',
+					type: 'number',
+					label: 'Context Window Size',
+					default: 200000,
+				},
+			],
+		} as unknown as AgentConfig;
+
+		beforeEach(() => {
+			// Seeded store entries must not leak between cases: the note reads the
+			// live store, so a leftover session would silently satisfy another test.
+			useSessionStore.setState({ sessions: [] } as never);
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([agentWithWindow]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				model: 'claude-sonnet',
+				contextWindow: 200000,
+			});
+		});
+
+		// #1370: the stored number stays visible in this control while the gauge,
+		// the Context Timeline and compaction all divide by the provider's window
+		// instead. The control looks like it configures something; it does not.
+		describe('override note (#1370)', () => {
+			const withUsage = (
+				overrides: Partial<Session>,
+				usageStats?: Record<string, unknown>
+			): Session =>
+				createSession({
+					...overrides,
+					activeTabId: 'tab-1',
+					aiTabs: [{ id: 'tab-1', usageStats }],
+				} as Partial<Session>);
+
+			const note = () => screen.queryByTestId('config-option-note-contextWindow');
+
+			it('explains the override when a provider window outranks a materialized value', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000 },
+							{
+								contextWindow: 1_000_000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				// Names the window actually in use, so the number in the field is not
+				// the only figure on screen.
+				expect(note()).toHaveTextContent('1.0M');
+				expect(note()).toHaveTextContent(/edit this field/i);
+			});
+
+			it('stays silent when the stored window is user-edited', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 120000, contextWindowSource: 'user-edited' },
+							{ contextWindow: 1_000_000, contextWindowResolved: true }
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('120000');
+				// The value is winning, so there is nothing to explain.
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('stays silent when the reported window carries no authority flag', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage({ customContextWindow: 200000 }, { contextWindow: 1_000_000 })}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				// An unflagged report may be a parser-injected static fallback, so the
+				// stored value is still the one in use.
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('stays silent when nothing is stored to override', async () => {
+				const { customContextWindow: _drop, ...withoutWindow } = createSession() as Record<
+					string,
+					unknown
+				>;
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={
+							{
+								...withoutWindow,
+								activeTabId: 'tab-1',
+								aiTabs: [
+									{
+										id: 'tab-1',
+										usageStats: { contextWindow: 1_000_000, contextWindowResolved: true },
+									},
+								],
+							} as unknown as Session
+						}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('follows the live store when usage lands while the modal is open', async () => {
+				// The `session` prop is a snapshot from when the modal opened, so a
+				// turn completing mid-edit would leave the note missing or naming a
+				// stale winner (review of #1371). Snapshot has no usage; the store
+				// entry does.
+				const snapshot = withUsage({ customContextWindow: 200000 }, undefined);
+				useSessionStore.setState({
+					sessions: [
+						withUsage(
+							{ customContextWindow: 200000 },
+							{
+								contextWindow: 1_000_000,
+								contextWindowResolved: true,
+							}
+						),
+					],
+				} as never);
+
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={snapshot}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).toHaveTextContent('1.0M');
+			});
+
+			it('stays silent while a provider switch is pending', async () => {
+				// Mid-switch the panel already shows the NEW provider's config, so a
+				// note describing the OLD provider's window would caption the wrong
+				// control (review of #1371).
+				//
+				// codex MUST be in the detect mock: without it `agent` resolves to null
+				// after the switch and the whole config panel unmounts, so the note
+				// would be absent for a reason that has nothing to do with the guard.
+				vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+					agentWithWindow,
+					{ ...agentWithWindow, id: 'codex', name: 'Codex' } as unknown as AgentConfig,
+				]);
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000 },
+							{
+								contextWindow: 1_000_000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				// Note is present before the switch...
+				await screen.findByDisplayValue('200000');
+				expect(note()).toBeInTheDocument();
+
+				// ...and gone once a different provider is selected. The provider
+				// control is a <select>, so change it rather than clicking a label.
+				fireEvent.change(screen.getByDisplayValue('Claude Code'), {
+					target: { value: 'codex' },
+				});
+				// The control itself is still on screen - the note is gone, not the panel.
+				await waitFor(() => expect(note()).not.toBeInTheDocument());
+				expect(screen.getByDisplayValue('200000')).toBeInTheDocument();
+			});
+
+			it('credits the model marker rather than the provider when it is what won', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000, customModel: 'opus[1m]' },
+							{
+								contextWindow: 500000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).toHaveTextContent(/selected model/i);
+				expect(note()).toHaveTextContent('1.0M');
+			});
+		});
+
+		// Finding AD1. This modal is HOW the agent-level default gets materialized
+		// into a per-session override (finding P1): with no stored value the panel
+		// seeds from `globalConfig.contextWindow`, and pressing Save writes that
+		// number to the session. If that write were recorded as 'user-edited' it
+		// would outrank the provider's own report and reinstate the exact bug P1
+		// removed - so the seed comparison, not the presence of a value, is what
+		// decides provenance.
+		it('does not mark an untouched seeded context window as user-edited', async () => {
+			const { customContextWindow: _drop, ...withoutWindow } = createSession() as Record<
+				string,
+				unknown
+			>;
+
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={withoutWindow as unknown as Session}
+					existingSessions={[]}
+				/>
+			);
+
+			// Seeded from the agent-level config because the session has none.
+			expect(await screen.findByDisplayValue('200000')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			// The value still materializes onto the session, exactly as before...
+			expect(args[10]).toBe(200000);
+			// ...but carries no provenance, so P1's precedence still applies to it.
+			expect(args[18]).toBeUndefined();
+		});
+
+		it('clears provenance when the user clears the context window', async () => {
+			// Review of PR #1362 (CodeRabbit). Clearing the control makes the value
+			// undefined, which differs from the numeric seed and so used to be
+			// recorded as a deliberate edit. Provenance must die with the value it
+			// describes, or the NEXT window set inherits precedence nobody asked for.
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession({ contextWindowSource: 'user-edited' })}
+					existingSessions={[]}
+				/>
+			);
+
+			const input = await screen.findByDisplayValue('100000');
+			fireEvent.change(input, { target: { value: '' } });
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			expect(args[10]).toBeUndefined();
+			expect(args[18]).toBeUndefined();
+		});
+
+		it('marks a context window the user actually changed as user-edited', async () => {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession()}
+					existingSessions={[]}
+				/>
+			);
+
+			const input = await screen.findByDisplayValue('100000');
+			fireEvent.change(input, { target: { value: '120000' } });
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const args = onSave.mock.calls[0];
+			expect(args[10]).toBe(120000);
+			expect(args[18]).toBe('user-edited');
 		});
 	});
 });

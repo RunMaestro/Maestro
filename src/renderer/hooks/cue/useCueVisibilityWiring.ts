@@ -6,7 +6,7 @@
  * gh CLI fetches, file-event dispatch) while the app is hidden.
  *
  * Mounts once in App.tsx. The hook is fire-and-forget: failures to invoke
- * `cue:setActive` are logged at debug level — the worst case is the
+ * `cue:setActive` are logged at debug level - the worst case is the
  * scanners stay running, which is the pre-existing behavior.
  *
  * See CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations" and PR-B 1.4.
@@ -23,7 +23,7 @@ function notifyMain(active: boolean): void {
 	cue.setActive(active).catch((err: unknown) => {
 		logger.debug('[Cue] setActive IPC failed', undefined, err);
 		// Fail-soft locally (worst case scanners stay running, which is the
-		// pre-existing behavior) but surface to Sentry — repeated failures
+		// pre-existing behavior) but surface to Sentry - repeated failures
 		// would otherwise be invisible. Per CLAUDE.md §"Error Handling & Sentry".
 		captureException(err instanceof Error ? err : new Error(String(err)), {
 			extra: { operation: 'cue.setActive', active },

@@ -7,7 +7,7 @@ export type { AgentId } from './agentIds';
 
 /**
  * Union type of all valid agent IDs.
- * Derived from AGENT_IDS — the single source of truth in agentIds.ts.
+ * Derived from AGENT_IDS - the single source of truth in agentIds.ts.
  */
 export type ToolType = import('./agentIds').AgentId;
 
@@ -99,6 +99,17 @@ export interface AgentCapabilities {
 	/** Agent supports --input-format stream-json for image input via stdin */
 	supportsStreamJsonInput: boolean;
 
+	/**
+	 * Agent's CLI reads the prompt from stdin when it is not passed as an
+	 * argument. Windows spawns deliver the prompt over stdin instead of argv to
+	 * stay under the ~32K CreateProcess command-line limit, which only works for
+	 * CLIs that actually read stdin. An agent that accepts the prompt solely as a
+	 * positional argument (Oh My Pi) would otherwise start with no prompt at all,
+	 * emit its session line, and exit 0 without ever calling the model.
+	 * False keeps the prompt in argv on every platform.
+	 */
+	supportsPromptViaStdin: boolean;
+
 	/** Agent emits streaming thinking/reasoning content that can be displayed */
 	supportsThinkingDisplay: boolean;
 
@@ -170,6 +181,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsResultMessages: false,
 	supportsModelSelection: false,
 	supportsStreamJsonInput: false,
+	supportsPromptViaStdin: false,
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
@@ -206,7 +218,7 @@ export function isWorktreeGroup(group: Group): boolean {
  *
  * Producer: `useCliActivityMonitoring` in
  * `renderer/hooks/remote/useCliActivityMonitoring.ts`. If a new field is added
- * here, the comparator must compare it too — TypeScript will flag the omission
+ * here, the comparator must compare it too - TypeScript will flag the omission
  * because both sites depend on this exact shape.
  */
 export interface SessionCliActivity {
@@ -251,18 +263,18 @@ export interface SessionInfo {
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential
-	 * backoff (30s→30m). Defaults ON — treat `undefined` as enabled via
+	 * backoff (30s→30m). Defaults ON - treat `undefined` as enabled via
 	 * {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnAvailabilityErrors?: boolean;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt when the plan quota is
 	 * exhausted (usage/quota limit). Waits until the parsed reset time, or 1h if
-	 * unknown, then retries hourly. Defaults ON — treat `undefined` as enabled
+	 * unknown, then retries hourly. Defaults ON - treat `undefined` as enabled
 	 * via {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnTokenExhaustion?: boolean;
-	/** Per-session SSH remote config — when enabled, CLI spawns via SSH. */
+	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
 
@@ -275,22 +287,68 @@ export interface UsageStats {
 	totalCostUsd: number;
 	contextWindow: number;
 	/**
+	 * True when `contextWindow` is an authoritative, runtime-resolved value (the
+	 * model's real window discovered from the provider's own catalog) rather than
+	 * a static per-agent default/fallback. Consumers use this to let the real
+	 * window win over the agent-level configured fallback while still honoring an
+	 * explicit per-session override. Set by providers whose window is model-
+	 * dependent and reported per turn (currently Oh My Pi); undefined otherwise.
+	 */
+	contextWindowResolved?: boolean;
+	/**
+	 * The model whose window `contextWindow` describes, for providers whose window
+	 * is model-dependent (currently Oh My Pi). Consumers that preserve a resolved
+	 * window across an unresolved delta (see `mergeContextWindow`) scope that
+	 * preservation to the SAME model so a mid-session model switch to a model that
+	 * is absent from the primed catalog can't leave the gauge stuck on the previous
+	 * model's window. Undefined for providers with a single static window.
+	 */
+	contextWindowModel?: string;
+	/**
+	 * True when this usage event exists ONLY to correct a previously emitted
+	 * context window (Oh My Pi's catalog primed after the first turn's fallback
+	 * usage was already emitted - see `pushResolvedOmpContextWindow`). The token
+	 * and cost fields are a REPLAY of that already-counted turn, so accumulating
+	 * consumers must NOT add them again: update the context window and leave every
+	 * token/cost total untouched. Undefined for ordinary per-turn usage events.
+	 */
+	contextWindowCorrectionOnly?: boolean;
+	/**
+	 * Monotonic sequence number stamped by main's context-timeline capture log
+	 * (`src/main/process-listeners/context-timeline-log.ts`) as the event goes
+	 * out on `process:usage`. The renderer records it on the Context Timeline
+	 * point it builds, so a renderer that later hydrates from the main-side log
+	 * can dedup hydrated captures against live ones exactly. Undefined for usage
+	 * events that never passed through that listener (unit tests, replays).
+	 */
+	captureSeq?: number;
+	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
 	 * These are already included in outputTokens but tracked separately for UI display.
 	 */
 	reasoningTokens?: number;
 	/**
-	 * Pre-normalization absolute token totals, set ONLY for providers whose CLI
-	 * reports cumulative session usage that we delta-normalize before emitting
-	 * (currently Codex - see normalizeUsageToDelta in StdoutHandler). For those
-	 * providers the top-level fields above are per-turn DELTAS, which are correct
-	 * for token accumulation but wrong for context-fill display: the cumulative
-	 * total is what actually occupies the model window. Consumers that plot
-	 * context occupancy (the Context Timeline inspector) read from here when
-	 * present and fall back to the top-level fields otherwise. Undefined for
-	 * per-call providers (Claude, Copilot, OpenCode), whose top-level fields are
-	 * already absolute for the current turn.
+	 * Absolute context-occupancy snapshot for the turn, set by providers whose
+	 * top-level fields above are NOT occupancy. Two sources today:
+	 *
+	 * - Codex: its CLI reports cumulative session usage which we delta-normalize
+	 *   before emitting (see normalizeUsageToDelta in StdoutHandler), so the
+	 *   top-level fields are per-turn DELTAS - correct for token accumulation,
+	 *   wrong for context fill. The pre-normalization cumulative total is the
+	 *   occupancy.
+	 * - Claude Code: its result message sums every internal API call of the turn,
+	 *   so the top-level fields are token SPEND and a tool-heavy turn can exceed
+	 *   the window entirely. Its parser attaches the LAST internal call's usage
+	 *   here, which is real occupancy (a single call's input is what was
+	 *   physically sent to the model). Note `outputTokens` in that case is the
+	 *   last call's output, not the turn's - occupancy consumers read the input
+	 *   side.
+	 *
+	 * Consumers that plot context occupancy (the Context Timeline inspector, the
+	 * context gauge) read from here when present and fall back to the top-level
+	 * fields otherwise. Undefined for providers whose top-level fields are already
+	 * absolute for the current turn (Copilot, OpenCode).
 	 */
 	absoluteUsage?: {
 		inputTokens: number;
@@ -301,8 +359,23 @@ export interface UsageStats {
 	};
 }
 
-// History entry types for the History panel
-export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
+/**
+ * History entry types for the History panel.
+ *
+ * - `USER`  - an interactive turn the user typed themselves.
+ * - `AUTO`  - an Auto Run (playbook / goal) task the engine dispatched.
+ * - `CUE`   - a turn triggered by a Cue subscription.
+ * - `AGENT` - an ordinary message proxied in from ANOTHER agent (a cross-agent
+ *   `@mention` consult). It is a normal turn, not automation: the only thing
+ *   that differs from `USER` is who typed it. Consults were originally logged as
+ *   `AUTO`, which made them render as Auto Run tasks and inflated the Auto Run
+ *   counts; `normalizeHistoryEntryType` in `shared/history.ts` re-maps those
+ *   legacy entries on read.
+ *
+ * Adding a member here? `ALL_HISTORY_ENTRY_TYPES` (shared/history.ts) is the
+ * single list every filter/validator iterates - update it, not a local copy.
+ */
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT';
 
 export interface HistoryEntry {
 	id: string;
@@ -393,11 +466,16 @@ export interface BatchDocumentEntry {
  * `read` and `write` are independent - a directory can be read-only (reference
  * material), write-only (a drop box the agent should never read back), or both.
  * An entry with neither flag set is inert and is omitted from the prompt.
+ *
+ * `description` is an optional hint the Conductor can attach to explain what the
+ * directory is for or how the agent should use it. When present it is rendered
+ * into the {{ADDITIONAL_DIRECTORIES}} prompt block alongside the access rule.
  */
 export interface AdditionalDirectory {
 	path: string;
 	read: boolean;
 	write: boolean;
+	description?: string;
 }
 
 // Git worktree configuration for Auto Run
@@ -746,7 +824,7 @@ export interface AgentSshRemoteConfig {
 	 * Mirror every new history entry for this agent to
 	 * <projectRoot>/.maestro/history/history-<hostname>.jsonl on *this* machine's
 	 * local filesystem. Meant for agents that run here locally but are controlled
-	 * by another Maestro instance over SSH — the controller reads the project's
+	 * by another Maestro instance over SSH - the controller reads the project's
 	 * `.maestro/history/` dir and sees entries generated on this side.
 	 * Independent of `enabled` / `syncHistory`.
 	 */

@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
-import type { HostCallHandlers } from './plugin-sandbox-host';
+import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
 import type { ActionGuard } from './action-guard';
@@ -37,11 +37,14 @@ import { evaluatePluginDispatch } from '../../shared/plugins/plugin-dispatch-gat
 import {
 	isHostViewBlocks,
 	MAX_HOST_VIEW_BLOCKS_BYTES,
+	MAX_PANEL_POST_BYTES,
 	serializedJsonByteLength,
 	type HostViewBlocks,
 	type HostViewContribution,
+	type PanelContribution,
 } from '../../shared/plugins/contributions';
 import type { HistoryEntry } from '../../shared/types';
+import { isHistoryEntryType } from '../../shared/history';
 
 /** Cap a fetched response body so a hostile/huge response cannot exhaust memory. */
 const MAX_FETCH_BYTES = 5_000_000;
@@ -150,6 +153,9 @@ export interface HostHandlerDeps {
 		patch: Record<string, unknown>
 	) => Promise<PluginSessionMetadata | null>;
 	sessionsDelete?: (sessionId: string) => Promise<boolean>;
+	/** Move the user's focus to an existing session, landing on its AI tab.
+	 * Resolves false when the session (or the named AI tab) no longer exists. */
+	sessionsFocus?: (sessionId: string, tabId?: string) => Promise<boolean>;
 
 	/** Tab metadata and mutators. When omitted the handlers fail closed. */
 	tabsList?: (sessionId?: string) => PluginTabMetadata[];
@@ -219,6 +225,24 @@ export interface HostHandlerDeps {
 		blocks?: HostViewBlocks
 	) => boolean;
 
+	/** Resolve a caller-owned local panel id against active panel declarations.
+	 * A plugin may only push data into panels IT declared. */
+	getPanel?: (pluginId: string, localId: string) => PanelContribution | null;
+	/** Host-to-panel push sink. Receives the already-namespaced panel id and
+	 * validated, size-capped JSON data; broadcasts it to the renderer(s) so the
+	 * owning panel webview can receive it. Absent means the method is not
+	 * registered at all (fail closed). */
+	panelPost?: (pluginId: string, namespacedPanelId: string, data: unknown) => void;
+	/** Show/hide sink for a plugin's OWN `modal`-placement panel. Receives the
+	 * already-namespaced panel id and the requested action; broadcasts it to the
+	 * renderer(s), which own the single modal-panel mount. Absent means the
+	 * open/close/toggle methods are not registered at all (fail closed). */
+	panelVisibility?: (
+		pluginId: string,
+		namespacedPanelId: string,
+		action: 'open' | 'close' | 'toggle'
+	) => void;
+
 	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
 	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
 	/** Optional path for per-plugin private SQLite databases. */
@@ -266,7 +290,7 @@ export interface HostHandlerDeps {
 	dispatchUnattendedAllowed?: (pluginId: string, agentId: string) => boolean;
 	/** Optional Phase-4 act verb: run a HOST-BLESSED binary. The handler resolves
 	 * `command` through `resolveSpawnBinary` (the host-owned registry) and hands
-	 * the sink a fully host-owned spec — binary path, env, cwd all come from the
+	 * the sink a fully host-owned spec - binary path, env, cwd all come from the
 	 * registry entry, never from the plugin; only validated argv strings pass
 	 * through. The sink must spawn WITHOUT a shell. */
 	spawn?: (pluginId: string, spec: ResolvedSpawnSpec) => Promise<unknown>;
@@ -424,7 +448,7 @@ function sanitizeTranscriptWriteEntry(
 	sessionId: string,
 	projectPath: string
 ): HistoryEntry {
-	const type = raw.type === 'AUTO' || raw.type === 'USER' || raw.type === 'CUE' ? raw.type : 'USER';
+	const type = isHistoryEntryType(raw.type) ? raw.type : 'USER';
 	return {
 		id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : `${Date.now()}-${Math.random()}`,
 		type,
@@ -576,7 +600,7 @@ function assertLowOrMediumRisk(text: string): void {
  * Enforce a CLOSED param schema for an act verb: every non-undefined key must
  * be in `allowed`. Undefined-valued keys are tolerated (the SDK shim always
  * sends an `opts` slot, and structured clone preserves it as undefined); any
- * key carrying a VALUE outside the schema is rejected loudly — a plugin can
+ * key carrying a VALUE outside the schema is rejected loudly - a plugin can
  * never smuggle skip-permissions/force/concurrency/env/cwd/model flags through.
  */
 function assertClosedSchema(
@@ -857,6 +881,21 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			});
 		},
 
+		'sessions.focus': async (pluginId, params) => {
+			const p = asObject(params);
+			if (typeof p.sessionId !== 'string') throw new Error('sessionId is required');
+			if (p.tabId !== undefined && typeof p.tabId !== 'string')
+				throw new Error('tabId must be a string');
+			// Closed schema: focus is navigation, so nothing else may ride along.
+			assertClosedSchema('sessions.focus', p, { sessionId: true, tabId: true });
+			assertBrokerAllowed(deps, pluginId, 'sessions.focus', p);
+			requireSession(p.sessionId);
+			if (!deps.sessionsFocus) throw new Error('sessions.focus is unavailable');
+			const ok = await deps.sessionsFocus(p.sessionId, p.tabId);
+			if (!ok) throw new Error(`unknown focus target: ${p.sessionId}`);
+			return { ok: true };
+		},
+
 		'history.list': async (pluginId, params) => {
 			const p = asObject(params);
 			assertBrokerAllowed(deps, pluginId, 'history.list', p);
@@ -938,7 +977,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						? p.projectPath
 						: undefined;
 			if (!projectPath) throw new Error('projectPath is required');
-			// Re-authorize against the session's REAL projectPath — the claimed
+			// Re-authorize against the session's REAL projectPath - the claimed
 			// path above is only the broker's first-pass hint.
 			assertBrokerAllowed(deps, pluginId, 'transcripts.append', { projectPath });
 			if (!deps.appendSessionTranscript) throw new Error('transcripts.append is unavailable');
@@ -1292,12 +1331,83 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// directly, bypassing this handler). We deliberately do NOT try to infer
 	// "user-initiated" presence here: it is racy and Relay needs the unattended
 	// grant regardless.
+	// ui.panelPost: the ONLY host-to-panel push channel. It is data-in, never
+	// code: the payload is JSON-validated and size-capped here, structured-cloned
+	// across every hop, and the renderer/guest never evaluate it. A plugin can
+	// target only panels IT declared, so the channel creates no cross-plugin
+	// reach and no new egress. Registered only when the sink is wired (fail
+	// closed, mirroring agents.dispatch).
+	if (deps.panelPost) {
+		const panelPost = deps.panelPost;
+		handlers['ui.panelPost'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('ui.panelPost', p, { panelId: true, data: true });
+			const panelId = p.panelId;
+			if (typeof panelId !== 'string' || panelId.trim() === '' || panelId !== panelId.trim()) {
+				throw new Error('panelId is required');
+			}
+			assertBrokerAllowed(deps, pluginId, 'ui.panelPost', p);
+			// Own-panels-only: `panelId` is the caller's LOCAL id, resolved against
+			// this plugin's declarations. A namespaced or foreign id never resolves.
+			if (!deps.getPanel?.(pluginId, panelId)) {
+				throw new Error(`panel "${panelId}" is not declared by this plugin`);
+			}
+			const byteLength = serializedJsonByteLength(p.data);
+			if (byteLength === null) throw new Error('panel data must be JSON-serializable');
+			if (byteLength > MAX_PANEL_POST_BYTES) {
+				throw new Error(`panel data exceeds the ${MAX_PANEL_POST_BYTES}-byte size limit`);
+			}
+			panelPost(pluginId, `${pluginId}/${panelId}`, p.data);
+			return { ok: true };
+		};
+	}
+
+	// ui.openPanel / ui.closePanel / ui.togglePanel: let a plugin summon or dismiss
+	// its OWN modal panel (the hotkey-summoned overlay path). Same own-panels-only
+	// resolution as ui.panelPost, so a plugin can never open, close, or flicker
+	// another plugin's surface, and no new consent is needed: anything that can
+	// contribute a panel at all already holds `ui:panel`. The verbs carry no data -
+	// they are pure show/hide signals - and are registered only when the sink is
+	// wired (fail closed).
+	if (deps.panelVisibility) {
+		const panelVisibility = deps.panelVisibility;
+		const makeVisibilityHandler = (
+			method: 'ui.openPanel' | 'ui.closePanel' | 'ui.togglePanel',
+			action: 'open' | 'close' | 'toggle'
+		): HostCallHandler => {
+			return async (pluginId, params) => {
+				const p = asObject(params);
+				assertClosedSchema(method, p, { panelId: true });
+				const panelId = p.panelId;
+				if (typeof panelId !== 'string' || panelId.trim() === '' || panelId !== panelId.trim()) {
+					throw new Error('panelId is required');
+				}
+				assertBrokerAllowed(deps, pluginId, method, p);
+				const panel = deps.getPanel?.(pluginId, panelId);
+				if (!panel) {
+					throw new Error(`panel "${panelId}" is not declared by this plugin`);
+				}
+				// Only `modal` panels have a summonable host; docked ones are always
+				// mounted and have their own hide control, so this would be a no-op the
+				// plugin could not distinguish from success.
+				if (panel.placement !== 'modal') {
+					throw new Error(`panel "${panelId}" is not a modal panel`);
+				}
+				panelVisibility(pluginId, `${pluginId}/${panelId}`, action);
+				return { ok: true };
+			};
+		};
+		handlers['ui.openPanel'] = makeVisibilityHandler('ui.openPanel', 'open');
+		handlers['ui.closePanel'] = makeVisibilityHandler('ui.closePanel', 'close');
+		handlers['ui.togglePanel'] = makeVisibilityHandler('ui.togglePanel', 'toggle');
+	}
+
 	if (deps.dispatch) {
 		const dispatch = deps.dispatch;
 		handlers['agents.dispatch'] = async (pluginId, params) => {
 			const p = asObject(params);
 			// Closed schema: {agentId, prompt} strings only. No model, permission
-			// mode, skip-permissions, cwd, or execution flag can ride along — the
+			// mode, skip-permissions, cwd, or execution flag can ride along - the
 			// target agent's own configuration decides those.
 			assertClosedSchema('agents.dispatch', p, { agentId: true, prompt: true });
 			const agentId = p.agentId;
@@ -1316,7 +1426,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					`agents.dispatch: prompt too long (max ${MAX_DISPATCH_PROMPT_CHARS} chars)`
 				);
 			}
-			// Broker: allowlist scope — the grant must name THIS exact agentId.
+			// Broker: allowlist scope - the grant must name THIS exact agentId.
 			assertBrokerAllowed(deps, pluginId, 'agents.dispatch', p);
 			// Unattended gate: direct plugin dispatch is never user-present, so it
 			// requires the separate unattended consent on top of the allowlist grant.
@@ -1341,7 +1451,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			const p = asObject(params);
 			// Closed schema: `command` is a host-blessed NAME; `opts.args` is the
 			// only other plugin input. env/cwd/shell/detached/force can never be
-			// supplied by the plugin — they are host-owned via the registry.
+			// supplied by the plugin - they are host-owned via the registry.
 			assertClosedSchema('process.spawn', p, { command: true, opts: true });
 			const opts = asObject(p.opts);
 			assertClosedSchema('process.spawn opts', opts, { args: true });
@@ -1349,7 +1459,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (typeof command !== 'string' || command.trim() === '') {
 				throw new Error('command is required');
 			}
-			// Broker: allowlist scope — the grant must name THIS exact binary name.
+			// Broker: allowlist scope - the grant must name THIS exact binary name.
 			assertBrokerAllowed(deps, pluginId, 'process.spawn', p);
 			assertTrustedActVerb(deps, pluginId);
 			const args = validateSpawnArgs(opts.args);

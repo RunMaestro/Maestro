@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
-import { Layers, Hash, Bot, User, Zap, BarChart3, ListOrdered } from 'lucide-react';
+import { Layers, Hash, Bot, User, Zap, BarChart3, ListOrdered, MessagesSquare } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
-import { CUE_COLOR } from './historyConstants';
+import { CUE_COLOR, AGENT_COLOR } from './historyConstants';
 import type { Theme } from '../../types';
 
 export interface HistoryStats {
@@ -11,6 +11,8 @@ export interface HistoryStats {
 	userCount: number;
 	/** Total CUE entries; only rendered when provided and > 0 (gated by the Maestro Cue encore feature) */
 	cueCount?: number;
+	/** Total AGENT entries (messages proxied in from another agent); only rendered when provided and > 0 */
+	agentEntryCount?: number;
 	totalCount: number;
 	/** Number of agents currently in 'busy' state (live indicator) */
 	activeAgentCount?: number;
@@ -92,6 +94,15 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 				color={theme.colors.warning}
 				theme={theme}
 			/>
+			{stats.agentEntryCount !== undefined && stats.agentEntryCount > 0 && (
+				<StatItem
+					icon={<MessagesSquare className="w-3 h-3" />}
+					label="Agent"
+					value={stats.agentEntryCount}
+					color={AGENT_COLOR}
+					theme={theme}
+				/>
+			)}
 			{stats.cueCount !== undefined && stats.cueCount > 0 && (
 				<StatItem
 					icon={<Zap className="w-3 h-3" />}
@@ -110,7 +121,7 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 				theme={theme}
 			/>
 
-			{/* Live activity indicators — only shown when provided and > 0 */}
+			{/* Live activity indicators - only shown when provided and > 0 */}
 			{showLiveIndicators(stats) && (
 				<>
 					<div

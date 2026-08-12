@@ -114,7 +114,7 @@ fsPromises.unlink(tempFile).catch(() => {});
 **Use debouncing for persistence:**
 
 Session persistence is debounced through `useDebouncedPersistence(sessions, initialLoadComplete, delay)`
-in `src/renderer/hooks/utils/useDebouncedPersistence.ts` — it returns
+in `src/renderer/hooks/utils/useDebouncedPersistence.ts` - it returns
 `{ isPending, flushNow }`. The hook already wires up `visibilitychange` and
 `beforeunload` to flush pending writes internally; do **not** add a second set
 of handlers in your component.
@@ -140,7 +140,7 @@ const suggestions = useMemo(() => {
 stale work mid-render with no timer. Use it when the heavy operation is a
 React re-render (filter + sort + categorize a list, render a markdown subtree)
 rather than an external API or fuzzy-search lib. Always keep the input
-`value=` bound to the immediate state — only pass the deferred copy to the
+`value=` bound to the immediate state - only pass the deferred copy to the
 heavy consumer.
 
 ```typescript
@@ -155,7 +155,7 @@ const { sortedFilteredSessions } = useSessionCategories(deferredFilter, ...);
 ```
 
 In jsdom/RTL the deferred value equals the immediate value synchronously, so
-existing tests keep passing — see `src/__tests__/renderer/hooks/useInputHandlers.test.ts:353`
+existing tests keep passing - see `src/__tests__/renderer/hooks/useInputHandlers.test.ts:353`
 for the precedent.
 
 **Use throttling for high-frequency events:**
@@ -199,6 +199,43 @@ const virtualizer = useVirtualizer({
 });
 ```
 
+## Progressive (Tail-First) Rendering
+
+When rows are individually expensive - each one runs a markdown pipeline, a
+syntax highlighter, or a chart - virtualization is not always the right tool.
+Virtualization needs a measurable row height, and it breaks `querySelector` over
+the full list (in-page search, jump-to-message). Use
+`useProgressiveRenderWindow()` in `src/renderer/hooks/utils/` instead:
+
+```typescript
+// See: src/renderer/components/TerminalOutput.tsx (issue #1342)
+const { startIndex, revealTo } = useProgressiveRenderWindow(
+	logs.length,
+	`${session.id}-${activeTabId}`, // resets the window on conversation switch
+	{ onBeforeExpand: snapshotScrollPosition }
+);
+const visible = logs.slice(startIndex);
+```
+
+It renders the newest slice immediately, then walks `startIndex` toward 0 a
+chunk at a time on `requestIdleCallback`, so a big list hydrates across many
+short tasks that yield to input instead of one multi-second long task. Every row
+still ends up in the DOM, so DOM-walking features keep working once backfill
+completes.
+
+Two things to get right at the call site:
+
+1. **Anchor the scroll.** Backfill prepends content above the viewport. Snapshot
+   `scrollHeight - scrollTop` in `onBeforeExpand` and restore it in a
+   `useLayoutEffect` on `startIndex`, before paint.
+2. **Use `revealTo(index)` for jumps.** Anything that scrolls to a specific row
+   with a bounded retry (see `jumpToElement`, ~30 frames) will time out waiting
+   for backfill to reach deep history. Pull the target in explicitly.
+
+Anything that re-walks the DOM on content change (search highlighting, match
+counts) must take `startIndex` as a dependency, or matches in freshly hydrated
+rows are silently missed.
+
 ## Per-Row DOM Budget
 
 A list row component should aim for **<30 DOM nodes per row**. CDP profiling
@@ -206,7 +243,7 @@ caught the left bar at ~56 nodes/row × 34 rows = 1,907 nodes; at 100+ rows
 this dominates layout/style cost even with `React.memo`. When both budgets
 (>30 nodes/row AND >30 rows possible) are exceeded:
 
-1. **Slim the row first** — lazy-mount hover-only controls, drop redundant
+1. **Slim the row first** - lazy-mount hover-only controls, drop redundant
    wrappers, replace decorative inline `<svg>` with CSS background-mask. Inline
    SVG carries paint cost beyond its node count; reserve it for icons that
    actually re-color or animate per row.
@@ -223,7 +260,7 @@ ship the entire collection on every change:
 ```typescript
 // BAD: clones and ships ALL sessions (with logs, tabs, browser state) on any
 // single-session change. Observed >500 MB short-lived heap churn from this
-// pattern in CDP profiling — the clone itself is the cost, not the disk write.
+// pattern in CDP profiling - the clone itself is the cost, not the disk write.
 window.maestro.sessions.setAll(allSessions);
 
 // GOOD: track dirty IDs in the store; ship only the changed subset.
@@ -234,7 +271,7 @@ Even when the disk write is debounced, `prepare*ForPersistence` allocates a
 full new tree per flush. Add a `setMany`-style IPC path before reaching for
 "smarter" diffing.
 
-## React State Bail-out — Don't Over-Guard
+## React State Bail-out - Don't Over-Guard
 
 `setState(samePrimitive)` is already a render-bail in React. Don't add
 manual guards "to prevent re-renders":
@@ -243,7 +280,7 @@ manual guards "to prevent re-renders":
 // UNNECESSARY: React already bails out
 if (!isPending) setIsPending(true);
 
-// FINE — same render cost
+// FINE - same render cost
 setIsPending(true);
 ```
 
@@ -336,7 +373,7 @@ Resting-state baselines (no terminals/canvas mounted, post-GC):
 | `JSHeapUsedSize`        | < 250 MB after GC                         |
 | Max frame in 60 samples | < 32 ms (anything larger = jank to chase) |
 
-`Documents: 2` is usually benign (DOMParser/sanitizer doc) — only investigate
+`Documents: 2` is usually benign (DOMParser/sanitizer doc) - only investigate
 if iframes/webviews are also reported by `document.querySelectorAll`.
 
 ### Chrome DevTools Performance Traces
