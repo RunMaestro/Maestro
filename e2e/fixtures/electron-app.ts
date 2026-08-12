@@ -21,6 +21,7 @@ interface ElectronTestFixtures {
 	window: Page;
 	appPath: string;
 	testDataDir: string;
+	electronLaunchEnv: Record<string, string>;
 }
 
 /**
@@ -68,6 +69,12 @@ export const test = base.extend<ElectronTestFixtures>({
 		}
 	},
 
+	// Optional per-suite environment overrides for the Electron main process
+	// eslint-disable-next-line no-empty-pattern
+	electronLaunchEnv: async ({}, use) => {
+		await use({});
+	},
+
 	// Path to the main entry point
 	// eslint-disable-next-line no-empty-pattern
 	appPath: async ({}, use) => {
@@ -85,13 +92,15 @@ export const test = base.extend<ElectronTestFixtures>({
 	},
 
 	// Launch Electron application
-	electronApp: async ({ appPath, testDataDir }, use) => {
+	electronApp: async ({ appPath, testDataDir, electronLaunchEnv }, use) => {
 		// Launch the Electron app
 		const app = await electron.launch({
 			args: [appPath],
 			env: {
 				...process.env,
-				// Use isolated data directory for tests
+				// Use the app's real demo-mode redirect so every persisted store,
+				// including Group Chats, resolves inside this test directory.
+				MAESTRO_DEMO_DIR: testDataDir,
 				MAESTRO_DATA_DIR: testDataDir,
 				// Disable hardware acceleration for CI
 				ELECTRON_DISABLE_GPU: '1',
@@ -99,6 +108,7 @@ export const test = base.extend<ElectronTestFixtures>({
 				NODE_ENV: 'test',
 				// Ensure we're in a testing context
 				MAESTRO_E2E_TEST: 'true',
+				...electronLaunchEnv,
 			},
 			// Increase timeout for slow CI environments
 			timeout: 30000,

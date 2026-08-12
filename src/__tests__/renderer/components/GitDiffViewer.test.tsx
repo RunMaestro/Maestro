@@ -1670,7 +1670,7 @@ describe('GitDiffViewer', () => {
 			expect(screen.getByText(/to toggle side-by-side view/i)).toBeInTheDocument();
 
 			// The persisted preference is read by the useState initializer, which
-			// only runs on mount — so unmount and remount to pick up the change.
+			// only runs on mount - so unmount and remount to pick up the change.
 			unmount();
 			window.localStorage.setItem(STORAGE_KEY, 'split');
 			render(

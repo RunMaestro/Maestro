@@ -41,6 +41,7 @@ export const HOST_API = {
 	'sessions.create': { capability: 'sessions:create' },
 	'sessions.update': { capability: 'sessions:write' },
 	'sessions.delete': { capability: 'sessions:write' },
+	'sessions.focus': { capability: 'sessions:focus' },
 	'history.list': { capability: 'history:read' },
 	'history.get': { capability: 'history:read' },
 	'transcripts.read': { capability: 'transcripts:read' },
@@ -54,6 +55,10 @@ export const HOST_API = {
 	'ui.runCommand': { capability: 'ui:command' },
 	'ui.hostViewUpdate': { capability: 'ui:hostView' },
 	'ui.hostViewRemove': { capability: 'ui:hostView' },
+	'ui.panelPost': { capability: 'ui:panel' },
+	'ui.openPanel': { capability: 'ui:panel' },
+	'ui.closePanel': { capability: 'ui:panel' },
+	'ui.togglePanel': { capability: 'ui:panel' },
 	'tabs.list': { capability: 'tabs:manage' },
 	'tabs.create': { capability: 'tabs:manage' },
 	'tabs.focus': { capability: 'tabs:manage' },
@@ -192,7 +197,7 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			return typeof p.agentId === 'string' ? p.agentId : undefined;
 		case 'process.spawn':
 			// Allowlist scope target: the host-blessed binary NAME the plugin
-			// selects (never a path or shell text — the handler's closed schema
+			// selects (never a path or shell text - the handler's closed schema
 			// and the host-owned registry enforce that).
 			return typeof p.command === 'string' ? p.command : undefined;
 		default:

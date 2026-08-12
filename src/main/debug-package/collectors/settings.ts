@@ -1,15 +1,17 @@
 /**
  * Settings Collector
  *
- * Collects application settings with sensitive data sanitized.
+ * Collects application settings with sensitive and identifying data removed.
  * - API keys and tokens are replaced with [REDACTED]
- * - Usernames in paths are replaced with ~
+ * - Usernames, hostnames, and SSH remote identities are replaced with [REDACTED]
+ * - Paths are replaced with opaque descriptors (no folder or project names)
+ * - Every remaining string is swept for embedded paths, URLs, and identity
  */
 
 import Store from 'electron-store';
-import { sanitizePath } from './sanitize';
+import { redactAndTruncate, redactPath } from './sanitize';
 
-// Keys that contain sensitive data (case-insensitive matching)
+// Keys that contain sensitive data (case-insensitive substring matching)
 const SENSITIVE_KEYS = [
 	'apikey',
 	'api_key',
@@ -18,6 +20,7 @@ const SENSITIVE_KEYS = [
 	'clienttoken',
 	'client_token',
 	'password',
+	'passphrase',
 	'secret',
 	'credential',
 	'accesstoken',
@@ -26,9 +29,43 @@ const SENSITIVE_KEYS = [
 	'refresh_token',
 	'privatekey',
 	'private_key',
+	// Identity: SSH remotes and git remotes carry the user's name, machine, and
+	// repository, all of which are exactly what must not reach a public issue.
+	'username',
+	'hostname',
+	'host',
+	'email',
+	'remoteurl',
+	'remote_url',
+	'originurl',
+	'origin_url',
+	'repourl',
+	'repo_url',
 ];
 
-// Keys that contain paths which should have usernames sanitized
+// Keys whose exact name (not substring) marks identifying data.
+// User-chosen labels ('name', 'title', 'label') are included on purpose: in
+// settings they name SSH remotes, custom agents, and presets, which is where
+// project and client names show up. Agent and group diagnostics come from
+// their own collectors, so nothing useful is lost.
+const IDENTITY_KEYS = [
+	'user',
+	'login',
+	'account',
+	'owner',
+	'name',
+	'displayname',
+	'fullname',
+	'title',
+	'label',
+	'projectname',
+	'reponame',
+	'repository',
+	'foldername',
+	'workspacename',
+];
+
+// Keys that contain paths, which are replaced with opaque descriptors
 const PATH_KEYS = [
 	'customsyncpath',
 	'custompath',
@@ -47,15 +84,18 @@ export interface SanitizedSettings {
 }
 
 /**
- * Check if a key contains sensitive data based on its name
+ * Check if a key contains sensitive or identifying data based on its name
  */
 function isSensitiveKey(key: string): boolean {
 	const lowerKey = key.toLowerCase();
-	return SENSITIVE_KEYS.some((sensitiveKey) => lowerKey.includes(sensitiveKey));
+	return (
+		SENSITIVE_KEYS.some((sensitiveKey) => lowerKey.includes(sensitiveKey)) ||
+		IDENTITY_KEYS.includes(lowerKey)
+	);
 }
 
 /**
- * Check if a key is a path that should be sanitized
+ * Check if a key is a path that should be redacted
  */
 function isPathKey(key: string): boolean {
 	const lowerKey = key.toLowerCase();
@@ -63,11 +103,17 @@ function isPathKey(key: string): boolean {
 }
 
 /**
- * Recursively sanitize an object, tracking what was sanitized
+ * Recursively sanitize an object, tracking what was sanitized.
+ * Strings are swept regardless of their key: a path can hang off any name,
+ * and key-based rules alone have historically missed arrays of paths.
  */
 function sanitizeObject(obj: unknown, sanitizedFields: string[], prefix: string = ''): unknown {
 	if (obj === null || obj === undefined) {
 		return obj;
+	}
+
+	if (typeof obj === 'string') {
+		return redactAndTruncate(obj);
 	}
 
 	if (Array.isArray(obj)) {
@@ -83,14 +129,15 @@ function sanitizeObject(obj: unknown, sanitizedFields: string[], prefix: string 
 				result[key] = '[REDACTED]';
 				sanitizedFields.push(fullKey);
 			} else if (typeof value === 'string' && isPathKey(key)) {
-				result[key] = sanitizePath(value);
+				result[key] = redactPath(value);
 				if (result[key] !== value) {
 					sanitizedFields.push(fullKey);
 				}
-			} else if (typeof value === 'object') {
-				result[key] = sanitizeObject(value, sanitizedFields, fullKey);
 			} else {
-				result[key] = value;
+				result[key] = sanitizeObject(value, sanitizedFields, fullKey);
+				if (typeof value === 'string' && result[key] !== value) {
+					sanitizedFields.push(fullKey);
+				}
 			}
 		}
 		return result;
@@ -119,7 +166,7 @@ export async function collectSettings(
 		const customSyncPath = bootstrapStore.get('customSyncPath');
 		sanitized['_syncInfo'] = {
 			hasCustomSyncPath: !!customSyncPath,
-			customSyncPath: customSyncPath ? sanitizePath(customSyncPath) : undefined,
+			customSyncPath: customSyncPath ? redactPath(customSyncPath) : undefined,
 		};
 	}
 

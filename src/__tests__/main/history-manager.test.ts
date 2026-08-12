@@ -31,7 +31,7 @@ vi.mock('../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
-// Mock fs module. PR-C 1.6 — history-manager now uses fs/promises, but the
+// Mock fs module. PR-C 1.6 - history-manager now uses fs/promises, but the
 // existing assertions are written against the sync mocks. We bridge the
 // async API to the sync mocks below so the test surface stays compact:
 // existing setup (mockExistsSync.mockImplementation(...), etc.) keeps
@@ -196,8 +196,8 @@ describe('HistoryManager', () => {
 			});
 		});
 
-		it('uses recursive mkdir (idempotent — safe even when dir exists)', async () => {
-			// PR-C 1.6: the existsSync-then-mkdirSync guard was redundant —
+		it('uses recursive mkdir (idempotent - safe even when dir exists)', async () => {
+			// PR-C 1.6: the existsSync-then-mkdirSync guard was redundant -
 			// fsp.mkdir({ recursive: true }) is itself idempotent and trivially
 			// fast. The new code calls it unconditionally and lets the OS
 			// no-op when the dir already exists.

@@ -102,7 +102,7 @@ describe('AgentOverviewCards', () => {
 
 		render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-		// Cards sort alphabetically by name — look up by content rather than
+		// Cards sort alphabetically by name - look up by content rather than
 		// index so the test isn't coupled to the ordering.
 		const cardByName = (name: string) =>
 			(screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement) ?? null;
@@ -441,7 +441,7 @@ describe('AgentOverviewCards', () => {
 
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('—');
+			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('\u2014');
 		});
 
 		it('sorts cards by auto % descending and sinks no-data sessions to the bottom', () => {

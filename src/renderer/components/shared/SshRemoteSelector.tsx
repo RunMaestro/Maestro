@@ -206,7 +206,7 @@ function SshRemoteDropdown({
 
 			{/* Share-to-project-dir toggle - only meaningful for locally-executed
 			    agents. When SSH execution is enabled, the agent runs on the remote
-			    host, so advertising this machine's local mirror has no audience —
+			    host, so advertising this machine's local mirror has no audience -
 			    a viewer would SSH into the remote, not here. The flag is still
 			    preserved across dropdown changes (see local/remote branches above)
 			    so toggling SSH doesn't silently wipe it. */}

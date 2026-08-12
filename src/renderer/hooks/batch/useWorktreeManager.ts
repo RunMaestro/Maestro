@@ -392,7 +392,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 						commitSubjects = logResult.entries.map((e) => e.subject);
 					}
 				} catch (err) {
-					// Non-fatal — commit log is nice-to-have
+					// Non-fatal - commit log is nice-to-have
 					captureException(err, { extra: { worktreePath, operation: 'git.log' } });
 				}
 

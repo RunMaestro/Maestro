@@ -11,7 +11,7 @@
  *   - Complete:   `<!-- maestro:goal-complete -->`
  *   - Deadlock:   `<!-- maestro:deadlock: reason here -->`  (reason optional)
  *
- * Parsing is deliberately regex-based and dependency-free — no markdown/HTML
+ * Parsing is deliberately regex-based and dependency-free - no markdown/HTML
  * parser is pulled in. Regexes are whitespace-tolerant and well-anchored to the
  * `<!-- maestro:... -->` comment shape.
  */
@@ -24,7 +24,7 @@ import type { GoalMarkers } from './types';
  * - `[\s\S]*?` inside the rationale group is non-greedy so it stops at the first
  *   `-->`. The `g` flag lets us collect every match and keep the LAST one.
  * - The number may be a float or negative; clamping/rounding happens afterward.
- * - A trailing `%` (`progress 45%` or `progress 45 %`) is tolerated and ignored —
+ * - A trailing `%` (`progress 45%` or `progress 45 %`) is tolerated and ignored -
  *   agents routinely write the percent sign even though the value is already a
  *   percentage.
  * - Because the pattern is matched anywhere in the text, a marker wrapped in
@@ -107,7 +107,7 @@ function trimToNull(value: string | undefined): string | null {
 /**
  * Parse the goal-driven markers from one iteration's agent output.
  *
- * Missing markers yield `null`/`false` — the exit evaluator decides how to
+ * Missing markers yield `null`/`false` - the exit evaluator decides how to
  * treat a missing progress report. A progress of exactly `100` implies
  * completion even without the bare `goal-complete` marker.
  */

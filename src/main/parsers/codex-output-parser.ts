@@ -295,6 +295,15 @@ export class CodexOutputParser implements AgentOutputParser {
 
 	// Cached context window - read once from config
 	private contextWindow: number;
+	/**
+	 * Provenance of `contextWindow`: true only once Codex itself reported a
+	 * `model_context_window` (turn_context or token_count). The constructor seed
+	 * below is a config value or a static-table lookup, never provider truth, so
+	 * it deliberately leaves this false. Emitted as `usage.contextWindowReported`
+	 * so `StdoutHandler.buildUsageStats` can mark the window authoritative
+	 * (finding P1) without guessing from the number alone.
+	 */
+	private contextWindowReported = false;
 	private model: string;
 
 	// Track tool name from tool_call to carry over to tool_result
@@ -379,6 +388,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (msg.type === 'turn_context' && msg.payload) {
 			if (msg.payload.model_context_window) {
 				this.contextWindow = msg.payload.model_context_window;
+				this.contextWindowReported = true;
 			}
 			if (msg.payload.model) {
 				this.model = msg.payload.model;
@@ -477,7 +487,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (payload.type === 'agent_message' && payload.message) {
 			const isCommentary = payload.phase === 'commentary';
 			if (isCommentary) {
-				// Commentary is intermediate progress text — emit as partial text
+				// Commentary is intermediate progress text - emit as partial text
 				return {
 					type: 'text',
 					text: payload.message,
@@ -503,6 +513,19 @@ export class CodexOutputParser implements AgentOutputParser {
 			const reasoningOutputTokens = tokenUsage.reasoning_output_tokens || 0;
 			const totalOutputTokens = outputTokens + reasoningOutputTokens;
 
+			// Cache the window the same way `turn_context` does. Without this the
+			// denominator flaps inside a single turn whenever Codex carries
+			// `model_context_window` in `token_count` but not in an earlier
+			// `turn_context`: this event reports the real window with the flag set
+			// (renderer rank 2), then `turn.completed` falls back through
+			// `extractUsageFromRaw` to the constructor's config or lookup-table seed
+			// with the flag clear (rank 3, the stored override wins). The value-level
+			// flap predates the flag, but the flag makes it cross a precedence tier.
+			if (payload.info.model_context_window) {
+				this.contextWindow = payload.info.model_context_window;
+				this.contextWindowReported = true;
+			}
+
 			return {
 				type: 'usage',
 				usage: {
@@ -511,13 +534,19 @@ export class CodexOutputParser implements AgentOutputParser {
 					cacheReadTokens: cachedInputTokens,
 					cacheCreationTokens: 0,
 					contextWindow: payload.info.model_context_window || this.contextWindow,
+					// Authoritative when this payload carried the window itself, or when an
+					// earlier turn_context reported the cached one. A config / static-table
+					// seed leaves the flag off (see `contextWindowReported`).
+					contextWindowReported: payload.info.model_context_window
+						? true
+						: this.contextWindowReported,
 					reasoningTokens: reasoningOutputTokens,
 				},
 				raw: msg,
 			};
 		}
 
-		// task_started, user_message, and other event types — system events
+		// task_started, user_message, and other event types - system events
 		return {
 			type: 'system',
 			raw: msg,
@@ -552,7 +581,7 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 			}
 
-			// User/developer/system messages — skip (system events)
+			// User/developer/system messages - skip (system events)
 			return {
 				type: 'system',
 				raw: msg,
@@ -619,7 +648,7 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Unknown response_item type — system event
+		// Unknown response_item type - system event
 		return {
 			type: 'system',
 			raw: msg,
@@ -712,7 +741,7 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'tool_call':
-				// Legacy: Agent is using a tool — store tool name for the subsequent tool_result
+				// Legacy: Agent is using a tool - store tool name for the subsequent tool_result
 				this.lastToolName = item.tool || null;
 				return {
 					type: 'tool_use',
@@ -725,7 +754,7 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'tool_result': {
-				// Legacy: Tool execution completed — carry over tool name from preceding tool_call
+				// Legacy: Tool execution completed - carry over tool name from preceding tool_call
 				const toolName = this.lastToolName || undefined;
 				this.lastToolName = null;
 				return {
@@ -836,8 +865,13 @@ export class CodexOutputParser implements AgentOutputParser {
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
 			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			// Context window from Codex config (~/.codex/config.toml) or model lookup table
+			// Context window from Codex config (~/.codex/config.toml) or model lookup
+			// table, unless a turn_context or token_count already replaced it with
+			// Codex's own value. Both cache it now, so once either has reported a
+			// window this reads the real one for the rest of the session instead of
+			// dropping back to the seed mid-turn.
 			contextWindow: this.contextWindow,
+			contextWindowReported: this.contextWindowReported,
 			// Store reasoning tokens separately for UI display
 			reasoningTokens: reasoningOutputTokens,
 		};

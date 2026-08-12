@@ -159,7 +159,7 @@ function renderHost(props: Omit<Parameters<typeof Host>[0], 'expose'>) {
 	return { ...utils, handle };
 }
 
-describe('useFilePreviewSearch — count vs navigate split', () => {
+describe('useFilePreviewSearch - count vs navigate split', () => {
 	it('calls adapter.findHits exactly once per query change, not per navigation', async () => {
 		const findHits = vi.fn((): SearchHit[] => [
 			{ sourceOffset: 0, length: 5, blockIndex: 0, offsetWithinBlock: 0 },
@@ -295,7 +295,7 @@ describe('useFilePreviewSearch — count vs navigate split', () => {
 		const oneHit: SearchHit[] = [
 			{ sourceOffset: 0, length: 3, blockIndex: 0, offsetWithinBlock: 0 },
 		];
-		// findHits return depends on the active query — flip the array when
+		// findHits return depends on the active query - flip the array when
 		// the query changes to simulate a shrinking result set.
 		const findHitsSpy = vi.fn((q: string) => {
 			if (q === 'aaa') return manyHits;
@@ -369,11 +369,11 @@ describe('useFilePreviewSearch — count vs navigate split', () => {
 	});
 });
 
-describe('useFilePreviewSearch — gutter exclusion (B5)', () => {
+describe('useFilePreviewSearch - gutter exclusion (B5)', () => {
 	it('skips text inside .text-fast-gutter and .cm-gutters elements', async () => {
 		// Rich-tier path (no adapter): count comes from the DOM walker. A
 		// container with a gutter line-number "42" and a body "42" must count
-		// only the body one — the search bar should never highlight gutter
+		// only the body one - the search bar should never highlight gutter
 		// chrome.
 		function GutterHost(props: { expose: (h: HostHandle) => void }) {
 			const containerRef = React.useRef<HTMLDivElement>(null);

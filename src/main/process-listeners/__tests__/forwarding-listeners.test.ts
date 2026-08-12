@@ -48,7 +48,6 @@ describe('Forwarding Listeners', () => {
 		expect(mockProcessManager.on).toHaveBeenCalledWith('thinking-chunk', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('tool-execution', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('stderr', expect.any(Function));
-		expect(mockProcessManager.on).toHaveBeenCalledWith('command-exit', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('query-complete', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('exit', expect.any(Function));
 	});
@@ -78,7 +77,7 @@ describe('Forwarding Listeners', () => {
 		handler?.(testSessionId, 'think');
 		handler?.(testSessionId, 'ing...');
 
-		// Nothing should have been sent yet — chunks are still buffered.
+		// Nothing should have been sent yet - chunks are still buffered.
 		expect(mockSafeSend).not.toHaveBeenCalled();
 
 		// Advance past the flush interval; the buffered content should arrive
@@ -99,7 +98,7 @@ describe('Forwarding Listeners', () => {
 		const handler = eventHandlers.get('thinking-chunk');
 		const testSessionId = 'test-session-123';
 
-		// 8KB threshold — push a payload that exceeds it in a single chunk.
+		// 8KB threshold - push a payload that exceeds it in a single chunk.
 		const big = 'x'.repeat(9 * 1024);
 		handler?.(testSessionId, big);
 
@@ -175,6 +174,70 @@ describe('Forwarding Listeners', () => {
 		);
 	});
 
+	it('should emit a metadata-only tool.executed plugin event alongside the renderer forward', () => {
+		const emitPluginEvent = vi.fn();
+		setupForwardingListeners(mockProcessManager, { ...mockDeps, emitPluginEvent });
+
+		const handler = eventHandlers.get('tool-execution');
+		const testSessionId = 'test-session-123';
+		const toolEvent = {
+			toolName: 'read_file',
+			toolCallId: 'call-7',
+			timestamp: 1700000000000,
+			state: { status: 'completed', input: { path: '/secret' }, output: 'file contents' },
+		};
+
+		handler?.(testSessionId, toolEvent);
+
+		// (a) renderer forward is unchanged - still the full tool event.
+		expect(mockSafeSend).toHaveBeenCalledWith('process:tool-execution', testSessionId, toolEvent);
+
+		// (b) plugin event carries name + timing only, never the state blob.
+		expect(emitPluginEvent).toHaveBeenCalledTimes(1);
+		const event = emitPluginEvent.mock.calls[0][0];
+		expect(event.topic).toBe('tool.executed');
+		expect(event.payload).toEqual({
+			sessionId: testSessionId,
+			toolName: 'read_file',
+			toolCallId: 'call-7',
+			timestamp: 1700000000000,
+			phase: 'completed',
+		});
+		expect(event.payload).not.toHaveProperty('state');
+		expect(JSON.stringify(event.payload)).not.toContain('/secret');
+	});
+
+	it('should omit phase when the tool state carries no status string', () => {
+		const emitPluginEvent = vi.fn();
+		setupForwardingListeners(mockProcessManager, { ...mockDeps, emitPluginEvent });
+
+		eventHandlers.get('tool-execution')?.('s1', {
+			toolName: 'bash',
+			timestamp: 5,
+			state: 'raw-string-state',
+		});
+
+		expect(emitPluginEvent.mock.calls[0][0].payload).toEqual({
+			sessionId: 's1',
+			toolName: 'bash',
+			timestamp: 5,
+		});
+	});
+
+	it('should not throw when no plugin event emitter is injected', () => {
+		setupForwardingListeners(mockProcessManager, mockDeps);
+
+		const handler = eventHandlers.get('tool-execution');
+		expect(() =>
+			handler?.('s1', { toolName: 'read_file', timestamp: 1, state: { status: 'running' } })
+		).not.toThrow();
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'process:tool-execution',
+			's1',
+			expect.objectContaining({ toolName: 'read_file' })
+		);
+	});
+
 	it('should forward stderr events to renderer', () => {
 		setupForwardingListeners(mockProcessManager, mockDeps);
 
@@ -187,15 +250,15 @@ describe('Forwarding Listeners', () => {
 		expect(mockSafeSend).toHaveBeenCalledWith('process:stderr', testSessionId, testStderr);
 	});
 
-	it('should forward command-exit events to renderer', () => {
+	it('does NOT forward command-exit - that moved to the data listener', () => {
+		// `process:command-exit` has to be sent AFTER the coalesced process:data
+		// buffer is flushed, or a fast command's output arrives after its own exit
+		// and gets dropped. This module is registered BEFORE the data listener, so
+		// forwarding it from here would always beat that flush. See
+		// data-listener.ts and its test for the ordering guarantee.
 		setupForwardingListeners(mockProcessManager, mockDeps);
 
-		const handler = eventHandlers.get('command-exit');
-		const testSessionId = 'test-session-123';
-		const testExitCode = 0;
-
-		handler?.(testSessionId, testExitCode);
-
-		expect(mockSafeSend).toHaveBeenCalledWith('process:command-exit', testSessionId, testExitCode);
+		expect(eventHandlers.get('command-exit')).toBeUndefined();
+		expect(mockProcessManager.on).not.toHaveBeenCalledWith('command-exit', expect.any(Function));
 	});
 });

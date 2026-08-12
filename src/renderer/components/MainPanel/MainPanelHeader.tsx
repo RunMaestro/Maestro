@@ -1,37 +1,34 @@
-import React, { useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
+// Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
+// Actions button, neither of which exists on main's header.
 import {
 	Wand2,
-	ExternalLink,
 	Columns,
-	Copy,
 	GitBranch,
-	ArrowUp,
-	ArrowDown,
-	FileEdit,
 	List,
-	GitPullRequest,
-	Settings2,
 	Server,
 	Bookmark,
 	Brain,
 	Menu,
 	Command,
 } from 'lucide-react';
-import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import { remoteUrlToBrowserUrl } from '../../../shared/gitUtils';
 import { GitStatusWidget } from '../GitStatusWidget';
+import { GitPillMenu } from '../GitPillMenu';
 import { useHoverTooltip } from '../../hooks';
+import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions } from '../../stores/modalStore';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { isWebDesktop } from '../../utils/runtimeContext';
-import { useContextTimelineStore } from '../../stores/contextTimelineStore';
+import {
+	useContextTimelineStore,
+	type TimelineAnchorRect,
+} from '../../stores/contextTimelineStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
-import { openUrl } from '../../utils/openUrl';
 import { calculateDisplayInputTokens } from '../../utils/contextUsage';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { safeClipboardWrite } from '../../utils/clipboard';
@@ -41,6 +38,32 @@ import {
 } from '../../stores/claudeUsageStore';
 import { formatFutureTime } from '../../../shared/formatters';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+
+/** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
+function rectOf(el: HTMLElement): TimelineAnchorRect {
+	const r = el.getBoundingClientRect();
+	return {
+		top: r.top,
+		left: r.left,
+		bottom: r.bottom,
+		right: r.right,
+		width: r.width,
+		height: r.height,
+	};
+}
+
+/**
+ * How long the pointer must rest on the git pill before the menu opens. Long
+ * enough that crossing the header on the way elsewhere doesn't trigger it,
+ * short enough to feel immediate when aimed at.
+ */
+const GIT_MENU_OPEN_DELAY_MS = 150;
+
+/**
+ * Grace period after the pointer leaves the pill or the menu. Covers the gap
+ * between them so the menu survives the trip across it.
+ */
+const GIT_MENU_CLOSE_DELAY_MS = 250;
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -71,7 +94,6 @@ export interface MainPanelHeaderProps {
 	setActiveAgentSessionId: (id: string | null) => void;
 	onStopBatchRun?: (sessionId?: string) => void;
 	onOpenWorktreeConfig?: () => void;
-	onOpenCreatePR?: () => void;
 	hasCapability: (cap: keyof AgentCapabilities) => boolean;
 }
 
@@ -98,7 +120,6 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	setActiveAgentSessionId,
 	onStopBatchRun,
 	onOpenWorktreeConfig,
-	onOpenCreatePR,
 	hasCapability,
 }: MainPanelHeaderProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
@@ -117,7 +138,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showSidebarOpener = leftSidebarHidden || (isWebDesktop() && isXs && !leftSidebarOpen);
 
 	// Claude Max plan usage (5-hour / weekly windows). Shown for any Claude
-	// Code session — the source account is always derivable from session env
+	// Code session - the source account is always derivable from session env
 	// vars (override > agent default > implicit ~/.claude), so the popover
 	// doesn't need a separate account picker. The snapshot is keyed by
 	// canonical CLAUDE_CONFIG_DIR. When the spawner has already stamped
@@ -129,8 +150,99 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const showBatchUsage = activeSession?.toolType === 'claude-code';
 
 	const headerRef = useRef<HTMLDivElement>(null);
-	const gitTooltip = useHoverTooltip(150);
+	// Anchors the git menu, and is the hover target that opens it. Wrapping both
+	// pills (SSH host + branch) means either one opens the menu, and it also
+	// excludes them from click-outside so clicking a pill can't close it.
+	const gitPillRef = useRef<HTMLDivElement>(null);
 	const contextTooltip = useHoverTooltip(150);
+	// The git menu opens on hover. The open delay keeps it from popping up while
+	// the pointer merely crosses the header on its way somewhere else; the close
+	// delay covers the gap between the pill and the menu below it.
+	const gitMenu = useHoverTooltip(GIT_MENU_CLOSE_DELAY_MS, GIT_MENU_OPEN_DELAY_MS);
+	const gitMenuOpen = activeSession.isGitRepo && gitMenu.isOpen;
+
+	// Hover/focus handlers, suppressed entirely for non-git agents so the LOCAL
+	// badge has no hidden behavior.
+	const gitPillHoverHandlers = activeSession.isGitRepo
+		? {
+				onMouseEnter: gitMenu.triggerHandlers.onMouseEnter,
+				onMouseLeave: gitMenu.triggerHandlers.onMouseLeave,
+				// Keyboard parity: tabbing to a pill opens the menu immediately,
+				// since focus is as deliberate as a click.
+				onFocus: gitMenu.open,
+				onBlur: gitMenu.triggerHandlers.onMouseLeave,
+			}
+		: {};
+
+	// Clicking a pill still opens the menu (for touch, and for anyone who clicks
+	// before the hover delay elapses). Deliberately NOT a toggle: hover has
+	// already opened it by the time most clicks land, so toggling would close a
+	// menu the pointer is still sitting on, which then can't reopen until the
+	// pointer leaves and returns.
+	const handleGitPillClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			if (!activeSession.isGitRepo) return;
+			gitMenu.open();
+		},
+		[activeSession.isGitRepo, gitMenu]
+	);
+
+	// Refresh git info once per open rather than per hover event, so the menu's
+	// ahead/behind badges are current without re-polling as the pointer moves.
+	// Held in a ref so an unstable `refreshGitStatus` identity can't re-trigger
+	// the effect while the menu is sitting open.
+	const refreshGitStatusRef = useRef(refreshGitStatus);
+	refreshGitStatusRef.current = refreshGitStatus;
+	useEffect(() => {
+		if (gitMenuOpen) refreshGitStatusRef.current();
+	}, [gitMenuOpen]);
+
+	// Same action set the Left Bar's right-click menu uses, so the two entry
+	// points can't drift apart.
+	const gitActions = useGitAgentActions(activeSession);
+
+	// Each action closes the menu before it opens its modal. Async actions (the
+	// diff has to be fetched first) are fire-and-forget - the menu shouldn't
+	// linger while git runs.
+	const runAction = useCallback(
+		(action: () => void | Promise<void>) => () => {
+			gitMenu.close();
+			void action();
+		},
+		[gitMenu]
+	);
+
+	const gitPillMenu = gitMenuOpen ? (
+		<GitPillMenu
+			theme={theme}
+			anchorRef={gitPillRef}
+			// Keeps the menu open while the pointer is on it, and closes it (after
+			// the grace delay) once the pointer leaves.
+			hoverHandlers={gitMenu.contentHandlers}
+			branch={gitInfo?.branch || gitActions.branch}
+			remote={gitInfo?.remote || undefined}
+			ahead={gitInfo?.ahead ?? gitActions.ahead}
+			behind={gitInfo?.behind ?? gitActions.behind}
+			changes={gitActions.changes}
+			onViewLog={runAction(() => {
+				// The header always targets the active agent, which is what the
+				// prop-driven viewer already shows.
+				setGitLogOpen?.(true);
+			})}
+			onViewDiff={runAction(gitActions.viewDiff)}
+			onPull={runAction(gitActions.pull)}
+			onPush={runAction(gitActions.push)}
+			onSwitchBranch={runAction(gitActions.switchBranch)}
+			onCreatePR={gitActions.canCreatePR ? runAction(gitActions.createPR) : undefined}
+			// Worktree children can't own a worktree config, so the row is hidden
+			// for them - matching what the old hover card did.
+			onConfigureWorktrees={
+				!isWorktreeChild && onOpenWorktreeConfig ? runAction(onOpenWorktreeConfig) : undefined
+			}
+			onClose={gitMenu.close}
+		/>
+	) : null;
 
 	return (
 		<div
@@ -177,13 +289,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						/>
 					)}
 					<div
+						ref={gitPillRef}
 						className="relative shrink-0 flex items-center gap-2"
-						onMouseEnter={
-							activeSession.isGitRepo ? gitTooltip.triggerHandlers.onMouseEnter : undefined
-						}
-						onMouseLeave={gitTooltip.triggerHandlers.onMouseLeave}
-						onFocus={activeSession.isGitRepo ? gitTooltip.triggerHandlers.onMouseEnter : undefined}
-						onBlur={gitTooltip.triggerHandlers.onMouseLeave}
+						{...gitPillHoverHandlers}
 					>
 						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
 						    GIT/LOCAL badge). For git repos the branch name is rendered in a separate
@@ -195,13 +303,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 									activeSession.isGitRepo ? 'cursor-pointer hover:bg-purple-500/20' : ''
 								}`}
 								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch})` : ''}`}
-								onClick={(e) => {
-									e.stopPropagation();
-									if (activeSession.isGitRepo) {
-										refreshGitStatus(); // Refresh git info immediately on click
-										setGitLogOpen?.(true);
-									}
-								}}
+								onClick={handleGitPillClick}
 							>
 								<Server className="w-3 h-3 shrink-0" />
 								<span className="truncate uppercase">{sshRemoteName}</span>
@@ -213,14 +315,10 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 										? 'border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20'
 										: 'border-blue-500/30 text-blue-500 bg-blue-500/10'
 								}`}
-								onClick={(e) => {
-									e.stopPropagation();
-									if (activeSession.isGitRepo) {
-										refreshGitStatus(); // Refresh git info immediately on click
-										setGitLogOpen?.(true);
-									}
-								}}
+								onClick={handleGitPillClick}
 								title={activeSession.isGitRepo && gitInfo?.branch ? gitInfo.branch : undefined}
+								aria-haspopup="menu"
+								aria-expanded={gitMenuOpen}
 							>
 								{activeSession.isGitRepo ? (
 									<>
@@ -245,11 +343,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								<button
 									className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20 cursor-pointer outline-none"
 									title={gitInfo?.branch || undefined}
-									onClick={(e) => {
-										e.stopPropagation();
-										refreshGitStatus(); // Refresh git info immediately on click
-										setGitLogOpen?.(true);
-									}}
+									onClick={handleGitPillClick}
+									aria-haspopup="menu"
+									aria-expanded={gitMenuOpen}
 								>
 									<GitBranch className="w-3 h-3 shrink-0" />
 									{/* Hide branch name text at narrow widths via CSS container query */}
@@ -258,181 +354,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 									</span>
 								</button>
 							)}
-						{activeSession.isGitRepo && gitTooltip.isOpen && gitInfo && (
-							<>
-								{/* Invisible bridge to prevent hover gap */}
-								<div
-									className="absolute left-0 right-0 h-3 pointer-events-auto"
-									style={{ top: '100%' }}
-									{...gitTooltip.contentHandlers}
-								/>
-								<div
-									className="absolute top-full left-0 pt-2 w-96 z-50 pointer-events-auto"
-									{...gitTooltip.contentHandlers}
-								>
-									<div
-										className="rounded shadow-xl"
-										style={{
-											backgroundColor: theme.colors.bgSidebar,
-											border: `1px solid ${theme.colors.border}`,
-										}}
-									>
-										{/* Branch / Origin / Status */}
-										<div
-											className="p-3 space-y-2 border-b"
-											style={{ borderColor: theme.colors.border }}
-										>
-											{/* Branch row */}
-											<div className="flex items-center gap-2">
-												<span
-													className="text-[10px] uppercase font-bold w-14 shrink-0"
-													style={{ color: theme.colors.textDim }}
-												>
-													Branch
-												</span>
-												<GitBranch className="w-3.5 h-3.5 text-orange-500 shrink-0" />
-												<span
-													className="text-xs font-mono font-medium truncate"
-													style={{ color: theme.colors.textMain }}
-												>
-													{gitInfo.branch}
-												</span>
-												<div className="flex items-center gap-1.5 ml-auto shrink-0">
-													{gitInfo.ahead > 0 && (
-														<span className="flex items-center gap-0.5 text-xs text-green-500">
-															<ArrowUp className="w-3 h-3" />
-															{gitInfo.ahead}
-														</span>
-													)}
-													{gitInfo.behind > 0 && (
-														<span className="flex items-center gap-0.5 text-xs text-red-500">
-															<ArrowDown className="w-3 h-3" />
-															{gitInfo.behind}
-														</span>
-													)}
-													<GhostIconButton
-														onClick={async (e) => {
-															e.stopPropagation();
-															if (await safeClipboardWrite(gitInfo.branch)) {
-																flashCopiedToClipboard(gitInfo.branch, 'Branch Name Copied');
-															}
-														}}
-														title="Copy branch name"
-														ariaLabel="Copy branch name"
-													>
-														<Copy className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-													</GhostIconButton>
-												</div>
-											</div>
-
-											{/* Origin row */}
-											{gitInfo.remote && (
-												<div className="flex items-center gap-2">
-													<span
-														className="text-[10px] uppercase font-bold w-14 shrink-0"
-														style={{ color: theme.colors.textDim }}
-													>
-														Origin
-													</span>
-													<ExternalLink
-														className="w-3 h-3 shrink-0"
-														style={{ color: theme.colors.textDim }}
-													/>
-													<button
-														onClick={(e) => {
-															e.stopPropagation();
-															const url = remoteUrlToBrowserUrl(gitInfo.remote);
-															if (url) openUrl(url);
-														}}
-														className="text-xs font-mono truncate hover:underline text-left"
-														style={{ color: theme.colors.textMain }}
-														title={`Open ${gitInfo.remote}`}
-													>
-														{gitInfo.remote.replace(/^https?:\/\//, '').replace(/\.git$/, '')}
-													</button>
-													<button
-														onClick={async (e) => {
-															e.stopPropagation();
-															if (await safeClipboardWrite(gitInfo.remote)) {
-																flashCopiedToClipboard(gitInfo.remote);
-															}
-														}}
-														className="p-1 rounded hover:bg-white/10 transition-colors ml-auto shrink-0"
-														title="Copy remote URL"
-													>
-														<Copy className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-													</button>
-												</div>
-											)}
-
-											{/* Status row */}
-											<div className="flex items-center gap-2">
-												<span
-													className="text-[10px] uppercase font-bold w-14 shrink-0"
-													style={{ color: theme.colors.textDim }}
-												>
-													Status
-												</span>
-												{gitInfo.uncommittedChanges > 0 ? (
-													<span
-														className="flex items-center gap-1.5 text-xs"
-														style={{ color: theme.colors.textMain }}
-													>
-														<FileEdit className="w-3 h-3 text-orange-500" />
-														{gitInfo.uncommittedChanges} uncommitted{' '}
-														{gitInfo.uncommittedChanges === 1 ? 'change' : 'changes'}
-													</span>
-												) : (
-													<span className="flex items-center gap-1.5 text-xs text-green-500">
-														Working tree clean
-													</span>
-												)}
-											</div>
-										</div>
-
-										{/* Worktree Actions */}
-										<div className="p-2 space-y-1">
-											{/* Configure Worktrees - only for parent sessions (not worktree children) */}
-											{!isWorktreeChild && onOpenWorktreeConfig && (
-												<button
-													onClick={(e) => {
-														e.stopPropagation();
-														onOpenWorktreeConfig();
-														gitTooltip.close();
-													}}
-													className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs hover:bg-white/10 transition-colors"
-													style={{ color: theme.colors.textDim }}
-												>
-													<Settings2
-														className="w-3.5 h-3.5"
-														style={{ color: theme.colors.textDim }}
-													/>
-													Configure Worktrees
-												</button>
-											)}
-											{/* Create PR - only for worktree children */}
-											{isWorktreeChild && onOpenCreatePR && (
-												<button
-													onClick={(e) => {
-														e.stopPropagation();
-														onOpenCreatePR();
-														gitTooltip.close();
-													}}
-													className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs hover:bg-white/10 transition-colors"
-													style={{ color: theme.colors.textDim }}
-												>
-													<GitPullRequest
-														className="w-3.5 h-3.5"
-														style={{ color: theme.colors.textDim }}
-													/>
-													Create Pull Request
-												</button>
-											)}
-										</div>
-									</div>
-								</div>
-							</>
-						)}
+						{gitPillMenu}
 					</div>
 				</div>
 
@@ -544,15 +466,21 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							tabIndex={0}
 							aria-label="Open context timeline"
 							{...contextTooltip.triggerHandlers}
-							onClick={() => useContextTimelineStore.getState().openPanel(activeSession.id)}
+							onClick={(e) =>
+								useContextTimelineStore
+									.getState()
+									.openPanel(activeSession.id, rectOf(e.currentTarget))
+							}
 							onKeyDown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault();
-									useContextTimelineStore.getState().openPanel(activeSession.id);
+									useContextTimelineStore
+										.getState()
+										.openPanel(activeSession.id, rectOf(e.currentTarget));
 								}
 							}}
 						>
-							{/* Plain-text readout: "X% context remaining" — clearer than a
+							{/* Plain-text readout: "X% context remaining" - clearer than a
 							    gauge bar at narrow widths and avoids redundant label+bar. */}
 							<span
 								className="text-xs font-mono font-medium tabular-nums whitespace-nowrap"
@@ -715,7 +643,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													</div>
 												)}
 
-												{/* TUI usage limits — shown for Claude Code tabs driving the TUI
+												{/* TUI usage limits - shown for Claude Code tabs driving the TUI
 												    (Adaptive Mode toggle OR static maestro-p Path) when a usage
 												    snapshot is cached. Bar color rules match the Usage Dashboard
 												    so the same percent reads the same way in both places:
@@ -766,7 +694,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																	●
 																</span>
 																<span>
-																	Not logged in — run{' '}
+																	Not logged in - run{' '}
 																	<code style={{ color: theme.colors.accent }}>/login</code>.
 																</span>
 															</div>

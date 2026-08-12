@@ -105,9 +105,13 @@ describe('useAgentExecution', () => {
 	});
 
 	it('spawns a batch agent and returns aggregated results', async () => {
+		// The tab is idle: a batch (Auto Run) spawn runs under its own `-batch-`
+		// process id and never marks a tab busy, so on exit there is no parallel
+		// thread to preserve and the session settles idle. The case where a tab IS
+		// still running is covered in useAgentExecution.exitQueueState.test.tsx.
 		const session = createMockSession({
 			state: 'busy',
-			aiTabs: [createMockTab({ state: 'busy' })],
+			aiTabs: [createMockTab({ state: 'idle' })],
 		});
 		const sessionsRef = { current: [session] };
 		const setSessions = vi.fn();
@@ -115,7 +119,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -182,7 +186,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -226,7 +230,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -253,94 +257,129 @@ describe('useAgentExecution', () => {
 		await spawnPromise;
 	});
 
-	it('uses raw stdin prompt delivery for local Windows batch runs when stream-json input is unsupported', async () => {
-		const originalPlatform = (window as any).maestro?.platform;
-		(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
-		const session = createMockSession({ toolType: 'codex' });
-		const sessionsRef = { current: [session] };
-		const setSessions = vi.fn();
-		const processQueuedItemRef = { current: null };
+	describe('per-run model/effort overrides', () => {
+		// The Auto Run spawn path has no active tab, so a run-scoped override
+		// simply has to win over the session's configured model/effort. Nothing
+		// is written back to the session: the override dies with the run.
+		const renderExecution = (session: Session) => {
+			const sessionsRef = { current: [session] };
+			return renderHook(() =>
+				useAgentExecution({
+					activeSessionId: session.id,
+					sessionsRef,
+					setSessions: vi.fn(),
+					processQueuedItemRef: { current: null },
+					setFlashNotification: vi.fn(),
+					setSuccessFlashNotification: vi.fn(),
+				})
+			);
+		};
 
-		vi.mocked(window.maestro.agents.get).mockResolvedValueOnce({
-			id: 'codex',
-			command: 'codex',
-			args: ['exec', '--json'],
-			capabilities: { supportsStreamJsonInput: false },
+		it('lets modelOverride/effortOverride win over the session values', async () => {
+			const session = createMockSession({
+				state: 'busy',
+				customModel: 'session-model',
+				customEffort: 'low',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+					modelOverride: 'run-model',
+					effortOverride: 'high',
+				}
+			);
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+			expect(spawnConfig.sessionCustomModel).toBe('run-model');
+			expect(spawnConfig.sessionCustomEffort).toBe('high');
+
+			act(() => {
+				onExitHandler?.(spawnConfig.sessionId as string);
+			});
+			await spawnPromise;
+
+			// The override is spawn-scoped only, never persisted back.
+			expect(session.customModel).toBe('session-model');
+			expect(session.customEffort).toBe('low');
 		});
 
-		const { result } = renderHook(() =>
-			useAgentExecution({
-				activeSession: session,
-				sessionsRef,
-				setSessions,
-				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
-		);
+		it('keeps the session values when no overrides are supplied', async () => {
+			const session = createMockSession({
+				state: 'busy',
+				customModel: 'session-model',
+				customEffort: 'low',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
 
-		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt');
+			const { result } = renderExecution(session);
 
-		await waitFor(() => {
-			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+			expect(spawnConfig.sessionCustomModel).toBe('session-model');
+			expect(spawnConfig.sessionCustomEffort).toBe('low');
+
+			act(() => {
+				onExitHandler?.(spawnConfig.sessionId as string);
+			});
+			await spawnPromise;
 		});
 
-		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
-		expect(spawnConfig.sendPromptViaStdin).toBe(false);
-		expect(spawnConfig.sendPromptViaStdinRaw).toBe(true);
+		it('falls back per-field when only one override is set', async () => {
+			const session = createMockSession({
+				state: 'busy',
+				customModel: 'session-model',
+				customEffort: 'low',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
 
-		const targetSessionId = spawnConfig.sessionId as string;
-		act(() => {
-			onExitHandler?.(targetSessionId);
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+					modelOverride: 'run-model',
+				}
+			);
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+			expect(spawnConfig.sessionCustomModel).toBe('run-model');
+			expect(spawnConfig.sessionCustomEffort).toBe('low');
+
+			act(() => {
+				onExitHandler?.(spawnConfig.sessionId as string);
+			});
+			await spawnPromise;
 		});
-		await spawnPromise;
-		(window as any).maestro.platform = originalPlatform;
-	});
-
-	it('does not enable local stdin flags for SSH batch runs', async () => {
-		const platformSpy = vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32');
-		const session = createMockSession({
-			toolType: 'codex',
-			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
-		});
-		const sessionsRef = { current: [session] };
-		const setSessions = vi.fn();
-		const processQueuedItemRef = { current: null };
-
-		vi.mocked(window.maestro.agents.get).mockResolvedValueOnce({
-			id: 'codex',
-			command: 'codex',
-			args: ['exec', '--json'],
-			capabilities: { supportsStreamJsonInput: false },
-		});
-
-		const { result } = renderHook(() =>
-			useAgentExecution({
-				activeSession: session,
-				sessionsRef,
-				setSessions,
-				processQueuedItemRef,
-				setFlashNotification: vi.fn(),
-				setSuccessFlashNotification: vi.fn(),
-			})
-		);
-
-		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt');
-
-		await waitFor(() => {
-			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
-		});
-
-		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
-		expect(spawnConfig.sendPromptViaStdin).toBe(false);
-		expect(spawnConfig.sendPromptViaStdinRaw).toBe(false);
-
-		const targetSessionId = spawnConfig.sessionId as string;
-		act(() => {
-			onExitHandler?.(targetSessionId);
-		});
-		await spawnPromise;
-		platformSpy.mockRestore();
 	});
 
 	it('queues the next item and logs queued messages', async () => {
@@ -360,7 +399,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -407,7 +446,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef,
@@ -474,7 +513,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions: vi.fn(),
 				processQueuedItemRef: { current: null },
@@ -509,7 +548,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions,
 				processQueuedItemRef: { current: null },
@@ -559,7 +598,7 @@ describe('useAgentExecution', () => {
 
 		const { result } = renderHook(() =>
 			useAgentExecution({
-				activeSession: session,
+				activeSessionId: session.id,
 				sessionsRef,
 				setSessions: vi.fn(),
 				processQueuedItemRef: { current: null },
@@ -591,7 +630,7 @@ describe('useAgentExecution', () => {
 		function renderForWatchdog(session: Session) {
 			return renderHook(() =>
 				useAgentExecution({
-					activeSession: session,
+					activeSessionId: session.id,
 					sessionsRef: { current: [session] },
 					setSessions: vi.fn(),
 					processQueuedItemRef: { current: null },

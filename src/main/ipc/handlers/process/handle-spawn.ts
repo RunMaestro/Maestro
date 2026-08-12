@@ -5,6 +5,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { ProcessManager } from '../../../process-manager';
 import { AgentDetector } from '../../../agents';
+import { checkBinaryExists, checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
 	getActivePluginManager,
@@ -41,6 +42,11 @@ import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-sp
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+	buildOmpPrimeEnv,
+} from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -79,6 +85,27 @@ export async function handleProcessSpawn(
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
+	let invalidLocalCustomPath = false;
+	if (config.sessionCustomPath && !config.sessionSshRemoteConfig?.enabled) {
+		const requestedCustomPath = config.sessionCustomPath;
+		const detection = await checkCustomPath(requestedCustomPath);
+		if (detection.exists && detection.path) {
+			config = { ...config, sessionCustomPath: detection.path };
+			if (detection.path !== requestedCustomPath) {
+				logger.info(`Resolved updated local custom path for ${config.toolType}`, LOG_CONTEXT, {
+					requestedCustomPath,
+					resolvedCustomPath: detection.path,
+				});
+			}
+		} else {
+			invalidLocalCustomPath = true;
+			config = { ...config, sessionCustomPath: undefined };
+			logger.warn(`Ignoring invalid local custom path for ${config.toolType}`, LOG_CONTEXT, {
+				requestedCustomPath,
+				fallbackPath: agent?.path || config.command,
+			});
+		}
+	}
 	// Use INFO level on Windows for better visibility in logs
 
 	const logFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
@@ -165,6 +192,32 @@ export async function handleProcessSpawn(
 			LOG_CONTEXT
 		);
 	}
+
+	// ========================================================================
+	// Prompt delivery: argv vs stdin. Decided HERE, never by the caller.
+	//
+	// Windows spawns hand the prompt to the child over stdin instead of argv to
+	// stay under the ~32K CreateProcess command-line limit. That is a property of
+	// the machine that runs the CLI and of the CLI itself, so the renderer must
+	// not decide it: a web-desktop client is a browser that can sit on a
+	// completely different OS than the host (`window.maestro.platform` there is
+	// derived from the browser's user agent), so a Windows browser driving a Linux
+	// host used to request stdin delivery. Agents that only accept a positional
+	// prompt then started with no prompt at all - omp emitted its session line and
+	// exited 0, which left the tab holding an agent session id omp never persisted,
+	// so every later turn failed to resume it too.
+	// ========================================================================
+	// An agent that has not declared the capability keeps its prompt in argv: an
+	// over-long command line fails loudly at spawn, while stdin delivery to a CLI
+	// that ignores stdin fails silently and poisons the tab's session id.
+	const hostDeliversPromptViaStdin =
+		isWindows() && !isSshEnabled && (agent?.capabilities?.supportsPromptViaStdin ?? false);
+	const promptHasImages = !!config.images?.length;
+	const supportsStreamJsonInput = agent?.capabilities?.supportsStreamJsonInput ?? false;
+	const sendPromptViaStdin =
+		hostDeliversPromptViaStdin && supportsStreamJsonInput && promptHasImages;
+	const sendPromptViaStdinRaw =
+		hostDeliversPromptViaStdin && (!supportsStreamJsonInput || !promptHasImages);
 
 	// Derive effective read-only state, honoring the legacy boolean flag only
 	// when permissionMode wasn't explicitly set (back-compat for older configs).
@@ -354,7 +407,7 @@ export async function handleProcessSpawn(
 	// turn is preserved in the agent's session transcript, so on resume we skip
 	// re-embedding to avoid polluting every subsequent user message with the
 	// full system prompt (which would be redundant context and waste tokens).
-	// Agents with native support re-send per invocation — that flag is metadata,
+	// Agents with native support re-send per invocation - that flag is metadata,
 	// not conversation content, and some agents (e.g. Claude Code) require it
 	// every turn because it isn't persisted into the session transcript.
 	// ========================================================================
@@ -448,7 +501,7 @@ export async function handleProcessSpawn(
 	// each run by calling the `task_complete` tool. The built-in autopilot
 	// system prompt biases the model toward calling that tool *early*,
 	// which manifests in Maestro as "the turn came back to me but the
-	// task wasn't actually done". The remedy isn't a CLI flag — it's a
+	// task wasn't actually done". The remedy isn't a CLI flag - it's a
 	// user-message preamble injected on every batch invocation that
 	// pushes back on premature completion and instructs the model to
 	// put its real conclusion in `task_complete.summary` (which is what
@@ -469,7 +522,7 @@ export async function handleProcessSpawn(
 				});
 			}
 		} catch (err) {
-			// Prompt not loaded yet (initializePrompts not called) — skip silently.
+			// Prompt not loaded yet (initializePrompts not called) - skip silently.
 			// This path is hit by tests that stub the IPC handler without bootstrapping
 			// prompts. Production code always runs initializePrompts() at app start.
 			logger.debug('copilot-preamble unavailable; skipping injection', LOG_CONTEXT, {
@@ -598,7 +651,10 @@ export async function handleProcessSpawn(
 	// so PATH and other environment variables are available. This ensures cross-platform
 	// compatibility and correct agent behavior.
 	// ========================================================================
-	let commandToSpawn = config.sessionCustomPath || config.command;
+	let commandToSpawn =
+		config.sessionCustomPath ||
+		(invalidLocalCustomPath ? agent?.path : undefined) ||
+		config.command;
 	let argsToSpawn = finalArgs;
 	let useShell = false;
 	let sshRemoteUsed: SshRemoteConfig | null = null;
@@ -693,7 +749,7 @@ export async function handleProcessSpawn(
 	// For local (non-SSH) spawns, prepend the parent dir of the binary
 	// we're actually about to spawn to PATH. Covers npm-style script
 	// agents (codex, claude, etc.) installed alongside a non-standard
-	// `node` that's outside our hardcoded version-manager paths —
+	// `node` that's outside our hardcoded version-manager paths -
 	// the script's `#!/usr/bin/env node` shebang needs that node on
 	// PATH. SSH path is built separately on the remote and must not
 	// inherit any local directories.
@@ -710,6 +766,90 @@ export async function handleProcessSpawn(
 			? path.dirname(localSpawnBinaryPath)
 			: undefined;
 
+	// Warm the omp model -> context-window catalog for local runs so the first
+	// turn's usage can resolve the model's real window (e.g. opus 1M) rather than
+	// the static fallback. Keyed to this binary + env overrides so one config's
+	// catalog is never served to another (see computeOmpCatalogKey). SSH remotes
+	// are skipped (their catalog may differ) and fall back to the configured window.
+	let ompModelCatalogKey: string | undefined;
+	// Set only when the prime outran the spawn cap: the spawn continues without a
+	// catalog, so the first turn emits the fallback window and we push a corrected
+	// one once this settles (see below, after the process exists).
+	let ompLatePrime: Promise<void> | undefined;
+	if (config.toolType === 'omp' && !sshRemoteUsed) {
+		// The prime needs an ABSOLUTE binary path (buildOmpPrimeEnv prepends its
+		// dirname, and the catalog key must identify one binary). A bare or
+		// relative path used to skip the whole block silently, which left
+		// ompModelCatalogKey undefined and latched the 200k fallback for the life
+		// of the process. Resolve it instead, reusing the same probes detection
+		// uses (they already cover ~/.bun/bin), and warn if it still cannot be.
+		let ompPrimeBinaryPath =
+			localSpawnBinaryPath && path.isAbsolute(localSpawnBinaryPath)
+				? localSpawnBinaryPath
+				: undefined;
+		if (!ompPrimeBinaryPath) {
+			const relativeDetection = localSpawnBinaryPath
+				? await checkCustomPath(localSpawnBinaryPath)
+				: undefined;
+			if (relativeDetection?.exists && relativeDetection.path) {
+				ompPrimeBinaryPath = relativeDetection.path;
+			} else {
+				const probed = await checkBinaryExists(agent?.binaryName || localSpawnBinaryPath || 'omp');
+				if (probed.exists && probed.path && path.isAbsolute(probed.path)) {
+					ompPrimeBinaryPath = probed.path;
+				}
+			}
+		}
+
+		if (!ompPrimeBinaryPath) {
+			logger.warn(`Skipped omp model catalog prime: no absolute binary path`, LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				sessionCustomPath: config.sessionCustomPath,
+				agentPath: agent?.path,
+				binaryName: agent?.binaryName,
+			});
+		} else {
+			// Identity uses the session's stable custom env overrides (not the
+			// platform-expanded `customEnvVarsToPass`, which on Windows is the whole
+			// env) so the same logical config maps to one catalog across platforms and
+			// matches the detector's default-identity warm-up.
+			ompModelCatalogKey = computeOmpCatalogKey(ompPrimeBinaryPath, effectiveCustomEnvVars);
+			// Bounded await: block the spawn only briefly so the first turn resolves
+			// correctly on a warm/fast catalog, and proceed (letting the prime finish
+			// in the background for later turns) when it is slow or fails.
+			const OMP_PRIME_SPAWN_CAP_MS = 3500;
+			// Prime with the platform-expanded env (mirroring the Windows agent path
+			// above) so the bun-based `omp` binary resolves in a packaged app: packaged
+			// Electron apps do not inherit the shell PATH, so a raw `process.env` lacks
+			// user-local bin dirs like `~/.bun/bin`. buildOmpPrimeEnv also prepends the
+			// binary's own dir so a co-located runtime is found first, and the detector's
+			// warm-up shares it so both prime sites build an identical env.
+			const primeEnv = buildOmpPrimeEnv(ompPrimeBinaryPath, customEnvVarsToPass);
+			const primeStartedAt = Date.now();
+			// retryFailedPrime: a user starting an agent must get a fresh attempt
+			// rather than inheriting a negative-cached failure (e.g. from a cold
+			// packaged start) that would pin the fallback window for 5 minutes.
+			const prime = primeOmpModelCatalog(ompPrimeBinaryPath, primeEnv, ompModelCatalogKey, {
+				retryFailedPrime: true,
+			});
+			const primeExceededCap = await Promise.race([
+				prime.then(() => false),
+				new Promise<boolean>((resolve) => setTimeout(() => resolve(true), OMP_PRIME_SPAWN_CAP_MS)),
+			]);
+			if (primeExceededCap) {
+				// Makes the cold-start theory checkable in the packaged app's log:
+				// the first turn will show the fallback window until the prime lands.
+				logger.warn(`omp prime exceeded spawn cap, continuing in background`, LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					command: ompPrimeBinaryPath,
+					elapsedMs: Date.now() - primeStartedAt,
+					capMs: OMP_PRIME_SPAWN_CAP_MS,
+				});
+				ompLatePrime = prime;
+			}
+		}
+	}
+
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -723,11 +863,15 @@ export async function handleProcessSpawn(
 		// For SSH, prompt is included in the stdin script, not passed separately
 		// For local execution, pass prompt (with system prompt embedded for non-append-system-prompt agents)
 		prompt: sshRemoteUsed ? undefined : effectivePrompt,
+		// Host-authoritative (see above): overrides whatever the caller sent.
+		sendPromptViaStdin,
+		sendPromptViaStdinRaw,
 		shell: shellToUse,
 		runInShell: useShell,
 		shellArgs: shellArgsStr, // Shell-specific CLI args (for terminal sessions)
 		shellEnvVars: globalShellEnvVars, // Global shell env vars (for both terminals and agents)
 		contextWindow, // Pass configured context window to process manager
+		ompModelCatalogKey, // Identity for the omp model catalog (local omp only)
 		// When using SSH, env vars are passed in the stdin script, not locally
 		customEnvVars: customEnvVarsToPass,
 		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
@@ -746,6 +890,22 @@ export async function handleProcessSpawn(
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 	});
+
+	// The prime outran the spawn cap, so the process started without a usable
+	// catalog and its first usage event carries the 200k fallback. Close the loop:
+	// when the prime lands, re-emit that turn's usage with the real window instead
+	// of leaving the gauge wrong until the next turn. Attached AFTER spawn so the
+	// managed process exists; the push itself no-ops if it already exited.
+	if (ompLatePrime && ompModelCatalogKey) {
+		const latePrimeCatalogKey = ompModelCatalogKey;
+		void ompLatePrime
+			.then(() => {
+				processManager.pushResolvedOmpContextWindow(config.sessionId, latePrimeCatalogKey);
+			})
+			.catch(() => {
+				// primeOmpModelCatalog already warn-logs its own failures.
+			});
+	}
 
 	logger.info(`Process spawned successfully`, LOG_CONTEXT, {
 		sessionId: config.sessionId,
@@ -780,7 +940,7 @@ export async function handleProcessSpawn(
 			prompt: replayPrompt,
 			buildApiSpawnConfig: ({ prompt }): ProcessSpawnConfig | null => {
 				// Pull the freshest agentSessionId for this session/tab off the
-				// sessions store — maestro-p's session-id watcher may have stamped
+				// sessions store - maestro-p's session-id watcher may have stamped
 				// one between spawn and exit.
 				let freshAgentSessionId: string | undefined = originalConfig.agentSessionId;
 				try {

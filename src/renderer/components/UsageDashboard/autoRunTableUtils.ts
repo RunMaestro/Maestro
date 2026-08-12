@@ -15,6 +15,7 @@ export function formatAgentName(agentType: string): string {
 		'qwen3-coder': 'Qwen3 Coder',
 		'factory-droid': 'Factory Droid',
 		copilot: 'GitHub Copilot',
+		grok: 'Grok CLI',
 		terminal: 'Terminal',
 	};
 	return names[agentType] || agentType;

@@ -76,7 +76,7 @@ export class StaticRoutes {
 	// copied into the web-desktop bundle by its vite publicDir, so this points at
 	// the same bundle root as webDesktopPath.
 	private webAssetsPath: string | null;
-	// Web-desktop bundle root — the default browser interface, served at the
+	// Web-desktop bundle root - the default browser interface, served at the
 	// token root and at /<token>/desktop. Null when the bundle hasn't been built.
 	private webDesktopPath: string | null;
 

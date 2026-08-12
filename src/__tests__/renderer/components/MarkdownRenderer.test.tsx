@@ -33,6 +33,7 @@ vi.mock('lucide-react', () => ({
 	ImageOff: () => <span data-testid="image-off-icon">ImageOff</span>,
 	Copy: () => <span data-testid="copy-icon">Copy</span>,
 	ExternalLink: () => <span data-testid="external-link-icon">ExternalLink</span>,
+	FolderOpen: () => <span data-testid="folder-open-icon">FolderOpen</span>,
 	Globe: () => <span data-testid="globe-icon">Globe</span>,
 	FileText: () => <span data-testid="file-text-icon">FileText</span>,
 	Target: () => <span data-testid="target-icon">Target</span>,
@@ -1617,7 +1618,7 @@ describe('MarkdownRenderer', () => {
 		it('does not parse $...$ as math by default (document semantics)', () => {
 			const content = 'price is $5 and $10 today';
 			const { container } = render(<MarkdownRenderer {...defaultProps} content={content} />);
-			// No KaTeX rendering — `$` characters stay as literal text
+			// No KaTeX rendering - `$` characters stay as literal text
 			expect(container.querySelector('.katex')).toBeNull();
 			expect(container.textContent).toContain('$5');
 			expect(container.textContent).toContain('$10');

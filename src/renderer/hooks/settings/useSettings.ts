@@ -7,7 +7,7 @@
  * 2. Reload settings on system resume from sleep
  * 3. Apply font size to document root element
  *
- * The UseSettingsReturn interface is unchanged — zero consumer changes needed.
+ * The UseSettingsReturn interface is unchanged - zero consumer changes needed.
  */
 
 import { useEffect } from 'react';
@@ -109,6 +109,9 @@ export interface UseSettingsReturn {
 	// Default thinking toggle (three states: 'off' | 'on' | 'sticky')
 	defaultShowThinking: ThinkingMode;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	// Global tool-call visibility toggle (Settings -> General)
+	showToolCalls: boolean;
+	setShowToolCalls: (value: boolean) => void;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
@@ -121,6 +124,7 @@ export interface UseSettingsReturn {
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
 	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
@@ -286,6 +290,8 @@ export interface UseSettingsReturn {
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	tabBarWheelScroll: boolean;
+	setTabBarWheelScroll: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
@@ -396,6 +402,10 @@ export interface UseSettingsReturn {
 	setForcedParallelExecution: (value: boolean) => void;
 	forcedParallelAcknowledged: boolean;
 	setForcedParallelAcknowledged: (value: boolean) => void;
+	forcedParallelAlways: boolean;
+	setForcedParallelAlways: (value: boolean) => void;
+	crossAgentMentionsWritable: boolean;
+	setCrossAgentMentionsWritable: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
@@ -495,7 +505,7 @@ export function useSettings(): UseSettingsReturn {
 	// PERF: Subscribe with shallow equality on the top-level state so a `set()` call that
 	// only flips one field doesn't re-render every consumer of useSettings. Critically,
 	// when an action calls `set({ x: value })` where `x === value` already, the resulting
-	// state object has a new reference but identical fields — shallow equality stops the
+	// state object has a new reference but identical fields - shallow equality stops the
 	// re-render cascade through MaestroConsoleInner → GitStatusProvider → workspace tree.
 	const store = useStoreWithEqualityFn(useSettingsStore, selectAllSettings, shallow);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);

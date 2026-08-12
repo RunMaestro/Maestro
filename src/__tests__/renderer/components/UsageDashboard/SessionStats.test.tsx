@@ -43,7 +43,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 	} as Session;
 }
 
-describe('SessionStats — worktree breakdown', () => {
+describe('SessionStats - worktree breakdown', () => {
 	it('renders the Regular | Worktree stat pair when sessions exist', () => {
 		const sessions = [
 			makeSession(),
@@ -103,7 +103,7 @@ describe('SessionStats — worktree breakdown', () => {
 	});
 });
 
-describe('SessionStats — agent type display names', () => {
+describe('SessionStats - agent type display names', () => {
 	it('shows the user-assigned name when only one session of that type exists', () => {
 		const sessions = [makeSession({ name: 'Backend API', toolType: 'claude-code' })];
 

@@ -933,10 +933,10 @@ describe('useFileExplorerEffects', () => {
 	});
 
 	// ====================================================================
-	// handleMainPanelFileClick — additional coverage
+	// handleMainPanelFileClick - additional coverage
 	// ====================================================================
 
-	describe('handleMainPanelFileClick — additional coverage', () => {
+	describe('handleMainPanelFileClick - additional coverage', () => {
 		it('passes SSH remote ID to readFile and handleOpenFileTab', async () => {
 			const useFileExplorerEffects = await loadHook();
 			const { shouldOpenExternally } = await import('../../../renderer/utils/fileExplorer');
@@ -1033,7 +1033,7 @@ describe('useFileExplorerEffects', () => {
 				await result.current.handleMainPanelFileClick('docs/manual.pdf');
 			});
 
-			// Should NOT open externally — SSH files are read via the remote
+			// Should NOT open externally - SSH files are read via the remote
 			expect((window as any).maestro.shell.openExternal).not.toHaveBeenCalled();
 			// Should read file and open in tab instead
 			expect(handleOpenFileTab).toHaveBeenCalled();
@@ -1142,10 +1142,10 @@ describe('useFileExplorerEffects', () => {
 	});
 
 	// ====================================================================
-	// Scroll restore — additional coverage
+	// Scroll restore - additional coverage
 	// ====================================================================
 
-	describe('scroll restore — additional coverage', () => {
+	describe('scroll restore - additional coverage', () => {
 		it('does not set scrollTop when fileExplorerScrollPos is undefined', async () => {
 			const useFileExplorerEffects = await loadHook();
 
@@ -1168,10 +1168,10 @@ describe('useFileExplorerEffects', () => {
 	});
 
 	// ====================================================================
-	// Flat file list computation — additional coverage
+	// Flat file list computation - additional coverage
 	// ====================================================================
 
-	describe('flat file list computation — additional coverage', () => {
+	describe('flat file list computation - additional coverage', () => {
 		it('passes all files through when showHiddenFiles is true', async () => {
 			const useFileExplorerEffects = await loadHook();
 			const { flattenTree } = await import('../../../renderer/utils/fileExplorer');
@@ -1323,10 +1323,10 @@ describe('useFileExplorerEffects', () => {
 	});
 
 	// ====================================================================
-	// Keyboard navigation — additional coverage
+	// Keyboard navigation - additional coverage
 	// ====================================================================
 
-	describe('keyboard navigation — additional coverage', () => {
+	describe('keyboard navigation - additional coverage', () => {
 		it('Cmd+ArrowUp jumps to first item', async () => {
 			const useFileExplorerEffects = await loadHook();
 			useUIStore.setState({ activeFocus: 'right', activeRightTab: 'files' });
@@ -1664,7 +1664,7 @@ describe('useFileExplorerEffects', () => {
 				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
 			});
 
-			// Should NOT toggle — already expanded
+			// Should NOT toggle - already expanded
 			expect(toggleFolder).not.toHaveBeenCalled();
 		});
 
@@ -1748,7 +1748,7 @@ describe('useFileExplorerEffects', () => {
 			// Unmount to trigger cleanup
 			unmount();
 
-			// Dispatch after unmount — should have no effect
+			// Dispatch after unmount - should have no effect
 			act(() => {
 				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
 			});
@@ -1759,10 +1759,10 @@ describe('useFileExplorerEffects', () => {
 	});
 
 	// ====================================================================
-	// stableFileTree — additional coverage
+	// stableFileTree - additional coverage
 	// ====================================================================
 
-	describe('stableFileTree — additional coverage', () => {
+	describe('stableFileTree - additional coverage', () => {
 		it('returns new reference when fileTree changes', async () => {
 			const useFileExplorerEffects = await loadHook();
 

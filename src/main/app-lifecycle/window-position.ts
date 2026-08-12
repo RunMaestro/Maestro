@@ -4,6 +4,61 @@ import { screen } from 'electron';
 type DisplayWorkArea = { x: number; y: number; width: number; height: number };
 
 /**
+ * The app's preferred minimum window size, in DIPs. This is the floor a window
+ * uses on any display large enough to hold it. See `resolveWindowSizeConstraints`
+ * for how it is relaxed on smaller displays.
+ */
+export const DESIGN_MIN_WINDOW_WIDTH = 1000;
+export const DESIGN_MIN_WINDOW_HEIGHT = 600;
+
+/**
+ * Resolves the size and minimum-size constraints for a window, clamped to the
+ * work area of the display it will occupy.
+ *
+ * A fixed `minWidth`/`minHeight` (the previous behavior) can exceed a real
+ * display's work area on small or heavily-scaled screens. `workArea` is reported
+ * in DIPs with the panel/dock already subtracted, so on a 1366x768 screen at
+ * 125% scale it is only ~1093x593 DIPs - smaller than the 1000x600 design
+ * minimum in height. When the enforced minimum is taller than the work area the
+ * window can never shrink to fit, so the native "maximize" (which targets the
+ * work area) silently no-ops. Relaxing the minimum to the work area lets the
+ * window fit and be maximized on such displays, while leaving the design minimum
+ * intact on every display large enough to hold it.
+ *
+ * The returned `width`/`height` are likewise clamped down to the work area so a
+ * saved (or default) size larger than the current screen does not spawn
+ * oversized. They are only ever clamped down, never enlarged: a smaller saved
+ * size is preserved, and the resolved `minWidth`/`minHeight` (which Electron
+ * enforces when the window realizes) supplies the floor, exactly as before.
+ */
+export function resolveWindowSizeConstraints(state: {
+	x?: number;
+	y?: number;
+	width: number;
+	height: number;
+}): { width: number; height: number; minWidth: number; minHeight: number } {
+	// Match the display the window will actually occupy (same rule the position
+	// resolver uses) so a window on a small secondary monitor is clamped to that
+	// monitor, not the primary. With no saved position, Electron places the
+	// window on the primary display, so clamp against that.
+	const workArea =
+		typeof state.x === 'number' && typeof state.y === 'number'
+			? screen.getDisplayMatching({
+					x: state.x,
+					y: state.y,
+					width: state.width,
+					height: state.height,
+				}).workArea
+			: screen.getPrimaryDisplay().workArea;
+
+	const minWidth = Math.min(DESIGN_MIN_WINDOW_WIDTH, workArea.width);
+	const minHeight = Math.min(DESIGN_MIN_WINDOW_HEIGHT, workArea.height);
+	const width = Math.min(state.width, workArea.width);
+	const height = Math.min(state.height, workArea.height);
+	return { width, height, minWidth, minHeight };
+}
+
+/**
  * Centers a window of the given size inside a display's work area. The offset is
  * clamped to zero so a window larger than the work area still pins to its
  * top-left corner (its title bar) rather than spilling above/left of it.

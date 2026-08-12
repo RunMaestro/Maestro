@@ -374,6 +374,16 @@ describe('shared/formatters', () => {
 			expect(formatCost(1.235)).toBe('$1.24'); // rounds up
 			expect(formatCost(1.999)).toBe('$2.00');
 		});
+
+		it('should add thousands separators to large costs', () => {
+			expect(formatCost(1000)).toBe('$1,000.00');
+			expect(formatCost(40950.6)).toBe('$40,950.60');
+			expect(formatCost(1234567.89)).toBe('$1,234,567.89');
+		});
+
+		it('should not add a separator below 1000', () => {
+			expect(formatCost(999.99)).toBe('$999.99');
+		});
 	});
 
 	// ==========================================================================

@@ -77,9 +77,9 @@ interface ProcessConfig {
 	};
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
-	// Windows command line length workaround
-	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
-	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
+	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
+	// neither of which a renderer (possibly a browser on another OS) can know.
 	// Claude token-source selection. Normally resolved server-side from the
 	// persisted session by sessionId, but spawns using a synthetic sessionId
 	// (e.g. background synopsis) forward these inline so the handler can resolve.
@@ -233,12 +233,20 @@ interface MaestroAPI {
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
 		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
-		 * debounced flushes — avoids cloning + serializing the entire sessions
+		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
 		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
 		getActiveSessionId: () => Promise<string>;
 		setActiveSessionId: (id: string) => Promise<void>;
+		/**
+		 * Listen for main-side focus requests emitted by the plugin `sessions.focus`
+		 * verb. The renderer applies the jump through its canonical helpers because
+		 * the main-side store write is invisible to the live Zustand store.
+		 */
+		onFocusRequest: (
+			handler: (payload: { sessionId: string; tabId?: string }) => void
+		) => () => void;
 	};
 	groups: {
 		getAll: () => Promise<any[]>;
@@ -294,7 +302,9 @@ interface MaestroAPI {
 				syncHistory?: boolean;
 			};
 		}) => Promise<{ exitCode: number }>;
-		getActiveProcesses: () => Promise<
+		/** Terminate an in-flight `runCommand`. False when nothing is running under that id. */
+		cancelCommand: (sessionId: string) => Promise<boolean>;
+		getActiveProcesses: (options?: { includeChildProcesses?: boolean }) => Promise<
 			Array<{
 				sessionId: string;
 				toolType: string;
@@ -342,6 +352,13 @@ interface MaestroAPI {
 				toolName: string;
 				input: Record<string, unknown>;
 				createdAt: number;
+				kind?: 'question';
+				questions?: Array<{
+					question: string;
+					header?: string;
+					options: Array<{ label: string; description?: string }>;
+					multiSelect: boolean;
+				}>;
 			}) => void
 		) => () => void;
 		respondPermission: (
@@ -382,9 +399,15 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				force?: boolean,
-				images?: string[]
+				images?: string[],
+				background?: boolean,
+				receiptChannel?: string
 			) => void
 		) => () => void;
+		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
+		 *  means the command reached the spawn/queue logic, not that it
+		 *  completed. Drives the CLI's `dispatch` success flag. */
+		sendRemoteCommandReceipt: (receiptChannel: string, accepted: boolean, reason?: string) => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
 		) => () => void;
@@ -430,7 +453,15 @@ interface MaestroAPI {
 			callback: (params: {
 				op: 'open' | 'update' | 'close';
 				id: string;
-				viewType?: 'tracker' | 'file' | 'markdown' | 'image' | 'code' | 'view' | 'decision';
+				viewType?:
+					| 'tracker'
+					| 'file'
+					| 'markdown'
+					| 'image'
+					| 'code'
+					| 'view'
+					| 'decision'
+					| 'html';
 				title?: string;
 				body?: string;
 				path?: string;
@@ -442,19 +473,56 @@ interface MaestroAPI {
 		onRemoteCadenzaFlash: (callback: (id: string) => void) => () => void;
 		flashCadenza: (id: string) => void;
 		onRemoteMovement: (
-			callback: (params: {
-				op: 'add' | 'update' | 'move' | 'remove' | 'clear';
-				id?: string;
-				x?: number;
-				y?: number;
-				width?: number;
-				height?: number;
-				title?: string;
-				body?: string;
-			}) => void
+			callback: (
+				params: {
+					op: 'begin' | 'add' | 'update' | 'move' | 'remove' | 'clear' | 'progress';
+					id?: string;
+					viewType?: 'view' | 'html';
+					x?: number;
+					y?: number;
+					width?: number;
+					height?: number;
+					title?: string;
+					body?: string;
+					sourcePlugin?: string;
+					revision?: number;
+					phase?: 'composing' | 'refining' | 'arranging' | 'reviewing' | 'testing';
+					step?: number;
+					steps?: number;
+					notes?: Array<{
+						value: 'quarter' | 'eighth' | 'sixteenth';
+						dotted?: boolean;
+						triad?: boolean;
+						tie?: boolean;
+					}>;
+				},
+				responseChannel?: string
+			) => void
 		) => () => void;
+		sendMovementAppliedResponse: (responseChannel: string, applied: boolean) => void;
+		releaseConcertoHtmlDocument: (surface: 'movement' | 'cadenza', id: string) => void;
+		restoreConcertoHtmlDocument: (
+			surface: 'movement' | 'cadenza',
+			id: string,
+			html: string
+		) => Promise<number>;
 		onRequestMovementState: (callback: (responseChannel: string) => void) => () => void;
 		sendMovementStateResponse: (responseChannel: string, snapshot: unknown) => void;
+		onRequestMovementDesignerInspection: (
+			callback: (id: string, expectedRevision: number, responseChannel: string) => void
+		) => () => void;
+		sendMovementDesignerInspectionResponse: (responseChannel: string, snapshot: unknown) => void;
+		onRequestMovementDesignerInteraction: (
+			callback: (
+				id: string,
+				action:
+					| { kind: 'click'; selector: string }
+					| { kind: 'type'; selector: string; value: string },
+				expectedRevision: number,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendMovementDesignerInteractionResponse: (responseChannel: string, result: unknown) => void;
 		notifyCadenzaHudReady: () => void;
 		setCadenzaHudCardRects: (
 			rects: Array<{ x: number; y: number; width: number; height: number }>
@@ -482,12 +550,57 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteOpenTerminalTabResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteNewAITabWithPrompt: (
-			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
 			responseChannel: string,
 			success: boolean,
 			tabId?: string
+		) => void;
+		onRemoteEnqueueCommand: (
+			callback: (
+				sessionId: string,
+				command: string,
+				responseChannel: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				images?: string[],
+				background?: boolean
+			) => void
+		) => () => void;
+		sendRemoteEnqueueCommandResponse: (
+			responseChannel: string,
+			result: {
+				success: boolean;
+				tabId?: string;
+				queued?: boolean;
+				queuePosition?: number;
+				queueLength?: number;
+				itemId?: string;
+				error?: string;
+				/** Machine-readable failure cause, so main can react to a specific one
+				 *  (dispatch callbacks retry agent-level on `tab-not-found`). */
+				reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
+			}
+		) => void;
+		onRemoteListQueue: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		) => () => void;
+		sendRemoteListQueueResponse: (
+			responseChannel: string,
+			result: { success: boolean; queues: unknown[]; error?: string }
+		) => void;
+		onRemoteRemoveQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteRemoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; removed: boolean; error?: string }
 		) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
@@ -918,14 +1031,14 @@ interface MaestroAPI {
 				currentDocumentIndex?: number;
 				totalTasksAcrossAllDocs?: number;
 				completedTasksAcrossAllDocs?: number;
-				// Error pause fields — surfaced to web/mobile so they can show recovery UI
+				// Error pause fields - surfaced to web/mobile so they can show recovery UI
 				errorPaused?: boolean;
 				errorMessage?: string;
 				errorType?: string;
 				errorRecoverable?: boolean;
 				errorDocumentIndex?: number;
 				errorTaskDescription?: string;
-				// Goal-Driven mode fields — surfaced so web/mobile show goal percent + iteration
+				// Goal-Driven mode fields - surfaced so web/mobile show goal percent + iteration
 				goalMode?: boolean;
 				goalProgress?: number;
 				goalRationale?: string;
@@ -1042,10 +1155,59 @@ interface MaestroAPI {
 			}>;
 			error: string | null;
 		}>;
+		/**
+		 * Run a network git operation (pull/push/fetch) and stream its output.
+		 * Subscribe via `onCommandOutput` before calling.
+		 */
+		runCommand: (options: {
+			runId: string;
+			operation: import('../shared/gitUtils').GitStreamingOperation;
+			cwd: string;
+			sshRemoteId?: string;
+			remoteCwd?: string;
+			setUpstream?: boolean;
+		}) => Promise<import('../shared/gitUtils').GitRunCommandResult>;
+		/** Terminate an in-flight `runCommand`. */
+		cancelCommand: (runId: string) => Promise<{ success: boolean }>;
+		/** Subscribe to streamed `runCommand` output. Returns an unsubscribe. */
+		onCommandOutput: (
+			callback: (data: import('../shared/gitUtils').GitCommandOutputChunk) => void
+		) => () => void;
+		/** Check out a branch (pass createTracking for an origin-only branch). */
+		checkoutBranch: (
+			cwd: string,
+			branch: string,
+			createTracking?: boolean,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; output?: string; error?: string }>;
 		commitCount: (
 			cwd: string,
 			sshRemoteId?: string
 		) => Promise<{ count: number; error: string | null }>;
+		graph: (
+			cwd: string,
+			options?: { limit?: number },
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			nodes: Array<{
+				hash: string;
+				shortHash: string;
+				parents: string[];
+				author: string;
+				date: string;
+				refs: string[];
+				subject: string;
+			}>;
+			error: string | null;
+		}>;
+		switchBranch: (
+			cwd: string,
+			branchName: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; stdout: string; stderr: string }>;
 		show: (
 			cwd: string,
 			hash: string,
@@ -1302,6 +1464,7 @@ interface MaestroAPI {
 		}>;
 		get: (agentId: string, sshRemoteId?: string) => Promise<AgentConfig | null>;
 		getCapabilities: (agentId: string) => Promise<AgentCapabilities>;
+		getAllCapabilities: () => Promise<Record<string, AgentCapabilities>>;
 		getConfig: (agentId: string) => Promise<Record<string, any>>;
 		setConfig: (agentId: string, config: Record<string, any>) => Promise<boolean>;
 		getConfigValue: (agentId: string, key: string) => Promise<any>;
@@ -1332,7 +1495,7 @@ interface MaestroAPI {
 			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 
-		// Capability snapshots — persisted per-agent readiness + version info.
+		// Capability snapshots - persisted per-agent readiness + version info.
 		getSnapshot: (
 			agentId: string,
 			sshRemoteId?: string
@@ -1580,7 +1743,13 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			sessionName?: string
+			sessionName?: string,
+			reason?: 'starred' | 'snoozed'
+		) => Promise<void>;
+		releaseSnoozedTranscript: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string
 		) => Promise<void>;
 	};
 	dialog: {
@@ -1726,7 +1895,7 @@ interface MaestroAPI {
 				shift: boolean;
 			}) => void
 		) => () => void;
-		/** @see ParsedDeepLink in src/shared/types.ts — keep in sync */
+		/** @see ParsedDeepLink in src/shared/types.ts - keep in sync */
 		onDeepLink: (
 			callback: (deepLink: {
 				action: 'focus' | 'session' | 'group';
@@ -2038,7 +2207,7 @@ interface MaestroAPI {
 			sharedContext?: { sshRemoteId: string; remoteCwd: string },
 			projectPath?: string
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number }>;
+			buckets: Array<import('../shared/history').GraphBucket>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
@@ -2046,6 +2215,7 @@ interface MaestroAPI {
 			autoCount: number;
 			userCount: number;
 			cueCount: number;
+			agentCount: number;
 			hostCounts: Record<string, number>;
 			cached: boolean;
 		}>;
@@ -2787,6 +2957,10 @@ interface MaestroAPI {
 			// Installation tracking for multi-device differentiation
 			installationId?: string; // Unique GUID per Maestro installation (auto-injected by main process)
 			clientTotalTimeMs?: number; // Client's self-proclaimed total time (for discrepancy detection)
+			// What earned this time. Absent means 'auto-run' (older clients predate
+			// this field). Cue submissions are far more frequent, so the server keys
+			// off this to suppress per-submission Discord notifications.
+			source?: 'auto-run' | 'cue';
 		}) => Promise<{
 			success: boolean;
 			message: string;
@@ -3134,6 +3308,12 @@ interface MaestroAPI {
 				success: boolean;
 			}>
 		>;
+		// Token & cost usage aggregate for the Tokens tab. Reads agent session
+		// transcripts; `force` bypasses the accessor's in-memory memo.
+		getTokenUsage: (
+			query?: import('../shared/tokenUsage').TokenUsageQuery,
+			force?: boolean
+		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
 		// Get aggregated stats for dashboard display
 		getAggregation: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<{
 			totalQueries: number;
@@ -3226,12 +3406,15 @@ interface MaestroAPI {
 		// Clear initialization result (after user has acknowledged the notification)
 		clearInitializationResult: () => Promise<boolean>;
 	};
-	// Cue Stats API (Phase 03 — Cue Dashboard aggregation query)
+	// Cue Stats API (Phase 03 - Cue Dashboard aggregation query)
 	// Throws 'CueStatsDisabled' when either encoreFeatures.usageStats or
 	// encoreFeatures.maestroCue is off; consumers should catch and render
 	// the "feature off" state.
 	cueStats: {
 		getAggregation: (range: CueStatsTimeRange) => Promise<CueStatsAggregation>;
+		// Conductor time (ms) the retained Cue run history would have credited.
+		// Ungated, unlike getAggregation; resolves 0 when there is no history.
+		getHistoricalConductorCredit: () => Promise<number>;
 	};
 	// Document Graph API (file watching for graph visualization)
 	documentGraph: {
@@ -3616,11 +3799,19 @@ interface MaestroAPI {
 		}) => Promise<string | null>;
 	};
 
+	// Tab lifecycle API (renderer -> main tab-close notification)
+	tabs: {
+		// Fire-and-forget: an AI tab was really removed (not snoozed, not left
+		// running as an orphan). Main retires anything scoped to that tab, e.g. an
+		// armed dispatch callback that would otherwise time out an hour later.
+		notifyAiTabClosed: (agentId: string, tabId: string) => void;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {
 			lookbackDays: number;
-			filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+			filter?: HistoryEntryType | HistoryEntryType[] | null;
 			limit?: number;
 			offset?: number;
 			graphBucketCount?: number;
@@ -3653,15 +3844,16 @@ interface MaestroAPI {
 				autoCount: number;
 				userCount: number;
 				cueCount: number;
+				agentEntryCount: number;
 				totalCount: number;
 			};
-			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
+			graphBuckets?: Array<import('../shared/history').GraphBucket>;
 		}>;
 		getGraphData: (
 			bucketCount: number,
 			lookbackHours: number | null
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number }>;
+			buckets: Array<import('../shared/history').GraphBucket>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
@@ -3669,6 +3861,7 @@ interface MaestroAPI {
 			autoCount: number;
 			userCount: number;
 			cueCount: number;
+			agentCount: number;
 			cached: boolean;
 			stats: {
 				agentCount: number;
@@ -3676,6 +3869,7 @@ interface MaestroAPI {
 				autoCount: number;
 				userCount: number;
 				cueCount: number;
+				agentEntryCount: number;
 				totalCount: number;
 			};
 		}>;
@@ -3683,7 +3877,7 @@ interface MaestroAPI {
 			timestamp: number,
 			options?: {
 				lookbackDays?: number;
-				filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+				filter?: HistoryEntryType | HistoryEntryType[] | null;
 			}
 		) => Promise<number>;
 		/**
@@ -3697,12 +3891,19 @@ interface MaestroAPI {
 			autoCount: number;
 			userCount: number;
 			cueCount: number;
+			agentEntryCount: number;
 			successCount: number;
 			failureCount: number;
 			successRate: number;
 			totalElapsedMs: number;
 			avgElapsedMs: number;
-			timelineBuckets: Array<{ startTime: number; auto: number; user: number; cue: number }>;
+			timelineBuckets: Array<{
+				startTime: number;
+				auto: number;
+				user: number;
+				cue: number;
+				agent: number;
+			}>;
 			perAgent: Array<{
 				sessionId: string;
 				agentName: string;
@@ -3729,10 +3930,12 @@ interface MaestroAPI {
 				durationMs: number;
 			};
 			error?: string;
-			/** Parsed structured narrative for Rich Mode (present only on clean parse). */
+			/** Parsed structured narrative, from a clean parse or a salvage. */
 			narrative?: import('../shared/directorNotesNarrative').DirectorNotesNarrative;
 			/** Set when the raw synopsis could not be parsed into a structured narrative. */
 			narrativeError?: string;
+			/** Set when `narrative` was salvaged; explains what had to be recovered. */
+			narrativeRecovery?: string;
 		}>;
 		/** Subscribe to synopsis generation progress updates. Returns cleanup function. */
 		onSynopsisProgress: (
@@ -3864,12 +4067,23 @@ interface MaestroAPI {
 		getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 		requestConsent: (id: string) => Promise<{ opened: boolean }>;
 		revokeGrants: (id: string) => Promise<PluginGrantsSnapshot>;
+		setAgentAllowlist: (id: string, agentIds: string[]) => Promise<PluginGrantsSnapshot>;
 		invokeCommand: (commandId: string, args?: unknown) => Promise<{ dispatched: boolean }>;
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
 		onChanged: (callback: () => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
+		onPanelData: (
+			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
+		) => () => void;
+		onPanelVisibility: (
+			callback: (payload: {
+				pluginId: string;
+				panelId: string;
+				action: 'open' | 'close' | 'toggle';
+			}) => void
+		) => () => void;
 		onRunUiCommand: (
 			callback: (commandId: string, args: unknown) => boolean | Promise<boolean>
 		) => () => void;
@@ -3914,6 +4128,22 @@ interface MaestroAPI {
 			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;
 			error?: string;
 		}>;
+	};
+
+	// Context Timeline capture log (main-side backfill of per-agent turn history)
+	contextTimeline: {
+		getCaptures: (sessionId: string | null) => Promise<{
+			success: boolean;
+			captures?: Array<{
+				seq: number;
+				timestamp: number;
+				sessionId: string;
+				usageStats: UsageStats;
+			}>;
+			trimmed?: boolean;
+			error?: string;
+		}>;
+		clearCaptures: (sessionId: string | null) => Promise<{ success: boolean; error?: string }>;
 	};
 
 	// Per-project memory API (Claude Code memory viewer)
@@ -4031,7 +4261,7 @@ interface MaestroAPI {
 	browserSession: {
 		clearSessionData: (partition: string) => Promise<{ ok: boolean; error?: string }>;
 	};
-	// Multi-window API — enumerate/create/focus/close windows and inspect or
+	// Multi-window API - enumerate/create/focus/close windows and inspect or
 	// move the agents (sessions) each window owns. `sessionIds` are agent IDs.
 	windows: {
 		create: (

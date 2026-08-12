@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/helpers/statusInfo — STATUS_COLORS palette + getStatusInfo
+ * Tests for SymphonyModal/helpers/statusInfo - STATUS_COLORS palette + getStatusInfo
  * mapping for every known ContributionStatus.
  */
 import { describe, it, expect, vi } from 'vitest';

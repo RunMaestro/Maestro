@@ -2,7 +2,7 @@
  * Public surface of the shared file-link core.
  *
  * Both the Rich path (`remarkFileLinks`) and the Fast path
- * (`markdownItAdapter`) reuse the same matcher + patterns + tree-indices —
+ * (`markdownItAdapter`) reuse the same matcher + patterns + tree-indices -
  * the barrel makes the contract obvious: consumers import the shapes and
  * helpers they need without deep paths.
  *

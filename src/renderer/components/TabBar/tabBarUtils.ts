@@ -1,12 +1,12 @@
 import type { Theme, UnifiedTab } from '../../types';
 
-/** The kind of content a tab holds — matches the UnifiedTab discriminant. */
+/** The kind of content a tab holds - matches the UnifiedTab discriminant. */
 export type TabKind = UnifiedTab['type'];
 
 /**
  * Signature color for each tab kind. AI/file/terminal track the active theme
  * via semantic tokens so the palette adapts to light/dark/vibe themes. Browser
- * uses a fixed sky blue — there's no "info/blue" semantic token in the theme,
+ * uses a fixed sky blue - there's no "info/blue" semantic token in the theme,
  * and the obvious fallback (`ansiBlue`) lands on desaturated purples/grays in
  * several vibe themes (pedurple, winamp, inquest), making the icon read as
  * gray next to the other kinds. A stable browser-blue keeps the kind visually
@@ -14,7 +14,7 @@ export type TabKind = UnifiedTab['type'];
  * - ai      → accent  (brand hue)
  * - browser → sky blue (fixed; universal "browser" color)
  * - file    → warning (yellow/orange)
- * - terminal→ success (green) — terminal tabs additionally override with
+ * - terminal→ success (green) - terminal tabs additionally override with
  *             their run-state, so this is the idle base.
  */
 const BROWSER_TAB_COLOR = '#3b82f6';
@@ -80,7 +80,7 @@ export function isUnifiedTabActive(
  * 9 for the last tab (Cmd+9), null for others.
  *
  * Callers pass the tab's index within the currently displayed list (filtered or not) so
- * hints stay aligned with Cmd+N behaviour — the jump shortcuts index into the same
+ * hints stay aligned with Cmd+N behaviour - the jump shortcuts index into the same
  * filtered list when the unread filter is active.
  */
 export function getShortcutHint(

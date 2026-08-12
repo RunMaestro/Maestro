@@ -3,24 +3,26 @@
  *
  * Part of the shared output-widget library: theme-aware, presentational-only
  * (no IPC, no store reads), independent of any Encore flag. A compact stacked
- * bar timeline that renders AUTO/USER/CUE counts per time slice as stacked
- * segments, with a legend. Colors follow the unified-history graph language
- * (AUTO = warning/yellow, USER = accent, CUE = cyan) and can be overridden via
- * props for colorblind palettes. All data arrives through props.
+ * bar timeline that renders AUTO/USER/CUE/AGENT counts per time slice as
+ * stacked segments, with a legend. Colors follow the unified-history graph
+ * language (AUTO = warning/yellow, USER = accent, CUE = cyan, AGENT = magenta)
+ * and can be overridden via props for colorblind palettes. All data arrives
+ * through props.
  */
 
 import { memo } from 'react';
 import { CUE_COLOR } from '../../../../shared/cue-pipeline-types';
+import { AGENT_COLOR } from '../../../../shared/crossAgentTypes';
 import type { TimelineBucket, WidgetProps } from '../types';
 
 interface ActivityTimelineProps extends WidgetProps {
 	/** Ordered time slices (oldest -> newest). */
 	buckets: TimelineBucket[];
 	/** Segment colors. Defaults to the unified-history language. */
-	colors?: { auto: string; user: string; cue: string };
+	colors?: { auto: string; user: string; cue: string; agent?: string };
 	/** Height of the bar area in px (default 96). */
 	height?: number;
-	/** Show the AUTO/USER/CUE legend (default true). */
+	/** Show the AUTO/USER/CUE/AGENT legend (default true). */
 	showLegend?: boolean;
 }
 
@@ -44,9 +46,10 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 		auto: colors?.auto ?? theme.colors.warning,
 		user: colors?.user ?? theme.colors.accent,
 		cue: colors?.cue ?? CUE_COLOR,
+		agent: colors?.agent ?? AGENT_COLOR,
 	};
 
-	const totals = buckets.map((b) => b.auto + b.user + b.cue);
+	const totals = buckets.map((b) => b.auto + b.user + b.cue + (b.agent ?? 0));
 	const max = Math.max(1, ...totals);
 	const hasActivity = totals.some((t) => t > 0);
 
@@ -57,7 +60,8 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 					{buckets.map((bucket, i) => {
 						const total = totals[i];
 						const colHeightPct = (total / max) * 100;
-						const title = `Auto ${bucket.auto} · User ${bucket.user} · Cue ${bucket.cue}`;
+						const agentCount = bucket.agent ?? 0;
+						const title = `Auto ${bucket.auto} · User ${bucket.user} · Cue ${bucket.cue} · Agent ${agentCount}`;
 						return (
 							<div
 								key={i}
@@ -71,6 +75,9 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 								>
 									{bucket.cue > 0 && (
 										<div style={{ flexGrow: bucket.cue, backgroundColor: palette.cue }} />
+									)}
+									{agentCount > 0 && (
+										<div style={{ flexGrow: agentCount, backgroundColor: palette.agent }} />
 									)}
 									{bucket.user > 0 && (
 										<div style={{ flexGrow: bucket.user, backgroundColor: palette.user }} />
@@ -100,6 +107,7 @@ export const ActivityTimeline = memo(function ActivityTimeline({
 					<LegendDot color={palette.user} label="User" />
 					<LegendDot color={palette.auto} label="Auto" />
 					<LegendDot color={palette.cue} label="Cue" />
+					<LegendDot color={palette.agent} label="Agent" />
 				</div>
 			)}
 		</div>

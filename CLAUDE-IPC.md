@@ -10,7 +10,7 @@ The `window.maestro` API exposes the following namespaces:
 
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
-- `process` - Spawn, write, kill, resize
+- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands)
 - `fs` - readDir, readFile
 - `dialog` - Folder selection
 - `shells` - Detect available shells
@@ -28,6 +28,7 @@ The `window.maestro` API exposes the following namespaces:
 - `git` - Status, diff, isRepo, numstat, branches, tags, info
 - `git` - Worktree support: worktreeInfo, getRepoRoot, worktreeSetup, worktreeCheckout
 - `git` - PR creation: createPR, checkGhCli, getDefaultBranch
+- `git` - Remote sync: runCommand/cancelCommand/onCommandOutput (streaming pull/push/fetch), checkoutBranch
 
 ## Web & Live Sessions
 
@@ -66,7 +67,7 @@ window.maestro.history = {
   clear: (projectPath?, sessionId?) => Promise<boolean>,
   delete: (entryId, sessionId?) => Promise<boolean>,
   update: (entryId, updates, sessionId?) => Promise<boolean>,
-  // Activity-graph data — always all-time, decoupled from any lookback
+  // Activity-graph data - always all-time, decoupled from any lookback
   // applied to the entry list. Disk-cached server-side keyed by the
   // session file's mtime+size, so repeat calls are cheap.
   getGraphData: (sessionId, bucketCount, sharedContext?) => Promise<HistoryGraphData>,
@@ -122,7 +123,7 @@ window.maestro.cue = {
 
 ## Cue Backup API
 
-Snapshot/restore of every workspace's `.maestro/cue.yaml` + `.maestro/prompts/` as a single zip in `userData/cue-backups/`. Used by the Cue modal's Backup tab. Restore is **additive only** — files in the live workspace that are not in the backup are left alone (deletion is too easy to regret).
+Snapshot/restore of every workspace's `.maestro/cue.yaml` + `.maestro/prompts/` as a single zip in `userData/cue-backups/`. Used by the Cue modal's Backup tab. Restore is **additive only** - files in the live workspace that are not in the backup are left alone (deletion is too easy to regret).
 
 ```typescript
 window.maestro.cueBackup = {

@@ -103,7 +103,7 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 					// (legacy / shared), owned (agent_id match), or fan-out target
 					// (session name / id appears in the owner's fan_out list). Fan-out
 					// targets must appear here so the dashboard can surface each
-					// participating agent with Status=Active and a Run Now button —
+					// participating agent with Status=Active and a Run Now button -
 					// otherwise a 1-trigger → N-agents pipeline shows only the owner.
 					subscriptions: state.config.subscriptions.filter((sub) =>
 						isSubscriptionParticipant(sub, sessionId, session.name)
@@ -133,7 +133,7 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 			for (const [, state] of deps.getSessionStates()) {
 				// `owner_agent_id` is per-root: it names an agent that must live at
 				// THAT cue.yaml's projectRoot. Never surface it as a "global"
-				// setting — otherwise the Settings modal reads the first session's
+				// setting - otherwise the Settings modal reads the first session's
 				// owner and `saveSettings()` writes it into EVERY cue.yaml, flagging
 				// unrelated single-agent projects with a bogus "owner_agent_id does
 				// not match any agent" ownership warning.

@@ -9,7 +9,7 @@
 
 export const autorunDefaultPrompt = `# Context
 
-Your name is **{{AGENT_NAME}}**, a Maestro-managed AI agent. You are executing tasks from a **Playbook** — a collection of Auto Run documents. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+Your name is **{{AGENT_NAME}}**, a Maestro-managed AI agent. You are executing tasks from a **Playbook** - a collection of Auto Run documents. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 - **Agent Path:** {{AGENT_PATH}}
 - **Git Branch:** {{GIT_BRANCH}}
@@ -81,7 +81,7 @@ docs/
 2. Task Selection
    Process the FIRST unchecked task (- [ ]) from top to bottom. Note that there may be relevant images associated with the task. If there are, analyze them, and include in your final synopsis back how many images you analyzed in preparation for solving the task.
 
-   IMPORTANT: You will only work on this single task. If the task description contains multiple steps or subtasks (e.g., bullet points, numbered lists, or semicolon-separated items), treat them as one cohesive unit—they were intentionally grouped by the document author to share context. Complete all parts before marking done. Do not move on to the next major checkbox item.
+   IMPORTANT: You will only work on this single task. If the task description contains multiple steps or subtasks (e.g., bullet points, numbered lists, or semicolon-separated items), treat them as one cohesive unit-they were intentionally grouped by the document author to share context. Complete all parts before marking done. Do not move on to the next major checkbox item.
 
 3. Task Evaluation
    - Fully understand the task and inspect the relevant code.
@@ -109,7 +109,7 @@ docs/
    - Update CLAUDE.md, README.md, or any other top-level documentation if appropriate.
 
 7. Exit Immediately
-   After completing (or skipping) your task, EXIT. Do not proceed to additional tasks—another agent instance will handle them. If there are no remaining open tasks, exit immediately and state that there is nothing left to do.
+   After completing (or skipping) your task, EXIT. Do not proceed to additional tasks-another agent instance will handle them. If there are no remaining open tasks, exit immediately and state that there is nothing left to do.
 
 ---
 
@@ -460,15 +460,15 @@ Based on incomplete work and patterns observed, suggest next steps grouped by pr
 - Include specific details when available (file names, feature names)
 - If there's limited data, acknowledge it and provide what insights you can
 - If a history file cannot be read, note it and continue with available files
-- The lookback period and stats are displayed separately in the UI — do not repeat them in the synopsis
+- The lookback period and stats are displayed separately in the UI - do not repeat them in the synopsis
 
 ## CRITICAL: Output Format Rules
 
-- Your response must start IMMEDIATELY with \`### Accomplishments\` — no text before it
+- Your response must start IMMEDIATELY with \`### Accomplishments\` - no text before it
 - Do NOT include ANY thinking, reasoning, or analysis preamble before the synopsis
 - Do NOT narrate your process (e.g., "Let me identify the qualifying entries...", "Now I can generate...", "I see X agents with Y entries...")
 - Do NOT echo timestamps, cutoff values, entry counts, or intermediate calculations
-- Do NOT list which entries qualify or don't qualify — just use them silently
+- Do NOT list which entries qualify or don't qualify - just use them silently
 - Your ENTIRE response must be the formatted synopsis and nothing else
 `;
 
@@ -528,7 +528,7 @@ Your role is to:
 
 - Use \`!autorun @AgentName:filename.md\` to trigger execution of a **specific** Auto Run document the agent just created or updated
 - Use \`!autorun @AgentName\` (without filename) only when you want to run ALL documents in the agent's Auto Run folder
-- **Always prefer the specific filename form** after an agent confirms creating or updating a document — this guarantees the right file is executed
+- **Always prefer the specific filename form** after an agent confirms creating or updating a document - this guarantees the right file is executed
 - **Never ask an agent to execute/run/process an Auto Run document via a regular \`@Agent\` message.** Auto Run document execution must go through \`!autorun\`, not a normal participant prompt
 - Require the agent to report the document path **relative to its Auto Run folder** (for example \`plans/frontend-plan.md\`) and then reuse that exact relative path in the \`!autorun\` command
 - Multiple agents can be triggered in parallel:
@@ -673,11 +673,11 @@ To recall recent work, read the file and scan the most recent entries by timesta
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks you to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** — an official repository of community and curated playbooks that users can browse and import directly into their sessions.
+**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks you to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** - an official repository of community and curated playbooks that users can browse and import directly into their sessions.
 
 When a user wants an auto-run document (or playbook), create a detailed multi-document, multi-point Markdown implementation plan in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-XX.md\`, where \`XX\` is the two-digit phase number (01, 02, etc.) and \`$PREFIX\` is the effort name. Always zero-pad phase numbers to ensure correct lexicographic sorting. Break phases by relevant context; do not mix unrelated task results in the same document. If working within a file, group and fix all type issues in that file together. If working with an MCP, keep all related tasks in the same document. Each task must be written as \`- [ ] ...\` so auto-run can execute and check them off with comments on completion.
 
-**Multi-phase efforts:** When creating 3 or more phase documents for a single effort, place them in a single flat subdirectory directly under \`{{AUTORUN_FOLDER}}\`, prefixed with today's date (e.g., \`{{AUTORUN_FOLDER}}/YYYY-MM-DD-Feature-Name/FEATURE-NAME-01.md\`). Do NOT create nested subdirectories — all phase documents for a given effort go into one folder, never \`project/feature/\` nesting. This allows users to add the entire folder at once and keeps related documents organized with a clear creation date.
+**Multi-phase efforts:** When creating 3 or more phase documents for a single effort, place them in a single flat subdirectory directly under \`{{AUTORUN_FOLDER}}\`, prefixed with today's date (e.g., \`{{AUTORUN_FOLDER}}/YYYY-MM-DD-Feature-Name/FEATURE-NAME-01.md\`). Do NOT create nested subdirectories - all phase documents for a given effort go into one folder, never \`project/feature/\` nesting. This allows users to add the entire folder at once and keeps related documents organized with a clear creation date.
 
 **Context efficiency:** Each checkbox task runs in a fresh agent context. Group logically related work under a single checkbox when: (1) tasks modify the same file(s), (2) tasks follow the same pattern/approach, or (3) understanding one task is prerequisite to the next. Keep tasks separate when they're independent or when a single task would exceed reasonable scope (~500 lines of change). A good task is self-contained and can be verified in isolation.
 
@@ -760,7 +760,7 @@ Do not assume the user will read generated files. Always explain your analysis, 
 1. [question]
 2. [question]
 
-Do NOT embed questions mid-response where they can be missed. Do NOT continue past a blocking question — stop and wait for answers. Keep questions concise and numbered so the user can respond by number.
+Do NOT embed questions mid-response where they can be missed. Do NOT continue past a blocking question - stop and wait for answers. Keep questions concise and numbered so the user can respond by number.
 
 ### Code Reuse and Refactoring
 
@@ -815,7 +815,7 @@ You can read and change any Maestro application setting or agent configuration d
 {{MAESTRO_CLI_PATH}} settings agent reset <agent-id> <key>
 \`\`\`
 
-Settings changes take effect instantly in the running Maestro desktop app — no restart required. When a user asks you to change application settings, theme, font size, notifications, or any other configuration, use the CLI rather than telling them to do it manually.
+Settings changes take effect instantly in the running Maestro desktop app - no restart required. When a user asks you to change application settings, theme, font size, notifications, or any other configuration, use the CLI rather than telling them to do it manually.
 
 Use \`--json\` for machine-readable output and \`-v\` / \`--verbose\` for descriptions of what each setting controls.
 
@@ -860,7 +860,7 @@ export const wizardDocumentGenerationPrompt = `You are an expert project planner
 
 ## Your Task
 
-Based on the project discovery conversation below, create a **Playbook** — a series of Auto Run documents that will guide an AI coding assistant through building this project step by step. (A Playbook is a collection of Auto Run documents; the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.)
+Based on the project discovery conversation below, create a **Playbook** - a series of Auto Run documents that will guide an AI coding assistant through building this project step by step. (A Playbook is a collection of Auto Run documents; the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.)
 
 ## File Access Restrictions
 
@@ -1166,7 +1166,7 @@ export const wizardInlineIterateGenerationPrompt = `You are an expert project pl
 
 ## Your Task
 
-Based on the project discovery conversation below, create or update the **Playbook** (a collection of Auto Run documents — the terms are synonymous). The user has existing documents and wants to extend or modify their plans. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+Based on the project discovery conversation below, create or update the **Playbook** (a collection of Auto Run documents - the terms are synonymous). The user has existing documents and wants to extend or modify their plans. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 ## File Access Restrictions
 
@@ -1397,7 +1397,7 @@ export const wizardInlineIteratePrompt = `You are a planning assistant helping e
 
 ## Your Role
 
-You are helping iterate on an existing **Playbook** (a collection of Auto Run documents — the terms are synonymous). The user has Auto Run documents and wants to extend or modify them. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+You are helping iterate on an existing **Playbook** (a collection of Auto Run documents - the terms are synonymous). The user has Auto Run documents and wants to extend or modify them. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 ## File Access Restrictions
 
@@ -1530,7 +1530,7 @@ This restriction ensures the wizard can safely run in parallel with other AI ope
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents — the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+**Terminology:** A **Playbook** is a collection of Auto Run documents - the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 When creating Playbooks (collections of Auto Run documents), generate detailed multi-document Markdown implementation plans in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-XX.md\`, where \`XX\` is the two-digit phase number (01, 02, etc.) and \`$PREFIX\` is the effort name. Always zero-pad phase numbers to ensure correct lexicographic sorting. Break phases by relevant context; do not mix unrelated task results in the same document. Each task must be written as \`- [ ] ...\` so auto-run can execute and check them off with comments on completion.
 
@@ -1658,7 +1658,7 @@ This restriction ensures the wizard can safely run in parallel with other AI ope
 
 ## Auto Run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents — the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+**Terminology:** A **Playbook** is a collection of Auto Run documents - the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 When creating Playbooks (collections of Auto Run documents), generate detailed Markdown implementation plans in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-XX.md\`, where \`XX\` is the two-digit phase number (01, 02, etc.) and \`$PREFIX\` is the effort name. Always zero-pad phase numbers to ensure correct lexicographic sorting. Break phases by relevant context; do not mix unrelated task results in the same document. Each task must be written as \`- [ ] ...\` so Auto Run can execute and check them off with comments on completion. Be deliberate about document count and task granularity.
 
@@ -1790,7 +1790,7 @@ Has anything changed since these documents were created? Would you like to conti
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents — the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
+**Terminology:** A **Playbook** is a collection of Auto Run documents - the terms are synonymous. Maestro also has a **Playbook Exchange** where users can browse and import community-curated playbooks.
 
 When a user wants an auto-run document (or playbook), create a detailed multi-document, multi-point Markdown implementation plan in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-X.md\`, where \`X\` is the phase number and \`$PREFIX\` is the effort name. Break phases by relevant context; do not mix unrelated task results in the same document. If working within a file, group and fix all type issues in that file together. If working with an MCP, keep all related tasks in the same document. Each task must be written as \`- [ ] ...\` so auto-run can execute and check them off with comments on completion. This is token-heavy, so be deliberate about document count and task granularity.
 
@@ -1848,7 +1848,7 @@ This restriction ensures the wizard can safely run in parallel with other AI ope
 
 ## Auto-run Documents (aka Playbooks)
 
-**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** — an official repository of community and curated playbooks that users can browse and import directly into their sessions.
+**Terminology:** A **Playbook** is a collection of Auto Run documents. When a user asks to "create a playbook," they mean "create a set of Auto Run documents." The terms are synonymous. Maestro also has a **Playbook Exchange** - an official repository of community and curated playbooks that users can browse and import directly into their sessions.
 
 When a user wants an auto-run document (or playbook), create a detailed multi-document, multi-point Markdown implementation plan in the \`{{AUTORUN_FOLDER}}\` folder. Use the format \`$PREFIX-X.md\`, where \`X\` is the phase number and \`$PREFIX\` is the effort name.
 

@@ -431,6 +431,12 @@ const TYPE_FILTER_CONFIG: {
 	{ type: 'error', label: 'Error', icon: AlertTriangle },
 ];
 
+// Lookup the same icon + label used by the filter pills, keyed by entry type,
+// so per-entry badges stay in sync with the filter pills automatically.
+const TYPE_CONFIG_BY_TYPE = Object.fromEntries(
+	TYPE_FILTER_CONFIG.map((config) => [config.type, config])
+) as Record<GroupChatHistoryEntryType, (typeof TYPE_FILTER_CONFIG)[number]>;
+
 // All entry types for default filter state
 const ALL_ENTRY_TYPES = new Set<GroupChatHistoryEntryType>([
 	'delegation',
@@ -658,11 +664,12 @@ export function GroupChatHistoryPanel({
 									borderLeftColor: participantColor,
 								}}
 							>
-								{/* Header Row */}
-								<div className="flex items-center justify-between mb-1.5">
+								{/* Header Row - grid so the type badge stays optically centered
+								    regardless of how wide the name or timestamp render */}
+								<div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-1.5">
 									{/* Participant Name Pill */}
 									<span
-										className="px-2 py-0.5 rounded text-[10px] font-bold"
+										className="justify-self-start truncate max-w-full px-2 py-0.5 rounded text-[10px] font-bold"
 										style={{
 											backgroundColor: participantColor + '25',
 											color: participantColor,
@@ -671,8 +678,27 @@ export function GroupChatHistoryPanel({
 									>
 										{entry.participantName}
 									</span>
+									{/* Entry type badge - mirrors the filter pill icon + label */}
+									{(() => {
+										const typeConfig = TYPE_CONFIG_BY_TYPE[entry.type];
+										if (!typeConfig) return <span />;
+										const { label, icon: TypeIcon } = typeConfig;
+										return (
+											<span
+												className="justify-self-center flex items-center gap-1 text-[10px] font-bold uppercase whitespace-nowrap"
+												style={{ color: theme.colors.accent }}
+												title={`${label} entry`}
+											>
+												<TypeIcon className="w-2.5 h-2.5 shrink-0" />
+												{label}
+											</span>
+										);
+									})()}
 									{/* Timestamp */}
-									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<span
+										className="justify-self-end text-[10px] whitespace-nowrap"
+										style={{ color: theme.colors.textDim }}
+									>
 										{formatTime(entry.timestamp)}
 									</span>
 								</div>

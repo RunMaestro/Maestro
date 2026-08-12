@@ -322,7 +322,7 @@ describe('pipelineToYamlSubscriptions', () => {
 	});
 });
 
-describe('pipelineToYamlSubscriptions — target_node_key emission', () => {
+describe('pipelineToYamlSubscriptions - target_node_key emission', () => {
 	it('emits target_node_key on a single-target trigger sub when the agent has a nodeKey', () => {
 		const pipeline = makePipeline({
 			nodes: [
@@ -472,7 +472,7 @@ describe('pipelineToYamlSubscriptions — target_node_key emission', () => {
 						sessionName: 'worker-2',
 						toolType: 'claude-code',
 						inputPrompt: 'A',
-						// No nodeKey on this one — partial population would
+						// No nodeKey on this one - partial population would
 						// produce ambiguous YAML, so the serializer skips the
 						// field entirely and the loader falls back to legacy
 						// dedup behavior.
@@ -1324,7 +1324,7 @@ describe('fan-out with per-edge prompts', () => {
 		expect(subs).toHaveLength(1);
 		expect(subs[0].fan_out).toEqual(['worker-1', 'worker-2']);
 		expect(subs[0].fan_out_prompts).toEqual(['edge prompt 1', 'edge prompt 2']);
-		// Stable-id mirror — dispatcher uses these to resolve renamed agents.
+		// Stable-id mirror - dispatcher uses these to resolve renamed agents.
 		expect(subs[0].fan_out_ids).toEqual(['s1', 's2']);
 	});
 
@@ -1860,7 +1860,7 @@ describe('fan-out per-agent prompt externalization', () => {
 		const { yaml: yamlStr, promptFiles } = pipelinesToYaml([pipeline]);
 
 		expect(yamlStr).toContain('fan_out_prompt_files:');
-		// Inline array MUST NOT be emitted when files take over — that was the
+		// Inline array MUST NOT be emitted when files take over - that was the
 		// asymmetric legacy shape.
 		expect(yamlStr).not.toMatch(/^\s*fan_out_prompts:/m);
 
@@ -1887,7 +1887,7 @@ describe('fan-out per-agent prompt externalization', () => {
 		const pipeline = makeFanOutPipeline(['has content', '', 'also content']);
 		const { promptFiles } = pipelinesToYaml([pipeline]);
 
-		// Middle agent gets an empty file — dropping the entry would shift
+		// Middle agent gets an empty file - dropping the entry would shift
 		// the positional mapping against `fan_out` and mis-route prompts at
 		// runtime.
 		expect(promptFiles.get('.maestro/prompts/codex_1-pipeline_1.md')).toBe('has content');
@@ -1897,7 +1897,7 @@ describe('fan-out per-agent prompt externalization', () => {
 
 	it('does not emit a redundant single prompt_file when per-agent files are in use', () => {
 		// `sub.prompt` is retained as an engine fallback but must NOT appear
-		// as `prompt_file` in the record — that would double-write the first
+		// as `prompt_file` in the record - that would double-write the first
 		// agent's prompt to two files and confuse readers.
 		const pipeline = makeFanOutPipeline(['a', 'b', 'c']);
 		const { yaml: yamlStr } = pipelinesToYaml([pipeline]);
@@ -1911,7 +1911,7 @@ describe('fan-out per-agent prompt externalization', () => {
 describe('fan-out with command targets (per-branch emission)', () => {
 	// When a trigger fans out to command nodes, the engine's `fan_out` field
 	// can't address them (commands have no session identity). The serializer
-	// must emit ONE full subscription per direct target instead — each
+	// must emit ONE full subscription per direct target instead - each
 	// re-carrying the trigger event config so they arm independently.
 
 	function makeCommandFanOutPipeline() {
@@ -2005,7 +2005,7 @@ describe('fan-out with command targets (per-branch emission)', () => {
 		const branchSubs = subs.filter((s) => s.event === 'time.scheduled');
 		expect(branchSubs).toHaveLength(2);
 
-		// None of the branch subs should use fan_out — per-branch is the
+		// None of the branch subs should use fan_out - per-branch is the
 		// opposite of fan_out; they're independent subs sharing trigger config.
 		for (const sub of branchSubs) {
 			expect(sub.fan_out).toBeUndefined();
@@ -2054,7 +2054,7 @@ describe('fan-out with command targets (per-branch emission)', () => {
 		expect(Array.isArray(fanInSub!.source_sub)).toBe(true);
 		const sourceSubs = fanInSub!.source_sub as string[];
 		expect(sourceSubs).toHaveLength(2);
-		// The upstream subs are the chain subs that run Agent1 and Agent2 —
+		// The upstream subs are the chain subs that run Agent1 and Agent2 -
 		// NOT the command subs. Main fires on agent completion, not command.
 		// Every entry must name a sub that actually exists in the output.
 		const allNames = new Set(subs.map((s) => s.name));
@@ -2067,7 +2067,7 @@ describe('fan-out with command targets (per-branch emission)', () => {
 		const pipeline = makeCommandFanOutPipeline();
 		const subs = pipelineToYamlSubscriptions(pipeline);
 
-		// Both branch subs must carry the schedule config — the engine arms
+		// Both branch subs must carry the schedule config - the engine arms
 		// each subscription separately, so an absent schedule_times on the
 		// second branch would leave that branch dormant.
 		const branchSubs = subs.filter((s) => s.event === 'time.scheduled');
@@ -2208,7 +2208,7 @@ describe('source_sub emission on agent chain subs', () => {
 		expect(subs[0].event).toBe('time.heartbeat');
 		expect(subs[0].source_sub).toBeUndefined();
 		// Chain sub runs B after A completes. source_sub names the trigger
-		// sub that actually ran A — so B fires on A's completion only, not
+		// sub that actually ran A - so B fires on A's completion only, not
 		// on B's own future completion.
 		expect(subs[1].event).toBe('agent.completed');
 		expect(subs[1].source_session).toBe('A');
@@ -2216,7 +2216,7 @@ describe('source_sub emission on agent chain subs', () => {
 	});
 });
 
-describe('pipelinesToYamlByOwnerCwd — owner id resolution', () => {
+describe('pipelinesToYamlByOwnerCwd - owner id resolution', () => {
 	// Regression: an agent node bound by NAME only (empty/stale sessionId, e.g.
 	// a legacy pipeline or an agent deleted-and-recreated under the same name)
 	// passed the save-time root validation (which falls back to name) but failed
@@ -2280,14 +2280,14 @@ describe('pipelinesToYamlByOwnerCwd — owner id resolution', () => {
 	});
 });
 
-describe('pipelinesToYamlByOwnerCwd — command-name / chain-name collision', () => {
+describe('pipelinesToYamlByOwnerCwd - command-name / chain-name collision', () => {
 	// Regression for the "Unresolvable agent_id ... (agent_id=<missing>)" save
 	// failure. agent_id used to be recovered via a SECOND name-keyed graph
 	// traversal (buildSubAgentIdMap). When a command node was named exactly like
 	// the `<pipeline>-chain-N` auto-naming scheme, that name-keyed map collapsed
 	// the colliding entry, its `Map.size`-driven chain counter drifted out of
 	// sync with the emitter, and a LATER subscription was looked up under a name
-	// the map never held — yielding no agent_id. Owners are now stamped per-sub
+	// the map never held - yielding no agent_id. Owners are now stamped per-sub
 	// at emission time (by object identity), so the collision is harmless.
 	const makeCollidingPipeline = (): CuePipeline =>
 		makePipeline({
@@ -2358,7 +2358,7 @@ describe('pipelinesToYamlByOwnerCwd — command-name / chain-name collision', ()
 		const pipeline = makeCollidingPipeline();
 		const sessionsById = new Map([['s1', { projectRoot: '/r1' }]]);
 		const { byCwd, unresolved } = pipelinesToYamlByOwnerCwd([pipeline], undefined, sessionsById);
-		// Nothing dropped — the whole point of the fix.
+		// Nothing dropped - the whole point of the fix.
 		expect(unresolved).toEqual([]);
 		// All work lands in the single owning root, every sub bound to s1.
 		expect([...byCwd.keys()]).toEqual(['/r1']);
@@ -2369,7 +2369,7 @@ describe('pipelinesToYamlByOwnerCwd — command-name / chain-name collision', ()
 	});
 });
 
-describe('pipelinesToYamlByOwnerCwd — owner_agent_id preservation', () => {
+describe('pipelinesToYamlByOwnerCwd - owner_agent_id preservation', () => {
 	// Regression: owner_agent_id is a PER-ROOT field (set via Edit YAML for a
 	// shared root). The editor doesn't manage it, but the save fully overwrites
 	// each cue.yaml. Without re-injecting the existing owner, a save would strip

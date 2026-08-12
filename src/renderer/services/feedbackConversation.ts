@@ -8,7 +8,6 @@
  */
 
 import type { ToolType } from '../types';
-import { getStdinFlags } from '../utils/spawnHelpers';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 
 // ============================================================================
@@ -352,14 +351,6 @@ export class FeedbackConversationManager {
 			// Build args based on agent type
 			const argsForSpawn = this.buildArgsForAgent(agent);
 
-			// Get stdin flags for Windows
-			const isSshSession = Boolean(currentSshRemoteConfig?.enabled);
-			const stdinFlags = getStdinFlags({
-				isSshSession,
-				supportsStreamJsonInput: Boolean(agent?.capabilities?.supportsStreamJsonInput),
-				hasImages: false,
-			});
-
 			// Spawn agent. A synchronous throw here (before a promise is returned)
 			// would bypass the .then/.catch chain below and leave resolveOnce
 			// unreached, hanging the turn until the inactivity timeout. Promise
@@ -374,7 +365,6 @@ export class FeedbackConversationManager {
 						command: binaryPath,
 						args: argsForSpawn,
 						prompt,
-						...stdinFlags,
 						sessionSshRemoteConfig: currentSshRemoteConfig,
 					} as any)
 				);

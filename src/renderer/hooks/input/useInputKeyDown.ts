@@ -1,5 +1,5 @@
 /**
- * useInputKeyDown — extracted from App.tsx (Phase 2F)
+ * useInputKeyDown - extracted from App.tsx (Phase 2F)
  *
  * Owns the handleInputKeyDown keyboard event handler for the main input area.
  * Handles tab completion, @ mentions, slash commands, enter-to-send,
@@ -50,7 +50,15 @@ export interface InputKeyDownDeps {
 	/** Process and send the current input */
 	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => void;
 	/** Get tab completion suggestions for a given input */
-	getTabCompletionSuggestions: (input: string) => TabCompletionSuggestion[];
+	getTabCompletionSuggestions: (
+		input: string,
+		filter?: TabCompletionFilter,
+		commandMode?: boolean
+	) => TabCompletionSuggestion[];
+	/** Whether the AI composer is in command mode, read at call time. */
+	getCommandMode: () => boolean;
+	/** Enter/leave command mode (Escape / Backspace on an empty command line). */
+	setCommandMode: (commandMode: boolean) => void;
 	/** Ref to the input textarea */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	/** Ref to the terminal output container */
@@ -79,6 +87,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		syncFileTreeToTabCompletion,
 		processInput,
 		getTabCompletionSuggestions,
+		getCommandMode,
+		setCommandMode,
 		inputRef,
 		terminalOutputRef,
 	} = deps;
@@ -120,7 +130,10 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 
 			// Cmd+F opens output search from input field. Search is scoped per
 			// agent+AI-tab, so target the active window's slot.
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
+			// Alt must be excluded: Opt+Cmd+F is cross-tab search, and on
+			// Windows/Linux it still reports e.key === 'f' (macOS rewrites it to 'ƒ'),
+			// so without this guard that combo silently opens the in-tab Find bar.
+			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.altKey) {
 				e.preventDefault();
 				if (activeSession) {
 					const key = outputSearchKeyFor(activeSession.id, activeSession.activeTabId);
@@ -134,8 +147,41 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				return; // Let the modal handle keys
 			}
 
-			// Handle tab completion dropdown (terminal mode only)
-			if (tabCompletionOpen && activeSession?.inputMode === 'terminal') {
+			// Tab completion serves both shell surfaces: the terminal composer, and
+			// the AI composer while it is in command mode, which is a shell line
+			// even though the tab is in AI mode.
+			const isCommandMode = activeSession?.inputMode === 'ai' && getCommandMode();
+			const isShellInput = activeSession?.inputMode === 'terminal' || isCommandMode;
+
+			// Leaving command mode. The composer holds no `!` to delete (the gesture
+			// consumed it), so the mode needs its own way out: Escape on an empty
+			// command line, and Backspace past the start of one - the same keys that
+			// would have removed the bang back when it was a character.
+			//
+			// Escape uses trim(): a line of spaces LOOKS empty, so Escape has to mean
+			// "get me out" there too. Without that it fell through to the generic
+			// Escape branch below, which blurs the composer - so a stray space turned
+			// the exit gesture into "lose command mode AND lose focus".
+			//
+			// Backspace stays on a strictly empty line: it is an editing key, and on
+			// "   " the user is deleting a space, not asking to leave.
+			if (
+				isCommandMode &&
+				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
+			) {
+				e.preventDefault();
+				setCommandMode(false);
+				// Keep the caret in the composer. Exiting command mode hands the input
+				// back to the agent, so the user is still typing - dropping focus would
+				// make the next keystroke go nowhere. Explicit rather than relying on
+				// React not remounting the textarea when the mode bar and `$` prefix
+				// unmount around it.
+				inputRef.current?.focus();
+				return;
+			}
+
+			// Handle tab completion dropdown
+			if (tabCompletionOpen && isShellInput) {
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
 					const newIndex = Math.min(
@@ -279,7 +325,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			}
 
 			// Read enter-to-send settings at call time (not closure).
-			// A per-tab override wins over the global default — set when the user
+			// A per-tab override wins over the global default - set when the user
 			// clicks the chip or runs the palette toggle on a specific tab.
 			const settings = useSettingsStore.getState();
 			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);
@@ -363,9 +409,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			} else if (e.key === 'Tab') {
 				e.preventDefault();
 
-				if (activeSession?.inputMode === 'terminal' && !slashCommandOpen) {
-					if (inputValue.trim()) {
-						const suggestions = getTabCompletionSuggestions(inputValue);
+				if (isShellInput && !slashCommandOpen) {
+					// An empty command line is a valid trigger - it means "what have I
+					// run before". A terminal needs something to complete against.
+					if (inputValue.trim() || isCommandMode) {
+						const suggestions = getTabCompletionSuggestions(inputValue, 'all', isCommandMode);
 						if (suggestions.length > 0) {
 							if (suggestions.length === 1) {
 								setInputValue(suggestions[0].value);
@@ -388,6 +436,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			syncFileTreeToTabCompletion,
 			processInput,
 			getTabCompletionSuggestions,
+			getCommandMode,
+			setCommandMode,
 			inputRef,
 			terminalOutputRef,
 			// InputContext values

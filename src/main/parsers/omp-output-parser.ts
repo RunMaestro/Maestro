@@ -52,6 +52,9 @@ interface OmpMessage {
 	role?: string;
 	content?: string | OmpContentBlock[];
 	usage?: OmpUsage;
+	// Assistant messages carry the resolved model (e.g. `claude-opus-4-8`),
+	// which downstream maps to the model's real context window.
+	model?: string;
 	errorMessage?: string;
 }
 
@@ -190,9 +193,24 @@ export class OmpOutputParser implements AgentOutputParser {
 					// then flushes the assembled streamed text the user already saw.
 					return { type: 'system', sessionId, raw: event };
 				}
+				const resultText = this.extractMessageText(finalMessage);
+				if (!resultText.trim()) {
+					// Assistant message present but carrying no text (empty or
+					// whitespace-only content, e.g. a final message that is only tool
+					// calls or was cut short before any text). Same hazard as the
+					// empty-transcript case above: a `result` with empty text makes
+					// `StdoutHandler` set `resultEmitted` WITHOUT emitting anything,
+					// which then defeats the ExitHandler silent-exit guard (it keys off
+					// `!resultEmitted`) - the turn would clear its busy pill showing no
+					// answer and no error, the reported "done after a second, nothing
+					// happened" turn. Return a non-result event so either the streamed-
+					// text exit fallback flushes what the user already saw, or the guard
+					// surfaces a recoverable "no response" error to resend.
+					return { type: 'system', sessionId, raw: event };
+				}
 				return {
 					type: 'result',
-					text: this.extractMessageText(finalMessage),
+					text: resultText,
 					sessionId,
 					raw: event,
 				};
@@ -350,6 +368,7 @@ export class OmpOutputParser implements AgentOutputParser {
 			cacheReadTokens: usage.cacheRead || 0,
 			cacheCreationTokens: usage.cacheWrite || 0,
 			costUsd: typeof usage.cost === 'number' ? usage.cost : usage.cost?.total || 0,
+			...(message.model ? { model: message.model } : {}),
 		};
 	}
 

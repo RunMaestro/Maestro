@@ -16,7 +16,7 @@ export function useAgentSessionsAutoView({
 	viewingSession,
 	handleViewSession,
 }: UseAgentSessionsAutoViewArgs): void {
-	// Track which session we've auto-jumped to — prevents re-jumping after user navigates back
+	// Track which session we've auto-jumped to - prevents re-jumping after user navigates back
 	const autoJumpedRef = useRef<string | null>(null);
 
 	useEffect(() => {

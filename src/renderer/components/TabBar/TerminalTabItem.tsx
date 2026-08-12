@@ -18,9 +18,9 @@ import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { isCoarsePointer } from '../../utils/touch';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
+import { ShortcutHint } from './ShortcutHint';
 
 /**
  * Props for the TerminalTabItem component.
@@ -142,15 +142,6 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			restartTerminalTab(tab.id);
 		},
 		[restartTerminalTab, tab.id]
-	);
-
-	const ShortcutHint = ({ keys }: { keys: string[] }) => (
-		<span
-			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
-			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-		>
-			{formatShortcutKeys(keys)}
-		</span>
 	);
 
 	const handleMouseDown = useCallback(
@@ -345,7 +336,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
       `}
 			style={tabStyle}
 			title={
-				(tab.cwd ? `${tab.shellType} — ${tab.cwd}` : tab.shellType) +
+				(tab.cwd ? `${tab.shellType} - ${tab.cwd}` : tab.shellType) +
 				(tab.startupCommand ? `\nStartup: ${tab.startupCommand}` : '')
 			}
 			onClick={handleTabSelect}
@@ -385,7 +376,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			{/* Terminal icon with state color */}
 			<Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: iconColor }} />
 
-			{/* Startup command marker — signals the tab will auto-run a command on
+			{/* Startup command marker - signals the tab will auto-run a command on
 				 next PTY spawn. Subtle accent-colored Play icon next to the terminal icon. */}
 			{tab.startupCommand && (
 				<Play
@@ -420,7 +411,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				</button>
 			)}
 
-			{/* Exit code badge — only when exited with non-zero code */}
+			{/* Exit code badge - only when exited with non-zero code */}
 			{tab.state === 'exited' && (tab.exitCode ?? 0) !== 0 && (
 				<span
 					className="px-1 rounded text-[9px] font-semibold shrink-0"
@@ -435,7 +426,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				</span>
 			)}
 
-			{/* Restart button — only for an exited terminal, so the tab is recoverable
+			{/* Restart button - only for an exited terminal, so the tab is recoverable
 				 (e.g. after an SSH drop) instead of being a dead husk. */}
 			{tab.state === 'exited' && (
 				<button
@@ -447,7 +438,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				</button>
 			)}
 
-			{/* Close button — visible on hover or active */}
+			{/* Close button - visible on hover or active */}
 			{(isHovered || isActive) && (
 				<button
 					onClick={handleCloseClick}
@@ -529,7 +520,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Move to First Position
 										{tabShortcuts.moveTabToStart && (
-											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -545,12 +536,12 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										/>
 										Move to Last Position
 										{tabShortcuts.moveTabToEnd && (
-											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} />
+											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} theme={theme} />
 										)}
 									</button>
 								)}
 
-								{/* Buffer actions — operate on the terminal's full scrollback */}
+								{/* Buffer actions - operate on the terminal's full scrollback */}
 								{(onCopyBuffer || onSendBufferToAgent || onPublishBufferGist) && (
 									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 								)}
@@ -601,7 +592,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
-									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
+									{tabShortcuts.closeTab && (
+										<ShortcutHint keys={tabShortcuts.closeTab.keys} theme={theme} />
+									)}
 								</button>
 
 								{onCloseOtherTabs && (
@@ -616,7 +609,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
 										{tabShortcuts.closeOtherTabs && (
-											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -633,7 +626,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
 										{tabShortcuts.closeTabsLeft && (
-											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} theme={theme} />
 										)}
 									</button>
 								)}
@@ -655,7 +648,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 										/>
 										Close Tabs to Right
 										{tabShortcuts.closeTabsRight && (
-											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} theme={theme} />
 										)}
 									</button>
 								)}

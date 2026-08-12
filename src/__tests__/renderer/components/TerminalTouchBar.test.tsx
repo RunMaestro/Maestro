@@ -1,5 +1,5 @@
 /**
- * Tests for TerminalTouchBar — the on-screen terminal key bar for touch devices.
+ * Tests for TerminalTouchBar - the on-screen terminal key bar for touch devices.
  *
  * Covers: every button emits the correct PTY sequence on pointer-down, the Ctrl
  * button drives the sticky toggle and reflects its armed state, and pointer-down

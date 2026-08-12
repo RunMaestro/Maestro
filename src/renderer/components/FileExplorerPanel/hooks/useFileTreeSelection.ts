@@ -42,7 +42,7 @@ export function useFileTreeSelection({
 		selectedPathsRef.current = selectedPaths;
 	}, [selectedPaths]);
 
-	// Drop the multi-selection (and anchor) when switching agents — paths are
+	// Drop the multi-selection (and anchor) when switching agents - paths are
 	// session-scoped and would otherwise resolve against a different working
 	// directory. Also runs on mount, which keeps the store-backed selection from
 	// leaking across panel remounts (matching the old local-state behavior).
@@ -92,7 +92,7 @@ export function useFileTreeSelection({
 				setSelectionAnchorIndex(globalIndex);
 				return;
 			}
-			// Plain click — collapse to single selection and reset the range anchor.
+			// Plain click - collapse to single selection and reset the range anchor.
 			if (useFileExplorerStore.getState().selectedPaths.size > 0) setSelectedPaths(new Set());
 			setSelectedFileIndex(globalIndex);
 			setSelectionAnchorIndex(globalIndex);

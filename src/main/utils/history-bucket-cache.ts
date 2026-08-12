@@ -3,7 +3,7 @@
  *
  * Disk-backed (with in-memory hot path) cache for activity-graph bucket
  * aggregations. The graph view in the History panels needs to be
- * "all-encompassing" — it always covers the full history, regardless of how
+ * "all-encompassing" - it always covers the full history, regardless of how
  * the entry list below is paginated. Recomputing those buckets on every
  * lookback flip or fresh load gets expensive once a project's history grows
  * past tens of thousands of entries (especially the unified view across all
@@ -21,22 +21,24 @@ import * as crypto from 'crypto';
 import { app } from 'electron';
 import { logger } from './logger';
 import { captureException } from './sentry';
+import type { GraphBucket } from '../../shared/history';
 
 const LOG_CONTEXT = '[HistoryBucketCache]';
 
 /** Bump to invalidate every existing cache entry on disk. */
-export const HISTORY_BUCKET_CACHE_VERSION = 2;
+// v3: added the `agent` series / `agentCount` (cross-agent consults split out of
+// `auto`). Cached v2 buckets tallied consults as AUTO, so they must be discarded
+// rather than merged - the read path drops any entry whose version differs.
+export const HISTORY_BUCKET_CACHE_VERSION = 3;
 
 /**
- * Single bucket of the activity graph — counts of each entry type within the
- * bucket's time slice. Mirrors `GraphBucket` in director-notes / ActivityGraph
- * so all three layers (cache, IPC, renderer) share the same shape.
+ * Single bucket of the activity graph - counts of each entry type within the
+ * bucket's time slice. Alias for the canonical `GraphBucket` (shared/history.ts)
+ * kept under this name because callers in this file rely on `agent` being
+ * guaranteed present: pre-agent-series cache entries are discarded by the
+ * version check above before ever reaching a `CachedGraphBucket`.
  */
-export interface CachedGraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
+export type CachedGraphBucket = GraphBucket;
 
 /**
  * What the cache stores per (cacheKey, sourceFingerprint) pair.
@@ -59,6 +61,7 @@ export interface CachedBucketData {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	/**
 	 * Per-host entry counts within the same window the buckets cover. Key
 	 * is the entry's `hostname`, or the synthetic `"__local__"` for entries
@@ -109,7 +112,7 @@ export class HistoryBucketCache {
 
 	/**
 	 * Returns cached data only if `expectedFingerprint` matches what was stored.
-	 * Otherwise returns null — caller should recompute and call `set()`.
+	 * Otherwise returns null - caller should recompute and call `set()`.
 	 *
 	 * Warm path (in-memory hit): returns synchronously-resolved promise; no
 	 * disk I/O. Cold path: reads via fs/promises so it doesn't block other
@@ -191,7 +194,7 @@ export class HistoryBucketCache {
 			);
 		} catch (err) {
 			const code = (err as NodeJS.ErrnoException).code;
-			if (code === 'ENOENT') return; // cache dir doesn't exist yet — nothing to clear
+			if (code === 'ENOENT') return; // cache dir doesn't exist yet - nothing to clear
 			logger.warn(`Failed to clear cache dir: ${err}`, LOG_CONTEXT);
 		}
 	}
@@ -231,7 +234,7 @@ export function getHistoryBucketCache(): HistoryBucketCache {
 	return instance;
 }
 
-/** Test seam — replace the singleton. */
+/** Test seam - replace the singleton. */
 export function setHistoryBucketCacheForTest(cache: HistoryBucketCache | null): void {
 	instance = cache;
 }

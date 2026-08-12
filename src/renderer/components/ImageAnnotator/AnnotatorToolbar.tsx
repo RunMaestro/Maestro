@@ -1,5 +1,5 @@
 /**
- * AnnotatorToolbar — Top-center floating toolbar for the image annotator.
+ * AnnotatorToolbar - Top-center floating toolbar for the image annotator.
  *
  * Pure UI: tool selection (pen / eraser / pan), undo, clear-with-inline-confirm,
  * settings drawer toggle, copy-to-clipboard, save, and cancel. Compositing and
@@ -37,6 +37,7 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { AnnotatorTool, UseAnnotatorStateReturn } from './useAnnotatorState';
 import { ANNOTATOR_PALETTE } from './annotatorConstants';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 interface AnnotatorToolbarProps {
 	state: UseAnnotatorStateReturn;
@@ -107,7 +108,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 	// other modals' useEventListener hooks, etc.) are registered. This is
 	// defensive: the main keyboard handler already early-returns when the
 	// annotator's modal layer is open, but we don't want to depend on that
-	// invariant — annotator shortcuts should be self-contained.
+	// invariant - annotator shortcuts should be self-contained.
 	const undoRef = useRef(undo);
 	undoRef.current = undo;
 	const onSaveRef = useRef(onSave);
@@ -135,7 +136,7 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				void onSaveRef.current();
 			} else if (key === 'c') {
 				// In annotation mode there's no selectable text to copy, so we
-				// hijack Cmd/Ctrl+C to copy the annotated composite — matching
+				// hijack Cmd/Ctrl+C to copy the annotated composite - matching
 				// what the toolbar's copy button does (including success flash).
 				event.preventDefault();
 				event.stopImmediatePropagation();
@@ -281,7 +282,12 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 
 			{divider}
 
-			<HoverTooltip label="Undo" shortcut="⌘Z" theme={theme} placement="left">
+			<HoverTooltip
+				label="Undo"
+				shortcut={formatShortcutKeys(['Meta', 'z'], '')}
+				theme={theme}
+				placement="left"
+			>
 				<GhostIconButton
 					onClick={undo}
 					ariaLabel="Undo"
@@ -432,7 +438,12 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				</GhostIconButton>
 			</HoverTooltip>
 
-			<HoverTooltip label="Copy" shortcut="⌘C" theme={theme} placement="left">
+			<HoverTooltip
+				label="Copy"
+				shortcut={formatShortcutKeys(['Meta', 'c'], '')}
+				theme={theme}
+				placement="left"
+			>
 				<GhostIconButton
 					onClick={() => void handleCopy()}
 					ariaLabel="Copy to clipboard"
@@ -443,7 +454,12 @@ export const AnnotatorToolbar = memo(function AnnotatorToolbar({
 				</GhostIconButton>
 			</HoverTooltip>
 
-			<HoverTooltip label="Save" shortcut="⌘S" theme={theme} placement="left">
+			<HoverTooltip
+				label="Save"
+				shortcut={formatShortcutKeys(['Meta', 's'], '')}
+				theme={theme}
+				placement="left"
+			>
 				<GhostIconButton
 					onClick={handleSave}
 					ariaLabel="Save"

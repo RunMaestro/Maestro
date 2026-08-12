@@ -163,6 +163,7 @@ describe('agents IPC handlers', () => {
 				'agents:refresh',
 				'agents:get',
 				'agents:getCapabilities',
+				'agents:getAllCapabilities',
 				'agents:getConfig',
 				'agents:setConfig',
 				'agents:getConfigValue',
@@ -759,6 +760,42 @@ describe('agents IPC handlers', () => {
 			expect(result).toHaveProperty('supportsResultMessages');
 			expect(result).toHaveProperty('supportsModelSelection');
 			expect(result).toHaveProperty('supportsStreamJsonInput');
+		});
+	});
+
+	describe('agents:getAllCapabilities', () => {
+		it('should return an entry for every known agent definition', async () => {
+			// Delegate to the REAL capability table so the assertions below are
+			// about shipped values, not values this test invented.
+			const real = await import('../../../../main/agents/capabilities');
+			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation(
+				real.getAgentCapabilities
+			);
+
+			const handler = handlers.get('agents:getAllCapabilities');
+			const result = (await handler!({} as any)) as Record<string, { supportsBatchMode: boolean }>;
+
+			const expectedIds = agentCapabilities.AGENT_DEFINITIONS.map((def) => def.id);
+			expect(Object.keys(result).sort()).toEqual([...expectedIds].sort());
+			for (const id of expectedIds) {
+				expect(result[id]).toBeDefined();
+			}
+		});
+
+		it('should report the two poles of the dispatch capability bug', async () => {
+			// opencode IS batch-capable and terminal is NOT. A background CLI
+			// dispatch to opencode used to be dropped purely because nothing had
+			// ever primed the renderer cache for it (finding V1).
+			const real = await import('../../../../main/agents/capabilities');
+			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation(
+				real.getAgentCapabilities
+			);
+
+			const handler = handlers.get('agents:getAllCapabilities');
+			const result = (await handler!({} as any)) as Record<string, { supportsBatchMode: boolean }>;
+
+			expect(result['opencode'].supportsBatchMode).toBe(true);
+			expect(result['terminal'].supportsBatchMode).toBe(false);
 		});
 	});
 
@@ -1522,7 +1559,7 @@ describe('agents IPC handlers', () => {
 			});
 
 			// An unexpected failure on the skills dir (e.g. EACCES) should
-			// NOT tear down the slash-command list — enrichment is
+			// NOT tear down the slash-command list - enrichment is
 			// best-effort. The error is still captured by Sentry inside
 			// discoverSlashCommands; the list itself survives.
 			vi.mocked(fs.promises.readdir).mockImplementation(async () => {
@@ -1596,7 +1633,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// No built-in commands — only custom .md commands are discoverable
+			// No built-in commands - only custom .md commands are discoverable
 			expect(result).toEqual([]);
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
@@ -1752,7 +1789,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// Array config ignored, no built-ins — result should be empty
+			// Array config ignored, no built-ins - result should be empty
 			expect(result).toEqual([]);
 		});
 
@@ -1777,7 +1814,7 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			const result = await handler!({} as any, 'opencode', '/test');
 
-			// Malformed JSON skipped gracefully, no built-ins — empty result
+			// Malformed JSON skipped gracefully, no built-ins - empty result
 			expect(result).toEqual([]);
 		});
 
@@ -1980,7 +2017,7 @@ describe('agents IPC handlers', () => {
 			const result = await handler({} as any);
 
 			expect(runSpy).toHaveBeenCalledTimes(1);
-			// Manual refresh must opt into the aggressive sampling path — startup
+			// Manual refresh must opt into the aggressive sampling path - startup
 			// mode would skip when no maestro-p session exists.
 			expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({ mode: 'manual' }));
 			expect(result).toEqual({ refreshed: 2 });

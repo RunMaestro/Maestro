@@ -24,7 +24,7 @@ import type { TemplateContext } from '../../../shared/templateVariables';
 
 // --- Mocks ---
 
-// Mock fs — only `readFileSync` is overridden (the executor uses it for prompt
+// Mock fs - only `readFileSync` is overridden (the executor uses it for prompt
 // files). Other methods (e.g. `existsSync`) pass through to the real module
 // via `importOriginal`, because pulling in `cue-template-context-builder`
 // transitively imports `cue-github-poller`, which calls `getExpandedEnv()` at
@@ -78,7 +78,7 @@ vi.mock('../../../main/agents', () => ({
 }));
 
 // Mock buildAgentArgs and applyAgentConfigOverrides.
-// buildAgentArgs returns flags only — it does NOT append the prompt as a positional arg.
+// buildAgentArgs returns flags only - it does NOT append the prompt as a positional arg.
 // The executor is responsible for appending the prompt after applyAgentConfigOverrides.
 const mockBuildAgentArgs = vi.fn((_agent: unknown, _opts: unknown) => [
 	'--print',
@@ -105,7 +105,7 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
-// Mock parsers — default returns null (no parser), overridden per test as needed
+// Mock parsers - default returns null (no parser), overridden per test as needed
 const mockGetOutputParser = vi.fn(
 	() => null as ReturnType<typeof import('../../../main/parsers').getOutputParser>
 );
@@ -237,7 +237,7 @@ function createExecutionConfig(overrides: Partial<CueExecutionConfig> = {}): Cue
 		session: createMockSession(),
 		subscription: createMockSubscription(),
 		event: createMockEvent(),
-		// Inline prompt content — as of the Phase 2 cleanup, the executor no longer
+		// Inline prompt content - as of the Phase 2 cleanup, the executor no longer
 		// reads prompt files. The cue-config-normalizer resolves prompt_file at config
 		// load time and stores the resolved content here.
 		promptPath: 'Default test prompt body',
@@ -285,7 +285,7 @@ describe('cue-executor', () => {
 	});
 
 	describe('executeCuePrompt', () => {
-		// As of the Phase 2 cleanup, the executor no longer resolves prompt files —
+		// As of the Phase 2 cleanup, the executor no longer resolves prompt files -
 		// the cue-config-normalizer reads prompt_file at config-load time and stores
 		// the resolved content in `prompt`. The executor's `promptPath` parameter is
 		// now always inline prompt content.
@@ -508,7 +508,7 @@ describe('cue-executor', () => {
 				await vi.advanceTimersByTimeAsync(0);
 
 				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
-				// spawnArgs come from sshResult.args — the prompt appears exactly once
+				// spawnArgs come from sshResult.args - the prompt appears exactly once
 				const promptOccurrences = spawnedArgs.filter((a) => a.includes('Hello world')).length;
 				expect(promptOccurrences).toBe(1);
 
@@ -659,7 +659,7 @@ describe('cue-executor', () => {
 				await vi.advanceTimersByTimeAsync(5000);
 				expect(childKill).toHaveBeenCalledWith('SIGTERM');
 
-				// Reset to track SIGKILL — but killed is already true so SIGKILL won't fire
+				// Reset to track SIGKILL - but killed is already true so SIGKILL won't fire
 				// since child.killed is true. That's correct behavior.
 				mockChild.killed = false;
 
@@ -1562,7 +1562,7 @@ describe('cue-executor', () => {
 			const resultPromise = executeCuePrompt(config);
 			await vi.advanceTimersByTimeAsync(0);
 
-			// Process is active — should appear in list
+			// Process is active - should appear in list
 			const activeEntry = getActiveProcesses().get('completed-run');
 			expect(activeEntry).toBeDefined();
 			expect(getCueProcessList().some((p) => p.runId === 'completed-run')).toBe(true);
@@ -1570,7 +1570,7 @@ describe('cue-executor', () => {
 			mockChild.emit('close', 0);
 			await resultPromise;
 
-			// Process completed — should be removed
+			// Process completed - should be removed
 			expect(getActiveProcesses().has('completed-run')).toBe(false);
 			expect(getCueProcessList().some((p) => p.runId === 'completed-run')).toBe(false);
 		});

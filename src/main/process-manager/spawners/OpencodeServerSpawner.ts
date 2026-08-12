@@ -115,20 +115,6 @@ export class OpencodeServerSpawner {
 		// SSE aborter for the kill path, plus a one-shot exit guard.
 		const streamAbort = new AbortController();
 		let finished = false;
-		const lifecycle: Lifecycle = {
-			isFinished: () => finished,
-			finish: (code: number) => {
-				if (finished) return;
-				finished = true;
-				void this.exitHandler.handleExit(sessionId, code).catch((err) => {
-					logger.error('[OpencodeServerSpawner] handleExit threw', 'OpencodeServer', {
-						sessionId,
-						error: String(err),
-					});
-				});
-			},
-		};
-
 		const managedProcess: ManagedProcess = {
 			sessionId,
 			toolType,
@@ -163,6 +149,19 @@ export class OpencodeServerSpawner {
 					this.abortActiveSession(managedProcess);
 					streamAbort.abort();
 				},
+			},
+		};
+		const lifecycle: Lifecycle = {
+			isFinished: () => finished,
+			finish: (code: number) => {
+				if (finished) return;
+				finished = true;
+				void this.exitHandler.handleExit(sessionId, code, managedProcess).catch((err) => {
+					logger.error('[OpencodeServerSpawner] handleExit threw', 'OpencodeServer', {
+						sessionId,
+						error: String(err),
+					});
+				});
 			},
 		};
 
@@ -289,7 +288,7 @@ export class OpencodeServerSpawner {
 				return;
 			}
 		} catch (setupErr) {
-			// A kill mid-setup surfaces as an aborted subscribe/create rejection —
+			// A kill mid-setup surfaces as an aborted subscribe/create rejection -
 			// that's a clean stop, not a transport failure, so don't fall back to CLI.
 			if (cancelled()) {
 				lifecycle.finish(0);
@@ -300,7 +299,7 @@ export class OpencodeServerSpawner {
 				'OpencodeServer',
 				{ sessionId, error: String(setupErr) }
 			);
-			// Only reclaim the slot if it's still ours — a concurrent respawn for the
+			// Only reclaim the slot if it's still ours - a concurrent respawn for the
 			// same sessionId must not be clobbered by our fallback.
 			if (this.processes.get(sessionId) === managedProcess) {
 				this.processes.delete(sessionId);

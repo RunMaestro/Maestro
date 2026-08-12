@@ -122,6 +122,23 @@ describe('buildCrossAgentPrompt', () => {
 		const prompt = buildCrossAgentPrompt(request({ sourceCwd: undefined }));
 		expect(prompt).not.toContain('permission to READ');
 	});
+
+	it('tells the target how to lift the read-only restriction when read-only', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' })
+		);
+		expect(prompt).toContain('Settings > General > Cross-Agent Mentions');
+	});
+
+	it('grants write access and drops the prohibition when writable is opted into', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ sourceCwd: '/Users/me/proj', userPrompt: 'Fix the bug' }),
+			true
+		);
+		expect(prompt).toContain('permission to READ and MODIFY');
+		expect(prompt).not.toContain('Do NOT modify or create files');
+		expect(prompt).not.toContain('Settings > General > Cross-Agent Mentions');
+	});
 });
 
 const IDLE_MS = 10 * 60 * 1000;
@@ -139,7 +156,12 @@ const targetSession = (): CrossAgentTargetSession => ({
 	cwd: '/proj',
 });
 
-function harness(overrides: { getTargetSession?: () => CrossAgentTargetSession | null } = {}) {
+function harness(
+	overrides: {
+		getTargetSession?: () => CrossAgentTargetSession | null;
+		writable?: boolean;
+	} = {}
+) {
 	const processManager = new FakeProcessManager();
 	const chunks: CrossAgentResponseChunk[] = [];
 	const dispatch = () =>
@@ -157,12 +179,27 @@ function harness(overrides: { getTargetSession?: () => CrossAgentTargetSession |
 			} as never,
 			sshStore: null,
 			getTargetSession: overrides.getTargetSession ?? targetSession,
+			writable: overrides.writable,
 			onChunk: (c) => chunks.push(c),
 		});
 	// The router keys its listeners on `cross-agent-<requestId>`; request() uses 'r1'.
 	const emitData = (text: string) => processManager.emit('data', 'cross-agent-r1', text);
 	const emitExit = (code: number) => processManager.emit('exit', 'cross-agent-r1', code);
-	return { processManager, chunks, dispatch, emitData, emitExit };
+	// A `--print` claude run signals progress through these, NOT through `data`.
+	const emitThinking = (text: string) =>
+		processManager.emit('thinking-chunk', 'cross-agent-r1', text);
+	const emitTool = () => processManager.emit('tool-execution', 'cross-agent-r1', { name: 'Read' });
+	const emitUsage = () => processManager.emit('usage', 'cross-agent-r1', { inputTokens: 1 });
+	return {
+		processManager,
+		chunks,
+		dispatch,
+		emitData,
+		emitExit,
+		emitThinking,
+		emitTool,
+		emitUsage,
+	};
 }
 
 describe('startCrossAgentRequest dispatch lifecycle', () => {
@@ -186,6 +223,14 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		expect(config.maxWaitSeconds).toBe(IDLE_MS / 1000);
 	});
 
+	it('spawns the consult read/write when the user opted into writable mentions', async () => {
+		const { dispatch } = harness({ writable: true });
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.readOnlyMode).toBe(false);
+	});
+
 	it('does not kill a target that keeps streaming past the idle budget', async () => {
 		const { chunks, dispatch, emitData } = harness();
 		await dispatch();
@@ -197,6 +242,86 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		vi.advanceTimersByTime(IDLE_MS - 60_000);
 
 		expect(chunks).toHaveLength(0);
+	});
+
+	// Regression: a `--print` stream-json consult emits `data` ONLY at the terminal
+	// result message - intermediate progress goes to thinking-chunk /
+	// tool-execution / usage. Arming the silence budget on `data` alone made it a
+	// hard N-minute deadline that killed agents which were working perfectly.
+	it('does not kill a target that is thinking but has emitted no data', async () => {
+		const { chunks, dispatch, emitThinking } = harness();
+		await dispatch();
+
+		for (let elapsed = 0; elapsed < HARD_MS - IDLE_MS; elapsed += IDLE_MS - 60_000) {
+			vi.advanceTimersByTime(IDLE_MS - 60_000);
+			emitThinking('reasoning...');
+		}
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('does not kill a target that is running tools but has emitted no data', async () => {
+		const { chunks, dispatch, emitTool } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		emitTool();
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('treats a usage report as proof of life', async () => {
+		const { chunks, dispatch, emitUsage } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		emitUsage();
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+
+		expect(chunks).toHaveLength(0);
+	});
+
+	it('ignores liveness signals belonging to a different session', async () => {
+		// The ProcessManager emitter is shared app-wide; another agent's activity
+		// must not keep a genuinely wedged consult alive forever.
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS - 60_000);
+		processManager.emit('thinking-chunk', 'some-other-session', 'not ours');
+		vi.advanceTimersByTime(60_000);
+
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0].error).toContain('went silent');
+	});
+
+	it('still stops a target that is truly wedged on every channel', async () => {
+		const { chunks, dispatch, processManager } = harness();
+		await dispatch();
+
+		vi.advanceTimersByTime(IDLE_MS);
+
+		expect(processManager.kill).toHaveBeenCalledWith('cross-agent-r1');
+		expect(chunks[0].error).toContain('went silent');
+	});
+
+	it('removes every liveness listener once the consult settles', async () => {
+		// These attach to the shared ProcessManager; leaking one per consult would
+		// accumulate for the life of the app.
+		const { dispatch, emitExit, processManager } = harness();
+		await dispatch();
+
+		const before = ['data', 'thinking-chunk', 'tool-execution', 'usage', 'exit'].map((e) =>
+			processManager.listenerCount(e)
+		);
+		expect(before.every((n) => n > 0)).toBe(true);
+
+		emitExit(0);
+
+		for (const evt of ['data', 'thinking-chunk', 'tool-execution', 'usage', 'exit']) {
+			expect(processManager.listenerCount(evt)).toBe(0);
+		}
 	});
 
 	it('kills the target and flushes partial output once it goes silent', async () => {

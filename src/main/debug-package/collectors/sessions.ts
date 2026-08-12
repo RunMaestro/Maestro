@@ -2,13 +2,14 @@
  * Sessions Collector
  *
  * Collects session metadata without conversation content.
- * - Paths are sanitized
+ * - Paths are replaced with opaque descriptors (no folder or project names)
  * - No AI logs or shell logs included
  * - No message content included
+ * - No agent names
  */
 
 import Store from 'electron-store';
-import { sanitizePath } from './sanitize';
+import { redactPath } from './sanitize';
 
 export interface DebugSessionInfo {
 	id: string;
@@ -16,8 +17,8 @@ export interface DebugSessionInfo {
 	toolType: string;
 	state: string;
 	inputMode: string;
-	cwd: string; // Sanitized
-	projectRoot: string; // Sanitized
+	cwd: string; // Redacted path descriptor
+	projectRoot: string; // Redacted path descriptor
 	isGitRepo: boolean;
 	isLive: boolean;
 	tabCount: number;
@@ -52,8 +53,8 @@ export async function collectSessions(sessionsStore: Store<any>): Promise<DebugS
 			toolType: session.toolType || 'unknown',
 			state: session.state || 'unknown',
 			inputMode: session.inputMode || 'ai',
-			cwd: sanitizePath(session.cwd || ''),
-			projectRoot: sanitizePath(session.projectRoot || ''),
+			cwd: redactPath(session.cwd || ''),
+			projectRoot: redactPath(session.projectRoot || ''),
 			isGitRepo: !!session.isGitRepo,
 			isLive: !!session.isLive,
 			tabCount: Array.isArray(session.aiTabs) ? session.aiTabs.length : 0,

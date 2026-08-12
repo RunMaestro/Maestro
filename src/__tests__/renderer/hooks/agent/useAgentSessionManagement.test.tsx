@@ -26,9 +26,16 @@ beforeEach(() => {
 	};
 });
 
-function makeDeps(activeSession: Session | null): UseAgentSessionManagementDeps {
+function seedActiveSession(session: Session | null) {
+	if (session) {
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as never);
+	} else {
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as never);
+	}
+}
+
+function makeDeps(_activeSession?: Session | null): UseAgentSessionManagementDeps {
 	return {
-		activeSession,
 		setSessions: vi.fn(),
 		setActiveAgentSessionId: vi.fn(),
 		setAgentSessionsOpen: vi.fn(),
@@ -53,6 +60,7 @@ describe('useAgentSessionManagement - history token source capture', () => {
 			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
 		} as Partial<Session>);
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() => useAgentSessionManagement(makeDeps(activeSession)));
 		await act(async () => {
 			await result.current.addHistoryEntry({ type: 'USER', summary: 'a turn' });
@@ -71,6 +79,7 @@ describe('useAgentSessionManagement - history token source capture', () => {
 			claudeInteractive: undefined,
 		} as Partial<Session>);
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() => useAgentSessionManagement(makeDeps(activeSession)));
 		await act(async () => {
 			await result.current.addHistoryEntry({ type: 'USER', summary: 'a turn' });
@@ -91,6 +100,7 @@ describe('useAgentSessionManagement - history token source capture', () => {
 			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
 		} as Partial<Session>);
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() => useAgentSessionManagement(makeDeps(activeSession)));
 		await act(async () => {
 			await result.current.addHistoryEntry({ type: 'USER', summary: 'a turn' });
@@ -107,6 +117,7 @@ describe('useAgentSessionManagement - history token source capture', () => {
 			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
 		} as Partial<Session>);
 
+		seedActiveSession(activeSession);
 		const { result } = renderHook(() => useAgentSessionManagement(makeDeps(activeSession)));
 		await act(async () => {
 			await result.current.addHistoryEntry({

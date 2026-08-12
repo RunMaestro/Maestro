@@ -131,7 +131,7 @@ describe('AgentDrawer', () => {
 		// Verify agent order within each group by checking DOM order. Each agent
 		// row: <div draggable> > <svg(Bot)> > <div(flex)> > <div(name)> + <div(toolType)>.
 		// The name is in the first div child with fontWeight:500. Skip the
-		// top-level standalone "Command" pill (also draggable, fontWeight:500) —
+		// top-level standalone "Command" pill (also draggable, fontWeight:500) -
 		// that's a node template, not an agent.
 		const agentNames = Array.from(container.querySelectorAll('[draggable="true"]'))
 			.map((el) => el.querySelector('[style*="font-weight: 500"]')?.textContent)
@@ -218,7 +218,7 @@ describe('AgentDrawer', () => {
 			const parsed = JSON.parse(dragPayload!);
 			expect(parsed).toEqual({ type: 'command' });
 			// The drop handler takes undefined/'' owningSessionId as the "unbound"
-			// signal — the user picks the owning agent in CommandConfigPanel.
+			// signal - the user picks the owning agent in CommandConfigPanel.
 			expect(parsed.owningSessionId).toBeUndefined();
 		});
 
@@ -235,7 +235,7 @@ describe('AgentDrawer', () => {
 
 		it('does not render per-agent terminal drag handles on session rows', () => {
 			// Sanity check that the legacy "Terminal icon on each row" pattern
-			// is gone — agent rows should have exactly one draggable ancestor
+			// is gone - agent rows should have exactly one draggable ancestor
 			// (the row itself), not a nested one.
 			const { container } = render(
 				<AgentDrawer isOpen={true} onClose={() => {}} sessions={mockSessions} theme={mockTheme} />

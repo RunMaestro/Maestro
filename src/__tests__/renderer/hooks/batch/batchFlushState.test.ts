@@ -44,7 +44,7 @@ describe('claimFlushState', () => {
 		expect(claimFlushState(refs, 'a')).toBeNull();
 	});
 
-	it('only deletes the targeted session — other entries are preserved', () => {
+	it('only deletes the targeted session - other entries are preserved', () => {
 		const refs = makeRefs({
 			a: makeFlushState({ sessionName: 'a' }),
 			b: makeFlushState({ sessionName: 'b' }),
@@ -74,7 +74,7 @@ describe('claimFlushState', () => {
 		expect(killClaim).not.toBeNull();
 		expect(naturalClaim).toBeNull();
 
-		// Reverse ordering — natural completion wins.
+		// Reverse ordering - natural completion wins.
 		const refs2 = makeRefs({ s: makeFlushState({ sessionName: 's' }) });
 		const naturalFirst = claimFlushState(refs2, 's');
 		const killSecond = claimFlushState(refs2, 's');

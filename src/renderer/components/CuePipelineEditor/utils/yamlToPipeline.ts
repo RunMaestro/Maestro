@@ -78,7 +78,7 @@ const LAYOUT = {
  * Extracts the base pipeline name by stripping `-chain-N`, `-fanin`,
  * `-cmd-<id>`, and `-cli-out` suffixes. Command nodes auto-named via the
  * editor's drop handler follow `<pipeline>-cmd-<base36>` and legacy
- * `cli_output` migrations synthesize `<pipeline>-cli-out` — both normalize
+ * `cli_output` migrations synthesize `<pipeline>-cli-out` - both normalize
  * back to their parent so round-tripping keeps them grouped. User-renamed
  * command nodes end up in their own pipeline group on reload (acceptable;
  * renaming signals intent).
@@ -92,7 +92,7 @@ function getBasePipelineName(subscriptionName: string): string {
 }
 
 /**
- * Returns the pipeline grouping key for a subscription — the explicit
+ * Returns the pipeline grouping key for a subscription - the explicit
  * `pipeline_name` field when present, otherwise the legacy base-name
  * derived from the subscription-name suffix convention.
  */
@@ -108,7 +108,7 @@ function getPipelineKey(sub: CueSubscription): string {
  * `pipeline_name` field when present and falling back to stripping the
  * subscription-name suffix convention (`-chain-N`, `-fanin`) for legacy
  * YAML. Explicit `pipeline_name` makes editing a single subscription's
- * `name` safe — it no longer splits the pipeline or orphans its chains.
+ * `name` safe - it no longer splits the pipeline or orphans its chains.
  *
  * Maintains insertion order within each group.
  */
@@ -151,7 +151,7 @@ function createErrorNode(
 /**
  * One resolved chain-source position. A position is either `resolved`
  * (maps to an existing session) or `unresolved` (no ID match, no name
- * match — the upstream agent was deleted and must be surfaced as an
+ * match - the upstream agent was deleted and must be surfaced as an
  * error node rather than silently dropped).
  */
 interface ResolvedChainSource {
@@ -195,7 +195,7 @@ function resolveChainSourcePositions(
 
 		// When an ID was written, it is authoritative. If the ID doesn't match
 		// any live session we MUST surface the position as unresolved and never
-		// fall through to name-based resolution — that would be the "silent
+		// fall through to name-based resolution - that would be the "silent
 		// identity swap" failure mode. Example: agent `uuid-A "Deploy"` deleted,
 		// a NEW agent `uuid-B "Deploy"` recreated with the same visible name.
 		// Name-match would happily rewire the chain to the new agent, hiding
@@ -222,7 +222,7 @@ function resolveChainSourcePositions(
 			// Legacy YAML with name only and no matching live session: emit
 			// the name so the downstream code creates a placeholder agent
 			// node. This is backwards compat for pre-source_session_ids YAML
-			// — without an ID we have no stable way to distinguish "stale
+			// - without an ID we have no stable way to distinguish "stale
 			// name" from "the agent still named this". Placeholder renders
 			// as a normal agent node; the user sees the name and can fix it.
 			resolved.push({ kind: 'resolved', sessionName: legacyName });
@@ -271,7 +271,7 @@ function isInitialTrigger(sub: CueSubscription): boolean {
  * full trigger event config (see `pipelineToYaml.ts` per-branch path). On
  * load, subs whose keys match AND whose `pipeline_name` already groups them
  * into the same pipeline collapse onto a single trigger node with one
- * outgoing edge per branch — mirroring the edit-time graph.
+ * outgoing edge per branch - mirroring the edit-time graph.
  *
  * Any divergence in event-specific config (a second schedule time, a
  * different watch glob, etc.) yields a separate key and therefore a
@@ -370,19 +370,19 @@ function triggerLabel(eventType: CueEventType): string {
  *
  * Resolution precedence:
  *   1. When `nodeKey` is provided and `nodeKeyToNode` already has it, return
- *      the existing node — this is the explicit fan-in case (multiple
+ *      the existing node - this is the explicit fan-in case (multiple
  *      subscriptions sharing the same visual target node).
  *   2. When `nodeKey` is provided and no entry exists yet, create a fresh
  *      node and register it under the key. Two subscriptions targeting the
  *      same `agent_id` but carrying *different* keys end up as two distinct
- *      visual nodes — the round-trip behavior the editor relies on after
+ *      visual nodes - the round-trip behavior the editor relies on after
  *      the user dropped the same agent onto the canvas twice.
  *   3. When `nodeKey` is absent (legacy YAML written before the field
  *      existed), fall back to dedup-by-sessionName so older pipelines keep
  *      loading without surprise behavior changes.
  *
  * `forceNew` is the legacy-path escape hatch for chains where the same
- * agent appears at multiple positions (e.g. A → B → A) — under the legacy
+ * agent appears at multiple positions (e.g. A → B → A) - under the legacy
  * path it forces a new node even when sessionName already maps to one.
  * Ignored when `nodeKey` resolves a hit (the user explicitly asked for one
  * shared node).
@@ -401,7 +401,7 @@ function getOrCreateAgentNode(
 		if (existing && existing.type === 'agent') return existing;
 	}
 
-	// Legacy dedup-by-sessionName path. Skip when we have an explicit key —
+	// Legacy dedup-by-sessionName path. Skip when we have an explicit key -
 	// the key-based path above is authoritative; falling through here for
 	// keyed subs would re-merge them by sessionName and re-introduce the
 	// "two trigger subs collapse into one node" bug we're fixing.
@@ -439,7 +439,7 @@ function getOrCreateAgentNode(
  * subscription (`_ownerSessions[0]`).
  *
  * `commandFromCliOutput` is the inline override used when migrating legacy
- * `cli_output: { target }` fields — we synthesize a `mode: 'cli'` command
+ * `cli_output: { target }` fields - we synthesize a `mode: 'cli'` command
  * locally rather than reading `sub.command`.
  */
 function createCommandNode(
@@ -453,7 +453,7 @@ function createCommandNode(
 ): PipelineNode {
 	// Same precedence as the agent path: when an explicit `nodeKey` already
 	// maps to a command node, return it (multiple subs sharing one visual
-	// command node — explicit user-drawn fan-in onto a command). Otherwise
+	// command node - explicit user-drawn fan-in onto a command). Otherwise
 	// create fresh and register under the key.
 	if (nodeKey && nodeKeyToNode) {
 		const existing = nodeKeyToNode.get(nodeKey);
@@ -513,18 +513,18 @@ export function subscriptionsToPipelines(
 		//   2. Within chain subs, topologically sort by `source_sub` so a
 		//      chain that references another chain comes AFTER its source.
 		//      Chain index is only a TIE-BREAKER for ready subs and for the
-		//      cycle-fallback path — it does NOT reliably encode dependency
+		//      cycle-fallback path - it does NOT reliably encode dependency
 		//      order. Example: chain-2 fan-in with source_sub=[chain-1,
 		//      chain-4] must come after chain-4 (index 4 > 2) so that
 		//      chain-2's source lookup finds chain-4's already-registered
 		//      target node in subNameToNode. Without that ordering, the
 		//      source lookup falls back to session-name resolution and
-		//      invents a premature agent node — and when chain-4 later
+		//      invents a premature agent node - and when chain-4 later
 		//      creates its own keyed target, the canvas ends up with a
 		//      disconnected phantom agent next to the real one.
 		//   3. Break ties on subscription name for total determinism.
 		// Without this, re-saving YAML in a different order used to visually
-		// swap agents that shared a session name — the "two agents swapped"
+		// swap agents that shared a session name - the "two agents swapped"
 		// bug vector that ID-based `sessionToNode` keying (below) also guards
 		// against.
 		// Fan-in subscriptions terminate a pipeline (they collect from many
@@ -533,7 +533,7 @@ export function subscriptionsToPipelines(
 		// written YAML may use the `-fanin` suffix convention instead. Under
 		// that legacy convention, `getChainIndex` returns 0 for `-fanin` names
 		// (no `-chain-N` suffix to parse), which would place them BEFORE
-		// `-chain-1` in the sort — reversing the intended flow. Treat any
+		// `-chain-1` in the sort - reversing the intended flow. Treat any
 		// `-fanin` suffix as a very high chain index so fan-in always sorts
 		// last among non-initial subs.
 		const isLegacyFanIn = (name: string) => /-fanin$/.test(name);
@@ -557,7 +557,7 @@ export function subscriptionsToPipelines(
 		// Kahn's algorithm over chain subs, prioritising lowest chain index
 		// among ready candidates so the chain-index intuition still wins
 		// when it doesn't violate a real source_sub dependency. Only chain
-		// subs participate in the topology — initial-trigger subs (including
+		// subs participate in the topology - initial-trigger subs (including
 		// command-action triggers) have already been added in the previous
 		// step and their `subNameToNode` entries are created by the trigger
 		// branch below before any chain sub runs.
@@ -607,7 +607,7 @@ export function subscriptionsToPipelines(
 		}
 		// Cycle fallback: if any chain sub never reached indegree=0 (the
 		// YAML contains a self-referential source_sub loop), append the
-		// remaining subs in tie-break order so they still render — the
+		// remaining subs in tie-break order so they still render - the
 		// loader stays lossy-but-visible instead of silently dropping them.
 		if (consumed.size < chainSubsForSort.length) {
 			const leftovers = chainSubsForSort.filter((s) => !consumed.has(s.name));
@@ -629,7 +629,7 @@ export function subscriptionsToPipelines(
 		const sessionToNode = new Map<string, PipelineNode>();
 		// Map subscription `target_node_key` (or fan-out per-position key) to
 		// the visual node that key identifies. When multiple subs carry the
-		// same key, all of them point at one shared visual node — explicit
+		// same key, all of them point at one shared visual node - explicit
 		// fan-in. When their keys differ, each gets its own node even if
 		// they share an agent_id. Absent keys (legacy YAML) bypass this map
 		// and fall through to the `sessionToNode` legacy dedup.
@@ -639,7 +639,7 @@ export function subscriptionsToPipelines(
 		// locate a specific upstream by its `source_sub` name instead of by
 		// session name. Critical for the `Cmd(owner=S) → Agent(S)` shape:
 		// the command node and its downstream agent share a session, so
-		// session-name lookup alone cannot tell them apart — it either
+		// session-name lookup alone cannot tell them apart - it either
 		// picks the wrong node or silently invents a duplicate agent. The
 		// sub-name reference is unambiguous.
 		const subNameToNode = new Map<string, PipelineNode>();
@@ -662,7 +662,7 @@ export function subscriptionsToPipelines(
 
 				let triggerId: string;
 				if (existingTriggerId) {
-					// Reuse the existing trigger node for this branch — we'll
+					// Reuse the existing trigger node for this branch - we'll
 					// append a new outgoing edge to its additional target
 					// below. Don't increment triggerCount; the visual trigger
 					// count tracks unique trigger nodes, not branches.
@@ -689,7 +689,7 @@ export function subscriptionsToPipelines(
 							// in multi-trigger pipelines. Without this, every Play
 							// button in the pipeline fired the first sub only (the
 							// one named exactly `pipeline.name`), making chain
-							// triggers — including GitHub PR/Issue polls — unreachable
+							// triggers - including GitHub PR/Issue polls - unreachable
 							// from the UI.
 							subscriptionName: sub.name,
 						} as TriggerNodeData,
@@ -710,7 +710,7 @@ export function subscriptionsToPipelines(
 				// would otherwise both compute y = baseY + 0*spacing and
 				// the agents would stack pixel-perfect on top of each
 				// other (rendering as a single node visually even though
-				// the model has two distinct nodes — the "(2)" instance
+				// the model has two distinct nodes - the "(2)" instance
 				// label is the only hint).
 				const ownerTriggerNode = nodeMap.get(triggerId);
 				const triggerY = ownerTriggerNode?.position.y ?? LAYOUT.baseY;
@@ -889,7 +889,7 @@ export function subscriptionsToPipelines(
 				// `source_sub` carries explicit upstream subscription names,
 				// one per source position. Used below to resolve the source
 				// to the exact node that sub produced (command vs agent vs
-				// chain-agent) — session-name lookup alone cannot tell a
+				// chain-agent) - session-name lookup alone cannot tell a
 				// command node apart from an agent that shares its session.
 				const sourceSubNames: (string | undefined)[] = Array.isArray(sub.source_sub)
 					? sub.source_sub
@@ -1110,7 +1110,7 @@ export function subscriptionsToPipelines(
 				// (e.g. A → B → A). Reusing the earlier node would create a back-edge
 				// instead of rendering the second occurrence as a distinct node.
 				// `forceNew` is ignored when `target_node_key` resolves to an
-				// existing node — the user explicitly asked for fan-in onto
+				// existing node - the user explicitly asked for fan-in onto
 				// that shared node, which trumps the back-edge heuristic.
 				const alreadyInChain = sessionToNode.has(targetSessionName);
 				const targetNode = getOrCreateAgentNode(
@@ -1171,7 +1171,7 @@ export function subscriptionsToPipelines(
 						mode: 'pass' as EdgeMode,
 					};
 					// Only set the flag when there's an explicit include list and
-					// this source isn't in it — absence of the flag means "include"
+					// this source isn't in it - absence of the flag means "include"
 					// (backward-compatible default).
 					if (includeSet && !includeSet.has(sourceName)) {
 						edge.includeUpstreamOutput = false;
@@ -1192,7 +1192,7 @@ export function subscriptionsToPipelines(
 			if (!sub.cli_output?.target) continue;
 			// Hand-written YAML (or a half-migrated normalizer pass) may carry
 			// legacy `cli_output` alongside the new `action: 'command'`. The
-			// command-action node was already created in the main loop above —
+			// command-action node was already created in the main loop above -
 			// synthesizing another one here produces a duplicate `-cli-out` node
 			// on every reload. Skip the migration in that case.
 			if (sub.action === 'command') continue;
@@ -1255,13 +1255,13 @@ function findTargetSession(
 	allSubs: CueSubscription[],
 	sessions: PipelineSessionInfo[]
 ): string | null {
-	// If the subscription has an explicit agent_id, trust it — the editor writes
+	// If the subscription has an explicit agent_id, trust it - the editor writes
 	// agent_id whenever the user binds a subscription to a specific session, and
 	// per-project-root YAML partitioning guarantees it is never a cross-session leak.
 	if (sub.agent_id) {
 		const session = sessions.find((s) => s.id === sub.agent_id);
 		if (session) return session.name;
-		// agent_id references a session that no longer exists — fall through
+		// agent_id references a session that no longer exists - fall through
 		// to owner / name-based resolution below.
 	}
 
@@ -1269,7 +1269,7 @@ function findTargetSession(
 	// use that to resolve the target when unambiguous.
 	const owners = (sub as CueSubscription & { _ownerSessions?: string[] })._ownerSessions;
 	if (owners && owners.length === 1) {
-		// Single owner — this is the definitive target session.
+		// Single owner - this is the definitive target session.
 		return owners[0];
 	}
 	if (owners && owners.length > 1) {
@@ -1301,7 +1301,7 @@ function findTargetSession(
 		const otherIndex = getChainIndex(other.name);
 
 		if (otherKey === pipelineKey && otherIndex === chainIndex + 1) {
-			// Prefer `source_session_ids` when present — it's the stable
+			// Prefer `source_session_ids` when present - it's the stable
 			// identity anchor that survives renames, and using the name
 			// here would re-introduce the silent-swap failure mode that
 			// `resolveChainSourcePositions` already protects against. Look
@@ -1315,7 +1315,7 @@ function findTargetSession(
 			if (sourceIds.length > 0) {
 				const matched = sessions.find((s) => s.id === sourceIds[0]);
 				if (matched) return matched.name;
-				// Stable id didn't resolve — fall through to legacy name
+				// Stable id didn't resolve - fall through to legacy name
 				// resolution rather than silently returning a possibly-
 				// stale legacy name as if it matched.
 			}
@@ -1358,7 +1358,7 @@ function findTargetSession(
 		// Prefer an owning session before scanning the global sessions list. The
 		// YAML literally lives in that session's project root, so it's a far
 		// stronger signal than "first session that isn't already a source" or
-		// the unconditional sessions[0] fallback below — the latter would
+		// the unconditional sessions[0] fallback below - the latter would
 		// otherwise display the pipeline as connected to whichever session
 		// happens to be first in sessions.json (issue #912).
 		if (owners && owners.length > 0) {

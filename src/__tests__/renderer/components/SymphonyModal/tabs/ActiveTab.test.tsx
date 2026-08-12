@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/tabs/ActiveTab — empty state CTA, count display,
+ * Tests for SymphonyModal/tabs/ActiveTab - empty state CTA, count display,
  * Check PR Status button, sync routing, session jump.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

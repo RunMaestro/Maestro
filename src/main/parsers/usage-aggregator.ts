@@ -16,7 +16,7 @@ import {
 import { capabilitySnapshots } from '../agents/capability-snapshot';
 
 // Re-export for consumers that import from this module. The local import
-// was dropped on migration to `getContextWindowForAgent` — the re-export
+// was dropped on migration to `getContextWindowForAgent` - the re-export
 // resolves directly from the source module without needing a binding.
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
 
@@ -101,7 +101,7 @@ export function estimateContextUsage(
 	agentId?: ToolType,
 	/**
 	 * SSH remote UUID when the session is running against a remote host.
-	 * Lets the snapshot lookup hit the `agentId:remoteId` key — otherwise
+	 * Lets the snapshot lookup hit the `agentId:remoteId` key - otherwise
 	 * remote sessions fall back to the local snapshot and then the static
 	 * table, which can mis-size the context window when the remote runs
 	 * a different model.
@@ -170,6 +170,10 @@ export function aggregateModelUsage(
 	let maxCacheReadTokens = 0;
 	let maxCacheCreationTokens = 0;
 	let contextWindow = FALLBACK_CONTEXT_WINDOW; // Default for Claude
+	// Provenance of the value above: it starts as an injected fallback, and only a
+	// window that some model actually reported below flips it to authoritative
+	// (finding P1 - the presence of a number says nothing about where it came from).
+	let contextWindowReported = false;
 
 	if (modelUsage) {
 		for (const modelStats of Object.values(modelUsage)) {
@@ -180,9 +184,18 @@ export function aggregateModelUsage(
 				maxCacheCreationTokens,
 				modelStats.cacheCreationInputTokens || 0
 			);
-			// Use the highest context window from any model
-			if (modelStats.contextWindow && modelStats.contextWindow > contextWindow) {
-				contextWindow = modelStats.contextWindow;
+			// Use the highest context window any model REPORTED. The max is taken
+			// against the other reported windows, never against the injected
+			// fallback: comparing to the fallback made a provider window at or
+			// below it (a 128k model, say) fail the test, leaving the frame marked
+			// unreported so the renderer let a stored customContextWindow outrank
+			// provider truth - the exact inversion P1 exists to fix. The first
+			// reported window therefore replaces the fallback outright.
+			if (modelStats.contextWindow && modelStats.contextWindow > 0) {
+				contextWindow = contextWindowReported
+					? Math.max(contextWindow, modelStats.contextWindow)
+					: modelStats.contextWindow;
+				contextWindowReported = true;
 			}
 		}
 	}
@@ -203,5 +216,8 @@ export function aggregateModelUsage(
 		cacheCreationInputTokens: maxCacheCreationTokens,
 		totalCostUsd,
 		contextWindow,
+		// Only set when the window above came from the provider's own modelUsage,
+		// so consumers can rank it above a stored customContextWindow fallback.
+		...(contextWindowReported ? { contextWindowResolved: true } : {}),
 	};
 }

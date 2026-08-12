@@ -23,7 +23,7 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from '../History';
-import type { GraphBucket } from '../History/ActivityGraph';
+import type { PrecomputedGraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useThrottledCallback } from '../../hooks';
@@ -35,6 +35,8 @@ import type { TabFocusHandle } from './OverviewTab';
 import { lookbackHoursToDays, bucketCountForLookback } from './lookback';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { visibleHistoryEntryTypes } from '../../../shared/history';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -49,7 +51,7 @@ interface UnifiedHistoryEntry extends HistoryEntry {
 
 interface UnifiedHistoryTabProps {
 	theme: Theme;
-	/** Navigate to a session tab — receives (sourceSessionId, agentSessionId) */
+	/** Navigate to a session tab - receives (sourceSessionId, agentSessionId) */
 	onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
 	fileTree?: FileNode[];
 	onFileClick?: (path: string) => void;
@@ -65,7 +67,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 		const visibleTypes = useMemo<HistoryEntryType[]>(
-			() => (maestroCueEnabled ? ['USER', 'AUTO', 'CUE'] : ['USER', 'AUTO']),
+			() => visibleHistoryEntryTypes(maestroCueEnabled),
 			[maestroCueEnabled]
 		);
 
@@ -74,7 +76,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		);
 
 		// Stable, ordered array of the active types. Pushed to the server so
-		// pagination operates over the *filtered* dataset — otherwise the
+		// pagination operates over the *filtered* dataset - otherwise the
 		// 100-entry page can be all one type (e.g. CUE heartbeats), and
 		// deselecting that type would empty the visible list even though
 		// thousands of other-typed entries exist deeper in history. Memoized
@@ -90,9 +92,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const [searchQuery, setSearchQuery] = useState('');
 
 		// Pre-computed graph buckets from backend (covers all entries in
-		// the lookback window — server-cached). Independent from the
+		// the lookback window - server-cached). Independent from the
 		// paginated entry list below.
-		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphBuckets, setGraphBuckets] = useState<PrecomputedGraphBucket[] | undefined>(
+			undefined
+		);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
 			undefined
 		);
@@ -173,7 +177,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const pendingEntriesRef = useRef<UnifiedHistoryEntry[]>([]);
 		const rafIdRef = useRef<number | null>(null);
 
-		// Stable ref for session names — avoids making the streaming effect depend on session state
+		// Stable ref for session names - avoids making the streaming effect depend on session state
 		const sessionsRef = useRef(useSessionStore.getState().sessions);
 		useEffect(() => {
 			return useSessionStore.subscribe((s) => {
@@ -204,15 +208,17 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				let newAuto = 0;
 				let newUser = 0;
 				let newCue = 0;
+				let newAgent = 0;
 				let prepended = 0;
 				for (const entry of uniqueBatch) {
 					if (entry.type === 'AUTO') newAuto++;
 					else if (entry.type === 'USER') newUser++;
 					else if (entry.type === 'CUE') newCue++;
+					else if (entry.type === 'AGENT') newAgent++;
 					if (prependLiveEntry(entry)) prepended++;
 				}
 
-				if (newAuto > 0 || newUser > 0 || newCue > 0) {
+				if (newAuto > 0 || newUser > 0 || newCue > 0 || newAgent > 0) {
 					setHistoryStats((prevStats) => {
 						if (!prevStats) return prevStats;
 						return {
@@ -220,7 +226,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							autoCount: prevStats.autoCount + newAuto,
 							userCount: prevStats.userCount + newUser,
 							cueCount: (prevStats.cueCount ?? 0) + newCue,
-							totalCount: prevStats.totalCount + newAuto + newUser + newCue,
+							agentEntryCount: (prevStats.agentEntryCount ?? 0) + newAgent,
+							totalCount: prevStats.totalCount + newAuto + newUser + newCue + newAgent,
 						};
 					});
 				}
@@ -318,7 +325,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			}
 		}, [isLoading]);
 
-		// Lookback change — the hook reloads the entry list automatically
+		// Lookback change - the hook reloads the entry list automatically
 		// when its `loadPage` identity changes (loadPage is memoized on
 		// `lookbackHours`). We just clear stats so the bar reflects the new
 		// scope until the next response lands.
@@ -384,7 +391,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		}, []);
 
 		// Virtualization. Use the worst-case-aware estimate so the initial
-		// paint never positions a row higher than its content needs —
+		// paint never positions a row higher than its content needs -
 		// adjacent rows would otherwise overlap until ResizeObserver caught up.
 		const estimateSize = useCallback(
 			(index: number) => {
@@ -399,6 +406,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			count: filteredEntries.length,
 			getScrollElement: () => listRef.current,
 			estimateSize,
+			// Key measurements to the ENTRY, not its slot - see the identical note in
+			// HistoryPanel. Without this, filtering leaves each row wearing the
+			// measured height of whatever previously occupied its index, which shows
+			// up as uneven gaps between cards.
+			getItemKey: (index) => filteredEntries[index]?.id ?? index,
 			overscan: 5,
 			gap: 12,
 			initialRect: { width: 300, height: 600 },
@@ -515,7 +527,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					);
 					await jumpToOffset(targetOffset);
 					// After the window slides, the virtualizer's bookkeeping
-					// has new indices — let the next render flush before
+					// has new indices - let the next render flush before
 					// scrolling. Scroll-to-top is the right default; the
 					// target lives near it because we anchored the page.
 					requestAnimationFrame(() => {
@@ -567,7 +579,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			[listNavKeyDown, searchExpanded, openSearch]
 		);
 
-		// Navigate to a session tab — looks up sourceSessionId from the unified entry
+		// Navigate to a session tab - looks up sourceSessionId from the unified entry
 		const handleOpenSessionAsTab = useCallback(
 			(agentSessionId: string) => {
 				if (!onResumeSession) return;
@@ -671,7 +683,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					<button
 						onClick={openSearch}
 						className="flex-shrink-0 p-1.5 rounded-full transition-colors hover:bg-white/10"
-						title="Search entries (⌘F)"
+						title={`Search entries (${formatShortcutKeys(['Meta', 'f'], '')})`}
 						style={{ color: searchExpanded ? theme.colors.accent : theme.colors.textDim }}
 					>
 						<Search className="w-4 h-4" />
@@ -694,7 +706,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						onBarClick={handleGraphBarClick}
 						activeFilters={activeFilters}
 					/>
-					{/* Entry count badge — shows window position when jumped, total otherwise */}
+					{/* Entry count badge - shows window position when jumped, total otherwise */}
 					{!isLoading && totalEntries > 0 && (
 						<span
 							className="text-[10px] font-mono whitespace-nowrap flex-shrink-0 mt-1"
@@ -707,7 +719,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 									: `${totalEntries}`}
 						</span>
 					)}
-					{/* Back-to-top affordance — only visible after a jump */}
+					{/* Back-to-top affordance - only visible after a jump */}
 					{!isAtTop && !isJumping && (
 						<button
 							onClick={() => void jumpToTop()}
@@ -728,7 +740,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					onKeyDown={handleKeyDown}
 					onScroll={handleScroll}
 				>
-					{/* Stats bar — scrolls with entries */}
+					{/* Stats bar - scrolls with entries */}
 					{!isLoading && enrichedStats && enrichedStats.totalCount > 0 && (
 						<HistoryStatsBar stats={enrichedStats} theme={theme} />
 					)}

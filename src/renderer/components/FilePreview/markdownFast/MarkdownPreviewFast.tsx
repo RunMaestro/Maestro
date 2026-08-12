@@ -106,7 +106,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 						const blockEls = root.querySelectorAll<HTMLElement>(`.${FAST_BLOCK_CLASS}`);
 						// Virtuoso renders only the visible window. The block at the
 						// matched index is the one we just scrolled to; it should now
-						// be present. If not (rare race), bail — the block-level
+						// be present. If not (rare race), bail - the block-level
 						// scroll already landed the user close enough.
 						const targetBlock = Array.from(blockEls).find(
 							(el) => el.getAttribute('data-block-index') === String(hit.blockIndex)
@@ -245,7 +245,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 			const mermaid = createMermaidRenderer({ theme });
 			highlighter.observe(root);
 			mermaid.observe(root);
-			// Re-observe after the next paint — new Virtuoso items may have
+			// Re-observe after the next paint - new Virtuoso items may have
 			// mounted in the layout pass that just finished.
 			const rafId = requestAnimationFrame(() => {
 				highlighter.observe(root);

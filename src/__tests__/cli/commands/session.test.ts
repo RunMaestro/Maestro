@@ -7,8 +7,8 @@
  * Cue follow-ups) that paired with `dispatch` form the "write then poll"
  * loop the design plan calls out.
  *
- * The tests cover the CLI's contract — JSON output shape, --since/--tail
- * forwarding, error mapping — independent of the desktop. The desktop-side
+ * The tests cover the CLI's contract - JSON output shape, --since/--tail
+ * forwarding, error mapping - independent of the desktop. The desktop-side
  * read logic is exercised via the integration tests when the WebSocket
  * handler runs against a real session store.
  */
@@ -122,7 +122,7 @@ describe('session list command', () => {
 		expect(line).toContain('Backend');
 		expect(line).toContain('busy');
 		expect(line).toContain('★');
-		// createdAt rendered via formatRelativeTime — the exact phrase depends on
+		// createdAt rendered via formatRelativeTime - the exact phrase depends on
 		// `now`, but the column is non-empty for any finite epoch.
 		expect(line.split('  ').filter(Boolean).length).toBeGreaterThanOrEqual(4);
 	});
@@ -143,7 +143,7 @@ describe('session list command', () => {
 		['Maestro discovery file is stale (app may have crashed)'],
 		['Not connected to Maestro'],
 	])('maps MaestroClient error "%s" to MAESTRO_NOT_RUNNING', async (errorMessage) => {
-		// Same three pre-WebSocket throws covered by dispatch.test — keeping the
+		// Same three pre-WebSocket throws covered by dispatch.test - keeping the
 		// mapping in sync means external scripts can branch on a single error
 		// code regardless of which CLI verb they used.
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error(errorMessage));
@@ -411,7 +411,7 @@ describe('session show command', () => {
 		'rejects partially-numeric --tail %p with INVALID_OPTION (no silent truncation)',
 		async (raw) => {
 			// `Number.parseInt('5abc', 10) === 5` and `parseInt('1.9', 10) === 1`
-			// silently accept these as valid tails — the strict regex precheck
+			// silently accept these as valid tails - the strict regex precheck
 			// is the only thing keeping a typo from quietly capping history at
 			// the wrong number.
 			await sessionShow('tab-1', { tail: raw });
@@ -426,7 +426,7 @@ describe('session show command', () => {
 
 	it('forwards --tail 0 as numeric 0 (handler enforces empty-history semantics)', async () => {
 		// `--tail 0` is a legitimate ask ("give me nothing yet, just confirm
-		// the tab exists"). The CLI must propagate the literal zero — the
+		// the tab exists"). The CLI must propagate the literal zero - the
 		// desktop side has its own slice-bug guard for the historical
 		// `slice(-0)` foot-gun. Asserting the wire value here keeps the two
 		// halves of the contract pinned down independently.

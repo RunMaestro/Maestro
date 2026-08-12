@@ -67,7 +67,7 @@ describe('cue-once-trigger-source', () => {
 		expect(event.payload.grace_minutes).toBe(360);
 		expect(requestSelfDestruct).not.toHaveBeenCalled();
 
-		// Subsequent ticks must not double-fire — the source stops its own timer
+		// Subsequent ticks must not double-fire - the source stops its own timer
 		// after firing.
 		vi.advanceTimersByTime(60_000);
 		expect(emit).toHaveBeenCalledTimes(1);
@@ -96,7 +96,7 @@ describe('cue-once-trigger-source', () => {
 		expect(requestSelfDestruct).not.toHaveBeenCalled();
 		expect(source.nextTriggerAt()).toBe(Date.parse(targetIso));
 
-		// Advance just one 30s tick — still in the future, still no fire.
+		// Advance just one 30s tick - still in the future, still no fire.
 		vi.advanceTimersByTime(30_000);
 		expect(emit).not.toHaveBeenCalled();
 
@@ -127,7 +127,7 @@ describe('cue-once-trigger-source', () => {
 		source.stop();
 	});
 
-	it('grace_minutes: 0 disables late fires — self-destructs without firing when fire_at is in the past', () => {
+	it('grace_minutes: 0 disables late fires - self-destructs without firing when fire_at is in the past', () => {
 		// 1 minute past fire_at; grace_minutes: 0 disables the missed-fire rescue
 		// entirely, so any past fire_at on first poll triggers self-destruct.
 		vi.setSystemTime(new Date('2026-03-09T09:01:00Z'));
@@ -152,7 +152,7 @@ describe('cue-once-trigger-source', () => {
 		source.stop();
 	});
 
-	it('idempotent fire — registry dedup prevents double-emit on repeat checkAndFire', () => {
+	it('idempotent fire - registry dedup prevents double-emit on repeat checkAndFire', () => {
 		vi.setSystemTime(new Date('2026-03-09T09:05:00Z'));
 		const emit = vi.fn();
 		const registry = createCueSessionRegistry();
@@ -337,11 +337,11 @@ describe('cue-once-trigger-source', () => {
 		source.start();
 		expect(emit).not.toHaveBeenCalled();
 
-		// First 30s tick: 08:59:30 — still in the future.
+		// First 30s tick: 08:59:30 - still in the future.
 		vi.advanceTimersByTime(30_000);
 		expect(emit).not.toHaveBeenCalled();
 
-		// Second tick: 09:00:00 — fire.
+		// Second tick: 09:00:00 - fire.
 		vi.advanceTimersByTime(30_000);
 		expect(emit).toHaveBeenCalledOnce();
 

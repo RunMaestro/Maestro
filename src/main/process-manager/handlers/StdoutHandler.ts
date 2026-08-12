@@ -7,6 +7,8 @@ import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
+import { getAgentLoginCommand } from '../../../shared/agentMetadata';
+import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -43,6 +45,7 @@ function normalizeUsageToDelta(
 		totalCostUsd: number;
 		contextWindow: number;
 		reasoningTokens?: number;
+		absoluteUsage?: UsageStats['absoluteUsage'];
 	}
 ): typeof usageStats & { absoluteUsage?: UsageStats['absoluteUsage'] } {
 	const totals: UsageTotals = {
@@ -92,10 +95,19 @@ function normalizeUsageToDelta(
 	// Preserve the pre-normalization cumulative totals as `absoluteUsage`, but ONLY
 	// for combined-context providers (Codex) whose cumulative total IS the current
 	// window occupancy. This function also runs for Claude Code, which can look
-	// monotonic for the first turns of a session; Claude's per-call values are NOT
-	// cumulative occupancy, so attaching an absolute snapshot there would let the
-	// timeline plot cumulative token spend as context fill. The first event of a
+	// monotonic for the first turns of a session; Claude's TURN TOTALS here are the
+	// CLI's own sum across the turn's internal API calls (token spend), so attaching
+	// them would let the timeline plot spend as context fill. The first event of a
 	// session returns raw above (no `last` yet) and is already absolute.
+	//
+	// Claude Code still gets an `absoluteUsage`, just not from here: its parser
+	// attaches the LAST internal call's usage, which is a genuine occupancy
+	// snapshot (a single call's input cannot exceed the window) and a different
+	// quantity from the cumulative totals this branch rejects. Every path in this
+	// function preserves an incoming `absoluteUsage` - the three early returns pass
+	// `usageStats` through verbatim, and the spread below re-attaches only for
+	// COMBINED_CONTEXT_AGENTS, which claude-code is not - so it can never be
+	// overwritten or double-attached.
 	const attachesAbsolute = COMBINED_CONTEXT_AGENTS.has(managedProcess.toolType as never);
 	return {
 		...usageStats,
@@ -255,6 +267,69 @@ function resetOversizedCopilotJsonBuffer(sessionId: string, managedProcess: Mana
 }
 
 /**
+ * Push a corrected context window for a local omp process whose catalog prime
+ * landed AFTER its first usage event was already emitted with the fallback
+ * window.
+ *
+ * Without this the gauge stays at `FALLBACK_CONTEXT_WINDOW` until the next turn
+ * produces a usage event, which on a slow (packaged, cold) prime is the whole
+ * first turn. Called from the spawn handler once the background prime settles.
+ *
+ * No-ops (returning false) when the process has exited, was replaced by a
+ * respawn with a different catalog identity, has nothing pending, or the model
+ * still does not resolve. The pending payload is cleared on a successful push,
+ * so a second call can never emit twice.
+ *
+ * @returns true when a corrected `usage` event was emitted.
+ */
+export function pushResolvedOmpContextWindow(
+	processes: Map<string, ManagedProcess>,
+	emitter: EventEmitter,
+	sessionId: string,
+	catalogKey: string
+): boolean {
+	const managedProcess = processes.get(sessionId);
+	if (!managedProcess || managedProcess.toolType !== 'omp' || managedProcess.sshRemoteId) {
+		return false;
+	}
+	// Guard against a respawn having taken over this sessionId with a different
+	// binary/env identity while the prime was still running.
+	if (managedProcess.ompModelCatalogKey !== catalogKey) {
+		return false;
+	}
+	const pending = managedProcess.pendingOmpUsagePush;
+	if (!pending) {
+		return false;
+	}
+	const resolved = getOmpModelContextWindow(pending.model, catalogKey);
+	if (!resolved || resolved <= 0) {
+		return false;
+	}
+
+	managedProcess.pendingOmpUsagePush = undefined;
+	// Correction-only: the token/cost fields carried in pending.stats were already
+	// counted when the fallback usage event fired for this turn. This correction
+	// re-emits through the ProcessManager EventEmitter, so EVERY on('usage')
+	// consumer sees it - not just the renderer. Zero every token/cost field at the
+	// source so no present or future accumulating consumer can re-add this turn.
+	// Only the context-window fields carry meaning on a correction; the model tag
+	// rides along from pending.stats so same-model window merges still match.
+	emitter.emit('usage', sessionId, {
+		...pending.stats,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0,
+		reasoningTokens: 0,
+		contextWindow: resolved,
+		contextWindowResolved: true,
+		contextWindowCorrectionOnly: true,
+	});
+	return true;
+}
+
+/**
  * Handles stdout data processing for child processes.
  * Extracts session IDs, usage stats, and result data from agent output.
  */
@@ -375,7 +450,7 @@ export class StdoutHandler {
 		try {
 			parsed = JSON.parse(line);
 		} catch {
-			// Not valid JSON — handled in the else branch below
+			// Not valid JSON - handled in the else branch below
 		}
 
 		if (parsed !== null && toolType === 'copilot-cli') {
@@ -402,7 +477,14 @@ export class StdoutHandler {
 				}
 
 				if (agentError.type === 'auth_expired' && managedProcess.sshRemoteHost) {
-					agentError.message = `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "claude login" to re-authenticate.`;
+					// Choose the login command by agentId - error-pattern messages
+					// are often generic (no CLI name) and first-match-wins ordering
+					// can shadow the ones that do name a command. A small map keeps
+					// every agent correct without depending on pattern text/order.
+					const loginCmd = getAgentLoginCommand(toolType);
+					agentError.message = loginCmd
+						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${loginCmd}" to re-authenticate.`
+						: `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate.`;
 				}
 
 				this.emitter.emit('agent-error', sessionId, agentError);
@@ -410,7 +492,7 @@ export class StdoutHandler {
 			}
 		}
 
-		// ── SSH error detection (line-based — SSH patterns are plain text) ──
+		// ── SSH error detection (line-based - SSH patterns are plain text) ──
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
@@ -500,15 +582,31 @@ export class StdoutHandler {
 			this.emitter.emit('slash-commands', sessionId, slashCommands);
 		}
 
-		// Handle streaming text events (OpenCode, Codex reasoning)
+		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			// For Copilot, skip thinking-chunk emission — the parser's delta events
-			// accumulate in streamedText which is emitted once as the result at exit.
-			// Emitting thinking-chunks AND result would duplicate the content.
-			if (managedProcess.toolType !== 'copilot-cli') {
-				this.emitter.emit('thinking-chunk', sessionId, event.text);
+			// Thinking panel routing:
+			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
+			//   and flush once at exit).
+			// - Grok / Codex / OpenCode: only isReasoning deltas → thinking-chunk.
+			//   These stream the final answer as partial `text` WITHOUT isReasoning;
+			//   dumping those into the thinking panel makes the wizard look finished
+			//   while tools still run (Grok emits no tool events on the stream).
+			// - Claude Code + Factory Droid: forward ALL partials. Claude's assistant
+			//   text arrives as partials with isReasoning undefined; that live preview
+			//   is exactly what drives the thinking display during a turn, and the
+			//   renderer replaces it with the final `result` (useBatchedSessionUpdates
+			//   drops non-sticky thinking/tool logs when assistant stdout arrives,
+			//   cleanupExitedTabLogs on exit). Gating Claude on isReasoning silenced the
+			//   inline thinking display for every ordinary (non-extended-thinking) turn.
+			const toolType = managedProcess.toolType;
+			if (toolType !== 'copilot-cli') {
+				const requiresReasoningTag =
+					toolType === 'grok' || toolType === 'codex' || toolType === 'opencode';
+				if (!requiresReasoningTag || event.isReasoning) {
+					this.emitter.emit('thinking-chunk', sessionId, event.text);
+				}
 			}
-			// Reasoning content is internal thinking — don't include it in the
+			// Reasoning content is internal thinking - don't include it in the
 			// final response text. Only message content should be in streamedText.
 			if (!event.isReasoning) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
@@ -533,7 +631,31 @@ export class StdoutHandler {
 				state: event.toolState,
 				timestamp: Date.now(),
 				toolCallId: event.toolCallId,
+				parentToolUseId: event.parentToolUseId,
 			});
+		}
+
+		// Handle extra parallel tool results carried alongside a primary tool_use
+		// event (Claude Code bundles parallel tool_result blocks into one message).
+		// The primary result is emitted by the tool_use path above; these are the
+		// rest, each finalizing its own call so no parallel badge stays 'running'.
+		if (event.toolResultBlocks?.length) {
+			for (const result of event.toolResultBlocks) {
+				const status = getToolStatus(result.toolState);
+				if (
+					result.toolCallId &&
+					(status === 'completed' || status === 'failed' || status === 'error')
+				) {
+					getEmittedToolCallIds(managedProcess).delete(result.toolCallId);
+				}
+				this.emitter.emit('tool-execution', sessionId, {
+					toolName: result.toolName,
+					state: result.toolState,
+					timestamp: Date.now(),
+					toolCallId: result.toolCallId,
+					parentToolUseId: result.parentToolUseId,
+				});
+			}
 		}
 
 		// Handle tool_use blocks embedded in text events (Claude Code mixed content)
@@ -552,6 +674,7 @@ export class StdoutHandler {
 					state: { status: 'running', input: tool.input },
 					timestamp: Date.now(),
 					toolCallId: tool.id,
+					parentToolUseId: event.parentToolUseId,
 				});
 			}
 		}
@@ -583,12 +706,12 @@ export class StdoutHandler {
 		//   - assistant.turn_end fires after every LLM turn, including
 		//     narration turns ("I'll delegate this to..."), so it can't
 		//     mark session end.
-		//   - session.shutdown is NOT written to stdout in batch mode —
+		//   - session.shutdown is NOT written to stdout in batch mode -
 		//     it only goes to `~/.copilot/session-state/<id>/events.jsonl`,
 		//     and Copilot may keep writing to that file (via subagent
 		//     processes) AFTER our parent process exits.
 		// The authoritative completion signal lives on disk, so we defer
-		// the final flush to ExitHandler — which awaits the disk-side
+		// the final flush to ExitHandler - which awaits the disk-side
 		// shutdown marker before emitting the `exit` event. Legacy
 		// `phase: 'final_answer'` messages still flush immediately via
 		// the path below.
@@ -713,20 +836,62 @@ export class StdoutHandler {
 			cacheCreationTokens?: number;
 			costUsd?: number;
 			contextWindow?: number;
+			contextWindowReported?: boolean;
 			reasoningTokens?: number;
+			model?: string;
+			absoluteUsage?: UsageStats['absoluteUsage'];
 		}
 	): UsageStats {
-		return {
+		const stats: UsageStats = {
 			inputTokens: usage.inputTokens,
 			outputTokens: usage.outputTokens,
 			cacheReadInputTokens: usage.cacheReadTokens || 0,
 			cacheCreationInputTokens: usage.cacheCreationTokens || 0,
 			totalCostUsd: usage.costUsd || 0,
+			// Occupancy snapshot the parser attached (claude-code's last-call usage).
+			// This object is CONSTRUCTED rather than spread, so anything the parser
+			// adds has to be copied here explicitly or it is silently dropped.
+			absoluteUsage: usage.absoluteUsage,
 			// Prioritize Claude Code's reported contextWindow over spawn config
 			// This ensures we use the actual model's context limit, not a stale config value
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
 			reasoningTokens: usage.reasoningTokens,
 		};
+		// A window is only AUTHORITATIVE when the parser saw it in the provider's
+		// own payload; parsers seed the same field with config values and static
+		// fallbacks, so the flag - not the presence of a number - is the signal.
+		// The renderer ranks a resolved window above the session's stored
+		// customContextWindow, which is usually a materialized creation-time
+		// default rather than a value the user chose (finding P1).
+		if (usage.contextWindowReported && (usage.contextWindow || 0) > 0) {
+			stats.contextWindowResolved = true;
+		}
+		// Oh My Pi's window is model-dependent and reported per turn, so resolve the
+		// per-turn model against the catalog primed for THIS process's binary + env
+		// (ompModelCatalogKey) and let that authoritative value win over the static
+		// per-agent fallback/config (e.g. so opus's 1M isn't masked by the 200k
+		// default). Local runs only; remotes have their own catalog and keep the
+		// configured/fallback window.
+		if (managedProcess.toolType === 'omp' && !managedProcess.sshRemoteId && usage.model) {
+			// Stamp the model this window belongs to so a downstream resolved-window
+			// preservation can't survive a switch to a different omp model.
+			stats.contextWindowModel = usage.model;
+			const resolved = managedProcess.ompModelCatalogKey
+				? getOmpModelContextWindow(usage.model, managedProcess.ompModelCatalogKey)
+				: undefined;
+			if (resolved && resolved > 0) {
+				stats.contextWindow = resolved;
+				stats.contextWindowResolved = true;
+				managedProcess.pendingOmpUsagePush = undefined;
+			} else {
+				// Catalog not primed (or this model missing from it): the stats above
+				// carry the static fallback. Remember them so a prime landing after
+				// the spawn cap can push a corrected window without waiting for the
+				// next turn (see pushResolvedOmpContextWindow).
+				managedProcess.pendingOmpUsagePush = { model: usage.model, stats };
+			}
+		}
+		return stats;
 	}
 
 	/** Emit session-id event at most once per managed process lifecycle. */

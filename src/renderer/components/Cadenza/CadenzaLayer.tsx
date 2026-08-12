@@ -28,6 +28,7 @@ import {
 	Image as ImageIcon,
 	LayoutGrid,
 	Code2,
+	Monitor,
 	ListChecks,
 	ChevronDown,
 	ChevronRight,
@@ -41,6 +42,7 @@ import { getBasename, getParentDir } from '../../../shared/formatters';
 import { Markdown } from '../Markdown';
 import { LocalImage } from '../Markdown/components/LocalImage';
 import { CadenzaBlocks } from './CadenzaBlocks';
+import { ConcertoHtmlPreview } from '../Concerto/ConcertoHtmlPreview';
 
 interface CadenzaLayerProps {
 	theme: Theme;
@@ -59,6 +61,7 @@ const ICON_FOR_TYPE: Record<CadenzaViewType, LucideIcon> = {
 	image: ImageIcon,
 	code: Code2,
 	view: LayoutGrid,
+	html: Monitor,
 	decision: ListChecks,
 };
 
@@ -129,6 +132,7 @@ const CadenzaCard = memo(function CadenzaCard({
 		view.viewType === 'image' ||
 		view.viewType === 'code' ||
 		view.viewType === 'view' ||
+		view.viewType === 'html' ||
 		view.viewType === 'decision';
 	const [collapsed, setCollapsed] = useState(false);
 	const moveCadenza = useCadenzaStore((s) => s.moveCadenza);
@@ -318,6 +322,18 @@ const CadenzaCard = memo(function CadenzaCard({
 						</div>
 					)}
 
+					{view.viewType === 'html' && view.body !== undefined && (
+						<div className="overflow-hidden" style={{ height: CONTENT_MAX_HEIGHT }}>
+							<ConcertoHtmlPreview
+								surface="cadenza"
+								id={view.id}
+								revision={view.timestamp}
+								title={view.title}
+								minHeight={CONTENT_MAX_HEIGHT}
+							/>
+						</div>
+					)}
+
 					{view.viewType === 'decision' && (
 						<div className="px-3 pb-3 pt-0.5">
 							{view.body !== undefined && (
@@ -363,6 +379,13 @@ export const CadenzaLayer = memo(function CadenzaLayer({
 }: CadenzaLayerProps) {
 	const cadenzas = useCadenzaStore((s) => s.cadenzas);
 	const removeCadenza = useCadenzaStore((s) => s.removeCadenza);
+	const closeCadenza = useCallback(
+		(id: string) => {
+			window.maestro.process.releaseConcertoHtmlDocument?.('cadenza', id);
+			removeCadenza(id);
+		},
+		[removeCadenza]
+	);
 
 	// HUD only: report each card's hit region to the main process, which polls the
 	// cursor against them to toggle click-through (cross-platform - no reliance on
@@ -402,13 +425,7 @@ export const CadenzaLayer = memo(function CadenzaLayer({
 	return createPortal(
 		<div className="fixed inset-0 pointer-events-none" style={{ zIndex: 100000 }}>
 			{cadenzas.map((view) => (
-				<CadenzaCard
-					key={view.id}
-					view={view}
-					theme={theme}
-					isHud={isHud}
-					onClose={removeCadenza}
-				/>
+				<CadenzaCard key={view.id} view={view} theme={theme} isHud={isHud} onClose={closeCadenza} />
 			))}
 		</div>,
 		document.body

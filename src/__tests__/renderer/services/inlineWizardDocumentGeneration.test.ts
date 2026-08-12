@@ -14,12 +14,25 @@ import {
 	generateDocumentPrompt,
 	loadInlineWizardDocGenPrompts,
 	createPlaybookDocumentEmitter,
+	extractDisplayTextFromChunk,
 	type DocumentGenerationConfig,
 	type PlaybookDocumentEmitter,
 } from '../../../renderer/services/inlineWizardDocumentGeneration';
 import type { InlineGeneratedDocument } from '../../../renderer/hooks/batch/useInlineWizard';
 
 describe('inlineWizardDocumentGeneration', () => {
+	describe('extractDisplayTextFromChunk', () => {
+		it('joins Grok text deltas and ignores thought deltas', () => {
+			const chunk =
+				'{"type":"thought","data":"reasoning"}\n' +
+				'{"type":"text","data":"Hello "}\n' +
+				'{"type":"text","data":"world"}\n' +
+				'{"type":"end","stopReason":"EndTurn","sessionId":"abc"}\n';
+
+			expect(extractDisplayTextFromChunk(chunk, 'grok')).toBe('Hello world');
+		});
+	});
+
 	describe('parseGeneratedDocuments', () => {
 		it('should parse documents with standard markers', () => {
 			const output = `

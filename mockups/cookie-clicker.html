@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Crumb &amp; Co. Cookie Clicker</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--ink: #33251e;
+				--muted: #806d61;
+				--cream: #fffaf1;
+				--paper: #fffdf8;
+				--line: #eadfd2;
+				--orange: #e87335;
+				--orange-dark: #bd4e1e;
+				--green: #426c52;
+				--gold: #ffc85a;
+				--shadow: 0 18px 50px rgba(74, 45, 26, 0.12);
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			html,
+			body {
+				margin: 0;
+				min-height: 100%;
+			}
+
+			body {
+				background:
+					radial-gradient(circle at 9% 7%, rgba(255, 200, 90, 0.22), transparent 26%),
+					linear-gradient(135deg, #fffaf1 0%, #f8efe4 100%);
+				color: var(--ink);
+				font-family:
+					Inter,
+					ui-sans-serif,
+					system-ui,
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+				overflow: hidden;
+			}
+
+			button {
+				font: inherit;
+			}
+
+			.app {
+				display: grid;
+				grid-template-rows: auto 1fr;
+				height: 100vh;
+				min-height: 570px;
+			}
+
+			.topbar {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				min-height: 72px;
+				padding: 14px clamp(20px, 3vw, 38px);
+				border-bottom: 1px solid rgba(145, 111, 85, 0.16);
+				background: rgba(255, 253, 248, 0.78);
+				backdrop-filter: blur(14px);
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+			}
+
+			.brand-mark {
+				display: grid;
+				width: 40px;
+				height: 40px;
+				place-items: center;
+				border-radius: 13px;
+				background: var(--orange);
+				box-shadow: 0 8px 20px rgba(232, 115, 53, 0.28);
+				color: white;
+				font-size: 21px;
+				transform: rotate(-5deg);
+			}
+
+			.brand-name {
+				font-family: Georgia, 'Times New Roman', serif;
+				font-size: 22px;
+				font-weight: 700;
+				letter-spacing: -0.02em;
+			}
+
+			.brand-tagline {
+				margin-top: 2px;
+				color: var(--muted);
+				font-size: 11px;
+				font-weight: 700;
+				letter-spacing: 0.12em;
+				text-transform: uppercase;
+			}
+
+			.header-stats {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+			}
+
+			.header-stat {
+				min-width: 94px;
+				padding: 9px 14px;
+				border: 1px solid var(--line);
+				border-radius: 14px;
+				background: rgba(255, 255, 255, 0.68);
+			}
+
+			.header-stat span {
+				display: block;
+				color: var(--muted);
+				font-size: 10px;
+				font-weight: 800;
+				letter-spacing: 0.11em;
+				text-transform: uppercase;
+			}
+
+			.header-stat strong {
+				display: block;
+				margin-top: 2px;
+				font-size: 15px;
+				font-variant-numeric: tabular-nums;
+			}
+
+			.reset {
+				width: 38px;
+				height: 38px;
+				border: 1px solid var(--line);
+				border-radius: 12px;
+				background: var(--paper);
+				color: var(--muted);
+				cursor: pointer;
+				transition: 160ms ease;
+			}
+
+			.reset:hover {
+				border-color: #d8c5b5;
+				color: var(--orange-dark);
+				transform: rotate(-12deg);
+			}
+
+			.workspace {
+				display: grid;
+				grid-template-columns: minmax(420px, 1.14fr) minmax(350px, 0.86fr);
+				gap: clamp(20px, 3vw, 42px);
+				min-height: 0;
+				padding: clamp(20px, 3vw, 34px) clamp(20px, 3vw, 38px) 30px;
+			}
+
+			.bakery {
+				position: relative;
+				display: flex;
+				min-width: 0;
+				align-items: center;
+				justify-content: center;
+				border: 1px solid rgba(213, 190, 168, 0.62);
+				border-radius: 28px;
+				background:
+					linear-gradient(rgba(255, 253, 248, 0.9), rgba(255, 250, 241, 0.9)),
+					repeating-linear-gradient(90deg, transparent 0 28px, rgba(128, 91, 63, 0.06) 28px 29px);
+				box-shadow: var(--shadow);
+				overflow: hidden;
+			}
+
+			.bakery::before,
+			.bakery::after {
+				position: absolute;
+				border-radius: 50%;
+				background: var(--gold);
+				content: '';
+				opacity: 0.1;
+			}
+
+			.bakery::before {
+				width: 260px;
+				height: 260px;
+				top: -150px;
+				left: -90px;
+			}
+
+			.bakery::after {
+				width: 190px;
+				height: 190px;
+				right: -90px;
+				bottom: -110px;
+			}
+
+			.bakery-content {
+				position: relative;
+				z-index: 1;
+				display: flex;
+				width: 100%;
+				max-width: 570px;
+				flex-direction: column;
+				align-items: center;
+				padding: 20px;
+				text-align: center;
+			}
+
+			.eyebrow {
+				margin-bottom: 7px;
+				color: var(--orange-dark);
+				font-size: 11px;
+				font-weight: 850;
+				letter-spacing: 0.15em;
+				text-transform: uppercase;
+			}
+
+			h1 {
+				margin: 0;
+				font-family: Georgia, 'Times New Roman', serif;
+				font-size: clamp(34px, 5vw, 56px);
+				letter-spacing: -0.045em;
+				line-height: 0.98;
+			}
+
+			.total-label {
+				margin: 10px 0 0;
+				color: var(--muted);
+				font-size: 13px;
+			}
+
+			.cookie-stage {
+				position: relative;
+				display: grid;
+				width: min(39vh, 280px);
+				height: min(39vh, 280px);
+				min-width: 180px;
+				min-height: 180px;
+				margin: clamp(12px, 2vh, 22px) 0;
+				place-items: center;
+			}
+
+			.cookie-stage::before,
+			.cookie-stage::after {
+				position: absolute;
+				border: 1px solid rgba(232, 115, 53, 0.16);
+				border-radius: 50%;
+				content: '';
+			}
+
+			.cookie-stage::before {
+				inset: 3%;
+			}
+
+			.cookie-stage::after {
+				inset: -5%;
+				border-style: dashed;
+				animation: slow-spin 28s linear infinite;
+			}
+
+			@keyframes slow-spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			.cookie-button {
+				position: relative;
+				z-index: 2;
+				width: 78%;
+				aspect-ratio: 1;
+				border: 0;
+				border-radius: 50%;
+				background:
+					radial-gradient(circle at 34% 26%, rgba(255, 244, 190, 0.9) 0 3%, transparent 4%),
+					radial-gradient(circle at 45% 45%, #f7c46f 0%, #df9851 72%, #bc6e32 100%);
+				box-shadow:
+					inset 10px 10px 16px rgba(255, 226, 154, 0.56),
+					inset -13px -17px 19px rgba(113, 57, 27, 0.24),
+					0 18px 0 #9e5428,
+					0 28px 45px rgba(104, 55, 25, 0.3);
+				cursor: pointer;
+				outline: none;
+				transition:
+					transform 80ms ease,
+					box-shadow 80ms ease;
+				-webkit-tap-highlight-color: transparent;
+			}
+
+			.cookie-button:hover {
+				transform: translateY(-4px) rotate(-1.5deg) scale(1.02);
+			}
+
+			.cookie-button:active,
+			.cookie-button.is-clicked {
+				transform: translateY(12px) scale(0.96);
+				box-shadow:
+					inset 10px 10px 16px rgba(255, 226, 154, 0.56),
+					inset -13px -17px 19px rgba(113, 57, 27, 0.24),
+					0 6px 0 #9e5428,
+					0 12px 22px rgba(104, 55, 25, 0.24);
+			}
+
+			.cookie-button:focus-visible {
+				box-shadow:
+					0 0 0 6px var(--paper),
+					0 0 0 10px var(--orange),
+					0 18px 0 #9e5428,
+					0 28px 45px rgba(104, 55, 25, 0.3);
+			}
+
+			.chip {
+				position: absolute;
+				width: 11%;
+				aspect-ratio: 1;
+				border-radius: 48% 52% 46% 54%;
+				background: #51301f;
+				box-shadow: inset 2px 2px 2px rgba(255, 255, 255, 0.13);
+				pointer-events: none;
+			}
+
+			.chip:nth-child(1) {
+				left: 26%;
+				top: 21%;
+				transform: rotate(18deg) scale(0.86);
+			}
+			.chip:nth-child(2) {
+				right: 24%;
+				top: 27%;
+				transform: rotate(-8deg) scale(1.1);
+			}
+			.chip:nth-child(3) {
+				left: 43%;
+				top: 44%;
+				transform: rotate(32deg) scale(0.72);
+			}
+			.chip:nth-child(4) {
+				left: 21%;
+				bottom: 27%;
+				transform: rotate(-20deg);
+			}
+			.chip:nth-child(5) {
+				right: 19%;
+				bottom: 23%;
+				transform: rotate(17deg) scale(0.78);
+			}
+			.chip:nth-child(6) {
+				left: 47%;
+				bottom: 14%;
+				transform: rotate(12deg) scale(0.56);
+			}
+
+			.click-value {
+				position: absolute;
+				z-index: 5;
+				color: var(--orange-dark);
+				font-size: 22px;
+				font-weight: 900;
+				pointer-events: none;
+				text-shadow: 0 2px 0 white;
+				animation: crumb-rise 850ms ease-out forwards;
+			}
+
+			@keyframes crumb-rise {
+				0% {
+					opacity: 0;
+					transform: translate(-50%, 0) scale(0.7);
+				}
+				18% {
+					opacity: 1;
+				}
+				100% {
+					opacity: 0;
+					transform: translate(-50%, -78px) scale(1.14);
+				}
+			}
+
+			.click-hint {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				color: var(--muted);
+				font-size: 12px;
+			}
+
+			.click-hint kbd {
+				padding: 4px 7px;
+				border: 1px solid #dacabb;
+				border-bottom-width: 2px;
+				border-radius: 7px;
+				background: white;
+				color: var(--ink);
+				font-size: 10px;
+				font-weight: 800;
+			}
+
+			.shop {
+				display: flex;
+				min-width: 0;
+				min-height: 0;
+				flex-direction: column;
+				padding: clamp(20px, 2.5vw, 30px);
+				border: 1px solid rgba(213, 190, 168, 0.62);
+				border-radius: 28px;
+				background: rgba(255, 253, 248, 0.86);
+				box-shadow: var(--shadow);
+				overflow: hidden;
+			}
+
+			.shop-header {
+				display: flex;
+				align-items: end;
+				justify-content: space-between;
+				gap: 18px;
+				margin-bottom: 16px;
+			}
+
+			.shop h2 {
+				margin: 0;
+				font-family: Georgia, 'Times New Roman', serif;
+				font-size: 28px;
+				letter-spacing: -0.03em;
+			}
+
+			.shop-subtitle {
+				margin: 4px 0 0;
+				color: var(--muted);
+				font-size: 12px;
+			}
+
+			.rank {
+				flex: 0 0 auto;
+				padding: 7px 10px;
+				border-radius: 999px;
+				background: #f3eadf;
+				color: var(--orange-dark);
+				font-size: 10px;
+				font-weight: 850;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+			}
+
+			.upgrades {
+				display: grid;
+				gap: 10px;
+				min-height: 0;
+				overflow: auto;
+				scrollbar-width: thin;
+				scrollbar-color: #d9c6b4 transparent;
+			}
+
+			.upgrade {
+				display: grid;
+				grid-template-columns: 48px 1fr auto;
+				gap: 13px;
+				align-items: center;
+				width: 100%;
+				padding: 13px;
+				border: 1px solid var(--line);
+				border-radius: 17px;
+				background: white;
+				color: var(--ink);
+				text-align: left;
+				cursor: pointer;
+				transition: 160ms ease;
+			}
+
+			.upgrade:not(:disabled):hover {
+				border-color: #e6ad83;
+				box-shadow: 0 10px 22px rgba(88, 54, 32, 0.08);
+				transform: translateY(-2px);
+			}
+
+			.upgrade:focus-visible {
+				outline: 3px solid rgba(232, 115, 53, 0.35);
+				outline-offset: 2px;
+			}
+
+			.upgrade:disabled {
+				background: #fbf8f4;
+				color: #a3968c;
+				cursor: not-allowed;
+				opacity: 0.72;
+			}
+
+			.upgrade-icon {
+				display: grid;
+				width: 48px;
+				height: 48px;
+				place-items: center;
+				border-radius: 14px;
+				background: #fff2df;
+				font-size: 23px;
+			}
+
+			.upgrade-name-row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.upgrade-name {
+				font-size: 14px;
+				font-weight: 800;
+			}
+
+			.owned {
+				padding: 2px 6px;
+				border-radius: 999px;
+				background: #e7efe9;
+				color: var(--green);
+				font-size: 9px;
+				font-weight: 850;
+			}
+
+			.upgrade-description {
+				margin-top: 3px;
+				color: var(--muted);
+				font-size: 11px;
+				line-height: 1.35;
+			}
+
+			.upgrade-price {
+				padding: 7px 9px;
+				border-radius: 10px;
+				background: #f6eee4;
+				color: #71492f;
+				font-size: 11px;
+				font-weight: 850;
+				white-space: nowrap;
+			}
+
+			.shop-footer {
+				margin-top: 14px;
+				padding-top: 14px;
+				border-top: 1px solid var(--line);
+			}
+
+			.progress-copy {
+				display: flex;
+				justify-content: space-between;
+				margin-bottom: 7px;
+				color: var(--muted);
+				font-size: 10px;
+				font-weight: 750;
+			}
+
+			.progress-track {
+				height: 7px;
+				border-radius: 99px;
+				background: #eee4da;
+				overflow: hidden;
+			}
+
+			.progress-fill {
+				height: 100%;
+				border-radius: inherit;
+				background: linear-gradient(90deg, var(--orange), var(--gold));
+				transition: width 240ms ease;
+			}
+
+			.toast {
+				position: fixed;
+				z-index: 20;
+				top: 88px;
+				left: 50%;
+				display: flex;
+				align-items: center;
+				gap: 9px;
+				padding: 11px 15px;
+				border: 1px solid #ead7bc;
+				border-radius: 14px;
+				background: #fffaf0;
+				box-shadow: 0 15px 40px rgba(72, 42, 25, 0.18);
+				font-size: 12px;
+				font-weight: 800;
+				transform: translate(-50%, -14px);
+				opacity: 0;
+				pointer-events: none;
+				transition: 220ms ease;
+			}
+
+			.toast.show {
+				transform: translate(-50%, 0);
+				opacity: 1;
+			}
+
+			@media (max-width: 760px) {
+				body {
+					overflow: auto;
+				}
+				.app {
+					height: auto;
+					min-height: 100vh;
+				}
+				.topbar {
+					align-items: flex-start;
+				}
+				.brand-tagline {
+					display: none;
+				}
+				.header-stats {
+					gap: 6px;
+				}
+				.header-stat {
+					min-width: 74px;
+					padding: 8px 10px;
+				}
+				.workspace {
+					grid-template-columns: 1fr;
+				}
+				.bakery {
+					min-height: 560px;
+				}
+				.shop {
+					min-height: 510px;
+				}
+			}
+
+			@media (max-width: 520px) {
+				.topbar {
+					padding: 12px 15px;
+				}
+				.brand-name {
+					font-size: 18px;
+				}
+				.brand-mark {
+					width: 36px;
+					height: 36px;
+				}
+				.header-stat:first-child {
+					display: none;
+				}
+				.workspace {
+					padding: 14px;
+				}
+				.upgrade {
+					grid-template-columns: 42px 1fr;
+				}
+				.upgrade-icon {
+					width: 42px;
+					height: 42px;
+				}
+				.upgrade-price {
+					grid-column: 2;
+					justify-self: start;
+				}
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				*,
+				*::before,
+				*::after {
+					scroll-behavior: auto !important;
+					animation-duration: 0.01ms !important;
+					animation-iteration-count: 1 !important;
+					transition-duration: 0.01ms !important;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="app">
+			<header class="topbar">
+				<div class="brand">
+					<div class="brand-mark" aria-hidden="true">C</div>
+					<div>
+						<div class="brand-name">Crumb &amp; Co.</div>
+						<div class="brand-tagline">Small batch cookie works</div>
+					</div>
+				</div>
+				<div class="header-stats">
+					<div class="header-stat">
+						<span>Per click</span>
+						<strong id="per-click">1 cookie</strong>
+					</div>
+					<div class="header-stat">
+						<span>Per second</span>
+						<strong id="per-second">0 cookies</strong>
+					</div>
+					<button
+						class="reset"
+						id="reset"
+						type="button"
+						title="Start a fresh batch"
+						aria-label="Reset game"
+					>
+						↻
+					</button>
+				</div>
+			</header>
+
+			<section class="workspace">
+				<section class="bakery" aria-labelledby="bakery-title">
+					<div class="bakery-content">
+						<div class="eyebrow">Today's bake</div>
+						<h1 id="bakery-title"><span id="cookie-count">0</span> cookies</h1>
+						<p class="total-label"><span id="all-time">0</span> baked all time</p>
+						<div class="cookie-stage" id="cookie-stage">
+							<button class="cookie-button" id="cookie" type="button" aria-label="Bake a cookie">
+								<span class="chip"></span>
+								<span class="chip"></span>
+								<span class="chip"></span>
+								<span class="chip"></span>
+								<span class="chip"></span>
+								<span class="chip"></span>
+							</button>
+						</div>
+						<div class="click-hint"><kbd>Space</kbd><span>or tap the cookie to bake</span></div>
+					</div>
+				</section>
+
+				<aside class="shop" aria-labelledby="shop-title">
+					<div class="shop-header">
+						<div>
+							<h2 id="shop-title">Kitchen upgrades</h2>
+							<p class="shop-subtitle">Turn one cookie into a tiny empire.</p>
+						</div>
+						<div class="rank" id="rank">Home baker</div>
+					</div>
+					<div class="upgrades" id="upgrades"></div>
+					<div class="shop-footer">
+						<div class="progress-copy">
+							<span id="next-copy">Next rank at 100 cookies</span
+							><span id="progress-percent">0%</span>
+						</div>
+						<div
+							class="progress-track"
+							role="progressbar"
+							aria-label="Progress to next bakery rank"
+							aria-valuemin="0"
+							aria-valuemax="100"
+							aria-valuenow="0"
+						>
+							<div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+						</div>
+					</div>
+				</aside>
+			</section>
+		</main>
+
+		<div class="toast" id="toast" role="status" aria-live="polite">
+			<span aria-hidden="true">✦</span><span id="toast-copy"></span>
+		</div>
+
+		<script>
+			const upgrades = [
+				{
+					id: 'mitt',
+					name: 'Lucky oven mitt',
+					icon: '🧤',
+					baseCost: 15,
+					cps: 0.2,
+					click: 0,
+					description: '+0.2 cookies every second',
+				},
+				{
+					id: 'mixer',
+					name: 'Countertop mixer',
+					icon: '🥣',
+					baseCost: 65,
+					cps: 1,
+					click: 0,
+					description: '+1 cookie every second',
+				},
+				{
+					id: 'recipe',
+					name: 'Secret recipe',
+					icon: '📖',
+					baseCost: 140,
+					cps: 0,
+					click: 1,
+					description: '+1 cookie with every tap',
+				},
+				{
+					id: 'oven',
+					name: 'Brick oven',
+					icon: '🔥',
+					baseCost: 480,
+					cps: 6,
+					click: 0,
+					description: '+6 cookies every second',
+				},
+				{
+					id: 'delivery',
+					name: 'Delivery bike',
+					icon: '🚲',
+					baseCost: 1600,
+					cps: 22,
+					click: 0,
+					description: '+22 cookies every second',
+				},
+			];
+
+			const ranks = [
+				{ name: 'Home baker', floor: 0, next: 100 },
+				{ name: 'Cookie cart', floor: 100, next: 1000 },
+				{ name: 'Neighborhood bakery', floor: 1000, next: 10000 },
+				{ name: 'Crumb tycoon', floor: 10000, next: 100000 },
+				{ name: 'Cookie legend', floor: 100000, next: null },
+			];
+
+			const state = {
+				cookies: 0,
+				allTime: 0,
+				owned: Object.fromEntries(upgrades.map((upgrade) => [upgrade.id, 0])),
+			};
+
+			const countEl = document.getElementById('cookie-count');
+			const allTimeEl = document.getElementById('all-time');
+			const perClickEl = document.getElementById('per-click');
+			const perSecondEl = document.getElementById('per-second');
+			const cookieButton = document.getElementById('cookie');
+			const cookieStage = document.getElementById('cookie-stage');
+			const upgradeList = document.getElementById('upgrades');
+			const toast = document.getElementById('toast');
+			const toastCopy = document.getElementById('toast-copy');
+			let toastTimer;
+			let lastRank = 0;
+
+			function format(value) {
+				if (value < 1000)
+					return value < 10 && value % 1 ? value.toFixed(1) : Math.floor(value).toLocaleString();
+				const units = [
+					{ value: 1e9, suffix: 'B' },
+					{ value: 1e6, suffix: 'M' },
+					{ value: 1e3, suffix: 'K' },
+				];
+				const unit = units.find((item) => value >= item.value);
+				return `${(value / unit.value).toFixed(value < unit.value * 10 ? 1 : 0)}${unit.suffix}`;
+			}
+
+			function perClick() {
+				return (
+					1 +
+					upgrades.reduce((total, upgrade) => total + state.owned[upgrade.id] * upgrade.click, 0)
+				);
+			}
+
+			function perSecond() {
+				return upgrades.reduce(
+					(total, upgrade) => total + state.owned[upgrade.id] * upgrade.cps,
+					0
+				);
+			}
+
+			function price(upgrade) {
+				return Math.ceil(upgrade.baseCost * Math.pow(1.24, state.owned[upgrade.id]));
+			}
+
+			function showToast(message) {
+				toastCopy.textContent = message;
+				toast.classList.add('show');
+				clearTimeout(toastTimer);
+				toastTimer = setTimeout(() => toast.classList.remove('show'), 2100);
+			}
+
+			function currentRankIndex() {
+				let index = 0;
+				for (let i = 0; i < ranks.length; i += 1) {
+					if (state.allTime >= ranks[i].floor) index = i;
+				}
+				return index;
+			}
+
+			function render() {
+				countEl.textContent = format(state.cookies);
+				allTimeEl.textContent = format(state.allTime);
+				perClickEl.textContent = `${format(perClick())} ${perClick() === 1 ? 'cookie' : 'cookies'}`;
+				perSecondEl.textContent = `${format(perSecond())} cookies`;
+
+				upgradeList.innerHTML = upgrades
+					.map((upgrade) => {
+						const cost = price(upgrade);
+						const owned = state.owned[upgrade.id];
+						return `
+						<button class="upgrade" type="button" data-upgrade="${upgrade.id}" ${state.cookies < cost ? 'disabled' : ''} aria-label="Buy ${upgrade.name} for ${cost} cookies">
+							<span class="upgrade-icon" aria-hidden="true">${upgrade.icon}</span>
+							<span>
+								<span class="upgrade-name-row">
+									<span class="upgrade-name">${upgrade.name}</span>
+									${owned ? `<span class="owned">${owned} owned</span>` : ''}
+								</span>
+								<span class="upgrade-description">${upgrade.description}</span>
+							</span>
+							<span class="upgrade-price">${format(cost)} cookies</span>
+						</button>`;
+					})
+					.join('');
+
+				const rankIndex = currentRankIndex();
+				const rank = ranks[rankIndex];
+				document.getElementById('rank').textContent = rank.name;
+				if (rank.next) {
+					const progress = Math.max(
+						0,
+						Math.min(100, ((state.allTime - rank.floor) / (rank.next - rank.floor)) * 100)
+					);
+					document.getElementById('next-copy').textContent =
+						`Next rank at ${format(rank.next)} cookies`;
+					document.getElementById('progress-percent').textContent = `${Math.floor(progress)}%`;
+					document.getElementById('progress-fill').style.width = `${progress}%`;
+					document
+						.querySelector('.progress-track')
+						.setAttribute('aria-valuenow', Math.floor(progress));
+				} else {
+					document.getElementById('next-copy').textContent = 'The whole town smells like cookies';
+					document.getElementById('progress-percent').textContent = '100%';
+					document.getElementById('progress-fill').style.width = '100%';
+					document.querySelector('.progress-track').setAttribute('aria-valuenow', 100);
+				}
+				if (rankIndex > lastRank) {
+					showToast(`New bakery rank: ${rank.name}`);
+					lastRank = rankIndex;
+				}
+			}
+
+			function bake(event) {
+				const amount = perClick();
+				state.cookies += amount;
+				state.allTime += amount;
+				cookieButton.classList.add('is-clicked');
+				setTimeout(() => cookieButton.classList.remove('is-clicked'), 85);
+
+				const crumb = document.createElement('span');
+				crumb.className = 'click-value';
+				crumb.textContent = `+${format(amount)}`;
+				const rect = cookieStage.getBoundingClientRect();
+				const sourceX =
+					event && typeof event.clientX === 'number' && event.clientX
+						? event.clientX - rect.left
+						: rect.width / 2;
+				const sourceY =
+					event && typeof event.clientY === 'number' && event.clientY
+						? event.clientY - rect.top
+						: rect.height / 2;
+				crumb.style.left = `${sourceX}px`;
+				crumb.style.top = `${sourceY}px`;
+				cookieStage.appendChild(crumb);
+				setTimeout(() => crumb.remove(), 900);
+				render();
+			}
+
+			cookieButton.addEventListener('click', bake);
+
+			upgradeList.addEventListener('click', (event) => {
+				const button = event.target.closest('[data-upgrade]');
+				if (!button) return;
+				const upgrade = upgrades.find((item) => item.id === button.dataset.upgrade);
+				const cost = price(upgrade);
+				if (state.cookies < cost) return;
+				state.cookies -= cost;
+				state.owned[upgrade.id] += 1;
+				showToast(`${upgrade.name} added to the kitchen`);
+				render();
+			});
+
+			document.addEventListener('keydown', (event) => {
+				if (event.code !== 'Space' || event.repeat || event.target.tagName === 'BUTTON') return;
+				event.preventDefault();
+				bake();
+			});
+
+			document.getElementById('reset').addEventListener('click', () => {
+				if (!confirm('Start a fresh batch? This resets your cookies and upgrades.')) return;
+				state.cookies = 0;
+				state.allTime = 0;
+				lastRank = 0;
+				for (const upgrade of upgrades) state.owned[upgrade.id] = 0;
+				showToast('Fresh batch started');
+				render();
+			});
+
+			let lastTick = performance.now();
+			setInterval(() => {
+				const now = performance.now();
+				const elapsed = (now - lastTick) / 1000;
+				lastTick = now;
+				const baked = perSecond() * elapsed;
+				if (baked > 0) {
+					state.cookies += baked;
+					state.allTime += baked;
+					render();
+				}
+			}, 250);
+
+			render();
+		</script>
+	</body>
+</html>

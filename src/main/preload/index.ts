@@ -51,6 +51,7 @@ import { createFsApi } from './fs';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
+import { createTabsApi } from './tabs';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
@@ -60,6 +61,7 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createContextTimelineApi } from './contextTimeline';
 import { createAgentRunApi } from './agentRun';
 import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
@@ -206,7 +208,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// App lifecycle API
 	app: createAppApi(),
 
-	// Synchronous platform string — process.platform never changes at runtime
+	// Synchronous platform string - process.platform never changes at runtime
 	platform: process.platform,
 
 	// Resolved on-disk maestro-cli.js path (dev vs packaged), or null. Used by
@@ -228,13 +230,16 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Tab Naming API (automatic tab name generation)
 	tabNaming: createTabNamingApi(),
 
+	// Tab lifecycle API (renderer -> main tab-close notification)
+	tabs: createTabsApi(),
+
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
 
 	// Cue API (event-driven automation)
 	cue: createCueApi(),
 
-	// Cue Backup API (Cue modal Backup tab — snapshot/restore cue.yaml + prompts)
+	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
 	// Pianola API (autonomous manager: rules + decision log)
@@ -252,6 +257,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+	// Context Timeline capture log (backfills the per-agent turn history)
+	contextTimeline: createContextTimelineApi(),
 	// AgentRun control-plane API (neutral run/campaign ledger)
 	agentRun: createAgentRunApi(),
 	// Coworking API (per-agent MCP installer + terminal registry sync)
@@ -259,7 +266,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Browser Session API (clear per-partition browsing data)
 	browserSession: createBrowserSessionApi(),
 
-	// Multi-window API (window.maestro.windows.* — enumerate/create/move windows)
+	// Multi-window API (window.maestro.windows.* - enumerate/create/move windows)
 	windows: createWindowsApi(),
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
@@ -576,6 +583,10 @@ export type {
 	TabNamingApi,
 	TabNamingConfig,
 } from './tabNaming';
+export type {
+	// From tabs
+	TabsApi,
+} from './tabs';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

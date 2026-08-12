@@ -1,5 +1,5 @@
 /**
- * Tests for MaestroPromptsTab — selection precedence and persistence.
+ * Tests for MaestroPromptsTab - selection precedence and persistence.
  *
  * Covers the default-on-open behavior:
  *   1) explicit initialSelectedPromptId prop wins

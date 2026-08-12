@@ -16,7 +16,7 @@ import type { Session, TerminalTab } from '../../../renderer/types';
 import type { Theme } from '../../../renderer/types';
 
 // ---------------------------------------------------------------------------
-// Mock XTerminal — the real component requires canvas/WebGL which jsdom lacks.
+// Mock XTerminal - the real component requires canvas/WebGL which jsdom lacks.
 // We expose a forwardRef'd stub so TerminalView can attach its imperative ref.
 // ---------------------------------------------------------------------------
 
@@ -72,7 +72,7 @@ vi.mock('../../../renderer/components/TerminalSearchBar', () => ({
 	TerminalSearchBar: () => null,
 }));
 
-// Mock tabStore — TerminalView uses closeTerminalTab to auto-close exited tabs
+// Mock tabStore - TerminalView uses closeTerminalTab to auto-close exited tabs
 const { mockCloseTerminalTab } = vi.hoisted(() => ({
 	mockCloseTerminalTab: vi.fn(),
 }));
@@ -85,7 +85,7 @@ vi.mock('../../../renderer/stores/tabStore', () => ({
 	},
 }));
 
-// Mock notifyToast — TerminalView shows error toasts on spawn failure
+// Mock notifyToast - TerminalView shows error toasts on spawn failure
 const { mockNotifyToast } = vi.hoisted(() => ({
 	mockNotifyToast: vi.fn().mockReturnValue('toast-id'),
 }));
@@ -163,7 +163,7 @@ const maestro = () => (window as any).maestro;
 beforeEach(() => {
 	vi.clearAllMocks();
 	xtermPropsBySessionId.clear();
-	// spawnTerminalTab and onData are not in the global setup mock — add them here
+	// spawnTerminalTab and onData are not in the global setup mock - add them here
 	maestro().process.spawnTerminalTab = vi.fn().mockResolvedValue({ success: true, pid: 9999 });
 	maestro().process.onData = vi.fn().mockReturnValue(() => {});
 });
@@ -172,7 +172,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('TerminalView — isVisible repaint behaviour', () => {
+describe('TerminalView - isVisible repaint behaviour', () => {
 	it('calls refresh() and focus() when isVisible becomes true', async () => {
 		const tab = makeTab({ pid: 1234, state: 'idle' });
 		const session = makeSession([tab]);
@@ -181,7 +181,7 @@ describe('TerminalView — isVisible repaint behaviour', () => {
 			<TerminalView {...defaultProps} session={session} isVisible={false} />
 		);
 
-		// Not visible yet — no repaint calls expected from the isVisible effect
+		// Not visible yet - no repaint calls expected from the isVisible effect
 		expect(mockRefresh).not.toHaveBeenCalled();
 		expect(mockFocus).not.toHaveBeenCalled();
 
@@ -212,7 +212,7 @@ describe('TerminalView — isVisible repaint behaviour', () => {
 		// Reset the mock AFTER mount so we only measure calls from the re-render
 		mockRefresh.mockClear();
 
-		// Re-render with same isVisible=false — the isVisible effect must NOT fire
+		// Re-render with same isVisible=false - the isVisible effect must NOT fire
 		await act(async () => {
 			rerender(<TerminalView {...defaultProps} session={session} isVisible={false} />);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -280,10 +280,10 @@ describe('TerminalView — isVisible repaint behaviour', () => {
 	});
 });
 
-describe('TerminalView — auto-close on shell exit', () => {
+describe('TerminalView - auto-close on shell exit', () => {
 	it('calls closeTerminalTab when a tab transitions to exited state after 2s', async () => {
 		vi.useFakeTimers();
-		// Tab created >2s ago — normal exit should auto-close
+		// Tab created >2s ago - normal exit should auto-close
 		const tab = makeTab({ pid: 1234, state: 'busy', createdAt: Date.now() - 5000 });
 		const session = makeSession([tab]);
 
@@ -315,7 +315,7 @@ describe('TerminalView — auto-close on shell exit', () => {
 
 	it('auto-closes and shows error toast when shell exits within 2s of creation (startup failure)', async () => {
 		vi.useFakeTimers();
-		// Tab just created — exit within 2s is a startup failure
+		// Tab just created - exit within 2s is a startup failure
 		const tab = makeTab({ pid: 1234, state: 'busy', createdAt: Date.now() });
 		const session = makeSession([tab]);
 
@@ -338,7 +338,7 @@ describe('TerminalView — auto-close on shell exit', () => {
 		// Tab should be closed
 		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1', 'pty-exit');
 
-		// Toast is debounced (200ms) — advance past the dedup window
+		// Toast is debounced (200ms) - advance past the dedup window
 		act(() => {
 			vi.advanceTimersByTime(250);
 		});
@@ -488,7 +488,7 @@ describe('TerminalView — auto-close on shell exit', () => {
 // so only the signal distinguishes it from the user typing `exit`. (#1184)
 // ---------------------------------------------------------------------------
 
-describe('TerminalView — killed shell keeps the tab (issue #1184)', () => {
+describe('TerminalView - killed shell keeps the tab (issue #1184)', () => {
 	/** Renders, delivers a process:exit through the real onExit subscription, then
 	 *  rerenders with the tab flipped to 'exited' as the store would. */
 	function exitPlainTabWith(code: number, signal?: number) {
@@ -550,12 +550,12 @@ describe('TerminalView — killed shell keeps the tab (issue #1184)', () => {
 	});
 });
 
-describe('TerminalView — SSH terminal working directory (regression)', () => {
+describe('TerminalView - SSH terminal working directory (regression)', () => {
 	// Regression test suite: SSH terminals must cd to the correct remote directory.
 	// The workingDirOverride in sessionSshRemoteConfig must follow the fallback chain:
 	//   1. sessionSshRemoteConfig.workingDirOverride (explicit)
 	//   2. session.remoteCwd (tracked remote cwd from agent)
-	//   3. session.cwd (the working directory from session creation — a remote path for SSH sessions)
+	//   3. session.cwd (the working directory from session creation - a remote path for SSH sessions)
 	// Without this chain, SSH terminals silently drop into the remote home directory.
 
 	it('uses sessionSshRemoteConfig.workingDirOverride when set', async () => {
@@ -632,7 +632,7 @@ describe('TerminalView — SSH terminal working directory (regression)', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		});
 
-		// session.cwd is the last-resort fallback — for SSH sessions this IS a remote path
+		// session.cwd is the last-resort fallback - for SSH sessions this IS a remote path
 		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
 			expect.objectContaining({
 				sessionSshRemoteConfig: expect.objectContaining({
@@ -671,7 +671,7 @@ describe('TerminalView — SSH terminal working directory (regression)', () => {
 	});
 });
 
-describe('TerminalView — selection context menu wiring', () => {
+describe('TerminalView - selection context menu wiring', () => {
 	it('forwards onCopySelection to XTerminal unchanged', () => {
 		const onCopySelection = vi.fn();
 		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
@@ -728,7 +728,7 @@ describe('TerminalView — selection context menu wiring', () => {
 	});
 });
 
-describe('TerminalView — clearActiveTerminal sends Ctrl+L to the PTY', () => {
+describe('TerminalView - clearActiveTerminal sends Ctrl+L to the PTY', () => {
 	// xterm.clear() only removes scrollback above the current prompt line, which feels
 	// like a no-op when the prompt was already at the top. Sending \x0c (Ctrl+L) to the
 	// PTY makes the shell redraw the prompt on a fresh screen, matching iTerm/VSCode
@@ -766,7 +766,7 @@ describe('TerminalView — clearActiveTerminal sends Ctrl+L to the PTY', () => {
 	});
 });
 
-describe('TerminalView — no refresh when no tabs', () => {
+describe('TerminalView - no refresh when no tabs', () => {
 	it('renders empty state without calling refresh when there are no terminal tabs', () => {
 		const session = makeSession([]);
 		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
@@ -775,7 +775,7 @@ describe('TerminalView — no refresh when no tabs', () => {
 	});
 });
 
-describe('TerminalView — touch key bar (coarse pointer)', () => {
+describe('TerminalView - touch key bar (coarse pointer)', () => {
 	const originalMatchMedia = window.matchMedia;
 
 	// isCoarsePointer() reads window.matchMedia('(pointer: coarse)'); drive it so

@@ -6,7 +6,12 @@ import type { Theme } from '../../../types';
 
 interface TabCompletionPopoverProps {
 	isOpen: boolean;
-	isTerminalMode: boolean;
+	/**
+	 * Whether the composer currently holds a shell command line - true in
+	 * terminal mode, and in AI mode while the draft is in command mode (`!cmd`).
+	 * Completion is meaningless for an ordinary AI message.
+	 */
+	isShellInput: boolean;
 	isGitRepo?: boolean;
 	suggestions: TabCompletionSuggestion[];
 	selectedIndex: number;
@@ -64,7 +69,7 @@ function getSuggestionColor(type: TabCompletionSuggestion['type'], theme: Theme)
 
 export const TabCompletionPopover = memo(function TabCompletionPopover({
 	isOpen,
-	isTerminalMode,
+	isShellInput,
 	isGitRepo,
 	suggestions,
 	selectedIndex,
@@ -77,7 +82,7 @@ export const TabCompletionPopover = memo(function TabCompletionPopover({
 	setSelectedIndex,
 	inputRef,
 }: TabCompletionPopoverProps) {
-	if (!isOpen || !isTerminalMode) {
+	if (!isOpen || !isShellInput) {
 		return null;
 	}
 

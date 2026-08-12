@@ -387,7 +387,7 @@ describe('useQuickActionsHandlers', () => {
 			expect(updatedTab.showThinking).toBe('on');
 		});
 
-		it('clears thinking and tool logs when cycling to off', () => {
+		it('clears thinking logs but keeps tool logs (render-gated) when cycling to off', () => {
 			const tab = createTab({
 				id: 'tab-1',
 				showThinking: 'sticky',
@@ -415,8 +415,10 @@ describe('useQuickActionsHandlers', () => {
 
 			const updatedTab = useSessionStore.getState().sessions[0].aiTabs[0];
 			const sources = updatedTab.logs.map((l: any) => l.source);
+			// Thinking logs are storage-gated; tool logs are always recorded and hidden
+			// only at render, so they must survive a thinking-off toggle.
 			expect(sources).not.toContain('thinking');
-			expect(sources).not.toContain('tool');
+			expect(sources).toContain('tool');
 			expect(sources).toContain('user');
 			expect(sources).toContain('ai');
 		});

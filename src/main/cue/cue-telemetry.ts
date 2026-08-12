@@ -1,14 +1,14 @@
 /**
- * Cue Telemetry — captures `trigger_fired` and `run_completed` events to a
+ * Cue Telemetry - captures `trigger_fired` and `run_completed` events to a
  * local outbox and submits them in batches to runmaestro.ai.
  *
  * Wire contract is documented in CLAUDE-CUE.md (§Telemetry). Two event types
  * cover all server-side rollups:
  *
- * - `trigger_fired`  — emitted from `cue-dispatch-service.ts` once per
+ * - `trigger_fired`  - emitted from `cue-dispatch-service.ts` once per
  *   subscription dispatch (NOT once per fan-out target). Carries the source
  *   event type so the server can bucket by trigger kind.
- * - `run_completed`  — emitted from `cue-engine.ts`'s `onRunCompleted`
+ * - `run_completed`  - emitted from `cue-engine.ts`'s `onRunCompleted`
  *   callback once per natural run completion. Carries hashed pipeline id,
  *   raw chain root id, parent run id, duration, status, and `task_kind`
  *   ("agent_handoff" | "command_node" | "trigger_action") so the server
@@ -20,7 +20,7 @@
  *   Stable per install, not cross-correlatable across users.
  * - `chain_root_id` is left raw because it's already a random UUID assigned
  *   at run-start with no semantic content.
- * - The outbox stores serialized events (already hashed) — no plaintext
+ * - The outbox stores serialized events (already hashed) - no plaintext
  *   names ever land on disk in the telemetry table.
  *
  * Gating:
@@ -37,7 +37,7 @@
  * - Primary flush trigger: an autorun completion calls `flushTelemetry()`
  *   from `stats:end-autorun`. This is the user's natural quiet window.
  * - Fallback: app-quit flush + outbox-threshold flush (>= 200 rows).
- * - No timer-based flush — burning battery on idle installs is not the goal.
+ * - No timer-based flush - burning battery on idle installs is not the goal.
  */
 
 import * as crypto from 'crypto';
@@ -51,7 +51,7 @@ import {
 
 const LOG_CONTEXT = '[CueTelemetry]';
 
-/** Schema version of the wire payload — bumped on breaking format changes. */
+/** Schema version of the wire payload - bumped on breaking format changes. */
 const SCHEMA_VERSION = 1;
 
 /** Endpoint for telemetry submission. Module-level so tests can override. */
@@ -73,13 +73,13 @@ const MAX_PAYLOAD_BYTES = 256 * 1024;
  */
 const OUTBOX_FLUSH_THRESHOLD = 200;
 
-/** Fetch timeout for telemetry POSTs. Short — telemetry is best-effort. */
+/** Fetch timeout for telemetry POSTs. Short - telemetry is best-effort. */
 const FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * Hash truncation length. 16 hex chars = 64 bits of entropy, enough to
  * distinguish O(billions) of distinct names without collision risk while
- * keeping the wire payload compact. Not cryptographic — only obfuscation.
+ * keeping the wire payload compact. Not cryptographic - only obfuscation.
  */
 const HASH_PREFIX_LENGTH = 16;
 
@@ -145,7 +145,7 @@ interface ModuleState {
 	config: CueTelemetryConfig | null;
 	/** Wall-clock ms until which submissions are paused (server backoff). */
 	backoffUntil: number;
-	/** Guards against overlapping flushes — only one POST in flight at a time. */
+	/** Guards against overlapping flushes - only one POST in flight at a time. */
 	flushInFlight: boolean;
 }
 
@@ -156,7 +156,7 @@ const state: ModuleState = {
 };
 
 /**
- * Configure the telemetry module. Idempotent — calling more than once
+ * Configure the telemetry module. Idempotent - calling more than once
  * replaces the prior config (used by tests, and by the engine when it
  * restarts with new dependencies).
  */
@@ -193,7 +193,7 @@ function isTelemetryActive(): boolean {
 /**
  * Hash a name with the local installationId as salt. Returns null if no
  * installationId is available yet (engine started before main bootstrap
- * persisted the id) or if the input name is empty — callers store null to
+ * persisted the id) or if the input name is empty - callers store null to
  * avoid creating a misleading "empty-string" bucket on the server.
  */
 export function hashName(
@@ -278,7 +278,7 @@ function persistEvent(event: CueTelemetryEvent): void {
 		const id = crypto.randomUUID();
 		insertTelemetryEvent(id, JSON.stringify(event));
 		// Threshold-flush safety net for installs that never run Auto Run.
-		// Cheap — countTelemetryEvents is a single COUNT(*) on a small table.
+		// Cheap - countTelemetryEvents is a single COUNT(*) on a small table.
 		const size = countTelemetryEvents();
 		if (size >= OUTBOX_FLUSH_THRESHOLD) {
 			void flushTelemetry({ reason: 'threshold' });
@@ -308,7 +308,7 @@ export interface FlushResult {
 
 /**
  * Drain the outbox by POSTing one batch to the telemetry endpoint. Returns
- * a result describing what happened — callers (autorun completion, app-quit,
+ * a result describing what happened - callers (autorun completion, app-quit,
  * threshold) don't act on it but tests and observers can.
  *
  * On success: deletes submitted rows from the outbox.
@@ -339,7 +339,7 @@ export async function flushTelemetry(
 			try {
 				parsed = JSON.parse(row.eventJson) as CueTelemetryEvent;
 			} catch {
-				// Malformed row — drop it from the outbox so it doesn't poison
+				// Malformed row - drop it from the outbox so it doesn't poison
 				// future flushes. We bundle it into `ids` so the success path
 				// deletes it.
 				ids.push(row.id);
@@ -380,7 +380,7 @@ export async function flushTelemetry(
 			const dropIds = ids.slice(0, dropCount);
 			deleteTelemetryEvents(dropIds);
 			logger.warn(
-				`Telemetry batch exceeded ${MAX_PAYLOAD_BYTES} bytes — dropped ${dropIds.length} events`,
+				`Telemetry batch exceeded ${MAX_PAYLOAD_BYTES} bytes - dropped ${dropIds.length} events`,
 				LOG_CONTEXT
 			);
 			return { ok: false, reason: 'error', error: 'payload-too-large' };
@@ -404,7 +404,7 @@ export async function flushTelemetry(
 			}
 		}
 
-		// 2xx (including 202) — server accepted, drop the rows we sent.
+		// 2xx (including 202) - server accepted, drop the rows we sent.
 		if (response.ok) {
 			deleteTelemetryEvents(ids);
 			logger.info(
@@ -414,25 +414,25 @@ export async function flushTelemetry(
 			return { ok: true, reason: 'sent', sent: events.length };
 		}
 
-		// 4xx — drop the batch (server thinks it's bad and won't accept on
-		// retry). 5xx — keep, retry later. Either way, don't crash.
+		// 4xx - drop the batch (server thinks it's bad and won't accept on
+		// retry). 5xx - keep, retry later. Either way, don't crash.
 		if (response.status >= 400 && response.status < 500) {
 			deleteTelemetryEvents(ids);
 			logger.warn(
-				`Telemetry rejected with ${response.status} — dropped ${events.length} events`,
+				`Telemetry rejected with ${response.status} - dropped ${events.length} events`,
 				LOG_CONTEXT
 			);
 			return { ok: false, reason: 'error', error: `http-${response.status}` };
 		}
 
 		logger.warn(
-			`Telemetry submission failed (${response.status}) — will retry next flush`,
+			`Telemetry submission failed (${response.status}) - will retry next flush`,
 			LOG_CONTEXT
 		);
 		return { ok: false, reason: 'error', error: `http-${response.status}` };
 	} catch (err) {
 		// Network errors (timeout, DNS, offline). Leave outbox rows in place
-		// so the next flush retries them. Do NOT report to Sentry — these are
+		// so the next flush retries them. Do NOT report to Sentry - these are
 		// expected at scale and would generate noise.
 		const message = err instanceof Error ? err.message : String(err);
 		logger.warn(`Telemetry submission error: ${message}`, LOG_CONTEXT);

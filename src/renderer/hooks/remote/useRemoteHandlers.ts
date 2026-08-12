@@ -1,5 +1,5 @@
 /**
- * useRemoteHandlers — extracted from App.tsx (Phase 2K)
+ * useRemoteHandlers - extracted from App.tsx (Phase 2K)
  *
  * Handles remote command processing from the web interface:
  *   - handleRemoteCommand event listener (terminal + AI mode dispatching)
@@ -12,7 +12,12 @@
 
 import { useEffect, useMemo, useCallback } from 'react';
 import type { Session, SessionState, LogEntry, CustomAICommand } from '../../types';
-import { hasCapabilityCached } from '../agent/useAgentCapabilities';
+import {
+	getCachedCapabilities,
+	setCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+	type AgentCapabilities,
+} from '../agent/useAgentCapabilities';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -23,7 +28,7 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../input/useInputProcessing';
 import { logger } from '../../utils/logger';
 
@@ -50,6 +55,17 @@ export interface UseRemoteHandlersDeps {
 	sshRemoteConfigs: Array<{ id: string; name: string }>;
 }
 
+/**
+ * How long the remote AI spawn may run before delivery is acked anyway.
+ *
+ * Kept comfortably inside the main side's `REMOTE_COMMAND_RECEIPT_TIMEOUT_MS`
+ * (3000ms, `src/main/web-server/callbacks/commandCallbacks.ts`) so a slow spawn
+ * is acked as handover rather than timing the caller out, while a spawn that
+ * rejects quickly - a missing or misconfigured agent binary, typically inside a
+ * few milliseconds - still reports the failure honestly.
+ */
+const REMOTE_SPAWN_ACK_GRACE_MS = 1500;
+
 // ============================================================================
 // Return type
 // ============================================================================
@@ -60,12 +76,6 @@ export interface UseRemoteHandlersReturn {
 	/** Map of session names to SSH remote config names */
 	sessionSshRemoteNames: Map<string, string>;
 }
-
-// ============================================================================
-// Selectors
-// ============================================================================
-
-const selectSessions = (s: ReturnType<typeof useSessionStore.getState>) => s.sessions;
 
 // ============================================================================
 // Hook
@@ -83,8 +93,16 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 		sshRemoteConfigs,
 	} = deps;
 
-	// --- Store subscriptions ---
-	const sessions = useSessionStore(selectSessions);
+	// PERF: SSH remote signature only - streaming must not wake App via sessions[].
+	// Remote command handler already reads via sessionsRef / getState().
+	const sessionSshRemoteKey = useSessionStore((s) =>
+		s.sessions
+			.filter(
+				(sess) => sess.sessionSshRemoteConfig?.enabled && sess.sessionSshRemoteConfig.remoteId
+			)
+			.map((sess) => `${sess.name}|${sess.sessionSshRemoteConfig!.remoteId}`)
+			.join('\n')
+	);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
 	const addLogToTab = useMemo(() => useSessionStore.getState().addLogToTab, []);
 	const setSuccessFlashNotification = useMemo(
@@ -93,12 +111,12 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	);
 
 	// ====================================================================
-	// sessionSshRemoteNames — memoized map for group chat participant cards
+	// sessionSshRemoteNames - memoized map for group chat participant cards
 	// ====================================================================
 
 	const sessionSshRemoteNames = useMemo(() => {
 		const map = new Map<string, string>();
-		for (const session of sessions) {
+		for (const session of useSessionStore.getState().sessions) {
 			if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig.remoteId) {
 				const sshConfig = sshRemoteConfigs.find(
 					(c) => c.id === session.sessionSshRemoteConfig?.remoteId
@@ -109,10 +127,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}
 		}
 		return map;
-	}, [sessions, sshRemoteConfigs]);
+		// sessionSshRemoteKey encodes name+remoteId pairs without a full sessions[] sub.
+	}, [sessionSshRemoteKey, sshRemoteConfigs]);
 
 	// ====================================================================
-	// handleRemoteCommand — processes commands from web interface
+	// handleRemoteCommand - processes commands from web interface
 	// ====================================================================
 
 	useEffect(() => {
@@ -124,7 +143,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				/** Optional explicit tab target (from `maestro-cli dispatch --session
 				 *  <tabId>`). When unset, falls back to the active tab. When set
 				 *  but unknown, the command is dropped (we never silently re-route
-				 *  to the active tab — callers chaining `--session <tabId>` would
+				 *  to the active tab - callers chaining `--session <tabId>` would
 				 *  otherwise believe the command landed in the requested tab). */
 				tabId?: string;
 				/** When true, bypass the renderer's busy-state guard. Mirrors the
@@ -135,6 +154,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  Forwarded to the agent spawn so AI tabs can render and send
 				 *  them in the prompt, mirroring desktop staged-images. */
 				images?: string[];
+				/** Reply channel for the web server's delivery receipt. Set when the
+				 *  command arrived over `remote:executeCommand`; absent for
+				 *  in-renderer synthetic dispatches. */
+				receiptChannel?: string;
 			}>;
 			const {
 				sessionId,
@@ -143,7 +166,20 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				tabId: requestedTabId,
 				force,
 				images,
+				receiptChannel,
 			} = customEvent.detail;
+
+			// The CLI's `dispatch` success flag is this ack, not the fact that an
+			// IPC send happened. `accepted: true` means the command reached the
+			// spawn/queue logic - delivery, not execution - so it is sent as the
+			// prompt is handed over, never after the agent replies. Every drop
+			// branch below answers `false` with the reason it dropped.
+			let receiptSent = false;
+			const reportDelivery = (accepted: boolean, reason?: string) => {
+				if (!receiptChannel || receiptSent) return;
+				receiptSent = true;
+				window.maestro.process.sendRemoteCommandReceipt(receiptChannel, accepted, reason);
+			};
 
 			logger.info('[Remote] Processing remote command via event:', undefined, {
 				sessionId,
@@ -156,6 +192,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
 				logger.info('[Remote] ERROR: Session not found in sessionsRef:', undefined, sessionId);
+				reportDelivery(false, 'session-not-found');
 				return;
 			}
 
@@ -198,6 +235,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						};
 					})
 				);
+
+				// The command is committed to the shell path from here on, so ack
+				// delivery before awaiting the run - the receipt reports handover,
+				// not the command's exit status.
+				reportDelivery(true);
 
 				// Use runCommand for clean stdout/stderr capture (same as desktop)
 				// When SSH is enabled for the session, the command runs on the remote host
@@ -250,18 +292,48 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Handle AI mode for batch-mode agents
-			if (!hasCapabilityCached(session.toolType, 'supportsBatchMode')) {
-				logger.info('[Remote] Not a batch-mode agent, skipping');
+			// Handle AI mode for batch-mode agents.
+			//
+			// A cache MISS is not an answer. `hasCapabilityCached` reports one as
+			// the conservative default (`supportsBatchMode: false`), which is how
+			// dispatches to agent types the user had not opened this renderer
+			// session were silently dropped. Startup priming normally fills the
+			// cache, but resolve on demand here too so this path is structurally
+			// incapable of acting on a miss if priming races or fails. A cached
+			// `false` still drops - that is correct for `terminal`/`web`.
+			let supportsBatchMode = getCachedCapabilities(session.toolType)?.supportsBatchMode;
+			if (supportsBatchMode === undefined) {
+				try {
+					const resolved = await window.maestro.agents.getCapabilities(session.toolType);
+					const full: AgentCapabilities = { ...DEFAULT_CAPABILITIES, ...resolved };
+					setCapabilitiesCache(session.toolType, full);
+					supportsBatchMode = full.supportsBatchMode;
+				} catch (error: unknown) {
+					logger.warn(
+						`[Remote] Failed to resolve capabilities for toolType "${session.toolType}" - dropping command`,
+						undefined,
+						error
+					);
+					reportDelivery(false, `capability-lookup-failed:${session.toolType}`);
+					return;
+				}
+			}
+			if (!supportsBatchMode) {
+				logger.info('[Remote] Not a batch-mode agent, skipping', undefined, {
+					toolType: session.toolType,
+					supportsBatchMode,
+				});
+				reportDelivery(false, `not-a-batch-mode-agent:${session.toolType}`);
 				return;
 			}
 
 			// Check if session is busy. `force: true` (from `dispatch --force`)
-			// bypasses this guard — without that escape hatch, the renderer would
+			// bypasses this guard - without that escape hatch, the renderer would
 			// silently drop forced dispatches and the server-side allow-list
 			// would be moot.
 			if (session.state === 'busy' && !force) {
 				logger.info('[Remote] Session is busy, cannot process command');
+				reportDelivery(false, 'session-busy');
 				return;
 			}
 
@@ -276,8 +348,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				: undefined;
 			if (requestedTabId && !requestedTab) {
 				logger.warn(
-					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} — dropping command (avoiding silent re-route to active tab)`
+					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} - dropping command (avoiding silent re-route to active tab)`
 				);
+				reportDelivery(false, `tab-not-found:${requestedTabId}`);
 				return;
 			}
 			const targetTab = requestedTab ?? getActiveTab(session);
@@ -365,7 +438,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						promptToSend.substring(0, 100)
 					);
 				} else {
-					// Unknown slash command — route the error log to the targeted
+					// Unknown slash command - route the error log to the targeted
 					// tab (not whichever tab happens to be active) so the caller
 					// sees the error in the conversation they dispatched into.
 					logger.info('[Remote] Unknown slash command:', undefined, commandText);
@@ -377,6 +450,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						},
 						writeTabId
 					);
+					// Stable code with no command text: the reason string is sent
+					// over the receipt channel and the main process logs it at warn
+					// level, so interpolating remote input here would persist
+					// whatever the caller typed - potentially a secret - into the
+					// app log (review of PR #1357). The text is still shown in the
+					// tab above and logged renderer-side for the operator.
+					reportDelivery(false, 'unknown-command');
 					return;
 				}
 			}
@@ -394,6 +474,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
 					logger.info(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
+					reportDelivery(false, `agent-not-configured:${session.toolType}`);
 					return;
 				}
 
@@ -406,8 +487,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					const tabStillExists = liveSession?.aiTabs?.some((t) => t.id === writeTabId);
 					if (!tabStillExists) {
 						logger.warn(
-							`[Remote] Target tab "${writeTabId}" was closed before spawn — dropping command`
+							`[Remote] Target tab "${writeTabId}" was closed before spawn - dropping command`
 						);
+						reportDelivery(false, `tab-closed-before-spawn:${writeTabId}`);
 						return;
 					}
 				}
@@ -432,16 +514,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					activeTabId: targetTab?.id,
 				});
 
-				// Determine whether to send the prompt via stdin on Windows to avoid
-				// exceeding the command line length limit. Remote commands may include
-				// substituted slash command prompts that can be very large.
-				const isSshSession = Boolean(session.sessionSshRemoteConfig?.enabled);
 				const remoteImages = images && images.length > 0 ? images : undefined;
-				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-					isSshSession,
-					supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages: !!remoteImages,
-				});
 
 				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
@@ -488,7 +561,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								: s.aiTabs;
 
 						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
-							logger.error('[runAICommand] Target tab not found in session — dropping user log');
+							logger.error('[runAICommand] Target tab not found in session - dropping user log');
 							return s;
 						}
 
@@ -509,38 +582,65 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					})
 				);
 
-				// Spawn agent with the prompt
-				await window.maestro.process.spawn({
-					sessionId: targetSessionId,
-					toolType: session.toolType,
-					cwd: session.cwd,
-					command: commandToUse,
-					args: spawnArgs,
-					prompt: promptToSend,
-					images: remoteImages,
-					appendSystemPrompt,
-					agentSessionId: tabAgentSessionId ?? undefined,
-					readOnlyMode: isReadOnly,
-					permissionMode: effectivePermissionMode,
-					sessionCustomPath: session.customPath,
-					sessionCustomArgs: session.customArgs,
-					sessionAdditionalDirectories: session.additionalDirectories,
-					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: session.customModel,
-					sessionCustomContextWindow: session.customContextWindow,
-					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-					// Windows stdin handling - slash command prompts after template
-					// substitution can exceed shell command line limits
-					sendPromptViaStdin,
-					sendPromptViaStdinRaw,
-				});
+				// Ack delivery on whichever comes first: the spawn settling, or a
+				// timer set inside the main-side receipt timeout.
+				//
+				// Acking unconditionally before the await (the first cut of this
+				// fix) made the catch below dead code - `receiptSent` was already
+				// true - so a spawn that rejected immediately, the usual shape of a
+				// missing or misconfigured agent binary, still reported
+				// `accepted: true`. That is the very "accepted but never runs"
+				// failure this PR exists to remove, reintroduced one layer down
+				// (review of PR #1357).
+				//
+				// Awaiting the spawn outright is not the answer either: the caller
+				// gives up after REMOTE_COMMAND_RECEIPT_TIMEOUT_MS and would turn a
+				// merely slow dispatch into a reported failure. So the timer keeps
+				// the handover contract for slow spawns while fast failures - which
+				// settle in milliseconds, far inside the window - report honestly.
+				const ackTimer = setTimeout(() => reportDelivery(true), REMOTE_SPAWN_ACK_GRACE_MS);
 
+				try {
+					// Spawn agent with the prompt
+					await window.maestro.process.spawn({
+						sessionId: targetSessionId,
+						toolType: session.toolType,
+						cwd: session.cwd,
+						command: commandToUse,
+						args: spawnArgs,
+						prompt: promptToSend,
+						images: remoteImages,
+						appendSystemPrompt,
+						agentSessionId: tabAgentSessionId ?? undefined,
+						readOnlyMode: isReadOnly,
+						permissionMode: effectivePermissionMode,
+						sessionCustomPath: session.customPath,
+						sessionCustomArgs: session.customArgs,
+						sessionAdditionalDirectories: session.additionalDirectories,
+						sessionCustomEnvVars: session.customEnvVars,
+						sessionCustomModel: session.customModel,
+						sessionCustomContextWindow: session.customContextWindow,
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					});
+				} finally {
+					clearTimeout(ackTimer);
+				}
+
+				// Reached only when the spawn resolved, so this is a real accept.
+				// A no-op if the grace timer already acked.
+				reportDelivery(true);
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
 			} catch (error: unknown) {
 				captureException(error, {
 					extra: { sessionId, toolType: session.toolType, mode: 'ai', operation: 'remote-spawn' },
 				});
 				const errorMessage = error instanceof Error ? error.message : String(error);
+				// Reports the failure honestly for everything that fails before the
+				// grace timer fires - the pre-handover failures (agent config
+				// lookup, prompt preparation) and now also a spawn that rejects
+				// fast, which is the common missing-binary case. Still a no-op if a
+				// slow spawn already acked; nothing can un-say a sent receipt.
+				reportDelivery(false, `remote-spawn-error:${errorMessage}`);
 				const errorLogEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
@@ -569,7 +669,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
 							logger.error(
-								'[runAICommand error] Target tab not found in session — dropping error log'
+								'[runAICommand error] Target tab not found in session - dropping error log'
 							);
 							return s;
 						}
@@ -596,10 +696,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 	const handleQuickActionsToggleRemoteControl = useCallback(async () => {
 		await toggleGlobalLive();
 		if (isLiveMode) {
-			setSuccessFlashNotification('Remote Control: OFFLINE — See indicator at top of left panel');
+			setSuccessFlashNotification('Remote Control: OFFLINE - See indicator at top of left panel');
 		} else {
 			setSuccessFlashNotification(
-				'Remote Control: LIVE — See LIVE indicator at top of left panel for QR code'
+				'Remote Control: LIVE - See LIVE indicator at top of left panel for QR code'
 			);
 		}
 		setTimeout(() => setSuccessFlashNotification(null), 4000);

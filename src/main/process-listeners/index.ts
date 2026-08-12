@@ -18,6 +18,7 @@ import { setupErrorListener } from './error-listener';
 import { setupStatsListener } from './stats-listener';
 import { setupExitListener } from './exit-listener';
 import { setupPluginEventListener } from './plugin-event-listener';
+import { setupDispatchCallbackListener } from './dispatch-callback-listener';
 
 // Re-export types for consumers
 export type { ProcessListenerDependencies, ParticipantInfo } from './types';
@@ -57,4 +58,8 @@ export function setupProcessListeners(
 	// Plugin event-bus bridge: forwards metadata-only lifecycle events to plugins
 	// that hold events:subscribe (no-op when the plugin bus is not wired).
 	setupPluginEventListener(processManager, deps);
+
+	// dispatch --notify-on-complete: arm on the dispatched process's spawn, fire
+	// on its exit (no-op when no callbacks are armed).
+	setupDispatchCallbackListener(processManager);
 }

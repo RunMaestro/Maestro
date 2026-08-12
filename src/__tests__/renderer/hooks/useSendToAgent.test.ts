@@ -407,7 +407,6 @@ describe('useSendToAgentWithSessions', () => {
 
 		const { result } = renderHook(() =>
 			useSendToAgentWithSessions({
-				sessions,
 				setSessions: mockSetSessions,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
@@ -431,7 +430,6 @@ describe('useSendToAgentWithSessions', () => {
 
 		const { result } = renderHook(() =>
 			useSendToAgentWithSessions({
-				sessions,
 				setSessions: mockSetSessions,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
@@ -467,7 +465,6 @@ describe('useSendToAgentWithSessions', () => {
 
 		const { result } = renderHook(() =>
 			useSendToAgentWithSessions({
-				sessions,
 				setSessions: mockSetSessions,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
@@ -495,7 +492,6 @@ describe('useSendToAgentWithSessions', () => {
 
 		const { result } = renderHook(() =>
 			useSendToAgentWithSessions({
-				sessions,
 				setSessions: mockSetSessions,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
@@ -519,7 +515,6 @@ describe('useSendToAgentWithSessions', () => {
 
 		const { result } = renderHook(() =>
 			useSendToAgentWithSessions({
-				sessions,
 				setSessions: mockSetSessions,
 			})
 		);
@@ -546,7 +541,6 @@ describe('useSendToAgentWithSessions', () => {
 
 		const { result } = renderHook(() =>
 			useSendToAgentWithSessions({
-				sessions,
 				setSessions: mockSetSessions,
 				onSessionCreated: mockOnSessionCreated,
 			})

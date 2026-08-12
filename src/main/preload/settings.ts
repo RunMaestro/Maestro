@@ -45,13 +45,24 @@ export function createSessionsApi() {
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
 		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
-		 * debounced flushes — avoids cloning + serializing the entire sessions
+		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
 		setMany: (updates: StoredSession[], removeIds: string[] = []) =>
 			ipcRenderer.invoke('sessions:setMany', updates, removeIds),
 		getActiveSessionId: () => ipcRenderer.invoke('sessions:getActiveSessionId') as Promise<string>,
 		setActiveSessionId: (id: string) => ipcRenderer.invoke('sessions:setActiveSessionId', id),
+		/**
+		 * Listen for main-side focus requests (plugin `sessions.focus` verb). The
+		 * main store write alone is invisible to the live renderer store, so the
+		 * renderer must apply the jump itself through the canonical helpers.
+		 */
+		onFocusRequest: (handler: (payload: { sessionId: string; tabId?: string }) => void) => {
+			const wrappedHandler = (_: unknown, payload: { sessionId: string; tabId?: string }) =>
+				handler(payload);
+			ipcRenderer.on('sessions:focus-request', wrappedHandler);
+			return () => ipcRenderer.removeListener('sessions:focus-request', wrappedHandler);
+		},
 	};
 }
 

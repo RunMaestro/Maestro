@@ -1,6 +1,7 @@
 import React from 'react';
 import type { NudgeMessageFieldProps } from './types';
 import { NUDGE_MESSAGE_MAX_LENGTH } from './types';
+import { useResizableTextarea } from '../../hooks/ui/useResizableTextarea';
 
 export const NudgeMessageField = React.memo(function NudgeMessageField({
 	theme,
@@ -19,7 +20,10 @@ export const NudgeMessageField = React.memo(function NudgeMessageField({
 		</>
 	),
 	placeholder = 'Instructions appended to every message you send...',
+	sizeKey = 'nudge-message',
 }: NudgeMessageFieldProps) {
+	const resize = useResizableTextarea({ sizeKey, minHeight: 80 });
+
 	return (
 		<div>
 			<div
@@ -30,6 +34,7 @@ export const NudgeMessageField = React.memo(function NudgeMessageField({
 			</div>
 			<p className="text-xs opacity-50 mb-2">{description}</p>
 			<textarea
+				ref={resize.textareaRef}
 				value={value}
 				onChange={(e) => onChange(e.target.value.slice(0, maxLength))}
 				placeholder={placeholder}
@@ -38,6 +43,7 @@ export const NudgeMessageField = React.memo(function NudgeMessageField({
 					borderColor: theme.colors.border,
 					color: theme.colors.textMain,
 					minHeight: '80px',
+					...resize.style,
 				}}
 				maxLength={maxLength}
 			/>

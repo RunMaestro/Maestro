@@ -35,6 +35,7 @@ import {
 	findLeafById,
 	focusPaneInSession,
 	promotePaneToStandalone,
+	resolveTabRefRenameValue,
 	resolveTabRefTitle,
 	tabRefKey,
 	updateGroupInSession,
@@ -415,9 +416,15 @@ function PaneActionsMenu({
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
 			close();
+			// Seed with the user-assigned name only (empty when the pane still shows an
+			// auto title), so hitting Rename on an untouched pane doesn't freeze its
+			// generated label - "Terminal 2", the filename, the live page title - into
+			// a custom name.
+			const renameValue = resolveTabRefRenameValue(session, node.tab);
+			if (renameValue === null) return;
 			useModalStore.getState().openModal('renameTab', {
 				tabId: node.tab.id,
-				initialName: resolveTabRefTitle(session, node.tab),
+				initialName: renameValue,
 			});
 		},
 		[close, node.tab, session]

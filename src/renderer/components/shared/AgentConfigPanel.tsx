@@ -157,7 +157,7 @@ function ModelTextInput({
 						onBlur={() => {
 							// Delay to allow click on dropdown item
 							setTimeout(() => {
-								// If a dropdown item was clicked, skip blur logic — the click handler already committed the value
+								// If a dropdown item was clicked, skip blur logic - the click handler already committed the value
 								if (selectionMadeRef.current) {
 									selectionMadeRef.current = false;
 									return;
@@ -305,6 +305,17 @@ export interface AgentConfigPanelProps {
 	onEnvVarsBlur: () => void;
 	// Agent-specific config options
 	agentConfig: Record<string, any>;
+	/**
+	 * Per-option advisory notes, keyed by `AgentConfigOption.key`, rendered under
+	 * the matching control above its description.
+	 *
+	 * Opt-in on purpose (#1370): only the Edit Agent surface can populate this,
+	 * because deciding whether a stored value is currently overridden needs the
+	 * session AND its live usage stats, neither of which this panel receives. The
+	 * create surfaces (New Agent, the Wizard, AgentCreationDialog) have no session
+	 * to override and write a materialization by design, so they pass nothing.
+	 */
+	configOptionNotes?: Record<string, React.ReactNode>;
 	onConfigChange: (key: string, value: any) => void;
 	/** Called when a config field blurs. For text fields, `committedValue` is the value that was just saved. */
 	onConfigBlur: (key: string, committedValue: any) => void | Promise<void>;
@@ -368,6 +379,7 @@ export function AgentConfigPanel({
 	onEnvVarAdd,
 	onEnvVarsBlur,
 	agentConfig,
+	configOptionNotes,
 	onConfigChange,
 	onConfigBlur,
 	availableModels = [],
@@ -759,7 +771,7 @@ export function AgentConfigPanel({
 						))}
 					{/* User-defined env vars */}
 					{Object.entries(customEnvVars).map(([key, value]) => (
-						<div key={`env-var-${getEnvVarId(key)}`} className="flex gap-2">
+						<div key={`env-var-${getEnvVarId(key)}`} className="flex gap-2 items-center">
 							<input
 								type="text"
 								value={getKeyDisplayValue(key)}
@@ -930,6 +942,15 @@ export function AgentConfigPanel({
 									</select>
 								);
 							})()}
+						{configOptionNotes?.[option.key] && (
+							<p
+								className="text-xs mt-2"
+								style={{ color: theme.colors.warning }}
+								data-testid={`config-option-note-${option.key}`}
+							>
+								{configOptionNotes[option.key]}
+							</p>
+						)}
 						<p className="text-xs opacity-50 mt-2">{option.description}</p>
 					</div>
 				))}

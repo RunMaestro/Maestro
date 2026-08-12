@@ -394,7 +394,7 @@ function filterLinks(
 
 /**
  * Calculate the mind map layout with center node and branching left/right columns.
- * This is the original layout algorithm — deterministic, alphabetized.
+ * This is the original layout algorithm - deterministic, alphabetized.
  */
 export const calculateMindMapLayout: LayoutFunction = (
 	allNodes,
@@ -548,7 +548,7 @@ export const calculateMindMapLayout: LayoutFunction = (
 /**
  * Calculate a radial layout with concentric rings around the center node.
  * Nodes at each depth level are distributed evenly around a ring.
- * Deterministic — no physics, pure trigonometry.
+ * Deterministic - no physics, pure trigonometry.
  */
 export const calculateRadialLayout: LayoutFunction = (
 	allNodes,
@@ -897,7 +897,7 @@ export const calculateForceLayout: LayoutFunction = (
 		centerHeight,
 	} = input;
 
-	// Build simulation nodes — seed positions deterministically from index
+	// Build simulation nodes - seed positions deterministically from index
 	const docNodesForSim = visibleDocumentNodes.filter((n) => n.id !== actualCenterNodeId);
 	const simNodes: ForceNode[] = docNodesForSim.map((node, i) => {
 		const previewText = node.description || node.contentPreview;

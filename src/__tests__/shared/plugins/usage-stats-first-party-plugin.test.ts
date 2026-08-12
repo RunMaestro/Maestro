@@ -55,7 +55,7 @@ describe('Usage & Stats first-party plugin definition', () => {
 	it('never claims host-owned surfaces as broker capabilities', () => {
 		const caps = USAGE_STATS_FIRST_PARTY_PLUGIN.permissions.map((p) => p.capability);
 		// The stats DB is HOST-OWNED SQLite, not the plugin's own brokered
-		// store — claiming storage:* would be dishonest (see first-party.ts NOTE).
+		// store - claiming storage:* would be dishonest (see first-party.ts NOTE).
 		expect(caps).not.toContain('storage:sql');
 		expect(caps).not.toContain('storage:read');
 		expect(caps).not.toContain('storage:write');

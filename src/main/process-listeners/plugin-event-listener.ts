@@ -4,7 +4,7 @@
  * Bridges ProcessManager lifecycle events to the metadata-only plugin event bus
  * (`deps.emitPluginEvent`). Kept separate from the other process listeners so the
  * plugin-facing surface is isolated and unit-testable. Emits ONLY scalar metadata
- * — never message bodies, prompts, agent output, or error text — per the contract
+ * - never message bodies, prompts, agent output, or error text - per the contract
  * in src/shared/plugins/events.ts (the bus additionally sanitizes + re-authorizes
  * every delivery against live grants). A no-op when no emitter is wired.
  */
@@ -24,7 +24,7 @@ import {
  * events yields the session total for both cumulative and delta reporters.
  * `totalCostUsd` is NOT delta-normalized upstream: cumulative reporters
  * (Claude) keep a running total in every event while delta reporters emit
- * per-turn costs — so we track both the sum and the last value and pick at
+ * per-turn costs - so we track both the sum and the last value and pick at
  * exit time based on the process's detected reporting mode. */
 interface SessionUsageTotals {
 	inputTokens: number;
@@ -55,7 +55,7 @@ export function setupPluginEventListener(
 		providerSessionIds.set(sessionId, agentSessionId);
 	});
 
-	// Agent/process exit — sessionId + exit code only (no output). Additionally
+	// Agent/process exit - sessionId + exit code only (no output). Additionally
 	// emits the rich agent.completed terminal event (metadata only) below.
 	processManager.on('exit', (sessionId: string, code: number) => {
 		emit({ topic: 'agent.exited', at: at(), payload: { sessionId, exitCode: code } });
@@ -77,7 +77,7 @@ export function setupPluginEventListener(
 		const startedAtMs = proc?.startTime;
 
 		// Cue queue depth for this session (pending auto-runs waiting on a
-		// concurrency slot). Threaded via deps — never a global. Absent when
+		// concurrency slot). Threaded via deps - never a global. Absent when
 		// Cue is off or the engine is not constructed.
 		let queueDepth: number | undefined;
 		if (deps.isCueEnabled?.()) {
@@ -88,7 +88,7 @@ export function setupPluginEventListener(
 		// state: Cue spawns its own child processes that never traverse the
 		// ProcessManager exit path, and non-Cue completions START a new chain
 		// root (see cue-completion-service.ts). There is therefore no lineage
-		// to carry here — the declared fields stay absent by design.
+		// to carry here - the declared fields stay absent by design.
 		const totalTokens = usage
 			? usage.inputTokens +
 				usage.outputTokens +
@@ -136,7 +136,7 @@ export function setupPluginEventListener(
 		});
 	});
 
-	// Agent error — type + recoverability only (never the provider message / raw).
+	// Agent error - type + recoverability only (never the provider message / raw).
 	processManager.on('agent-error', (sessionId: string, agentError: AgentError) => {
 		emit({
 			topic: 'agent.error',
@@ -150,26 +150,34 @@ export function setupPluginEventListener(
 		});
 	});
 
-	// Token/cost usage — counts only. Also accumulated per session for the
+	// Token/cost usage - counts only. Also accumulated per session for the
 	// terminal agent.completed payload (cleared on exit).
 	processManager.on('usage', (sessionId: string, usage: UsageStats) => {
-		const totals = usageBySession.get(sessionId) ?? {
-			inputTokens: 0,
-			outputTokens: 0,
-			cacheReadInputTokens: 0,
-			cacheCreationInputTokens: 0,
-			reasoningTokens: 0,
-			costSum: 0,
-			lastCost: 0,
-		};
-		totals.inputTokens += usage.inputTokens;
-		totals.outputTokens += usage.outputTokens;
-		totals.cacheReadInputTokens += usage.cacheReadInputTokens;
-		totals.cacheCreationInputTokens += usage.cacheCreationInputTokens;
-		totals.reasoningTokens += usage.reasoningTokens ?? 0;
-		totals.costSum += usage.totalCostUsd;
-		totals.lastCost = usage.totalCostUsd;
-		usageBySession.set(sessionId, totals);
+		// A context-window correction replays an already-counted turn's tokens/cost
+		// purely to refresh the resolved window. The source
+		// (pushResolvedOmpContextWindow) already zeroes those fields; this guard is
+		// belt-and-braces so an accumulating consumer here never double-counts even if
+		// a future emitter forgets to zero. Skip the totals accumulation but still
+		// surface the corrected window on usage.updated below.
+		if (!usage.contextWindowCorrectionOnly) {
+			const totals = usageBySession.get(sessionId) ?? {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+				costSum: 0,
+				lastCost: 0,
+			};
+			totals.inputTokens += usage.inputTokens;
+			totals.outputTokens += usage.outputTokens;
+			totals.cacheReadInputTokens += usage.cacheReadInputTokens;
+			totals.cacheCreationInputTokens += usage.cacheCreationInputTokens;
+			totals.reasoningTokens += usage.reasoningTokens ?? 0;
+			totals.costSum += usage.totalCostUsd;
+			totals.lastCost = usage.totalCostUsd;
+			usageBySession.set(sessionId, totals);
+		}
 
 		emit({
 			topic: 'usage.updated',
@@ -189,7 +197,7 @@ export function setupPluginEventListener(
 		});
 	});
 
-	// Batch query / auto-run completion — timing + source (user|auto), no output.
+	// Batch query / auto-run completion - timing + source (user|auto), no output.
 	processManager.on('query-complete', (_sessionId: string, q: QueryCompleteData) => {
 		emit({
 			topic: 'run.completed',

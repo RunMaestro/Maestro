@@ -36,7 +36,7 @@ function writePrompt(relativePath: string, content: string) {
 	fs.writeFileSync(path.join(projectRoot, relativePath), content, 'utf-8');
 }
 
-describe('normalizer — fan_out_prompt_files resolution', () => {
+describe('normalizer - fan_out_prompt_files resolution', () => {
 	it('expands fan_out_prompt_files into fan_out_prompts at load time', () => {
 		writePrompt('.maestro/prompts/codex_1-pipeline_1.md', 'codex work');
 		writePrompt('.maestro/prompts/opencode_1-pipeline_1.md', 'opencode work');
@@ -165,10 +165,10 @@ describe('normalizer — fan_out_prompt_files resolution', () => {
 	});
 });
 
-describe('normalizer — settings.owner_agent_id passthrough', () => {
+describe('normalizer - settings.owner_agent_id passthrough', () => {
 	// Regression for #912: the validator and the CueSettings contract both
 	// accept `owner_agent_id`, but `normalizeSettings` was silently dropping
-	// it — so `computeOwnershipWarning` always saw `undefined` and fell
+	// it - so `computeOwnershipWarning` always saw `undefined` and fell
 	// through to the "first agent wins" branch.
 	it('propagates owner_agent_id from raw yaml into normalized settings', () => {
 		const raw = yaml.dump({

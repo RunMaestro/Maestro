@@ -9,7 +9,7 @@
  *   start/stop the engine (reason semantics match the cue:enable IPC path).
  * - Bridge integration: disabling the marketplace tile through the
  *   FirstPartyPluginBridge ACTUALLY halts file watchers / GitHub pollers /
- *   yaml watchers — not just UI.
+ *   yaml watchers - not just UI.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -126,7 +126,7 @@ describe('MAESTRO_CUE first-party plugin definition', () => {
 			(p) => p.capability === 'net:fetch'
 		);
 		expect(netFetch?.scope).toBe('github.com');
-		// Watch globs come from per-project cue.yaml files — a static path
+		// Watch globs come from per-project cue.yaml files - a static path
 		// scope cannot name them, so the request is the (disclosed) broad form.
 		const fsWatch = MAESTRO_CUE_FIRST_PARTY_PLUGIN_PERMISSIONS.find(
 			(p) => p.capability === 'fs:watch'
@@ -315,7 +315,7 @@ describe('marketplace toggle → bridge → cue engine lifecycle', () => {
 		expect(encoreFeatures.maestroCue).toBe(true);
 	});
 
-	it('disable ACTUALLY halts watchers, pollers, and yaml watchers — not just UI', () => {
+	it('disable ACTUALLY halts watchers, pollers, and yaml watchers - not just UI', () => {
 		bridge.setEnabled(true);
 		expect(engine.isEnabled()).toBe(true);
 

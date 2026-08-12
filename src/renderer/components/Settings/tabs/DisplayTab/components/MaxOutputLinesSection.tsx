@@ -29,7 +29,7 @@ export function MaxOutputLinesSection({
 				onChange={setMaxOutputLines}
 				theme={theme}
 			/>
-			<p className="text-xs opacity-50 mt-2">
+			<p className="text-xs opacity-70 mt-2">
 				Long outputs will be collapsed into a scrollable window. Set to &quot;All&quot; to always
 				show full output.
 			</p>

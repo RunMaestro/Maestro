@@ -1,5 +1,5 @@
 /**
- * Unit tests for CueFanInTracker — focused on the three new methods added
+ * Unit tests for CueFanInTracker - focused on the three new methods added
  * in Phase 8C: getActiveTrackerKeys, getTrackerCreatedAt, expireTracker,
  * plus the lifecycle cleanup of fanInCreatedAt in clearForSession and reset.
  */
@@ -50,7 +50,7 @@ function makeCompletion(overrides: Partial<AgentCompletionData> = {}): AgentComp
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe('CueFanInTracker — new inspection methods', () => {
+describe('CueFanInTracker - new inspection methods', () => {
 	let dispatch: ReturnType<typeof vi.fn>;
 	let onLog: ReturnType<typeof vi.fn>;
 
@@ -126,7 +126,7 @@ describe('CueFanInTracker — new inspection methods', () => {
 				makeCompletion()
 			);
 
-			// Fan-in fired — no more active trackers
+			// Fan-in fired - no more active trackers
 			expect(tracker.getActiveTrackerKeys()).toEqual([]);
 		});
 	});
@@ -191,7 +191,7 @@ describe('CueFanInTracker — new inspection methods', () => {
 		});
 	});
 
-	describe('clearForSession — cleans up fanInCreatedAt', () => {
+	describe('clearForSession - cleans up fanInCreatedAt', () => {
 		it('removes createdAt entry when the owning session is cleared', () => {
 			const tracker = makeTracker();
 			const sub = makeSub();
@@ -216,7 +216,7 @@ describe('CueFanInTracker — new inspection methods', () => {
 		});
 	});
 
-	describe('reset — clears all fanInCreatedAt entries', () => {
+	describe('reset - clears all fanInCreatedAt entries', () => {
 		it('removes all createdAt entries on reset', () => {
 			const tracker = makeTracker();
 			const sub = makeSub();
@@ -241,7 +241,7 @@ describe('CueFanInTracker — new inspection methods', () => {
 		});
 	});
 
-	// ─── Phase 12D — checkHealth ────────────────────────────────────────────
+	// ─── Phase 12D - checkHealth ────────────────────────────────────────────
 	describe('checkHealth', () => {
 		const sessions = [
 			{ id: 'session-a', name: 'Agent A', toolType: 'claude-code', cwd: '/', projectRoot: '/' },
@@ -397,7 +397,7 @@ describe('CueFanInTracker — new inspection methods', () => {
 	// ─── Regression: chainDepth propagation through fan-in ────────────────────
 	// Bug 30ab9a5c4: fan-in dispatch did not forward the max chainDepth across
 	// completed sources, so circular pipelines routed through fan-in nodes
-	// bypassed the depth guard in CueCompletionService.notifyAgentCompleted —
+	// bypassed the depth guard in CueCompletionService.notifyAgentCompleted -
 	// the next dispatch saw chainDepth=0 and ran indefinitely. The fix stores
 	// chainDepth in FanInSourceCompletion and the all-complete + timeout-continue
 	// paths both pass `Math.max(...completions.map(c => c.chainDepth))` to
@@ -433,7 +433,7 @@ describe('CueFanInTracker — new inspection methods', () => {
 			const call = dispatch.mock.calls[0];
 			expect(call[0]).toBe('owner');
 			expect(call[1]).toBe(sub);
-			// Last positional argument is chainDepth — must equal max(3, 7) = 7,
+			// Last positional argument is chainDepth - must equal max(3, 7) = 7,
 			// NOT the last completion's depth (would mask cycles where the
 			// deepest source isn't the most recent), and NOT 0 (the original
 			// bug, which let cycles run forever).

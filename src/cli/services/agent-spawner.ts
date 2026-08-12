@@ -15,6 +15,7 @@ import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
+import { checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { sanitizeSessionId } from '../../shared/history';
@@ -37,7 +38,7 @@ import {
 } from '../../main/agents/claudeSpawnCore';
 
 // Types from the SSH wrapper are imported type-only so no runtime module load
-// happens for non-SSH sessions — the SSH chain pulls in execFile/which helpers
+// happens for non-SSH sessions - the SSH chain pulls in execFile/which helpers
 // that aren't needed when a session runs locally. The wrapSpawnWithSsh
 // implementation is dynamically imported inside maybeWrapSpawnWithSsh().
 type SshSpawnWrapConfig = import('../../main/utils/ssh-spawn-wrapper').SshSpawnWrapConfig;
@@ -128,7 +129,7 @@ type SpawnOverrides = Pick<
 /**
  * Maximum command-line length we'll accept before falling back to
  * `--append-system-prompt-file <tmp>` on Windows. Matches the threshold logic
- * in `src/main/ipc/handlers/process.ts` — Windows CreateProcess caps the
+ * in `src/main/ipc/handlers/process.ts` - Windows CreateProcess caps the
  * cmdline at ~32K, so a large inline system prompt would silently truncate.
  * SSH sessions are exempt: the command runs inside a shell script, not the OS
  * cmdline. The 30s cleanup mirrors the desktop handler's safety window.
@@ -142,7 +143,7 @@ const SYSTEM_PROMPT_TMPFILE_CLEANUP_MS = 30_000;
  * custom model / effort / args / env vars as the desktop app.
  *
  * Note: `applyAgentConfigOverrides().effectiveCustomEnvVars` folds agent
- * `defaultEnvVars` into its return value. We deliberately strip that here —
+ * `defaultEnvVars` into its return value. We deliberately strip that here -
  * defaults are layered separately by `applyEnvLayers()` and
  * `buildSshEnvForRemote()` with "shell wins" semantics, and treating them as
  * user overrides would clobber explicit shell env.
@@ -227,7 +228,7 @@ function buildAppendSystemPromptArgs(
 			// If we can't write the temp file, fall back to inline. The agent
 			// may truncate on Windows cmdline limits, but that's better than
 			// silently dropping the prompt. Log so the user can spot the
-			// downgrade — CLI has no Sentry pipeline, so stderr is the visibility
+			// downgrade - CLI has no Sentry pipeline, so stderr is the visibility
 			// surface available here.
 			const reason = writeErr instanceof Error ? writeErr.message : String(writeErr);
 			console.error(
@@ -236,11 +237,11 @@ function buildAppendSystemPromptArgs(
 			return ['--append-system-prompt', content];
 		}
 		// `.unref()` so the 30s cleanup timer doesn't keep the CLI alive after
-		// the agent already exited — without it, `maestro-cli send` would
+		// the agent already exited - without it, `maestro-cli send` would
 		// appear to hang on Windows until the timer fires.
 		const cleanupTimer = setTimeout(() => {
 			fs.promises.unlink(tempFile).catch((unlinkErr: NodeJS.ErrnoException) => {
-				// ENOENT means the file is already gone — expected if the OS
+				// ENOENT means the file is already gone - expected if the OS
 				// cleaned tmpdir or a parallel run won the race. Other errors
 				// indicate a real problem (permissions, FS issue): surface them
 				// on stderr so the user has a breadcrumb.
@@ -260,7 +261,7 @@ function buildAppendSystemPromptArgs(
 // Claude Code arguments for batch mode (stream-json format)
 const CLAUDE_ARGS = ['--print', '--verbose', '--output-format', 'stream-json'];
 
-// Permission bypass arg for Claude — skipped in read-only mode
+// Permission bypass arg for Claude - skipped in read-only mode
 const CLAUDE_YOLO_ARGS = ['--dangerously-skip-permissions'];
 
 // Cached paths per agent type (resolved once at startup)
@@ -290,25 +291,11 @@ function getExpandedPath(): string {
 }
 
 /**
- * Check if a file exists and is executable
+ * Resolve a configured executable path, including known rotating install locations.
  */
-async function isExecutable(filePath: string): Promise<boolean> {
-	try {
-		const stats = await fs.promises.stat(filePath);
-		if (!stats.isFile()) return false;
-
-		// On Unix, check executable permission
-		if (!isWindows()) {
-			try {
-				await fs.promises.access(filePath, fs.constants.X_OK);
-			} catch {
-				return false;
-			}
-		}
-		return true;
-	} catch {
-		return false;
-	}
+async function resolveExecutablePath(filePath: string): Promise<string | undefined> {
+	const detection = await checkCustomPath(filePath);
+	return detection.exists ? detection.path : undefined;
 }
 
 /**
@@ -356,9 +343,10 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 	// 1. Check for custom path in settings
 	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedPaths.set(toolType, customPath);
-			return { available: true, path: customPath, source: 'settings' };
+		const resolvedCustomPath = await resolveExecutablePath(customPath);
+		if (resolvedCustomPath) {
+			cachedPaths.set(toolType, resolvedCustomPath);
+			return { available: true, path: resolvedCustomPath, source: 'settings' };
 		}
 		console.error(
 			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
@@ -420,7 +408,7 @@ async function spawnClaudeAgent(
 	const env = buildExpandedEnv();
 	const def = getAgentDefinition('claude-code');
 
-	// Build args WITHOUT the prompt — the prompt is appended below for local
+	// Build args WITHOUT the prompt - the prompt is appended below for local
 	// execution or embedded into the SSH wrapper for remote execution.
 	const preOverrideArgs = [...CLAUDE_ARGS];
 
@@ -451,7 +439,7 @@ async function spawnClaudeAgent(
 	// flag rides through both the local args and the SSH-wrapped args because
 	// `wrapSpawnWithSsh` rebuilds the remote command from `baseArgs` below.
 	// Claude Code re-reads this flag every turn (not persisted in the session
-	// transcript), so include it on resume too — matches desktop behavior at
+	// transcript), so include it on resume too - matches desktop behavior at
 	// `src/main/ipc/handlers/process.ts:254`.
 	const baseArgs = overrides.appendSystemPrompt
 		? [
@@ -517,7 +505,7 @@ async function spawnClaudeAgent(
 	);
 
 	// SSH-wrap if a remote is configured; otherwise append prompt locally.
-	// Claude uses '-- <prompt>' positional form — the default in wrapSpawnWithSsh.
+	// Claude uses '-- <prompt>' positional form - the default in wrapSpawnWithSsh.
 	let spawnCommand = claudeCommand;
 	let spawnArgs: string[] = [...baseArgs, '--', prompt];
 	let spawnCwd = cwd;
@@ -597,7 +585,7 @@ async function spawnClaudeAgent(
 				result = msg.result;
 			}
 
-			// Accumulate text from assistant messages — Claude Code may emit
+			// Accumulate text from assistant messages - Claude Code may emit
 			// an empty result field with the actual text in assistant messages
 			if (msg.type === 'assistant' && msg.message?.content) {
 				const content = msg.message.content;
@@ -703,7 +691,7 @@ async function spawnClaudeAgent(
  * read-only overrides. Takes user-only env (no agent defaults folded in) so a
  * key present in both `defaultEnvVars` and `batchModeEnvVars` keeps the
  * batch-mode value on the remote instead of being reverted to the default.
- * Local process.env is NOT forwarded — the remote host has its own environment.
+ * Local process.env is NOT forwarded - the remote host has its own environment.
  */
 function buildSshEnvForRemote(
 	def: ReturnType<typeof getAgentDefinition>,
@@ -720,7 +708,7 @@ function buildSshEnvForRemote(
 
 /**
  * Return an AgentResult that tells the caller the configured SSH remote
- * couldn't be resolved. Fails loudly instead of silently running locally —
+ * couldn't be resolved. Fails loudly instead of silently running locally -
  * when the user explicitly enabled SSH, they don't want their prompt leaking
  * onto the local machine if the remote is misconfigured.
  */
@@ -806,7 +794,7 @@ async function spawnJsonLineAgent(
 	const env = buildExpandedEnv();
 	const def = getAgentDefinition(toolType);
 
-	// Build args from agent definition (without the prompt or model/customArgs —
+	// Build args from agent definition (without the prompt or model/customArgs -
 	// those come from applyAgentConfigOverrides via configOptions).
 	const preOverrideArgs: string[] = [];
 
@@ -872,7 +860,7 @@ async function spawnJsonLineAgent(
 	//  - Agents declaring `supportsAppendSystemPrompt: true` get the dedicated
 	//    flag (no agent in this branch does today, but the gate future-proofs).
 	//  - Everyone else gets the prompt embedded in the user message on first
-	//    turn; on resume we skip — desktop relies on the prompt being already
+	//    turn; on resume we skip - desktop relies on the prompt being already
 	//    captured in the agent's session transcript (see
 	//    `src/main/ipc/handlers/process.ts:300-312`).
 	const supportsNativeSystemPrompt = hasCapability(toolType, 'supportsAppendSystemPrompt');
@@ -957,6 +945,12 @@ async function spawnJsonLineAgent(
 
 		let jsonBuffer = '';
 		let result: string | undefined;
+		// Accumulated partial text deltas, used as a fallback when no result
+		// event carries text. Grok streams its answer solely as token-sized
+		// `text` deltas (whitespace embedded, so direct concatenation) and its
+		// terminal `end` event has no text. Mirrors spawnClaudeAgent's
+		// assistantText fallback. Reasoning deltas are excluded.
+		let streamedText = '';
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
@@ -968,7 +962,7 @@ async function spawnJsonLineAgent(
 
 			// Route through parser.extractSessionId() rather than only checking
 			// init events. Some agents (e.g. copilot-cli batch mode) never emit
-			// a session.start on stdout — the sessionId arrives only on the
+			// a session.start on stdout - the sessionId arrives only on the
 			// final `result` event. extractSessionId() encapsulates each
 			// adapter's event shape, and the !sessionId guard keeps
 			// "first-wins" semantics for adapters (codex, opencode) that
@@ -980,6 +974,10 @@ async function spawnJsonLineAgent(
 
 			if (event.type === 'result' && event.text) {
 				result = result ? `${result}\n${event.text}` : event.text;
+			}
+
+			if (event.type === 'text' && event.isPartial && !event.isReasoning && event.text) {
+				streamedText += event.text;
 			}
 
 			if (event.type === 'error' && event.text && !errorText) {
@@ -1024,8 +1022,18 @@ async function spawnJsonLineAgent(
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
 
-			if (code === 0 && !errorText) {
-				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
+			// Soft success: agents like Grok may exit non-zero after a full
+			// answer (e.g. --max-turns) with no structured error event. Prefer
+			// the streamed answer over raw stderr when there is no errorText.
+			const responseText = result || streamedText || undefined;
+			const hasAnswer = Boolean(responseText?.trim());
+			if (!errorText && (code === 0 || hasAnswer)) {
+				resolve({
+					success: true,
+					response: responseText,
+					agentSessionId: sessionId,
+					usageStats,
+				});
 			} else {
 				resolve({
 					success: false,
@@ -1046,7 +1054,7 @@ async function spawnJsonLineAgent(
  * Options for spawning an agent via CLI.
  *
  * Session-level overrides take precedence over the agent-level config read
- * from `maestro-agent-configs.json`. Pass the session values directly here —
+ * from `maestro-agent-configs.json`. Pass the session values directly here -
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {

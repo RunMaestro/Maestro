@@ -10,6 +10,7 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { captureException } from '../utils/sentry';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useKeyboardShortcutHelpers } from '../hooks/keyboard';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { LightboxModal } from './LightboxModal';
 
 interface QueuedItemEditModalProps {
@@ -20,7 +21,7 @@ interface QueuedItemEditModalProps {
 }
 
 /**
- * QueuedItemEditModal — edit a queued message's prompt text and attached images
+ * QueuedItemEditModal - edit a queued message's prompt text and attached images
  * before it is sent. Add images via the file picker or paste, edit them in the
  * shared annotator, or remove them. Reuses the same image primitives as the
  * composer (annotator store, dedupe helper, FileReader flow) and renders its own
@@ -43,6 +44,12 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	const { isShortcut } = useKeyboardShortcutHelpers({ shortcuts, tabShortcuts });
+
+	const resize = useResizableTextarea({
+		sizeKey: 'queued-item-edit',
+		minHeight: 80,
+		externalRef: textareaRef,
+	});
 
 	// Focus the textarea on open, cursor at end.
 	useEffect(() => {
@@ -160,6 +167,7 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 							backgroundColor: theme.colors.bgMain,
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
+							...resize.style,
 						}}
 					/>
 

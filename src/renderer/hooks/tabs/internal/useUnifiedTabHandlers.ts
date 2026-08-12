@@ -120,7 +120,7 @@ export function useUnifiedTabHandlers({
 		[endInlineWizard]
 	);
 
-	// Bulk close operations never destroy a tab with an unsent draft — such tabs
+	// Bulk close operations never destroy a tab with an unsent draft - such tabs
 	// are filtered out of the close set so they survive. The rest close silently
 	// (no confirmation prompt).
 	const handleCloseOtherTabs = useCallback(

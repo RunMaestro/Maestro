@@ -1,5 +1,5 @@
 /**
- * useQueueProcessing — extracted from App.tsx
+ * useQueueProcessing - extracted from App.tsx
  *
  * Handles execution queue processing:
  *   - Delegates queued item execution to agentStore
@@ -251,7 +251,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			}, 500);
 			return () => clearTimeout(startupTimerId);
 		} else {
-			// No startup items to process — runtime recovery can start immediately
+			// No startup items to process - runtime recovery can start immediately
 			startupRecoveryComplete.current = true;
 		}
 	}, [sessionsLoaded, dispatchQueuedItem]);
@@ -279,7 +279,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		for (const session of sessions) {
 			if (session.state === 'idle' && hasRunnableQueueItem(session.executionQueue ?? [])) {
 				console.log(
-					`[QueueProcessing] Runtime recovery — dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
+					`[QueueProcessing] Runtime recovery - dispatching stuck item for session ${session.id.substring(0, 8)}, queue depth: ${session.executionQueue.length}`
 				);
 				dispatchQueuedItem(session);
 			}

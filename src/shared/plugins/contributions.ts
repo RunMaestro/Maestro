@@ -23,6 +23,14 @@ import type { PluginCapability } from './permissions';
 export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
 
 /**
+ * Maximum UTF-8 size of ONE host-to-panel push (`ui.panelPost`). Panel data is
+ * a live update stream, not a bulk transfer, so the per-message cap is small
+ * and deliberate: it bounds what a plugin can force through the sandbox RPC,
+ * the main-to-renderer IPC, and the webview bridge in a single call.
+ */
+export const MAX_PANEL_POST_BYTES = 64 * 1024;
+
+/**
  * Size of JSON data as it crosses a UTF-8 message boundary. Returns null when
  * the value is not serializable, rather than throwing from an input validator.
  */
@@ -173,6 +181,15 @@ export interface CommandContribution {
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /**
+ * How much room a `modal`-placement panel takes. `default` is the historic fixed
+ * dialog chrome; `full` renders edge-to-edge (a summonable full-window overlay).
+ * Presentation only - it never changes WHERE a panel routes, which is why it is
+ * a separate optional field rather than a sixth `PanelPlacement` value that every
+ * routing switch would have to grow a case for. Ignored by docked placements.
+ */
+export type PanelSize = 'default' | 'full';
+
+/**
  * A UI panel a (tier-1) plugin contributes. Rendered in a locked-down sandboxed
  * iframe (no same-origin, no top navigation) in the reserved plugin modal band,
  * or docked into a UI slot when `placement` is set.
@@ -187,6 +204,8 @@ export interface PanelContribution {
 	entry: string;
 	/** Where the panel docks. Defaults to `modal`. */
 	placement: PanelPlacement;
+	/** Chrome size for `modal` panels. Defaults to `default`. */
+	size: PanelSize;
 }
 
 /**
@@ -240,27 +259,109 @@ export interface KeybindingContribution {
 	description?: string;
 }
 
-/** Where a `ui:contribute` item renders. The renderer maps each surface to a
- * concrete region (status bar, menus, sidebar/activity bar, toolbar). */
-export type UiSurface = 'status-bar' | 'menu' | 'sidebar' | 'activity-bar' | 'toolbar';
-
-export const UI_SURFACES: readonly UiSurface[] = [
+/**
+ * Host-mediated regions a plugin may target with a declarative `uiItem`.
+ * Add a future surface by appending one literal here; the union and all
+ * allowlist checks derive from this registry.
+ */
+export const UI_SURFACES = [
 	'status-bar',
 	'menu',
 	'sidebar',
 	'activity-bar',
 	'toolbar',
-];
+	'tabBar',
+	'sessionRowBadge',
+	'groupHeaderBadge',
+	'settingsSection',
+	'rightPanelTab',
+	'contextMenuItem',
+	'emptyState',
+] as const;
 
-/** Type guard: is `value` one of the known UI surfaces? */
-export function isUiSurface(value: unknown): value is UiSurface {
+/** Public union of the host-owned slots available to `ui:contribute`. */
+export type PluginUiSurface = (typeof UI_SURFACES)[number];
+
+/** Compatibility name retained for existing plugin authors. */
+export type UiSurface = PluginUiSurface;
+
+/**
+ * Host-owned chrome that is permanently unavailable to every plugin render
+ * tier. Keep these semantic targets separate from contribution ids: ids are
+ * only provenance/uniqueness, never an authority to mount into a region.
+ */
+export const PROTECTED_UI_SURFACES = [
+	'plugin-management',
+	'permission-consent',
+	'uninstall-grant-revoke',
+	'security-indicators',
+] as const;
+
+export type ProtectedUiSurface = (typeof PROTECTED_UI_SURFACES)[number];
+export type HostUiSurface = PluginUiSurface | ProtectedUiSurface;
+export type PluginUiMountTier = 'ui:contribute' | 'ui:render-unsafe';
+
+export interface PluginUiMountAttempt {
+	pluginId: string;
+	tier: PluginUiMountTier;
+	target: unknown;
+}
+
+export type PluginUiMountValidation =
+	| { allowed: true }
+	| {
+			allowed: false;
+			error: string;
+	  };
+
+/** Is `value` a host zone that plugins may never target or nest beneath? */
+export function isProtectedUiSurface(value: unknown): value is ProtectedUiSurface {
+	return typeof value === 'string' && (PROTECTED_UI_SURFACES as readonly string[]).includes(value);
+}
+
+/** Type guard for the positive allowlist of plugin-contributable host slots. */
+export function isPluginUiSurface(value: unknown): value is PluginUiSurface {
 	return typeof value === 'string' && (UI_SURFACES as readonly string[]).includes(value);
+}
+
+/** Host-internal target guard; unknown strings fail closed. */
+export function isHostUiSurface(value: unknown): value is HostUiSurface {
+	return isPluginUiSurface(value) || isProtectedUiSurface(value);
+}
+
+/** Backward-compatible name for the original public surface guard. */
+export const isUiSurface = isPluginUiSurface;
+
+/**
+ * Shared trusted-chrome admission policy for declarative items and the
+ * high-trust `ui:render-unsafe` tier. The latter has no current mount API, but
+ * any future unsafe renderer must use this exact registry-level check before it
+ * selects a host slot.
+ */
+export function validatePluginUiMount({
+	pluginId,
+	tier,
+	target,
+}: PluginUiMountAttempt): PluginUiMountValidation {
+	if (isProtectedUiSurface(target)) {
+		return {
+			allowed: false,
+			error: `[${pluginId}] ${tier} surface "${target}" is protected chrome and was dropped`,
+		};
+	}
+	if (!isPluginUiSurface(target)) {
+		return {
+			allowed: false,
+			error: `[${pluginId}] ${tier} surface "${String(target)}" is invalid or unavailable`,
+		};
+	}
+	return { allowed: true };
 }
 
 /**
  * A declarative UI item a (tier-1) plugin renders into a host surface. The item
- * is pure data (label / icon / placement) the host renders; activating it invokes
- * one of the plugin's OWN commands through the broker. Gated by the
+ * is pure data (label / icon / tooltip / placement) the host renders; activating
+ * it invokes one of the plugin's OWN commands through the broker. Gated by the
  * `ui:contribute` capability (see `gateContributions`), so an enabled plugin
  * WITHOUT that grant contributes none.
  */
@@ -268,12 +369,14 @@ export interface UiItemContribution {
 	id: string;
 	localId: string;
 	pluginId: string;
-	surface: UiSurface;
+	surface: PluginUiSurface;
 	label: string;
 	/** Plugin-local command id invoked on activation. */
 	command: string;
 	/** Optional icon keyword the renderer maps to its icon set. */
 	icon?: string;
+	/** Optional host-rendered tooltip; provenance is always appended by the host. */
+	tooltip?: string;
 	/** Optional grouping / ordering hints within the surface. */
 	group?: string;
 	priority?: number;
@@ -550,7 +653,7 @@ export function collectContributions(manifest: PluginManifest): PluginContributi
  * (should be impossible since ids are plugin-scoped, but defended anyway) the
  * first wins and the duplicate is recorded as an error. Pass `hasCapabilityFor`
  * (the verified per-plugin grants) to gate capability-scoped contributions
- * (`ui:contribute` items, `ui:panel` panels) DURING aggregation — the secure
+ * (`ui:contribute` items, `ui:panel` panels) DURING aggregation - the secure
  * default for the production path, so a render host can't forget to filter.
  */
 export function aggregateContributions(
@@ -613,7 +716,22 @@ export function aggregateContributions(
 		c.agents.forEach((agent) => pushUnique('agents', agg.agents, agent));
 		c.tools.forEach((t) => pushUnique('tools', agg.tools, t));
 		c.keybindings.forEach((k) => pushUnique('keybindings', agg.keybindings, k));
-		c.uiItems.forEach((u) => pushUnique('uiItems', agg.uiItems, u));
+		c.uiItems.forEach((item) => {
+			// Defense in depth: collection already validates the raw surface, but
+			// aggregation is the last shared registry boundary before IPC exposes
+			// these records to every renderer. Never trust a forged intermediate
+			// object or a future collection path to have done that validation.
+			const mount = validatePluginUiMount({
+				pluginId: item.pluginId,
+				tier: 'ui:contribute',
+				target: item.surface,
+			});
+			if (!mount.allowed) {
+				(agg.errorsByPlugin[item.pluginId] ??= []).push(mount.error);
+				return;
+			}
+			pushUnique('uiItems', agg.uiItems, item);
+		});
 		c.hostViews.forEach((view) => pushUnique('hostViews', agg.hostViews, view));
 		c.groupings.forEach((grouping) => pushUnique('groupings', agg.groupings, grouping));
 	}
@@ -1112,8 +1230,13 @@ function parseUiItem(pluginId: string, raw: unknown, errors: string[]): UiItemCo
 	}
 	const localId = parseLocalId(pluginId, raw, errors);
 	if (!localId) return null;
-	if (!isUiSurface(raw.surface)) {
-		errors.push(`[${pluginId}] uiItem "${localId}" has an invalid or missing surface`);
+	const mount = validatePluginUiMount({
+		pluginId,
+		tier: 'ui:contribute',
+		target: raw.surface,
+	});
+	if (!mount.allowed) {
+		errors.push(mount.error);
 		return null;
 	}
 	if (!isNonEmptyString(raw.label)) {
@@ -1130,10 +1253,11 @@ function parseUiItem(pluginId: string, raw: unknown, errors: string[]): UiItemCo
 		id: namespaced(pluginId, localId),
 		localId,
 		pluginId,
-		surface: raw.surface,
+		surface: raw.surface as PluginUiSurface,
 		label: raw.label.trim(),
 		command: raw.command.trim(),
 		...(isNonEmptyString(raw.icon) ? { icon: raw.icon.trim() } : {}),
+		...(isNonEmptyString(raw.tooltip) ? { tooltip: raw.tooltip.trim() } : {}),
 		...(isNonEmptyString(raw.group) ? { group: raw.group.trim() } : {}),
 		...(priority !== undefined ? { priority } : {}),
 	};
@@ -1310,6 +1434,26 @@ function parsePanelPlacement(
 	return 'modal';
 }
 
+const PANEL_SIZES: readonly PanelSize[] = ['default', 'full'];
+
+/** Parse an optional panel size, defaulting to `default`; an invalid value is an
+ * error but never drops the panel (it renders at the safe default size). Absent
+ * is NOT an error, so every manifest written before this field behaves exactly
+ * as it did - which matters because bundled plugins are signature-pinned. */
+function parsePanelSize(
+	pluginId: string,
+	localId: string,
+	raw: unknown,
+	errors: string[]
+): PanelSize {
+	if (raw === undefined) return 'default';
+	if (typeof raw === 'string' && (PANEL_SIZES as readonly string[]).includes(raw)) {
+		return raw as PanelSize;
+	}
+	errors.push(`[${pluginId}] panel "${localId}" has an invalid size; defaulting to default`);
+	return 'default';
+}
+
 function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelContribution | null {
 	if (!isPlainObject(raw)) {
 		errors.push(`[${pluginId}] a panel contribution is not an object`);
@@ -1326,6 +1470,7 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		return null;
 	}
 	const placement = parsePanelPlacement(pluginId, localId, raw.placement, errors);
+	const size = parsePanelSize(pluginId, localId, raw.size, errors);
 	return {
 		id: namespaced(pluginId, localId),
 		localId,
@@ -1333,6 +1478,7 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		title: raw.title.trim(),
 		entry: raw.entry.trim(),
 		placement,
+		size,
 	};
 }
 

@@ -26,7 +26,7 @@ export type ExtensionKind = 'builtin' | 'plugin';
 /**
  * State pill shown on a tile.
  *  - 'not-installed': a first-party feature that is turned off (enabling it is
- *    how you "install" it — built-ins are bundled but inactive until enabled).
+ *    how you "install" it - built-ins are bundled but inactive until enabled).
  *  - 'installed': a plugin present on disk but disabled.
  *  - 'enabled': active (feature flag on / plugin enabled).
  */
@@ -161,6 +161,7 @@ export function pluginExtension(record: PluginRecord): UnifiedExtension {
 		state: record.enabled ? 'enabled' : 'installed',
 		tier: m?.tier,
 		trust: record.signature?.status,
+		beta: m?.beta,
 		version: m?.version,
 		author: m?.author,
 		loadStatus: record.loadStatus,

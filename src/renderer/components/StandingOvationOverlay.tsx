@@ -14,6 +14,7 @@ import {
 import { safeClipboardWriteBlob } from '../utils/clipboard';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { Z_LAYERS } from '../constants/zLayers';
 
 interface StandingOvationOverlayProps {
 	theme: Theme;
@@ -79,9 +80,6 @@ export function StandingOvationOverlay({
 		[]
 	);
 
-	// Z-index layering: backdrop (99997) < confetti (99998) < modal (99999)
-	const CONFETTI_Z_INDEX = 99998;
-
 	// Fire confetti from multiple origins with playground settings
 	const fireConfetti = useCallback(() => {
 		// Skip if disabled by user preference
@@ -100,7 +98,7 @@ export function StandingOvationOverlay({
 			flat: false,
 			shapes: ['circle', 'star', 'square'] as ('circle' | 'star' | 'square')[],
 			colors: confettiColors,
-			zIndex: CONFETTI_Z_INDEX,
+			zIndex: Z_LAYERS.CONFETTI,
 			disableForReducedMotion: true,
 		};
 
@@ -327,7 +325,7 @@ export function StandingOvationOverlay({
 				}
 			}
 		} catch (error) {
-			// Canvas/image generation errors — not clipboard
+			// Canvas/image generation errors - not clipboard
 			logger.error('Failed to generate share image:', undefined, error);
 		}
 	}, [generateShareImage]);
@@ -356,7 +354,7 @@ export function StandingOvationOverlay({
 				}}
 			/>
 
-			{/* Confetti renders at z-index 99998 (set in fireConfetti) */}
+			{/* Confetti renders at Z_LAYERS.CONFETTI (set in fireConfetti) */}
 
 			{/* Modal container - highest layer (z-index 99999) */}
 			<div

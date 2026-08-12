@@ -1,10 +1,10 @@
 /**
- * Cue Template Context Builder — builds the `templateContext.cue` object
+ * Cue Template Context Builder - builds the `templateContext.cue` object
  * from a CueEvent's payload using an enricher registry pattern.
  *
  * Each event type registers an enricher function that maps payload fields
  * to template context keys. Adding a new event type requires only adding
- * one enricher entry — no changes to the executor or engine.
+ * one enricher entry - no changes to the executor or engine.
  */
 
 import type { CueEvent, CueSubscription } from './cue-types';
@@ -33,7 +33,7 @@ export type CueTemplateContext = NonNullable<TemplateContext['cue']>;
  */
 const enricherRegistry = new Map<CueEventType | '*', CueContextEnricher>();
 
-/** Base enricher — runs for all event types. Populates common fields. */
+/** Base enricher - runs for all event types. Populates common fields. */
 enricherRegistry.set('*', (event, subscription, runId) => {
 	const base: Record<string, string> = {
 		eventType: event.type,
@@ -51,7 +51,7 @@ enricherRegistry.set('*', (event, subscription, runId) => {
 		sourceExitCode: String(event.payload.exitCode ?? ''),
 		sourceDuration: String(event.payload.durationMs ?? ''),
 		sourceTriggeredBy: String(event.payload.triggeredBy ?? ''),
-		// Unified "triggering agent's session ID" — populated by the completion
+		// Unified "triggering agent's session ID" - populated by the completion
 		// service (sourceSessionId) for agent.completed and by the CLI handler
 		// (sourceAgentId) for cli.trigger. Surfaced to users as {{CUE_FROM_AGENT}}
 		// so a single variable references whichever upstream agent fired this run.
@@ -78,7 +78,7 @@ enricherRegistry.set('*', (event, subscription, runId) => {
 	return base;
 });
 
-/** task.pending enricher — adds task-specific fields. */
+/** task.pending enricher - adds task-specific fields. */
 enricherRegistry.set('task.pending', (event) => ({
 	taskFile: String(event.payload.path ?? ''),
 	taskFileName: String(event.payload.filename ?? ''),
@@ -116,13 +116,13 @@ function buildGitHubContext(event: CueEvent): Record<string, string> {
 enricherRegistry.set('github.pull_request', (event) => buildGitHubContext(event));
 enricherRegistry.set('github.issue', (event) => buildGitHubContext(event));
 
-/** cli.trigger enricher — adds CLI-specific fields. */
+/** cli.trigger enricher - adds CLI-specific fields. */
 enricherRegistry.set('cli.trigger', (event) => ({
 	cliPrompt: String(event.payload.cliPrompt ?? ''),
 	sourceAgentId: String(event.payload.sourceAgentId ?? ''),
 }));
 
-/** time.once enricher — surfaces the originally-scheduled fire timestamp. */
+/** time.once enricher - surfaces the originally-scheduled fire timestamp. */
 enricherRegistry.set('time.once', (event) => ({
 	fireAt: String(event.payload.fire_at ?? ''),
 }));

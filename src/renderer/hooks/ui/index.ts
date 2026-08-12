@@ -42,6 +42,15 @@ export type { UseThemeStylesDeps, UseThemeStylesReturn, ThemeColors } from './us
 // Context menu viewport positioning
 export { useContextMenuPosition } from './useContextMenuPosition';
 
+// Portaled dropdown positioning beneath an anchor element
+export { useAnchoredMenuPosition } from './useAnchoredMenuPosition';
+export type {
+	AnchoredMenuPosition,
+	AnchoredMenuOptions,
+	AnchoredMenuPlacement,
+	AnchoredMenuAlign,
+} from './useAnchoredMenuPosition';
+
 // Resizable panel drag behavior
 export { useResizablePanel } from './useResizablePanel';
 export type { UseResizablePanelOptions, UseResizablePanelReturn } from './useResizablePanel';
@@ -53,6 +62,12 @@ export type {
 	UseResizableModalOptions,
 	UseResizableModalReturn,
 } from './useResizableModal';
+// Remembered height for user-resized textareas
+export { useResizableTextarea } from './useResizableTextarea';
+export type {
+	UseResizableTextareaOptions,
+	UseResizableTextareaReturn,
+} from './useResizableTextarea';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

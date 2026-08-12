@@ -6,7 +6,10 @@ import {
 	formatShortcutKeys,
 } from '../../../../../utils/shortcutFormatter';
 import { ForcedParallelWarningModal } from '../../../../ForcedParallelWarningModal';
+import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
 import type { ForcedParallelWarningState, GeneralTabSettings } from '../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface InputBehaviorSectionProps {
 	theme: Theme;
@@ -15,6 +18,8 @@ interface InputBehaviorSectionProps {
 	enterToSendAIExpanded: boolean;
 	setEnterToSendAIExpanded: (enabled: boolean) => void;
 	forcedParallelExecution: boolean;
+	forcedParallelAlways: boolean;
+	setForcedParallelAlways: (enabled: boolean) => void;
 	shortcuts: GeneralTabSettings['shortcuts'];
 	forcedParallelWarning: ForcedParallelWarningState;
 }
@@ -26,6 +31,8 @@ export function InputBehaviorSection({
 	enterToSendAIExpanded,
 	setEnterToSendAIExpanded,
 	forcedParallelExecution,
+	forcedParallelAlways,
+	setForcedParallelAlways,
 	shortcuts,
 	forcedParallelWarning,
 }: InputBehaviorSectionProps) {
@@ -33,13 +40,14 @@ export function InputBehaviorSection({
 		? formatShortcutKeys(shortcuts.forcedParallelSend.keys)
 		: formatShortcutKeys(['Meta', 'Shift', 'Enter']);
 
+	// "Always" mode makes every send a force-send, so the modifier shortcut is
+	// redundant - we ghost it out to signal that.
+	const alwaysMode = forcedParallelExecution && forcedParallelAlways;
+
 	return (
 		<div data-setting-id="general-input-behavior">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Keyboard className="w-3 h-3" />
-				Input Send Behavior
-			</div>
-			<p className="text-xs opacity-50 mb-3">
+			<SettingsSectionHeading icon={Keyboard}>Input Send Behavior</SettingsSectionHeading>
+			<p className="text-xs opacity-70 mb-3">
 				Configure how to send messages. Choose between Enter or {formatMetaKey()}
 				+Enter.
 			</p>
@@ -62,12 +70,12 @@ export function InputBehaviorSection({
 						{formatEnterToSend(enterToSendAI)}
 					</button>
 				</div>
-				<p className="text-xs opacity-50">
+				<p className="text-xs opacity-70">
 					{enterToSendAI
 						? 'Press Enter to send. Use Shift+Enter for new line.'
 						: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 				</p>
-				<p className="text-[11px] opacity-40 mt-1">
+				<p className="text-[11px] opacity-55 mt-1">
 					Default for new tabs. Toggling the chip in an AI tab (or running &quot;Toggle Enter to
 					Send&quot; from the command palette) overrides this for that tab only.
 				</p>
@@ -93,7 +101,7 @@ export function InputBehaviorSection({
 						{formatEnterToSend(enterToSendAIExpanded)}
 					</button>
 				</div>
-				<p className="text-xs opacity-50">
+				<p className="text-xs opacity-70">
 					{enterToSendAIExpanded
 						? 'In the expanded Prompt Composer, press Enter to send. Use Shift+Enter for new line.'
 						: `In the expanded Prompt Composer, press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
@@ -118,29 +126,19 @@ export function InputBehaviorSection({
 							style={{
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textMain,
-								opacity: forcedParallelExecution ? 1 : 0.5,
+								opacity: !forcedParallelExecution || alwaysMode ? 0.35 : 1,
+								textDecoration: alwaysMode ? 'line-through' : 'none',
 							}}
+							title={alwaysMode ? 'Not needed in Always mode - every send is forced' : undefined}
 						>
 							{forcedParallelShortcut}
 						</span>
-						<button
-							onClick={forcedParallelWarning.handleToggle}
-							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
-							style={{
-								backgroundColor: forcedParallelExecution
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={forcedParallelExecution}
-							aria-label="Forced Parallel Execution"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									forcedParallelExecution ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={forcedParallelExecution}
+							onChange={forcedParallelWarning.handleToggle}
+							theme={theme}
+							ariaLabel="Forced Parallel Execution"
+						/>
 					</div>
 				</div>
 				<div
@@ -152,11 +150,43 @@ export function InputBehaviorSection({
 				>
 					<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
 					<span>
-						When enabled, use <strong>{forcedParallelShortcut}</strong> to send messages even while
-						the agent is busy. Parallel writes to the same files may cause one to overwrite the
-						other.
+						{alwaysMode ? (
+							<>
+								<strong>Every message force-sends</strong>, even while the agent is busy - no
+								modifier needed. Parallel writes to the same files may cause one to overwrite the
+								other.
+							</>
+						) : (
+							<>
+								When enabled, use <strong>{forcedParallelShortcut}</strong> to send messages even
+								while the agent is busy. Parallel writes to the same files may cause one to
+								overwrite the other.
+							</>
+						)}
 					</span>
 				</div>
+
+				{forcedParallelExecution && (
+					<div className="mt-3">
+						<div className="font-medium mb-2" style={{ color: theme.colors.textMain }}>
+							Send trigger
+						</div>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'modifier' as const, label: 'Modifier' },
+								{ value: 'always' as const, label: 'Always' },
+							]}
+							value={forcedParallelAlways ? 'always' : 'modifier'}
+							onChange={(value) => setForcedParallelAlways(value === 'always')}
+							theme={theme}
+						/>
+						<p className="text-xs opacity-70 mt-2">
+							{forcedParallelAlways
+								? 'Every send force-sends past a busy agent. No modifier required.'
+								: `Use ${forcedParallelShortcut} to force-send past a busy agent. A normal send queues as usual.`}
+						</p>
+					</div>
+				)}
 			</div>
 
 			<ForcedParallelWarningModal

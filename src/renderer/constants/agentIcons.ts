@@ -47,6 +47,11 @@ export const AGENT_ICONS: Record<string, string> = {
 	// Oh My Pi
 	omp: '🦉',
 
+	// xAI family - monochrome ✕ (U+2715), not ✖️ (U+2716+VS16) which forces
+	// red emoji presentation and collides with the "error / no connection"
+	// agent state color in the Left Bar.
+	grok: '✕',
+
 	// Enterprise
 	'factory-droid': '🏭',
 

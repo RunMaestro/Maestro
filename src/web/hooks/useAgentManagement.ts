@@ -45,7 +45,7 @@ export interface UseAgentManagementReturn {
 	/** Move an agent to a group (or null for ungrouped). */
 	moveToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
 
-	/** Handler for groups_changed broadcasts — wire to onGroupsChanged in WebSocket handlers */
+	/** Handler for groups_changed broadcasts - wire to onGroupsChanged in WebSocket handlers */
 	handleGroupsChanged: (groups: GroupData[]) => void;
 }
 
@@ -81,7 +81,7 @@ export function useAgentManagement(
 				}
 			})
 			.catch(() => {
-				// Groups fetch failed — will retry on reconnect
+				// Groups fetch failed - will retry on reconnect
 			})
 			.finally(() => {
 				setIsLoading(false);

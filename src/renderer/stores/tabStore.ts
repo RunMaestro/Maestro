@@ -4,10 +4,10 @@
  * Tab DATA (aiTabs, filePreviewTabs, unifiedTabOrder, etc.) lives inside Session
  * objects in sessionStore. This store provides:
  *
- * 1. Tab operation actions — wrap tabHelpers.ts pure functions + sessionStore mutations,
+ * 1. Tab operation actions - wrap tabHelpers.ts pure functions + sessionStore mutations,
  *    replacing ~43 callbacks currently threaded through App.tsx props
- * 2. Tab-specific UI state — gist content/URLs (the only tab state still in App.tsx)
- * 3. Selectors — derived tab state (activeTab, activeFileTab, unifiedTabs)
+ * 2. Tab-specific UI state - gist content/URLs (the only tab state still in App.tsx)
+ * 3. Selectors - derived tab state (activeTab, activeFileTab, unifiedTabs)
  *
  * Why tab data stays in sessionStore:
  * - Tab arrays are deeply embedded in the Session type (200+ call sites)
@@ -25,13 +25,12 @@
  */
 
 import { create } from 'zustand';
-import type { AITab, FilePreviewTab, Session, LogEntry } from '../types';
+import type { AITab, FilePreviewTab, Session, LogEntry, SnoozedTabEntry } from '../types';
 import type { GistInfo } from '../components/GistPublishModal';
 import {
 	createTab as createTabHelper,
 	closeTab as closeTabHelper,
 	closeFileTab as closeFileTabHelper,
-	reopenUnifiedClosedTab as reopenUnifiedClosedTabHelper,
 	setActiveTab as setActiveTabHelper,
 	navigateToNextUnifiedTab as navigateToNextHelper,
 	navigateToPrevUnifiedTab as navigateToPrevHelper,
@@ -58,7 +57,18 @@ import {
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
 import { useSessionStore, selectActiveSession, updateSessionWith } from './sessionStore';
-import { renameGroup as renameGroupHelper } from '../utils/panelLayout';
+import {
+	renameGroup as renameGroupHelper,
+	setGroupEmoji as setGroupEmojiHelper,
+	reopenClosedTabWithTiling as reopenUnifiedClosedTabHelper,
+} from '../utils/panelLayout';
+import {
+	snoozeTab as snoozeTabHelper,
+	wakeSnoozedTab as wakeSnoozedTabHelper,
+	removeSnoozedTab as removeSnoozedTabHelper,
+	updateSnoozedTab as updateSnoozedTabHelper,
+	type WakeSnoozedTabResult,
+} from '../utils/snoozeHelpers';
 import { logger } from '../utils/logger';
 
 /**
@@ -200,6 +210,48 @@ export interface TabStoreActions {
 	renameGroup: (groupId: string, name: string, fallbackName: string) => void;
 
 	/**
+	 * Set the emoji shown on a tiled tab group's chip. An empty string clears it
+	 * back to the default grid glyph. Persisted via updateSessionWith.
+	 */
+	setGroupEmoji: (groupId: string, emoji: string) => void;
+
+	/**
+	 * Snooze an AI tab in the active session until `wakeAt`, with an optional
+	 * note surfaced in the wake notification. The tab leaves the tab bar until
+	 * useSnoozeScheduler brings it back.
+	 *
+	 * @returns The stored snooze entry, or null if the tab wasn't found
+	 */
+	snoozeTab: (
+		tabId: string,
+		wakeAt: number,
+		note?: string,
+		showUnreadOnly?: boolean
+	) => SnoozedTabEntry | null;
+
+	/**
+	 * Restore a snoozed tab immediately, clearing its snooze. Works on any
+	 * session so the Snoozed Tabs list can act across agents.
+	 */
+	unsnoozeTab: (sessionId: string, snoozeId: string) => WakeSnoozedTabResult | null;
+
+	/**
+	 * Discard a snooze without restoring its tab.
+	 */
+	dismissSnoozedTab: (sessionId: string, snoozeId: string) => void;
+
+	/**
+	 * Reschedule a snooze. Passing `note` rewrites it; omitting it keeps the
+	 * existing note.
+	 */
+	rescheduleSnoozedTab: (
+		sessionId: string,
+		snoozeId: string,
+		wakeAt: number,
+		note?: string
+	) => void;
+
+	/**
 	 * Toggle read-only mode on an AI tab.
 	 */
 	toggleReadOnly: (tabId: string) => void;
@@ -332,6 +384,8 @@ export interface TabStoreActions {
 	setFileTabHtmlRenderMode: (tabId: string, value: boolean) => void;
 	/** Clear the transient deep-link line jump after FilePreview has consumed it. */
 	clearFileTabPendingScrollToLine: (tabId: string) => void;
+	/** Clear the one-shot media autoplay request once the player has acted on it. */
+	clearFileTabAutoplayMedia: (tabId: string) => void;
 }
 
 export type TabStore = TabStoreState & TabStoreActions;
@@ -544,6 +598,42 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateSessionWith(session.id, (s) => renameGroupHelper(s, groupId, name, fallbackName));
 	},
 
+	setGroupEmoji: (groupId, emoji) => {
+		const session = getActiveSession();
+		if (!session) return;
+		updateSessionWith(session.id, (s) => setGroupEmojiHelper(s, groupId, emoji));
+	},
+
+	// Snooze - see utils/snoozeHelpers.ts for why snoozed tabs leave aiTabs entirely
+	snoozeTab: (tabId, wakeAt, note, showUnreadOnly = false) => {
+		const session = getActiveSession();
+		if (!session) return null;
+		const result = snoozeTabHelper(session, tabId, wakeAt, note, showUnreadOnly);
+		if (!result) return null;
+		updateActiveSession(result.session);
+		return result.entry;
+	},
+
+	unsnoozeTab: (sessionId, snoozeId) => {
+		const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+		if (!session) return null;
+		// 'unsnoozed': the user pulled this back early rather than it coming due.
+		const result = wakeSnoozedTabHelper(session, snoozeId, 'unsnoozed');
+		if (!result) return null;
+		updateSessionWith(sessionId, () => result.session);
+		return result;
+	},
+
+	dismissSnoozedTab: (sessionId, snoozeId) => {
+		updateSessionWith(sessionId, (session) => removeSnoozedTabHelper(session, snoozeId));
+	},
+
+	rescheduleSnoozedTab: (sessionId, snoozeId, wakeAt, note) => {
+		updateSessionWith(sessionId, (session) =>
+			updateSnoozedTabHelper(session, snoozeId, wakeAt, note)
+		);
+	},
+
 	toggleReadOnly: (tabId) => {
 		const session = getActiveSession();
 		if (!session) return;
@@ -692,4 +782,6 @@ export const useTabStore = create<TabStore>()((set) => ({
 	setFileTabHtmlRenderMode: (tabId, value) => updateFileTab(tabId, { htmlRenderMode: value }),
 	clearFileTabPendingScrollToLine: (tabId) =>
 		updateFileTab(tabId, { pendingScrollToLine: undefined }),
+
+	clearFileTabAutoplayMedia: (tabId) => updateFileTab(tabId, { autoplayMedia: undefined }),
 }));

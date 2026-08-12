@@ -28,11 +28,11 @@ import {
  * intercepted by FilePreview and routed to the app's shared search bar so
  * the same UI works across Rich / Fast / Giant tiers (see search-hardening
  * plan B4). `highlightSelectionMatches` is kept because it paints same-
- * string occurrences when the user manually selects a range — independent
+ * string occurrences when the user manually selects a range - independent
  * of the search bar.
  *
  * The `defaultHighlightStyle` is provided as a fallback for tags the theme
- * adapter doesn't cover — applied via `fallback: true` so the adapter's
+ * adapter doesn't cover - applied via `fallback: true` so the adapter's
  * colors win for tags it specifies.
  */
 export function buildBaseExtensions(): Extension {
@@ -52,7 +52,7 @@ export function buildBaseExtensions(): Extension {
 		// Keyboard-only focus support (the editor element still receives
 		// focus, just no caret).
 		EditorView.contentAttributes.of({ tabIndex: '0' }),
-		// `lineWrapping` is intentional — Giant tier is the escalation target
+		// `lineWrapping` is intentional - Giant tier is the escalation target
 		// for files with pathologically long single lines (see
 		// LINE_LENGTH_GIANT_THRESHOLD in filePreviewUtils). Without wrapping,
 		// a single 500k-character line becomes a multi-million-pixel-wide

@@ -173,13 +173,13 @@ describe('SummaryCards', () => {
 			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
 		});
 
-		it('renders all twelve metric cards', () => {
-			// Card count grew from 10 to 12: Interactive % + Local % were removed,
-			// and Current Streak / Best Day / Active Days / Worktree % were added.
+		it('renders all fourteen metric cards', () => {
+			// Card count grew to 14: the Tokens and Cost cards were added alongside
+			// the earlier Streak / Best Day / Active Days additions.
 			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards).toHaveLength(12);
+			expect(cards).toHaveLength(14);
 		});
 
 		it('renders Total Queries metric', async () => {
@@ -339,7 +339,7 @@ describe('SummaryCards', () => {
 		});
 	});
 
-	// Interactive Ratio tests removed — the Interactive % card is no longer
+	// Interactive Ratio tests removed - the Interactive % card is no longer
 	// rendered. Top Agent / Peak Hour still surface N/A when their inputs are
 	// empty, which the existing "Most Active Agent Calculation > shows N/A"
 	// test already covers.
@@ -390,7 +390,7 @@ describe('SummaryCards', () => {
 			const sparklines = grid.querySelectorAll(
 				'[data-testid="sparkline"], [data-testid="sparkline-empty"]'
 			);
-			expect(svgElements.length - sparklines.length).toBe(12);
+			expect(svgElements.length - sparklines.length).toBe(14);
 		});
 	});
 
@@ -429,7 +429,7 @@ describe('SummaryCards', () => {
 		});
 
 		it('renders an empty (dashed-baseline) sparkline when byDay is empty', () => {
-			// emptyData has byDay: [] — left-padded to seven zeros, the Sparkline
+			// emptyData has byDay: [] - left-padded to seven zeros, the Sparkline
 			// collapses to its empty/dashed baseline state.
 			render(<SummaryCards data={emptyData} theme={theme} />);
 

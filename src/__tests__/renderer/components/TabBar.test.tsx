@@ -15,7 +15,8 @@ vi.mock('../../../renderer/utils/runtimeContext', () => ({
 	isElectronDesktop: vi.fn(() => true),
 }));
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="x-icon" className={className} style={style}>
 			X
@@ -139,6 +140,11 @@ vi.mock('lucide-react', () => ({
 	Clock: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="clock-icon" className={className} style={style}>
 			🕐
+		</span>
+	),
+	Layers: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="layers-icon" className={className} style={style}>
+			▤
 		</span>
 	),
 	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -525,7 +531,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			// No name or agentSessionId yet — shows "New Session"
+			// No name or agentSessionId yet - shows "New Session"
 			expect(screen.getByText('New Session')).toBeInTheDocument();
 		});
 
@@ -533,7 +539,7 @@ describe('TabBar', () => {
 			// Regression: previously every freshly-created OpenCode tab inherited the
 			// most recent sibling tab's session id (all tabs displayed "SES_2387").
 			// A tab without its own agentSessionId must show "New Session" regardless
-			// of session-level state or awaiting flags — the title is strictly per-tab.
+			// of session-level state or awaiting flags - the title is strictly per-tab.
 			const tabs = [
 				createTab({
 					id: 'tab-1',
@@ -1098,7 +1104,7 @@ describe('TabBar', () => {
 			expect(mockOnOpenTabSearch).toHaveBeenCalled();
 		});
 
-		it('opens search popover and calls onOpenOutputSearch when Search Message History clicked', () => {
+		it('opens search popover and calls onOpenOutputSearch when the this-tab entry is clicked', () => {
 			const mockOnOpenOutputSearch = vi.fn();
 			render(
 				<TabBar
@@ -1115,9 +1121,46 @@ describe('TabBar', () => {
 
 			// Click the search button to open the popover
 			fireEvent.click(screen.getByTitle('Search…'));
-			// Click "Search Message History" in the popover
-			fireEvent.click(screen.getByText('Search Message History'));
+			// Click the this-tab message search entry in the popover
+			fireEvent.click(screen.getByText('Search Messages (this tab)'));
 			expect(mockOnOpenOutputSearch).toHaveBeenCalled();
+		});
+
+		it('calls onOpenCrossTabSearch when the all-tabs entry is clicked', () => {
+			const mockOnOpenCrossTabSearch = vi.fn();
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+					onOpenCrossTabSearch={mockOnOpenCrossTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByText('Search Messages (all agent tabs)'));
+			expect(mockOnOpenCrossTabSearch).toHaveBeenCalled();
+		});
+
+		it('hides the all-tabs entry when no handler is supplied', () => {
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Search…'));
+			expect(screen.queryByText('Search Messages (all agent tabs)')).not.toBeInTheDocument();
 		});
 	});
 
@@ -4751,7 +4794,7 @@ describe('Unified tabs drag and drop', () => {
 			/>
 		);
 
-		// Hover over term-2 (index 2 — last tab, so Move to First should show)
+		// Hover over term-2 (index 2 - last tab, so Move to First should show)
 		const termTabElement = screen.getByText('Terminal 2').closest('[data-tab-id]')!;
 
 		await act(async () => {
@@ -4811,7 +4854,7 @@ describe('Unified tabs drag and drop', () => {
 			/>
 		);
 
-		// Hover over term-1 (index 1 — middle tab, so both should show)
+		// Hover over term-1 (index 1 - middle tab, so both should show)
 		const termTabElement = screen.getByText('Terminal 1').closest('[data-tab-id]')!;
 
 		await act(async () => {
@@ -4829,7 +4872,7 @@ describe('Unified tabs drag and drop', () => {
 
 	// Regression: when the user clicks back to an AI tab and then opens a 2nd
 	// terminal, addTerminalTab inserts the new terminal directly after the AI
-	// tab — which places it visually to the LEFT of the existing terminal.
+	// tab - which places it visually to the LEFT of the existing terminal.
 	// "Terminal N" labels must follow creation order so the older terminal
 	// stays "Terminal 1" and the new one becomes "Terminal 2".
 	it('numbers terminal tabs by creation order, not visual position', () => {
@@ -6350,5 +6393,180 @@ describe('Performance: Many file tabs (10+)', () => {
 		// Inactive file tab should NOT have the active margin adjustment
 		const inactiveFileTab = screen.getByText('file-5').closest('[data-tab-id]')!;
 		expect(inactiveFileTab).toHaveStyle({ marginBottom: '0' });
+	});
+});
+
+// A tiled group is ONE unified tab, so its chip must drag and reorder exactly like
+// an AI / file / terminal / browser chip. It previously rendered with no drag props
+// at all, so a group was the only tab type the user could not move in the strip.
+describe('Group tab chip drag and drop', () => {
+	const mockOnUnifiedTabReorder = vi.fn();
+	const mockOnGroupSelect = vi.fn();
+	const mockOnGroupRename = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		Element.prototype.scrollTo = vi.fn();
+	});
+
+	const aiTabA = createTab({ id: 'ai-tab-1', name: 'AI Tab 1' });
+	const aiTabB = createTab({ id: 'ai-tab-2', name: 'AI Tab 2' });
+
+	const group = {
+		id: 'group-1',
+		name: 'Group: Terminal 1',
+		focusedPaneId: 'leaf-1',
+		createdAt: Date.now(),
+		layout: {
+			kind: 'split' as const,
+			id: 'split-1',
+			direction: 'row' as const,
+			sizes: [0.5, 0.5],
+			children: [
+				{ kind: 'leaf' as const, id: 'leaf-1', tab: { type: 'terminal' as const, id: 'term-1' } },
+				{ kind: 'leaf' as const, id: 'leaf-2', tab: { type: 'ai' as const, id: 'ai-hidden' } },
+			],
+		},
+	};
+
+	// Order: AI Tab 1, <group>, AI Tab 2
+	const unifiedTabs = [
+		{ type: 'ai' as const, id: 'ai-tab-1', data: aiTabA },
+		{ type: 'group' as const, id: 'group-1', data: group },
+		{ type: 'ai' as const, id: 'ai-tab-2', data: aiTabB },
+	];
+
+	function renderWithGroup() {
+		return render(
+			<TabBar
+				tabs={[aiTabA, aiTabB]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={unifiedTabs as never}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+				onGroupSelect={mockOnGroupSelect}
+				onGroupRename={mockOnGroupRename}
+			/>
+		);
+	}
+
+	// Query by id, not by label text: the inline rename flow swaps the name span
+	// for an <input>, so a text lookup would stop resolving mid-test.
+	function groupChip() {
+		return document.querySelector('[data-tab-id="group-1"]')!;
+	}
+
+	it('marks the group chip draggable', () => {
+		renderWithGroup();
+
+		expect(groupChip()).toHaveAttribute('draggable', 'true');
+	});
+
+	it('sets the group id as the drag payload on drag start', () => {
+		renderWithGroup();
+
+		const dataTransfer = {
+			effectAllowed: '',
+			setData: vi.fn(),
+			getData: vi.fn().mockReturnValue('group-1'),
+		};
+		fireEvent.dragStart(groupChip(), { dataTransfer });
+
+		expect(dataTransfer.effectAllowed).toBe('move');
+		expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'group-1');
+	});
+
+	it('does NOT write a tile payload for a group (a group cannot nest in a group)', () => {
+		renderWithGroup();
+
+		const dataTransfer = {
+			effectAllowed: '',
+			setData: vi.fn(),
+			getData: vi.fn().mockReturnValue('group-1'),
+		};
+		fireEvent.dragStart(groupChip(), { dataTransfer });
+
+		// text/plain (reorder) is the ONLY format written for a group.
+		expect(dataTransfer.setData).toHaveBeenCalledTimes(1);
+		expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'group-1');
+	});
+
+	it('reorders the group when dropped on another tab chip', () => {
+		renderWithGroup();
+
+		const targetTab = screen.getByText('AI Tab 2').closest('[data-tab-id]')!;
+
+		fireEvent.dragStart(groupChip(), {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('group-1'),
+			},
+		});
+		fireEvent.drop(targetTab, {
+			dataTransfer: { getData: vi.fn().mockReturnValue('group-1') },
+		});
+
+		// group is at unified index 1, AI Tab 2 at index 2
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
+	});
+
+	it('accepts another tab dropped onto the group chip and reorders it', () => {
+		renderWithGroup();
+
+		const sourceTab = screen.getByText('AI Tab 1').closest('[data-tab-id]')!;
+
+		fireEvent.dragStart(sourceTab, {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('ai-tab-1'),
+			},
+		});
+		fireEvent.drop(groupChip(), {
+			dataTransfer: { getData: vi.fn().mockReturnValue('ai-tab-1') },
+		});
+
+		// ai-tab-1 (index 0) moves to the group's slot (index 1)
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(0, 1);
+	});
+
+	it('sets dropEffect on drag over so the chip is a valid drop target', () => {
+		renderWithGroup();
+
+		const dataTransfer = { dropEffect: '' };
+		fireEvent.dragOver(groupChip(), { dataTransfer });
+
+		expect(dataTransfer.dropEffect).toBe('move');
+	});
+
+	it('does not reorder when the group is dropped on itself', () => {
+		renderWithGroup();
+
+		fireEvent.dragStart(groupChip(), {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('group-1'),
+			},
+		});
+		fireEvent.drop(groupChip(), {
+			dataTransfer: { getData: vi.fn().mockReturnValue('group-1') },
+		});
+
+		expect(mockOnUnifiedTabReorder).not.toHaveBeenCalled();
+	});
+
+	it('suppresses dragging while the chip is being renamed inline', () => {
+		renderWithGroup();
+
+		// Double-click opens the inline rename input; a native drag would otherwise
+		// hijack text selection inside it.
+		fireEvent.doubleClick(groupChip());
+
+		expect(groupChip()).toHaveAttribute('draggable', 'false');
 	});
 });

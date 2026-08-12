@@ -8,7 +8,7 @@ import type {
 	UsageStats,
 	Group,
 } from '../../../types';
-import type { AgentSpawnErrorKind } from '../../agent/useAgentExecution';
+import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
 import type {
 	GoalIterationRecord,
 	GoalExitReason,
@@ -51,7 +51,9 @@ type UpdateBatchStateFn = (
 type SpawnAgentFn = (
 	sessionId: string,
 	prompt: string,
-	cwdOverride?: string
+	cwdOverride?: string,
+	/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
+	options?: SpawnAgentRunOverrides
 ) => Promise<{
 	success: boolean;
 	response?: string;
@@ -79,6 +81,7 @@ type SpawnBackgroundSynopsisFn = (
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
 		customModel?: string;
+		customEffort?: string;
 		customContextWindow?: number;
 		enableMaestroP?: boolean;
 		maestroPMode?: 'interactive' | 'dynamic';
@@ -99,7 +102,7 @@ type SpawnBackgroundSynopsisFn = (
 
 export interface UseGoalRunnerDeps {
 	// Refs (shared with useBatchRunner so lifecycle behavior stays consistent)
-	sessionsRef: MutableRefObject<Session[]>;
+	getSessions: () => Session[];
 	audioFeedbackEnabledRef: MutableRefObject<boolean | undefined>;
 	audioFeedbackCommandRef: MutableRefObject<string | undefined>;
 	autoRunFlushStateRefs: AutoRunFlushStateRefs;
@@ -188,13 +191,13 @@ function exitReasonLabel(reason: GoalExitReason): string {
  * instead of a document/task loop.
  *
  * Each iteration spawns the agent via the injected `onSpawnAgent` (which already
- * honors SSH and agent-config overrides — do NOT bypass it), parses the agent's
+ * honors SSH and agent-config overrides - do NOT bypass it), parses the agent's
  * self-reported `<!-- maestro:... -->` markers, feeds the running history into the
  * pure `evaluateGoalExit` decision function, and stops on
  * completion / deadlock / max-iterations / stall / user-stop.
  */
 export function useGoalRunner({
-	sessionsRef,
+	getSessions,
 	audioFeedbackEnabledRef,
 	audioFeedbackCommandRef,
 	autoRunFlushStateRefs,
@@ -215,7 +218,7 @@ export function useGoalRunner({
 }: UseGoalRunnerDeps): UseGoalRunnerReturn {
 	const startGoalRun = useCallback(
 		async (sessionId: string, config: BatchRunConfig, folderPath: string) => {
-			// Global Auto Run kill switch — same gate as the document runner.
+			// Global Auto Run kill switch - same gate as the document runner.
 			if (useSettingsStore.getState().autoRunDisabled) {
 				window.maestro.logger.log(
 					'warn',
@@ -231,6 +234,18 @@ export function useGoalRunner({
 				return;
 			}
 
+			// Run-scoped model/effort override, built only when the run picked one so
+			// default runs pass no spawn options at all. An absent override means the
+			// spawn uses the session's configured model, then the agent default.
+			// Nothing here is written back to the session.
+			const runOverrides: SpawnAgentRunOverrides | undefined =
+				config.model || config.effort
+					? {
+							...(config.model && { modelOverride: config.model }),
+							...(config.effort && { effortOverride: config.effort }),
+						}
+					: undefined;
+
 			const goalConfig: GoalRunConfig | undefined = config.goalConfig;
 			if (!goalConfig) {
 				// The router only delegates here when goalConfig is present; guard anyway.
@@ -240,14 +255,14 @@ export function useGoalRunner({
 				return;
 			}
 
-			// Resolve the session (sessionsRef first, then the store for just-created sessions).
+			// Prefer getSessions(), then the store for just-created sessions.
 			const session =
-				sessionsRef.current.find((s) => s.id === sessionId) ||
+				getSessions().find((s) => s.id === sessionId) ||
 				selectSessionById(sessionId)(useSessionStore.getState());
 			if (!session) {
 				window.maestro.logger.log('error', 'Session not found for goal run', 'GoalRunner', {
 					sessionId,
-					availableSessionIds: sessionsRef.current.map((s) => s.id),
+					availableSessionIds: getSessions().map((s) => s.id),
 				});
 				return;
 			}
@@ -284,7 +299,7 @@ export function useGoalRunner({
 			timeTracking.startTracking(sessionId);
 			stopRequestedRefs.current[sessionId] = false;
 
-			// Goal mode has no worktree — the agent runs in its own cwd. SSH remains
+			// Goal mode has no worktree - the agent runs in its own cwd. SSH remains
 			// honored inside onSpawnAgent regardless of the cwd override.
 			const effectiveCwd = session.cwd;
 
@@ -295,7 +310,7 @@ export function useGoalRunner({
 					const status = await gitService.getStatus(effectiveCwd);
 					gitBranch = status.branch;
 				} catch {
-					// Ignore git errors — branch stays empty.
+					// Ignore git errors - branch stays empty.
 				}
 			}
 
@@ -405,8 +420,8 @@ export function useGoalRunner({
 
 			// Start stats tracking. Record the goal as the document path behind a
 			// `Goal: ` prefix (trimmed to a readable length) so the run is
-			// recognizable — and distinguishable from document runs — in the Usage
-			// Dashboard; progress maps onto the 0–100 task scale.
+			// recognizable - and distinguishable from document runs - in the Usage
+			// Dashboard; progress maps onto the 0-100 task scale.
 			let statsAutoRunId: string | null = null;
 			try {
 				statsAutoRunId = await window.maestro.stats.startAutoRun({
@@ -488,7 +503,8 @@ export function useGoalRunner({
 					result = await onSpawnAgent(
 						sessionId,
 						prompt,
-						effectiveCwd !== session.cwd ? effectiveCwd : undefined
+						effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+						runOverrides
 					);
 				} catch (error) {
 					logger.error('[GoalRunner] Agent spawn threw:', undefined, error);
@@ -632,7 +648,7 @@ export function useGoalRunner({
 					: result.error || result.response || synopsis;
 				const fullResponse = stripMaestroMarkers(rawFullResponse);
 				const rationaleText = markers.rationale?.trim();
-				const iterationSummary = `Goal progress: ${displayProgress}% — ${rationaleText || synopsis}`;
+				const iterationSummary = `Goal progress: ${displayProgress}% - ${rationaleText || synopsis}`;
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
@@ -726,7 +742,11 @@ export function useGoalRunner({
 								customPath: session.customPath,
 								customArgs: session.customArgs,
 								customEnvVars: session.customEnvVars,
-								customModel: session.customModel,
+								// Mirror the primary iteration's effective config: the run-scoped
+								// model/effort override wins over the session default so the handoff
+								// synopsis spawns under the same configuration as the goal run itself.
+								customModel: config.model ?? session.customModel,
+								customEffort: config.effort ?? session.customEffort,
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
@@ -877,7 +897,7 @@ export function useGoalRunner({
 			onProcessQueueAfterCompletion,
 			onSpawnAgent,
 			spawnBackgroundSynopsis,
-			sessionsRef,
+			getSessions,
 			stopRequestedRefs,
 			timeTracking,
 			updateBatchStateAndBroadcastRef,

@@ -31,7 +31,7 @@ describe('cue-active-state', () => {
 		expect(isCueActive()).toBe(true);
 	});
 
-	it('is idempotent — repeated calls preserve the same state', () => {
+	it('is idempotent - repeated calls preserve the same state', () => {
 		setCueActive(false);
 		setCueActive(false);
 		expect(isCueActive()).toBe(false);

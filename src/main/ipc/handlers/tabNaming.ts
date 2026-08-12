@@ -76,6 +76,20 @@ export interface TabNamingHandlerDependencies {
 const TAB_NAMING_TIMEOUT_MS = 120 * 1000;
 
 /**
+ * Spawn failures that mean "the configured agent binary is unusable on this
+ * machine", not "Maestro has a bug": a missing/renamed CLI, a path pointing at
+ * a non-executable (EFTYPE on Windows when the resolved target is a script or
+ * a broken shim), or one the user can't execute. Tab naming is cosmetic and
+ * degrades to leaving the tab unnamed, so these shouldn't page us. (MAESTRO-X4)
+ */
+const EXPECTED_SPAWN_ERROR_CODES = new Set(['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']);
+
+function isExpectedSpawnFailure(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && EXPECTED_SPAWN_ERROR_CODES.has(code);
+}
+
+/**
  * Interval for checking partial output for a valid tab name.
  * Allows resolving as soon as the agent outputs the name,
  * without waiting for the full process to exit.
@@ -502,30 +516,56 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// cmd.exe's ~8KB command-line limit (ENAMETOOLONG on spawn).
 						// Tab naming concatenates a multi-KB system prompt with the user
 						// message, so a long first message easily exceeds the limit.
-						const sendPromptViaStdinRaw = isWindows() && !config.sessionSshRemoteConfig?.enabled;
+						// Only for CLIs that actually read stdin - one that takes the
+						// prompt positionally (omp) would run with no prompt and name
+						// nothing.
+						const sendPromptViaStdinRaw =
+							isWindows() &&
+							!config.sessionSshRemoteConfig?.enabled &&
+							(agent.capabilities?.supportsPromptViaStdin ?? false);
 
 						// Spawn the process
 						// When using SSH with stdin, pass the flag so ChildProcessSpawner
 						// sends the prompt via stdin instead of command line args
-						processManager.spawn({
-							sessionId,
-							toolType: config.agentType,
-							cwd,
-							command,
-							args: finalArgs,
-							prompt: fullPrompt,
-							// Global shell env vars (Settings -> Shell Configuration) are the
-							// lowest env layer the chat applies; without them a subscription
-							// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
-							// reaches the naming spawn and claude exits "Not logged in".
-							shellEnvVars: globalShellEnvVars,
-							customEnvVars,
-							promptArgs: agent.promptArgs,
-							noPromptSeparator: agent.noPromptSeparator,
-							sendPromptViaStdin: shouldSendPromptViaStdin,
-							sendPromptViaStdinRaw,
-							promptAlreadyInArgs,
-						});
+						//
+						// child_process.spawn throws synchronously for a bad binary or an
+						// over-long argv. This runs in the Promise executor, so an escaping
+						// throw rejects the naming promise and surfaces as a hard IPC
+						// failure - the outer try/catch can't see it, because the promise is
+						// returned rather than awaited. Bail to null like every other
+						// failure path here so a cosmetic feature can't break the send.
+						try {
+							processManager.spawn({
+								sessionId,
+								toolType: config.agentType,
+								cwd,
+								command,
+								args: finalArgs,
+								prompt: fullPrompt,
+								// Global shell env vars (Settings -> Shell Configuration) are the
+								// lowest env layer the chat applies; without them a subscription
+								// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
+								// reaches the naming spawn and claude exits "Not logged in".
+								shellEnvVars: globalShellEnvVars,
+								customEnvVars,
+								promptArgs: agent.promptArgs,
+								noPromptSeparator: agent.noPromptSeparator,
+								sendPromptViaStdin: shouldSendPromptViaStdin,
+								sendPromptViaStdinRaw,
+								promptAlreadyInArgs,
+							});
+						} catch (error) {
+							if (!isExpectedSpawnFailure(error)) {
+								void captureException(error);
+							}
+							logger.warn('Tab naming spawn failed', LOG_CONTEXT, {
+								sessionId,
+								command,
+								code: (error as NodeJS.ErrnoException).code,
+								error: String(error),
+							});
+							resolveWith(null, 'spawn failed');
+						}
 					});
 				} catch (error) {
 					void captureException(error);
@@ -620,9 +660,13 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 		if (event.type === 'result') {
 			// The final result carries the complete response; last one wins.
 			resultText = event.text;
-		} else if (event.type === 'text') {
+		} else if (event.type === 'text' && !event.isReasoning) {
 			// Streaming assistant chunks - accumulate so early extraction can
-			// resolve before the terminating result event arrives.
+			// resolve before the terminating result event arrives. Reasoning
+			// deltas (grok `thought`, codex/copilot reasoning) are excluded:
+			// they stream BEFORE the answer, so mining them would let early
+			// extraction resolve with a thinking fragment ("This is a simple
+			// task") instead of the generated name.
 			assistantText += event.text;
 		}
 	}

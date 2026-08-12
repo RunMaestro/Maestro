@@ -6,7 +6,7 @@
  * stay in App.tsx and are passed in as slots.
  */
 
-import React, { useEffect, type ComponentProps, type ReactNode } from 'react';
+import React, { useEffect, useRef, type ComponentProps, type ReactNode } from 'react';
 import { withMonoFallback } from '../../shared/fontStack';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { SessionList } from './SessionList';
@@ -18,14 +18,16 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
+import { MediaPlaybackHost } from './MediaPlayback';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
 import { CadenzaLayer } from './Cadenza';
 import { MovementOverlay } from './Movement';
 import { useCadenzaStore } from '../stores/cadenzaStore';
-import { useMovementStore } from '../stores/movementStore';
-import type { Group, GroupChat, Session, Theme } from '../types';
+import { selectHasVisibleMovement, useMovementStore } from '../stores/movementStore';
+import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
+import type { Group, GroupChat, Theme } from '../types';
 
 type SessionListProps = ComponentProps<typeof SessionList>;
 type MainPanelProps = ComponentProps<typeof MainPanel>;
@@ -45,7 +47,6 @@ export interface AppShellProps {
 	activeGroupChatId: string | null;
 	groupChats: GroupChat[];
 	groups: Group[];
-	activeSession: Session | null;
 
 	modals: ReactNode;
 	standaloneModals: ReactNode;
@@ -87,7 +88,6 @@ export function AppShell({
 	activeGroupChatId,
 	groupChats,
 	groups,
-	activeSession,
 	modals,
 	standaloneModals,
 	logViewerOpen,
@@ -111,6 +111,25 @@ export function AppShell({
 	rightEdgeSwipeHandlers,
 	onToastSessionClick,
 }: AppShellProps) {
+	// PERF: Title chrome self-sources a narrow slice so App does not pass
+	// activeSession into the shell (busy/log flushes stay off this paint path when
+	// App's chrome equality ignores state).
+	const titleGroupId = useSessionStore((s) => selectActiveSession(s)?.groupId);
+	const titleSessionName = useSessionStore((s) => selectActiveSession(s)?.name);
+	const titleTabLabel = useSessionStore((s) => {
+		const sess = selectActiveSession(s);
+		if (!sess) return null;
+		const activeTab = sess.aiTabs?.find((t) => t.id === sess.activeTabId);
+		if (!activeTab) return null;
+		return (
+			activeTab.name ||
+			(activeTab.agentSessionId ? activeTab.agentSessionId.split('-')[0].toUpperCase() : null)
+		);
+	});
+	const hasTitleSession = useSessionStore((s) => !!selectActiveSession(s));
+	const hasVisibleConcerto = useMovementStore(selectHasVisibleMovement);
+	const concertoChatBoundaryRef = useRef<HTMLDivElement>(null);
+
 	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
 	// outside React. Clear both stores when the feature is disabled so stale views
 	// do not return if the user enables it again later.
@@ -122,6 +141,13 @@ export function AppShell({
 
 	const showTitleBar =
 		!isMobileLandscape && !useNativeTitleBar && !isMdDownViewport && !isWebDesktop();
+	const concertoWorkspaceActive =
+		concertoEnabled && hasVisibleConcerto && hasSessions && !activeGroupChatId && !logViewerOpen;
+	const concertoWorkspaceLayout = concertoWorkspaceActive
+		? isNarrowViewport
+			? 'stacked'
+			: 'side'
+		: undefined;
 
 	return (
 		<div
@@ -157,30 +183,21 @@ export function AppShell({
 							{groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Unknown'}
 						</span>
 					) : (
-						activeSession && (
+						hasTitleSession &&
+						titleSessionName && (
 							<span
 								className="text-xs select-none opacity-50"
 								style={{ color: theme.colors.textDim }}
 							>
 								{(() => {
 									const parts: string[] = [];
-									const group = groups.find((g) => g.id === activeSession.groupId);
+									const group = groups.find((g) => g.id === titleGroupId);
 									if (group) {
 										parts.push(`${group.emoji} ${group.name}`);
 									}
-									parts.push(activeSession.name);
-									const activeTab = activeSession.aiTabs?.find(
-										(t) => t.id === activeSession.activeTabId
-									);
-									if (activeTab) {
-										const tabLabel =
-											activeTab.name ||
-											(activeTab.agentSessionId
-												? activeTab.agentSessionId.split('-')[0].toUpperCase()
-												: null);
-										if (tabLabel) {
-											parts.push(tabLabel);
-										}
+									parts.push(titleSessionName);
+									if (titleTabLabel) {
+										parts.push(titleTabLabel);
 									}
 									return parts.join(' | ');
 								})()}
@@ -241,9 +258,43 @@ export function AppShell({
 
 			{groupChatView}
 
-			{hasSessions && !activeGroupChatId && !logViewerOpen && (
-				<MainPanel ref={mainPanelRef} {...mainPanelProps} />
-			)}
+			{hasSessions &&
+				!activeGroupChatId &&
+				!logViewerOpen &&
+				(concertoWorkspaceActive ? (
+					<div
+						ref={concertoChatBoundaryRef}
+						data-testid="concerto-chat-surface"
+						data-concerto-workspace
+						className="flex flex-col min-w-0 min-h-0 overflow-hidden"
+						style={
+							isNarrowViewport
+								? {
+										position: 'fixed',
+										left: 0,
+										right: 0,
+										bottom: 0,
+										height: 'clamp(280px, 42vh, 460px)',
+										zIndex: 90001,
+										borderTop: `1px solid ${theme.colors.border}`,
+										boxShadow: '0 -16px 40px -24px rgba(0,0,0,0.7)',
+									}
+								: {
+										flex: '0 1 clamp(400px, 34vw, 520px)',
+										width: 'clamp(400px, 34vw, 520px)',
+										minWidth: 400,
+										position: 'relative',
+										zIndex: 1,
+										borderRight: `1px solid ${theme.colors.border}`,
+										boxShadow: '16px 0 40px -28px rgba(0,0,0,0.75)',
+									}
+						}
+					>
+						<MainPanel ref={mainPanelRef} {...mainPanelProps} />
+					</div>
+				) : (
+					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
+				))}
 
 			<PluginPanelSlot
 				theme={theme}
@@ -261,6 +312,11 @@ export function AppShell({
 
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
+			{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
+			    Owns every <audio>/<video> element so playback survives switching
+			    tabs and agents. Each element is parked over the MediaViewportSlot
+			    its file preview tab renders. See MediaPlaybackHost. */}
+			<MediaPlaybackHost theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
 			{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}
 			<ContextTimelinePanel theme={theme} />
@@ -269,7 +325,12 @@ export function AppShell({
 			{concertoEnabled && (
 				<>
 					<CadenzaLayer theme={theme} />
-					<MovementOverlay theme={theme} />
+					<MovementOverlay
+						theme={theme}
+						workspaceBoundaryRef={concertoWorkspaceActive ? concertoChatBoundaryRef : undefined}
+						workspaceLayout={concertoWorkspaceLayout}
+						workspaceTopInset={showTitleBar ? 40 : 0}
+					/>
 				</>
 			)}
 		</div>

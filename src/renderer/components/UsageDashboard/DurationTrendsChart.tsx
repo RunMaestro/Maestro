@@ -19,6 +19,7 @@ import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStat
 import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 import { ChartTooltip } from './ChartTooltip';
+import { computeAxisLabelIndices } from './chartUtils';
 
 // Data point for the chart
 interface DataPoint {
@@ -162,6 +163,11 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 			count: day.count,
 		}));
 	}, [data.byDay, timeRange, showSmoothed]);
+
+	const xLabelIndices = useMemo(
+		() => computeAxisLabelIndices(chartData.length),
+		[chartData.length]
+	);
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
@@ -380,15 +386,7 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 
 						{/* X-axis labels */}
 						{chartData.map((point, idx) => {
-							// Show fewer labels for longer time ranges
-							const labelInterval =
-								chartData.length > 14
-									? Math.ceil(chartData.length / 7)
-									: chartData.length > 7
-										? 2
-										: 1;
-
-							if (idx % labelInterval !== 0 && idx !== chartData.length - 1) {
+							if (!xLabelIndices.has(idx)) {
 								return null;
 							}
 
@@ -473,7 +471,7 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 					</svg>
 				)}
 
-				{/* Tooltip — clamped to viewport so chart points near the right/top
+				{/* Tooltip - clamped to viewport so chart points near the right/top
 				    edge don't get cropped. Estimated width/height match the rendered
 				    box; if content changes substantially, revisit these. */}
 				{hoveredPoint && (

@@ -12,6 +12,16 @@ vi.mock('node-pty', () => ({
 	spawn: vi.fn(),
 }));
 
+const { mockExecFile, mockExecFileSync } = vi.hoisted(() => ({
+	mockExecFile: vi.fn(),
+	mockExecFileSync: vi.fn(),
+}));
+
+vi.mock('child_process', async (importOriginal) => {
+	const actual = await importOriginal();
+	return { ...actual, execFile: mockExecFile, execFileSync: mockExecFileSync };
+});
+
 // Mock logger to avoid any side effects
 vi.mock('../../main/utils/logger', () => ({
 	logger: {
@@ -22,7 +32,7 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock platform detection — delegates to process.platform by default so
+// Mock platform detection - delegates to process.platform by default so
 // pre-existing tests that override process.platform still work. Kill-method
 // tests override via mockReturnValueOnce / mockReturnValue.
 const { mockIsWindows } = vi.hoisted(() => ({
@@ -33,7 +43,21 @@ vi.mock('../../shared/platformDetection', () => ({
 	isWindows: () => mockIsWindows(),
 }));
 
+// Mock the PID liveness probe so the stale-entry reconciliation can be driven
+// deterministically on any host (a hardcoded "dead" PID would otherwise be a
+// coin flip). Defaults to "alive" so unrelated tests keep the old semantics.
+const { mockIsPidAlive } = vi.hoisted(() => ({
+	mockIsPidAlive: vi.fn<(pid: number | undefined) => boolean>().mockReturnValue(true),
+}));
+
+vi.mock('../../main/process-manager/utils/childProcessInfo', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../main/process-manager/utils/childProcessInfo')>();
+	return { ...actual, isPidAlive: (pid?: number) => mockIsPidAlive(pid) };
+});
+
 import * as fs from 'fs';
+import { logger } from '../../main/utils/logger';
 
 import {
 	aggregateModelUsage,
@@ -68,6 +92,9 @@ describe('process-manager.ts', () => {
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.05,
 					contextWindow: 200000,
+					// The model reported this window itself, so it is provider truth
+					// even though it equals the fallback (review of PR #1356).
+					contextWindowResolved: true,
 				});
 			});
 
@@ -101,6 +128,7 @@ describe('process-manager.ts', () => {
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.1,
 					contextWindow: 200000, // Should use the highest context window
+					contextWindowResolved: true,
 				});
 			});
 
@@ -368,6 +396,8 @@ describe('process-manager.ts', () => {
 
 		beforeEach(() => {
 			processManager = new ProcessManager();
+			mockExecFile.mockClear();
+			mockExecFileSync.mockClear();
 		});
 
 		describe('error detection exports', () => {
@@ -557,7 +587,7 @@ describe('process-manager.ts', () => {
 			});
 		});
 
-		describe('kill method — Windows PTY tree kill', () => {
+		describe('kill method - Windows PTY tree kill', () => {
 			let killWindowsTreeSpy: ReturnType<typeof vi.spyOn>;
 
 			beforeEach(() => {
@@ -591,6 +621,33 @@ describe('process-manager.ts', () => {
 
 				expect(killWindowsTreeSpy).toHaveBeenCalledWith(12345, 'pty-session', false);
 				expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+
+				killWindowsTreeSpy.mockRestore();
+				const error = new Error('taskkill failed');
+				mockExecFile.mockImplementationOnce(
+					(_command: string, _arguments: string[], callback: (callbackError: Error) => void) =>
+						callback(error)
+				);
+				// The private helper is the behavior selected by the public Windows kill path.
+				const managerWithPrivateKill = processManager as unknown as {
+					killWindowsProcessTree: (pid: number, sessionId: string, sync?: boolean) => void;
+				};
+				expect(() =>
+					managerWithPrivateKill.killWindowsProcessTree(12345, 'async-session')
+				).not.toThrow();
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'taskkill',
+					['/pid', '12345', '/t', '/f'],
+					expect.any(Function)
+				);
+				expect(logger.debug).toHaveBeenCalledWith(
+					'[ProcessManager] taskkill exited with error (process may already be terminated)',
+					'ProcessManager',
+					{ sessionId: 'async-session', pid: 12345, error: String(error) }
+				);
+				killWindowsTreeSpy = vi
+					.spyOn(ProcessManager.prototype as never, 'killWindowsProcessTree' as never)
+					.mockImplementation(() => {});
 			});
 
 			it('should use SIGTERM for PTY processes on non-Windows', () => {
@@ -659,9 +716,14 @@ describe('process-manager.ts', () => {
 			});
 		});
 
-		describe('spawn() kill-before-spawn guard', () => {
+		describe('spawn() existing process guard', () => {
+			beforeEach(() => {
+				mockIsPidAlive.mockReturnValue(true);
+			});
+
 			afterEach(() => {
 				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+				mockIsPidAlive.mockReturnValue(true);
 			});
 
 			it('should kill existing process before spawning with same sessionId', () => {
@@ -697,10 +759,158 @@ describe('process-manager.ts', () => {
 						shell: 'zsh',
 					});
 				} catch {
-					// spawn may fail due to mock — we only care about the kill call
+					// spawn may fail due to mock - we only care about the kill call
 				}
 
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGTERM');
+			});
+
+			it('should refuse to replace a live agent process with the same sessionId', () => {
+				const processes = (processManager as any).processes as Map<string, any>;
+				const liveChildProcess = {
+					pid: 32828,
+					exitCode: null,
+					signalCode: null,
+					kill: vi.fn(),
+				};
+				const liveProcess = {
+					sessionId: 'dup-agent-session',
+					toolType: 'codex',
+					isTerminal: false,
+					pid: 32828,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					childProcess: liveChildProcess,
+				};
+				processes.set('dup-agent-session', liveProcess);
+
+				expect(() =>
+					processManager.spawn({
+						sessionId: 'dup-agent-session',
+						toolType: 'codex',
+						cwd: '/tmp',
+						command: 'codex',
+						args: ['exec', '--json'],
+						prompt: 'second turn',
+					})
+				).toThrow('Agent process already running for session dup-agent-session');
+				expect(liveChildProcess.kill).not.toHaveBeenCalled();
+				expect(processManager.get('dup-agent-session')).toBe(liveProcess);
+			});
+
+			it('should retain an exited agent until close cleanup drains its output', () => {
+				// The PID is already gone here: node saw the child exit, so `close` is
+				// still draining trailing stdout microseconds later. Reclaiming on
+				// liveness alone would drop that final response (issue #1249), so the
+				// drain window must stay refused even though the process is dead.
+				mockIsPidAlive.mockReturnValue(false);
+				const processes = (processManager as any).processes as Map<string, any>;
+				const exitingChildProcess = {
+					pid: 32829,
+					exitCode: 0,
+					signalCode: null,
+					kill: vi.fn(),
+				};
+				const exitingProcess = {
+					sessionId: 'draining-agent-session',
+					toolType: 'codex',
+					isTerminal: false,
+					pid: 32829,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					childProcess: exitingChildProcess,
+				};
+				processes.set('draining-agent-session', exitingProcess);
+
+				expect(() =>
+					processManager.spawn({
+						sessionId: 'draining-agent-session',
+						toolType: 'codex',
+						cwd: '/tmp',
+						command: 'codex',
+						args: ['exec', '--json'],
+						prompt: 'replayed turn',
+					})
+				).toThrow('Agent process already running for session draining-agent-session');
+				expect(exitingChildProcess.kill).not.toHaveBeenCalled();
+				expect(processManager.get('draining-agent-session')).toBe(exitingProcess);
+			});
+
+			it('should reclaim an agent entry whose OS process no longer exists', () => {
+				// Issue #1339: after a long idle the child died without node ever
+				// seeing `close`, so the entry (still "running" as far as node knows)
+				// owned the session id forever and every later turn threw.
+				mockIsPidAlive.mockReturnValue(false);
+				const processes = (processManager as any).processes as Map<string, any>;
+				const staleChildProcess = {
+					pid: 32830,
+					exitCode: null,
+					signalCode: null,
+					kill: vi.fn(),
+				};
+				const staleProcess = {
+					sessionId: 'stale-agent-session',
+					toolType: 'codex',
+					isTerminal: false,
+					pid: 32830,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					childProcess: staleChildProcess,
+				};
+				processes.set('stale-agent-session', staleProcess);
+
+				let thrown: unknown;
+				try {
+					processManager.spawn({
+						sessionId: 'stale-agent-session',
+						toolType: 'codex',
+						cwd: '/tmp',
+						command: 'codex',
+						args: ['exec', '--json'],
+						prompt: 'turn after idle',
+					});
+				} catch (err) {
+					// The spawn itself may still fail against the mocked child_process;
+					// what matters is that it was no longer blocked by the guard.
+					thrown = err;
+				}
+
+				expect(String((thrown as Error | undefined)?.message ?? '')).not.toContain(
+					'Agent process already running'
+				);
+				// The dead entry is dropped, and never signalled - there is no process
+				// left to kill, and a kill() would emit a spurious exit.
+				expect(processManager.get('stale-agent-session')).not.toBe(staleProcess);
+				expect(staleChildProcess.kill).not.toHaveBeenCalled();
+			});
+
+			it('should refuse to replace an SDK-backed agent turn even when no OS pid is alive', () => {
+				// SDK turns have no OS child of their own, so a liveness probe proves
+				// nothing and could match an unrelated recycled PID.
+				mockIsPidAlive.mockReturnValue(false);
+				const processes = (processManager as any).processes as Map<string, any>;
+				const sdkProcess = {
+					sessionId: 'sdk-agent-session',
+					toolType: 'opencode',
+					isTerminal: false,
+					pid: 32831,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					sdkController: { interrupt: vi.fn(), kill: vi.fn() },
+				};
+				processes.set('sdk-agent-session', sdkProcess);
+
+				expect(() =>
+					processManager.spawn({
+						sessionId: 'sdk-agent-session',
+						toolType: 'opencode',
+						cwd: '/tmp',
+						command: 'opencode',
+						args: ['run'],
+						prompt: 'second turn',
+					})
+				).toThrow('Agent process already running for session sdk-agent-session');
+				expect(processManager.get('sdk-agent-session')).toBe(sdkProcess);
 			});
 		});
 
@@ -710,6 +920,7 @@ describe('process-manager.ts', () => {
 			});
 
 			it('should kill all processes even when kill() deletes from the map', () => {
+				mockIsWindows.mockReturnValue(true);
 				const kills: string[] = [];
 				const originalKill = processManager.kill.bind(processManager);
 				processManager.kill = (sessionId: string, opts?: { sync?: boolean }) => {
@@ -741,9 +952,14 @@ describe('process-manager.ts', () => {
 
 				expect(kills).toEqual(expect.arrayContaining(['a', 'b', 'c']));
 				expect(kills).toHaveLength(3);
+				expect(mockExecFileSync).toHaveBeenCalledTimes(3);
+				expect(mockExecFileSync).toHaveBeenCalledWith('taskkill', ['/pid', '1', '/t', '/f'], {
+					timeout: 5000,
+				});
 			});
 
 			it('should pass sync: true to kill() so Windows taskkill blocks until complete', () => {
+				mockIsWindows.mockReturnValue(true);
 				const killSpy = vi.spyOn(processManager, 'kill');
 
 				const processes = (processManager as any).processes as Map<string, any>;
@@ -767,6 +983,9 @@ describe('process-manager.ts', () => {
 				processManager.killAll();
 
 				expect(killSpy).toHaveBeenCalledWith('sync-test', { sync: true, shutdown: false });
+				expect(mockExecFileSync).toHaveBeenCalledWith('taskkill', ['/pid', '1', '/t', '/f'], {
+					timeout: 5000,
+				});
 				killSpy.mockRestore();
 			});
 
@@ -798,10 +1017,12 @@ describe('process-manager.ts', () => {
 
 				processManager.killAll({ shutdown: true });
 
-				// SIGKILL only — no SIGTERM, no escalation timer, no onExit listener.
+				// SIGKILL only - no SIGTERM, no escalation timer, no onExit listener.
 				expect(mockPtyKill).toHaveBeenCalledTimes(1);
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGKILL');
 				expect(mockOnExit).not.toHaveBeenCalled();
+				expect(mockExecFile).not.toHaveBeenCalled();
+				expect(mockExecFileSync).not.toHaveBeenCalled();
 			});
 		});
 	});

@@ -14,7 +14,7 @@ import type {
 } from './cue';
 export type { CueCommand, CueCommandMode, CueEventType } from './cue';
 
-/** Cue brand color — single source of truth for all Cue UI */
+/** Cue brand color - single source of truth for all Cue UI */
 export const CUE_COLOR = '#06b6d4';
 
 /**
@@ -73,12 +73,12 @@ export interface TriggerNodeData {
 	};
 	/** Name of the underlying Cue subscription this trigger represents on disk.
 	 *  Populated on load by `yamlToPipeline`. Every trigger node in a multi-
-	 *  trigger pipeline maps to a distinct subscription — the first keeps the
+	 *  trigger pipeline maps to a distinct subscription - the first keeps the
 	 *  pipeline name (e.g. "Pipeline 1"), subsequent triggers carry the
 	 *  `-chain-N` suffix (e.g. "Pipeline 1-chain-2"). The trigger's Play
 	 *  button uses this field to fire the correct subscription; without it,
 	 *  all Play buttons would fire the first sub only. Undefined for
-	 *  never-saved pipelines — the Play button is hidden until save. */
+	 *  never-saved pipelines - the Play button is hidden until save. */
 	subscriptionName?: string;
 }
 
@@ -126,7 +126,7 @@ export interface CommandNodeData {
 	/** Cached owning session name for display. */
 	owningSessionName: string;
 	/** Stable per-instance identifier (UUID). See `AgentNodeData.nodeKey`
-	 *  for the round-trip semantics — the same `target_node_key` field on
+	 *  for the round-trip semantics - the same `target_node_key` field on
 	 *  the subscription carries this value to/from YAML. */
 	nodeKey?: string;
 }
@@ -134,7 +134,7 @@ export interface CommandNodeData {
 /**
  * Data for an "error" node rendered in place of an unresolved agent. The
  * loader emits these when a chain/target session reference in the YAML
- * cannot be matched to any live session — `agent_id` points to a deleted
+ * cannot be matched to any live session - `agent_id` points to a deleted
  * session, `source_session_ids` misses, and name-based fallback also
  * misses. Showing a visible error beats silently picking a wrong agent
  * (which is how the "two agents swapped" bug manifested). Save is blocked
@@ -250,7 +250,7 @@ export interface CuePipeline {
 	 * Per-pipeline manual offset applied only in the "All Pipelines" view so
 	 * users can drag entire pipeline groups around the canvas. When undefined,
 	 * the auto-stacking layout (computePipelineYOffsets) places the pipeline.
-	 * Layout-only — never written to YAML, only to the layout-state JSON.
+	 * Layout-only - never written to YAML, only to the layout-state JSON.
 	 */
 	viewOffset?: { x: number; y: number };
 }
@@ -287,7 +287,7 @@ export const PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY = '__default__';
 
 export interface PipelineLayoutState {
 	/**
-	 * Schema version. Legacy files (v1) have no version field — the loader
+	 * Schema version. Legacy files (v1) have no version field - the loader
 	 * translates them into v2 on first read. Bump this only on breaking
 	 * changes to the shape; additive changes should stay at 2 with optional
 	 * fields so older clients keep loading.

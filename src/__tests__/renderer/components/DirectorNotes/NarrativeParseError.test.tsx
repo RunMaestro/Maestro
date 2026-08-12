@@ -1,8 +1,10 @@
 /**
- * Tests for NarrativeParseError — the OVERT failure surface for Rich Mode.
+ * Tests for NarrativeParseError - the OVERT failure surface shared by Rich and
+ * Plain Mode.
  *
  * Verifies it:
  * - renders a loud, unmissable banner (role="alert" + heading + the precise error)
+ * - switches to the partial-recovery wording when a narrative WAS salvaged
  * - keeps the raw agent output hidden behind a "View raw output" disclosure that
  *   toggles (and tracks aria-expanded)
  * - copies the raw output verbatim and confirms with "Copied!"
@@ -43,8 +45,24 @@ describe('NarrativeParseError', () => {
 		const banner = screen.getByRole('alert');
 		expect(banner).toBeInTheDocument();
 		expect(
-			screen.getByText("Rich Mode could not parse the AI's structured output")
+			screen.getByText("Maestro could not parse the AI's structured output")
 		).toBeInTheDocument();
+		expect(screen.getByText(ERROR)).toBeInTheDocument();
+	});
+
+	it('switches to partial-recovery wording when a narrative was salvaged', () => {
+		const reason = 'Recovered what could be read: the response was cut off before it finished.';
+		render(
+			<NarrativeParseError theme={mockTheme} error={ERROR} rawOutput={RAW} recovery={reason} />
+		);
+
+		expect(
+			screen.getByText("Part of the AI's structured output could not be parsed")
+		).toBeInTheDocument();
+		// The reason is stated out loud so a partial report never reads as complete.
+		expect(screen.getByRole('alert')).toHaveTextContent(/cut off before it finished/i);
+		expect(screen.getByRole('alert')).toHaveTextContent(/may be incomplete/i);
+		// The precise parse error stays visible in both states.
 		expect(screen.getByText(ERROR)).toBeInTheDocument();
 	});
 

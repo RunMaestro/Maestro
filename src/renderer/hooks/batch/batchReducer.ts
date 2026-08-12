@@ -171,6 +171,8 @@ export interface StartBatchPayload {
 	worktreePath?: string;
 	worktreeBranch?: string;
 	customPrompt?: string;
+	// Per-run model override chosen in the launch modal (absent = session default).
+	runModelOverride?: string;
 	startTime: number;
 	// Time tracking
 	cumulativeTaskTimeMs: number;
@@ -295,6 +297,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					currentTaskIndex: 0,
 					originalContent: '',
 					customPrompt: payload.customPrompt,
+					runModelOverride: payload.runModelOverride,
 					sessionIds: [],
 					startTime: payload.startTime,
 					// Time tracking

@@ -209,6 +209,26 @@ When an update is available, you'll see:
 - **Download** button to get the latest release from GitHub
 - Option to enable/disable automatic update checks
 
+### Anonymous Check-in
+
+Alongside each update check, Maestro sends a small anonymous ping so we can count how many installs are active and which platforms and themes people actually use. It is the only usage data the app reports about itself.
+
+**What it sends:**
+
+| Field      | Example           | Notes                                                        |
+| ---------- | ----------------- | ------------------------------------------------------------ |
+| Install ID | `9f3a...` (UUID)  | Randomly generated once, stored locally. Not your machine ID |
+| Version    | `0.17.3`          | The Maestro version you're running                           |
+| Platform   | `darwin`, `win32` | Operating system                                             |
+| Arch       | `arm64`, `x64`    | CPU architecture                                             |
+| Theme      | `dracula`         | Active theme ID                                              |
+
+**What it does not send:** your name, email, IP-derived location, file paths, project names, prompts, agent output, or anything you type. The install ID is a random UUID generated on first run and kept in your local app data - it is not derived from your hardware, and it cannot be traced back to you.
+
+**Frequency:** once when Maestro launches, then once per day if you leave it running.
+
+**To turn it off:** Settings → General → **Check for updates on startup**. The check-in rides along with the update check, so disabling that disables both. Development and test builds never check in.
+
 ### Pre-release Channel (Beta Opt-in)
 
 By default, Maestro only notifies you about stable releases. If you want to try new features before they're officially released, you can opt into the pre-release channel.
@@ -225,13 +245,14 @@ By default, Maestro only notifies you about stable releases. If you want to try 
 - The Update dialog will show all available pre-release versions
 
 **Pre-release version types:**
-| Suffix | Description |
-|--------|-------------|
-| `-alpha` | Early development, may be unstable |
-| `-beta` | Feature-complete but still testing |
-| `-rc` | Release candidate, nearly ready for stable |
-| `-dev` | Development builds |
-| `-canary` | Cutting-edge nightly builds |
+
+| Suffix    | Description                                |
+| --------- | ------------------------------------------ |
+| `-alpha`  | Early development, may be unstable         |
+| `-beta`   | Feature-complete but still testing         |
+| `-rc`     | Release candidate, nearly ready for stable |
+| `-dev`    | Development builds                         |
+| `-canary` | Cutting-edge nightly builds                |
 
 **Reverting to stable:** Toggle the setting off and download the latest stable release from GitHub. Pre-releases won't auto-downgrade to stable versions.
 

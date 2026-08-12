@@ -838,6 +838,7 @@ export interface DirectorNotesHistoryDisplay {
 		autoCount: number;
 		userCount: number;
 		cueCount: number;
+		agentEntryCount: number;
 		totalCount: number;
 		lookbackDays: number;
 	};
@@ -865,13 +866,13 @@ export function formatDirectorNotesHistory(
 	// Header
 	const period =
 		lookbackDays > 0 ? `last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'all time';
-	lines.push(bold(c('cyan', "DIRECTOR'S NOTES — HISTORY")) + dim(` (${period})`));
+	lines.push(bold(c('cyan', "DIRECTOR'S NOTES - HISTORY")) + dim(` (${period})`));
 	lines.push('');
 
 	// Stats
 	const { stats } = data;
 	lines.push(
-		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue)`)}`
+		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent)`)}`
 	);
 	lines.push(`  ${c('white', 'Showing:')}  ${data.showing} of ${data.total}`);
 	lines.push('');
@@ -896,7 +897,9 @@ export function formatDirectorNotesHistory(
 				? c('blue', '[AUTO]')
 				: entry.type === 'CUE'
 					? c('magenta', '[CUE]')
-					: c('yellow', '[USER]');
+					: entry.type === 'AGENT'
+						? c('cyan', '[AGENT]')
+						: c('yellow', '[USER]');
 		const agent = entry.agentName
 			? c('white', truncate(entry.agentName, 20))
 			: dim(entry.sourceSessionId.slice(0, 8));

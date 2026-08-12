@@ -29,6 +29,7 @@ import {
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
+import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -63,6 +64,10 @@ export interface CueProcessEntry {
 	eventType: string;
 	/** For SSH spawns: the agent invocation running on the remote host. */
 	sshRemoteCommand?: string;
+}
+
+interface ProcessQuery {
+	includeChildProcesses?: boolean;
 }
 
 export interface ProcessHandlerDependencies {
@@ -110,6 +115,34 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Wire the Claude Code permission relay: surface requests to the renderer
 	// and clean up per-spawn bindings when a process exits.
 	initPermissionRelay(getMainWindow, getProcessManager());
+
+	// Manual renderer closes are ownership events, not remote Movement/Cadenza
+	// mutations. Release their isolated documents explicitly so closed mockups do
+	// not retain memory or consume the bounded registry.
+	ipcMain.on('concerto-html:release', (_event, surface: unknown, id: unknown) => {
+		if ((surface !== 'movement' && surface !== 'cadenza') || typeof id !== 'string' || !id) {
+			return;
+		}
+		releaseConcertoHtmlDocument(surface, id);
+	});
+
+	ipcMain.handle(
+		'concerto-html:restore',
+		withIpcErrorLogging(
+			handlerOpts('restoreConcertoHtmlDocument'),
+			async (surface: unknown, id: unknown, html: unknown) => {
+				if (
+					(surface !== 'movement' && surface !== 'cadenza') ||
+					typeof id !== 'string' ||
+					!id ||
+					typeof html !== 'string'
+				) {
+					throw new Error('Invalid Concerto HTML restore request');
+				}
+				return restoreConcertoHtmlDocument(surface, id, html);
+			}
+		)
+	);
 
 	// Renderer -> main: the user's allow/deny decision for a relayed request.
 	ipcMain.handle(
@@ -221,7 +254,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Get all active processes managed by the ProcessManager (and Cue runs if available)
 	ipcMain.handle(
 		'process:getActiveProcesses',
-		withIpcErrorLogging(handlerOpts('getActiveProcesses'), async () => {
+		withIpcErrorLogging(handlerOpts('getActiveProcesses'), async (options?: ProcessQuery) => {
 			const processManager = requireProcessManager(getProcessManager);
 			const processes = processManager.getAll();
 			// Return serializable process info (exclude non-serializable PTY/child process objects)
@@ -241,7 +274,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						maestroEnvVars: p.maestroEnvVars,
 						sshRemoteCommand: p.sshRemoteCommand,
 					};
-					if (p.isTerminal && p.pid) {
+					if (options?.includeChildProcesses !== false && p.isTerminal && p.pid) {
 						const children = await getChildProcesses(p.pid);
 						if (children.length > 0) {
 							entry.childProcesses = children;
@@ -308,7 +341,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				shellEnvVars?: Record<string, string>;
 				cols?: number;
 				rows?: number;
-				// Agent type (e.g. 'claude-code') — used to resolve agent-level customEnvVars
+				// Agent type (e.g. 'claude-code') - used to resolve agent-level customEnvVars
 				toolType?: string;
 				// Session-level custom env vars (override agent-level)
 				sessionCustomEnvVars?: Record<string, string>;
@@ -480,7 +513,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				};
 			}) => {
 				logger.warn(
-					'process:runCommand is deprecated — use process:spawnTerminalTab for persistent PTY sessions'
+					'process:runCommand is deprecated - use process:spawnTerminalTab for persistent PTY sessions'
 				);
 				const processManager = requireProcessManager(getProcessManager);
 
@@ -533,6 +566,26 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					shellEnvVars,
 					sshRemoteConfig
 				);
+			}
+		)
+	);
+
+	// Terminate an in-flight process:runCommand. Needed because a one-shot
+	// command can block forever (a program waiting on stdin, `tail -f`, a
+	// runaway build) and runCommand's child isn't in the ProcessManager's
+	// process map, so process:kill can't reach it.
+	ipcMain.handle(
+		'process:cancelCommand',
+		withIpcErrorLogging(
+			handlerOpts('cancelCommand'),
+			async (config: { sessionId: string }): Promise<boolean> => {
+				const processManager = requireProcessManager(getProcessManager);
+				const cancelled = processManager.cancelCommand(config.sessionId);
+				logger.debug(`Cancel command requested`, LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					cancelled,
+				});
+				return cancelled;
 			}
 		)
 	);

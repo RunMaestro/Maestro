@@ -2,7 +2,7 @@
  * Shared activity event bus.
  *
  * Multiple hooks (useActivityTracker, useHandsOnTimeTracker, useGitStatusPolling)
- * each registered their own keydown/mousedown/wheel/touchstart listeners — totaling
+ * each registered their own keydown/mousedown/wheel/touchstart listeners - totaling
  * 13+ global event listeners all doing the same thing: detecting user activity.
  *
  * This module consolidates them into a single set of passive listeners.

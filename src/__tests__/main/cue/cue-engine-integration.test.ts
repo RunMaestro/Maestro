@@ -1,14 +1,14 @@
 /**
- * Phase 15B — Cue engine end-to-end integration tests.
+ * Phase 15B - Cue engine end-to-end integration tests.
  *
  * Drives the real `CueEngine` with its real backing services (session
  * registry, fan-in tracker, run manager, heartbeat, dispatch, completion,
  * cleanup) and the in-memory Cue DB from `cue-integration-test-helpers.ts`.
  * Only the boundary callbacks are mocked:
- *   - `onCueRun`          — the executor is not invoked; we assert the engine
+ *   - `onCueRun`          - the executor is not invoked; we assert the engine
  *                           reached the dispatch point with the right payload
- *   - `loadCueConfig`     — we inject configs directly instead of reading disk
- *   - file watcher, GitHub poller, task scanner — provide a cleanup fn only
+ *   - `loadCueConfig`     - we inject configs directly instead of reading disk
+ *   - file watcher, GitHub poller, task scanner - provide a cleanup fn only
  *
  * This file complements the narrower unit tests in `cue-engine.test.ts` by
  * exercising interleavings that span multiple services: heartbeat →
@@ -61,7 +61,7 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	watchCueYaml: (root: string, onChange: () => void) => mockWatchCueYaml(root, onChange),
 }));
 
-// Trigger sources whose real implementations would need real IO — keep their
+// Trigger sources whose real implementations would need real IO - keep their
 // constructors as cleanup-fn-returning stubs.
 vi.mock('../../../main/cue/cue-file-watcher', () => ({
 	createCueFileWatcher: vi.fn(() => () => {}),
@@ -95,7 +95,7 @@ function resetSharedState() {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe('Phase 15B — CueEngine integration', () => {
+describe('Phase 15B - CueEngine integration', () => {
 	let yamlWatcherCleanup: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
@@ -246,9 +246,11 @@ describe('Phase 15B — CueEngine integration', () => {
 			engine.stop();
 		});
 
-		it('does not credit a sub-minute agent run', async () => {
+		it('emits no credit for a single sub-minute run (the remainder is carried)', async () => {
 			configsByProject.set('/projects/test', heartbeatConfig());
-			// Default helper duration is 100ms → floors to 0 → no credit.
+			// Default helper duration is 100ms - under the one-minute emission
+			// granularity, so nothing is emitted yet. The 100ms is not lost: it
+			// stays in the engine's remainder for the next run to build on.
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
@@ -259,11 +261,49 @@ describe('Phase 15B — CueEngine integration', () => {
 			engine.stop();
 		});
 
-		it('does not credit a non-completed (failed) run', async () => {
+		it('accumulates sub-minute remainders across runs instead of flooring them away', async () => {
+			configsByProject.set('/projects/test', heartbeatConfig());
+			// Two 40s runs. Flooring each independently would credit 0 twice;
+			// carrying the remainder credits one whole minute on the second.
+			const deps = createMockDeps({
+				onCueRun: vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
+					vi.advanceTimersByTime(40000);
+					return {
+						runId: 'run-1',
+						sessionId: 'session-1',
+						sessionName: 'Test Session',
+						subscriptionName: request.subscriptionName,
+						event: request.event,
+						status: 'completed' as const,
+						stdout: 'output',
+						stderr: '',
+						exitCode: 0,
+						durationMs: 40000,
+						startedAt: new Date().toISOString(),
+						endedAt: new Date().toISOString(),
+					};
+				}),
+			});
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([]);
+
+			// Second heartbeat fires on the 5-minute interval.
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+			expect(creditsFromOnLog(deps.onLog)).toEqual([60000]);
+
+			engine.stop();
+		});
+
+		it('credits a failed run - the unattended time was still consumed', async () => {
 			configsByProject.set('/projects/test', heartbeatConfig());
 			const deps = createMockDeps({
 				onCueRun: vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
-					// Over a minute of wall-clock, but failed → status gate blocks credit.
+					// Two minutes of unattended wall-clock that happened to end in
+					// failure. The machine was still working, so it credits.
 					vi.advanceTimersByTime(120000);
 					return {
 						runId: 'run-1',
@@ -285,7 +325,7 @@ describe('Phase 15B — CueEngine integration', () => {
 			engine.start();
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(creditsFromOnLog(deps.onLog)).toEqual([]);
+			expect(creditsFromOnLog(deps.onLog)).toEqual([120000]);
 
 			engine.stop();
 		});
@@ -483,7 +523,7 @@ describe('Phase 15B — CueEngine integration', () => {
 			expect(postRefreshCalls).toContain('replacement');
 			expect(postRefreshCalls).not.toContain('original');
 
-			// Advancing the interval must not re-fire "original" — the watcher
+			// Advancing the interval must not re-fire "original" - the watcher
 			// was torn down on refresh.
 			vi.clearAllMocks();
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
@@ -554,7 +594,7 @@ describe('Phase 15B — CueEngine integration', () => {
 
 			engine1.stop();
 
-			// Fresh engine, same process. DB was not cleared — the event row
+			// Fresh engine, same process. DB was not cleared - the event row
 			// from the first run is still there.
 			const engine2 = new CueEngine(deps);
 			engine2.start();
@@ -661,7 +701,7 @@ describe('Phase 15B — CueEngine integration', () => {
 		});
 	});
 
-	// ─── Phase 13B — Metrics ────────────────────────────────────────────────
+	// ─── Phase 13B - Metrics ────────────────────────────────────────────────
 
 	describe('metrics (Phase 13B)', () => {
 		it('returns a zeroed snapshot before engine start', () => {

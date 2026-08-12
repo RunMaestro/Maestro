@@ -1,5 +1,5 @@
 /**
- * RetryCountdownBanner — live countdown for an in-progress Agent Resilience
+ * RetryCountdownBanner - live countdown for an in-progress Agent Resilience
  * auto-retry. Renders directly above the input area for the active AI tab
  * whenever `retryStore` holds a pending retry for it, showing when the next
  * resend fires plus Cancel / Retry Now controls. Renders nothing when there is

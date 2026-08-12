@@ -36,7 +36,7 @@ afterEach(() => {
 	}
 });
 
-describe('normalizer — time.once field passthrough', () => {
+describe('normalizer - time.once field passthrough', () => {
 	it('passes through fire_at as a string', () => {
 		const raw = yaml.dump({
 			subscriptions: [
@@ -113,7 +113,7 @@ describe('normalizer — time.once field passthrough', () => {
 
 		const doc = parseCueConfigDocument(raw, projectRoot);
 		const { config } = materializeCueConfig(doc!);
-		// `0` must survive — the trigger source treats it as "disable rescue"
+		// `0` must survive - the trigger source treats it as "disable rescue"
 		// and the normalizer's defensive coercion must not collapse it to
 		// undefined (which would let the runtime default of 360 take over).
 		expect(config.subscriptions[0].grace_minutes).toBe(0);
@@ -178,7 +178,7 @@ describe('normalizer — time.once field passthrough', () => {
 
 		const doc = parseCueConfigDocument(raw, projectRoot);
 		const { config } = materializeCueConfig(doc!);
-		// `false` must survive — the runtime default is `true`, so a dropped
+		// `false` must survive - the runtime default is `true`, so a dropped
 		// `false` would silently re-enable self-destruct on failure.
 		expect(config.subscriptions[0].self_destruct_on_failure).toBe(false);
 	});
@@ -223,7 +223,7 @@ describe('normalizer — time.once field passthrough', () => {
 	});
 });
 
-describe('normalizer — action: notify passthrough', () => {
+describe('normalizer - action: notify passthrough', () => {
 	it('passes through action: notify and a full notify block', () => {
 		const raw = yaml.dump({
 			subscriptions: [

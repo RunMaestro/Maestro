@@ -23,7 +23,7 @@ import type { ProcessConfig, SpawnResult } from '../../main/process-manager';
 
 // The literal env var names the generated MCP server script actually reads.
 // Asserting the literals (not the source constants) pins the real wire contract
-// between the injector and the script — a rename of the constant's value would
+// between the injector and the script - a rename of the constant's value would
 // silently break that contract and must redden these tests.
 const OVERRIDE_ENV = 'MAESTRO_COWORKING_SOCKET_OVERRIDE';
 const SESSION_ID_ENV = 'MAESTRO_COWORKING_SESSION_ID';

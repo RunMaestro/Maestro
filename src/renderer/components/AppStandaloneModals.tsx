@@ -17,6 +17,7 @@ import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { AppOverlays } from './AppOverlays';
+import { GitPillModals } from './GitPillModals';
 import { PlaygroundPanel } from './PlaygroundPanel';
 import { GistPublishModal } from './GistPublishModal';
 import type { GistInfo } from './GistPublishModal';
@@ -321,6 +322,9 @@ function AppStandaloneModalsInner({
 				/>
 			)}
 
+			{/* --- GIT PILL: STREAMING PULL/PUSH CONSOLE + BRANCH SWITCHER --- */}
+			<GitPillModals theme={theme} />
+
 			{/* --- DEBUG: VIEW APPLICATION STATS --- */}
 			{debugApplicationStatsOpen && (
 				<DebugApplicationStatsModal
@@ -459,7 +463,7 @@ function AppStandaloneModalsInner({
 							});
 						}
 						// Save gist URL for the individual message, if the publish originated from one.
-						// In-memory only — intentionally not persisted across app restarts.
+						// In-memory only - intentionally not persisted across app restarts.
 						if (tabGistContent?.messageId) {
 							useMessageGistStore.getState().setMessageGist(tabGistContent.messageId, {
 								gistUrl,
