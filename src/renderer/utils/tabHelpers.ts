@@ -458,6 +458,22 @@ export function getInitialRenameValue(tab: AITab): string {
 }
 
 /**
+ * The filename a file tab's content should be previewed AS: the tab's display
+ * name with its extension re-attached.
+ *
+ * A `FilePreviewTab` stores the stem and the extension separately so the tab
+ * strip can render them differently, but every content decision downstream of
+ * `FilePreview` keys off the extension: markdown vs plain text, image, CSV,
+ * JSONL, mermaid, HTML render, binary. Passing the bare `tab.name` silently
+ * demotes a `.md` file to unformatted source, which is exactly what happened to
+ * tiled file panes. Any caller building the `file` prop for `FilePreview` MUST
+ * go through this rather than re-deriving the concatenation.
+ */
+export function getFileTabFileName(tab: Pick<FilePreviewTab, 'name' | 'extension'>): string {
+	return `${tab.name}${tab.extension ?? ''}`;
+}
+
+/**
  * Attempt to extract a tab name from the user's message using fast client-side
  * pattern matching. This avoids spawning an expensive ephemeral agent for messages
  * that clearly reference a GitHub PR, issue, or similar identifiable resource.

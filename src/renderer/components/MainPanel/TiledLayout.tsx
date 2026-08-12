@@ -25,7 +25,7 @@ import {
 
 import { TerminalOutput } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
-import { hasDraft } from '../../utils/tabHelpers';
+import { getFileTabFileName, hasDraft } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -217,13 +217,25 @@ function TiledFilePane({
 		[fileTabId, session.id, sshRemoteId]
 	);
 
-	if (!fileTab) return <PaneMissingTab theme={theme} />;
+	// Same shape the single view builds in useFilePreviewHandlers: the extension is
+	// re-attached (FilePreview decides markdown/image/CSV/binary from the filename)
+	// and the object identity is stable so an <img> pane doesn't remount and flicker
+	// on every unrelated render.
+	const file = React.useMemo(
+		() =>
+			fileTab
+				? { name: getFileTabFileName(fileTab), path: fileTab.path, content: fileTab.content }
+				: null,
+		[fileTab?.name, fileTab?.extension, fileTab?.path, fileTab?.content]
+	);
+
+	if (!fileTab || !file) return <PaneMissingTab theme={theme} />;
 
 	return (
 		<div className="flex-1 overflow-hidden select-text">
 			<React.Suspense fallback={null}>
 				<FilePreview
-					file={{ name: fileTab.name, path: fileTab.path, content: fileTab.content }}
+					file={file}
 					onClose={() => {}}
 					isTabMode={true}
 					theme={theme}
