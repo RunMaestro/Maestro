@@ -231,6 +231,57 @@ describe('useStarredItems', () => {
 		expect(session?.inputMode).toBe('ai');
 	});
 
+	it('activateStarredItem focuses the PANE of a starred tab that is tiled into a group', async () => {
+		// Bug: a starred tab folded into a tiled group has no standalone chip, so
+		// setting activeTabId alone left the group's other pane focused (or rendered
+		// the tab as a dedicated view outside its group). Activation must select the
+		// owning group and point focusedPaneId at that tab's leaf.
+		useSessionStore.setState({
+			sessions: [
+				makeSession({
+					id: 's1',
+					activeGroupId: null,
+					aiTabs: [
+						{ id: 't1', starred: true, agentSessionId: 'asid-1', name: 'Tab One' },
+						{ id: 't2', agentSessionId: 'asid-2', name: 'Tab Two' },
+					] as never,
+					activeTabId: 't2',
+					tabGroups: [
+						{
+							id: 'g1',
+							name: 'Group',
+							focusedPaneId: 'leaf-2',
+							createdAt: 0,
+							layout: {
+								kind: 'split',
+								id: 'split-1',
+								direction: 'row',
+								sizes: [0.5, 0.5],
+								children: [
+									{ kind: 'leaf', id: 'leaf-1', tab: { type: 'ai', id: 't1' } },
+									{ kind: 'leaf', id: 'leaf-2', tab: { type: 'ai', id: 't2' } },
+								],
+							},
+						},
+					] as never,
+				}),
+			],
+		} as never);
+
+		const { result } = renderHook(() => useStarredItems({}));
+		const row = result.current.starredItems[0];
+
+		await act(async () => {
+			await result.current.activateStarredItem(row);
+		});
+
+		const session = useSessionStore.getState().sessions.find((s) => s.id === 's1');
+		expect(session?.activeGroupId).toBe('g1');
+		expect(session?.tabGroups?.[0].focusedPaneId).toBe('leaf-1');
+		expect(session?.activeTabId).toBe('t1');
+		expect(session?.inputMode).toBe('ai');
+	});
+
 	it('dismisses an active group chat when activating a starred item (regression #1175)', async () => {
 		// Bug: clicking a Starred Session while a group chat was open did nothing.
 		// The group chat view is gated on a truthy activeGroupChatId and renders on
