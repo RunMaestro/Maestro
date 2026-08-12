@@ -17,6 +17,7 @@ import {
 	type CopilotShutdownWaitResult,
 } from '../CopilotShutdownWaiter';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { isSupersededGeneration } from '../generation';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -231,6 +232,25 @@ export class ExitHandler {
 			cleanupTempFiles(managedProcess.tempImageFiles);
 		}
 
+		// `awaitCopilotShutdown` above can park this handler for SECONDS. A
+		// replacement can claim this session id inside that window, and from here
+		// on every remaining step writes into shared per-session state:
+		// `query-complete` settles a turn, `flushDataBuffer` pushes buffered bytes
+		// into the session's stream, and `exit` + `delete` settle and untrack it.
+		//
+		// Suppressing only the final emit would still let this process's buffered
+		// output appear inside the successor's reply and would still record its
+		// duration against the successor's turn. So the check runs BEFORE the
+		// side effects, not just before the emit.
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing exit side effects',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
+
 		// Emit query-complete event for batch mode processes (for stats tracking)
 		if (isBatchMode && managedProcess.querySource) {
 			const duration = Date.now() - managedProcess.startTime;
@@ -255,13 +275,10 @@ export class ExitHandler {
 		// before the exit event, so listeners see all data before exit fires.
 		this.bufferManager.flushDataBuffer(sessionId);
 
-		// `awaitCopilotShutdown` above can park this handler for seconds, long
-		// enough for the session to be re-spawned under the same key. Emitting
-		// then would settle the successor's turn with this process's exit code,
-		// and the delete would orphan a running process. Callers already screen
-		// out replaced generations before entering; this re-checks the window
-		// that opened while we awaited.
-		if (this.processes.get(sessionId) !== managedProcess) {
+		// Re-checked immediately before settling the turn: `flushDataBuffer` above
+		// is async-adjacent enough that a replacement can still land between the
+		// two points.
+		if (this.isSuperseded(sessionId, managedProcess)) {
 			logger.warn(
 				'[ProcessManager] Session re-spawned during exit handling, suppressing exit event',
 				'ProcessManager',
@@ -271,7 +288,26 @@ export class ExitHandler {
 		}
 
 		this.emitter.emit('exit', sessionId, code);
-		this.processes.delete(sessionId);
+		// Only delete OUR entry. Deleting unconditionally would untrack a live
+		// successor that claimed the key, leaving a process the user cannot stop.
+		if (this.processes.get(sessionId) === managedProcess) {
+			this.processes.delete(sessionId);
+		}
+	}
+
+	/**
+	 * True when a newer spawn has taken over this session id, so this process's
+	 * remaining work must not touch shared per-session state.
+	 *
+	 * Generation first: it stays meaningful after the successor deletes its own
+	 * map entry, which is exactly when an identity check silently starts passing
+	 * again. The map comparison is kept as a fallback for processes registered
+	 * without a generation.
+	 */
+	private isSuperseded(sessionId: string, managedProcess: ManagedProcess): boolean {
+		if (isSupersededGeneration(sessionId, managedProcess.spawnGeneration)) return true;
+		const current = this.processes.get(sessionId);
+		return current !== undefined && current !== managedProcess;
 	}
 
 	/**

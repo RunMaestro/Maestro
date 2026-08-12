@@ -56,6 +56,10 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import {
+	nextSpawnGeneration,
+	resetSpawnGenerationsForTest,
+} from '../../../../main/process-manager/generation';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
@@ -119,6 +123,9 @@ describe('ExitHandler', () => {
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
 		exitHandler = new ExitHandler({ processes, emitter, bufferManager });
+		// Generations are module state and only ever count up, so they must be
+		// reset between tests or a later test inherits a stale high-water mark.
+		resetSpawnGenerationsForTest();
 		// Default: no SSH remote resolves and no remote reads happen. Individual
 		// SSH tests override these. Reset so per-test mock values don't leak.
 		vi.mocked(getSshRemoteById)
@@ -315,6 +322,68 @@ describe('ExitHandler', () => {
 
 			expect(onExit).not.toHaveBeenCalled();
 			expect(processes.get('test-session')).toBe(successor);
+		});
+
+		// Suppressing only the final emit is not enough. Everything between the
+		// await and the emit writes into shared per-session state, so the
+		// predecessor's buffered bytes would surface inside the SUCCESSOR's reply
+		// and its duration would be recorded against the successor's turn.
+		it('does not flush its buffer or settle a query into the successor', async () => {
+			const successor = createMockProcess({ pid: 4321 });
+			const proc = createMockProcess({
+				isBatchMode: true,
+				querySource: 'user',
+				outputParser: createMockOutputParser({
+					detectErrorFromExit: vi.fn(() => {
+						processes.set('test-session', successor);
+						return null;
+					}),
+				}),
+			});
+			processes.set('test-session', proc);
+
+			const onQueryComplete = vi.fn();
+			emitter.on('query-complete', onQueryComplete);
+			const flushSpy = vi.spyOn(bufferManager, 'flushDataBuffer');
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onQueryComplete).not.toHaveBeenCalled();
+			// The one flush at the top of handleExit is expected and harmless (it
+			// runs before any replacement can exist). The FINAL flush - the one
+			// that would push this process's bytes into the successor's stream -
+			// must not happen.
+			expect(flushSpy).toHaveBeenCalledTimes(1);
+		});
+
+		// The identity check can only answer while an entry exists. Once the
+		// successor finishes and deletes its own entry, `get()` returns undefined
+		// and a predecessor still draining would look current again - emitting a
+		// second exit for a session that already settled.
+		it('stays suppressed after the successor has finished and removed itself', async () => {
+			const proc = createMockProcess({
+				outputParser: createMockOutputParser({
+					detectErrorFromExit: vi.fn(() => {
+						// Successor claims the id, runs, and completes - all while this
+						// handler is parked.
+						const successor = createMockProcess({ pid: 4321 });
+						successor.spawnGeneration = (proc.spawnGeneration ?? 0) + 1;
+						nextSpawnGeneration('test-session');
+						processes.set('test-session', successor);
+						processes.delete('test-session');
+						return null;
+					}),
+				}),
+			});
+			proc.spawnGeneration = nextSpawnGeneration('test-session');
+			processes.set('test-session', proc);
+
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onExit).not.toHaveBeenCalled();
 		});
 	});
 

@@ -119,6 +119,11 @@ export interface ManagedProcess {
 	 *  Inherited system env is NOT included - this is the actionable set shown in the
 	 *  Process Details modal. */
 	maestroEnvVars?: Record<string, string>;
+	/** Monotonic spawn number for this session id, claimed at registration.
+	 *  Lets a late event from a killed process recognize that a newer spawn owns
+	 *  the session even after that newer spawn has removed its own map entry.
+	 *  See `process-manager/generation.ts`. */
+	spawnGeneration?: number;
 }
 
 export interface UsageTotals {

@@ -13,6 +13,7 @@ import {
 import { resolveShellPath } from '../utils/pathResolver';
 import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 
 /**
  * Handles spawning of PTY (pseudo-terminal) processes.
@@ -145,20 +146,21 @@ export class PtySpawner {
 				),
 			};
 
-			this.processes.set(sessionId, managedProcess);
-
 			// A killed PTY can still deliver data and its exit after ProcessManager
 			// has registered a replacement under the same sessionId key (`spawn()`
 			// kills the predecessor first, then the spawner re-uses the key). Late
 			// events keyed by sessionId alone would land on the live successor:
 			// the predecessor's exit code would be reported as the successor dying
 			// and the `delete` below would orphan a process that is still running.
-			// A missing entry is NOT superseded - that's the ordinary post-kill
-			// path whose exit event the renderer needs to settle the tab.
-			const isSuperseded = (): boolean => {
-				const current = this.processes.get(sessionId);
-				return current !== undefined && current !== managedProcess;
-			};
+			//
+			// Generation, not map identity - see process-manager/generation.ts for
+			// why "am I still the map entry?" stops working once the successor
+			// finishes and removes its own entry.
+			managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
+			this.processes.set(sessionId, managedProcess);
+
+			const isSuperseded = (): boolean =>
+				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
 
 			// Terminal session IDs use the format {sessionId}-terminal-{tabId} (desktop)
 			// or {sessionId}-terminal (web). xterm.js renders escape sequences itself,
