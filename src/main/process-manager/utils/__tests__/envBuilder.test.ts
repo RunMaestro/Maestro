@@ -713,9 +713,13 @@ describe('envBuilder - Global Environment Variables', () => {
 		});
 
 		it('removes a key set by the session custom vars', () => {
-			const env = buildChildProcessEnv({ ANTHROPIC_API_KEY: 'from-agent' }, false, undefined, [], [
-				'ANTHROPIC_API_KEY',
-			]);
+			const env = buildChildProcessEnv(
+				{ ANTHROPIC_API_KEY: 'from-agent' },
+				false,
+				undefined,
+				[],
+				['ANTHROPIC_API_KEY']
+			);
 
 			expect(env.ANTHROPIC_API_KEY).toBeUndefined();
 		});
