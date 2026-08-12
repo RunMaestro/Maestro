@@ -3,7 +3,10 @@ import { logger } from './logger';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
  * shape lets CLI callers pass AgentDefinition (no capabilities/available). */
-type AgentConfigOverridable = Pick<AgentConfig, 'configOptions' | 'defaultEnvVars'>;
+type AgentConfigOverridable = Pick<
+	AgentConfig,
+	'configOptions' | 'defaultEnvVars' | 'readOnlyArgs'
+>;
 
 const LOG_CONTEXT = '[AgentArgs]';
 
@@ -36,6 +39,14 @@ type AgentConfigOverrides = {
 	sessionCustomEffort?: string;
 	sessionCustomArgs?: string;
 	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * Whether this spawn is read-only (plan mode). Config options are appended
+	 * AFTER `buildAgentArgs()` has already emitted `readOnlyArgs`, so a config
+	 * option or custom arg repeating one of those flags would win on the CLI and
+	 * silently undo read-only enforcement (e.g. OpenCode's `--agent plan`
+	 * followed by a user's `--agent build`). When set, those args are dropped.
+	 */
+	readOnlyMode?: boolean;
 };
 
 type AgentConfigResolution = {
@@ -59,6 +70,36 @@ function parseCustomArgs(customArgs?: string): string[] {
 		}
 		return arg;
 	});
+}
+
+/**
+ * Drop every occurrence of `flags` (and the value each one consumes) from an
+ * argument list. Handles both `--flag value` and `--flag=value` spellings.
+ * Used to keep read-only args from being overridden by a later duplicate.
+ */
+function stripFlags(args: string[], flags: Set<string>): string[] {
+	if (flags.size === 0) {
+		return args;
+	}
+
+	const kept: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		const equalsIndex = arg.indexOf('=');
+		const flagName = equalsIndex > 0 ? arg.slice(0, equalsIndex) : arg;
+
+		if (!flags.has(flagName)) {
+			kept.push(arg);
+			continue;
+		}
+
+		// `--flag=value` carries its value inline; `--flag value` eats the next
+		// token too, as long as that token isn't itself a flag.
+		if (equalsIndex === -1 && i + 1 < args.length && !args[i + 1].startsWith('-')) {
+			i++;
+		}
+	}
+	return kept;
 }
 
 /** Check whether jsonOutputArgs (exact sequence or flag key) are already present in the args list. */
@@ -186,6 +227,13 @@ export function applyAgentConfigOverrides(
 	const agentConfigValues = overrides.agentConfigValues ?? {};
 	let modelSource: AgentConfigResolution['modelSource'] = 'default';
 
+	// Flags that read-only mode pins (e.g. OpenCode's `--agent plan`). Config
+	// options and custom args repeating one of these are dropped below so the
+	// user's plan-mode intent isn't overridden later on the command line.
+	const readOnlyPinnedFlags = new Set<string>(
+		overrides.readOnlyMode ? (agent?.readOnlyArgs ?? []).filter((arg) => arg.startsWith('-')) : []
+	);
+
 	if (agent && agent.configOptions) {
 		for (const option of agent.configOptions) {
 			if (!option.argBuilder) {
@@ -219,7 +267,17 @@ export function applyAgentConfigOverrides(
 			// Type assertion needed because AgentConfigOption is a discriminated union
 			// and we're handling all types generically here
 			const argBuilderFn = option.argBuilder as (value: unknown) => string[];
-			finalArgs = [...finalArgs, ...argBuilderFn(value)];
+			const builtArgs = argBuilderFn(value);
+			const optionArgs = stripFlags(builtArgs, readOnlyPinnedFlags);
+
+			if (optionArgs.length !== builtArgs.length) {
+				logger.debug(
+					`Dropped config option "${option.key}" args that conflict with read-only mode`,
+					LOG_CONTEXT
+				);
+			}
+
+			finalArgs = [...finalArgs, ...optionArgs];
 		}
 	}
 
@@ -230,7 +288,7 @@ export function applyAgentConfigOverrides(
 			? 'agent'
 			: 'none';
 
-	const parsedCustomArgs = parseCustomArgs(effectiveCustomArgs);
+	const parsedCustomArgs = stripFlags(parseCustomArgs(effectiveCustomArgs), readOnlyPinnedFlags);
 	if (parsedCustomArgs.length > 0) {
 		finalArgs = [...finalArgs, ...parsedCustomArgs];
 	} else {

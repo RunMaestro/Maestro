@@ -229,6 +229,7 @@ export async function groomContext(
 		agentConfigValues: agentConfigValues ?? {},
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		readOnlyMode,
 	});
 	const resolvedArgs = configResolution.args;
 	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;

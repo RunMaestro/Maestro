@@ -849,6 +849,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				sessionCustomModel: chat.moderatorConfig?.customModel,
 				sessionCustomArgs: chat.moderatorConfig?.customArgs,
 				sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
+				readOnlyMode: true,
 			});
 
 			// For Gemini CLI: only disable workspace sandbox when read-only mode is
@@ -1307,6 +1308,7 @@ export async function routeModeratorResponse(
 				sessionCustomModel: matchingSession?.customModel,
 				sessionCustomArgs: matchingSession?.customArgs,
 				sessionCustomEnvVars: matchingSession?.customEnvVars,
+				readOnlyMode: readOnly ?? false,
 			});
 
 			try {
@@ -1694,6 +1696,7 @@ Review the agent responses above. Either:
 		sessionCustomModel: chat.moderatorConfig?.customModel,
 		sessionCustomArgs: chat.moderatorConfig?.customArgs,
 		sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
+		readOnlyMode: true,
 	});
 
 	// For Gemini CLI: only disable workspace sandbox when read-only mode is
@@ -1881,6 +1884,7 @@ export async function respawnParticipantWithRecovery(
 		sessionCustomModel: matchingSession?.customModel,
 		sessionCustomArgs: matchingSession?.customArgs,
 		sessionCustomEnvVars: matchingSession?.customEnvVars,
+		readOnlyMode: readOnly ?? false,
 	});
 
 	// Emit participant state change to show this participant is working
