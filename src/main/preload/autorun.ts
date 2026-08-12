@@ -134,11 +134,19 @@ export function createAutorunApi() {
 		// Watch .maestro/STATUS.json for live playbook progress. Returns the
 		// current status (if the file already exists) so the panel can populate
 		// immediately; subsequent updates arrive via onStatusChanged.
-		watchStatus: (projectPath: string): Promise<{ status: PlaybookStatus | null }> =>
-			ipcRenderer.invoke('autorun:watchStatus', projectPath),
+		watchStatus: (
+			projectPath: string,
+			subscriberId: string,
+			isRemote?: boolean
+		): Promise<{
+			status: PlaybookStatus | null;
+			watching: boolean;
+			isRemote?: boolean;
+			message?: string;
+		}> => ipcRenderer.invoke('autorun:watchStatus', projectPath, subscriberId, isRemote),
 
-		unwatchStatus: (projectPath: string): Promise<Record<string, never>> =>
-			ipcRenderer.invoke('autorun:unwatchStatus', projectPath),
+		unwatchStatus: (projectPath: string, subscriberId: string): Promise<Record<string, never>> =>
+			ipcRenderer.invoke('autorun:unwatchStatus', projectPath, subscriberId),
 
 		onStatusChanged: (
 			handler: (data: { projectPath: string; status: PlaybookStatus | null }) => void

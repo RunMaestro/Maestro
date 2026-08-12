@@ -434,8 +434,15 @@ export function useBatchRunner({
 			const statusProjectPath = effectiveCwd;
 			let statusCleanup: (() => void) | null = null;
 			try {
-				const { status: initialStatus } =
-					await window.maestro.autorun.watchStatus(statusProjectPath);
+				// sessionId is the subscription identity: two agents can run Auto Run
+				// on one project, and the watcher is released only when the last of
+				// them finishes. Remote agents write STATUS.json on the far host, so
+				// the watch is declined rather than pointed at the local filesystem.
+				const { status: initialStatus } = await window.maestro.autorun.watchStatus(
+					statusProjectPath,
+					sessionId,
+					Boolean(sshRemoteId)
+				);
 				if (initialStatus) {
 					dispatch({ type: 'UPDATE_PLAYBOOK_STATUS', sessionId, status: initialStatus });
 				}
@@ -1620,14 +1627,15 @@ export function useBatchRunner({
 			// Allow system to sleep now that Auto Run is complete
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
 
-			// Detach the STATUS.json watcher for this run. The main-process watcher
-			// is also torn down on app quit, and re-arming closes any prior watcher,
-			// so this is best-effort cleanup.
+			// Release this run's claim on the STATUS.json watcher. The main-process
+			// watcher only closes once every subscriber has released it, so a sibling
+			// agent still running Auto Run on this project keeps its live panel.
+			// Also torn down on app quit, so this is best-effort cleanup.
 			if (statusCleanup) {
 				statusCleanup();
 			}
 			try {
-				await window.maestro.autorun.unwatchStatus(statusProjectPath);
+				await window.maestro.autorun.unwatchStatus(statusProjectPath, sessionId);
 			} catch {
 				// Ignore cleanup errors.
 			}

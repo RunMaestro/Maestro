@@ -77,7 +77,13 @@ const clearPendingChangesForFolder = (folderPath: string) => {
 // Playbook STATUS.json watchers, keyed by project path. A running playbook can
 // write .maestro/STATUS.json to surface live progress; we watch the file and
 // push each parsed update to the renderer. Cleaned up on unwatch, and on quit.
-const statusWatchers = new Map<string, FSWatcher>();
+//
+// Reference-counted by subscriber, because several agents can run Auto Run
+// against the SAME project at once. With one watcher per path and no count, the
+// second agent's watch closed and replaced the first agent's watcher, and then
+// the first agent finishing unwatched the path out from under the second - which
+// kept running with a silently dead status panel.
+const statusWatchers = new Map<string, { watcher: FSWatcher; subscribers: Set<string> }>();
 // Per-project debounce timer so a burst of writes coalesces into one read.
 const statusWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
 
@@ -1504,26 +1510,47 @@ export function registerAutorunHandlers(
 	// the path even if it does not exist yet and fires once the playbook writes it.
 	ipcMain.handle(
 		'autorun:watchStatus',
-		createIpcHandler(handlerOpts('watchStatus'), async (projectPath: string) => {
-			// Replace any existing watcher for this path (idempotent re-arm).
-			const existing = statusWatchers.get(projectPath);
-			if (existing) {
-				await existing.close();
-				statusWatchers.delete(projectPath);
-			}
+		createIpcHandler(
+			handlerOpts('watchStatus'),
+			async (projectPath: string, subscriberId: string, isRemote?: boolean) => {
+				// An SSH agent writes STATUS.json on the REMOTE host. chokidar only
+				// sees the local filesystem, so watching here would either report
+				// nothing forever or - worse - report a same-named local file from an
+				// unrelated project. Decline explicitly, matching `watchFolder`, rather
+				// than arm a watcher that silently watches the wrong machine.
+				if (isRemote) {
+					logger.info(
+						`STATUS.json watching not available for remote session: ${projectPath}`,
+						LOG_CONTEXT
+					);
+					return {
+						status: null,
+						watching: false,
+						isRemote: true,
+						message: 'STATUS.json watching is not available for remote sessions.',
+					};
+				}
 
-			const statusFilePath = path.join(projectPath, STATUS_PATH);
+				// Join an existing watcher rather than replacing it: a sibling agent
+				// running Auto Run on the same project is relying on it.
+				const existing = statusWatchers.get(projectPath);
+				const statusFilePath = path.join(projectPath, STATUS_PATH);
 
-			// Read the current status once so the panel populates immediately.
-			let initialStatus: PlaybookStatus | null = null;
-			try {
-				const content = await fs.readFile(statusFilePath, 'utf-8');
-				initialStatus = JSON.parse(content) as PlaybookStatus;
-			} catch {
-				// Missing or malformed on first read: start blank, the watcher will catch up.
-			}
+				// Read the current status once so the panel populates immediately.
+				let initialStatus: PlaybookStatus | null = null;
+				try {
+					const content = await fs.readFile(statusFilePath, 'utf-8');
+					initialStatus = JSON.parse(content) as PlaybookStatus;
+				} catch {
+					// Missing or malformed on first read: start blank, the watcher will catch up.
+				}
 
-			const watcher = chokidar.watch(statusFilePath, {
+				if (existing) {
+					existing.subscribers.add(subscriberId);
+					return { status: initialStatus, watching: true };
+				}
+
+				const watcher = chokidar.watch(statusFilePath, {
 				persistent: true,
 				ignoreInitial: true,
 			});
@@ -1560,20 +1587,38 @@ export function registerAutorunHandlers(
 				);
 			});
 
-			statusWatchers.set(projectPath, watcher);
-			logger.info(`Started watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+				statusWatchers.set(projectPath, {
+					watcher,
+					subscribers: new Set([subscriberId]),
+				});
+				logger.info(`Started watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
 
-			return { status: initialStatus };
-		})
+				return { status: initialStatus, watching: true };
+			}
+		)
 	);
 
-	// Stop watching STATUS.json for a project.
+	// Stop watching STATUS.json for a project. The watcher only closes once the
+	// LAST subscriber releases it, so one agent finishing cannot blind a sibling
+	// agent still running Auto Run against the same project.
 	ipcMain.handle(
 		'autorun:unwatchStatus',
-		createIpcHandler(handlerOpts('unwatchStatus', false), async (projectPath: string) => {
-			const watcher = statusWatchers.get(projectPath);
-			if (watcher) {
-				await watcher.close();
+		createIpcHandler(
+			handlerOpts('unwatchStatus', false),
+			async (projectPath: string, subscriberId: string) => {
+				const entry = statusWatchers.get(projectPath);
+				if (!entry) return {};
+
+				entry.subscribers.delete(subscriberId);
+				if (entry.subscribers.size > 0) {
+					logger.debug(
+						`Released STATUS.json watch for ${projectPath} (${entry.subscribers.size} subscriber(s) remain)`,
+						LOG_CONTEXT
+					);
+					return {};
+				}
+
+				await entry.watcher.close();
 				statusWatchers.delete(projectPath);
 				const pending = statusWatchDebounceTimers.get(projectPath);
 				if (pending) {
@@ -1581,9 +1626,9 @@ export function registerAutorunHandlers(
 					statusWatchDebounceTimers.delete(projectPath);
 				}
 				logger.info(`Stopped watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+				return {};
 			}
-			return {};
-		})
+		)
 	);
 
 	// Clean up all watchers on app quit
@@ -1594,8 +1639,8 @@ export function registerAutorunHandlers(
 		}
 		autoRunWatchers.clear();
 
-		for (const [projectPath, watcher] of statusWatchers) {
-			watcher.close();
+		for (const [projectPath, entry] of statusWatchers) {
+			entry.watcher.close();
 			logger.info(`Cleaned up STATUS.json watcher for: ${projectPath}`, LOG_CONTEXT);
 		}
 		statusWatchers.clear();

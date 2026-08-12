@@ -58,14 +58,21 @@ vi.mock('fs/promises', () => ({
 
 // Don't mock path - use the real Node.js implementation
 
-// Mock chokidar
-vi.mock('chokidar', () => ({
-	default: {
-		watch: vi.fn(() => ({
+// Mock chokidar. The watch fn and the per-watcher close are hoisted so tests
+// can assert WHEN a watcher is created and closed (reference counting).
+const { mockChokidarWatch, mockWatcherClose } = vi.hoisted(() => {
+	const close = vi.fn();
+	return {
+		mockWatcherClose: close,
+		mockChokidarWatch: vi.fn(() => ({
 			on: vi.fn().mockReturnThis(),
-			close: vi.fn(),
+			close,
 		})),
-	},
+	};
+});
+
+vi.mock('chokidar', () => ({
+	default: { watch: mockChokidarWatch },
 }));
 
 // Mock electron-store
@@ -281,10 +288,51 @@ describe('autorun IPC handlers', () => {
 
 		it('before-quit cleanup runs without throwing after a status watch', async () => {
 			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
-			await handlers.get('autorun:watchStatus')!({} as any, '/test/project');
+			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
 
 			const beforeQuit = appEventHandlers.get('before-quit');
 			expect(() => beforeQuit!()).not.toThrow();
+		});
+
+		// Several agents can run Auto Run against one project at the same time.
+		// The watcher is shared, so it must outlive any single one of them.
+		it('keeps the watcher alive while another agent is still subscribed', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
+
+			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
+			const second = await handlers.get('autorun:watchStatus')!(
+				{} as any,
+				'/test/project',
+				'agent-2'
+			);
+			// The second agent joins the existing watcher instead of replacing it.
+			expect(second.watching).toBe(true);
+			expect(mockWatcherClose).not.toHaveBeenCalled();
+
+			// agent-1 finishing must not blind agent-2.
+			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-1');
+			expect(mockWatcherClose).not.toHaveBeenCalled();
+
+			// Only the last release actually closes it.
+			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-2');
+			expect(mockWatcherClose).toHaveBeenCalled();
+		});
+
+		// An SSH agent writes STATUS.json on the remote host; chokidar only sees
+		// the local disk, so watching would report nothing forever, or report an
+		// unrelated same-named local file.
+		it('declines to watch for a remote session instead of watching the wrong host', async () => {
+			const result = await handlers.get('autorun:watchStatus')!(
+				{} as any,
+				'/test/project',
+				'agent-1',
+				true
+			);
+
+			expect(result.watching).toBe(false);
+			expect(result.isRemote).toBe(true);
+			expect(result.status).toBeNull();
+			expect(mockChokidarWatch).not.toHaveBeenCalled();
 		});
 	});
 
