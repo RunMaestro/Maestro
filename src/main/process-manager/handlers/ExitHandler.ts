@@ -95,10 +95,12 @@ export class ExitHandler {
 		// with (not the stale planning narration our parent saw last).
 		await this.awaitCopilotShutdown(sessionId, managedProcess);
 
-		// THE guard. This await is the only suspension point in handleExit, so it
-		// is the only place a replacement can claim the session id mid-flight -
-		// which makes right here the earliest point the question can be asked, and
-		// the only one that covers everything downstream. Every step below emits
+		// The main guard. `awaitCopilotShutdown` is the only suspension point in
+		// this method, so it is the only place a replacement can claim the session
+		// id mid-flight, and this is the earliest point the question can be asked
+		// for everything downstream. (That method has awaits of its OWN and emits
+		// from inside them, so it carries a second check at its emit site - this
+		// one runs after it has already returned.) Every step below emits
 		// into shared per-session state (batch-mode result text, the stream-json
 		// remainder, the streamedText fallback, usage, agent-error, query-complete,
 		// the final flush, exit), so a guard placed any lower silently lets some of
@@ -393,6 +395,20 @@ export class ExitHandler {
 					managedProcess.contextWindow && managedProcess.contextWindow > 0
 						? managedProcess.contextWindow
 						: FALLBACK_CONTEXT_WINDOW;
+				// This method has its own awaits (the shutdown wait plus two disk
+				// reads), so a replacement can claim the session id before we get
+				// here - and `usage` is keyed by sessionId alone, so it would land on
+				// the live successor and misreport its context gauge with the dead
+				// turn's token counts. handleExit's guard runs only after this method
+				// RETURNS, so it cannot cover this emit.
+				if (this.isSuperseded(sessionId, managedProcess)) {
+					logger.warn(
+						'[ProcessManager] Session re-spawned during Copilot reconciliation, dropping usage',
+						'ProcessManager',
+						{ sessionId, agentSessionId }
+					);
+					return;
+				}
 				this.emitter.emit('usage', sessionId, {
 					inputTokens: usage.inputTokens,
 					outputTokens: usage.outputTokens,
