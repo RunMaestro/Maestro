@@ -215,7 +215,13 @@ describe('ChildProcessSpawner', () => {
 				})
 			);
 
-			expect(buildChildProcessEnv).toHaveBeenCalledWith(undefined, true, undefined, undefined);
+			expect(buildChildProcessEnv).toHaveBeenCalledWith(
+				undefined,
+				true,
+				undefined,
+				undefined,
+				undefined
+			);
 		});
 
 		it('should enable stream-json mode when sendPromptViaStdin is true', () => {

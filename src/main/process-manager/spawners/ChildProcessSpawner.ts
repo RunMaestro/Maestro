@@ -225,7 +225,8 @@ export class ChildProcessSpawner {
 				customEnvVars,
 				isResuming,
 				shellEnvVars,
-				config.extraPathDirs
+				config.extraPathDirs,
+				config.unsetEnvKeys
 			);
 
 			// Log environment variable application for troubleshooting

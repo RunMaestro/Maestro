@@ -116,7 +116,13 @@ export class PtySpawner {
 				// For AI agents in PTY mode: use same env building logic as child processes
 				// This ensures tilde expansion (~/ paths), Electron var stripping, and consistent
 				// global shell environment variable handling across all spawner types
-				ptyEnv = buildChildProcessEnv(customEnvVars, false, shellEnvVars);
+				ptyEnv = buildChildProcessEnv(
+					customEnvVars,
+					false,
+					shellEnvVars,
+					config.extraPathDirs,
+					config.unsetEnvKeys
+				);
 			}
 
 			const ptyProcess = pty.spawn(ptyCommand, ptyArgs, {

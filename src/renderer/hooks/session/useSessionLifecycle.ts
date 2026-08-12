@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { Session, AITab } from '../../types';
+import type { Session, AITab, FailoverConfig } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -96,7 +96,8 @@ export interface SessionLifecycleReturn {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		failoverConfig?: FailoverConfig
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -166,7 +167,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPPath?: string,
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
-			retryOnTokenExhaustion?: boolean
+			retryOnTokenExhaustion?: boolean,
+			failoverConfig?: FailoverConfig
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -189,6 +191,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						// cleared on a provider switch below (unlike maestroP fields).
 						retryOnAvailabilityErrors,
 						retryOnTokenExhaustion,
+						failoverConfig,
 					};
 
 					// If provider changed, reset tabs and provider-specific config
@@ -221,6 +224,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							enableMaestroP: undefined,
 							maestroPPath: undefined,
 							maestroPMode: undefined,
+							// Endpoint env carries provider-specific base URLs and tokens.
+							failoverConfig: undefined,
 							// Reset file preview tabs and unified tab order
 							filePreviewTabs: [],
 							activeFileTabId: null,

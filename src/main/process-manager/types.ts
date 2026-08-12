@@ -55,6 +55,12 @@ export interface ProcessConfig {
 	 *  script's `#!/usr/bin/env node` shebang. Local spawn only - SSH builds
 	 *  its remote PATH separately. */
 	extraPathDirs?: string[];
+	/** Env vars to REMOVE from the child environment, applied after every other
+	 *  layer. Provider Failover sets this so a backup endpoint cannot inherit the
+	 *  primary provider's credential from global settings or `process.env`; a
+	 *  merge alone cannot express a removal. Local spawn only - SSH builds its
+	 *  remote environment separately. */
+	unsetEnvKeys?: string[];
 	/** Agent-reported session id when this spawn is resuming a prior session
 	 *  (e.g. Copilot's `--resume=<id>`, Claude's `--resume <id>`). The spawner
 	 *  uses it to seed `ManagedProcess.agentSessionId` so post-exit work that
