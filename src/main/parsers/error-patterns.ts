@@ -475,6 +475,27 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			message: 'Network error occurred. Please check your connection.',
 			recoverable: true,
 		},
+		{
+			// Codex's server-side conversation compaction failing mid-turn (#1378).
+			// Reported as a 404 from .../codex/responses/compact, but the status
+			// varies, so key off the task name instead. The failure is turn-scoped
+			// rather than session-fatal, so keep it recoverable and say so - the
+			// reporter's session looked permanently dead only because nothing was
+			// ever surfaced.
+			pattern: /error running remote compact task/i,
+			message:
+				'Codex could not compact this conversation on its server. The turn was dropped but the session is intact - retry the prompt, and start a new tab if it keeps failing.',
+			recoverable: true,
+		},
+		{
+			// Codex's HTTP client renders upstream failures as
+			// "unexpected status <code> <reason>". 429 is claimed earlier by the
+			// rate_limited bank (which runs first), so this covers the rest.
+			pattern: /unexpected status (\d{3})\b/i,
+			message: (match) =>
+				`Codex request failed upstream (HTTP ${match[1]}). This is a provider-side failure - please retry.`,
+			recoverable: true,
+		},
 	],
 
 	permission_denied: [
