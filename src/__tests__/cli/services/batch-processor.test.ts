@@ -1199,9 +1199,7 @@ describe('batch-processor', () => {
 			vi.mocked(readHistory).mockReturnValue([]);
 
 			const session = mockSession();
-			await collectEvents(
-				runPlaybook(session, mockPlaybook({ loopEnabled: false }), '/playbooks')
-			);
+			await collectEvents(runPlaybook(session, mockPlaybook({ loopEnabled: false }), '/playbooks'));
 
 			const summaries = vi
 				.mocked(addHistoryEntry)
