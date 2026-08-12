@@ -63,9 +63,23 @@ interface ImageContextMenuHostProps {
 	theme: Theme;
 }
 
+/**
+ * The image plus the project it belonged to, frozen at right-click time.
+ *
+ * The destination is captured with the target rather than read live at confirm
+ * time: the user can switch agents while the save modal is open, and the image
+ * must still land in the project it was rendered in, on that project's host.
+ */
+interface PendingSave {
+	target: ExportableImage;
+	projectRoot: string;
+	sshRemoteId?: string;
+	sessionId?: string;
+}
+
 export function ImageContextMenuHost({ theme }: ImageContextMenuHostProps) {
 	const [menu, setMenu] = useState<ImageContextMenuState | null>(null);
-	const [saveTarget, setSaveTarget] = useState<ExportableImage | null>(null);
+	const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
 	const [isSaving, setIsSaving] = useState(false);
 	const session = useActiveSession();
 	// Images are saved into the project they were rendered in. Every surface that
@@ -89,14 +103,14 @@ export function ImageContextMenuHost({ theme }: ImageContextMenuHostProps) {
 
 	const handleSave = useCallback(
 		async (destination: ImageDestination) => {
-			if (!saveTarget || !projectRoot) return;
+			if (!pendingSave) return;
 			setIsSaving(true);
 			try {
 				const saved = await saveImageToProject(
-					saveTarget,
+					pendingSave.target,
 					{
-						projectRoot,
-						sshRemoteId: session?.sshRemoteId,
+						projectRoot: pendingSave.projectRoot,
+						sshRemoteId: pendingSave.sshRemoteId,
 						relativeDir: destination.relativeDir,
 						fileName: destination.fileName,
 					},
@@ -106,12 +120,12 @@ export function ImageContextMenuHost({ theme }: ImageContextMenuHostProps) {
 					color: 'green',
 					title: 'Image Saved',
 					message: saved.relativePath,
-					sessionId: session?.id,
-					clickAction: session?.id
-						? { kind: 'open-file', sessionId: session.id, path: saved.path }
+					sessionId: pendingSave.sessionId,
+					clickAction: pendingSave.sessionId
+						? { kind: 'open-file', sessionId: pendingSave.sessionId, path: saved.path }
 						: undefined,
 				});
-				setSaveTarget(null);
+				setPendingSave(null);
 			} catch (err) {
 				notifyToast({
 					color: 'red',
@@ -122,7 +136,7 @@ export function ImageContextMenuHost({ theme }: ImageContextMenuHostProps) {
 				setIsSaving(false);
 			}
 		},
-		[saveTarget, projectRoot, session?.sshRemoteId, session?.id]
+		[pendingSave]
 	);
 
 	return (
@@ -134,18 +148,31 @@ export function ImageContextMenuHost({ theme }: ImageContextMenuHostProps) {
 					onDismiss={() => setMenu(null)}
 					// No project means nowhere to save into (e.g. the wizard before an
 					// agent exists); the menu drops the entry rather than failing later.
-					onSaveToProject={projectRoot ? () => setSaveTarget(menu.target) : undefined}
+					onSaveToProject={
+						projectRoot
+							? () =>
+									setPendingSave({
+										target: menu.target,
+										projectRoot,
+										sshRemoteId: session?.sshRemoteId,
+										sessionId: session?.id,
+									})
+							: undefined
+					}
 				/>
 			)}
-			{saveTarget && (
+			{pendingSave && (
 				<ImageDestinationModal
 					theme={theme}
-					projectRoot={projectRoot}
-					isSvg={isSvgElement(saveTarget)}
+					projectRoot={pendingSave.projectRoot}
+					isSvg={isSvgElement(pendingSave.target)}
 					initialDir={DIAGRAMS_DIR}
-					initialFileName={suggestImageFileName(saveTarget, defaultExtensionFor(saveTarget))}
+					initialFileName={suggestImageFileName(
+						pendingSave.target,
+						defaultExtensionFor(pendingSave.target)
+					)}
 					onSave={handleSave}
-					onCancel={() => setSaveTarget(null)}
+					onCancel={() => setPendingSave(null)}
 					isSaving={isSaving}
 				/>
 			)}

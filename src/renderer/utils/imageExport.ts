@@ -15,7 +15,7 @@
 
 import { safeClipboardWrite, safeClipboardWriteImage } from './clipboard';
 import { DIAGRAMS_DIR } from '../../shared/maestro-paths';
-import { joinPath } from '../../shared/formatters';
+import { joinPath, isAbsolutePath } from '../../shared/formatters';
 
 /** Anything the right-click menu can copy or save. */
 export type ExportableImage = SVGSVGElement | HTMLImageElement;
@@ -256,10 +256,24 @@ function timestampSlug(now: Date): string {
 	);
 }
 
-/** Default extension for a target: SVG keeps its markup, raster keeps its encoding. */
+/**
+ * Default extension for a target: SVG keeps its markup, raster keeps its
+ * encoding. Without a resolved data URL the encoding is guessed from the
+ * element's own `src` so a JPEG is not seeded as `.png`; the guess only seeds
+ * the save modal, since `saveImageToProject` re-derives the extension from the
+ * bytes it actually writes.
+ */
 export function defaultExtensionFor(el: ExportableImage, sourceDataUrl?: string | null): string {
 	if (isSvgElement(el)) return 'svg';
-	return sourceDataUrl ? dataUrlExtension(sourceDataUrl) : 'png';
+	if (sourceDataUrl) return dataUrlExtension(sourceDataUrl);
+
+	const src = (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src || '';
+	if (src.startsWith('data:')) return dataUrlExtension(src);
+	// Strip the query/fragment before looking at the extension, or a URL like
+	// `photo.jpg?w=64` yields "jpg?w=64".
+	const ext = /\.([a-z0-9]+)$/i.exec(src.split(/[?#]/)[0])?.[1]?.toLowerCase();
+	if (ext === 'jpeg') return 'jpg';
+	return ext && ext.length <= 4 ? ext : 'png';
 }
 
 /**
@@ -288,6 +302,41 @@ async function encodeForSave(
 }
 
 /**
+ * Reject a folder that would escape the project root.
+ *
+ * The folder is free text in the save modal and `joinPath` preserves `..`, so
+ * `../../secrets` would otherwise write anywhere on the filesystem (or the SSH
+ * remote). The whole contract of this function is "inside the project", so an
+ * escape is refused rather than clamped - silently rewriting the user's path
+ * would save the file somewhere they did not ask for.
+ */
+function assertSafeRelativeDir(relativeDir: string): void {
+	if (isAbsolutePath(relativeDir)) {
+		throw new Error('Folder must be relative to the project, not an absolute path');
+	}
+	if (relativeDir.split(/[/\\]/).some((segment) => segment === '..')) {
+		throw new Error('Folder cannot step outside the project with ".."');
+	}
+}
+
+/** Reject a file name that is really a path, for the same reason as the folder. */
+function assertSafeFileName(fileName: string): void {
+	if (/[/\\]/.test(fileName)) {
+		throw new Error('File name cannot contain a path separator');
+	}
+	if (fileName === '.' || fileName === '..') {
+		throw new Error('File name is not valid');
+	}
+}
+
+/** Force `name` to carry `ext`, so the extension never lies about the bytes. */
+function forceExtension(name: string, ext: string): string {
+	const dot = name.lastIndexOf('.');
+	const base = dot > 0 ? name.slice(0, dot) : name;
+	return `${base}.${ext}`;
+}
+
+/**
  * Save an image into the project it was rendered in, under
  * `.maestro/diagrams/` by default.
  *
@@ -298,6 +347,9 @@ async function encodeForSave(
  * SSH because the write goes through the same `fs` IPC the rest of the app uses.
  *
  * A name collision gets a `-2`, `-3`, … suffix rather than overwriting.
+ *
+ * Throws when the destination would escape `projectRoot`, when the image cannot
+ * be read, or when every candidate name is taken.
  */
 export async function saveImageToProject(
 	el: ExportableImage,
@@ -305,25 +357,36 @@ export async function saveImageToProject(
 	format: ImageSaveFormat = 'original'
 ): Promise<ImageSaveToProjectResult> {
 	const relativeDir = target.relativeDir?.trim() || DIAGRAMS_DIR;
+	assertSafeRelativeDir(relativeDir);
+
+	const encoded = await encodeForSave(el, format);
+	// The extension is derived from what was actually encoded, never from the
+	// requested name: saving a JPEG as "original" must not produce a .png, and
+	// asking for PNG output must not keep a .svg. Anything downstream that picks
+	// a decoder by extension would otherwise reject the file.
+	const ext = 'markup' in encoded ? 'svg' : dataUrlExtension(encoded.dataUrl);
+
+	const requested = target.fileName?.trim() || suggestImageFileName(el, ext);
+	assertSafeFileName(requested);
+
 	const dir = joinPath(target.projectRoot, relativeDir);
 	await window.maestro.fs.mkdir(dir, target.sshRemoteId);
 
-	const encoded = await encodeForSave(el, format);
-	const requested =
-		target.fileName?.trim() ||
-		suggestImageFileName(el, 'markup' in encoded ? 'svg' : dataUrlExtension(encoded.dataUrl));
+	const withExt = forceExtension(requested, ext);
+	const base = withExt.slice(0, withExt.length - ext.length - 1);
 
-	const dot = requested.lastIndexOf('.');
-	const base = dot > 0 ? requested.slice(0, dot) : requested;
-	const ext = dot > 0 ? requested.slice(dot) : '';
-
-	let filename = requested;
-	for (
-		let n = 2;
-		n <= 100 && (await window.maestro.fs.stat(joinPath(dir, filename), target.sshRemoteId));
-		n++
-	) {
-		filename = `${base}-${n}${ext}`;
+	// Every candidate is checked, including the last: picking a name without
+	// testing it is how a `-100` file would get silently overwritten.
+	let filename = '';
+	for (let n = 1; n <= 100; n++) {
+		const candidate = n === 1 ? withExt : `${base}-${n}.${ext}`;
+		if (!(await window.maestro.fs.stat(joinPath(dir, candidate), target.sshRemoteId))) {
+			filename = candidate;
+			break;
+		}
+	}
+	if (!filename) {
+		throw new Error(`Too many files named like ${withExt} already exist`);
 	}
 
 	const path = joinPath(dir, filename);

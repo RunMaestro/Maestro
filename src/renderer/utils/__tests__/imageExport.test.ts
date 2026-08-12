@@ -18,6 +18,7 @@ import {
 	saveImageElementToDisk,
 	saveImageToProject,
 	suggestImageFileName,
+	defaultExtensionFor,
 } from '../imageExport';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -340,5 +341,122 @@ describe('suggestImageFileName', () => {
 	it('names diagrams and images distinctly, with a sortable timestamp', () => {
 		expect(suggestImageFileName(makeSvg(), 'svg')).toMatch(/^diagram-\d{8}-\d{6}\.svg$/);
 		expect(suggestImageFileName(makeImg(PNG_DATA_URL), 'png')).toMatch(/^image-\d{8}-\d{6}\.png$/);
+	});
+});
+
+describe('saveImageToProject path safety', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.fs.mkdir).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.writeFile).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.writeImageFile).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.stat)
+			.mockClear()
+			.mockResolvedValue(null as never);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it.each(['../escape', 'a/../../escape', '..'])(
+		'refuses a folder that steps outside the project: %s',
+		async (relativeDir) => {
+			await expect(
+				saveImageToProject(makeSvg(), { projectRoot: '/p', relativeDir, fileName: 'd.svg' }, 'svg')
+			).rejects.toThrow(/outside the project/);
+			// Nothing may touch the filesystem once the path is rejected.
+			expect(window.maestro.fs.mkdir).not.toHaveBeenCalled();
+			expect(window.maestro.fs.writeFile).not.toHaveBeenCalled();
+		}
+	);
+
+	it('refuses an absolute folder', async () => {
+		await expect(
+			saveImageToProject(
+				makeSvg(),
+				{ projectRoot: '/p', relativeDir: '/etc', fileName: 'd.svg' },
+				'svg'
+			)
+		).rejects.toThrow(/absolute path/);
+		expect(window.maestro.fs.mkdir).not.toHaveBeenCalled();
+	});
+
+	it('refuses a file name carrying a path separator', async () => {
+		await expect(
+			saveImageToProject(makeSvg(), { projectRoot: '/p', fileName: '../../evil.svg' }, 'svg')
+		).rejects.toThrow(/path separator/);
+		expect(window.maestro.fs.writeFile).not.toHaveBeenCalled();
+	});
+
+	it('still allows an ordinary nested folder', async () => {
+		await saveImageToProject(
+			makeSvg(),
+			{ projectRoot: '/p', relativeDir: 'docs/img/diagrams', fileName: 'd.svg' },
+			'svg'
+		);
+		expect(window.maestro.fs.mkdir).toHaveBeenCalledWith('/p/docs/img/diagrams', undefined);
+	});
+
+	it('errors rather than overwriting when every candidate name is taken', async () => {
+		// Including the final one: picking a name without testing it is the bug.
+		vi.mocked(window.maestro.fs.stat).mockResolvedValue({ isFile: true } as never);
+
+		await expect(
+			saveImageToProject(makeSvg(), { projectRoot: '/p', fileName: 'd.svg' }, 'svg')
+		).rejects.toThrow(/Too many files/);
+		expect(window.maestro.fs.writeFile).not.toHaveBeenCalled();
+	});
+});
+
+describe('save extension matches the encoded bytes', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.fs.mkdir).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.writeFile).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.writeImageFile).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.stat)
+			.mockClear()
+			.mockResolvedValue(null as never);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('corrects a .png name when the original JPEG bytes are written', async () => {
+		const jpeg = makeImg('data:image/jpeg;base64,/9j/AAAA');
+
+		const result = await saveImageToProject(
+			jpeg,
+			{ projectRoot: '/p', fileName: 'shot.png' },
+			'original'
+		);
+
+		expect(result.relativePath).toBe('.maestro/diagrams/shot.jpg');
+	});
+
+	// The SVG -> PNG direction can't be asserted here: it goes through
+	// svgToPngDataUrl, and jsdom never fires <img> onload for an SVG data URL, so
+	// the call hangs. Same reason the rasterizing helpers are uncovered above.
+});
+
+describe('defaultExtensionFor', () => {
+	it('reads a raster encoding off its data URL rather than assuming png', () => {
+		expect(defaultExtensionFor(makeImg('data:image/jpeg;base64,/9j/AAAA'))).toBe('jpg');
+	});
+
+	it('falls back to the src extension, ignoring the query string', () => {
+		expect(defaultExtensionFor(makeImg('https://example.com/photo.webp?w=64'))).toBe('webp');
+	});
+
+	it('normalizes .jpeg to .jpg', () => {
+		expect(defaultExtensionFor(makeImg('https://example.com/photo.jpeg'))).toBe('jpg');
+	});
+
+	it('defaults to png when the source says nothing useful', () => {
+		expect(defaultExtensionFor(makeImg('https://example.com/render'))).toBe('png');
+	});
+
+	it('always calls an svg element svg', () => {
+		expect(defaultExtensionFor(makeSvg())).toBe('svg');
 	});
 });
