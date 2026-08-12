@@ -1191,6 +1191,73 @@ describe('batch-processor', () => {
 			expect(complete?.totalCost).toBeCloseTo(0.01, 5);
 		});
 
+		// The boundary IS the final summary row. A run that writes none leaves the
+		// next run nothing to scan back to, so the next aggregation sweeps up this
+		// run's task rows and reports the two added together.
+		it('writes a boundary summary even for a single-pass non-looping run', async () => {
+			oneTaskRun(0.01);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			const session = mockSession();
+			await collectEvents(
+				runPlaybook(session, mockPlaybook({ loopEnabled: false }), '/playbooks')
+			);
+
+			const summaries = vi
+				.mocked(addHistoryEntry)
+				.mock.calls.map((call) => call[0].summary as string);
+			expect(summaries.some((s) => /^Auto Run completed:/.test(s))).toBe(true);
+		});
+
+		it('reconciles and writes a boundary when the agent halts the run', async () => {
+			// Halt returns early, so it used to skip reconciliation entirely: the
+			// complete event carried this process's raw counters, and no boundary row
+			// was written at all.
+			// The halt marker is read back off the DOCUMENT after the agent runs,
+			// not off the agent's response. Call 1 is the pre-scan and call 2 the
+			// loop's own read - the marker must not appear until the post-read, or
+			// the pre-existing-halt guard rejects the run before it starts.
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '<!-- maestro:halt: needs review -->', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.01,
+					contextWindow: 200000,
+				},
+			});
+			// Three task rows survive from before a restart; this run adds one.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				taskEntry(4, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.halted).toBe(true);
+			// Reconciled across the restart rather than reporting only this process.
+			expect(complete?.totalTasksCompleted).toBe(4);
+			expect(complete?.totalCost).toBeCloseTo(0.07, 5);
+
+			const summaries = vi
+				.mocked(addHistoryEntry)
+				.mock.calls.map((call) => call[0].summary as string);
+			expect(summaries.some((s) => /^Auto Run halted:/.test(s))).toBe(true);
+		});
+
 		it('does not undercount the current run when history lags behind', async () => {
 			// Current run completes one task; history read returns nothing (e.g. the
 			// per-task write has not been flushed yet). Reconciliation must keep the

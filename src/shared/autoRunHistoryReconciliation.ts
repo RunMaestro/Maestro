@@ -33,8 +33,12 @@ export interface AutoRunHistoryTotals extends FinalSummaryTotals {
 	entryCount: number;
 }
 
+// Every way a run can END. This set IS the run boundary: `aggregateAutoRunHistoryTotals`
+// scans back to the most recent match and sums only what follows, so a terminal
+// state missing from this list makes the next run absorb this run's task rows.
+// Adding a new terminal outcome means adding it here in the same change.
 const FINAL_AUTORUN_SUMMARY_RE =
-	/^Auto Run (completed|completed with stalls|stalled|stopped|killed):/;
+	/^Auto Run (completed|completed with stalls|stalled|stopped|killed|halted):/;
 const LOOP_SUMMARY_RE = /^Loop \d+(?: \(final\))? completed:/;
 const CONTROL_SUMMARY_PREFIXES = [
 	'Auto Run started in worktree',
@@ -105,6 +109,11 @@ export function aggregateAutoRunHistoryTotals(
 	return taskEntries.reduce<AutoRunHistoryTotals>(
 		(totals, entry) => {
 			const usageStats = entry.usageStats;
+			// `?? 1` is a deliberate FLOOR for legacy rows written before
+			// `completedTaskCount` existed. Such a row may represent several tasks,
+			// and nothing on disk says how many, so one-per-row is the only honest
+			// reading - it can undercount an old run, never overcount one. Rows
+			// written by current code always carry the exact count.
 			totals.totalCompletedTasks += Math.max(0, entry.completedTaskCount ?? 1);
 			totals.totalElapsedMs += entry.elapsedTimeMs || 0;
 			totals.totalInputTokens += usageStats?.inputTokens || 0;

@@ -354,13 +354,23 @@ export async function* runPlaybook(
 		};
 
 		// Helper to create total Auto Run summary from reconciled totals.
-		const createAutoRunSummary = (reconciled: FinalSummaryTotals): void => {
+		//
+		// Written for EVERY run, including a single-pass non-looping one. Besides
+		// matching desktop Auto Run (`buildFinalSummary` is unconditional there),
+		// this row is the run BOUNDARY that `aggregateAutoRunHistoryTotals` scans
+		// back to. Skipping it for non-loop runs - as this did - left the next run
+		// with no boundary, so its aggregation swept up the previous run's task
+		// rows and reported the two runs added together.
+		const createAutoRunSummary = (reconciled: FinalSummaryTotals, outcome?: string): void => {
 			if (!writeHistory) return;
-			// Only write if we completed multiple loops or if looping was enabled
-			if (!playbook.loopEnabled && loopIteration === 0) return;
 
 			const loopsCompleted = loopIteration + 1;
-			const summary = `Auto Run completed: ${reconciled.totalCompletedTasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
+			// Must keep matching FINAL_AUTORUN_SUMMARY_RE in
+			// shared/autoRunHistoryReconciliation.ts, or the row stops being
+			// recognized as a boundary and the double-counting returns silently.
+			const summary = outcome
+				? `Auto Run ${outcome}`
+				: `Auto Run completed: ${reconciled.totalCompletedTasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
 
 			const totalUsageStats: UsageStats | undefined =
 				reconciled.totalInputTokens > 0 || reconciled.totalOutputTokens > 0
@@ -676,13 +686,21 @@ export async function* runPlaybook(
 						createFinalLoopEntry(`Halted by agent: ${haltReason}`);
 						unregisterCliActivity(session.id);
 
+						// A halt is still an end-of-run, so it reconciles like one. Emitting
+						// the raw in-memory counters here would undercount any run that
+						// crossed a restart before halting, and - because the halt returns
+						// early - would also leave no final summary row, so the NEXT run's
+						// aggregation would absorb this one's task entries.
+						const haltReconciled = reconcileTotals();
+						createAutoRunSummary(haltReconciled, `halted: ${haltReason}`);
+
 						yield {
 							type: 'complete',
 							timestamp: Date.now(),
 							success: false,
-							totalTasksCompleted: totalCompletedTasks,
-							totalElapsedMs: Date.now() - batchStartTime,
-							totalCost,
+							totalTasksCompleted: haltReconciled.totalCompletedTasks,
+							totalElapsedMs: haltReconciled.totalElapsedMs,
+							totalCost: haltReconciled.totalCost,
 							halted: true,
 							haltReason,
 						};
