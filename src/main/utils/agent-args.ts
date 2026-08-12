@@ -73,11 +73,39 @@ function parseCustomArgs(customArgs?: string): string[] {
 }
 
 /**
- * Drop every occurrence of `flags` (and the value each one consumes) from an
- * argument list. Handles both `--flag value` and `--flag=value` spellings.
- * Used to keep read-only args from being overridden by a later duplicate.
+ * Split an agent's `readOnlyArgs` into the flag names it pins and, separately,
+ * which of those flags actually take a value within that array (e.g.
+ * `--sandbox` in `['--sandbox', 'read-only']`) versus boolean switches with
+ * nothing after them there (e.g. `--skip-git-repo-check` at the end, or
+ * immediately followed by another flag). `stripFlags` needs this distinction:
+ * treating every pinned flag as value-taking makes it eat whatever unrelated
+ * argument happens to follow a boolean switch in the user's own custom args.
  */
-function stripFlags(args: string[], flags: Set<string>): string[] {
+function classifyReadOnlyFlags(readOnlyArgs: string[]): {
+	flags: Set<string>;
+	valueTakingFlags: Set<string>;
+} {
+	const flags = new Set<string>();
+	const valueTakingFlags = new Set<string>();
+	for (let i = 0; i < readOnlyArgs.length; i++) {
+		const arg = readOnlyArgs[i];
+		if (!arg.startsWith('-')) continue;
+		flags.add(arg);
+		const next = readOnlyArgs[i + 1];
+		if (next !== undefined && !next.startsWith('-')) {
+			valueTakingFlags.add(arg);
+		}
+	}
+	return { flags, valueTakingFlags };
+}
+
+/**
+ * Drop every occurrence of `flags` (and, for flags in `valueTakingFlags`, the
+ * value each one consumes) from an argument list. Handles both `--flag value`
+ * and `--flag=value` spellings for value-taking flags. Used to keep read-only
+ * args from being overridden by a later duplicate.
+ */
+function stripFlags(args: string[], flags: Set<string>, valueTakingFlags: Set<string>): string[] {
 	if (flags.size === 0) {
 		return args;
 	}
@@ -93,9 +121,15 @@ function stripFlags(args: string[], flags: Set<string>): string[] {
 			continue;
 		}
 
-		// `--flag=value` carries its value inline; `--flag value` eats the next
-		// token too, as long as that token isn't itself a flag.
-		if (equalsIndex === -1 && i + 1 < args.length && !args[i + 1].startsWith('-')) {
+		// `--flag=value` carries its value inline. `--flag value` only eats the
+		// next token when this specific flag is known to take one - a boolean
+		// switch must never consume an unrelated following argument.
+		if (
+			equalsIndex === -1 &&
+			valueTakingFlags.has(flagName) &&
+			i + 1 < args.length &&
+			!args[i + 1].startsWith('-')
+		) {
 			i++;
 		}
 	}
@@ -230,9 +264,10 @@ export function applyAgentConfigOverrides(
 	// Flags that read-only mode pins (e.g. OpenCode's `--agent plan`). Config
 	// options and custom args repeating one of these are dropped below so the
 	// user's plan-mode intent isn't overridden later on the command line.
-	const readOnlyPinnedFlags = new Set<string>(
-		overrides.readOnlyMode ? (agent?.readOnlyArgs ?? []).filter((arg) => arg.startsWith('-')) : []
-	);
+	const { flags: readOnlyPinnedFlags, valueTakingFlags: readOnlyValueTakingFlags } =
+		overrides.readOnlyMode
+			? classifyReadOnlyFlags(agent?.readOnlyArgs ?? [])
+			: { flags: new Set<string>(), valueTakingFlags: new Set<string>() };
 
 	if (agent && agent.configOptions) {
 		for (const option of agent.configOptions) {
@@ -268,7 +303,7 @@ export function applyAgentConfigOverrides(
 			// and we're handling all types generically here
 			const argBuilderFn = option.argBuilder as (value: unknown) => string[];
 			const builtArgs = argBuilderFn(value);
-			const optionArgs = stripFlags(builtArgs, readOnlyPinnedFlags);
+			const optionArgs = stripFlags(builtArgs, readOnlyPinnedFlags, readOnlyValueTakingFlags);
 
 			if (optionArgs.length !== builtArgs.length) {
 				logger.debug(
@@ -288,7 +323,11 @@ export function applyAgentConfigOverrides(
 			? 'agent'
 			: 'none';
 
-	const parsedCustomArgs = stripFlags(parseCustomArgs(effectiveCustomArgs), readOnlyPinnedFlags);
+	const parsedCustomArgs = stripFlags(
+		parseCustomArgs(effectiveCustomArgs),
+		readOnlyPinnedFlags,
+		readOnlyValueTakingFlags
+	);
 	if (parsedCustomArgs.length > 0) {
 		finalArgs = [...finalArgs, ...parsedCustomArgs];
 	} else {

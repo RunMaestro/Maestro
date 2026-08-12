@@ -934,6 +934,35 @@ describe('applyAgentConfigOverrides', () => {
 			});
 			expect(result.args).toEqual(['run', '--agent', 'plan']);
 		});
+
+		// Regression: a pinned flag with no value of its own (e.g. Codex's
+		// `--skip-git-repo-check`) used to eat whatever unrelated token followed
+		// it, since stripFlags couldn't tell a boolean switch from a value-taking
+		// one and only checked whether the next token looked like a flag.
+		const codexLike = makeAgent({
+			readOnlyArgs: [
+				'--sandbox',
+				'read-only',
+				'--dangerously-bypass-approvals-and-sandbox',
+				'--skip-git-repo-check',
+			],
+		});
+
+		it('does not eat an unrelated custom arg following a boolean pinned flag', () => {
+			const result = applyAgentConfigOverrides(codexLike, ['exec'], {
+				sessionCustomArgs: '--foo bar --skip-git-repo-check my-value',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['exec', '--foo', 'bar', 'my-value']);
+		});
+
+		it('still eats the value for a pinned flag that genuinely takes one', () => {
+			const result = applyAgentConfigOverrides(codexLike, ['exec'], {
+				sessionCustomArgs: '--sandbox danger-full-access --other-flag keep-me',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['exec', '--other-flag', 'keep-me']);
+		});
 	});
 });
 
