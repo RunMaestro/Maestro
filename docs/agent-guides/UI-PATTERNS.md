@@ -869,9 +869,8 @@ Presets:
 - **`chat`** - richest surface (AI Terminal, Group Chat, History, Feedback,
   Director's Notes, Document Graph). Shiki code fences with copy button + language
   picker, file links via `remarkFileLinks`, right-click link/file/image context
-  menus (raster `<img>` and inline `<svg>` diagrams both get a Copy Image / Save
-  Image menu via `ImageContextMenu` + `hooks/ui/useImageContextMenu.ts` +
-  `utils/imageExport.ts`), IPC-loaded local images, chat line
+  menus (images and diagrams get their Copy/Save menu app-wide from
+  `ImageContextMenuHost`, not from this preset), IPC-loaded local images, chat line
   breaks + KaTeX math, Bionify, raw-HTML + DOMPurify. `MarkdownRenderer` is a thin
   wrapper around `<Markdown preset="chat">`.
 - **`document`** - file/doc preview. Prism highlighting, search highlight, anchor
@@ -921,15 +920,18 @@ Portal-rendered toast notification stack. Rendered in `App.tsx`:
 
 ---
 
-## Right-Click Image Menu (`ImageContextMenu` + `useImageContextMenu`)
+## Right-Click Image Menu (`ImageContextMenuHost`)
 
-Every image rendered in chat gets the same two actions on right-click: **Copy Image** (clipboard) and **Save Image...** (native save dialog). Do NOT add a per-surface copy/save button pair or a second menu - wire the shared pieces:
+Every image anywhere in the app - raster `<img>`, agent-authored inline `<svg>`, Mermaid charts, thumbnails, the lightbox - gets the same three actions on right-click: **Copy Image**, **Save to Project...**, and **Save As...**.
 
-- `useImageContextMenu()` (`hooks/ui/useImageContextMenu.ts`) owns the menu state. Use `openImageMenu(target, x, y)` when React owns the element (a markdown `<img>`, an inline `<svg>`), and `openImageMenuFromEvent(e)` when the image is injected imperatively or when one handler covers a strip of thumbnails - it resolves the `<svg>`/`<img>` the click actually landed on.
-- `<ImageContextMenu menu={imageMenu} theme={theme} onDismiss={dismissImageMenu} />` renders the menu, portaled to `document.body` and positioned at the pointer via `useContextMenuPosition`.
-- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` and `saveImageElementToDisk()`. Both accept either element type. SVG targets save as `.svg` markup, or rasterize when the user picks `.png`; raster targets keep their encoding. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
+**Surfaces wire up nothing.** `<ImageContextMenuHost>` is mounted once in `App.tsx` and owns a single delegated `contextmenu` listener on the document that resolves the image from the click target. Do NOT add an `onContextMenu` to a new image surface, do not call a hook, and do not add a per-surface copy/save button pair. There is no per-surface wiring to forget, which is the entire point: the menu used to hang off individual components, so every new image surface silently shipped without it.
 
-Wired surfaces: chat markdown (`Markdown` chat preset, covering `<img>` and inline `<svg>`), `MermaidRenderer` (the diagram `<svg>` is appended imperatively, so the handler lives on the container), transcript attachment thumbnails (`TerminalOutput`), and `LightboxModal`.
+- `resolveImageFromEvent(e)` (exported from `ImageContextMenuHost.tsx`) decides what counts. It skips three things: anything inside a `[data-no-image-menu]` subtree, lucide icons (which are `<svg>` but carry the `lucide` class), and anything under 32px rendered (favicons, inline badges).
+- **Opting a surface out:** put `data-no-image-menu` on its container. Use this only when the surface owns its own right-click behavior (e.g. `AnnotatorCanvas`). A menu that already handled the click and called `preventDefault()` is skipped automatically via `defaultPrevented` - that is how `LinkContextMenu` / `FileContextMenu` coexist with this one.
+- `utils/imageExport.ts` does the work: `copyImageElementToClipboard()` returns `'image' | 'text' | 'failed'` so the UI can admit when only markup or a URL reached the clipboard rather than claiming a paste-able image. `saveImageToProject()` writes into the project's `DIAGRAMS_DIR` (`.maestro/diagrams/`) and works over SSH; `saveImageElementToDisk()` is the native-dialog path. Binary writes go through `fs.writeImageFile` (`fs.writeFile` is UTF-8 and would corrupt the bytes).
+- `ImageDestinationModal` is the "Save to Project..." destination picker (folder, file name, SVG/PNG format, live path preview). Not to be confused with `FilePreview/ImageSaveModal`, which is the annotator's overwrite-vs-save-as prompt.
+
+`serializeSvg()` stamps the measured size onto the clone when the source has none. Mermaid sizes charts with CSS (`width="100%"`), and without this the rasterized copy comes out cropped at the browser's 300x150 default.
 
 ---
 

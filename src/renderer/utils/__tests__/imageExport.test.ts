@@ -16,6 +16,8 @@ import {
 	isSvgElement,
 	imgToDataUrl,
 	saveImageElementToDisk,
+	saveImageToProject,
+	suggestImageFileName,
 } from '../imageExport';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -232,5 +234,111 @@ describe('saveImageElementToDisk', () => {
 			error: 'Could not read the image data',
 		});
 		expect(window.maestro.dialog.saveFile).not.toHaveBeenCalled();
+	});
+});
+
+describe('saveImageToProject', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.fs.mkdir).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.writeFile).mockClear().mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.fs.writeImageFile).mockClear().mockResolvedValue({ success: true });
+		// stat() answering null means "no file there", so no de-duplication suffix.
+		vi.mocked(window.maestro.fs.stat)
+			.mockClear()
+			.mockResolvedValue(null as never);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('writes an SVG into .maestro/diagrams under the project root', async () => {
+		const result = await saveImageToProject(
+			makeSvg(),
+			{ projectRoot: '/home/me/proj', fileName: 'diagram.svg' },
+			'svg'
+		);
+
+		expect(window.maestro.fs.mkdir).toHaveBeenCalledWith(
+			'/home/me/proj/.maestro/diagrams',
+			undefined
+		);
+		expect(window.maestro.fs.writeFile).toHaveBeenCalledWith(
+			'/home/me/proj/.maestro/diagrams/diagram.svg',
+			expect.stringContaining('<svg'),
+			undefined
+		);
+		expect(result.relativePath).toBe('.maestro/diagrams/diagram.svg');
+	});
+
+	it('honors a custom folder', async () => {
+		await saveImageToProject(
+			makeSvg(),
+			{ projectRoot: '/home/me/proj', relativeDir: 'docs/img', fileName: 'a.svg' },
+			'svg'
+		);
+
+		expect(window.maestro.fs.mkdir).toHaveBeenCalledWith('/home/me/proj/docs/img', undefined);
+	});
+
+	it('suffixes rather than overwriting an existing name', async () => {
+		// First two candidates exist, the third is free.
+		vi.mocked(window.maestro.fs.stat)
+			.mockResolvedValueOnce({ isFile: true } as never)
+			.mockResolvedValueOnce({ isFile: true } as never)
+			.mockResolvedValue(null as never);
+
+		const result = await saveImageToProject(
+			makeSvg(),
+			{ projectRoot: '/p', fileName: 'diagram.svg' },
+			'svg'
+		);
+
+		expect(result.relativePath).toBe('.maestro/diagrams/diagram-3.svg');
+	});
+
+	it('routes raster bytes through writeImageFile, never the UTF-8 writeFile', async () => {
+		await saveImageToProject(
+			makeImg(PNG_DATA_URL),
+			{ projectRoot: '/p', fileName: 'shot.png' },
+			'original'
+		);
+
+		expect(window.maestro.fs.writeImageFile).toHaveBeenCalledWith(
+			'/p/.maestro/diagrams/shot.png',
+			PNG_DATA_URL,
+			undefined
+		);
+		expect(window.maestro.fs.writeFile).not.toHaveBeenCalled();
+	});
+
+	it('threads the SSH remote id through every filesystem call', async () => {
+		await saveImageToProject(
+			makeSvg(),
+			{ projectRoot: '/remote/proj', sshRemoteId: 'box-1', fileName: 'd.svg' },
+			'svg'
+		);
+
+		expect(window.maestro.fs.mkdir).toHaveBeenCalledWith('/remote/proj/.maestro/diagrams', 'box-1');
+		expect(window.maestro.fs.writeFile).toHaveBeenCalledWith(
+			'/remote/proj/.maestro/diagrams/d.svg',
+			expect.any(String),
+			'box-1'
+		);
+	});
+
+	it('throws when the write reports failure instead of returning a path', async () => {
+		vi.mocked(window.maestro.fs.writeFile).mockResolvedValue({ success: false });
+
+		await expect(
+			saveImageToProject(makeSvg(), { projectRoot: '/p', fileName: 'd.svg' }, 'svg')
+		).rejects.toThrow(/Failed to write/);
+	});
+});
+
+describe('suggestImageFileName', () => {
+	it('names diagrams and images distinctly, with a sortable timestamp', () => {
+		expect(suggestImageFileName(makeSvg(), 'svg')).toMatch(/^diagram-\d{8}-\d{6}\.svg$/);
+		expect(suggestImageFileName(makeImg(PNG_DATA_URL), 'png')).toMatch(/^image-\d{8}-\d{6}\.png$/);
 	});
 });
