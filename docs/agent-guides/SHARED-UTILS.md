@@ -522,6 +522,34 @@ the spelled-out platforms.
 | `calculateContextDisplay(usageStats, contextWindow, agentId?, fallbackPercentage?)`     | Returns `{ tokens, percentage, contextWindow }` | Single source of truth for context gauge rendering.                                  |
 | `estimateAccumulatedGrowth(currentUsage, outputTokens, cacheReadTokens, contextWindow)` | `(number, number, number, number) => number`    | Conservative growth estimate during tool-heavy turns. Bounded to 1-3% per turn.      |
 
+### Context Window Precedence (`src/renderer/utils/contextWindowPrecedence.ts`)
+
+**The canonical ranking for "which context window do we divide by".** Any new
+surface that needs the effective window MUST resolve through this rather than
+re-deriving the order - a divergent copy is how the header gauge and the Context
+Timeline disagreed before PR #1221, and findings P1/AD1 exist to keep them in
+step.
+
+| Function                                    | Signature                                        | Purpose                                                                |
+| ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
+| `resolveContextWindow(inputs)`              | `(ContextWindowInputs) => ResolvedContextWindow` | Effective window PLUS the `source` rank that supplied it.              |
+| `isStoredContextWindowOverridden(resolved)` | `(ResolvedContextWindow) => boolean`             | True when a stored `customContextWindow` exists but a higher rank won. |
+
+Precedence: `[1m]` model marker > user-edited `customContextWindow` > provider-resolved
+report > stored `customContextWindow` of unknown provenance > agent config > raw report.
+
+It returns the winning SOURCE, not just the number, because "is the stored value
+overridden?" is unanswerable from the figure alone - a stored 200k and a
+provider-reported 200k are numerically identical and opposite in meaning.
+
+Known consumers: `useContextWindow` (header gauge) and `EditAgentModal`'s
+override note. `useAgentUsageListener` mirrors the shared ranks for the Context
+Timeline with two timeline-only extras interleaved below rank 4; keep the shared
+ranks positionally identical there. A THIRD list exists in
+`resolveConfiguredContextWindow` (`contextWindowResolver.ts`, Auto Run's
+fresh-context picker) which ranks the stored value first unconditionally - it
+predates P1/AD1, serves a different purpose, and is deliberately NOT kept in sync.
+
 ### Session Helpers (`src/renderer/utils/sessionHelpers.ts`)
 
 | Function                                  | Signature                                                                        | Purpose                                                                                 |

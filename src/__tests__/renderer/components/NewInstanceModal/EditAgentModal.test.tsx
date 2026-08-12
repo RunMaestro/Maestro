@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
@@ -873,10 +874,223 @@ describe('EditAgentModal', () => {
 		} as unknown as AgentConfig;
 
 		beforeEach(() => {
+			// Seeded store entries must not leak between cases: the note reads the
+			// live store, so a leftover session would silently satisfy another test.
+			useSessionStore.setState({ sessions: [] } as never);
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([agentWithWindow]);
 			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
 				model: 'claude-sonnet',
 				contextWindow: 200000,
+			});
+		});
+
+		// #1370: the stored number stays visible in this control while the gauge,
+		// the Context Timeline and compaction all divide by the provider's window
+		// instead. The control looks like it configures something; it does not.
+		describe('override note (#1370)', () => {
+			const withUsage = (
+				overrides: Partial<Session>,
+				usageStats?: Record<string, unknown>
+			): Session =>
+				createSession({
+					...overrides,
+					activeTabId: 'tab-1',
+					aiTabs: [{ id: 'tab-1', usageStats }],
+				} as Partial<Session>);
+
+			const note = () => screen.queryByTestId('config-option-note-contextWindow');
+
+			it('explains the override when a provider window outranks a materialized value', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000 },
+							{
+								contextWindow: 1_000_000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				// Names the window actually in use, so the number in the field is not
+				// the only figure on screen.
+				expect(note()).toHaveTextContent('1.0M');
+				expect(note()).toHaveTextContent(/edit this field/i);
+			});
+
+			it('stays silent when the stored window is user-edited', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 120000, contextWindowSource: 'user-edited' },
+							{ contextWindow: 1_000_000, contextWindowResolved: true }
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('120000');
+				// The value is winning, so there is nothing to explain.
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('stays silent when the reported window carries no authority flag', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage({ customContextWindow: 200000 }, { contextWindow: 1_000_000 })}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				// An unflagged report may be a parser-injected static fallback, so the
+				// stored value is still the one in use.
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('stays silent when nothing is stored to override', async () => {
+				const { customContextWindow: _drop, ...withoutWindow } = createSession() as Record<
+					string,
+					unknown
+				>;
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={
+							{
+								...withoutWindow,
+								activeTabId: 'tab-1',
+								aiTabs: [
+									{
+										id: 'tab-1',
+										usageStats: { contextWindow: 1_000_000, contextWindowResolved: true },
+									},
+								],
+							} as unknown as Session
+						}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).not.toBeInTheDocument();
+			});
+
+			it('follows the live store when usage lands while the modal is open', async () => {
+				// The `session` prop is a snapshot from when the modal opened, so a
+				// turn completing mid-edit would leave the note missing or naming a
+				// stale winner (review of #1371). Snapshot has no usage; the store
+				// entry does.
+				const snapshot = withUsage({ customContextWindow: 200000 }, undefined);
+				useSessionStore.setState({
+					sessions: [
+						withUsage(
+							{ customContextWindow: 200000 },
+							{
+								contextWindow: 1_000_000,
+								contextWindowResolved: true,
+							}
+						),
+					],
+				} as never);
+
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={snapshot}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).toHaveTextContent('1.0M');
+			});
+
+			it('stays silent while a provider switch is pending', async () => {
+				// Mid-switch the panel already shows the NEW provider's config, so a
+				// note describing the OLD provider's window would caption the wrong
+				// control (review of #1371).
+				//
+				// codex MUST be in the detect mock: without it `agent` resolves to null
+				// after the switch and the whole config panel unmounts, so the note
+				// would be absent for a reason that has nothing to do with the guard.
+				vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+					agentWithWindow,
+					{ ...agentWithWindow, id: 'codex', name: 'Codex' } as unknown as AgentConfig,
+				]);
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000 },
+							{
+								contextWindow: 1_000_000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				// Note is present before the switch...
+				await screen.findByDisplayValue('200000');
+				expect(note()).toBeInTheDocument();
+
+				// ...and gone once a different provider is selected. The provider
+				// control is a <select>, so change it rather than clicking a label.
+				fireEvent.change(screen.getByDisplayValue('Claude Code'), {
+					target: { value: 'codex' },
+				});
+				// The control itself is still on screen - the note is gone, not the panel.
+				await waitFor(() => expect(note()).not.toBeInTheDocument());
+				expect(screen.getByDisplayValue('200000')).toBeInTheDocument();
+			});
+
+			it('credits the model marker rather than the provider when it is what won', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={withUsage(
+							{ customContextWindow: 200000, customModel: 'opus[1m]' },
+							{
+								contextWindow: 500000,
+								contextWindowResolved: true,
+							}
+						)}
+						existingSessions={[]}
+					/>
+				);
+
+				await screen.findByDisplayValue('200000');
+				expect(note()).toHaveTextContent(/selected model/i);
+				expect(note()).toHaveTextContent('1.0M');
 			});
 		});
 
