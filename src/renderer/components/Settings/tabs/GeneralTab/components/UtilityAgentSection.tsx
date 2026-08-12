@@ -30,6 +30,7 @@ export function UtilityAgentSection({
 }: UtilityAgentSectionProps) {
 	const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([]);
 	const [agentsLoaded, setAgentsLoaded] = useState(false);
+	const [detectionFailed, setDetectionFailed] = useState(false);
 
 	// Detect available agents for the dropdown, lazily when the tab opens.
 	useEffect(() => {
@@ -47,19 +48,27 @@ export function UtilityAgentSection({
 				setAgentsLoaded(true);
 			})
 			.catch(() => {
-				// Silently fail - the dropdown will just show the default option.
+				// Detection failing must not silently hide a persisted selection: the
+				// dropdown would fall back to its first option and read "Default" while
+				// auxiliary tasks kept routing to the stored agent. Record the failure
+				// so the value stays visible, just unverified.
+				if (!cancelled) setDetectionFailed(true);
 			});
 		return () => {
 			cancelled = true;
 		};
 	}, [isOpen, agentsLoaded]);
 
-	// Only meaningful once detection has actually run - before that, an empty
-	// list would flag every configured agent as missing.
-	const staleAgentId =
-		agentsLoaded && utilityAgentId && !availableAgents.some((a) => a.id === utilityAgentId)
-			? utilityAgentId
-			: null;
+	// A persisted id that matches no <option> makes the select render as its
+	// FIRST option, so the UI would read "Default" while the stored agent is what
+	// actually runs. Two different causes, two different messages:
+	//  - detection succeeded and the agent is genuinely gone -> it is missing.
+	//  - detection failed -> we simply do not know, so do not claim it is missing.
+	const selectionKnown = availableAgents.some((a) => a.id === utilityAgentId);
+	const missingAgentId = agentsLoaded && utilityAgentId && !selectionKnown ? utilityAgentId : null;
+	const unverifiedAgentId =
+		detectionFailed && utilityAgentId && !selectionKnown ? utilityAgentId : null;
+	const unmatchedAgentId = missingAgentId ?? unverifiedAgentId;
 
 	return (
 		<div data-setting-id="general-utility-agent">
@@ -97,19 +106,27 @@ export function UtilityAgentSection({
 							</option>
 						))}
 						{/*
-						 * A persisted id whose agent is no longer installed matches no
-						 * option, and a <select> with an unmatched value renders as its
-						 * FIRST option - so the UI would read "Default" while auxiliary
-						 * tasks kept routing to a missing binary and failing. Surface it
-						 * instead, so the setting the user is actually running is the
-						 * setting they can see.
+						 * A persisted id that matches no option makes the <select> render
+						 * as its FIRST option - so the UI would read "Default" while
+						 * auxiliary tasks kept routing to the stored agent. Surface it
+						 * either way, so the setting the user is running is the setting
+						 * they can see.
 						 */}
-						{staleAgentId && <option value={staleAgentId}>{staleAgentId} (not installed)</option>}
+						{unmatchedAgentId && (
+							<option value={unmatchedAgentId}>
+								{unmatchedAgentId} {missingAgentId ? '(not installed)' : '(unverified)'}
+							</option>
+						)}
 					</select>
-					{staleAgentId && (
+					{missingAgentId && (
 						<div className="text-xs mt-1" style={{ color: theme.colors.warning }}>
 							This agent is no longer available. Auxiliary tasks will fail until you pick another
 							agent or return to Default.
+						</div>
+					)}
+					{!missingAgentId && unverifiedAgentId && (
+						<div className="text-xs mt-1" style={{ color: theme.colors.warning }}>
+							Could not check installed agents. This selection is still in use.
 						</div>
 					)}
 				</div>
