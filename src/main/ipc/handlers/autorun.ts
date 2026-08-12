@@ -1551,41 +1551,41 @@ export function registerAutorunHandlers(
 				}
 
 				const watcher = chokidar.watch(statusFilePath, {
-				persistent: true,
-				ignoreInitial: true,
-			});
+					persistent: true,
+					ignoreInitial: true,
+				});
 
-			const scheduleRead = () => {
-				const pending = statusWatchDebounceTimers.get(projectPath);
-				if (pending) clearTimeout(pending);
-				statusWatchDebounceTimers.set(
-					projectPath,
-					setTimeout(() => {
+				const scheduleRead = () => {
+					const pending = statusWatchDebounceTimers.get(projectPath);
+					if (pending) clearTimeout(pending);
+					statusWatchDebounceTimers.set(
+						projectPath,
+						setTimeout(() => {
+							statusWatchDebounceTimers.delete(projectPath);
+							// Let unexpected read errors bubble to Sentry; parse errors are handled inside.
+							void readAndBroadcastStatus(projectPath, statusFilePath);
+						}, 300)
+					);
+				};
+
+				watcher.on('add', scheduleRead);
+				watcher.on('change', scheduleRead);
+				watcher.on('unlink', () => {
+					// File deleted: clear the status in the renderer.
+					const pending = statusWatchDebounceTimers.get(projectPath);
+					if (pending) {
+						clearTimeout(pending);
 						statusWatchDebounceTimers.delete(projectPath);
-						// Let unexpected read errors bubble to Sentry; parse errors are handled inside.
-						void readAndBroadcastStatus(projectPath, statusFilePath);
-					}, 300)
-				);
-			};
-
-			watcher.on('add', scheduleRead);
-			watcher.on('change', scheduleRead);
-			watcher.on('unlink', () => {
-				// File deleted: clear the status in the renderer.
-				const pending = statusWatchDebounceTimers.get(projectPath);
-				if (pending) {
-					clearTimeout(pending);
-					statusWatchDebounceTimers.delete(projectPath);
-				}
-				safeSend('autorun:statusChanged', { projectPath, status: null });
-			});
-			watcher.on('error', (error) => {
-				logger.error(
-					`${LOG_CONTEXT} STATUS.json watcher error for ${projectPath}`,
-					LOG_CONTEXT,
-					error
-				);
-			});
+					}
+					safeSend('autorun:statusChanged', { projectPath, status: null });
+				});
+				watcher.on('error', (error) => {
+					logger.error(
+						`${LOG_CONTEXT} STATUS.json watcher error for ${projectPath}`,
+						LOG_CONTEXT,
+						error
+					);
+				});
 
 				statusWatchers.set(projectPath, {
 					watcher,

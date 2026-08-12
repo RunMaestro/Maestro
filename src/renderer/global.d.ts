@@ -2364,10 +2364,7 @@ interface MaestroAPI {
 			isRemote?: boolean;
 			message?: string;
 		}>;
-		unwatchStatus: (
-			projectPath: string,
-			subscriberId: string
-		) => Promise<Record<string, never>>;
+		unwatchStatus: (projectPath: string, subscriberId: string) => Promise<Record<string, never>>;
 		onStatusChanged: (
 			handler: (data: {
 				projectPath: string;
