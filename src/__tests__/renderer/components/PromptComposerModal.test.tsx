@@ -1254,7 +1254,9 @@ describe('PromptComposerModal', () => {
 				/>
 			);
 
-			const modalContent = container.querySelector('.w-\\[90vw\\].h-\\[80vh\\]');
+			const modalContent = container.querySelector(
+				'[data-modal-resize-key="prompt-composer-compact"]'
+			);
 			expect(modalContent).toBeInTheDocument();
 		});
 	});

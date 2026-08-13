@@ -1116,7 +1116,7 @@ describe('PlaygroundPanel', () => {
 				fireEvent.click(screen.getByRole('button', { name: /Copy CSS Settings/ }));
 			});
 
-			// safeClipboardWrite swallows the error — no success indicator should appear
+			// safeClipboardWrite swallows the error - no success indicator should appear
 			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
 		});
 	});
@@ -1270,7 +1270,7 @@ describe('PlaygroundPanel', () => {
 				fireEvent.click(screen.getByRole('button', { name: /Copy Settings/ }));
 			});
 
-			// safeClipboardWrite swallows the error — no success indicator should appear
+			// safeClipboardWrite swallows the error - no success indicator should appear
 			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
 		});
 	});

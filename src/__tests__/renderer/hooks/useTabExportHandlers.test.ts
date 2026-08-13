@@ -15,7 +15,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
-// Mocks — must be declared before importing the hook
+// Mocks - must be declared before importing the hook
 // ============================================================================
 
 // Mock tabStore

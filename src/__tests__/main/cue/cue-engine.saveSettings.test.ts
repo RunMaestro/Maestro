@@ -1,5 +1,5 @@
 /**
- * Tests for CueEngine.saveSettings() — the path used by Settings → Encore
+ * Tests for CueEngine.saveSettings() - the path used by Settings → Encore
  * Features → Maestro Cue to persist global settings to every known cue.yaml
  * on disk and refresh in-memory engine state.
  *
@@ -62,7 +62,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	clearGitHubSeenForSubscription: vi.fn(),
 }));
 
-// Mock the config repository — saveSettings reads and writes through this.
+// Mock the config repository - saveSettings reads and writes through this.
 const mockReadCueConfigFile = vi.fn<(root: string) => { filePath: string; raw: string } | null>();
 const mockWriteCueConfigFile = vi.fn<(root: string, content: string) => string>();
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
@@ -347,7 +347,7 @@ describe('CueEngine.saveSettings', () => {
 			};
 		});
 
-		// Reset before exercising saveSettings — captureException may be called
+		// Reset before exercising saveSettings - captureException may be called
 		// during engine.start() bootstrap noise we don't care about here.
 		mockCaptureException.mockClear();
 		const result = engine.saveSettings({

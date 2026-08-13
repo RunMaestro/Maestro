@@ -1,5 +1,5 @@
 /**
- * useAgentToolExecutionListener — registers `window.maestro.process.onToolExecution`
+ * useAgentToolExecutionListener - registers `window.maestro.process.onToolExecution`
  *
  * Buffers tool events (running/completed/failed) and merges them into the
  * matching tab's logs. Identification rules (preserved verbatim):

@@ -3,15 +3,17 @@ import { useShallow } from 'zustand/react/shallow';
 import type { Session } from '../../types';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
-import { notifyToast } from '../../stores/notificationStore';
+import { notifyToast, useNotificationStore } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
 import { useModalStore } from '../../stores/modalStore';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
-import { useGitDetail } from '../../contexts/GitStatusContext';
+import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { useListNavigation } from '../../hooks';
@@ -30,8 +32,14 @@ import {
 } from './utils/quickActionSorting';
 import { QuickActionsList } from './components/QuickActionsList';
 import { QuickActionsSearchBar } from './components/QuickActionsSearchBar';
+import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
+import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
+import {
+	selectCanRestoreFloatingPlayer,
+	useMediaPlaybackStore,
+} from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
@@ -39,6 +47,7 @@ import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/groupChatCommands';
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
+import { buildNotificationCommands } from './commands/notificationCommands';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
@@ -84,8 +93,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setAgentSessionsOpen,
 		setMemoryViewerOpen,
 		setActiveAgentSessionId,
-		setGitDiffPreview,
-		setGitLogOpen,
 		onRenameTab,
 		onToggleReadOnlyMode,
 		onToggleTabShowThinking,
@@ -158,10 +165,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onNavForward,
 	} = props;
 
-	// Git status refresh — used to re-sync polling cache when `git diff` comes
+	// Git status refresh - used to re-sync polling cache when `git diff` comes
 	// back empty despite the widget advertising changes (e.g. files were
 	// reverted or committed since the last poll).
-	const { refreshGitStatus } = useGitDetail();
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
 	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
@@ -194,6 +200,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const canRestoreFloatingPlayer = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
+	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
+	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
+	const clearToasts = useNotificationStore((s) => s.clearToasts);
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -267,6 +277,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
+	// The palette is the third surface for the git action set, after the header
+	// branch pill and the Left Bar right-click menu.
+	const gitActions = useGitAgentActions(activeSession);
 	// Output search is scoped per agent+AI-tab; open the active window's slot so
 	// the Find bar doesn't follow the user to other agents/tabs.
 	const openActiveOutputSearch = useCallback(
@@ -282,26 +295,32 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	);
 
 	const activeTabInfo = getActiveTabInfo(activeSession, isAiMode);
+
+	// Cross-tab search needs AI tabs to search; group chats have none.
+	const canSearchAllTabs = !activeGroupChatId && (activeSession?.aiTabs?.length ?? 0) > 0;
 	const activeTabType = activeTabInfo.activeTabType;
 
 	// Register layer on mount - escape behavior depends on current mode.
 	// Only fall back to the main menu if the user actually came from there;
 	// when the modal was opened directly into move-to-group via a hotkey,
 	// escape should dismiss it entirely rather than reveal the cmd+k menu.
-	useModalLayer(MODAL_PRIORITIES.QUICK_ACTION, 'Quick Actions', () => {
+	// Named so the ESC pill in the search bar can invoke exactly what the key does.
+	const handleEscape = useCallback(() => {
 		if (mode === 'move-to-group' && initialMode === 'main') {
 			setMode('main');
 			// Note: Selection will be reset by the search/mode change useEffect
 		} else {
 			setQuickActionOpen(false);
 		}
-	});
+	}, [mode, initialMode, setQuickActionOpen]);
+
+	useModalLayer(MODAL_PRIORITIES.QUICK_ACTION, 'Quick Actions', handleEscape);
 
 	useFocusAfterRender(inputRef, true, 50);
 
 	// Track scroll position to determine which items are visible.
 	// Items have variable height (subtext / runningInfo presence, plus LIVE/IDLE
-	// section headers that interleave with — but aren't part of — `filtered`),
+	// section headers that interleave with - but aren't part of - `filtered`),
 	// so a magic itemHeight constant drifts. Measure real button positions
 	// against the container's viewport instead.
 	const handleScroll = () => {
@@ -381,6 +400,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mainActions: QuickAction[] = [
 		...sessionActions,
 		...groupChatActions,
+		...buildMediaPlayerCommands({
+			canRestoreFloatingPlayer,
+			restoreFloatingPlayer,
+			setQuickActionOpen,
+		}),
+		...buildNotificationCommands({
+			visibleToastCount,
+			clearToasts,
+			setQuickActionOpen,
+		}),
 		...buildNavigationCommands({
 			activeSession,
 			activeSessionId,
@@ -599,19 +628,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildGitWorktreeCommands({
 			activeSession,
 			sessions,
-			setGitDiffPreview,
-			setGitLogOpen,
+			gitActions,
 			setQuickActionOpen,
 			onQuickCreateWorktree,
 			onOpenCreatePR,
 			onRefreshGitFileState,
-			onRefreshGitStatus: refreshGitStatus,
 			shortcuts: {
 				viewGitDiff: shortcuts.viewGitDiff,
 				viewGitLog: shortcuts.viewGitLog,
 			},
 			gitService,
-			notifyCenterFlash,
 			notifyToast,
 			openUrl,
 			logger,
@@ -642,6 +668,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setOutputSearchOpen: openActiveOutputSearch,
 			setFileTreeFilterOpen: storeSetFileTreeFilterOpen,
 			setHistorySearchFilterOpen: storeSetHistorySearchFilterOpen,
+			openCrossTabSearch: canSearchAllTabs ? () => openModal('crossTabSearch') : undefined,
+			searchAllTabsShortcut: shortcuts.searchAllTabs,
 		}),
 		...buildGroupChatCommands({
 			sessions,
@@ -700,7 +728,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	filteredRef.current = filtered;
 
 	// LIVE/IDLE bucket headers only earn their pixels in agents mode when both
-	// buckets are present — a single-bucket list doesn't need a label above it.
+	// buckets are present - a single-bucket list doesn't need a label above it.
 	const showBucketHeaders = shouldShowAgentBucketHeaders(filtered, mode);
 
 	// Callback for when an item is selected (by Enter key or number hotkey)
@@ -740,7 +768,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, [selectedIndex]);
 
 	// Reset selection when search or mode changes.
-	// resetSelection is intentionally excluded from deps — it changes when filtered.length
+	// resetSelection is intentionally excluded from deps - it changes when filtered.length
 	// changes, but we only want to reset on user-driven search/mode changes, not on every
 	// list length fluctuation from parent re-renders (which causes infinite update loops).
 	useEffect(() => {
@@ -776,10 +804,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			e.stopPropagation();
 		}
 	};
+	const resizeKey = mode === 'agents' ? 'agent-switcher' : 'quick-actions';
+	const resizableModal = useResizableModal({
+		resizeKey,
+		defaultSize: { width: 600, height: 680 },
+		minSize: { width: 420, height: 320 },
+		externalRef: modalRef,
+	});
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-start justify-center pt-32 z-[9999] animate-in fade-in duration-100"
+			className="fixed inset-0 modal-overlay flex items-center justify-center p-8 animate-in fade-in duration-100"
+			// Above the toast layer: while the palette is open it owns the screen,
+			// so a stack of notifications can't sit on top of the results list.
+			style={{ zIndex: Z_LAYERS.QUICK_ACTIONS }}
 			onMouseDown={(e) => {
 				// Dismiss when clicking outside the modal content (backdrop only).
 				if (e.target === e.currentTarget && !renamingSession) {
@@ -793,9 +831,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				aria-modal="true"
 				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
-				className="modal-w-md rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[min(680px,calc(100vh-10rem))] outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="relative rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none select-none"
+				style={{
+					...resizableModal.style,
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+				}}
+				data-modal-resize-key={resizeKey}
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				<QuickActionsSearchBar
 					theme={theme}
 					mode={mode}
@@ -807,6 +857,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					setRenameValue={setRenameValue}
 					inputRef={inputRef}
 					onKeyDown={handleKeyDown}
+					onClose={handleEscape}
 				/>
 				{!renamingSession && (
 					<QuickActionsList

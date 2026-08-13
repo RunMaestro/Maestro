@@ -621,7 +621,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 				</div>
 			</div>
 
-			{/* GitHub-style heatmap for year/all views — week columns stretch to
+			{/* GitHub-style heatmap for year/all views - week columns stretch to
 			    fill the container instead of using a fixed 13px cell width, so
 			    the heatmap fills the modal regardless of viewport width. */}
 			{useGitHubLayout && gitHubGrid && (
@@ -645,7 +645,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 
 					{/* Grid container */}
 					<div className="flex-1 min-w-0">
-						{/* Month labels row — column widths derived from the same flex
+						{/* Month labels row - column widths derived from the same flex
 						    distribution as the cells (each week column = 1 unit). */}
 						<div className="flex gap-[2px]" style={{ marginBottom: 6, height: 18 }}>
 							{gitHubGrid.monthLabels.map((monthLabel, idx) => (
@@ -709,7 +709,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 				</div>
 			)}
 
-			{/* 4-hour block heatmap for month/quarter views — day columns are
+			{/* 4-hour block heatmap for month/quarter views - day columns are
 			    flex 1/0/0 so the grid stretches to fill the modal instead of
 			    fixing every column at 14px and forcing horizontal scroll. */}
 			{use4HourBlockLayout && blockGrid && (
@@ -730,7 +730,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 						))}
 					</div>
 
-					{/* Grid of cells — fills the available width */}
+					{/* Grid of cells - fills the available width */}
 					<div className="flex-1 min-w-0">
 						<div className="flex gap-[3px]">
 							{blockGrid.dayColumns.map((col, colIdx) => {

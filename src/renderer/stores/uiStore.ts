@@ -34,6 +34,17 @@ export interface OutputSearchSlot {
 	regex: boolean;
 }
 
+/**
+ * A request to scroll a specific transcript entry into view and flash it.
+ * Set by cross-tab message search (Opt+Cmd+F) after it switches tabs; consumed
+ * by the TerminalOutput instance whose agent+tab match, which clears it.
+ */
+export interface PendingLogJump {
+	sessionId: string;
+	tabId: string;
+	logId: string;
+}
+
 export interface UIStoreState {
 	// Sidebar
 	leftSidebarOpen: boolean;
@@ -64,6 +75,10 @@ export interface UIStoreState {
 	// outputSearchKeyFor in utils/outputSearch). Slots are pruned when a search is
 	// closed with an empty term, so the map only holds windows with an active find.
 	outputSearchByKey: Record<string, OutputSearchSlot>;
+
+	// Pending "jump to this message" request from cross-tab search. Null when no
+	// jump is in flight; the target transcript clears it once it has scrolled.
+	pendingLogJump: PendingLogJump | null;
 
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
@@ -136,13 +151,13 @@ export interface UIStoreActions {
 	setSidebarExtraSelection: (selection: SidebarExtraSelection | null) => void;
 
 	/**
-	 * Compatibility shim — fires a yellow center flash.
+	 * Compatibility shim - fires a yellow center flash.
 	 * New code should call `notifyCenterFlash({ message, color: 'yellow' })` directly.
 	 * Passing `null` is a no-op (auto-dismiss handles clearing).
 	 */
 	setFlashNotification: (msg: string | null | ((prev: string | null) => string | null)) => void;
 	/**
-	 * Compatibility shim — fires a themed center flash.
+	 * Compatibility shim - fires a themed center flash.
 	 * New code should call `notifyCenterFlash({ message })` directly (defaults to `theme`).
 	 * Passing `null` is a no-op (auto-dismiss handles clearing).
 	 */
@@ -155,6 +170,11 @@ export interface UIStoreActions {
 	setOutputSearchQuery: (key: string, query: string | ((prev: string) => string)) => void;
 	setOutputSearchRegex: (key: string, regex: boolean | ((prev: boolean) => boolean)) => void;
 	toggleOutputSearchRegex: (key: string) => void;
+
+	// Cross-tab search jump target
+	setPendingLogJump: (jump: PendingLogJump | null) => void;
+	/** Clear only if the pending jump still points at this exact entry. */
+	clearPendingLogJump: (logId: string) => void;
 
 	// Session filter (sidebar agent search)
 	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -264,6 +284,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	selectedSidebarIndex: 0,
 	sidebarExtraSelection: null,
 	outputSearchByKey: {},
+	pendingLogJump: null,
 	sessionFilterOpen: false,
 	historySearchFilterOpen: false,
 	groupChatHistorySearchFilterOpen: false,
@@ -345,6 +366,11 @@ export const useUIStore = create<UIStore>()((set) => ({
 				regex: !(s.outputSearchByKey[key] ?? DEFAULT_OUTPUT_SEARCH).regex,
 			}),
 		})),
+
+	setPendingLogJump: (jump) => set({ pendingLogJump: jump }),
+	// Guarded so a stale consumer can't wipe a newer jump the user just queued.
+	clearPendingLogJump: (logId) =>
+		set((s) => (s.pendingLogJump?.logId === logId ? { pendingLogJump: null } : s)),
 
 	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
 	setHistorySearchFilterOpen: (v) =>

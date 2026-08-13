@@ -37,7 +37,7 @@ export interface UseSettingsReturn {
 	setConductorProfile: (value: string) => Promise<boolean>;
 	/** Pass Infinity for "All"; it serializes to null on the wire and desktop rehydrates it. */
 	setMaxOutputLines: (value: number) => Promise<boolean>;
-	/** Handler for settings_changed broadcasts — wire to onSettingsChanged in WebSocket handlers */
+	/** Handler for settings_changed broadcasts - wire to onSettingsChanged in WebSocket handlers */
 	handleSettingsChanged: (settings: WebSettings) => void;
 }
 
@@ -90,7 +90,7 @@ export function useSettings(
 				}
 			})
 			.catch(() => {
-				// Settings fetch failed — will retry on reconnect
+				// Settings fetch failed - will retry on reconnect
 			})
 			.finally(() => {
 				setIsLoading(false);
@@ -185,7 +185,7 @@ export function useSettings(
 	);
 
 	const setMaxOutputLines = useCallback(
-		// Infinity ("All") serializes as null on the wire — desktop rehydrates it.
+		// Infinity ("All") serializes as null on the wire - desktop rehydrates it.
 		(value: number) => setSetting('maxOutputLines', Number.isFinite(value) ? value : null),
 		[setSetting]
 	);

@@ -1,5 +1,5 @@
 /**
- * useQueueProcessing — extracted from App.tsx
+ * useQueueProcessing - extracted from App.tsx
  *
  * Handles execution queue processing:
  *   - Delegates queued item execution to agentStore
@@ -222,7 +222,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 			}, 500);
 			return () => clearTimeout(startupTimerId);
 		} else {
-			// No startup items to process — runtime recovery can start immediately
+			// No startup items to process - runtime recovery can start immediately
 			startupRecoveryComplete.current = true;
 		}
 	}, [sessionsLoaded, sessions, dispatchQueuedItem]);

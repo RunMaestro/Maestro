@@ -40,7 +40,8 @@ Tips and gotchas:
 | New Agent Wizard            | `Cmd+Shift+N`         | `Ctrl+Shift+N`         |
 | New Group Chat              | `Opt+Cmd+C`           | `Alt+Ctrl+C`           |
 | Remove Agent                | `Cmd+Shift+Backspace` | `Ctrl+Shift+Backspace` |
-| Move Agent to Group         | `Cmd+Shift+M`         | `Ctrl+Shift+M`         |
+| Move Agent to Group         | `Opt+Cmd+M`           | `Alt+Ctrl+M`           |
+| Open Memory Viewer          | `Cmd+Shift+M`         | `Ctrl+Shift+M`         |
 | Previous Agent              | `Cmd+[`               | `Ctrl+[`               |
 | Next Agent                  | `Cmd+]`               | `Ctrl+]`               |
 | Navigate Back               | `Cmd+Shift+,`         | `Ctrl+Shift+,`         |
@@ -111,7 +112,8 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
 | Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
 | Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
-| Focus Active Tab          | `Opt+Cmd+F`             | `Alt+Ctrl+F`              |
+| Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
+| Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
 | Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
@@ -150,6 +152,7 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 | Focus Output             | `Esc` while in input                              |
 | Focus Input              | `Esc` while in output                             |
 | Open Output Search       | `Cmd+F` while in output                           |
+| Search All Open Tabs     | `Opt+Cmd+F` / `Alt+Ctrl+F`                        |
 | Scroll Output            | `Up/Down Arrow` while in output                   |
 | Prev/Next Message        | `Shift+Up/Down Arrow` while in output             |
 | Page Up/Down             | `Alt+Up/Down Arrow` while in output               |
@@ -171,7 +174,7 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 
 ### Tab Completion
 
-The Command Terminal provides intelligent tab completion for faster command entry:
+The Command Terminal - and the AI chat while in [command mode](./general-usage#command-mode) - provides intelligent tab completion for faster command entry:
 
 | Action                 | Key                                            |
 | ---------------------- | ---------------------------------------------- |
@@ -184,8 +187,8 @@ The Command Terminal provides intelligent tab completion for faster command entr
 
 **Completion Sources:**
 
-- **History** - Previous shell commands from your session
-- **Files/Folders** - Files and directories in your current working directory
+- **History** - Previous shell commands from your session. In command mode this is your prior command-mode commands, so `Tab` on an empty line lists what you have run before
+- **Files/Folders** - Files and directories in your current working directory. In command mode this is the agent's working directory, which is where the command actually runs
 - **Git Branches** - Local and remote branches (git repos only)
 - **Git Tags** - Available tags (git repos only)
 
@@ -206,21 +209,41 @@ In AI mode, use `@` to reference files in your prompts:
 
 ## Navigation & Search
 
-| Action                          | macOS                              | Windows/Linux                      |
-| ------------------------------- | ---------------------------------- | ---------------------------------- |
-| Navigate Agents                 | `Up/Down Arrow` while in sidebar   | `Up/Down Arrow` while in sidebar   |
-| Select Agent                    | `Enter` while in sidebar           | `Enter` while in sidebar           |
-| Filter Sessions (in Left Panel) | `Cmd+F`                            | `Ctrl+F`                           |
-| Navigate Files                  | `Up/Down Arrow` while in file tree | `Up/Down Arrow` while in file tree |
-| Extend File Selection           | `Shift+Up/Down Arrow` in file tree | `Shift+Up/Down Arrow` in file tree |
-| Multi-select Files              | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
-| Filter Files (in Files tab)     | `Cmd+F`                            | `Ctrl+F`                           |
-| Filter History (in History tab) | `Cmd+F`                            | `Ctrl+F`                           |
-| Search Output (in Main Window)  | `Cmd+F`                            | `Ctrl+F`                           |
-| Search System Logs              | `Cmd+F`                            | `Ctrl+F`                           |
-| Search Director's Notes         | `Cmd+F`                            | `Ctrl+F`                           |
-| Open File Preview               | `Enter` on selected file           | `Enter` on selected file           |
-| Close Preview/Filter/Modal      | `Esc`                              | `Esc`                              |
+| Action                           | macOS                              | Windows/Linux                      |
+| -------------------------------- | ---------------------------------- | ---------------------------------- |
+| Navigate Agents                  | `Up/Down Arrow` while in sidebar   | `Up/Down Arrow` while in sidebar   |
+| Select Agent                     | `Enter` while in sidebar           | `Enter` while in sidebar           |
+| Filter Sessions (in Left Panel)  | `Cmd+F`                            | `Ctrl+F`                           |
+| Navigate Files                   | `Up/Down Arrow` while in file tree | `Up/Down Arrow` while in file tree |
+| Extend File Selection            | `Shift+Up/Down Arrow` in file tree | `Shift+Up/Down Arrow` in file tree |
+| Multi-select Files               | `Cmd+Click` / `Shift+Click`        | `Ctrl+Click` / `Shift+Click`       |
+| Filter Files (in Files tab)      | `Cmd+F`                            | `Ctrl+F`                           |
+| Filter History (in History tab)  | `Cmd+F`                            | `Ctrl+F`                           |
+| Search Output (in Main Window)   | `Cmd+F`                            | `Ctrl+F`                           |
+| Search Messages (All Agent Tabs) | `Opt+Cmd+F`                        | `Alt+Ctrl+F`                       |
+| Search System Logs               | `Cmd+F`                            | `Ctrl+F`                           |
+| Search Director's Notes          | `Cmd+F`                            | `Ctrl+F`                           |
+| Open File Preview                | `Enter` on selected file           | `Enter` on selected file           |
+| Close Preview/Filter/Modal       | `Esc`                              | `Esc`                              |
+
+### Searching Message History
+
+Two searches cover your conversations, both reachable from the magnifying-glass
+menu in the tab bar and both supporting plain text or regex:
+
+| Search           | Shortcut                   | Scope                               |
+| ---------------- | -------------------------- | ----------------------------------- |
+| Find bar         | `Cmd+F` / `Ctrl+F`         | The tab you're currently viewing    |
+| Cross-tab search | `Opt+Cmd+F` / `Alt+Ctrl+F` | Every open tab in the current agent |
+
+The Find bar highlights matches inline; `Enter` and `Shift+Enter` step through
+them. Cross-tab search opens a modal listing hits grouped by tab. Choosing one
+switches to that tab, scrolls to the message, flashes it, and seeds that tab's
+Find bar with the same query positioned on the match you picked. It is also in
+the command palette as "Search: Messages (All Agent Tabs)".
+
+See [Searching Message History](./general-usage#searching-message-history) for
+the full walkthrough.
 
 ## File Preview
 
@@ -233,6 +256,25 @@ In AI mode, use `@` to reference files in your prompts:
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
 | Scroll                              | `Up/Down Arrow` | `Up/Down Arrow` |
 | Close                               | `Esc`           | `Esc`           |
+
+### CSV Row Detail
+
+Available while previewing a `.csv` or `.tsv` file. See
+[CSV and TSV Tables](./general-usage#csv-and-tsv-tables) for the full
+walkthrough.
+
+The field list is focused on open, so these work without clicking first.
+
+| Action               | macOS                 | Windows/Linux         |
+| -------------------- | --------------------- | --------------------- |
+| Open row detail view | `Double-click`        | `Double-click`        |
+| Previous / next row  | `Left/Right Arrow`    | `Left/Right Arrow`    |
+| Scroll fields        | `Up/Down Arrow`       | `Up/Down Arrow`       |
+| Scroll by screen     | `PageUp` / `PageDown` | `PageUp` / `PageDown` |
+| Jump to top / bottom | `Home` / `End`        | `Home` / `End`        |
+| Focus the filter     | `/`                   | `/`                   |
+| Leave the filter     | `Enter`               | `Enter`               |
+| Close row detail     | `Esc`                 | `Esc`                 |
 
 ## Document Graph
 
@@ -264,6 +306,18 @@ Most shortcuts can be remapped to fit your workflow:
 - Conflicting shortcuts will override the previous binding
 
 **Resetting shortcuts:** There's currently no "reset to default" button - if you need to restore defaults, you can find the original bindings in this documentation or delete the shortcuts from your settings file.
+
+### Changed Default Bindings
+
+When a default binding has to move to free a combo for a new action, Maestro migrates it for you on the next launch - but only if you were still on the old default. If you had personally rebound that action, your binding is left untouched and you may need to move it yourself.
+
+| Action                    | Was           | Now           | Freed for                        |
+| ------------------------- | ------------- | ------------- | -------------------------------- |
+| Focus Active Tab          | `Opt+Cmd+F`   | `Opt+Cmd+Up`  | Search Messages (All Agent Tabs) |
+| Move Session to Group     | `Cmd+Shift+M` | `Opt+Cmd+M`   | Open Memory Viewer               |
+| Auto Run Expanded Preview | `Cmd+Shift+2` | `Cmd+Shift+E` | Run Auto Run                     |
+
+If `Opt+Cmd+F` still focuses the active tab instead of opening cross-tab search, you had a custom binding on it: open **Settings** → **Shortcuts**, clear it from **Focus Active Tab**, and the new default takes over.
 
 ## Keyboard Mastery
 

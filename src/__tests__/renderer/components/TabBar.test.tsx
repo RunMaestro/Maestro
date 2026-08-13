@@ -128,6 +128,11 @@ vi.mock('lucide-react', () => ({
 			🕐
 		</span>
 	),
+	Layers: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="layers-icon" className={className} style={style}>
+			▤
+		</span>
+	),
 	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="message-square-icon" className={className} style={style}>
 			💬
@@ -486,7 +491,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			// No name or agentSessionId yet — shows "New Session"
+			// No name or agentSessionId yet - shows "New Session"
 			expect(screen.getByText('New Session')).toBeInTheDocument();
 		});
 
@@ -494,7 +499,7 @@ describe('TabBar', () => {
 			// Regression: previously every freshly-created OpenCode tab inherited the
 			// most recent sibling tab's session id (all tabs displayed "SES_2387").
 			// A tab without its own agentSessionId must show "New Session" regardless
-			// of session-level state or awaiting flags — the title is strictly per-tab.
+			// of session-level state or awaiting flags - the title is strictly per-tab.
 			const tabs = [
 				createTab({
 					id: 'tab-1',
@@ -1059,7 +1064,7 @@ describe('TabBar', () => {
 			expect(mockOnOpenTabSearch).toHaveBeenCalled();
 		});
 
-		it('opens search popover and calls onOpenOutputSearch when Search Message History clicked', () => {
+		it('opens search popover and calls onOpenOutputSearch when the this-tab entry is clicked', () => {
 			const mockOnOpenOutputSearch = vi.fn();
 			render(
 				<TabBar
@@ -1076,9 +1081,46 @@ describe('TabBar', () => {
 
 			// Click the search button to open the popover
 			fireEvent.click(screen.getByTitle('Search…'));
-			// Click "Search Message History" in the popover
-			fireEvent.click(screen.getByText('Search Message History'));
+			// Click the this-tab message search entry in the popover
+			fireEvent.click(screen.getByText('Search Messages (this tab)'));
 			expect(mockOnOpenOutputSearch).toHaveBeenCalled();
+		});
+
+		it('calls onOpenCrossTabSearch when the all-tabs entry is clicked', () => {
+			const mockOnOpenCrossTabSearch = vi.fn();
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+					onOpenCrossTabSearch={mockOnOpenCrossTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByText('Search Messages (all agent tabs)'));
+			expect(mockOnOpenCrossTabSearch).toHaveBeenCalled();
+		});
+
+		it('hides the all-tabs entry when no handler is supplied', () => {
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Search…'));
+			expect(screen.queryByText('Search Messages (all agent tabs)')).not.toBeInTheDocument();
 		});
 	});
 
@@ -4653,7 +4695,7 @@ describe('Unified tabs drag and drop', () => {
 			/>
 		);
 
-		// Hover over term-2 (index 2 — last tab, so Move to First should show)
+		// Hover over term-2 (index 2 - last tab, so Move to First should show)
 		const termTabElement = screen.getByText('Terminal 2').closest('[data-tab-id]')!;
 
 		await act(async () => {
@@ -4713,7 +4755,7 @@ describe('Unified tabs drag and drop', () => {
 			/>
 		);
 
-		// Hover over term-1 (index 1 — middle tab, so both should show)
+		// Hover over term-1 (index 1 - middle tab, so both should show)
 		const termTabElement = screen.getByText('Terminal 1').closest('[data-tab-id]')!;
 
 		await act(async () => {
@@ -4731,7 +4773,7 @@ describe('Unified tabs drag and drop', () => {
 
 	// Regression: when the user clicks back to an AI tab and then opens a 2nd
 	// terminal, addTerminalTab inserts the new terminal directly after the AI
-	// tab — which places it visually to the LEFT of the existing terminal.
+	// tab - which places it visually to the LEFT of the existing terminal.
 	// "Terminal N" labels must follow creation order so the older terminal
 	// stays "Terminal 1" and the new one becomes "Terminal 2".
 	it('numbers terminal tabs by creation order, not visual position', () => {

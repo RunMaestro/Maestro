@@ -1,5 +1,5 @@
 /**
- * Tests for useEventListener — generic event-listener hook used across the
+ * Tests for useEventListener - generic event-listener hook used across the
  * renderer. Covers the original window-only behaviour plus the new
  * `target` and `enabled` options.
  */
@@ -79,7 +79,7 @@ describe('useEventListener', () => {
 				fireEvent.click(el);
 				expect(handler).toHaveBeenCalledTimes(1);
 			} finally {
-				// Always remove the appended element, even if an assertion threw —
+				// Always remove the appended element, even if an assertion threw -
 				// otherwise an orphan <div> persists in document.body for the next
 				// test in this worker.
 				document.body.removeChild(el);

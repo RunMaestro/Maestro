@@ -69,7 +69,7 @@ export interface BrowserTabViewHandle {
 	 * Returns `""` if the webview cannot be reached or the script throws.
 	 */
 	getContent(): Promise<string>;
-	/** The tabId this view is currently rendering — used for ref-to-tab reconciliation. */
+	/** The tabId this view is currently rendering - used for ref-to-tab reconciliation. */
 	getTabId(): string;
 	/** Open the in-page find bar and focus its input. */
 	openFind(): void;
@@ -143,7 +143,7 @@ export const BrowserTabView = React.memo(
 					const webview = webviewRef.current;
 					if (!webview) return '';
 					// Wait up to 2s for dom-ready so extraction works immediately after a
-					// tab activation. If the guest is still navigating, we still attempt —
+					// tab activation. If the guest is still navigating, we still attempt -
 					// Electron's executeJavaScript queues until the page is ready.
 					if (!isDomReadyRef.current) {
 						const deadline = Date.now() + 2000;
@@ -200,7 +200,7 @@ export const BrowserTabView = React.memo(
 			};
 			const onFocusIn = () => {
 				if (!userClickedRef.current) {
-					// Focus was not user-initiated — push it back out, but leave the
+					// Focus was not user-initiated - push it back out, but leave the
 					// find-bar input alone (Cmd+F intentionally focuses it
 					// programmatically, and that is exactly the case this guard
 					// would otherwise mistakenly reject).
@@ -791,7 +791,7 @@ export const BrowserTabView = React.memo(
 										(event.metaKey || event.ctrlKey) &&
 										!event.altKey
 									) {
-										// Cmd+G / Cmd+Shift+G — next/prev match (standard browser shortcut)
+										// Cmd+G / Cmd+Shift+G - next/prev match (standard browser shortcut)
 										event.preventDefault();
 										event.stopPropagation();
 										handleFindNext(!event.shiftKey);
@@ -801,7 +801,7 @@ export const BrowserTabView = React.memo(
 										!event.altKey &&
 										!event.shiftKey
 									) {
-										// Cmd+F while find bar is open — re-focus and select the query
+										// Cmd+F while find bar is open - re-focus and select the query
 										event.preventDefault();
 										event.stopPropagation();
 										event.currentTarget.select();

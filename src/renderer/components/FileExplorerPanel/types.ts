@@ -3,6 +3,7 @@ import type { Session, Theme, FocusArea } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
+import type { FileClickOptions } from '../../hooks/ui/useAppHandlers';
 
 /** MIME type for dragging multiple file-tree rows as a JSON array of relative paths. */
 export const FILE_TREE_MULTI_MIME = 'application/x-maestro-file-paths';
@@ -23,7 +24,7 @@ export const AUTO_REFRESH_OPTIONS = [
 	{ label: 'Every 3 minutes', value: 180 },
 ];
 
-/** Flattened node for virtualization — one entry per visible tree row. */
+/** Flattened node for virtualization - one entry per visible tree row. */
 export interface FlattenedNode {
 	node: FileNode;
 	path: string;
@@ -117,7 +118,7 @@ export interface FileExplorerPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,
@@ -135,7 +136,7 @@ export interface FileExplorerPanelProps {
 		sessionId: string,
 		options?: { maxEntriesOverride?: number }
 	) => Promise<FileTreeChanges | undefined>;
-	/** Cancel the in-flight file tree load — useful when SSH scans monopolize connections. */
+	/** Cancel the in-flight file tree load - useful when SSH scans monopolize connections. */
 	cancelFileTreeLoad?: (sessionId: string) => void;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	onAutoRefreshChange?: (interval: number) => void;

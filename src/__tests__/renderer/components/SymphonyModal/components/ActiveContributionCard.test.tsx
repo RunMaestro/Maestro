@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/ActiveContributionCard — status rendering,
+ * Tests for SymphonyModal/components/ActiveContributionCard - status rendering,
  * finalize gating, sync/finalize callbacks, session jump, draft PR link.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

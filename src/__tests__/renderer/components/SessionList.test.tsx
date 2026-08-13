@@ -81,6 +81,13 @@ vi.mock('lucide-react', () => ({
 	Zap: ({ title, style }: { title?: string; style?: Record<string, string> }) => (
 		<span data-testid="icon-zap" title={title} style={style} />
 	),
+	// Git action icons in the session context menu
+	History: () => <span data-testid="icon-history" />,
+	FileDiff: () => <span data-testid="icon-file-diff" />,
+	ArrowDown: () => <span data-testid="icon-arrow-down" />,
+	ArrowUp: () => <span data-testid="icon-arrow-up" />,
+	ArrowDownToLine: () => <span data-testid="icon-arrow-down-to-line" />,
+	ArrowUpFromLine: () => <span data-testid="icon-arrow-up-from-line" />,
 }));
 
 // Mock gitService
@@ -118,7 +125,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 		refreshGitStatus: vi.fn().mockResolvedValue(undefined),
 	}),
 }));
-// Modal actions mock — replaces prop-passed modal setters
+// Modal actions mock - replaces prop-passed modal setters
 const mockModalActions = {
 	setShortcutsHelpOpen: vi.fn(),
 	setSettingsModalOpen: vi.fn(),
@@ -893,7 +900,7 @@ describe('SessionList', () => {
 
 			// With every session in a group, the empty "Ungrouped Agents" folder
 			// header is replaced by a compact drop-zone container + New Group
-			// button — no orphan folder header.
+			// button - no orphan folder header.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 			// The New Group button still renders so the user can keep organizing.
 			expect(screen.getByText('New Group')).toBeInTheDocument();
@@ -1078,7 +1085,7 @@ describe('SessionList', () => {
 
 			// The session should be visible in the group
 			expect(screen.getByText('Grouped Session')).toBeInTheDocument();
-			// No empty "Ungrouped Agents" header — the drop zone / New Group
+			// No empty "Ungrouped Agents" header - the drop zone / New Group
 			// button takes over that space instead.
 			expect(screen.queryByText('Ungrouped Agents')).not.toBeInTheDocument();
 		});
@@ -1411,7 +1418,7 @@ describe('SessionList', () => {
 
 		it('shows busy status with pulse animation', () => {
 			// Claude sessions without an agentSessionId render a static "no active Claude session"
-			// indicator regardless of state — provide one so the busy animation is exercised.
+			// indicator regardless of state - provide one so the busy animation is exercised.
 			const sessions = [
 				createMockSession({
 					id: 's1',

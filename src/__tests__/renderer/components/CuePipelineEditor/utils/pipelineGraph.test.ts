@@ -2,7 +2,7 @@
  * Tests for pipelineGraph utilities: getTriggerConfigSummary,
  * convertToReactFlowNodes, and convertToReactFlowEdges.
  *
- * These are pure functions — no React, no DOM.
+ * These are pure functions - no React, no DOM.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -266,7 +266,7 @@ describe('convertToReactFlowNodes', () => {
 	it('threads subscriptionName from TriggerNodeData to TriggerNodeDataProps', () => {
 		// Regression guard: if this thread-through breaks, the Play button
 		// on chain triggers silently falls back to pipelineName and fires
-		// the wrong subscription — that's the GitHub-trigger-unreachable bug.
+		// the wrong subscription - that's the GitHub-trigger-unreachable bug.
 		const trigger = makeTrigger('t1', 'github.pull_request');
 		(trigger.data as TriggerNodeData).subscriptionName = 'Pipeline 1-chain-2';
 		const pipeline = makePipeline('p1', { nodes: [trigger] });
@@ -277,7 +277,7 @@ describe('convertToReactFlowNodes', () => {
 	});
 
 	it('leaves subscriptionName undefined when not stamped on the node data', () => {
-		// Never-saved pipelines don't have a subscription yet — the TriggerNode
+		// Never-saved pipelines don't have a subscription yet - the TriggerNode
 		// component's Play button is hidden (isSaved=false) in that case, and
 		// the fallback to pipelineName handles any legacy data that slips through.
 		const trigger = makeTrigger('t1', 'time.heartbeat');
@@ -373,7 +373,7 @@ describe('convertToReactFlowNodes', () => {
 			color: '#8b5cf6',
 			nodes: [makeAgent('a2', sharedSessionId, 'Pedsidian', {}, { x: 0, y: 0 })],
 		});
-		// p2 is selected — only p2's Pedsidian should appear
+		// p2 is selected - only p2's Pedsidian should appear
 		const nodes = convertToReactFlowNodes([p1, p2], 'p2');
 		const ids = nodes.map((n) => n.id);
 		expect(ids).toHaveLength(1);
@@ -520,7 +520,7 @@ describe('convertToReactFlowNodes', () => {
 		const p2 = makePipeline('p2', {
 			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 100 })],
 		});
-		// Select p1 — no offsets should be computed
+		// Select p1 - no offsets should be computed
 		const nodes = convertToReactFlowNodes([p1, p2], 'p1');
 		const t1 = nodes.find((n) => n.id === 'p1:t1')!;
 		expect(t1.position.y).toBe(100);
@@ -556,10 +556,10 @@ describe('convertToReactFlowNodes', () => {
 		expect(groups).toHaveLength(2);
 		expect(groups.find((g) => g.id === 'pipeline-group:p1')).toBeDefined();
 		expect(groups.find((g) => g.id === 'pipeline-group:p2')).toBeDefined();
-		// In pointer/select mode (the default — no isHandMode flag) the group
+		// In pointer/select mode (the default - no isHandMode flag) the group
 		// card is selectable AND draggable, and sits ABOVE its content nodes so
 		// the whole body is the drag handle. It is never deletable via the
-		// canvas Delete key — removal must go through the toolbar.
+		// canvas Delete key - removal must go through the toolbar.
 		for (const g of groups) {
 			expect(g.selectable).toBe(true);
 			expect(g.draggable).toBe(true);
@@ -654,7 +654,7 @@ describe('convertToReactFlowNodes', () => {
 		const t1 = nodes.find((n) => n.id === 'p1:t1')!;
 		const t2 = nodes.find((n) => n.id === 'p2:t2')!;
 		// p1 honors its viewOffset (y=500). p2 auto-stacks BELOW p1's rendered
-		// bottom rather than starting at y=0 — otherwise mixed-mode layouts
+		// bottom rather than starting at y=0 - otherwise mixed-mode layouts
 		// (some pipelines dragged, some never moved) would overlap manual
 		// pipelines on first open.
 		expect(t1.position.y).toBe(500);
@@ -834,7 +834,7 @@ describe('convertToReactFlowEdges', () => {
 
 // ─── Edge-animation edge cases (per-agent, not pipeline-wide) ────────────────
 
-describe('convertToReactFlowEdges — per-agent edge animation', () => {
+describe('convertToReactFlowEdges - per-agent edge animation', () => {
 	// Regression guard for the "all edges animate when ANY run is active" bug.
 	// Rule: an edge animates iff its target is an agent whose sessionName
 	// appears in the pipeline's active-agents set.
@@ -979,7 +979,7 @@ describe('convertToReactFlowEdges — per-agent edge animation', () => {
 	});
 
 	it('edges whose target is NOT an agent (cli_output, error) never animate', () => {
-		// Edges pointing at non-agent nodes can't correspond to an active run —
+		// Edges pointing at non-agent nodes can't correspond to an active run -
 		// don't animate them even if an agent with a matching name is running.
 		const pipeline = makePipeline('p1', {
 			nodes: [
@@ -1008,7 +1008,7 @@ describe('convertToReactFlowEdges — per-agent edge animation', () => {
 	it('multi-pipeline: a run in pipeline A does not animate edges in pipeline B', () => {
 		// Pipeline A and B both contain an agent named "Worker". Only pipeline A
 		// has an active run. Pipeline B's identically-named agent must NOT
-		// have its incoming edge animated — the map is keyed by pipeline id.
+		// have its incoming edge animated - the map is keyed by pipeline id.
 		const pA = makePipeline('pA', {
 			nodes: [makeTrigger('tA', 'time.heartbeat'), makeAgent('a', 'sess-shared', 'Worker')],
 			edges: [makeEdge('eA', 'tA', 'a')],
@@ -1162,7 +1162,7 @@ describe('convertToReactFlowNodes triggerOptions', () => {
 	it('agent node carries isRunning when its sessionName is in runningAgentsByPipeline', () => {
 		// runningAgentsByPipeline drives the running-agent pulse animation.
 		// The agent node only pulses when its sessionName matches a name in
-		// the set keyed by its owning pipeline id — runs in OTHER pipelines
+		// the set keyed by its owning pipeline id - runs in OTHER pipelines
 		// must not light up an unrelated sibling that happens to share a name.
 		const pipeline = makePipeline('p1', {
 			nodes: [
@@ -1192,7 +1192,7 @@ describe('convertToReactFlowNodes triggerOptions', () => {
 
 // ─── Per-trigger isRunning (one sub → one trigger spinner) ───────────────────
 
-describe('convertToReactFlowNodes — per-trigger isRunning', () => {
+describe('convertToReactFlowNodes - per-trigger isRunning', () => {
 	// Regression guard for the "all trigger icons spin when any sub runs" bug.
 	// A multi-trigger pipeline (startup + scheduled + GitHub PR) generates
 	// three trigger nodes sharing one pipeline. Only the trigger whose own
@@ -1320,7 +1320,7 @@ describe('convertToReactFlowNodes — per-trigger isRunning', () => {
 		};
 		const nodes = convertToReactFlowNodes([pipeline], 'p1', undefined, {
 			onTriggerPipeline: vi.fn(),
-			isSaved: false, // unsaved — Play button hidden, but isRunning still resolves
+			isSaved: false, // unsaved - Play button hidden, but isRunning still resolves
 			runningPipelineIds: new Set(['p1']),
 			runningSubscriptionsByPipeline: new Map(),
 		});
@@ -1649,7 +1649,7 @@ describe('resolveNonOverlappingPipelineOffset', () => {
 		const other = makePipeline('p2', {
 			nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
 		});
-		// Place "other" 2000px below — well clear of moved at desired (0, 0).
+		// Place "other" 2000px below - well clear of moved at desired (0, 0).
 		const result = resolveNonOverlappingPipelineOffset(moved, { x: 0, y: 0 }, [
 			{ pipeline: other, offset: { x: 0, y: 2000 } },
 		]);
@@ -1671,7 +1671,7 @@ describe('resolveNonOverlappingPipelineOffset', () => {
 		expect(Math.abs(result.x) + Math.abs(result.y)).toBeGreaterThan(0);
 
 		// Verify the resolved position has no overlap by re-running with the
-		// resolved offset as the desired one — should be a fixed point.
+		// resolved offset as the desired one - should be a fixed point.
 		const fixedPoint = resolveNonOverlappingPipelineOffset(moved, result, [
 			{ pipeline: other, offset: { x: 0, y: 0 } },
 		]);

@@ -10,7 +10,7 @@ export const FAST_BLOCK_CLASS = 'markdown-fast-block';
  * the Rich path's `.file-preview-content.prose` rules (they coexist when the
  * user flips between tiers via the override chip in Phase 2).
  *
- * Visual parity with the Rich path is intentional — the only difference users
+ * Visual parity with the Rich path is intentional - the only difference users
  * should notice between tiers is responsiveness, not styling.
  *
  * Kept as a function (not a static template) so we can re-evaluate when the

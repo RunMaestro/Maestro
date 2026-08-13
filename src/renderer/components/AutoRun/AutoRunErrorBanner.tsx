@@ -42,7 +42,7 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 						{errorDocumentName && (
 							<span style={{ color: theme.colors.textDim }}>
 								{' '}
-								— while processing <strong>{errorDocumentName}</strong>
+								- while processing <strong>{errorDocumentName}</strong>
 							</span>
 						)}
 					</div>

@@ -57,6 +57,9 @@ export function AchievementCard({
 			<BadgeStatsGrid
 				theme={theme}
 				cumulativeTimeFormatted={viewModel.cumulativeTimeFormatted}
+				cueTimeFormatted={viewModel.cueTimeFormatted}
+				autoRunTimeFormatted={viewModel.autoRunTimeFormatted}
+				cueSharePercent={viewModel.cueSharePercent}
 				longestRunFormatted={viewModel.longestRunFormatted}
 				totalRuns={viewModel.totalRuns}
 			/>

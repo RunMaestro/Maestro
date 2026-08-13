@@ -61,7 +61,7 @@ export function useFilePreviewHandlers({
 		[activeFileTabId, onFileTabEditModeChange]
 	);
 
-	// Memoize sshRemoteId to prevent object recreation — defined early so save handler can use it
+	// Memoize sshRemoteId to prevent object recreation - defined early so save handler can use it
 	const filePreviewSshRemoteId = useMemo(
 		() =>
 			activeSession?.sshRemoteId ||
@@ -80,7 +80,7 @@ export function useFilePreviewHandlers({
 		async (path: string, content: string): Promise<boolean> => {
 			let savePath = path;
 
-			// Untitled file — prompt for save location
+			// Untitled file - prompt for save location
 			if (!path) {
 				const chosen = await window.maestro.dialog.saveFile({
 					title: 'Save File',

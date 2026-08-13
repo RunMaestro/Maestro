@@ -33,7 +33,7 @@ import { getLiveDraft } from './liveDraftStore';
  * Follows unifiedTabOrder, then appends any orphaned tabs as a safety net
  * (e.g., from migration or state corruption).
  *
- * Single source of truth — used by useTabHandlers and tabStore selectors.
+ * Single source of truth - used by useTabHandlers and tabStore selectors.
  */
 export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	if (!session) return [];
@@ -127,7 +127,7 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
 	const liveBrowserIds = new Set(browserTabs.map((t) => t.id));
 	const liveTerminalIds = new Set(terminalTabs.map((t) => t.id));
 
-	// Prune stale entries and duplicates — refs whose tabs no longer exist, and
+	// Prune stale entries and duplicates - refs whose tabs no longer exist, and
 	// later duplicate refs for the same type+id (buildUnifiedTabs also skips both).
 	// Without this, navigation indices diverge from the rendered tab bar.
 	const seen = new Set<string>();
@@ -229,7 +229,7 @@ export function moveActiveUnifiedTabToEdge(session: Session, edge: 'start' | 'en
  * @returns The name to pre-fill in the rename input (empty for auto-generated names)
  */
 /**
- * Get the display name for a tab. Strictly per-tab — the title only reflects
+ * Get the display name for a tab. Strictly per-tab - the title only reflects
  * THIS tab's own state, never another tab's id from the session level.
  *
  * Resolution order:
@@ -664,7 +664,8 @@ export interface CloseTabResult {
  * unless skipHistory is true (e.g., for wizard tabs which should not be restorable).
  * If the closed tab was active, the next tab (or previous if at end) becomes active.
  * When showUnreadOnly is true, prioritizes switching to the next unread tab.
- * If closing the last tab, a fresh new tab is created to replace it.
+ * Closing the last AI tab creates a fresh replacement only when the agent has no
+ * other tabs (terminal/file/browser) left, so an agent can sit at zero AI tabs.
  *
  * @param session - The Maestro session containing the tab
  * @param tabId - The ID of the tab to close
@@ -711,11 +712,22 @@ export function closeTab(
 	// Remove tab from aiTabs
 	let updatedTabs = session.aiTabs.filter((tab) => tab.id !== tabId);
 
-	// If we just closed the last tab, create a fresh new tab to replace it
+	// Tabs of other kinds that survive this close. Closing the last AI tab only
+	// forces a fresh replacement when the agent would otherwise be left with no
+	// tabs at all, so a brand new agent still always has a chat to type into.
+	// Once the user has opened terminal/file/browser tabs, the agent is allowed to
+	// sit at zero AI tabs instead of keeping a dead one around - the "+" menu is
+	// still on screen to open whatever they want next.
+	const otherTabCount =
+		(session.filePreviewTabs?.length ?? 0) +
+		(session.terminalTabs?.length ?? 0) +
+		(session.browserTabs?.length ?? 0);
+
 	let newActiveTabId = session.activeTabId;
-	// Fallback unified tab ref when the closed tab was active — may be terminal or file
+	// Fallback unified tab ref when the closed tab was active - may be terminal or file
 	let fallbackRef: UnifiedTabRef | null = null;
-	if (updatedTabs.length === 0) {
+	let createdFreshTab = false;
+	if (updatedTabs.length === 0 && otherTabCount === 0) {
 		const freshTab: AITab = {
 			id: generateId(),
 			agentSessionId: null,
@@ -729,11 +741,12 @@ export function closeTab(
 		};
 		updatedTabs = [freshTab];
 		newActiveTabId = freshTab.id;
+		createdFreshTab = true;
 	} else if (session.activeTabId === tabId) {
 		// If we closed the active tab, select the tab to the left (previous tab)
 		// If closing the first tab, select the new first tab (was previously to the right)
 
-		if (showUnreadOnly) {
+		if (showUnreadOnly && updatedTabs.length > 0) {
 			// When filtering unread tabs, find the previous unread tab to switch to
 			// Build a temporary session with the updated tabs to use getNavigableTabs
 			const tempSession = { ...session, aiTabs: updatedTabs };
@@ -753,7 +766,7 @@ export function closeTab(
 			}
 		} else {
 			// Normal mode: use repaired unifiedTabOrder to find the correct left neighbor.
-			// This respects the visual tab order which includes terminal and file tabs —
+			// This respects the visual tab order which includes terminal and file tabs -
 			// without this, closing an AI tab that sits to the right of a terminal tab
 			// would fall back to a random AI tab instead of the adjacent terminal tab.
 			// We use getRepairedUnifiedTabOrder to skip stale/duplicate refs (same as rendering).
@@ -767,12 +780,18 @@ export function closeTab(
 			if (closedUnifiedIndex !== -1 && remainingUnified.length > 0) {
 				const fallbackIndex = Math.max(0, closedUnifiedIndex - 1);
 				fallbackRef = remainingUnified[Math.min(fallbackIndex, remainingUnified.length - 1)];
-			} else {
-				// unifiedTabOrder out of sync — fall back to aiTabs position
+			} else if (updatedTabs.length > 0) {
+				// unifiedTabOrder out of sync - fall back to aiTabs position
 				const newIndex = Math.max(0, tabIndex - 1);
 				newActiveTabId = updatedTabs[newIndex].id;
 			}
 		}
+	}
+
+	// No AI tab survives, so there is nothing for activeTabId to point at. Covers
+	// every path above, including closing a non-active sole AI tab.
+	if (updatedTabs.length === 0) {
+		newActiveTabId = '';
 	}
 
 	// Add to closed tab history unless skipHistory is set (e.g., for wizard tabs)
@@ -788,11 +807,16 @@ export function closeTab(
 
 	// If we created a fresh tab, add it to unifiedTabOrder at the end
 	let finalUnifiedTabOrder = updatedUnifiedTabOrder;
-	if (session.aiTabs.length === 1 && updatedTabs.length === 1 && updatedTabs[0].id !== tabId) {
-		// A fresh tab was created to replace the closed one
+	if (createdFreshTab) {
 		const freshTabRef: UnifiedTabRef = { type: 'ai', id: updatedTabs[0].id };
 		finalUnifiedTabOrder = [...updatedUnifiedTabOrder, freshTabRef];
 	}
+
+	// With no AI tabs left, activeTabId must stop pointing at the tab we just
+	// removed. A dangling id makes a later switch back to AI mode render an input
+	// area bound to a tab that no longer exists. Non-AI fallbacks otherwise keep
+	// activeTabId so returning to AI mode lands on the same tab as before.
+	const survivingActiveTabId = updatedTabs.length === 0 ? '' : session.activeTabId;
 
 	// Create updated session.
 	// When the fallback is a non-AI tab (terminal or file), we must update the corresponding
@@ -802,7 +826,8 @@ export function closeTab(
 			? {
 					...session,
 					aiTabs: updatedTabs,
-					// Keep activeTabId as-is; the terminal tab is now active
+					// Keep activeTabId unless no AI tab survives; the terminal tab is now active
+					activeTabId: survivingActiveTabId,
 					activeTerminalTabId: fallbackRef.id,
 					activeFileTabId: null,
 					inputMode: 'terminal',
@@ -813,6 +838,7 @@ export function closeTab(
 				? {
 						...session,
 						aiTabs: updatedTabs,
+						activeTabId: survivingActiveTabId,
 						activeFileTabId: fallbackRef.id,
 						activeBrowserTabId: null,
 						activeTerminalTabId: null,
@@ -824,6 +850,7 @@ export function closeTab(
 					? {
 							...session,
 							aiTabs: updatedTabs,
+							activeTabId: survivingActiveTabId,
 							activeFileTabId: null,
 							activeBrowserTabId: fallbackRef.id,
 							activeTerminalTabId: null,
@@ -873,7 +900,7 @@ export function closeTab(
 		updatedOrphans === session.orphanedThinkingTabs
 			? updatedSession
 			: { ...updatedSession, orphanedThinkingTabs: updatedOrphans };
-	// Only clear session-level busy state when nothing is thinking anywhere —
+	// Only clear session-level busy state when nothing is thinking anywhere -
 	// neither a remaining aiTab nor an orphaned-but-still-running tab.
 	const finalSession =
 		closedTabWasBusy &&
@@ -910,7 +937,7 @@ export interface RestoreOrphanedTabResult {
 /**
  * Restore a tab from `orphanedThinkingTabs` back to `aiTabs` and make it active.
  * Used when the user clicks the thinking pill's tab link for a tab they closed
- * while its agent was still running — restoring brings it back into the tab bar
+ * while its agent was still running - restoring brings it back into the tab bar
  * so streaming output resumes routing to the visible tab. The tab keeps its
  * original ID, so the still-running process re-attaches automatically.
  */
@@ -1569,7 +1596,7 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 			wasDuplicate: false,
 		};
 	} else {
-		// Terminal tab restore — create a fresh terminal tab (old PTY is gone, can't restore)
+		// Terminal tab restore - create a fresh terminal tab (old PTY is gone, can't restore)
 		const closedTerminalTab = closedEntry.tab;
 		const freshTab = createTerminalTab(
 			closedTerminalTab.shellType,
@@ -1634,6 +1661,27 @@ export function aiTabFocusFields(tabId?: string): Partial<Session> {
 	};
 }
 
+/**
+ * Session patch that lands on a specific file preview tab.
+ *
+ * The file-tab counterpart to {@link aiTabFocusFields}: spread it into a session
+ * update (`{ ...s, ...fileTabFocusFields(tabId) }`) to make that file tab the
+ * visible one. Clears the terminal and browser selections and forces AI mode,
+ * because both of those outrank the file tab in the render precedence - leaving
+ * either set would keep the old view on screen and the focus would appear to do
+ * nothing.
+ *
+ * @param tabId - The file preview tab to activate.
+ */
+export function fileTabFocusFields(tabId: string): Partial<Session> {
+	return {
+		activeFileTabId: tabId,
+		activeTerminalTabId: null,
+		activeBrowserTabId: null,
+		inputMode: 'ai',
+	};
+}
+
 export interface SetActiveTabResult {
 	tab: AITab; // The newly active tab
 	session: Session; // Updated session with activeTabId changed
@@ -1682,7 +1730,7 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
 	// When selecting an AI tab, deselect any active file/terminal tab and switch to AI mode.
 	// This ensures only one tab type (AI, file, or terminal) is active at a time, and
 	// switching from terminal mode back to AI mode works by clicking any AI tab.
-	// Clearing activeTerminalTabId is critical — getCurrentUnifiedTabIndex checks it first,
+	// Clearing activeTerminalTabId is critical - getCurrentUnifiedTabIndex checks it first,
 	// so a stale value causes next/prev tab navigation to start from the wrong position.
 	return {
 		tab: targetTab,
@@ -2028,7 +2076,7 @@ export function navigateToUnifiedTabByIndex(
 		// If already active, no file/terminal/browser tab selected, and in AI mode, return current state.
 		// The other-ID checks are critical: without them, a stale browser/file/terminal selection
 		// causes the early return to fire and skip the clearing update below, leaving
-		// findActiveUnifiedTabIndex pointing at the wrong tab — the higher-priority ID wins
+		// findActiveUnifiedTabIndex pointing at the wrong tab - the higher-priority ID wins
 		// visually and the user-perceived "current tab" never changes (Cmd+Shift+[ no-ops).
 		if (
 			session.activeTabId === targetTabRef.id &&
@@ -2046,7 +2094,7 @@ export function navigateToUnifiedTabByIndex(
 
 		// Set the AI tab as active, clear terminal/file selection, and ensure inputMode is 'ai'.
 		// inputMode must be explicitly set because navigating from a terminal tab leaves inputMode
-		// as 'terminal' in the spread — without this, MainPanel would continue rendering the
+		// as 'terminal' in the spread - without this, MainPanel would continue rendering the
 		// terminal view even though an AI tab is now active.
 		return {
 			type: 'ai',
@@ -2129,7 +2177,7 @@ export function navigateToUnifiedTabByIndex(
 			},
 		};
 	} else {
-		// Terminal tab — verify it exists and activate it
+		// Terminal tab - verify it exists and activate it
 		const terminalTab = (session.terminalTabs || []).find((tab) => tab.id === targetTabRef.id);
 		if (!terminalTab) return null;
 
@@ -2244,7 +2292,7 @@ export function navigateToNextUnifiedTab(
 		return null;
 	}
 
-	// When the unread filter is on, walk within the exact list TabBar renders — the shared
+	// When the unread filter is on, walk within the exact list TabBar renders - the shared
 	// filter is the single source of truth so navigation and display can never drift.
 	const effectiveOrder = showUnreadOnly
 		? filterUnifiedTabOrderForUnread(session, repairedOrder)
@@ -2290,7 +2338,7 @@ export function navigateToPrevUnifiedTab(
 		return null;
 	}
 
-	// When the unread filter is on, walk within the exact list TabBar renders — the shared
+	// When the unread filter is on, walk within the exact list TabBar renders - the shared
 	// filter is the single source of truth so navigation and display can never drift.
 	const effectiveOrder = showUnreadOnly
 		? filterUnifiedTabOrderForUnread(session, repairedOrder)
@@ -2593,7 +2641,7 @@ export interface GoToNextUnreadResult {
  * is effectively a draft (it's meant to be completed into an Auto Run doc), so
  * the navigation should stop on it. Pass `isWizardActive` to opt into that.
  *
- * Does NOT mutate state — the caller applies the result via setSessions/setActiveSessionId.
+ * Does NOT mutate state - the caller applies the result via setSessions/setActiveSessionId.
  */
 export function findNextUnreadSession(
 	orderedSessions: Session[],
@@ -2607,7 +2655,7 @@ export function findNextUnreadSession(
 
 	// 1) Tab-level jump within the current session: if there's an unread/draft
 	//    tab here that isn't already active, switch to it without changing
-	//    sessions. The shortcut is called "Next Unread / Draft *Tab*" — staying
+	//    sessions. The shortcut is called "Next Unread / Draft *Tab*" - staying
 	//    in the same session is the closest "next" when one exists.
 	if (currentSession) {
 		const inSessionTarget = currentSession.aiTabs?.find(
@@ -2640,7 +2688,7 @@ export function findNextUnreadSession(
 	}
 
 	// Nothing actionable elsewhere. Don't silently clear the current session's
-	// unread flags — if the user can see an unread badge here, they should be
+	// unread flags - if the user can see an unread badge here, they should be
 	// able to find it (it would have been handled by step 1 above when present).
 	return {
 		jumped: false,

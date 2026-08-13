@@ -87,7 +87,7 @@ export interface CueFanInTracker {
 	/** Force-expire a tracker by key without dispatching or waiting for timeout. Used by the cleanup service. */
 	expireTracker(key: string): void;
 	/**
-	 * Phase 12D — returns active trackers stalled >50% of their timeout. Empty
+	 * Phase 12D - returns active trackers stalled >50% of their timeout. Empty
 	 * result is the healthy case. Caller supplies `lookupSubscription` since
 	 * the tracker itself doesn't hold subscription config.
 	 */
@@ -103,7 +103,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 	/**
 	 * Resolve a user-authored `sources` list (names or IDs, possibly mixed) to a
 	 * deduped set of canonical session IDs. This is the source of truth for
-	 * fan-in completion counting — the raw `sources.length` is NOT reliable
+	 * fan-in completion counting - the raw `sources.length` is NOT reliable
 	 * because (a) the same session may be referenced by both name and ID, and
 	 * (b) names may fail to resolve, in which case we fall back to treating the
 	 * raw string as an identity (same as the pre-refactor behavior) so a user's
@@ -133,7 +133,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 		const completedNames = [...tracker.values()].map((c) => c.sessionName);
 		const completedIds = new Set([...tracker.keys()]);
 
-		// Determine which sources haven't completed yet — using the canonical
+		// Determine which sources haven't completed yet - using the canonical
 		// resolved-ID set so duplicate references (name + id for same session)
 		// don't get reported twice as timed out.
 		const resolvedSourceIds = resolveSourcesToIds(sources);
@@ -177,7 +177,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				completions.length > 0 ? Math.max(...completions.map((c) => c.chainDepth)) : 0;
 			deps.onLog(
 				'cue',
-				`[CUE] Fan-in "${sub.name}" timed out (continue mode) — firing with ${completedNames.length}/${totalSources} sources`
+				`[CUE] Fan-in "${sub.name}" timed out (continue mode) - firing with ${completedNames.length}/${totalSources} sources`
 			);
 			deps.dispatchSubscription(
 				ownerSessionId,
@@ -187,12 +187,12 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				maxChainDepth
 			);
 		} else {
-			// 'break' mode — log failure and clear
+			// 'break' mode - log failure and clear
 			fanInTrackers.delete(key);
 			fanInCreatedAt.delete(key);
 			deps.onLog(
 				'cue',
-				`[CUE] Fan-in "${sub.name}" timed out (break mode) — ${completedNames.length}/${totalSources} completed, waiting for: ${timedOutSources.join(', ')}`
+				`[CUE] Fan-in "${sub.name}" timed out (break mode) - ${completedNames.length}/${totalSources} completed, waiting for: ${timedOutSources.join(', ')}`
 			);
 		}
 	}
@@ -250,17 +250,17 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				return;
 			}
 
-			// All sources completed — clear timer and fire
+			// All sources completed - clear timer and fire
 			const timer = fanInTimers.get(key);
 			if (timer) {
 				clearTimeout(timer);
 				fanInTimers.delete(key);
 			}
 			fanInTrackers.delete(key);
-			// Drop the timestamp alongside the tracker — leaving it behind would
+			// Drop the timestamp alongside the tracker - leaving it behind would
 			// leak a key into fanInCreatedAt forever (the success path used to
-			// only delete fanInTrackers, while every other path — timeout/break
-			// modes, clearForSession, expireTracker, reset — already cleaned up
+			// only delete fanInTrackers, while every other path - timeout/break
+			// modes, clearForSession, expireTracker, reset - already cleaned up
 			// fanInCreatedAt correctly).
 			fanInCreatedAt.delete(key);
 
@@ -331,11 +331,11 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			}
 		},
 
-		// Phase 12D — return entries for trackers stalled > 50% of their timeout.
+		// Phase 12D - return entries for trackers stalled > 50% of their timeout.
 		// The tracker doesn't know its subscription config, so we accept a
 		// `lookupSubscription` callback that the engine wires up against its
 		// registry. Entries whose subscription can't be resolved (renamed /
-		// deleted mid-wait) are excluded — the cleanup service will evict them.
+		// deleted mid-wait) are excluded - the cleanup service will evict them.
 		checkHealth({
 			sessions,
 			lookupSubscription,
@@ -356,7 +356,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				const percentElapsed = timeoutMs > 0 ? (elapsedMs / timeoutMs) * 100 : 0;
 				if (percentElapsed <= 50) continue;
 
-				// Resolve expected count via dedup — same logic used for completion counting.
+				// Resolve expected count via dedup - same logic used for completion counting.
 				// We inline it here because calling the private helper from outside the
 				// closure would require exposing it, which leaks implementation detail.
 				const resolvedExpected = new Set<string>();

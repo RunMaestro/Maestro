@@ -41,7 +41,7 @@ vi.mock('../../../web/components/ThemeProvider', () => ({
 	ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-// Partial mock — keep real exports (GESTURE_THRESHOLDS, HAPTIC_PATTERNS, etc.,
+// Partial mock - keep real exports (GESTURE_THRESHOLDS, HAPTIC_PATTERNS, etc.,
 // which useSwipeGestures relies on) and only stub the haptics side effect.
 vi.mock('../../../web/mobile/constants', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../web/mobile/constants')>();
@@ -96,7 +96,7 @@ describe('LeftPanel — Bookmarks section', () => {
 	});
 
 	it('hides the Bookmarks section while the unread filter is active', () => {
-		// Bookmarked AND busy, so it passes the unread filter and still renders —
+		// Bookmarked AND busy, so it passes the unread filter and still renders -
 		// but the dedicated Bookmarks section header must be suppressed.
 		const sessions = [
 			createSession({ id: 's1', name: 'Busy Bookmarked', bookmarked: true, state: 'busy' }),

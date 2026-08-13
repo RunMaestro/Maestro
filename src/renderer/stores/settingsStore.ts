@@ -22,6 +22,7 @@ import type {
 	ThemeColors,
 	Shortcut,
 	CustomAICommand,
+	AchievementTimeSource,
 	AutoRunStats,
 	MaestroUsageStats,
 	OnboardingStats,
@@ -40,8 +41,26 @@ import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { isToastWidth } from '../../shared/toastWidth';
+import { normalizePlaybackRate } from '../../shared/mediaTypes';
+import {
+	MEDIA_FLOAT_SETTINGS_KEY,
+	MEDIA_QUEUE_SETTINGS_KEY,
+	useMediaPlaybackStore,
+	type PersistedMediaQueue,
+} from './mediaPlaybackStore';
+import { sanitizeMediaItems, sanitizeMediaTimes } from '../utils/mediaItems';
+import { sanitizeMediaFloat } from '../utils/mediaFloatGeometry';
 import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
+import {
+	useSnoozeHistoryStore,
+	sanitizeSnoozeHistory,
+	SNOOZE_HISTORY_SETTINGS_KEY,
+} from './snoozeHistoryStore';
+import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
+import { sanitizeTextareaHeights } from '../utils/textareaSizing';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -66,13 +85,13 @@ export async function loadSettingsStorePrompts(force = false): Promise<void> {
 	const commitCmd = currentCommands.find((c) => c.id === 'commit');
 	if (commitCmd && commitCmd.prompt !== cachedCommitCommandPrompt) {
 		if (commitCmd.prompt && !force) {
-			// User has a non-empty custom prompt from AI Commands (old way) — migrate it
+			// User has a non-empty custom prompt from AI Commands (old way) - migrate it
 			const saveResult = await window.maestro.prompts.save('commit-command', commitCmd.prompt);
 			if (saveResult.success) {
 				cachedCommitCommandPrompt = commitCmd.prompt;
 			}
 		} else {
-			// First load (empty) or refresh — update store with loaded prompt
+			// First load (empty) or refresh - update store with loaded prompt
 			useSettingsStore.setState({
 				customAICommands: currentCommands.map((c) =>
 					c.id === 'commit' ? { ...c, prompt: cachedCommitCommandPrompt } : c
@@ -138,7 +157,7 @@ export const FILE_EXPLORER_MAX_ENTRIES_CAP = 1_000_000;
 export const DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION = 0.1;
 /** Minimum allowed SSH cap fraction (5%). */
 export const SSH_REDUCE_ENTRY_CAP_MIN_FRACTION = 0.05;
-/** Maximum allowed SSH cap fraction (100% — no reduction). */
+/** Maximum allowed SSH cap fraction (100% - no reduction). */
 export const SSH_REDUCE_ENTRY_CAP_MAX_FRACTION = 1.0;
 /** Slider step for the SSH cap fraction (5 percentage points). */
 export const SSH_REDUCE_ENTRY_CAP_STEP = 0.05;
@@ -156,6 +175,7 @@ const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 
 const DEFAULT_AUTO_RUN_STATS: AutoRunStats = {
 	cumulativeTimeMs: 0,
+	cueTimeMs: 0,
 	longestRunMs: 0,
 	longestRunTimestamp: 0,
 	totalRuns: 0,
@@ -222,14 +242,15 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'wordWrap',
 	'remoteImages',
 	'htmlRender',
+	'openInBrowser',
 	'previewTier',
 	'editToggle',
 	'editImage',
 	'copyContent',
 	'publishGist',
 	'documentGraph',
-	'openInBrowser',
 	'openInDefault',
+	'revealInFolder',
 	'copyPath',
 ] as const;
 
@@ -313,6 +334,8 @@ export interface SettingsStoreState {
 	ghPath: string;
 	fontFamily: string;
 	fontSize: number;
+	/** Playback speed for audio/video in the file preview. Sticky across files. */
+	mediaPlaybackRate: number;
 	activeThemeId: ThemeId;
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
@@ -325,6 +348,8 @@ export interface SettingsStoreState {
 	defaultShowThinking: ThinkingMode;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
+	modalSizes: ModalSizes;
+	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
 	bionifyReadingMode: boolean;
@@ -463,6 +488,7 @@ export interface SettingsStoreActions {
 	setGhPath: (value: string) => void;
 	setFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
+	setMediaPlaybackRate: (value: number) => void;
 	setActiveThemeId: (value: ThemeId) => void;
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
@@ -475,6 +501,12 @@ export interface SettingsStoreActions {
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
+	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
+	resetModalSize: (key: ModalResizeKey) => void;
+	resetModalSizes: () => void;
+	/** Remember the height a user dragged a resizable textarea to. */
+	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
 	setBionifyReadingMode: (value: boolean) => void;
@@ -607,7 +639,15 @@ export interface SettingsStoreActions {
 		newBadgeLevel: number | null;
 		isNewRecord: boolean;
 	};
-	updateAutoRunProgress: (deltaMs: number) => {
+	/**
+	 * Credit a block of autonomous time toward the Conductor level. `source`
+	 * defaults to 'autoRun'; pass 'cue' so the block also lands in the Cue
+	 * subtotal shown on the About card.
+	 */
+	updateAutoRunProgress: (
+		deltaMs: number,
+		source?: AchievementTimeSource
+	) => {
 		newBadgeLevel: number | null;
 		isNewRecord: boolean;
 	};
@@ -674,6 +714,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		ghPath: '',
 		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
 		fontSize: 14,
+		mediaPlaybackRate: 1,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 		customThemeBaseId: 'dracula',
@@ -686,6 +727,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
+		modalSizes: {},
+		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		bionifyReadingMode: false,
@@ -873,6 +916,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			window.maestro.settings.set('fontSize', value);
 		},
 
+		setMediaPlaybackRate: (value) => {
+			const rate = normalizePlaybackRate(value);
+			set({ mediaPlaybackRate: rate });
+			window.maestro.settings.set('mediaPlaybackRate', rate);
+		},
+
 		setActiveThemeId: (value) => {
 			set({ activeThemeId: value });
 			window.maestro.settings.set('activeThemeId', value);
@@ -934,6 +983,45 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const clamped = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, value));
 			set({ rightPanelWidth: clamped });
 			window.maestro.settings.set('rightPanelWidth', clamped);
+		},
+
+		setModalSize: (key, value) => {
+			const normalized = sanitizeModalSizes({ [key]: value })[key];
+			if (!normalized) return;
+			const next = {
+				...get().modalSizes,
+				[key]: normalized,
+			};
+			set({ modalSizes: next });
+			window.maestro.settings.set('modalSizes', next);
+		},
+
+		// Single-key counterpart to resetModalSizes, backing the double-click-to-reset
+		// gesture on a single modal's resize handles.
+		resetModalSize: (key) => {
+			const current = get().modalSizes;
+			if (!(key in current)) return;
+			const next = { ...current };
+			delete next[key];
+			set({ modalSizes: next });
+			window.maestro.settings.set('modalSizes', next);
+		},
+
+		resetModalSizes: () => {
+			set({ modalSizes: {} });
+			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setTextareaHeight: (key, value) => {
+			const normalized = sanitizeTextareaHeights({ [key]: value })[key];
+			if (!normalized) return;
+			if (get().textareaHeights[key] === normalized) return;
+			const next = {
+				...get().textareaHeights,
+				[key]: normalized,
+			};
+			set({ textareaHeights: next });
+			window.maestro.settings.set('textareaHeights', next);
 		},
 
 		setMarkdownEditMode: (value) => {
@@ -1092,21 +1180,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 
 		setPersistentWebLink: async (value) => {
 			const requestSeq = ++persistentWebLinkRequestSeq;
-			// Optimistic update — immediately reflect user intent in UI
+			// Optimistic update - immediately reflect user intent in UI
 			set({ persistentWebLink: value });
 			if (value) {
 				try {
 					// persistCurrentToken writes both webAuthToken and persistentWebLink
-					// on the main side — the factory ignores webAuthToken unless
+					// on the main side - the factory ignores webAuthToken unless
 					// persistentWebLink is also true, so partial writes are safe
 					const result = await window.maestro.live.persistCurrentToken();
 					if (requestSeq !== persistentWebLinkRequestSeq) {
 						// Stale: another call was made while this IPC was in-flight.
-						// The IPC handler already wrote the token and flag in main —
+						// The IPC handler already wrote the token and flag in main -
 						// only clear them if the user's latest intent was to disable.
 						// Note: the superseding disable call may have already issued its
 						// own clearPersistentToken, making this a redundant but harmless
-						// second call — the handler is idempotent.
+						// second call - the handler is idempotent.
 						if (!get().persistentWebLink) {
 							try {
 								await window.maestro.live.clearPersistentToken();
@@ -1138,7 +1226,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 					const result = await window.maestro.live.clearPersistentToken();
 					if (requestSeq !== persistentWebLinkRequestSeq) {
 						// Stale: user re-enabled while this clear was in-flight.
-						// The enable path will handle persisting — nothing to undo here.
+						// The enable path will handle persisting - nothing to undo here.
 						return;
 					}
 					if (!result.success) {
@@ -1152,11 +1240,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 					}
 				} catch (error) {
 					if (requestSeq === persistentWebLinkRequestSeq) {
-						// Clear failed — rollback Zustand to match main-side state
+						// Clear failed - rollback Zustand to match main-side state
 						set({ persistentWebLink: true });
 						logger.error('[Settings] Failed to clear persistent web link:', undefined, error);
 					}
-					// else: stale — a newer call is in charge, nothing to do
+					// else: stale - a newer call is in charge, nothing to do
 				}
 			}
 		},
@@ -1734,6 +1822,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 
 			const updated: AutoRunStats = {
 				cumulativeTimeMs: prev.cumulativeTimeMs, // Already updated incrementally
+				cueTimeMs: prev.cueTimeMs ?? 0, // Also accrued incrementally
 				longestRunMs: isNewRecord ? elapsedTimeMs : prev.longestRunMs,
 				longestRunTimestamp: isNewRecord ? Date.now() : prev.longestRunTimestamp,
 				totalRuns: prev.totalRuns + 1,
@@ -1750,7 +1839,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			return { newBadgeLevel, isNewRecord };
 		},
 
-		updateAutoRunProgress: (deltaMs) => {
+		updateAutoRunProgress: (deltaMs, source = 'autoRun') => {
 			const prev = get().autoRunStats;
 
 			// Add the delta to cumulative time
@@ -1774,6 +1863,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 
 			const updated: AutoRunStats = {
 				cumulativeTimeMs: newCumulativeTime,
+				// Cue credit is a subset of cumulative time, not an addition to it
+				cueTimeMs: (prev.cueTimeMs ?? 0) + (source === 'cue' ? deltaMs : 0),
 				longestRunMs: prev.longestRunMs, // Don't update until run completes
 				longestRunTimestamp: prev.longestRunTimestamp,
 				totalRuns: prev.totalRuns, // Don't increment - run not complete yet
@@ -2082,6 +2173,12 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[]; toKeys: stri
 		fromKeys: ['Meta', 'Shift', '2'],
 		toKeys: ['Meta', 'Shift', 'e'],
 	},
+	// focusActiveTab moved off Opt+Cmd+F to free that combo for searchAllTabs
+	// (cross-tab message search), which reads as an escalation of Cmd+F.
+	focusActiveTab: {
+		fromKeys: ['Alt', 'Meta', 'f'],
+		toKeys: ['Alt', 'Meta', 'ArrowUp'],
+	},
 };
 
 function keysEqual(a: string[], b: string[]): boolean {
@@ -2152,6 +2249,10 @@ function migrateShortcuts(
  * Called once on app startup and again on system resume from sleep.
  */
 export async function loadAllSettings(): Promise<void> {
+	// Snapshot before the awaited reads below. Anything the user changes while
+	// they are in flight must survive this load - see the filter before setState.
+	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
+
 	try {
 		// Batch load all settings in a single IPC call
 		const allSettings = (await window.maestro.settings.getAll()) as Record<string, unknown>;
@@ -2198,6 +2299,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 
+		if (allSettings['mediaPlaybackRate'] !== undefined)
+			patch.mediaPlaybackRate = normalizePlaybackRate(allSettings['mediaPlaybackRate']);
+
 		if (allSettings['activeThemeId'] !== undefined)
 			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
 
@@ -2243,6 +2347,12 @@ export async function loadAllSettings(): Promise<void> {
 				RIGHT_PANEL_MIN_WIDTH,
 				Math.min(RIGHT_PANEL_MAX_WIDTH, allSettings['rightPanelWidth'] as number)
 			);
+
+		if (allSettings['modalSizes'] !== undefined)
+			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
+
+		if (allSettings['textareaHeights'] !== undefined)
+			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
 
 		if (allSettings['markdownEditMode'] !== undefined)
 			patch.markdownEditMode = allSettings['markdownEditMode'] as boolean;
@@ -2477,6 +2587,56 @@ export async function loadAllSettings(): Promise<void> {
 			useUIStore.setState({
 				usageRefreshIntervals: allSettings['usageRefreshIntervals'] as Record<string, number>,
 			});
+
+		// Resolved-snooze history lives in snoozeHistoryStore (it's appended from
+		// the wake scheduler and the Snoozed Tabs modal, not from Settings), so its
+		// persisted array hydrates directly there. Sanitized first: entries are
+		// read straight back from disk and rendered.
+		if (allSettings[SNOOZE_HISTORY_SETTINGS_KEY] !== undefined)
+			useSnoozeHistoryStore.setState({
+				entries: sanitizeSnoozeHistory(allSettings[SNOOZE_HISTORY_SETTINGS_KEY]),
+			});
+
+		// Floating media player geometry lives in mediaPlaybackStore so the
+		// drag/resize handlers can read and write it without a settings
+		// round-trip. (Per-modal `modalSizes` is NOT hydrated here: rc keeps it in
+		// settingsStore behind sanitizeModalSizes, hydrated above with the other
+		// settings-owned keys.)
+		// Position and per-kind width only: the player's height is derived from
+		// whatever is loaded (audio has no picture, video wants its own aspect
+		// ratio), so it is not a stored number.
+		if (allSettings[MEDIA_FLOAT_SETTINGS_KEY] !== undefined) {
+			const float = sanitizeMediaFloat(allSettings[MEDIA_FLOAT_SETTINGS_KEY]);
+			if (float)
+				useMediaPlaybackStore.setState({
+					floatPosition: { top: float.top, left: float.left },
+					floatWidths: float.widths,
+				});
+		}
+
+		// The play queue outlives a restart so a half-listened playlist is still
+		// there tomorrow. It comes back hidden and paused: restoring what was
+		// queued should not start a podcast at launch, and the Left Bar's
+		// now-playing indicator is what advertises that it is loaded. Recently
+		// played is NOT restored - it is per-session by design.
+		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
+			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
+			const items = sanitizeMediaItems(stored?.items);
+			if (items.length > 0) {
+				const ids = new Set(items.map((item) => item.id));
+				const storedActive = stored?.activeItemId;
+				useMediaPlaybackStore.setState({
+					items,
+					activeItemId:
+						typeof storedActive === 'string' && ids.has(storedActive) ? storedActive : items[0].id,
+					resumeTimes: sanitizeMediaTimes(stored?.resumeTimes, ids),
+					durations: sanitizeMediaTimes(stored?.durations, ids),
+					dismissed: true,
+					playing: false,
+					pendingAutoplay: false,
+				});
+			}
+		}
 
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
@@ -2859,13 +3019,80 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['annotatorTextBgColor'] !== undefined)
 			patch.annotatorTextBgColor = allSettings['annotatorTextBgColor'] as string;
 
+		// On a RELOAD (system resume, another window's write), drop any key the user
+		// changed while the reads above were in flight. This load is several IPC
+		// round trips long, so reapplying the older snapshot on top of live typing
+		// loses keystrokes and yanks the caret to the end of the field. Those edits
+		// persisted themselves on the way in, so the in-memory value is the newer
+		// one. Skipped on the initial hydration, where the store still holds
+		// defaults and every disk value must land.
+		if (beforeRead.settingsLoaded === true) {
+			const live = useSettingsStore.getState() as unknown as Record<string, unknown>;
+			const patchKeys = patch as unknown as Record<string, unknown>;
+			for (const key of Object.keys(patchKeys)) {
+				if (live[key] !== beforeRead[key]) {
+					delete patchKeys[key];
+				}
+			}
+		}
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
+
+		// Deliberately not awaited: it reads the Cue database over IPC and only
+		// refines a display subtotal, so it must not hold up settings load.
+		void backfillCueTimeIfNeeded(allSettings['cueTimeBackfillApplied'] === true);
 	} catch (error) {
 		logger.error('[Settings] Failed to load settings:', undefined, error);
 		// Mark settings as loaded even if there was an error (use defaults)
 		useSettingsStore.setState({ settingsLoaded: true });
+	}
+}
+
+/**
+ * One-time backfill of `autoRunStats.cueTimeMs`.
+ *
+ * Cue and Auto Run time were credited through one identical code path before
+ * the split existed, so the Cue share of the already-accrued `cumulativeTimeMs`
+ * cannot be recovered from settings alone. The Cue database still holds per-run
+ * durations for its retention window, so this reconstructs the Cue share from
+ * there using the engine's own crediting rule.
+ *
+ * This only re-attributes time already inside `cumulativeTimeMs` - it never adds
+ * to the total, and is clamped so the subtotal can't exceed it. History older
+ * than the Cue retention window is unrecoverable and stays attributed to Auto
+ * Run, so the result is a floor, not an exact split.
+ */
+async function backfillCueTimeIfNeeded(alreadyApplied: boolean): Promise<void> {
+	if (alreadyApplied) return;
+	try {
+		const historicalCreditMs = await window.maestro.cueStats.getHistoricalConductorCredit();
+		// Mark applied regardless of the amount: a user with no retained Cue
+		// history should not re-query the database on every launch.
+		window.maestro.settings.set('cueTimeBackfillApplied', true);
+		if (!Number.isFinite(historicalCreditMs) || historicalCreditMs <= 0) return;
+
+		const prev = useSettingsStore.getState().autoRunStats;
+		// Take the larger of the two: live Cue credit may already have accrued
+		// between app launch and this call, and that time is also represented in
+		// the historical total once its run completed.
+		const cueTimeMs = Math.min(
+			Math.max(prev.cueTimeMs ?? 0, historicalCreditMs),
+			prev.cumulativeTimeMs
+		);
+		if (cueTimeMs === (prev.cueTimeMs ?? 0)) return;
+
+		const updated: AutoRunStats = { ...prev, cueTimeMs };
+		useSettingsStore.setState({ autoRunStats: updated });
+		window.maestro.settings.set('autoRunStats', updated);
+		logger.info(
+			`[Settings] Backfilled Cue Conductor time from cue.db: ${Math.round(cueTimeMs / 60000)} minutes`
+		);
+	} catch (error) {
+		// A missing/failed Cue database just means no historical split is
+		// available. Leave the flag unset so a later launch can retry.
+		logger.warn('[Settings] Cue time backfill skipped', undefined, error);
 	}
 }
 
@@ -2892,6 +3119,7 @@ export function getSettingsActions() {
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setFontSize: state.setFontSize,
+		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,
 		setCustomThemeColors: state.setCustomThemeColors,
 		setCustomThemeBaseId: state.setCustomThemeBaseId,
@@ -2901,6 +3129,10 @@ export function getSettingsActions() {
 		setDefaultShowThinking: state.setDefaultShowThinking,
 		setLeftSidebarWidth: state.setLeftSidebarWidth,
 		setRightPanelWidth: state.setRightPanelWidth,
+		setModalSize: state.setModalSize,
+		resetModalSize: state.resetModalSize,
+		resetModalSizes: state.resetModalSizes,
+		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
 		setBionifyReadingMode: state.setBionifyReadingMode,

@@ -1,4 +1,4 @@
-// Dispatch command — hand off a prompt to the Maestro desktop app and return
+// Dispatch command - hand off a prompt to the Maestro desktop app and return
 // addressable tab/session IDs so callers (Maestro-Discord, Cue) can address
 // the same tab on follow-up calls without owning a persistent channel.
 
@@ -16,7 +16,7 @@ export interface DispatchOptions {
 export interface DispatchResponse {
 	success: boolean;
 	agentId?: string;
-	/** Tab id the prompt was delivered to. Identical to `tabId` — the duplicate
+	/** Tab id the prompt was delivered to. Identical to `tabId` - the duplicate
 	 *  field is kept so polling consumers can use either name. */
 	sessionId?: string | null;
 	tabId?: string | null;
@@ -46,7 +46,7 @@ export async function runDispatch(
 		};
 	}
 
-	// `--new-tab --force` is meaningless — a freshly created tab can never be
+	// `--new-tab --force` is meaningless - a freshly created tab can never be
 	// busy, so the bypass-busy semantics of --force don't apply. Reject the
 	// combo rather than silently ignoring --force, which would mismatch the
 	// help text and confuse callers debugging why nothing is being bypassed.

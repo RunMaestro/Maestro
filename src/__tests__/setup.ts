@@ -284,6 +284,7 @@ const mockMaestro = {
 		getPathForFile: vi.fn((file?: { path?: string }) => file?.path ?? ''),
 		writeFile: vi.fn().mockResolvedValue({ success: true }),
 		writeImageFile: vi.fn().mockResolvedValue({ success: true }),
+		mkdir: vi.fn().mockResolvedValue({ success: true }),
 		stat: vi.fn().mockResolvedValue({
 			size: 1024,
 			createdAt: '2024-01-01T00:00:00.000Z',
@@ -407,6 +408,9 @@ const mockMaestro = {
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
+		// Transcript mirror (starred + snoozed retention)
+		snapshotStarredTranscript: vi.fn().mockResolvedValue(undefined),
+		releaseSnoozedTranscript: vi.fn().mockResolvedValue(undefined),
 	},
 	autorun: {
 		readDoc: vi.fn().mockResolvedValue({ success: true, content: '' }),

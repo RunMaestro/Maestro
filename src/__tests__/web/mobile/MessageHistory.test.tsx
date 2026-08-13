@@ -242,7 +242,7 @@ describe('MessageHistory', () => {
 	describe('Message Truncation', () => {
 		// 15 newline-separated lines; > any finite cap we exercise below.
 		const manyLines = Array.from({ length: 15 }, (_, i) => `Line ${i + 1}`).join('\n');
-		// 600 characters on a single line — used to assert that char length alone
+		// 600 characters on a single line - used to assert that char length alone
 		// does NOT trigger truncation (matches desktop TerminalOutput behavior).
 		const longSingleLine = 'A'.repeat(600);
 
@@ -279,7 +279,7 @@ describe('MessageHistory', () => {
 		});
 
 		// Regression: a long single-line response must not collapse just because of
-		// its character count when a finite line cap is configured — only line
+		// its character count when a finite line cap is configured - only line
 		// counts gate truncation, matching desktop TerminalOutput.
 		it('does not truncate by character length when only a finite line cap is configured', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: longSingleLine })];
@@ -774,7 +774,7 @@ describe('MessageHistory', () => {
 
 		it('handles very long single-word text without truncating when "All"', () => {
 			// Long char count alone must NOT trigger truncation under the
-			// desktop-parity rules — only the line cap drives the collapse.
+			// desktop-parity rules - only the line cap drives the collapse.
 			const longWord = 'supercalifragilisticexpialidocious'.repeat(50);
 			const logs: LogEntry[] = [createLogEntry({ text: longWord })];
 			render(<MessageHistory logs={logs} inputMode="ai" />);

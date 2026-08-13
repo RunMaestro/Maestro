@@ -32,6 +32,8 @@ export interface TabBarProps {
 	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Handler to export tab as HTML */
 	onExportHtml?: (tabId: string) => void;
+	/** Open the snooze picker for an AI tab (AI tabs only). */
+	onSnooze?: (tabId: string) => void;
 	/** Handler to publish tab context as GitHub Gist */
 	onPublishGist?: (tabId: string) => void;
 	/** Whether GitHub CLI is available for gist publishing */
@@ -41,6 +43,8 @@ export interface TabBarProps {
 	onOpenTabSearch?: () => void;
 	/** Handler to open message search (Cmd+F) */
 	onOpenOutputSearch?: () => void;
+	/** Handler to open cross-tab message search (Opt+Cmd+F) */
+	onOpenCrossTabSearch?: () => void;
 	/** Handler to close all tabs */
 	onCloseAllTabs?: () => void;
 	/** Handler to close all tabs except the pivot (clicked) tab, or the active tab when no id is given */
@@ -73,7 +77,7 @@ export interface TabBarProps {
 	// === Terminal Tab Props (Phase 8) ===
 	/** Currently active terminal tab ID (null if no terminal tab is active) */
 	activeTerminalTabId?: string | null;
-	/** Current input mode — used to determine which tab type shows as active */
+	/** Current input mode - used to determine which tab type shows as active */
 	inputMode?: 'ai' | 'terminal';
 	/** Handler to select a terminal tab */
 	onTerminalTabSelect?: (tabId: string) => void;
@@ -98,6 +102,6 @@ export interface TabBarProps {
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
 
-	/** True when the owning agent is running on an SSH remote — hides local-only OS actions in tab menus */
+	/** True when the owning agent is running on an SSH remote - hides local-only OS actions in tab menus */
 	sshRemote?: boolean;
 }

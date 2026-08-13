@@ -62,7 +62,7 @@ export interface UseMobileKeyboardHandlerDeps {
  *
  * Mirrors the logic in `src/renderer/hooks/keyboard/useKeyboardShortcutHelpers.ts`
  * but inlined here to avoid importing a React hook from a renderer path. Kept in
- * sync manually — update both if matching rules change.
+ * sync manually - update both if matching rules change.
  */
 const MODIFIER_KEYS = new Set(['meta', 'ctrl', 'command', 'shift', 'alt']);
 
@@ -160,7 +160,7 @@ export function useMobileKeyboardHandler(deps: UseMobileKeyboardHandlerDeps): vo
 			const isXtermTarget = isXtermElement(target) || isXtermElement(activeElement);
 			if (activeSession?.inputMode === 'terminal' && isXtermTarget) return;
 
-			// Escape closes the command palette. Not a configurable shortcut — mirrors
+			// Escape closes the command palette. Not a configurable shortcut - mirrors
 			// desktop modal behavior.
 			if (e.key === 'Escape' && isCommandPaletteOpen && onCloseCommandPalette) {
 				e.preventDefault();

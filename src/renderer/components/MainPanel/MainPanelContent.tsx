@@ -71,7 +71,7 @@ export interface MainPanelContentProps {
 	handleFilePreviewSearchQueryChange: (searchQuery: string) => void;
 	handleFilePreviewReload: () => void;
 	handleBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
-	/** Ref registry for the currently-mounted BrowserTabView — used to extract the active tab's content */
+	/** Ref registry for the currently-mounted BrowserTabView - used to extract the active tab's content */
 	browserViewRef?: React.MutableRefObject<import('./BrowserTabView').BrowserTabViewHandle | null>;
 
 	// Terminal mounting props
@@ -698,7 +698,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					    the transcript as a collapsed RetryStatusCard (see TerminalOutput),
 					    so no separate countdown banner sits above the composer. */}
 
-					{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode — xterm.js handles its own input) */}
+					{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode - xterm.js handles its own input) */}
 					{!isMobileLandscape &&
 						!activeTab?.wizardState?.isGeneratingDocs &&
 						!activeBrowserTabId &&

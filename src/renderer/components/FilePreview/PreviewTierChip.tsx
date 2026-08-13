@@ -44,7 +44,7 @@ const TIER_DESCRIPTION: Record<PreviewTier, string> = {
 /**
  * Header chip showing the active preview tier with a popover to switch.
  *
- * The chip itself is presentation-only — all decisions about which tier is
+ * The chip itself is presentation-only - all decisions about which tier is
  * "auto" come from the caller via `autoTier`, and persistence of the override
  * is delegated via `onSelect`. This keeps the chip easy to test and reusable
  * regardless of where the override lives in app state.
@@ -153,7 +153,7 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 						minWidth: '240px',
 					}}
 				>
-					{/* Status header — always reflects the tier that is actually
+					{/* Status header - always reflects the tier that is actually
 					    rendering right now (override if set, otherwise auto). */}
 					<div
 						data-testid="preview-tier-chip-status"
@@ -212,7 +212,7 @@ const MenuRow: React.FC<MenuRowProps> = ({ theme, active, label, description, ic
 		onClick={onClick}
 		aria-current={active ? 'true' : undefined}
 		// Inactive rows get the standard hover-bg from Tailwind. Active rows
-		// keep the accent-tinted background via inline style — leaving that off
+		// keep the accent-tinted background via inline style - leaving that off
 		// when inactive lets `:hover` win (an inline `background: transparent`
 		// would otherwise override the hover class).
 		className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${

@@ -1,7 +1,7 @@
 /**
  * Preload API for Cue backup operations
  *
- * Exposes window.maestro.cueBackup.* — create, list, inspect, read file
+ * Exposes window.maestro.cueBackup.* - create, list, inspect, read file
  * (from zip or live disk), restore single file, restore everything, delete.
  */
 

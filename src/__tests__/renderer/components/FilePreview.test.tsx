@@ -28,6 +28,7 @@ vi.mock('lucide-react', () => ({
 	GitGraph: () => <span data-testid="gitgraph-icon">GitGraph</span>,
 	List: () => <span data-testid="list-icon">List</span>,
 	ExternalLink: () => <span data-testid="external-link-icon">ExternalLink</span>,
+	FolderOpen: () => <span data-testid="folder-open-icon">FolderOpen</span>,
 	RefreshCw: () => <span data-testid="refresh-icon">RefreshCw</span>,
 	X: () => <span data-testid="x-icon">X</span>,
 	ZoomIn: () => <span data-testid="zoom-in-icon">ZoomIn</span>,
@@ -318,6 +319,39 @@ describe('FilePreview', () => {
 			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
 			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Reveal in file manager button', () => {
+		it('shows the reveal button with its own FolderOpen icon', () => {
+			render(<FilePreview {...defaultProps} />);
+
+			const icon = screen.getByTestId('folder-open-icon');
+			expect(icon).toBeInTheDocument();
+			// Distinct icon from Open in Default App so the two actions read differently
+			expect(icon.closest('button')).not.toBe(
+				screen.getByTestId('external-link-icon').closest('button')
+			);
+		});
+
+		it('calls shell.showItemInFolder with the file path when clicked', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+				/>
+			);
+
+			const button = screen.getByTestId('folder-open-icon').closest('button')!;
+			fireEvent.click(button);
+
+			expect(window.maestro?.shell?.showItemInFolder).toHaveBeenCalledWith('/test/readme.md');
+		});
+
+		it('hides the reveal button for SSH remote sessions', () => {
+			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
+
+			expect(screen.queryByTestId('folder-open-icon')).not.toBeInTheDocument();
 		});
 	});
 
@@ -622,7 +656,7 @@ describe('FilePreview', () => {
 
 			const callsAfterMount = mockStat.mock.calls.length;
 
-			// Advance timers past multiple poll intervals — no additional calls should happen
+			// Advance timers past multiple poll intervals - no additional calls should happen
 			await act(async () => {
 				vi.advanceTimersByTime(6000);
 			});
@@ -799,7 +833,7 @@ describe('FilePreview', () => {
 	// `edit mode keyboard navigation` tests were removed when FilePreview's edit
 	// surface was swapped from a raw <textarea> to CodeMirror. Cmd+Up/Down and
 	// Cmd+Shift+Up/Down are now provided by CodeMirror's `defaultKeymap`
-	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) — there's
+	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) - there's
 	// no FilePreview-level handler to test, so the old tests would have only
 	// exercised our mock.
 

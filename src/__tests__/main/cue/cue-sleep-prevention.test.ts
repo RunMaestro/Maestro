@@ -1131,7 +1131,7 @@ describe('Cue Sleep Prevention', () => {
 			).length;
 			expect(runAddsAfterQueue).toBe(1); // Still just the first run
 
-			// Now resolve the first run — queued event should be dispatched
+			// Now resolve the first run - queued event should be dispatched
 			resolveRun!({
 				runId: 'run-1',
 				sessionId: 'session-1',

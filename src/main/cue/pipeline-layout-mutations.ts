@@ -34,7 +34,7 @@ export type MutationResult =
 export type FindResult = { found: true; pipeline: CuePipeline } | { found: false };
 
 /**
- * Lower-level helpers — exported so tests can drive them with an in-memory
+ * Lower-level helpers - exported so tests can drive them with an in-memory
  * layout instead of the on-disk file.
  */
 
@@ -99,7 +99,7 @@ export function validatePipelineEntry(
 }
 
 /**
- * Find a pipeline within a layout by `name` (preferred — what the user types)
+ * Find a pipeline within a layout by `name` (preferred - what the user types)
  * or by `id` (so tooling that already has the canonical id can use it). Names
  * are unique within the editor's UI, but a defensive `===` test on either
  * field lets the CLI accept whichever the user has at hand.
@@ -111,7 +111,7 @@ export function findPipeline(layout: PipelineLayoutState, identifier: string): F
 
 /**
  * Apply an `add` or `replace` to a layout in memory. The two operations
- * differ only in conflict policy — `add` rejects when a pipeline with the
+ * differ only in conflict policy - `add` rejects when a pipeline with the
  * same name/id already exists, `replace` requires it. Returns a new layout
  * object so callers don't mutate the caller's reference.
  */
@@ -209,7 +209,7 @@ export function getPipelineFromDisk(identifier: string): CuePipeline | null {
 
 /**
  * Add or replace a pipeline on disk. The optional `name` argument is the
- * identifier the user supplied on the CLI — when provided, we sanity-check
+ * identifier the user supplied on the CLI - when provided, we sanity-check
  * that it matches the pipeline JSON's own `name`/`id` so a typo doesn't
  * silently install a pipeline under the wrong handle.
  */
@@ -236,7 +236,7 @@ export function setPipelineOnDisk(
 
 	const layout = loadPipelineLayout();
 	if (!layout) {
-		// `add` against an empty layout is fine — bootstrap one. `replace`
+		// `add` against an empty layout is fine - bootstrap one. `replace`
 		// against an empty layout is a user error (nothing to replace).
 		if (policy === 'replace') {
 			return {

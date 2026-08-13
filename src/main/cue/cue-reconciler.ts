@@ -1,16 +1,16 @@
 /**
- * Cue Time Event Reconciler — catches up on missed time-based events after sleep/wake.
+ * Cue Time Event Reconciler - catches up on missed time-based events after sleep/wake.
  *
  * When the CueEngine detects a heartbeat gap (laptop sleep), this module fires
  * exactly one catch-up event per affected `time.heartbeat` and `time.scheduled`
  * subscription. One event per subscription regardless of how many intervals or
- * scheduled slots fell inside the gap — the payload reports the count, and the
+ * scheduled slots fell inside the gap - the payload reports the count, and the
  * agent can act on it once rather than getting flooded after a multi-day sleep.
  *
  * Does NOT reconcile `file.changed`, `agent.completed`, `github.*`, or
  * `task.pending`. File watchers and agent completions don't need reconciliation
  * (FSEvents survives sleep; fan-in state is durable). GitHub pollers self-heal
- * on the next tick — `engine.reconcileAfterWake()` triggers an immediate poll
+ * on the next tick - `engine.reconcileAfterWake()` triggers an immediate poll
  * via `pollNow()` rather than synthesizing events here.
  */
 
@@ -107,7 +107,7 @@ function reconcileScheduled(
 	const slots = collectMissedScheduledSlots(times, days, sleepStartMs, wakeTimeMs);
 	if (slots.length === 0) return;
 
-	// Most recent slot wins — after a multi-day sleep we fire ONE catch-up for
+	// Most recent slot wins - after a multi-day sleep we fire ONE catch-up for
 	// the latest occurrence rather than flooding with one per missed slot.
 	const mostRecentSlotMs = slots[slots.length - 1];
 	const missedCount = slots.length;
@@ -138,7 +138,7 @@ function reconcileScheduled(
  * Returns ascending timestamps of every (HH:MM, day) slot that fell inside
  * `[sleepStartMs, wakeTimeMs)`. Upper bound is exclusive so a wake that lands
  * exactly on a slot boundary lets the live trigger source fire it instead of
- * the reconciler — prevents double-fires.
+ * the reconciler - prevents double-fires.
  */
 function collectMissedScheduledSlots(
 	times: string[],

@@ -39,3 +39,15 @@ export { WorktreePill } from './WorktreePill';
 
 export { HoverTooltip } from './HoverTooltip';
 export type { HoverTooltipProps } from './HoverTooltip';
+
+export { CalendarPicker } from './CalendarPicker';
+export type { CalendarPickerProps } from './CalendarPicker';
+
+export { EscCloseButton } from './EscCloseButton';
+export type { EscCloseButtonProps } from './EscCloseButton';
+
+export { CopyIconButton } from './CopyIconButton';
+export type { CopyIconButtonProps } from './CopyIconButton';
+
+export { GitChangeCounts } from './GitChangeCounts';
+export type { GitChangeCountsProps } from './GitChangeCounts';

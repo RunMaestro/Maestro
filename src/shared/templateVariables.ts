@@ -93,14 +93,14 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *
  *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
- *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
+ *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  *
  *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
  */
 
 /**
  * Detect the current platform in both Node.js (main process / CLI) and
- * renderer (browser) contexts.  The renderer has no `process` global —
+ * renderer (browser) contexts.  The renderer has no `process` global -
  * platform is exposed via the preload bridge at `window.maestro.platform`.
  */
 function getCurrentPlatform(): string {
@@ -218,10 +218,10 @@ export interface TemplateContext {
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
 		sourceAgentId?: string;
-		// Unified upstream-agent session ID — `sourceSessionId` for agent.completed,
+		// Unified upstream-agent session ID - `sourceSessionId` for agent.completed,
 		// `sourceAgentId` for cli.trigger. Surfaced as {{CUE_FROM_AGENT}}.
 		fromAgent?: string;
-		// time.once fields — originally-scheduled fire timestamp (ISO-8601 with TZ).
+		// time.once fields - originally-scheduled fire timestamp (ISO-8601 with TZ).
 		fireAt?: string;
 	};
 }

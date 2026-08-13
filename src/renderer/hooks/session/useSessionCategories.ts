@@ -34,7 +34,7 @@ export function useSessionCategories(
 	stuckOutageSignature = ''
 ): SessionCategories {
 	// PERF: Match SessionList's sidebar-only equality so categorization doesn't
-	// recompute on every streaming flush — only when a sidebar-relevant field
+	// recompute on every streaming flush - only when a sidebar-relevant field
 	// (state, name, group/bookmark/parent membership, AI tab unread/state) shifts.
 	const sessions = useStoreWithEqualityFn(
 		useSessionStore,

@@ -102,7 +102,7 @@ export function prettifyAgentType(type: string): string {
  *
  * Resolution order:
  *   1. Match the key against `Session.id` (with optional suffixes like tab IDs).
- *   2. Match the key against any session's `toolType` — if a session of that
+ *   2. Match the key against any session's `toolType` - if a session of that
  *      type exists, prefer that session's user-assigned name (single-instance
  *      case) and otherwise fall through to the prettified type.
  *   3. Fall back to `prettifyAgentType(key)`.
@@ -138,7 +138,7 @@ export function resolveAgentDisplayName(
 /**
  * Clamp an absolute tooltip position so its bounding rect stays inside the
  * viewport. Pass `transform` to describe which corner of the tooltip the
- * anchor point represents — the function returns top-left coordinates the
+ * anchor point represents - the function returns top-left coordinates the
  * caller can drop directly into `style.left` / `style.top` (and stop using
  * a CSS transform).
  *

@@ -505,6 +505,94 @@ describe('tabStore', () => {
 	});
 
 	// ========================================================================
+	// Snooze
+	// ========================================================================
+
+	describe('snooze actions', () => {
+		const HOUR = 60 * 60 * 1000;
+
+		it('should snooze a tab out of the active session', () => {
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
+
+			const entry = useTabStore
+				.getState()
+				.snoozeTab('tab-2', Date.now() + HOUR, 'come back to this');
+
+			expect(entry).not.toBeNull();
+			expect(entry!.note).toBe('come back to this');
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs.map((t) => t.id)).toEqual(['tab-1']);
+			expect(session.snoozedTabs).toHaveLength(1);
+		});
+
+		it('should return null when snoozing an unknown tab', () => {
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' })]);
+			expect(useTabStore.getState().snoozeTab('nope', Date.now() + HOUR)).toBeNull();
+		});
+
+		it('should unsnooze a tab back into its session', () => {
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
+			const entry = useTabStore.getState().snoozeTab('tab-2', Date.now() + HOUR)!;
+
+			const result = useTabStore.getState().unsnoozeTab('test-session', entry.id);
+
+			expect(result).not.toBeNull();
+			expect(result!.tabId).toBe('tab-2');
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'tab-2']);
+			expect(session.snoozedTabs).toHaveLength(0);
+		});
+
+		it('should dismiss a snooze without restoring the tab', () => {
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
+			const entry = useTabStore.getState().snoozeTab('tab-2', Date.now() + HOUR)!;
+
+			useTabStore.getState().dismissSnoozedTab('test-session', entry.id);
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.snoozedTabs).toHaveLength(0);
+			expect(session.aiTabs.map((t) => t.id)).toEqual(['tab-1']);
+		});
+
+		it('should reschedule a snooze and update its note', () => {
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
+			const entry = useTabStore.getState().snoozeTab('tab-2', Date.now() + HOUR, 'old note')!;
+			const newWake = Date.now() + 5 * HOUR;
+
+			useTabStore.getState().rescheduleSnoozedTab('test-session', entry.id, newWake, 'new note');
+
+			const snoozed = useSessionStore.getState().sessions[0].snoozedTabs![0];
+			expect(snoozed.wakeAt).toBe(newWake);
+			expect(snoozed.note).toBe('new note');
+		});
+
+		it('should act on a non-active session (the list modal spans agents)', () => {
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })]);
+			const entry = useTabStore.getState().snoozeTab('tab-2', Date.now() + HOUR)!;
+
+			// Point the store at a different active agent, then operate on the
+			// original by ID - this is what the Snoozed Tabs modal does.
+			const other = createMockSession({ id: 'other-session', aiTabs: [], unifiedTabOrder: [] });
+			useSessionStore.setState({
+				sessions: [useSessionStore.getState().sessions[0], other],
+				activeSessionId: 'other-session',
+			});
+
+			const result = useTabStore.getState().unsnoozeTab('test-session', entry.id);
+
+			expect(result).not.toBeNull();
+			const restored = useSessionStore.getState().sessions.find((s) => s.id === 'test-session')!;
+			expect(restored.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'tab-2']);
+			expect(restored.snoozedTabs).toHaveLength(0);
+		});
+
+		it('should return null when unsnoozing from an unknown session', () => {
+			setupSessionWithTabs([createMockAITab({ id: 'tab-1' })]);
+			expect(useTabStore.getState().unsnoozeTab('ghost-session', 'whatever')).toBeNull();
+		});
+	});
+
+	// ========================================================================
 	// Tab Reordering
 	// ========================================================================
 
@@ -538,7 +626,7 @@ describe('tabStore', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			setupSessionWithTabs([tab1]);
 
-			// Out of bounds — should be a no-op
+			// Out of bounds - should be a no-op
 			useTabStore.getState().reorderTabs(0, 5);
 			useTabStore.getState().reorderTabs(-1, 0);
 

@@ -47,7 +47,7 @@ const SHOW_THINKING_OPTIONS = [
 ];
 
 /**
- * Max output lines options — mirrors the desktop Display tab.
+ * Max output lines options - mirrors the desktop Display tab.
  * `Infinity` is the "All" sentinel (serialized as null over the wire).
  */
 const MAX_OUTPUT_LINES_OPTIONS: { value: number; label: string }[] = [

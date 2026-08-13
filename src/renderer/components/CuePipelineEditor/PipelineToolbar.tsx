@@ -1,5 +1,5 @@
 /**
- * PipelineToolbar — Toolbar with trigger/agent drawer toggles, pipeline selector,
+ * PipelineToolbar - Toolbar with trigger/agent drawer toggles, pipeline selector,
  * settings toggle, save/discard buttons, and validation error bar.
  */
 

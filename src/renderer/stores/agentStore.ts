@@ -2,14 +2,14 @@
  * agentStore - Zustand store for agent lifecycle orchestration
  *
  * This store follows the tabStore pattern: it does NOT own session-level agent
- * state (state, busySource, agentError, etc. — those stay in sessionStore).
+ * state (state, busySource, agentError, etc. - those stay in sessionStore).
  * Instead it provides orchestration actions that compose sessionStore mutations
  * with IPC calls for agent lifecycle management.
  *
  * Responsibilities:
- * 1. Agent detection cache — avoid repeated IPC calls for agent configs
- * 2. Error recovery actions — clearError, restart, retry, newSession, authenticate
- * 3. Agent lifecycle actions — kill, interrupt
+ * 1. Agent detection cache - avoid repeated IPC calls for agent configs
+ * 2. Error recovery actions - clearError, restart, retry, newSession, authenticate
+ * 3. Agent lifecycle actions - kill, interrupt
  *
  * Can be used outside React via useAgentStore.getState().
  */
@@ -36,9 +36,10 @@ import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers
 import { generateId } from '../utils/ids';
 import { useSessionStore, selectSessionById } from './sessionStore';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
-// with retryStore is safe — both sides only touch each other inside runtime
+// with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
 import { noteDispatch } from './retryStore';
+import { maybeReturnToPrimary } from './failoverStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
@@ -369,9 +370,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
 		// tab so it matches the error listener's tab) so it can be auto-resent if
 		// this turn fails with a transient upstream error. We record the item with
-		// its tabId pinned to the resolved target — `item.tabId` may be undefined
+		// its tabId pinned to the resolved target - `item.tabId` may be undefined
 		// when the item fell back to the active tab.
 		noteDispatch(sessionId, { ...item, tabId: targetTab.id }, deps);
+
+		// Provider Failover: lazy fail-back probe. If this agent has sat on a backup
+		// endpoint past its dwell time, move it back to the primary now so THIS turn
+		// re-tests the real provider. Awaited so the swap lands in main before the
+		// spawn below reads it. If the primary is still down, the resulting error
+		// sends the agent straight back to a backup.
+		await maybeReturnToPrimary(sessionId);
 
 		try {
 			// Get agent configuration for this session's tool type
@@ -485,7 +493,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						if (/\$ARGUMENTS/g.test(promptWithArgs)) {
 							promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, item.commandArgs);
 						} else {
-							// No $ARGUMENTS placeholder — append trailing text after the prompt
+							// No $ARGUMENTS placeholder - append trailing text after the prompt
 							promptWithArgs = `${promptWithArgs}\n\n${item.commandArgs}`;
 						}
 					} else {

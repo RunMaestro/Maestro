@@ -1260,7 +1260,7 @@ describe('useBatchProcessor hook', () => {
 			const endCall = (window.maestro.stats.endAutoRun as ReturnType<typeof vi.fn>).mock.calls[0];
 			expect(endCall[0]).toBe('auto-run-id'); // statsAutoRunId from setup mock
 			expect(endCall[1]).toBeGreaterThan(0); // elapsed duration in ms
-			expect(endCall[2]).toBe(0); // completedTasks — nothing finished before kill
+			expect(endCall[2]).toBe(0); // completedTasks - nothing finished before kill
 
 			// A history entry tagged as AUTO must be written with the elapsed time
 			const historyEntry = mockOnAddHistoryEntry.mock.calls.find(
@@ -1280,7 +1280,7 @@ describe('useBatchProcessor hook', () => {
 			// observe it. The loop's in-flight processTask would resolve (or reject from
 			// the killed agent), the catch/continue would fall through to the next inner
 			// while iteration, see the stop flag as undefined (falsy), and dispatch a
-			// fresh spawnAgent for the next task — keeping notifications and the agent
+			// fresh spawnAgent for the next task - keeping notifications and the agent
 			// process alive after the user clicked Kill.
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
@@ -2888,7 +2888,7 @@ describe('useBatchProcessor hook', () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 
-			// Single task document — processTask will throw on this task
+			// Single task document - processTask will throw on this task
 			mockReadDoc.mockImplementation(async () => ({
 				success: true,
 				content: '- [ ] Task 1',
@@ -2962,7 +2962,7 @@ describe('useBatchProcessor hook', () => {
 
 			// Batch should have completed (stopped via abort)
 			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
-			// Only one spawn attempt — didn't retry after abort
+			// Only one spawn attempt - didn't retry after abort
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		});
 
@@ -3067,7 +3067,7 @@ describe('useBatchProcessor hook', () => {
 				if (filename.includes('doc1')) {
 					return { success: true, content: '- [ ] Task A' };
 				}
-				// doc2 — unchecked until agent succeeds, then checked
+				// doc2 - unchecked until agent succeeds, then checked
 				if (doc2Completed) return { success: true, content: '- [x] Task B' };
 				return { success: true, content: '- [ ] Task B' };
 			});
@@ -3085,7 +3085,7 @@ describe('useBatchProcessor hook', () => {
 			mockOnSpawnAgent.mockImplementation(async () => {
 				spawnCount++;
 				if (spawnCount === 1 && pauseHandler) {
-					// First spawn (doc1) — triggers error pause and throws
+					// First spawn (doc1) - triggers error pause and throws
 					pauseHandler(
 						'test-session-id',
 						{
@@ -3100,7 +3100,7 @@ describe('useBatchProcessor hook', () => {
 					pauseHandler = null;
 					throw new Error('Agent exited with error');
 				}
-				// Second spawn (doc2) — succeeds, mark doc2 as completed
+				// Second spawn (doc2) - succeeds, mark doc2 as completed
 				// so the post-task re-read in processTask sees checked content
 				doc2Completed = true;
 				return { success: true, agentSessionId: 'session-2' };
@@ -5660,7 +5660,7 @@ describe('useBatchProcessor hook', () => {
 			// the Auto Run worktree picker but the new branch was created
 			// from the main repo's HEAD instead. The fix makes baseBranch a
 			// first-class arg threaded all the way through to the IPC layer.
-			// This is the legacy `config.worktree` path (no worktreeTarget) —
+			// This is the legacy `config.worktree` path (no worktreeTarget) -
 			// covers the WorktreeManager.setupWorktree branch.
 			const session = createMockSession({
 				sshRemoteId: undefined,
@@ -5705,7 +5705,7 @@ describe('useBatchProcessor hook', () => {
 				'/projects/worktrees/auto-run-rc-0514',
 				'auto-run-rc-0514',
 				undefined, // sshRemoteId
-				'rc' // baseBranch — must reach IPC, not get dropped
+				'rc' // baseBranch - must reach IPC, not get dropped
 			);
 		});
 	});

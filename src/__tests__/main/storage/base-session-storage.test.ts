@@ -1,5 +1,5 @@
 /**
- * Tests for BaseSessionStorage — shared pagination, search, and utility methods.
+ * Tests for BaseSessionStorage - shared pagination, search, and utility methods.
  *
  * Uses a concrete TestSessionStorage subclass to test the abstract base class.
  */

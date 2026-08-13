@@ -351,8 +351,9 @@ describe('AgentPromptComposerModal', () => {
 				/>
 			);
 
-			// The modal container has w-[90vw] class
-			const modalContainer = document.querySelector('.w-\\[90vw\\]');
+			const modalContainer = document.querySelector(
+				'[data-modal-resize-key="agent-prompt-composer"]'
+			);
 			expect(modalContainer).toHaveStyle({ backgroundColor: theme.colors.bgMain });
 		});
 
@@ -817,7 +818,7 @@ describe('AgentPromptComposerModal', () => {
 			expect(backdrop).toBeInTheDocument();
 
 			// Backdrop close requires both mousedown AND click to originate on the
-			// backdrop element itself — guards against drag-overshoot from text
+			// backdrop element itself - guards against drag-overshoot from text
 			// selection inside the modal accidentally closing it.
 			await act(async () => {
 				fireEvent.mouseDown(backdrop!);
@@ -1393,8 +1394,10 @@ describe('AgentPromptComposerModal', () => {
 				/>
 			);
 
-			const modalContent = screen.getByText('Agent Prompt Editor').closest('.w-\\[90vw\\]');
-			expect(modalContent).toHaveClass('h-[85vh]', 'max-w-5xl');
+			const modalContent = screen
+				.getByText('Agent Prompt Editor')
+				.closest('[data-modal-resize-key="agent-prompt-composer"]');
+			expect(modalContent).toHaveStyle({ maxWidth: '90vw', maxHeight: '90vh' });
 		});
 
 		it('has fixed position backdrop', () => {

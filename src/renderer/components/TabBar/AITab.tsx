@@ -50,6 +50,7 @@ export interface AITabProps {
 	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Stable callback - receives tabId */
 	onExportHtml?: (tabId: string) => void;
+	onSnooze?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onPublishGist?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -112,6 +113,7 @@ export const AITab = memo(function AITab({
 	onSummarizeAndContinue,
 	onCopyContext,
 	onExportHtml,
+	onSnooze,
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
@@ -308,6 +310,17 @@ export const AITab = memo(function AITab({
 		[onExportHtml, tabId, setOverlayOpen]
 	);
 
+	const handleSnoozeClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			// Close the overlay first: the tab this menu belongs to is about to leave
+			// the tab bar, and the hover overlay would otherwise outlive its anchor.
+			setOverlayOpen(false);
+			onSnooze?.(tabId);
+		},
+		[onSnooze, tabId, setOverlayOpen]
+	);
+
 	const handlePublishGistClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -383,7 +396,7 @@ export const AITab = memo(function AITab({
 	);
 
 	// Memoize display name to avoid recalculation on every render.
-	// Deps are the specific fields getTabDisplayName reads (name, agentSessionId, fallback) —
+	// Deps are the specific fields getTabDisplayName reads (name, agentSessionId, fallback) -
 	// using [tab] would invalidate on every logs/state change which is too aggressive.
 	const displayName = useMemo(
 		() => getTabDisplayName(tab, sessionAgentSessionId),
@@ -600,6 +613,7 @@ export const AITab = memo(function AITab({
 							onRenameClick={handleRenameClick}
 							onMarkUnreadClick={handleMarkUnreadClick}
 							onExportHtmlClick={handleExportHtmlClick}
+							onSnoozeClick={handleSnoozeClick}
 							onCopyContextClick={handleCopyContextClick}
 							onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
 							onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
@@ -617,6 +631,7 @@ export const AITab = memo(function AITab({
 							onSummarizeAndContinue={onSummarizeAndContinue}
 							onCopyContext={onCopyContext}
 							onExportHtml={onExportHtml}
+							onSnooze={onSnooze}
 							onPublishGist={onPublishGist}
 							onMoveToFirst={onMoveToFirst}
 							onMoveToLast={onMoveToLast}

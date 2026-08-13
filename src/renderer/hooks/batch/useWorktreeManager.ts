@@ -265,7 +265,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 					};
 				}
 
-				// Fresh worktree on disk — run the owning agent's setup script before the
+				// Fresh worktree on disk - run the owning agent's setup script before the
 				// batch run starts, so generated env files exist for the first prompt.
 				if (setupResult.created) {
 					await runWorktreeSetupScript({
@@ -405,7 +405,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 						commitSubjects = logResult.entries.map((e) => e.subject);
 					}
 				} catch (err) {
-					// Non-fatal — commit log is nice-to-have
+					// Non-fatal - commit log is nice-to-have
 					captureException(err, { extra: { worktreePath, operation: 'git.log' } });
 				}
 

@@ -23,6 +23,7 @@ import {
 	Star,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
@@ -45,6 +46,7 @@ import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPillRows } from './CollapsedSessionPill';
+import { EscCloseButton } from '../ui/EscCloseButton';
 import { SidebarActions } from './SidebarActions';
 import { SkinnySidebar } from './SkinnySidebar';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
@@ -55,12 +57,25 @@ import { captureException } from '../../utils/sentry';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
 
+/**
+ * Sidebar width below which the now-playing pill drops its filename and shows
+ * only the note icon.
+ *
+ * The header's left cluster does not scroll or wrap, so every element in it has
+ * to earn its width: at a default sidebar the logo, the badge pill and the
+ * LIVE/OFFLINE pill already fill the row, and a filename on top of them pushes
+ * the hamburger off the edge. The threshold is the OFFLINE one plus room for a
+ * label, and the icon alone still says audio is playing - the tooltip names the
+ * file either way.
+ */
+const NOW_PLAYING_LABEL_MIN_WIDTH = 440;
+
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
 // ============================================================================
 
 interface SessionListProps {
-	// Computed values (not in stores — remain as props)
+	// Computed values (not in stores - remain as props)
 	theme: Theme;
 	sortedSessions: Session[];
 	navIndexMap?: Map<string, number>;
@@ -227,7 +242,7 @@ function SessionListInner(props: SessionListProps) {
 	}, [wizardActiveSessions, sessions]);
 
 	// Cue session status map: sessionId → { count, active }
-	// Always fetched — the indicator shows whenever a .maestro/cue.yaml has subscriptions,
+	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
 	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
 	const [cueSessionMap, setCueSessionMap] = useState<
 		Map<string, { count: number; active: boolean }>
@@ -248,7 +263,7 @@ function SessionListInner(props: SessionListProps) {
 						});
 					}
 				}
-				// Preserve referential identity when nothing changed — the map is fed
+				// Preserve referential identity when nothing changed - the map is fed
 				// to every SessionItem as a prop, and a fresh reference busts memo even
 				// when contents are equal. With cue activity ticks coming in at ~1Hz this
 				// would otherwise re-render all sidebar rows on every tick.
@@ -459,7 +474,7 @@ function SessionListInner(props: SessionListProps) {
 		? sessions.find((s) => s.id === contextMenu.sessionId)
 		: null;
 
-	// Group context menu state — opened by right-clicking a group header
+	// Group context menu state - opened by right-clicking a group header
 	const [groupContextMenu, setGroupContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -646,7 +661,7 @@ function SessionListInner(props: SessionListProps) {
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
 	// These Maps store stable function references keyed by session id. They only
-	// depend on the *set of session ids* — not on per-session field changes — so
+	// depend on the *set of session ids* - not on per-session field changes - so
 	// rebuilding them on every sidebar field change (state/name/etc.) was
 	// wasted work that broke SessionItem's React.memo bail-out (5 × N closures
 	// per flush). Key off a derived id signature instead.
@@ -797,7 +812,7 @@ function SessionListInner(props: SessionListProps) {
 
 		const content = (
 			<>
-				{/* Parent session — chevron in SessionItem toggles worktree expansion. */}
+				{/* Parent session - chevron in SessionItem toggles worktree expansion. */}
 				<SessionItem
 					session={session}
 					variant={effectiveVariant}
@@ -1031,6 +1046,14 @@ function SessionListInner(props: SessionListProps) {
 									<span>{autoRunStats.currentBadgeLevel}</span>
 								</button>
 							)}
+							{/* Now playing - only while the floating player is hidden, so the
+							    user can always see that audio is coming from Maestro and get
+							    the widget back with one click. Sheds its label on a narrow
+							    sidebar, the same way the LIVE pill below does. */}
+							<NowPlayingIndicator
+								theme={theme}
+								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH}
+							/>
 							{/* Global LIVE Toggle */}
 							<div className="ml-2 relative z-10" ref={liveOverlayRef} data-tour="remote-control">
 								<button
@@ -1124,6 +1147,7 @@ function SessionListInner(props: SessionListProps) {
 					</>
 				) : (
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
+						<NowPlayingIndicator theme={theme} compact />
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
 								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}${
@@ -1181,15 +1205,15 @@ function SessionListInner(props: SessionListProps) {
 								className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 							/>
-							<div
-								className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-								style={{
-									backgroundColor: theme.colors.bgMain,
-									color: theme.colors.textDim,
+							<EscCloseButton
+								theme={theme}
+								variant="adornment"
+								label="Close filter (Esc)"
+								onClose={() => {
+									setSessionFilterOpen(false);
+									setSessionFilter('');
 								}}
-							>
-								ESC
-							</div>
+							/>
 						</div>
 					)}
 

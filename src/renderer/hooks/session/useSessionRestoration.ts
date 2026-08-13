@@ -1,8 +1,8 @@
 /**
- * useSessionRestoration — extracted from App.tsx (Phase 2E)
+ * useSessionRestoration - extracted from App.tsx (Phase 2E)
  *
  * Owns session loading, restoration, migration, and corruption recovery.
- * Reads from Zustand stores directly — no parameters needed.
+ * Reads from Zustand stores directly - no parameters needed.
  *
  * Functions:
  *   - restoreSession: migrates legacy fields, recovers corrupted data, resets runtime state
@@ -21,8 +21,21 @@ import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+
+/**
+ * Whether a persisted terminal tab is still there after a restart.
+ *
+ * Only tabs carrying a startup command are durable - the command re-runs on
+ * relaunch, which is the point of them. Restoration and the zero-tab corruption
+ * check both go through this so they cannot disagree about how many tabs an
+ * agent is about to have.
+ */
+function terminalTabSurvivesRestart(tab: { startupCommand?: string }): boolean {
+	return (tab.startupCommand ?? '').trim() !== '';
+}
 
 // ============================================================================
 // Return type
@@ -81,7 +94,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
 	// If the agent is unavailable, marks the session with error state.
-	// Called after splash hides — never blocks startup.
+	// Called after splash hides - never blocks startup.
 	const validateAgentInBackground = useCallback(
 		async (sessionId: string, toolType: string, sshRemoteId: string | undefined) => {
 			try {
@@ -203,11 +216,23 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				session = { ...session, createdAt: backfill };
 			}
 
-			// Sessions must have aiTabs - if missing, this is a data corruption issue
-			// Create a default tab to prevent crashes when code calls .find() on aiTabs
-			if (!session.aiTabs || session.aiTabs.length === 0) {
+			// An agent may legitimately have zero AI tabs as long as some other tab kind
+			// is still open (the user closed the last chat but kept a terminal around).
+			// Only a session with no tabs whatsoever is treated as data corruption -
+			// recovering the zero-AI-tab case would wipe the tabs the user still has.
+			//
+			// Terminal tabs are counted through `terminalTabSurvivesRestart` because
+			// restoration below drops the ones with no startup command. Counting the
+			// raw array would let an agent whose sole tab is a plain terminal skip
+			// recovery here and then lose that terminal, landing on zero tabs.
+			const restoredTabCount =
+				(session.aiTabs?.length ?? 0) +
+				(session.filePreviewTabs?.length ?? 0) +
+				(session.terminalTabs ?? []).filter(terminalTabSurvivesRestart).length +
+				(session.browserTabs?.length ?? 0);
+			if (restoredTabCount === 0) {
 				logger.error(
-					'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+					'[restoreSession] Session has no tabs of any kind - data corruption, creating default tab:',
 					undefined,
 					session.id
 				);
@@ -247,6 +272,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
 					unifiedClosedTabHistory: [],
 				};
+			}
+
+			// Normalize a missing aiTabs array so the rest of the app can keep calling
+			// .find()/.map() on it. Zero AI tabs is a valid state; undefined is not.
+			if (!session.aiTabs) {
+				session = { ...session, aiTabs: [] };
 			}
 
 			// Fix inconsistency: activeFileTabId should only be set in AI mode.
@@ -321,7 +352,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				const GIT_TIMEOUT_MS = 5000;
 				// NOTE: On timeout, the inner git operations continue running in the
 				// background until the OS/filesystem eventually resolves/rejects them.
-				// This is a known trade-off of Promise.race — Promises are not cancellable.
+				// This is a known trade-off of Promise.race - Promises are not cancellable.
 				try {
 					const gitResult = await Promise.race([
 						(async () => {
@@ -352,7 +383,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 
-			// Migration: ensure terminalTabs exists (may be empty — terminals are created on demand)
+			// Migration: ensure terminalTabs exists (may be empty - terminals are created on demand)
 			if (!correctedSession.terminalTabs) {
 				correctedSession = {
 					...correctedSession,
@@ -403,7 +434,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// startup command - those are intentionally durable so their command
 			// re-runs on relaunch. Drop the rest, then reset PTY runtime state.
 			const resetTerminalTabs = (correctedSession.terminalTabs || [])
-				.filter((tab) => (tab.startupCommand ?? '').trim() !== '')
+				.filter(terminalTabSurvivesRestart)
 				.map((tab) => ({
 					...tab,
 					pid: 0,
@@ -420,7 +451,20 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			const restoredActiveTabId = validAiTabIds.has(correctedSession.activeTabId)
 				? correctedSession.activeTabId
 				: resetAiTabs[0]?.id || correctedSession.activeTabId;
-			let restoredActiveFileTabId = correctedSession.activeFileTabId ?? null;
+			// Media no longer gets a file preview tab - it opens in the floating
+			// player instead - so drop any left behind by an older build. Without
+			// this they come back as a permanent "Binary File" card the user has to
+			// close by hand. The stream URL's per-boot token is already stale, but
+			// the check is a prefix test, so they are still recognizable.
+			const restoredFilePreviewTabs = (correctedSession.filePreviewTabs || []).filter(
+				(tab) => !isMediaStreamUrl(tab.content)
+			);
+			const validFileTabIds = new Set(restoredFilePreviewTabs.map((tab) => tab.id));
+
+			let restoredActiveFileTabId =
+				correctedSession.activeFileTabId && validFileTabIds.has(correctedSession.activeFileTabId)
+					? correctedSession.activeFileTabId
+					: null;
 			let restoredActiveBrowserTabId =
 				correctedSession.activeBrowserTabId &&
 				validBrowserTabIds.has(correctedSession.activeBrowserTabId)
@@ -447,7 +491,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...correctedSession,
 				aiTabs: resetAiTabs,
 				activeTabId: restoredActiveTabId,
-				filePreviewTabs: correctedSession.filePreviewTabs || [],
+				filePreviewTabs: restoredFilePreviewTabs,
 				activeFileTabId: restoredActiveFileTabId,
 				browserTabs: resetBrowserTabs,
 				activeBrowserTabId: restoredActiveBrowserTabId,
@@ -519,10 +563,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					// Restore persisted active session ID, falling back to first session.
 					const savedActiveSessionId = await window.maestro.sessions.getActiveSessionId();
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
-						// Saved ID is valid — hydrate locally without writing back to disk
+						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
 					} else if (restoredSessions[0]?.id) {
-						// Saved ID is stale or missing — persist the fallback so it
+						// Saved ID is stale or missing - persist the fallback so it
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
@@ -547,7 +591,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					}
 				} else {
 					setSessions([]);
-					// No sessions means no file tree to load — unblock splash immediately
+					// No sessions means no file tree to load - unblock splash immediately
 					useSessionStore.getState().setInitialFileTreeReady(true);
 				}
 
@@ -570,7 +614,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				logger.error('Failed to load sessions/groups:', undefined, e);
 				setSessions([]);
 				setGroups([]);
-				// Error loading sessions — no file tree to wait for
+				// Error loading sessions - no file tree to wait for
 				useSessionStore.getState().setInitialFileTreeReady(true);
 			} finally {
 				// Mark initial load as complete to enable persistence

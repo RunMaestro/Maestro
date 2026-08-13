@@ -48,6 +48,7 @@ import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
+import { useResizableTextarea } from '../../../hooks/ui/useResizableTextarea';
 import { logger } from '../../../utils/logger';
 
 export interface GeneralTabProps {
@@ -165,7 +166,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 
 	const handleForcedParallelToggle = useCallback(() => {
 		if (!forcedParallelExecution && !forcedParallelAcknowledged) {
-			// First time enabling — show warning modal
+			// First time enabling - show warning modal
 			setShowForcedParallelWarning(true);
 		} else {
 			// Already acknowledged or turning off
@@ -277,6 +278,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		}
 	};
 
+	const conductorProfileResize = useResizableTextarea({
+		sizeKey: 'settings-conductor-profile',
+		minHeight: 100,
+	});
+
 	const handleShellInteraction = () => {
 		if (!shellsLoaded && !shellsLoading) {
 			loadShells();
@@ -297,6 +303,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					(Optional, max 5000 characters)
 				</p>
 				<textarea
+					ref={conductorProfileResize.textareaRef}
 					value={conductorProfile}
 					onChange={(e) => setConductorProfile(e.target.value)}
 					placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
@@ -305,6 +312,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						borderColor: theme.colors.border,
 						color: theme.colors.textMain,
 						minHeight: '100px',
+						...conductorProfileResize.style,
 					}}
 					maxLength={5000}
 				/>

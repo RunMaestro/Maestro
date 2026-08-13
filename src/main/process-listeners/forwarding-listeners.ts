@@ -8,7 +8,7 @@ import type { ProcessListenerDependencies, ToolExecution } from './types';
 
 /** Coalesce thinking chunks for this long before flushing to the renderer. */
 const THINKING_CHUNK_FLUSH_INTERVAL_MS = 50;
-/** Hard cap on buffered thinking chunk size — flush early if exceeded. */
+/** Hard cap on buffered thinking chunk size - flush early if exceeded. */
 const THINKING_CHUNK_FLUSH_SIZE = 8 * 1024;
 
 /**
@@ -30,7 +30,7 @@ export function setupForwardingListeners(
 
 	// Per-session thinking-chunk buffers. Streaming reasoning can arrive at
 	// per-character granularity; coalescing them into ~50ms windows cuts IPC
-	// volume dramatically without changing observable behavior — the renderer
+	// volume dramatically without changing observable behavior - the renderer
 	// already appends each chunk to a running buffer.
 	const thinkingBuffers = new Map<
 		string,
@@ -115,8 +115,8 @@ export function setupForwardingListeners(
 		safeSend('process:stderr', sessionId, data);
 	});
 
-	// Handle command exit (from runCommand - separate from PTY exit)
-	processManager.on('command-exit', (sessionId: string, code: number) => {
-		safeSend('process:command-exit', sessionId, code);
-	});
+	// NOTE: `command-exit` is deliberately NOT forwarded here. It has to be sent
+	// AFTER the coalesced process:data buffer is flushed, or a fast command's
+	// output arrives after its own exit and gets dropped. It lives in
+	// data-listener.ts next to that flush - see the comment there.
 }

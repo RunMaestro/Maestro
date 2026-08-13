@@ -149,7 +149,7 @@ describe('prompt-manager drift detection', () => {
 				[targetId]: {
 					content: userOverride,
 					isModified: true,
-					// No originalHash — this is a legacy entry written before drift tracking.
+					// No originalHash - this is a legacy entry written before drift tracking.
 				},
 			},
 		});
@@ -158,7 +158,7 @@ describe('prompt-manager drift detection', () => {
 		await initializePrompts();
 
 		// Legacy entries are treated as "in sync with current bundled" rather than
-		// false-flagged as drifted — we have no baseline to compare against.
+		// false-flagged as drifted - we have no baseline to compare against.
 		const target = getAllPrompts().find((p) => p.id === targetId)!;
 		expect(target.hasDefaultDrifted).toBe(false);
 

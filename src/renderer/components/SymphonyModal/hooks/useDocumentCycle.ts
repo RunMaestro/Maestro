@@ -14,7 +14,7 @@ export interface UseDocumentCycleParams {
  *
  * NOTE: this attaches to `window`; behavior is identical to the original inline
  * effect inside RepositoryDetailView. It deliberately does NOT call
- * stopPropagation — the shell's tab-cycle handler also responds to the same
+ * stopPropagation - the shell's tab-cycle handler also responds to the same
  * shortcut. See CUE-REFACTORING.md §4.1 "Risks" for the documented follow-up.
  */
 export function useDocumentCycle({

@@ -6,7 +6,7 @@
  * focused diagnostic panels: failure spotlight, time-series, hour-of-day,
  * trigger-type, pipeline, agent, and slowest-runs.
  *
- * The component is responsible only for read+display — gating lives in the
+ * The component is responsible only for read+display - gating lives in the
  * parent dashboard (tab is hidden when `encoreFeatures.maestroCue` is off)
  * and in the IPC handler (throws `'CueStatsDisabled'` when either Encore
  * flag is off, which we render as a friendly note as defense in depth).
@@ -70,7 +70,7 @@ function formatPercent(ratio: number): string {
 const SUMMARY_SPARKLINE_LIMIT = 14;
 
 /**
- * Right-aligned slice of the time-series buckets used to draw a 7–14 point
+ * Right-aligned slice of the time-series buckets used to draw a 7-14 point
  * sparkline beneath each summary card. We pad with leading zeros if the range
  * has fewer buckets so geometry stays stable.
  */
@@ -446,7 +446,7 @@ interface GroupTableProps {
 	keyLabel: string;
 	formatLabel?: (label: string, key: string) => string;
 	/** When true, the Total Tokens / Total Cost columns are dropped from the
-	 *  table — used when the active range has no token data so we don't
+	 *  table - used when the active range has no token data so we don't
 	 *  render columns of zeros and dashes. */
 	hideTokenColumns?: boolean;
 }
@@ -950,7 +950,7 @@ const TriggerTypeChart = memo(function TriggerTypeChart({
 
 /* ---------------------------- Hour-of-day chart -------------------------- */
 
-const HOUR_LABEL_INTERVAL = 3; // 0, 3, 6, … 21 — keeps the strip readable.
+const HOUR_LABEL_INTERVAL = 3; // 0, 3, 6, … 21 - keeps the strip readable.
 
 /**
  * 24-bar histogram showing when Cue runs in the local day. Helps the user

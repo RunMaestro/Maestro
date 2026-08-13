@@ -1,5 +1,5 @@
 /**
- * FolderPickerSheet — server-driven folder browser for the mobile/web Auto Run
+ * FolderPickerSheet - server-driven folder browser for the mobile/web Auto Run
  * panel. Mirrors desktop's `dialog.selectFolder` flow: navigate the tree,
  * confirm a folder, and the selection is persisted on the session via the
  * `set_auto_run_folder` WebSocket message (which routes through the renderer
@@ -24,7 +24,7 @@ interface FileNode {
 
 export interface FolderPickerSheetProps {
 	sessionId: string;
-	/** Path to start browsing from — typically the session's `cwd`. */
+	/** Path to start browsing from - typically the session's `cwd`. */
 	startPath: string;
 	/** Pre-select this folder when opening (e.g. the current `autoRunFolderPath`). */
 	initialPath?: string | null;
@@ -96,7 +96,7 @@ export function FolderPickerSheet({
 		// Preserve a POSIX root marker so re-joining yields `/repo/docs` instead
 		// of `repo/docs`, which would never match a server-side `node.path`.
 		const posixAbsolute = initialPath.startsWith('/');
-		// UNC prefix (`\\host\share`) and Windows drive (`C:\`) — keep both as
+		// UNC prefix (`\\host\share`) and Windows drive (`C:\`) - keep both as
 		// the first ancestor so children resolve under them.
 		const uncMatch = /^\\\\[^\\]+\\[^\\]+/.exec(initialPath);
 		const driveMatch = /^[a-zA-Z]:[\\/]?/.exec(initialPath);
@@ -397,7 +397,7 @@ export function FolderPickerSheet({
 					</button>
 				</header>
 
-				{/* Typeable path input — mirrors desktop's `FormInput` in
+				{/* Typeable path input - mirrors desktop's `FormInput` in
 				    AutoRunSetupModal so users who know the path can paste/type
 				    it instead of clicking through the tree. The tree below stays
 				    as the secondary "Browse" affordance. */}
@@ -434,7 +434,7 @@ export function FolderPickerSheet({
 					/>
 				</div>
 
-				{/* Body — folder tree */}
+				{/* Body - folder tree */}
 				<div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px' }}>
 					{loading && (
 						<div style={{ padding: '24px', textAlign: 'center', color: colors.textDim }}>
@@ -463,7 +463,7 @@ export function FolderPickerSheet({
 					{folderRows}
 				</div>
 
-				{/* Footer — Cancel + Confirm */}
+				{/* Footer - Cancel + Confirm */}
 				<footer
 					style={{
 						display: 'flex',

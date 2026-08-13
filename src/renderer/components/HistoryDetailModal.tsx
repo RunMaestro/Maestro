@@ -21,6 +21,7 @@ import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
 import { formatTimestamp } from '../../shared/formatters';
@@ -33,6 +34,7 @@ import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/c
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { ResizeHandles } from './ui/ResizeHandles';
 import { useSettingsStore } from '../stores/settingsStore';
 
 interface HistoryDetailModalProps {
@@ -55,7 +57,7 @@ interface HistoryDetailModalProps {
 	/**
 	 * Agent identifier (session.toolType) used to display input tokens correctly.
 	 * Claude reports `inputTokens` as the uncached delta only, so we add the cache
-	 * partitions to show the real input size — see calculateDisplayInputTokens.
+	 * partitions to show the real input size - see calculateDisplayInputTokens.
 	 */
 	agentId?: ToolType;
 }
@@ -191,6 +193,11 @@ export function HistoryDetailModal({
 	//   - fullResponse = may contain more context
 	const rawResponse = entry.fullResponse || entry.summary || '';
 	const cleanResponse = stripAnsiCodes(rawResponse);
+	const resizableModal = useResizableModal({
+		resizeKey: 'history-detail',
+		defaultSize: { width: 960, height: 720 },
+		minSize: { width: 640, height: 420 },
+	});
 
 	return (
 		<div className="fixed inset-0 flex items-center justify-center z-[9999]">
@@ -199,12 +206,25 @@ export function HistoryDetailModal({
 
 			{/* Modal */}
 			<div
-				className="relative w-full max-w-3xl max-h-[80vh] overflow-hidden rounded-lg border shadow-2xl flex flex-col select-text"
+				ref={resizableModal.modalRef}
+				role="dialog"
+				aria-modal="true"
+				aria-label="History Detail"
+				className="relative overflow-hidden rounded-lg border shadow-2xl flex flex-col select-text"
 				style={{
+					...resizableModal.style,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
+				data-modal-resize-key="history-detail"
 			>
+				<ResizeHandles
+					onResizeStart={resizableModal.onResizeStart}
+					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
+				/>
+
 				{/* Header */}
 				<div
 					className="relative px-6 py-4 border-b shrink-0"

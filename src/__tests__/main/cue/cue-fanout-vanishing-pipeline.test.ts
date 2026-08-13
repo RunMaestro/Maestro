@@ -11,7 +11,7 @@
  *      prompt files are on disk.
  *
  * Root cause: Commit 7 (fan-out per-agent prompt file externalization)
- * emitted YAML with only `fan_out_prompt_files` — no `prompt` or
+ * emitted YAML with only `fan_out_prompt_files` - no `prompt` or
  * `prompt_file`. The loader's `validateSubscription` required one of the
  * latter two, rejected the sub, and the lenient partition dropped it
  * from the config. With no surviving subscriptions, the graph had
@@ -186,7 +186,7 @@ describe('fan-out pipeline survives a save with differing per-agent prompts (reg
 		// `graphSessionsToPipelines`), not the composed helpers.
 		const pipe = makeFanOutPipeline(['codex unique', 'opencode unique', 'claude unique']);
 
-		// Step 1: renderer save — write yaml + per-agent prompt files
+		// Step 1: renderer save - write yaml + per-agent prompt files
 		// exactly as the IPC layer would.
 		const { yaml: yamlStr, promptFiles } = pipelinesToYaml([pipe]);
 		fs.writeFileSync(path.join(projectRoot, '.maestro/cue.yaml'), yamlStr, 'utf-8');
@@ -196,7 +196,7 @@ describe('fan-out pipeline survives a save with differing per-agent prompts (reg
 			fs.writeFileSync(absPath, content, 'utf-8');
 		}
 
-		// Step 2: engine reload — three separate sessions all pointing at
+		// Step 2: engine reload - three separate sessions all pointing at
 		// the same project root, each gets its own SessionState that shares
 		// the same underlying config.
 		const detailed = loadCueConfigDetailed(projectRoot);
@@ -204,7 +204,7 @@ describe('fan-out pipeline survives a save with differing per-agent prompts (reg
 		if (!detailed.ok) return;
 		expect(detailed.config.subscriptions).toHaveLength(1);
 
-		// Step 3: graph data — each of the three sessions reports the
+		// Step 3: graph data - each of the three sessions reports the
 		// shared fan-out subscription as a participant. The renderer's
 		// `graphSessionsToPipelines` dedupes by name but must still
 		// reconstruct the full pipeline.

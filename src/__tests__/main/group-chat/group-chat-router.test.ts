@@ -1081,7 +1081,7 @@ describe('group-chat-router', () => {
 			setGetSessionsCallback(() => [sshSession]);
 			setSshStore(mockSshStore);
 
-			// User mentions @RemoteAgent — this should auto-add with SSH config
+			// User mentions @RemoteAgent - this should auto-add with SSH config
 			await routeUserMessage(
 				chat.id,
 				'@RemoteAgent: please help',
@@ -1132,7 +1132,7 @@ describe('group-chat-router', () => {
 
 			mockWrapSpawnWithSsh.mockClear();
 
-			// Moderator mentions the SSH participant — batch spawn should use SSH wrapping
+			// Moderator mentions the SSH participant - batch spawn should use SSH wrapping
 			await routeModeratorResponse(
 				chat.id,
 				'@SSHWorker: implement the feature',

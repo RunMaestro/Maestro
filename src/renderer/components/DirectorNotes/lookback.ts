@@ -6,6 +6,16 @@ export function lookbackHoursToDays(hours: number | null): number {
 	return Math.ceil(hours / 24);
 }
 
+/**
+ * Resolve the activity-graph bucket count for a given lookback selection. Each
+ * lookback option carries its own preferred resolution (24 for short windows,
+ * 28 for "1 week", 30 for "1 month", etc.); unknown windows fall back to 24.
+ */
+export function bucketCountForLookback(hours: number | null): number {
+	const config = LOOKBACK_OPTIONS.find((o) => o.hours === hours);
+	return config?.bucketCount ?? 24;
+}
+
 /** Find the smallest LOOKBACK_OPTIONS entry that covers the given number of days. 0 => null (All time). */
 export function daysToLookbackHours(days: number): number | null {
 	if (days <= 0) return null;

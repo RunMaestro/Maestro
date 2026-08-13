@@ -26,6 +26,7 @@ import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { dragHasOsFiles } from '../../utils/osFileDrop';
 
 import type { FileExplorerPanelProps } from './types';
+import { isMediaFile } from '../../../shared/mediaTypes';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from './types';
 
 // Sub-components
@@ -39,6 +40,7 @@ import { DeleteFileModal } from './components/DeleteFileModal';
 import { MultiDeleteModal } from './components/MultiDeleteModal';
 import { MoveConflictModal } from './components/MoveConflictModal';
 import { FileTreeRow } from './components/FileTreeRow';
+import { EscCloseButton } from '../ui/EscCloseButton';
 import { FileTreeContextMenu } from './components/FileTreeContextMenu';
 
 // Hooks
@@ -116,7 +118,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		sessionIdRef.current = session.id;
 	}, [session.id]);
 
-	// SSH remote ID — use sshRemoteId (set after AI spawns) or fall back to
+	// SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to
 	// sessionSshRemoteConfig (set before spawn). Ensures file ops work for both
 	// AI and terminal-only SSH sessions.
 	const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
@@ -147,6 +149,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			setSelectedFileIndex,
 			flattenedTreeRef,
 		});
+
+	// Drives the context menu's "Add N to Play Queue" entry. Judged by extension,
+	// which is all the menu needs to decide whether to offer the action.
+	const selectedMediaCount = useMemo(
+		() => Array.from(selectedPaths).filter((path) => isMediaFile(path)).length,
+		[selectedPaths]
+	);
 
 	// ── Virtualizer ───────────────────────────────────────────────────────────
 
@@ -189,7 +198,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	// ── Filter ────────────────────────────────────────────────────────────────
 
-	useFileTreeFilter({
+	const { handleFilterEscape } = useFileTreeFilter({
 		fileTreeFilterOpen,
 		setFileTreeFilterOpen,
 		setFileTreeFilter,
@@ -225,7 +234,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setSessions,
 	});
 
-	// ── expandFolder — shared between file ops and drag-to-move ───────────────
+	// ── expandFolder - shared between file ops and drag-to-move ───────────────
 
 	const expandFolder = useCallback(
 		(relativePath: string) => {
@@ -330,6 +339,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handlePreviewFile,
 		handlePreviewAllInFolder,
 		handlePreviewMulti,
+		handleQueueMedia,
 		handleOpenInDefaultAppMulti,
 		handleOpenDeleteMulti,
 		handleDeleteMulti,
@@ -435,15 +445,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							className="w-full pl-3 pr-14 py-2 rounded border bg-transparent outline-none text-sm"
 							style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 						/>
-						<div
-							className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								color: theme.colors.textDim,
-							}}
-						>
-							ESC
-						</div>
+						<EscCloseButton
+							theme={theme}
+							variant="adornment"
+							label="Close filter (Esc)"
+							onClose={handleFilterEscape}
+						/>
 					</div>
 				</div>
 			)}
@@ -482,7 +489,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						{!compact && <Search className="w-3 h-3" />}
 						Find
 					</button>
-					{/* Open in file manager — local sessions only */}
+					{/* Open in file manager - local sessions only */}
 					{!sshRemoteId && (
 						<button
 							onClick={() =>
@@ -574,7 +581,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						</div>
 					</button>
 				</div>
-				{/* Path row — doubles as a drop target for the workspace root. The path
+				{/* Path row - doubles as a drop target for the workspace root. The path
 				    points at the root working directory, so dropping a tree item (or an
 				    OS file) here moves/imports it to the root, same as the bottom
 				    receptacle. Uses '' as the destination, mirroring handleFolderDrop. */}
@@ -748,7 +755,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 									const item = flattenedTree[virtualRow.index];
 									// Render as a stable memo'd component (identity defined at module
 									// level, not inside a render), so React never sees a new component
-									// type on each parent render — prevents remounting every visible row.
+									// type on each parent render - prevents remounting every visible row.
 									return (
 										<FileTreeRow
 											key={item.path}
@@ -812,7 +819,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				/>
 			)}
 
-			{/* Move-to-root receptacle — appears only while an in-tree row is being
+			{/* Move-to-root receptacle - appears only while an in-tree row is being
 			    dragged, giving items buried in subfolders a target to land back at
 			    the workspace root. Sits at the bottom of the panel, just above the
 			    stats bar. Mirrors the Left Bar's "Drop here to ungroup" zone for UI
@@ -886,6 +893,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenBrowserTabAt={onOpenBrowserTabAt}
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
+					selectedMediaCount={selectedMediaCount}
 					onCopyPath={handleCopyPath}
 					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}
@@ -897,6 +905,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					onPreviewMulti={handlePreviewMulti}
+					onQueueMedia={handleQueueMedia}
 					onOpenInDefaultAppMulti={handleOpenInDefaultAppMulti}
 					onOpenDeleteMulti={handleOpenDeleteMulti}
 					onFocusInGraph={handleFocusInGraph}
@@ -980,7 +989,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				/>
 			)}
 
-			{/* OS-file import overlay — explains what dropping a Finder/Explorer file
+			{/* OS-file import overlay - explains what dropping a Finder/Explorer file
 			    does, mirroring the main panel's chat-drop hint. Shown only for
 			    external drags (isExternalDrag); in-tree moves get row highlighting
 			    instead. `pointer-events-none` lets dragover/drop pass through to the

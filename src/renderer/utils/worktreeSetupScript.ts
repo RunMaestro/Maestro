@@ -35,14 +35,40 @@ interface RunWorktreeSetupScriptArgs {
  *
  * The batch runner only knows the repo cwd, so this resolves the owning parent
  * agent from the store instead of threading the session through every layer.
+ *
+ * Several agents can sit on ONE repo - that is a normal Maestro setup - and
+ * taking the first match would run a different agent's setup script in this
+ * worktree. Arbitrary shell commands are not a coin flip worth taking, so when
+ * the candidates disagree on the script this returns undefined and setup is
+ * skipped. Agents that agree (or where only one defines a script) are
+ * unambiguous and still run.
+ *
+ * Callers that know their own session pass it directly and never reach here.
  */
 function findParentSessionByRepoPath(mainRepoPath: string): Session | undefined {
 	const normalized = normalizePath(mainRepoPath);
-	return useSessionStore
+	const candidates = useSessionStore
 		.getState()
-		.sessions.find(
-			(s) => !s.parentSessionId && s.worktreeConfig && normalizePath(s.cwd) === normalized
+		.sessions.filter(
+			(s) =>
+				!s.parentSessionId &&
+				s.worktreeConfig?.setupScript?.trim() &&
+				normalizePath(s.cwd) === normalized
 		);
+
+	if (candidates.length === 0) return undefined;
+
+	const scripts = new Set(candidates.map((s) => s.worktreeConfig!.setupScript!.trim()));
+	if (scripts.size > 1) {
+		notifyToast({
+			type: 'warning',
+			title: 'Worktree Setup Script Skipped',
+			message: `${candidates.length} agents on this repository define different setup scripts, so none was run. Open the worktree from a specific agent to use its script.`,
+		});
+		return undefined;
+	}
+
+	return candidates[0];
 }
 
 /**

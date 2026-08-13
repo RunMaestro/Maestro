@@ -13,6 +13,7 @@ import {
 	Share2,
 	ChevronsLeft,
 	ChevronsRight,
+	Clock,
 	X,
 } from 'lucide-react';
 import type { AITab, Theme } from '../../types';
@@ -37,6 +38,7 @@ export interface AITabOverlayMenuProps {
 	onRenameClick: (e: React.MouseEvent) => void;
 	onMarkUnreadClick: (e: React.MouseEvent) => void;
 	onExportHtmlClick: (e: React.MouseEvent) => void;
+	onSnoozeClick: (e: React.MouseEvent) => void;
 	onCopyContextClick: (e: React.MouseEvent) => void;
 	onCopyContextWithReasoningClick: (e: React.MouseEvent) => void;
 	onSummarizeAndContinueClick: (e: React.MouseEvent) => void;
@@ -55,6 +57,7 @@ export interface AITabOverlayMenuProps {
 	onSummarizeAndContinue?: (tabId: string) => void;
 	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	onExportHtml?: (tabId: string) => void;
+	onSnooze?: (tabId: string) => void;
 	onPublishGist?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
@@ -65,7 +68,7 @@ export interface AITabOverlayMenuProps {
 
 /**
  * Overlay menu content for AI tabs.
- * Pure presentational — all handlers passed as props.
+ * Pure presentational - all handlers passed as props.
  */
 export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	tab,
@@ -81,6 +84,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onRenameClick,
 	onMarkUnreadClick,
 	onExportHtmlClick,
+	onSnoozeClick,
 	onCopyContextClick,
 	onCopyContextWithReasoningClick,
 	onSummarizeAndContinueClick,
@@ -98,6 +102,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onSummarizeAndContinue,
 	onCopyContext,
 	onExportHtml,
+	onSnooze,
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
@@ -233,6 +238,18 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					</button>
 				)}
 
+				{/* Snooze - hide the tab until a chosen moment, then bring it back */}
+				{onSnooze && (
+					<button
+						onClick={onSnoozeClick}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+					>
+						<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Snooze Tab
+					</button>
+				)}
+
 				{/* Context Management Section - divider and grouped options */}
 				{(tab.agentSessionId || (tab.logs?.length ?? 0) >= 1) &&
 					(onMergeWith || onSendToAgent || onSummarizeAndContinue || onCopyContext) && (
@@ -251,7 +268,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					</button>
 				)}
 
-				{/* Context: Copy with Reasoning — only when the tab has reasoning blocks */}
+				{/* Context: Copy with Reasoning - only when the tab has reasoning blocks */}
 				{onCopyContext && hasThinkingEntries(tab.logs) && (
 					<button
 						onClick={onCopyContextWithReasoningClick}

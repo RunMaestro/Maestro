@@ -257,54 +257,6 @@ export function formatFutureTime(dateOrTimestamp: Date | number | string): strin
 }
 
 /**
- * Format duration in milliseconds as compact display string.
- * Uses uppercase units (D, H, M) for consistency.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "1D", "2H 30M", "15M", "<1M")
- */
-export function formatActiveTime(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const totalMinutes = Math.floor(totalSeconds / 60);
-	const totalHours = Math.floor(totalMinutes / 60);
-	const totalDays = Math.floor(totalHours / 24);
-
-	if (totalDays > 0) {
-		return `${totalDays}D`;
-	} else if (totalHours > 0) {
-		const remainingMinutes = totalMinutes % 60;
-		if (remainingMinutes > 0) {
-			return `${totalHours}H ${remainingMinutes}M`;
-		}
-		return `${totalHours}H`;
-	} else if (totalMinutes > 0) {
-		return `${totalMinutes}M`;
-	} else {
-		return '<1M';
-	}
-}
-
-/**
- * Format elapsed time in milliseconds as precise human-readable format.
- * Shows milliseconds for sub-second, seconds for <1m, minutes+seconds for <1h,
- * and hours+minutes for longer durations.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "500ms", "30s", "5m 12s", "1h 10m")
- */
-export function formatElapsedTime(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
-	const hours = Math.floor(minutes / 60);
-	const remainingMinutes = minutes % 60;
-	return `${hours}h ${remainingMinutes}m`;
-}
-
-/**
  * Format cost as USD with appropriate precision.
  * Shows "<$0.01" for very small amounts.
  *
@@ -414,6 +366,23 @@ export function getBasename(path: string): string {
 }
 
 /**
+ * Join path segments onto a base path, using whichever separator the base
+ * already speaks (backslash only when the base is Windows-style).
+ *
+ * Node's `path.join` is not available in the renderer, and a hardcoded `/`
+ * breaks Windows while a hardcoded `\` breaks SSH remotes (always POSIX), so
+ * the base path is the source of truth. Segments may use either separator.
+ */
+export function joinPath(base: string, ...segments: string[]): string {
+	const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/';
+	const trimmedBase = base.replace(/[/\\]+$/, '');
+	const tail = segments
+		.map((s) => s.replace(/^[/\\]+|[/\\]+$/g, '').replace(/[/\\]+/g, sep))
+		.filter(Boolean);
+	return tail.length > 0 ? `${trimmedBase}${sep}${tail.join(sep)}` : trimmedBase;
+}
+
+/**
  * Format an SSH remote's connection target for display, e.g. "pedram@10.0.50.63:2222".
  *
  * The username prefix is omitted when none is set (SSH falls back to ~/.ssh/config or
@@ -448,122 +417,6 @@ export function truncateCommand(command: string, maxLength: number = 40): string
 	const singleLine = command.replace(/\n/g, ' ').trim();
 	if (singleLine.length <= maxLength) return singleLine;
 	return singleLine.slice(0, maxLength - 1) + '…';
-}
-
-/**
- * Format duration in milliseconds as human-readable string without millisecond precision.
- * Suitable for dashboard displays where sub-second precision is unnecessary.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "0s", "45s", "5m 30s", "2h 15m")
- */
-export function formatDurationHuman(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
-
-/**
- * Format duration in milliseconds compactly, omitting seconds in the minute range.
- * Useful for summary displays where second-level precision is noise.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "0s", "45s", "5m", "2h 15m")
- */
-export function formatDurationCompact(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m`;
-	}
-	return `${totalSeconds}s`;
-}
-
-/**
- * Format duration in milliseconds with full English words.
- * Suitable for celebratory or detailed displays.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "5 minutes 30 seconds", "1 hour 15 minutes")
- */
-export function formatDurationVerbose(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const hours = Math.floor(minutes / 60);
-
-	if (hours > 0) {
-		const remainingMinutes = minutes % 60;
-		if (remainingMinutes > 0) {
-			return `${hours} hour${hours > 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
-		}
-		return `${hours} hour${hours > 1 ? 's' : ''}`;
-	}
-
-	if (minutes > 0) {
-		const remainingSeconds = seconds % 60;
-		if (remainingSeconds > 0) {
-			return `${minutes} minute${minutes > 1 ? 's' : ''} ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}`;
-		}
-		return `${minutes} minute${minutes > 1 ? 's' : ''}`;
-	}
-
-	return `${seconds} second${seconds > 1 ? 's' : ''}`;
-}
-
-/**
- * Format duration in milliseconds as multi-part string with days support.
- * Useful for toast notifications and long-running processes.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "5s", "2m 30s", "1h 15m", "3d 2h 15m")
- */
-export function formatDurationParts(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const totalSeconds = Math.floor(ms / 1000);
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-
-	const days = Math.floor(totalSeconds / 86400);
-	const hours = Math.floor((totalSeconds % 86400) / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	const parts: string[] = [];
-	if (days > 0) parts.push(`${days}d`);
-	if (hours > 0) parts.push(`${hours}h`);
-	if (minutes > 0) parts.push(`${minutes}m`);
-	if (seconds > 0 && days === 0) parts.push(`${seconds}s`);
-
-	return parts.join(' ') || '0s';
-}
-
-/**
- * Format duration in milliseconds as decimal string for compact CLI output.
- * Uses single-decimal precision with appropriate unit suffix.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "500ms", "5.2s", "3.1m", "1.5h")
- */
-export function formatDurationDecimal(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	if (ms < 3600_000) return `${(ms / 60_000).toFixed(1)}m`;
-	return `${(ms / 3600_000).toFixed(1)}h`;
 }
 
 /**
@@ -702,3 +555,30 @@ export function formatTimestamp(
 		}
 	}
 }
+
+// ============================================================================
+// Durations
+// ============================================================================
+// Every duration formatter lives in ./duration.ts, built on one shared unit
+// ladder. They are re-exported here because ~50 call sites already import them
+// from this module, and because a duration is a formatter - somebody looking
+// for one should find it. Import either path; ./duration.ts is canonical and is
+// where new duration work belongs.
+
+export {
+	humanizeDuration,
+	formatDurationHuman,
+	formatDurationCompact,
+	formatDurationVerbose,
+	formatDurationParts,
+	formatDurationDecimal,
+	formatDurationLong,
+	formatDurationWords,
+	formatActiveTime,
+	formatElapsedTime,
+	DURATION_MS,
+	DURATION_LADDER_FULL,
+	DURATION_LADDER_DAYS,
+	DURATION_LADDER_HOURS,
+} from './duration';
+export type { DurationUnit, DurationStyle, HumanizeDurationOptions } from './duration';

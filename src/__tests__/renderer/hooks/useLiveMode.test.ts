@@ -64,7 +64,7 @@ describe('useLiveMode', () => {
 	});
 
 	// -----------------------------------------------------------------------
-	// toggleGlobalLive — turning ON
+	// toggleGlobalLive - turning ON
 	// -----------------------------------------------------------------------
 
 	it('toggleGlobalLive turns on: calls startServer and sets state', async () => {
@@ -82,7 +82,7 @@ describe('useLiveMode', () => {
 	});
 
 	// -----------------------------------------------------------------------
-	// toggleGlobalLive — turning OFF
+	// toggleGlobalLive - turning OFF
 	// -----------------------------------------------------------------------
 
 	it('toggleGlobalLive turns off: calls tunnel.stop then disableAll, clears state', async () => {
@@ -108,7 +108,7 @@ describe('useLiveMode', () => {
 	});
 
 	// -----------------------------------------------------------------------
-	// toggleGlobalLive — failure cases
+	// toggleGlobalLive - failure cases
 	// -----------------------------------------------------------------------
 
 	it('toggleGlobalLive handles startServer failure (success: false) without changing state', async () => {

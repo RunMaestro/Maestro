@@ -8,7 +8,7 @@ import { captureException } from '../../../utils/sentry';
  *
  * Each `@codemirror/lang-*` package weighs 10-30 KB gz. Dynamic `import()`
  * means the only language pack that ever enters the bundle is the one the
- * user actually opens. Unknown languages get plain text — still useful since
+ * user actually opens. Unknown languages get plain text - still useful since
  * CM6 handles them with line numbers and search.
  *
  * The language ids here mirror what `getLanguageFromFilename()` (see
@@ -82,7 +82,7 @@ function resolveLanguageId(language: string): string {
  * import fails (network / packaging issue). Import failures are reported to
  * Sentry with context so we hear about packaging regressions in field data,
  * but the promise still resolves to null so the caller can mount the editor
- * without syntax highlighting — degraded UX is better than no preview.
+ * without syntax highlighting - degraded UX is better than no preview.
  */
 export async function loadLanguageExtension(language: string): Promise<Extension | null> {
 	const id = resolveLanguageId(language);

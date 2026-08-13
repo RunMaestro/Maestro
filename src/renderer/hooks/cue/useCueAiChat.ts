@@ -1,5 +1,5 @@
 /**
- * useCueAiChat — Manages AI assist chat for the Cue YAML editor.
+ * useCueAiChat - Manages AI assist chat for the Cue YAML editor.
  *
  * Handles agent spawning, streaming responses, message state, and cleanup.
  */
@@ -63,7 +63,7 @@ export function useCueAiChat({
 
 	const session = useSessionStore(selectSessionById(sessionId));
 
-	// Reset chat state when modal opens — clean up stale listeners first
+	// Reset chat state when modal opens - clean up stale listeners first
 	useEffect(() => {
 		if (isOpen) {
 			aiCleanupRef.current.forEach((fn) => fn());

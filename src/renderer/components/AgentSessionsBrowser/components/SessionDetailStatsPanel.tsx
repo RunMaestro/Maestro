@@ -14,16 +14,16 @@ import { FALLBACK_CONTEXT_WINDOW } from '../../../../shared/agentConstants';
 import type { Theme } from '../../../types';
 import type { AgentSession } from '../../../hooks/agent/useSessionViewer';
 import { formatNumber, formatSize } from '../../../utils/formatters';
+import { formatDurationHuman, DURATION_MS } from '../../../../shared/duration';
 
 interface SessionDetailStatsPanelProps {
 	viewingSession: AgentSession;
 	theme: Theme;
 }
 
+/** Agent sessions report duration in seconds; every shared formatter takes ms. */
 function formatSessionDuration(seconds: number): string {
-	if (seconds < 60) return `${seconds}s`;
-	if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-	return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+	return formatDurationHuman(seconds * DURATION_MS.second);
 }
 
 export const SessionDetailStatsPanel = React.memo(function SessionDetailStatsPanel({

@@ -314,6 +314,7 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 			documentGraph: true,
 			openInBrowser: true,
 			openInDefault: true,
+			revealInFolder: true,
 			copyPath: true,
 		},
 		setFilePreviewToolbarButtonVisibility: vi.fn(),
@@ -564,7 +565,7 @@ describe('SettingsModal', () => {
 
 			unmount();
 
-			// Reopen with no explicit initialTab — should land on Shortcuts, not General.
+			// Reopen with no explicit initialTab - should land on Shortcuts, not General.
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
@@ -586,12 +587,12 @@ describe('SettingsModal', () => {
 			const getContent = () => container.querySelector<HTMLDivElement>('.p-6.overflow-y-auto');
 			expect(getContent()).toBeTruthy();
 
-			// Scroll General down — simulates the user being deep in a long panel.
+			// Scroll General down - simulates the user being deep in a long panel.
 			const general = getContent()!;
 			general.scrollTop = 420;
 			fireEvent.scroll(general);
 
-			// Switch to Shortcuts — never visited, should land at the top.
+			// Switch to Shortcuts - never visited, should land at the top.
 			fireEvent.click(screen.getByTitle('Shortcuts'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -603,14 +604,14 @@ describe('SettingsModal', () => {
 			shortcuts.scrollTop = 180;
 			fireEvent.scroll(shortcuts);
 
-			// Back to General — restores 420.
+			// Back to General - restores 420.
 			fireEvent.click(screen.getByTitle('General'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 			expect(getContent()!.scrollTop).toBe(420);
 
-			// Back to Shortcuts — restores 180.
+			// Back to Shortcuts - restores 180.
 			fireEvent.click(screen.getByTitle('Shortcuts'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -638,7 +639,7 @@ describe('SettingsModal', () => {
 
 			first.unmount();
 
-			// Reopen — last tab AND last scroll position should be restored together.
+			// Reopen - last tab AND last scroll position should be restored together.
 			const second = render(<SettingsModal {...createDefaultProps()} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -662,7 +663,7 @@ describe('SettingsModal', () => {
 			// Start on general tab
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] — alphabetically the next tab after General is Maestro Prompts
+			// Press Cmd+Shift+] - alphabetically the next tab after General is Maestro Prompts
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
@@ -683,7 +684,7 @@ describe('SettingsModal', () => {
 			// Start on shortcuts tab
 			expect(screen.getByPlaceholderText('Filter shortcuts...')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ — alphabetically the prev tab before Shortcuts is Notifications
+			// Press Cmd+Shift+[ - alphabetically the prev tab before Shortcuts is Notifications
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
@@ -810,7 +811,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Scope to the font-size section — the toast-width setting also renders
+			// Scope to the font-size section - the toast-width setting also renders
 			// Small/Medium/Large buttons, so an unscoped query is ambiguous.
 			const fontSizeSection = within(
 				document.querySelector('[data-setting-id="display-font-size"]') as HTMLElement
@@ -1775,7 +1776,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Modal should still be open — onClose should NOT have been called
+			// Modal should still be open - onClose should NOT have been called
 			expect(onClose).not.toHaveBeenCalled();
 		});
 	});

@@ -286,39 +286,38 @@ describe('UsageDashboard Responsive Layout', () => {
 	});
 
 	describe('Modal Container Sizing', () => {
-		it('modal uses viewport-relative width (80vw)', async () => {
+		it('modal renders a persisted-size shell', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
 				const dialog = screen.getByRole('dialog');
-				expect(dialog).toHaveStyle({ width: '80vw' });
+				expect(dialog).toHaveAttribute('data-modal-resize-key', 'usage-dashboard');
 			});
 		});
 
-		it('modal has max-width constraint (2200px)', async () => {
+		it('modal has max-width viewport clamp', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
 				const dialog = screen.getByRole('dialog');
-				expect(dialog).toHaveStyle({ maxWidth: '2200px' });
+				expect(dialog).toHaveStyle({ maxWidth: '90vw' });
 			});
 		});
 
-		it('modal uses viewport-relative height (85vh)', async () => {
+		it('modal renders resize handles', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
-				const dialog = screen.getByRole('dialog');
-				expect(dialog).toHaveStyle({ height: '85vh' });
+				expect(screen.getByTestId('modal-resize-handle-se')).toBeInTheDocument();
 			});
 		});
 
-		it('modal has max-height constraint (1400px)', async () => {
+		it('modal has max-height viewport clamp', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
 				const dialog = screen.getByRole('dialog');
-				expect(dialog).toHaveStyle({ maxHeight: '1400px' });
+				expect(dialog).toHaveStyle({ maxHeight: '90vh' });
 			});
 		});
 	});
@@ -672,7 +671,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
 			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
@@ -698,7 +697,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
 			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
@@ -723,7 +722,7 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 
 			// Switch to Auto Run view
-			// Auto Run is now the 5th tab (index 4) — Agent Overview was inserted
+			// Auto Run is now the 5th tab (index 4) - Agent Overview was inserted
 			// between Agents and Activity.
 			const autoRunTab = screen.getAllByRole('tab')[4];
 			act(() => {
@@ -894,7 +893,7 @@ describe('UsageDashboard Responsive Layout', () => {
 				expect(summaryCards).toHaveStyle({ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' });
 			});
 
-			// Switch to agents — its single section is now agent-overview-cards
+			// Switch to agents - its single section is now agent-overview-cards
 			// (the previous agent-comparison chart moved to the new "Agent
 			// Overview" tab). Look up by label, not index, since the order
 			// changed when "Agent Overview" was inserted above "Agents".

@@ -109,6 +109,27 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: [],
 		category: 'appearance',
 	},
+	mediaPlayerFloatRect: {
+		description:
+			'Position of the floating media player and the width it was last given for each media kind, remembered across restarts. Its height is derived from whatever is playing, so it is not stored. Null until the user moves or resizes it.',
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
+	mediaPlayerQueue: {
+		description:
+			'Media play queue, the loaded item, and remembered playback positions, kept across restarts. Null until something is queued. Recently-played history is deliberately not stored here - it is per-session.',
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
+	mediaPlaybackRate: {
+		description:
+			'Playback speed for audio and video files opened in the file preview. Persists across files and restarts. Range 0.25 to 4.',
+		type: 'number',
+		default: 1,
+		category: 'editor',
+	},
 	colorBlindMode: {
 		description: 'Enable colorblind-friendly palettes for status indicators and charts.',
 		type: 'boolean',
@@ -242,20 +263,22 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, previewTier, editToggle, copyContent, publishGist, documentGraph, openInBrowser, openInDefault, copyPath.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath.',
 		type: 'object',
 		default: {
 			save: true,
 			wordWrap: true,
 			remoteImages: true,
 			htmlRender: true,
+			openInBrowser: true,
 			previewTier: true,
 			editToggle: true,
+			editImage: true,
 			copyContent: true,
 			publishGist: true,
 			documentGraph: true,
-			openInBrowser: true,
 			openInDefault: true,
+			revealInFolder: true,
 			copyPath: true,
 		},
 		category: 'appearance',
@@ -645,7 +668,7 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- Updates & Crash Reporting ---
 	checkForUpdatesOnStartup: {
 		description:
-			'Automatically check for Maestro updates on launch and once per day while running.',
+			'Automatically check for Maestro updates on launch and once per day while running. Also sends an anonymous check-in (a random install ID, app version, OS, and theme) so we can count active installs. Turning this off disables both.',
 		type: 'boolean',
 		default: true,
 		category: 'updates',
@@ -996,9 +1019,9 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'advanced',
 	},
 	directorNotesSettings: {
-		description: "Director's Notes settings: provider, lookback window.",
+		description: "Director's Notes settings: provider, lookback window, optional ideal end state.",
 		type: 'object',
-		default: { provider: 'claude-code', defaultLookbackDays: 7 },
+		default: { provider: 'claude-code', defaultLookbackDays: 7, defaultMode: 'rich' },
 		category: 'advanced',
 	},
 

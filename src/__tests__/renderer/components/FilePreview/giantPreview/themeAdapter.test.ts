@@ -24,7 +24,7 @@ describe('buildEditorTheme', () => {
 		expect(() => buildEditorTheme(createMockTheme({ mode: 'dark' }))).not.toThrow();
 	});
 
-	it('handles a vibe-mode theme as dark (defensive — anything not "light" is dark)', () => {
+	it('handles a vibe-mode theme as dark (defensive - anything not "light" is dark)', () => {
 		expect(() => buildEditorTheme(createMockTheme({ mode: 'vibe' }))).not.toThrow();
 	});
 });

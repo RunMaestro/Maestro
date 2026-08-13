@@ -14,16 +14,42 @@ import {
 	buildWrappedCommand,
 } from '../utils/pathResolver';
 import { isWindows } from '../../../shared/platformDetection';
+import { killProcessTreeNow, sweepStragglers } from '../utils/commandKill';
 import { captureException } from '../../utils/sentry';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { getDefaultShell } from '../../stores/defaults';
+
+/**
+ * Exit code reported when a command had to be SIGKILLed and never told us how it
+ * ended. 128+9, the shell convention for "killed by signal 9".
+ */
+const SIGKILL_EXIT_CODE = 137;
 
 /**
  * Runs single commands locally and captures stdout/stderr cleanly.
  * On Unix, uses a transient PTY so interactive shell aliases behave correctly.
  */
 export class LocalCommandRunner {
+	/**
+	 * In-flight commands keyed by the sessionId they were launched under, so a
+	 * caller can terminate one that never exits on its own (an interactive
+	 * program waiting on stdin, a `tail -f`, a runaway build). Entries are
+	 * removed on exit.
+	 */
+	private running = new Map<string, () => void>();
+
 	constructor(private emitter: EventEmitter) {}
+
+	/**
+	 * Terminate an in-flight command started by `run()`.
+	 * Returns false when nothing is running under that sessionId.
+	 */
+	cancel(sessionId: string): boolean {
+		const kill = this.running.get(sessionId);
+		if (!kill) return false;
+		kill();
+		return true;
+	}
 
 	private isRecoverablePtySpawnError(error: unknown): boolean {
 		const errorCode =
@@ -83,7 +109,7 @@ export class LocalCommandRunner {
 				// even when the interactive shell doesn't source an rc file that
 				// extends PATH. Matches buildPtyTerminalEnv()'s behavior for
 				// consistency between PTY terminal tabs and single runCommand
-				// invocations — a minimal-config zsh shouldn't see different
+				// invocations - a minimal-config zsh shouldn't see different
 				// resolution between the two paths.
 				env = {
 					HOME: process.env.HOME,
@@ -155,6 +181,46 @@ export class LocalCommandRunner {
 					return;
 				}
 
+				let settled = false;
+
+				/**
+				 * Report the run as finished exactly once, from whichever path gets
+				 * there first: Stop, or the pty's own exit.
+				 */
+				const settle = (exitCode: number) => {
+					if (settled) return;
+					settled = true;
+					this.running.delete(sessionId);
+					this.emitter.emit('command-exit', sessionId, exitCode);
+					resolve({ exitCode });
+				};
+
+				this.running.set(sessionId, () => {
+					// SIGKILL the whole tree, synchronously, right now. No SIGTERM grace
+					// period and no Ctrl+C negotiation: Stop is a deliberate act on a
+					// command the user has already decided against, and anything catchable
+					// can be ignored by the very programs most likely to need stopping.
+					killProcessTreeNow(ptyProcess.pid, { sessionId });
+
+					// Tear down the pty itself so its master fd closes and the slave side
+					// is released even if something in the tree outlived the signals.
+					try {
+						ptyProcess.kill('SIGKILL');
+					} catch {
+						// Already gone - expected, since we just killed it.
+					}
+
+					// Settle NOW rather than waiting for the pty's exit event. The tree
+					// has been SIGKILLed, which cannot be caught or ignored, so there is
+					// nothing left to wait for - and waiting is exactly what left the card
+					// sitting on "Stopping..." with no way out.
+					settle(SIGKILL_EXIT_CODE);
+
+					// Fire-and-forget sweep for anything mid-fork during the kill. Never
+					// awaited; the UI is already released.
+					sweepStragglers(ptyProcess.pid);
+				});
+
 				ptyProcess.onData((data) => {
 					const output = stripControlSequences(data, command, true);
 					logger.debug('[ProcessManager] runCommand PTY stdout FILTERED', 'ProcessManager', {
@@ -174,8 +240,7 @@ export class LocalCommandRunner {
 						sessionId,
 						exitCode,
 					});
-					this.emitter.emit('command-exit', sessionId, exitCode);
-					resolve({ exitCode });
+					settle(exitCode);
 				});
 
 				return;
@@ -195,6 +260,31 @@ export class LocalCommandRunner {
 				cwd,
 				env,
 				shell: shellPath,
+			});
+
+			// Windows path. Same contract as the PTY branch above: kill the whole
+			// tree at once (`taskkill /t /f`, since child.kill() takes only the
+			// shell and orphans its children) and settle immediately rather than
+			// waiting on an exit that may never arrive.
+			let childSettled = false;
+			const settleChild = (exitCode: number) => {
+				if (childSettled) return;
+				childSettled = true;
+				this.running.delete(sessionId);
+				this.emitter.emit('command-exit', sessionId, exitCode);
+				resolve({ exitCode });
+			};
+
+			this.running.set(sessionId, () => {
+				if (childProcess.pid) {
+					killProcessTreeNow(childProcess.pid, { sessionId });
+				}
+				try {
+					childProcess.kill('SIGKILL');
+				} catch {
+					// Already gone.
+				}
+				settleChild(SIGKILL_EXIT_CODE);
 			});
 
 			// Handle stdout - emit data events for real-time streaming
@@ -250,8 +340,7 @@ export class LocalCommandRunner {
 					sessionId,
 					exitCode: code,
 				});
-				this.emitter.emit('command-exit', sessionId, code || 0);
-				resolve({ exitCode: code || 0 });
+				settleChild(code || 0);
 			});
 
 			// Handle errors
@@ -261,8 +350,7 @@ export class LocalCommandRunner {
 					error: error.message,
 				});
 				this.emitter.emit('stderr', sessionId, `Error: ${error.message}`);
-				this.emitter.emit('command-exit', sessionId, 1);
-				resolve({ exitCode: 1 });
+				settleChild(1);
 			});
 		});
 	}

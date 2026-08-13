@@ -10,11 +10,12 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
+import { isWebContentsAvailable } from '../../utils/safe-send';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 import {
@@ -42,16 +43,34 @@ function cliActivityChanged(
 	prev: SessionCliActivity | null | undefined,
 	curr: SessionCliActivity | null | undefined
 ): boolean {
-	// Existence change (one is null/undefined, the other isn't) — broadcast.
+	// Existence change (one is null/undefined, the other isn't) - broadcast.
 	if (!prev !== !curr) return true;
-	// Both are nullish — no change.
+	// Both are nullish - no change.
 	if (!prev || !curr) return false;
-	// Both present — compare known fields.
+	// Both present - compare known fields.
 	return (
 		prev.playbookId !== curr.playbookId ||
 		prev.playbookName !== curr.playbookName ||
 		prev.startedAt !== curr.startedAt
 	);
+}
+
+/**
+ * Tell every OTHER window that settings changed on disk.
+ *
+ * The settings file watcher deliberately ignores writes the app makes itself
+ * (see stores/write-tracker.ts): echoing a renderer's own write back to it
+ * triggers an async `loadAllSettings()` that overwrites whatever the user is
+ * typing, which is how the Conductor Profile textarea kept losing characters
+ * and snapping the caret to the end. Peer windows still have to hear about it,
+ * so route that here - immediately, and only to windows that did not write.
+ */
+function notifyPeerWindows(senderWebContentsId: number | undefined): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!isWebContentsAvailable(win)) continue;
+		if (win.webContents.id === senderWebContentsId) continue;
+		win.webContents.send('settings:externalChange');
+	}
 }
 
 /**
@@ -118,11 +137,11 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		return value;
 	});
 
-	ipcMain.handle('settings:set', async (_, key: string, value: any) => {
+	ipcMain.handle('settings:set', async (event, key: string, value: any) => {
 		try {
 			settingsStore.set(key, value);
 		} catch (err) {
-			// ENOSPC / ENFILE errors are transient disk issues — log and return false
+			// ENOSPC / ENFILE errors are transient disk issues - log and return false
 			// so the renderer doesn't see an unhandled rejection.
 			const code = (err as NodeJS.ErrnoException).code;
 			logger.warn(
@@ -132,6 +151,8 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			return false;
 		}
 		logger.info(`Settings updated: ${key}`, 'Settings', { key, value });
+
+		notifyPeerWindows(event?.sender?.id);
 
 		const webServer = getWebServer();
 		// Broadcast theme changes to connected web clients
@@ -238,7 +259,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	 * Incremental session persistence: merge a subset of dirty sessions into
 	 * the existing stored sessions, optionally removing some by id.
 	 *
-	 * This is the preferred path for the renderer's debounced persistence —
+	 * This is the preferred path for the renderer's debounced persistence -
 	 * it avoids cloning + serializing the entire sessions tree on every
 	 * change. `sessions:setAll` remains as the bootstrap path and as a
 	 * fallback when no diff baseline is available.
@@ -353,14 +374,14 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 				sessionsStore.set('sessions', merged);
 			} catch (err) {
 				const code = (err as NodeJS.ErrnoException).code;
-				// Recoverable filesystem errors — the next debounced flush will
+				// Recoverable filesystem errors - the next debounced flush will
 				// retry when conditions improve. Log warn and return false so
 				// the renderer's flush path can mark the write as unconfirmed.
 				if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
 					logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
 					return false;
 				}
-				// Anything else is unexpected — log error and rethrow so
+				// Anything else is unexpected - log error and rethrow so
 				// withIpcErrorLogging surfaces it to Sentry. Per CLAUDE.md
 				// §"Error Handling & Sentry", silent swallows hide bugs from
 				// production telemetry.
@@ -462,7 +483,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		try {
 			sessionsStore.set('sessions', sessions);
 		} catch (err) {
-			// ENOSPC, ENFILE, or JSON serialization failures are recoverable —
+			// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
 			// the next debounced write will succeed when conditions improve.
 			// Log but don't throw so the renderer doesn't see an unhandled rejection.
 			const code = (err as NodeJS.ErrnoException).code;

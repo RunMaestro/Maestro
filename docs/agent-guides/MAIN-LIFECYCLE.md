@@ -330,15 +330,28 @@ interface MaestroSettings {
 
 ```text
 src/main/stores/
-  index.ts       # Public API barrel
-  types.ts       # Type definitions
-  defaults.ts    # Default values for all stores
-  instances.ts   # Store instance creation and initialization
-  getters.ts     # Public getter functions
-  utils.ts       # Utility functions (getCustomSyncPath, getEarlySettings)
+  index.ts         # Public API barrel
+  types.ts         # Type definitions
+  defaults.ts      # Default values for all stores
+  instances.ts     # Store instance creation and initialization
+  getters.ts       # Public getter functions
+  utils.ts         # Utility functions (getCustomSyncPath, getEarlySettings)
+  write-tracker.ts # Stamps the app's own store writes (see below)
 ```
 
 `initializeStores()` must be called before any store getter. The `app.setPath('userData', ...)` calls must happen before initialization.
+
+### External Settings Changes vs Our Own Writes
+
+`src/main/app-lifecycle/settings-watcher.ts` runs `fs.watch()` over `maestro-settings.json` and `maestro-agent-configs.json` so edits from outside the app (maestro-cli, a text editor, a sync daemon) reach the renderer as a `settings:externalChange` IPC event, which triggers `loadAllSettings()`.
+
+The app's own writes fire that same watcher, and echoing them back is actively harmful: `loadAllSettings()` is several IPC round trips long, so reapplying the on-disk snapshot lands on top of whatever the user typed meanwhile. Text settings save on every keystroke (the Conductor Profile textarea is the worst case), so the reload dropped characters and snapped the caret to the end of the field.
+
+Three pieces keep that from happening. Change any one of them and the keystroke-loss bug comes back:
+
+1. **`src/main/stores/write-tracker.ts`** - `trackStoreWrites(store, fileName)` wraps the `set` / `delete` / `clear` / `reset` methods of a store instance so every mutation stamps a timestamp. It is applied in `instances.ts` at construction, so new write call sites are covered without touching them. The watcher drops any change that lands within `INTERNAL_WRITE_SHADOW_MS` (500ms) of a stamp, checked at event time rather than after the debounce so continuous typing stays suppressed.
+2. **`notifyPeerWindows()` in `src/main/ipc/handlers/persistence.ts`** - because the watcher now stays quiet for our own writes, `settings:set` explicitly forwards `settings:externalChange` to every window _except_ the one that wrote. Multi-window sync would otherwise break.
+3. **The in-flight guard in `loadAllSettings()` (`src/renderer/stores/settingsStore.ts`)** - a reload snapshots the store before its awaited reads and drops any key the user changed while they were in flight. Those edits already persisted themselves, so the in-memory value is newer. Skipped on the initial hydration, where the store still holds defaults and every disk value must land.
 
 ## Auto-Updater
 
@@ -597,30 +610,31 @@ The `performCleanup()` function runs synchronously from `before-quit` (async ope
 
 ## Key Source Files
 
-| File                                         | Purpose                                                    |
-| -------------------------------------------- | ---------------------------------------------------------- |
-| `src/main/index.ts`                          | Entry point, startup sequence, IPC wiring                  |
-| `src/main/app-lifecycle/index.ts`            | Lifecycle module barrel                                    |
-| `src/main/app-lifecycle/window-manager.ts`   | BrowserWindow creation, crash detection, auto-updater init |
-| `src/main/app-lifecycle/quit-handler.ts`     | Quit confirmation flow and cleanup                         |
-| `src/main/app-lifecycle/error-handlers.ts`   | Global uncaught exception handlers                         |
-| `src/main/app-lifecycle/cli-watcher.ts`      | CLI activity file watcher                                  |
-| `src/main/app-lifecycle/settings-watcher.ts` | External settings-file change detection                    |
-| `src/main/stores/index.ts`                   | Store module barrel                                        |
-| `src/main/stores/types.ts`                   | Store type definitions                                     |
-| `src/main/stores/instances.ts`               | Store initialization                                       |
-| `src/main/stores/getters.ts`                 | Store getter functions                                     |
-| `src/main/stores/defaults.ts`                | Store default values                                       |
-| `src/main/stores/utils.ts`                   | Store utilities (early settings, custom sync path)         |
-| `src/main/auto-updater.ts`                   | electron-updater integration                               |
-| `src/main/power-manager.ts`                  | System sleep prevention                                    |
-| `src/main/wakatime-manager.ts`               | WakaTime heartbeat integration                             |
-| `src/main/history-manager.ts`                | Per-session history storage and migration                  |
-| `src/main/process-manager/`                  | Process spawning (PTY + child_process)                     |
-| `src/main/process-listeners/`                | Process event routing                                      |
-| `src/main/ipc/handlers/`                     | All IPC handler modules                                    |
-| `src/main/utils/sentry.ts`                   | Sentry utilities and memory monitoring                     |
-| `src/main/utils/logger.ts`                   | Structured logging                                         |
+| File                                         | Purpose                                                     |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| `src/main/index.ts`                          | Entry point, startup sequence, IPC wiring                   |
+| `src/main/app-lifecycle/index.ts`            | Lifecycle module barrel                                     |
+| `src/main/app-lifecycle/window-manager.ts`   | BrowserWindow creation, crash detection, auto-updater init  |
+| `src/main/app-lifecycle/quit-handler.ts`     | Quit confirmation flow and cleanup                          |
+| `src/main/app-lifecycle/error-handlers.ts`   | Global uncaught exception handlers                          |
+| `src/main/app-lifecycle/cli-watcher.ts`      | CLI activity file watcher                                   |
+| `src/main/app-lifecycle/settings-watcher.ts` | External settings-file change detection                     |
+| `src/main/stores/write-tracker.ts`           | Stamps the app's own store writes so the watcher skips them |
+| `src/main/stores/index.ts`                   | Store module barrel                                         |
+| `src/main/stores/types.ts`                   | Store type definitions                                      |
+| `src/main/stores/instances.ts`               | Store initialization                                        |
+| `src/main/stores/getters.ts`                 | Store getter functions                                      |
+| `src/main/stores/defaults.ts`                | Store default values                                        |
+| `src/main/stores/utils.ts`                   | Store utilities (early settings, custom sync path)          |
+| `src/main/auto-updater.ts`                   | electron-updater integration                                |
+| `src/main/power-manager.ts`                  | System sleep prevention                                     |
+| `src/main/wakatime-manager.ts`               | WakaTime heartbeat integration                              |
+| `src/main/history-manager.ts`                | Per-session history storage and migration                   |
+| `src/main/process-manager/`                  | Process spawning (PTY + child_process)                      |
+| `src/main/process-listeners/`                | Process event routing                                       |
+| `src/main/ipc/handlers/`                     | All IPC handler modules                                     |
+| `src/main/utils/sentry.ts`                   | Sentry utilities and memory monitoring                      |
+| `src/main/utils/logger.ts`                   | Structured logging                                          |
 
 ## Electron Major-Bump Smoke Test
 

@@ -45,10 +45,10 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	// filesystems (macOS APFS/HFS+, Windows NTFS), Unicode normalization
 	// differences (NFC vs NFD), and symlinks that could otherwise escape the
 	// root without tripping a lowercase `startsWith` guard. `path.relative`
-	// returns '' when the paths are equal (treated as inside — reading the
+	// returns '' when the paths are equal (treated as inside - reading the
 	// root directory as a file will simply fail downstream), a `..`-prefixed
 	// path for POSIX escapes, and an absolute path on Windows when `realPath`
-	// lives on a different drive or UNC share (no common base) — so we reject
+	// lives on a different drive or UNC share (no common base) - so we reject
 	// any absolute rel too.
 	let canonicalPath: string;
 	try {
@@ -65,7 +65,7 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	try {
 		// Read the canonicalized path, not absPath. If `promptFile` was a symlink
 		// that pointed inside the root at check time, reading `absPath` would
-		// re-follow the symlink at read time — letting an attacker swap the
+		// re-follow the symlink at read time - letting an attacker swap the
 		// symlink's target between the check and the read. Reading `realPath`
 		// pins us to the file we actually validated.
 		return fs.readFileSync(canonicalPath, 'utf-8');
@@ -195,7 +195,7 @@ function normalizeSubscription(
 		(outputPromptSpec?.file ? readPromptFile(projectRoot, outputPromptSpec.file) : undefined);
 
 	// Resolve per-agent fan-out prompts. `fan_out_prompt_files` takes
-	// precedence over inline `fan_out_prompts` — each slot is expanded from
+	// precedence over inline `fan_out_prompts` - each slot is expanded from
 	// its `.md` file so the runtime dispatch path keeps reading one
 	// authoritative field (`fan_out_prompts[i]`). Falls back to the inline
 	// array for legacy YAML written before Commit 7. When neither field is
@@ -215,7 +215,7 @@ function normalizeSubscription(
 		? fanOutPromptFiles.map((filePath, i) => {
 				const fromFile = readPromptFile(projectRoot, filePath);
 				if (typeof fromFile === 'string') return fromFile;
-				// File missing/unreadable — fall back to the inline array at
+				// File missing/unreadable - fall back to the inline array at
 				// the same index (if a caller dual-wrote both) or an empty
 				// string. Dispatch still has `prompt` as a final fallback.
 				return inlineFanOutPrompts?.[i] ?? '';
@@ -348,7 +348,7 @@ function normalizeSubscription(
 		// "one shared node with multiple inputs" on round-trip. Without
 		// this passthrough the normalizer silently strips them and the
 		// loader falls back to dedup-by-sessionName, re-merging visually
-		// distinct nodes into one — the exact bug `target_node_key` was
+		// distinct nodes into one - the exact bug `target_node_key` was
 		// added to fix.
 		target_node_key:
 			typeof sub.target_node_key === 'string' && sub.target_node_key.length > 0
@@ -391,7 +391,7 @@ function normalizeSettings(rawSettings: Record<string, unknown> | undefined): Cu
 		// same projectRoot. Without this passthrough, the validator and
 		// contract both accept `owner_agent_id` but `computeOwnershipWarning`
 		// always sees `undefined` and silently falls through to the "first
-		// agent wins" branch — the exact symptom reported in #912.
+		// agent wins" branch - the exact symptom reported in #912.
 		owner_agent_id:
 			typeof rawSettings?.owner_agent_id === 'string' && rawSettings.owner_agent_id.trim() !== ''
 				? rawSettings.owner_agent_id.trim()
@@ -436,11 +436,11 @@ export function materializeCueConfig(document: CueConfigDocument): MaterializedC
 	const warnings: string[] = [];
 
 	const subscriptions = document.subscriptions.map((sub) => {
-		// Surface unresolved prompt_file references as warnings — the file existed
+		// Surface unresolved prompt_file references as warnings - the file existed
 		// in the YAML but readPromptFile() returned undefined / empty.
 		if (sub.promptSpec.file && !sub.promptSpec.inline && !sub.prompt) {
 			warnings.push(
-				`"${sub.name}" has prompt_file "${sub.promptSpec.file}" but the file was not found or resolved to empty/unreadable content — subscription will fail on trigger`
+				`"${sub.name}" has prompt_file "${sub.promptSpec.file}" but the file was not found or resolved to empty/unreadable content - subscription will fail on trigger`
 			);
 		}
 		if (sub.outputPromptSpec?.file && !sub.outputPromptSpec.inline && sub.output_prompt == null) {

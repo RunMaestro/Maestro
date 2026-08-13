@@ -1,4 +1,13 @@
-import React, { useRef, useEffect, useMemo, forwardRef, useState, useCallback, memo } from 'react';
+import React, {
+	useRef,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	forwardRef,
+	useState,
+	useCallback,
+	memo,
+} from 'react';
 import {
 	ChevronDown,
 	ChevronUp,
@@ -21,7 +30,7 @@ import Convert from 'ansi-to-html';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
-import { useDebouncedValue, useThrottledCallback } from '../hooks';
+import { useDebouncedValue, useThrottledCallback, useProgressiveRenderWindow } from '../hooks';
 import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
@@ -33,6 +42,9 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
+import { EscCloseButton } from './ui/EscCloseButton';
+import { ShellCommandCard } from './ShellCommandCard';
+import { isSelfContainedCard } from '../utils/logEntries';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { linkifyNode } from '../utils/linkify';
@@ -41,10 +53,26 @@ import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { useUIStore } from '../stores/uiStore';
+import { jumpToElement } from '../utils/jumpHighlight';
 import { SessionRecoveryCard } from './SessionRecoveryCard';
+import { AgentTaskListCard } from './AgentTaskListCard';
+import { extractAgentTaskList } from '../utils/agentTaskList';
 import { RetryStatusCard } from './RetryStatusCard';
+import { SnoozeReturnCard } from './SnoozeReturnCard';
 import { getTokenSourcePill } from '../../shared/claudeTokenModeLabel';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+
+/**
+ * Frames a cross-tab search jump keeps re-asserting its scroll position.
+ * Rows carry `content-visibility: auto`, so ones that have never been near the
+ * viewport are laid out at their `contain-intrinsic-size` estimate; the target
+ * shifts as real heights replace those estimates on the way there.
+ */
+const JUMP_STABILIZE_FRAMES = 10;
+
+/** How long the jump keeps auto-scroll suppressed after landing (~2x the stabilize window). */
+const JUMP_SETTLE_MS = 400;
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -59,27 +87,16 @@ const safeCommand = (v: unknown): string | null => {
 	return null;
 };
 
-/** Summarize TodoWrite todos array — shows in-progress task and progress count */
-const summarizeTodos = (v: unknown): string | null => {
-	if (!Array.isArray(v) || v.length === 0) return null;
-	const todos = v as Array<{ content?: string; status?: string; activeForm?: string }>;
-	const completed = todos.filter((t) => t.status === 'completed').length;
-	const inProgress = todos.find((t) => t.status === 'in_progress');
-	const label = inProgress?.activeForm || inProgress?.content || todos[0]?.content;
-	if (!label) return `${todos.length} tasks`;
-	return `${label} (${completed}/${todos.length})`;
-};
-
 /** Structured result from summarizeToolInput for richer rendering */
 interface ToolSummary {
 	/** Human-readable description (e.g. Bash description field) */
 	description?: string;
-	/** Primary content — command text or generic summary */
+	/** Primary content - command text or generic summary */
 	detail: string;
 }
 
 /**
- * Summarize tool input generically — no per-tool extractors needed.
+ * Summarize tool input generically - no per-tool extractors needed.
  * Returns structured data so the renderer can display description and command
  * with proper visual hierarchy.
  *
@@ -88,7 +105,7 @@ interface ToolSummary {
  */
 const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	// Some agents (notably Copilot/Codex apply_patch) deliver the tool argument
-	// as a raw string instead of an object — Object.entries on a string would
+	// as a raw string instead of an object - Object.entries on a string would
 	// iterate it character-by-character and produce garbled, space-separated
 	// output, so surface the string as-is.
 	if (typeof input === 'string') {
@@ -98,10 +115,6 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 		return null;
 	}
 	const inputRecord = input as Record<string, unknown>;
-
-	// Special case: TodoWrite todos array
-	const todosResult = summarizeTodos(inputRecord.todos);
-	if (todosResult) return { detail: todosResult };
 
 	// Extract description field separately for structured display
 	const description =
@@ -113,7 +126,7 @@ const summarizeToolInput = (input: unknown): ToolSummary | null => {
 	const parts: string[] = [];
 	for (const [key, val] of Object.entries(inputRecord)) {
 		if (val === undefined || val === null || val === '') continue;
-		// Skip description — rendered separately
+		// Skip description - rendered separately
 		if (key === 'description') continue;
 		// Command arrays (Codex)
 		const cmd = safeCommand(val);
@@ -275,14 +288,14 @@ interface LogItemProps {
 	ghCliAvailable?: boolean;
 	onPublishGist?: (text: string, messageId?: string) => void;
 	publishedGistUrl?: string;
-	// Fork conversation from this message (AI mode only, user messages and AI responses — source 'user' | 'ai' | 'stdout')
+	// Fork conversation from this message (AI mode only, user messages and AI responses - source 'user' | 'ai' | 'stdout')
 	onForkConversation?: (logId: string) => void;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
-	// Claude mode pill — both passed as primitives so LogItem memo equality stays cheap.
+	// Claude mode pill - both passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
 	// Session recovery (session_not_found inline card). Only consumed when
@@ -466,6 +479,49 @@ const LogItemComponent = memo(
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
 
+		// Command mode: a `!command` run renders as its own terminal-output card
+		// (monospace, ANSI preserved) rather than a markdown chat bubble.
+		if (log.shellCommand) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-6 py-2"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
+				>
+					<div className="w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<ShellCommandCard
+							log={log}
+							theme={theme}
+							fontFamily={fontFamily}
+							ansiConverter={ansiConverter}
+						/>
+					</div>
+				</div>
+			);
+		}
+
+		// A snoozed tab that came back marks the gap with its own card, carrying
+		// the note the user left themselves. Same clean row as the other cards.
+		if (log.snoozeReturn) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-6 py-2"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 80px' }}
+				>
+					<div className="w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<SnoozeReturnCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
 		// Agent Resilience: an outage marker renders as a live status card in a
 		// clean row (no error-tinted bubble chrome), left gutter kept for alignment.
 		if (log.retryOutageId) {
@@ -474,6 +530,7 @@ const LogItemComponent = memo(
 					ref={logItemRef}
 					className="flex gap-4 px-6 py-2"
 					data-log-index={index}
+					data-log-id={log.id}
 					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
 				>
 					<div className="w-20 shrink-0" />
@@ -489,6 +546,9 @@ const LogItemComponent = memo(
 				ref={logItemRef}
 				className={`flex gap-4 group ${isReversed ? 'flex-row-reverse' : ''} px-6 py-2`}
 				data-log-index={index}
+				// Jump anchor for cross-tab message search. For a collapsed response
+				// group this is the FIRST entry's id (see renderedIdByLogId).
+				data-log-id={log.id}
 				// PERF: the transcript is not virtualized, so every message stays in the
 				// DOM. content-visibility:auto lets the browser skip style/layout/paint for
 				// off-screen rows (the dominant scroll cost - a huge static layer tree the
@@ -729,8 +789,12 @@ const LogItemComponent = memo(
 						(() => {
 							// Extract tool input details for display
 							const toolInput = log.metadata?.toolState?.input;
+							// Checklist-shaped payloads (Claude Code/OpenCode TodoWrite,
+							// Codex update_plan) get the richer inline card instead of the
+							// generic key/value summary.
+							const taskList = extractAgentTaskList(toolInput);
 							const toolSummary =
-								toolInput !== undefined && toolInput !== null
+								!taskList && toolInput !== undefined && toolInput !== null
 									? summarizeToolInput(toolInput)
 									: null;
 							// Show the tool result once it has finished. Without this the
@@ -787,6 +851,7 @@ const LogItemComponent = memo(
 											</span>
 										)}
 									</div>
+									{taskList && <AgentTaskListCard theme={theme} taskList={taskList} />}
 									{toolSummary?.detail && (
 										<div
 											className="mt-1 ml-1 pl-2 opacity-70 break-words whitespace-pre-wrap border-l"
@@ -1054,7 +1119,7 @@ const LogItemComponent = memo(
 							onRecover={(opts) => onSessionRecover?.(opts)}
 						/>
 					)}
-					{/* Mode pill — shows which CLI captured this Claude turn (TUI Wrapper =
+					{/* Mode pill - shows which CLI captured this Claude turn (TUI Wrapper =
 					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
 					    session has Dynamic Mode enabled (auto-switching between the two). */}
 					{isClaudeCode &&
@@ -1089,7 +1154,7 @@ const LogItemComponent = memo(
 						className="absolute bottom-2 right-2 flex items-center gap-1"
 						style={{ transition: 'opacity 0.15s ease-in-out' }}
 					>
-						{/* Markdown toggle button — available on both user and assistant
+						{/* Markdown toggle button - available on both user and assistant
 						    messages in AI mode for consistent UX (#622). */}
 						{isAIMode && (
 							<button
@@ -1136,7 +1201,7 @@ const LogItemComponent = memo(
 								<Save className="w-3.5 h-3.5" />
 							</button>
 						)}
-						{/* Fork conversation — user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
+						{/* Fork conversation - user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
 						{(log.source === 'user' || log.source === 'ai' || log.source === 'stdout') &&
 							isAIMode &&
 							onForkConversation && (
@@ -1475,6 +1540,11 @@ export const TerminalOutput = memo(
 		// Guard flag: prevents the scroll handler from pausing auto-scroll
 		// during programmatic scrollTo() calls from the MutationObserver effect.
 		const isProgrammaticScrollRef = useRef(false);
+		// Guard flag: a cross-tab search jump is landing, so the follow-the-tail
+		// auto-scroll must stand down. Switching tabs re-renders every row, and the
+		// MutationObserver below reacts to that by slamming the container to the
+		// bottom - which is what used to eat the scroll to the hit.
+		const jumpInFlightRef = useRef(false);
 
 		// Track read state per tab - stores the log count when user scrolled to bottom
 		const tabReadStateRef = useRef<Map<string, number>>(new Map());
@@ -1504,6 +1574,14 @@ export const TerminalOutput = memo(
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 		const layerIdRef = useRef<string>();
 
+		// One definition of "dismiss the find bar", shared by the Escape layer and
+		// the ESC pill so a pointer-only user gets identical behavior.
+		const closeOutputSearch = useCallback(() => {
+			setOutputSearchOpen(false);
+			setOutputSearchQuery('');
+			terminalOutputRef.current?.focus();
+		}, [setOutputSearchOpen, setOutputSearchQuery]);
+
 		// Register layer when search is open
 		useEffect(() => {
 			if (outputSearchOpen) {
@@ -1513,11 +1591,7 @@ export const TerminalOutput = memo(
 					blocksLowerLayers: false,
 					capturesFocus: true,
 					focusTrap: 'none',
-					onEscape: () => {
-						setOutputSearchOpen(false);
-						setOutputSearchQuery('');
-						terminalOutputRef.current?.focus();
-					},
+					onEscape: closeOutputSearch,
 					allowClickOutside: true,
 					ariaLabel: 'Output Search',
 				});
@@ -1528,18 +1602,17 @@ export const TerminalOutput = memo(
 					}
 				};
 			}
+			// closeOutputSearch is intentionally omitted: re-registering the layer on
+			// every identity change would churn the stack. The effect below keeps the
+			// handler fresh instead.
 		}, [outputSearchOpen, registerLayer, unregisterLayer]);
 
 		// Update the handler when dependencies change
 		useEffect(() => {
 			if (outputSearchOpen && layerIdRef.current) {
-				updateLayerHandler(layerIdRef.current, () => {
-					setOutputSearchOpen(false);
-					setOutputSearchQuery('');
-					terminalOutputRef.current?.focus();
-				});
+				updateLayerHandler(layerIdRef.current, closeOutputSearch);
 			}
-		}, [outputSearchOpen, updateLayerHandler]);
+		}, [outputSearchOpen, updateLayerHandler, closeOutputSearch]);
 
 		// Search match navigation state (populated by effect below after filteredLogs is defined)
 		const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
@@ -1663,8 +1736,14 @@ export const TerminalOutput = memo(
 		// In AI mode, collapse consecutive non-user entries into single response blocks
 		// This provides a cleaner view where each user message gets one response
 		// Tool and thinking entries are kept separate (not collapsed)
-		const collapsedLogs = useMemo(() => {
+		//
+		// Also returns renderedIdByLogId: because grouped entries render as ONE row
+		// carrying the first entry's id, anything that wants to scroll to a raw log
+		// entry (cross-tab search jumps) has to resolve it to the row that actually
+		// exists in the DOM.
+		const { logs: collapsedLogs, renderedIdByLogId } = useMemo(() => {
 			const result: LogEntry[] = [];
+			const renderedIds = new Map<string, string>();
 			let currentResponseGroup: LogEntry[] = [];
 
 			// Helper to flush accumulated response group
@@ -1674,11 +1753,15 @@ export const TerminalOutput = memo(
 					const combinedText = currentResponseGroup.map((l) => l.text).join('');
 					// The token-source pill keys off `renderStyle === 'text-stream'`
 					// (maestro-p TUI capture). A response group can lead with a
-					// non-stream entry — e.g. the "Adaptive Mode: switched ..." system
-					// banner — and basing the combined entry only on `[0]` would inherit
+					// non-stream entry - e.g. the "Adaptive Mode: switched ..." system
+					// banner - and basing the combined entry only on `[0]` would inherit
 					// that entry's missing renderStyle and mislabel an interactive turn
 					// as "API". Preserve text-stream if ANY grouped entry carries it.
 					const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
+					const groupId = currentResponseGroup[0].id;
+					for (const grouped of currentResponseGroup) {
+						renderedIds.set(grouped.id, groupId);
+					}
 					result.push({
 						...currentResponseGroup[0],
 						text: combinedText,
@@ -1693,18 +1776,30 @@ export const TerminalOutput = memo(
 				if (log.source === 'user') {
 					// Flush any accumulated response group before user message
 					flushResponseGroup();
+					renderedIds.set(log.id, log.id);
 					result.push(log);
 				} else if (
 					log.source === 'tool' ||
 					log.source === 'thinking' ||
 					log.source === 'error' ||
-					log.retryOutageId
+					isSelfContainedCard(log)
 				) {
-					// Flush response group before tool/thinking/error and Agent
-					// Resilience outage markers, then add them standalone. The outage
-					// marker must not merge into a text group - it renders as a live
-					// status card.
+					// Flush response group before tool/thinking/error entries and any
+					// self-contained card, then add them standalone.
+					//
+					// A card MUST NOT be merged into a text group. Grouping concatenates
+					// `text` and renders the result with the FIRST entry's props, so a
+					// card swallowed by a group loses its marker (`shellCommand`,
+					// `retryOutageId`, ...) and its body gets pasted onto the preceding
+					// agent reply as plain markdown - which is how `!ls` output ended up
+					// inside a chat bubble with its ANSI codes showing as literal text.
+					//
+					// This used to name `retryOutageId` alone; every new card kind hit
+					// the same bug until it was added here too. isSelfContainedCard is
+					// the shared rule (see utils/logEntries.ts), so new kinds are
+					// standalone by construction.
 					flushResponseGroup();
+					renderedIds.set(log.id, log.id);
 					result.push(log);
 				} else {
 					// Accumulate non-user entries (AI responses)
@@ -1715,15 +1810,135 @@ export const TerminalOutput = memo(
 			// Flush final response group
 			flushResponseGroup();
 
-			return result;
+			return { logs: result, renderedIdByLogId: renderedIds };
 		}, [activeLogs]);
 
 		// PERF: Debounce search query so the highlight pass doesn't run on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
 
-		// Search no longer filters logs — all logs stay visible. Matches are highlighted and
+		// Search no longer filters logs - all logs stay visible. Matches are highlighted and
 		// navigated inline via CSS Custom Highlight API (see highlight effect below).
 		const filteredLogs = collapsedLogs;
+
+		// ============================================================================
+		// Progressive transcript rendering (issue #1342)
+		// ============================================================================
+		// Mounting every entry of a long transcript in one commit blocked the main
+		// thread for seconds on agent switch (each entry runs the full remark/rehype
+		// pipeline). Render the newest slice first, then backfill older history on
+		// idle ticks. Prepending entries above the viewport would shift what the user
+		// is reading, so snapshot distance-from-bottom before each expansion and
+		// restore it in a layout effect, before the browser paints.
+		const backfillBottomDistanceRef = useRef<number | null>(null);
+
+		const handleBeforeBackfill = useCallback(() => {
+			const container = scrollContainerRef.current;
+			if (container) {
+				backfillBottomDistanceRef.current = container.scrollHeight - container.scrollTop;
+			}
+		}, []);
+
+		const { startIndex: logStartIndex, revealTo: revealLogIndex } = useProgressiveRenderWindow(
+			filteredLogs.length,
+			`${session.id}-${activeTabId ?? ''}`,
+			{ onBeforeExpand: handleBeforeBackfill }
+		);
+
+		useLayoutEffect(() => {
+			const container = scrollContainerRef.current;
+			const bottomDistance = backfillBottomDistanceRef.current;
+			backfillBottomDistanceRef.current = null;
+			if (!container || bottomDistance === null) return;
+			// Anchor to the bottom rather than the top: content was prepended, so the
+			// distance from the bottom is what stayed constant for the user.
+			container.scrollTop = container.scrollHeight - bottomDistance;
+		}, [logStartIndex]);
+
+		const visibleLogs = useMemo(
+			() => (logStartIndex > 0 ? filteredLogs.slice(logStartIndex) : filteredLogs),
+			[filteredLogs, logStartIndex]
+		);
+
+		// ============================================================================
+		// Cross-tab search jump (Opt+Cmd+F -> pick a hit in another tab)
+		// ============================================================================
+		// The modal switches the active tab, seeds this tab's Find bar with the same
+		// query, and leaves a pendingLogJump behind. Here we scroll that entry into
+		// view, flash it, and hand the match index to the Find bar so next/prev
+		// continues from the hit the user actually clicked.
+		const pendingLogJump = useUIStore((s) => s.pendingLogJump);
+		const pendingJumpMatchIdRef = useRef<string | null>(null);
+		const cancelJumpRef = useRef<(() => void) | null>(null);
+		// Only cancel an in-flight jump when the transcript goes away; clearing the
+		// store entry inside the effect must NOT tear down the flash we just started.
+		useEffect(() => () => cancelJumpRef.current?.(), []);
+
+		useEffect(() => {
+			if (!pendingLogJump) return;
+			if (pendingLogJump.sessionId !== session.id) return;
+			// Wait for the tab switch to land before hunting for the entry.
+			if (!activeTab || pendingLogJump.tabId !== activeTab.id) return;
+
+			const { logId } = pendingLogJump;
+			const renderedId = renderedIdByLogId.get(logId) ?? logId;
+			pendingJumpMatchIdRef.current = renderedId;
+			cancelJumpRef.current?.();
+
+			// The target may still be behind the progressive render window (#1342).
+			// jumpToElement gives up after ~30 frames, which idle backfill can outlast
+			// on a long transcript, so pull the entry in now instead of racing it.
+			const targetIndex = filteredLogs.findIndex((l) => l.id === renderedId);
+			if (targetIndex >= 0) revealLogIndex(targetIndex);
+
+			jumpInFlightRef.current = true;
+			const releaseJump = () => {
+				jumpInFlightRef.current = false;
+			};
+			const cancel = jumpToElement(
+				() =>
+					Array.from(
+						scrollContainerRef.current?.querySelectorAll<HTMLElement>('[data-log-id]') ?? []
+					).find((el) => el.getAttribute('data-log-id') === renderedId),
+				{
+					color: theme.colors.accent,
+					// Instant rather than smooth: an animated scroll is still running
+					// when the next batch of rows renders, and whoever scrolls during
+					// that window wins. Landing in one frame removes the race.
+					behavior: 'auto',
+					stabilizeFrames: JUMP_STABILIZE_FRAMES,
+					onFound: () => {
+						// Stay on the hit instead of following the tail. Scrolling back
+						// to the bottom resumes auto-scroll (see handleScrollInner), so
+						// this is the same state a manual scroll-up would leave behind.
+						// Flip the refs first so the observer's live shouldAutoScroll()
+						// sees the pause this frame, before the re-render (same trick the
+						// scroll-restore effect below uses).
+						autoScrollPausedRef.current = true;
+						isAtBottomRef.current = false;
+						setAutoScrollPaused(true);
+						setIsAtBottom(false);
+						setTimeout(releaseJump, JUMP_SETTLE_MS);
+					},
+					onTimeout: releaseJump,
+				}
+			);
+			// Releasing on cancel matters: a jump abandoned before it landed would
+			// otherwise leave auto-scroll suppressed for the rest of the session.
+			cancelJumpRef.current = () => {
+				releaseJump();
+				cancel();
+			};
+			// Consume it: the jump is a one-shot request, not persistent state.
+			useUIStore.getState().clearPendingLogJump(logId);
+		}, [
+			pendingLogJump,
+			session.id,
+			activeTab,
+			renderedIdByLogId,
+			theme.colors.accent,
+			filteredLogs,
+			revealLogIndex,
+		]);
 
 		// ============================================================================
 		// Search match navigation (CSS Custom Highlight API)
@@ -1750,13 +1965,16 @@ export const TerminalOutput = memo(
 				setTotalMatches(0);
 				setCurrentMatchIndex(0);
 				setRegexError(null);
+				// A closed/cleared search cancels any queued jump-to-match request so
+				// it can't hijack the user's next search in this tab.
+				pendingJumpMatchIdRef.current = null;
 				return;
 			}
 
 			const container = scrollContainerRef.current;
 			if (!container) return;
 
-			// Build the match regex — plain text is escaped; regex mode is validated.
+			// Build the match regex - plain text is escaped; regex mode is validated.
 			let regex: RegExp;
 			try {
 				if (outputSearchRegex) {
@@ -1802,6 +2020,27 @@ export const TerminalOutput = memo(
 			setTotalMatches(ranges.length);
 			setCurrentMatchIndex((prev) => (ranges.length === 0 ? 0 : Math.min(prev, ranges.length - 1)));
 
+			// A cross-tab search jump pre-fills this query, so the "current" match
+			// should be the entry the user clicked, not the first hit in the tab.
+			const jumpTargetId = pendingJumpMatchIdRef.current;
+			if (jumpTargetId) {
+				const idx = ranges.findIndex((r) => {
+					const el = (
+						r.startContainer.nodeType === Node.ELEMENT_NODE
+							? (r.startContainer as Element)
+							: r.startContainer.parentElement
+					)?.closest('[data-log-id]');
+					return el?.getAttribute('data-log-id') === jumpTargetId;
+				});
+				// Keep the request pending if this pass ran against a stale debounced
+				// query (no range inside the target row yet) - the next pass, with the
+				// jump's own query, will land it.
+				if (idx >= 0) {
+					pendingJumpMatchIdRef.current = null;
+					setCurrentMatchIndex(idx);
+				}
+			}
+
 			if (!('highlights' in CSS) || ranges.length === 0) {
 				clearHighlights();
 				return;
@@ -1814,7 +2053,10 @@ export const TerminalOutput = memo(
 			// require re-walking the DOM.
 
 			return clearHighlights;
-		}, [debouncedSearchQuery, outputSearchRegex, outputSearchOpen, filteredLogs]);
+			// logStartIndex is a dependency because idle backfill adds entries to the
+			// DOM after the initial pass; without it, matches in freshly hydrated
+			// history would never be highlighted or counted.
+		}, [debouncedSearchQuery, outputSearchRegex, outputSearchOpen, filteredLogs, logStartIndex]);
 
 		// Update the "current" highlight and scroll it into view when index changes.
 		useEffect(() => {
@@ -1882,13 +2124,13 @@ export const TerminalOutput = memo(
 				}
 			} else {
 				if (isProgrammaticScrollRef.current) {
-					// This scroll event was triggered by our own scrollTo() call —
+					// This scroll event was triggered by our own scrollTo() call -
 					// consume the guard flag here inside the throttled handler to avoid
 					// the race where queueMicrotask clears the flag before a deferred
 					// throttled invocation fires (throttle delay is 16ms > microtask).
 					isProgrammaticScrollRef.current = false;
 				} else {
-					// Genuine user scroll away from bottom — pause auto-scroll
+					// Genuine user scroll away from bottom - pause auto-scroll
 					setAutoScrollPaused(true);
 				}
 			}
@@ -1979,7 +2221,7 @@ export const TerminalOutput = memo(
 		}, [filteredLogs.length, isAtBottom, activeTabId]);
 
 		// Auto-scroll to bottom when DOM content changes in the scroll container.
-		// Uses MutationObserver to detect ALL content mutations — new nodes (log entries),
+		// Uses MutationObserver to detect ALL content mutations - new nodes (log entries),
 		// text changes (thinking stream growth), and attribute changes (tool status updates).
 		// This replaces the previous filteredLogs.length dependency, which missed in-place
 		// text updates during thinking/tool streaming (GitHub issue #402).
@@ -1987,13 +2229,14 @@ export const TerminalOutput = memo(
 			const container = scrollContainerRef.current;
 			if (!container) return;
 
-			const shouldAutoScroll = () => !autoScrollPausedRef.current || isAtBottomRef.current;
+			const shouldAutoScroll = () =>
+				!jumpInFlightRef.current && (!autoScrollPausedRef.current || isAtBottomRef.current);
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
 				requestAnimationFrame(() => {
 					if (scrollContainerRef.current) {
-						// Set guard flag BEFORE scrollTo — the throttled scroll handler
+						// Set guard flag BEFORE scrollTo - the throttled scroll handler
 						// checks this flag and consumes it (clears it) when it fires,
 						// preventing the programmatic scroll from being misinterpreted
 						// as a user scroll-up that should pause auto-scroll.
@@ -2040,6 +2283,10 @@ export const TerminalOutput = memo(
 			if (initialScrollTop !== undefined && initialScrollTop > 0 && !hasRestoredScrollRef.current) {
 				hasRestoredScrollRef.current = true;
 				requestAnimationFrame(() => {
+					// A cross-tab search jump asked for a specific message in this tab.
+					// That beats the position the tab was left at - restoring here would
+					// scroll straight back off the hit.
+					if (jumpInFlightRef.current) return;
 					if (scrollContainerRef.current) {
 						const { scrollHeight, clientHeight } = scrollContainerRef.current;
 						// Clamp to max scrollable area
@@ -2130,7 +2377,7 @@ export const TerminalOutput = memo(
 						return;
 					}
 					// Shift+Arrow: jump message-by-message. Skip when the user is typing in
-					// an input/textarea inside the region — those handle their own
+					// an input/textarea inside the region - those handle their own
 					// arrow-key cursor movement.
 					if (
 						(e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
@@ -2203,7 +2450,7 @@ export const TerminalOutput = memo(
 					}
 				}}
 			>
-				{/* CSS for Custom Highlight API — paints matches without mutating DOM */}
+				{/* CSS for Custom Highlight API - paints matches without mutating DOM */}
 				<style>{`
 					::highlight(terminal-search-all) {
 						background-color: ${theme.colors.warning};
@@ -2252,15 +2499,12 @@ export const TerminalOutput = memo(
 									spellCheck={outputSearchRegex ? false : undefined}
 									autoFocus
 								/>
-								<div
-									className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-xs font-bold pointer-events-none"
-									style={{
-										backgroundColor: theme.colors.bgMain,
-										color: theme.colors.textDim,
-									}}
-								>
-									ESC
-								</div>
+								<EscCloseButton
+									theme={theme}
+									variant="adornment"
+									label="Close search (Esc)"
+									onClose={closeOutputSearch}
+								/>
 							</div>
 							<button
 								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
@@ -2336,65 +2580,70 @@ export const TerminalOutput = memo(
 					onScroll={handleScroll}
 				>
 					{/* Log entries */}
-					{filteredLogs.map((log, index) => (
-						<LogItemComponent
-							key={log.id}
-							log={log}
-							index={index}
-							isTerminal={isTerminal}
-							isAIMode={isAIMode}
-							theme={theme}
-							fontFamily={fontFamily}
-							maxOutputLines={maxOutputLines}
-							lastUserCommand={
-								isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
-							}
-							isExpanded={expandedLogs.has(log.id)}
-							onToggleExpanded={toggleExpanded}
-							localFilterQuery={localFilters.get(log.id) || ''}
-							filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
-							activeLocalFilter={activeLocalFilter}
-							onToggleLocalFilter={toggleLocalFilter}
-							onSetLocalFilterQuery={setLocalFilterQuery}
-							onSetFilterMode={setFilterModeForLog}
-							onClearLocalFilter={clearLocalFilter}
-							deleteConfirmLogId={deleteConfirmLogId}
-							onDeleteLog={onDeleteLog}
-							onSetDeleteConfirmLogId={setDeleteConfirmLogId}
-							scrollContainerRef={scrollContainerRef}
-							setLightboxImage={setLightboxImage}
-							copyToClipboard={copyToClipboard}
-							ansiConverter={ansiConverter}
-							markdownEditMode={markdownEditMode}
-							onToggleMarkdownEditMode={toggleMarkdownEditMode}
-							onReplayMessage={onReplayMessage}
-							onForkConversation={onForkConversation}
-							sessionId={session.id}
-							onSessionRecover={onSessionRecover}
-							isRecoveringSession={isRecoveringSession}
-							sessionRecoveryError={sessionRecoveryError}
-							fileTree={fileTree}
-							cwd={cwd}
-							projectRoot={projectRoot}
-							onFileClick={onFileClick}
-							sshRemoteId={
-								session.sessionSshRemoteConfig?.enabled
-									? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
-									: undefined
-							}
-							onShowErrorDetails={onShowErrorDetails}
-							onSaveToFile={handleSaveToFile}
-							ghCliAvailable={ghCliAvailable}
-							onPublishGist={onPublishMessageGist}
-							publishedGistUrl={publishedGists[log.id]?.gistUrl}
-							bionifyReadingMode={globalBionifyReadingMode}
-							bionifyIntensity={globalBionifyIntensity}
-							bionifyAlgorithm={globalBionifyAlgorithm}
-							userMessageAlignment={userMessageAlignment}
-							isClaudeCode={session.toolType === 'claude-code'}
-							isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
-						/>
-					))}
+					{visibleLogs.map((log, visibleIndex) => {
+						// Absolute index into filteredLogs - sibling lookups (echo stripping)
+						// and jump-to-message targeting must not see the window offset.
+						const index = logStartIndex + visibleIndex;
+						return (
+							<LogItemComponent
+								key={log.id}
+								log={log}
+								index={index}
+								isTerminal={isTerminal}
+								isAIMode={isAIMode}
+								theme={theme}
+								fontFamily={fontFamily}
+								maxOutputLines={maxOutputLines}
+								lastUserCommand={
+									isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
+								}
+								isExpanded={expandedLogs.has(log.id)}
+								onToggleExpanded={toggleExpanded}
+								localFilterQuery={localFilters.get(log.id) || ''}
+								filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
+								activeLocalFilter={activeLocalFilter}
+								onToggleLocalFilter={toggleLocalFilter}
+								onSetLocalFilterQuery={setLocalFilterQuery}
+								onSetFilterMode={setFilterModeForLog}
+								onClearLocalFilter={clearLocalFilter}
+								deleteConfirmLogId={deleteConfirmLogId}
+								onDeleteLog={onDeleteLog}
+								onSetDeleteConfirmLogId={setDeleteConfirmLogId}
+								scrollContainerRef={scrollContainerRef}
+								setLightboxImage={setLightboxImage}
+								copyToClipboard={copyToClipboard}
+								ansiConverter={ansiConverter}
+								markdownEditMode={markdownEditMode}
+								onToggleMarkdownEditMode={toggleMarkdownEditMode}
+								onReplayMessage={onReplayMessage}
+								onForkConversation={onForkConversation}
+								sessionId={session.id}
+								onSessionRecover={onSessionRecover}
+								isRecoveringSession={isRecoveringSession}
+								sessionRecoveryError={sessionRecoveryError}
+								fileTree={fileTree}
+								cwd={cwd}
+								projectRoot={projectRoot}
+								onFileClick={onFileClick}
+								sshRemoteId={
+									session.sessionSshRemoteConfig?.enabled
+										? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
+										: undefined
+								}
+								onShowErrorDetails={onShowErrorDetails}
+								onSaveToFile={handleSaveToFile}
+								ghCliAvailable={ghCliAvailable}
+								onPublishGist={onPublishMessageGist}
+								publishedGistUrl={publishedGists[log.id]?.gistUrl}
+								bionifyReadingMode={globalBionifyReadingMode}
+								bionifyIntensity={globalBionifyIntensity}
+								bionifyAlgorithm={globalBionifyAlgorithm}
+								userMessageAlignment={userMessageAlignment}
+								isClaudeCode={session.toolType === 'claude-code'}
+								isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+							/>
+						);
+					})}
 
 					{/* Queued items section - filtered to active tab */}
 					{session.executionQueue && session.executionQueue.length > 0 && (

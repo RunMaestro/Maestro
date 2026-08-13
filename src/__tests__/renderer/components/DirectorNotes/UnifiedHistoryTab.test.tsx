@@ -6,6 +6,7 @@ import { UnifiedHistoryTab as RawUnifiedHistoryTab } from '../../../../renderer/
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 
 // Lookback is owned by DirectorNotesModal in real use; tests use this
 // stateful wrapper so we can keep `<UnifiedHistoryTab ... />` ergonomics.
@@ -211,7 +212,7 @@ const mockGetGraphData = vi.fn();
 const mockGetOffsetForTimestamp = vi.fn();
 const mockHistoryUpdate = vi.fn();
 
-/** Default graph response — all-time aggregate, decoupled from the entry list. */
+/** Default graph response - all-time aggregate, decoupled from the entry list. */
 const createGraphDataResponse = () => ({
 	buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
 	bucketCount: 24,
@@ -280,6 +281,14 @@ const createPaginatedResponse = (entries: any[], hasMore = false, total?: number
 });
 
 beforeEach(() => {
+	// UnifiedHistoryTab persists its USER/AUTO/CUE filter selection to
+	// localStorage (see historyFilterPersistence.ts). jsdom here has no working
+	// Storage, and a filter toggled in one test would otherwise leak into every
+	// test that follows, silently filtering out entries and shifting
+	// index-based assertions with no visible cause. Installing a fresh mock per
+	// test provides the API and doubles as the reset.
+	installLocalStorageMock();
+
 	mockDirNotesSettings.defaultLookbackDays = 7;
 	(window as any).maestro = {
 		directorNotes: {
@@ -562,7 +571,7 @@ describe('UnifiedHistoryTab', () => {
 				createPaginatedResponse(createMockEntries().slice(0, 1))
 			);
 
-			// Change lookback to "All Time" (null hours = 0 days) — different from initial 168h
+			// Change lookback to "All Time" (null hours = 0 days) - different from initial 168h
 			await act(async () => {
 				fireEvent.click(screen.getByTestId('lookback-change-null'));
 			});
@@ -610,7 +619,7 @@ describe('UnifiedHistoryTab', () => {
 
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
-			// Graph never sees the entry array — its buckets come from the
+			// Graph never sees the entry array - its buckets come from the
 			// cached server-side aggregate via getGraphData().
 			await waitFor(() => {
 				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('0');

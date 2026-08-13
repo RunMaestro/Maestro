@@ -8,6 +8,7 @@
 import { WebServer } from '../../web-server';
 import { tunnelManager } from '../../tunnel-manager';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
+import { redactAndTruncate } from './sanitize';
 
 export interface WebServerInfo {
 	isRunning: boolean;
@@ -66,7 +67,8 @@ export async function collectWebServer(webServer: WebServer | null): Promise<Web
 		const tunnelStatus = tunnelManager.getStatus();
 		result.tunnel.isRunning = tunnelStatus.isRunning || false;
 		result.tunnel.hasUrl = !!tunnelStatus.url;
-		result.tunnel.error = tunnelStatus.error || undefined;
+		// Tunnel errors quote the tunnel URL and local paths
+		result.tunnel.error = tunnelStatus.error ? redactAndTruncate(tunnelStatus.error) : undefined;
 	} catch {
 		// Tunnel status unavailable
 	}

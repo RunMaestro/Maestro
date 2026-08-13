@@ -1,5 +1,5 @@
 import type React from 'react';
-import type { AgentConfig, Session, ToolType, Theme } from '../../types';
+import type { AgentConfig, Session, ToolType, Theme, FailoverConfig } from '../../types';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -61,7 +61,7 @@ export interface NewInstanceModalProps {
 	theme: Theme;
 	existingSessions: Session[];
 	sourceSession?: Session; // Optional session to duplicate from
-	presetGroupId?: string | null; // Group to place the new agent in (ignored when duplicating — duplicate inherits source's group)
+	presetGroupId?: string | null; // Group to place the new agent in (ignored when duplicating - duplicate inherits source's group)
 }
 
 export interface EditAgentModalProps {
@@ -83,7 +83,8 @@ export interface EditAgentModalProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		failoverConfig?: FailoverConfig
 	) => void;
 	theme: Theme;
 	session: Session | null;
@@ -106,6 +107,8 @@ export interface NudgeMessageFieldProps {
 	labelSuffix?: string;
 	description?: React.ReactNode;
 	placeholder?: string;
+	/** Key the user's dragged textarea height is remembered under. */
+	sizeKey?: string;
 }
 
 export interface RemotePathStatusProps {

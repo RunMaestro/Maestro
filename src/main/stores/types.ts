@@ -53,6 +53,17 @@ export interface MaestroSettings {
 	fontSize: number;
 	fontFamily: string;
 	customFonts: string[];
+	mediaPlaybackRate: number;
+	/**
+	 * Floating player position plus its per-kind widths. Shape is owned by the
+	 * renderer (`PersistedMediaFloat`); the main process only stores it.
+	 */
+	mediaPlayerFloatRect: unknown;
+	/**
+	 * Play queue, loaded item, and remembered positions. Shape is owned by the
+	 * renderer (`PersistedMediaQueue`); the main process only stores it.
+	 */
+	mediaPlayerQueue: unknown;
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
 	// Web interface authentication
@@ -184,7 +195,7 @@ export interface SettingsStoreInterface {
 	get<T>(key: string, defaultValue?: T): T;
 	/** Type-safe set for known settings keys */
 	set<K extends keyof MaestroSettings>(key: K, value: MaestroSettings[K]): void;
-	/** Fallback for dynamic keys — used by the generic settings:set IPC handler
+	/** Fallback for dynamic keys - used by the generic settings:set IPC handler
 	 *  in persistence.ts which accepts arbitrary key/value pairs from the renderer */
 	set(key: string, value: unknown): void;
 }

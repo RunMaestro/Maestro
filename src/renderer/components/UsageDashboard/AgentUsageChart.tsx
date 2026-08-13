@@ -20,6 +20,7 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
+import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
 import { buildNameMap } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
 
@@ -63,7 +64,7 @@ interface AgentUsageChartProps {
 	colorBlindMode?: boolean;
 	/** Current sessions for mapping IDs to names */
 	sessions?: Session[];
-	/** Drill-down click handler — fires with the legend item's session key + display name. */
+	/** Drill-down click handler - fires with the legend item's session key + display name. */
 	onAgentClick?: (key: string, displayName: string) => void;
 	/**
 	 * Active drill-down filter key. When set, the matching line is rendered with
@@ -74,22 +75,12 @@ interface AgentUsageChartProps {
 }
 
 /**
- * Format duration for Y-axis labels (shorter format)
+ * Format duration for Y-axis labels: one unit only, so tick labels stay narrow.
+ * A zero tick is bare "0" - the axis origin needs no unit.
  */
 function formatYAxisDuration(ms: number): string {
 	if (ms === 0) return '0';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor(totalSeconds / 60);
-
-	if (hours > 0) {
-		return `${hours}h`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m`;
-	}
-	return `${totalSeconds}s`;
+	return humanizeDuration(ms, { units: DURATION_LADDER_HOURS, maxUnits: 1 });
 }
 
 /**
@@ -164,7 +155,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 			const agentList = topSessions.map((s) => s.sessionId);
 
 			// Resolve session IDs to user-facing display names via the shared
-			// `buildNameMap` utility — keeps name resolution consistent with the
+			// `buildNameMap` utility - keeps name resolution consistent with the
 			// other dashboard charts. Worktree sessions still get a " (WT)" text
 			// suffix on top of the visual dashed-line indicator so they're
 			// distinguishable in tooltips where the line marker isn't visible.
@@ -296,7 +287,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 		padding,
 	]);
 
-	// Generate line paths for each agent — only draw across the agent's active
+	// Generate line paths for each agent - only draw across the agent's active
 	// range so newly-introduced agents don't get a flat line backfilled from
 	// the chart's start (and removed agents don't extend to the end).
 	const linePaths = useMemo(() => {
@@ -597,7 +588,7 @@ export const AgentUsageChart = memo(function AgentUsageChart({
 					})()}
 			</div>
 
-			{/* Legend — clickable when `onAgentClick` is wired (drill-down filter). */}
+			{/* Legend - clickable when `onAgentClick` is wired (drill-down filter). */}
 			<div
 				className="flex items-center justify-center gap-4 mt-3 pt-3 border-t flex-wrap"
 				style={{ borderColor: theme.colors.border }}

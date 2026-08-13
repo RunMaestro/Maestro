@@ -17,6 +17,22 @@ import { captureMessage } from '../utils/sentry';
 const CODEX_USAGE_ENDPOINT = 'https://chatgpt.com/backend-api/wham/usage';
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+/**
+ * HTTP statuses from the Codex quota endpoint that say nothing about Maestro.
+ *
+ * - 401/403: this CODEX_HOME isn't logged in. Surfaced to the UI as
+ *   `unauthenticated`.
+ * - 408/429/5xx: the upstream is throttling us or is degraded. The sampler runs
+ *   on a timer, so a single ChatGPT outage reports once per tick per install -
+ *   the dominant source of MAESTRO-RR volume.
+ *
+ * Anything else (a 4xx that implies we sent a malformed request) still reports,
+ * because that would be our bug.
+ */
+function isExpectedQuotaStatus(status: number): boolean {
+	return status === 401 || status === 403 || status === 408 || status === 429 || status >= 500;
+}
+
 export interface SampleCodexUsageOptions {
 	codexHome: string;
 	timeoutMs?: number;
@@ -116,11 +132,11 @@ export async function sampleCodexUsage(opts: SampleCodexUsageOptions): Promise<C
 
 	if (!response.ok) {
 		const status = response.status;
-		// 401/403 just mean the CODEX_HOME isn't logged in - an expected,
-		// recoverable state we surface to the UI as `unauthenticated`, not a
-		// failure worth a Sentry breadcrumb. Only report genuinely unexpected
-		// HTTP errors. Fixes MAESTRO-RR.
-		if (status !== 401 && status !== 403) {
+		// Un-logged-in CODEX_HOMEs and a throttled or degraded upstream are
+		// expected, recoverable states we surface through the returned snapshot,
+		// not failures worth a Sentry breadcrumb. Only report genuinely
+		// unexpected HTTP errors. See isExpectedQuotaStatus (MAESTRO-RR).
+		if (!isExpectedQuotaStatus(status)) {
 			void reportCodexUsageFailure(codexHomeKey, `http ${status}`);
 		}
 		return {

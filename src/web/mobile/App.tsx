@@ -664,7 +664,7 @@ function MobileHeader({
 					)}
 				</div>
 
-				{/* Settings — shown directly on wide screens */}
+				{/* Settings - shown directly on wide screens */}
 				{isWide && (
 					<button
 						onClick={onSettingsTap}
@@ -731,7 +731,7 @@ function MobileHeader({
 					</button>
 				)}
 
-				{/* Overflow menu (⋯) — always present for less-frequent actions */}
+				{/* Overflow menu (⋯) - always present for less-frequent actions */}
 				<div ref={overflowRef} style={{ position: 'relative' }}>
 					<button
 						onClick={() => setShowOverflow((prev) => !prev)}
@@ -769,7 +769,7 @@ function MobileHeader({
 								overflow: 'hidden',
 							}}
 						>
-							{/* Settings — only in overflow on narrow screens */}
+							{/* Settings - only in overflow on narrow screens */}
 							{!isWide && (
 								<OverflowMenuItem
 									icon={
@@ -792,7 +792,7 @@ function MobileHeader({
 									colors={colors}
 								/>
 							)}
-							{/* Group Chat — only in overflow on narrow screens */}
+							{/* Group Chat - only in overflow on narrow screens */}
 							{!isWide && (
 								<OverflowMenuItem
 									icon={
@@ -1128,11 +1128,11 @@ export default function MobileApp() {
 	const [showRightDrawer, setShowRightDrawer] = useState(false);
 	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
 	// Tracks the document currently focused inside `AutoRunInline` so the launch
-	// sheet can pre-fill it as the active selection — mirrors desktop's
+	// sheet can pre-fill it as the active selection - mirrors desktop's
 	// `BatchRunnerModal` `currentDocument` semantics. Bubbled up from
 	// `AutoRunInline` via `onSelectedDocumentChange`.
 	const [autoRunSelectedDoc, setAutoRunSelectedDoc] = useState<string | null>(null);
-	// Server-driven folder picker — mobile/web parity for desktop's
+	// Server-driven folder picker - mobile/web parity for desktop's
 	// `dialog.selectFolder` flow that repoints a session at a different
 	// `.maestro/` folder. The picker uses `get_file_tree` to navigate and sends
 	// `set_auto_run_folder` on confirm; the server bridges to the renderer's
@@ -1144,7 +1144,7 @@ export default function MobileApp() {
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
 	const [responseIndex, setResponseIndex] = useState(0);
-	// Measured height of the sticky CommandInputBar — drives dynamic bottom padding
+	// Measured height of the sticky CommandInputBar - drives dynamic bottom padding
 	// so the last chat line stays visible when the bar grows with multi-line drafts.
 	const [inputBarHeight, setInputBarHeight] = useState(80);
 
@@ -1198,7 +1198,7 @@ export default function MobileApp() {
 	// Git diff viewer state
 	const [gitDiffFile, setGitDiffFile] = useState<string | null>(null);
 
-	// History panel state (persisted — used by right drawer's history tab)
+	// History panel state (persisted - used by right drawer's history tab)
 	const [historyFilter] = useState<'all' | 'AUTO' | 'USER'>(savedState.historyFilter);
 	const [historySearchQuery] = useState(savedState.historySearchQuery);
 	const [historySearchOpen] = useState(savedState.historySearchOpen);
@@ -1436,9 +1436,9 @@ export default function MobileApp() {
 			onTerminalReady: (sessionId) => {
 				const inputMode = (activeSession?.inputMode as InputMode | undefined) || 'ai';
 				if (sessionId !== activeSessionId || inputMode !== 'terminal') return;
-				// PTY just spawned — refit xterm and re-send current dimensions
+				// PTY just spawned - refit xterm and re-send current dimensions
 				// so the PTY matches the actual terminal viewport.
-				// Use wsSendRef (not send) to avoid circular dependency — send
+				// Use wsSendRef (not send) to avoid circular dependency - send
 				// comes from useWebSocket which is still being initialized here.
 				const size = webTerminalRef.current?.fitAndGetSize();
 				if (size && size.cols > 0 && size.rows > 0) {
@@ -1633,7 +1633,7 @@ export default function MobileApp() {
 
 			// Read the pre-launch state from the current sessions snapshot before
 			// scheduling the optimistic update. Don't do this inside the
-			// `setSessions` updater — React 18 Concurrent Mode is allowed to call
+			// `setSessions` updater - React 18 Concurrent Mode is allowed to call
 			// updater functions multiple times for speculative/interrupted renders,
 			// so a side effect there is non-deterministic.
 			const previousState = sessions.find((s) => s.id === sessionId)?.state;
@@ -1671,7 +1671,7 @@ export default function MobileApp() {
 					);
 				}
 			} catch (error) {
-				// Unexpected throw (non-transport error) — revert the optimistic
+				// Unexpected throw (non-transport error) - revert the optimistic
 				// indicator and re-throw so the rejection surfaces to global
 				// handlers (browser unhandled-rejection / Sentry if/when the web
 				// bundle ever wires it up) instead of being silently swallowed.
@@ -1753,19 +1753,19 @@ export default function MobileApp() {
 	const isActuallyConnected =
 		!isOffline && (connectionState === 'connected' || connectionState === 'authenticated');
 
-	// Settings hook — uses WebSocket for fetching/updating settings
+	// Settings hook - uses WebSocket for fetching/updating settings
 	const settingsHook = useSettings(sendRequest, isActuallyConnected);
 
-	// Agent management hook — uses WebSocket for agent/group CRUD
+	// Agent management hook - uses WebSocket for agent/group CRUD
 	const agentManagement = useAgentManagement(sendRequest, isActuallyConnected);
 
-	// Group chat hook — uses WebSocket for group chat management
+	// Group chat hook - uses WebSocket for group chat management
 	const groupChat = useGroupChat(sendRequest, send, isActuallyConnected);
 
-	// Git status hook — uses WebSocket for git status/diff
+	// Git status hook - uses WebSocket for git status/diff
 	const gitStatus = useGitStatus(sendRequest, isActuallyConnected, activeSessionId || undefined);
 
-	// Cue automation hook — uses WebSocket for Cue subscription/activity management
+	// Cue automation hook - uses WebSocket for Cue subscription/activity management
 	const cue = useCue(sendRequest, send, isActuallyConnected);
 
 	// Keep settings changed ref in sync
@@ -1987,7 +1987,7 @@ export default function MobileApp() {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 	}, []);
 
-	// Handle agent created — select the new agent
+	// Handle agent created - select the new agent
 	const handleAgentCreated = useCallback(
 		(sessionId: string) => {
 			handleSelectSession(sessionId);
@@ -2083,7 +2083,7 @@ export default function MobileApp() {
 		setShowRightDrawer(false);
 	}, []);
 
-	// Handle opening History panel — redirects to right drawer History tab
+	// Handle opening History panel - redirects to right drawer History tab
 	// Handle opening Tab Search modal
 	const handleOpenTabSearch = useCallback(() => {
 		setShowTabSearch(true);
@@ -2102,7 +2102,7 @@ export default function MobileApp() {
 
 			// Find the active session to get input mode
 			const currentMode = currentInputMode;
-			// Images are AI-mode only — terminal commands have no image concept.
+			// Images are AI-mode only - terminal commands have no image concept.
 			const effectiveImages =
 				currentMode === 'ai' && images && images.length > 0 ? images : undefined;
 
@@ -2291,7 +2291,7 @@ export default function MobileApp() {
 		setShowCommandPalette(false);
 	}, []);
 
-	// Configurable keyboard shortcuts — defaults merged with user overrides from
+	// Configurable keyboard shortcuts - defaults merged with user overrides from
 	// desktop settings. Web-supported action IDs are curated in webShortcuts.ts.
 	const resolvedShortcuts = useMemo(
 		() => resolveWebShortcuts(settingsHook.settings?.shortcuts),
@@ -2380,10 +2380,10 @@ export default function MobileApp() {
 				const { edge } = edgeSwipeRef.current;
 				edgeSwipeRef.current = null;
 				if (edge === 'right' && deltaX < 0) {
-					// Swipe left from right edge — open right drawer
+					// Swipe left from right edge - open right drawer
 					handleOpenRightDrawer('files');
 				} else if (edge === 'left' && deltaX > 0) {
-					// Swipe right from left edge — open left panel
+					// Swipe right from left edge - open left panel
 					setShowLeftPanel(true);
 				}
 			}
@@ -3372,7 +3372,7 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Auto Run folder picker — desktop parity for `dialog.selectFolder`.
+			{/* Auto Run folder picker - desktop parity for `dialog.selectFolder`.
 				Browses the server filesystem via `get_file_tree` and persists the
 				chosen folder onto the session via `set_auto_run_folder`. */}
 			{activeSessionId && showFolderPicker && activeSession?.cwd && (
@@ -3412,7 +3412,7 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Group Chat panel — full-screen overlay */}
+			{/* Group Chat panel - full-screen overlay */}
 			{activeGroupChatId && groupChat.activeChat && (
 				<GroupChatPanel
 					chatState={groupChat.activeChat}
@@ -3422,7 +3422,7 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Cue automation panel — full-screen overlay */}
+			{/* Cue automation panel - full-screen overlay */}
 			{showCuePanel && (
 				<CuePanel
 					subscriptions={cue.subscriptions}
@@ -3434,7 +3434,7 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Usage Dashboard panel — full-screen overlay */}
+			{/* Usage Dashboard panel - full-screen overlay */}
 			{showUsageDashboard && (
 				<UsageDashboardPanel
 					onClose={() => setShowUsageDashboard(false)}
@@ -3442,7 +3442,7 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Achievements panel — full-screen overlay */}
+			{/* Achievements panel - full-screen overlay */}
 			{showAchievements && (
 				<AchievementsPanel onClose={() => setShowAchievements(false)} sendRequest={sendRequest} />
 			)}
@@ -3466,7 +3466,7 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Group Chat list — small bottom sheet listing active chats */}
+			{/* Group Chat list - small bottom sheet listing active chats */}
 			{showGroupChatList && (
 				<GroupChatListSheet
 					chats={groupChat.chats}
@@ -3489,7 +3489,7 @@ export default function MobileApp() {
 					overflow: 'hidden',
 				}}
 			>
-				{/* Left panel — agent list, toggleable */}
+				{/* Left panel - agent list, toggleable */}
 				{showLeftPanel && (
 					<LeftPanel
 						sessions={sessions}
@@ -3522,7 +3522,7 @@ export default function MobileApp() {
 						padding: currentInputMode === 'terminal' ? '0' : '12px',
 						// CommandInputBar already includes `max(12px, env(safe-area-inset-bottom))`
 						// in its own padding and reports its border-box height, so reserve just
-						// that height — adding the inset again would leave a visible gap on
+						// that height - adding the inset again would leave a visible gap on
 						// notched devices.
 						paddingBottom: currentInputMode === 'terminal' ? '0' : `${inputBarHeight}px`,
 						textAlign: currentInputMode === 'terminal' ? 'left' : 'center',
@@ -3556,7 +3556,7 @@ export default function MobileApp() {
 					</div>
 				</main>
 
-				{/* Right panel — inline, toggleable */}
+				{/* Right panel - inline, toggleable */}
 				{showRightDrawer && activeSessionId && (
 					<RightPanel
 						sessionId={activeSessionId}
@@ -3584,7 +3584,7 @@ export default function MobileApp() {
 				)}
 			</div>
 
-			{/* Sticky bottom command input bar — hidden in terminal mode (xterm.js handles all input).
+			{/* Sticky bottom command input bar - hidden in terminal mode (xterm.js handles all input).
 				Also hidden when the right panel is open in full-screen overlay mode (narrow viewport),
 				so the panel's own bottom action bar isn't covered by the chat input. On wider viewports
 				the right panel is inline and shrinks the main column, so the input stays visible. */}

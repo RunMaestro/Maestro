@@ -1,6 +1,6 @@
 /**
  * @file tui-driver.test.ts
- * @description Tests for src/maestro-p/tui-driver.ts — the slim PTY driver
+ * @description Tests for src/maestro-p/tui-driver.ts - the slim PTY driver
  * that surfaces 'ready' / 'limit-hit' / 'line' / 'exit' events to maestro-p's
  * run and status flows.
  *
@@ -209,7 +209,7 @@ describe('TuiDriver', () => {
 			const driver = await makeDriver();
 			const readyHandler = vi.fn();
 			driver.on('ready', readyHandler);
-			// Real captures arrive with \r prepended by the PTY before the indicator —
+			// Real captures arrive with \r prepended by the PTY before the indicator -
 			// a ^-anchored regex would miss this. The unanchored regex catches it.
 			feed('\r❯ \n');
 			expect(readyHandler).toHaveBeenCalledTimes(1);
@@ -231,7 +231,7 @@ describe('TuiDriver', () => {
 			const driver = await makeDriver();
 			const trustHandler = vi.fn();
 			driver.on('trust-accepted', trustHandler);
-			// Claude TUI v2.1.143+ trust prompt — the ANSI-stripped form
+			// Claude TUI v2.1.143+ trust prompt - the ANSI-stripped form
 			// collapses cursor-positioning whitespace, so the highlighted
 			// option appears as `❯1.Yes,Itrustthisfolder` with no space.
 			feed(
@@ -270,7 +270,7 @@ describe('TuiDriver', () => {
 			expect(trustHandler).not.toHaveBeenCalled();
 		});
 
-		it('does NOT block the ready handshake — both can fire from one feed', async () => {
+		it('does NOT block the ready handshake - both can fire from one feed', async () => {
 			const driver = await makeDriver();
 			const trustHandler = vi.fn();
 			const readyHandler = vi.fn();
@@ -364,7 +364,7 @@ describe('TuiDriver', () => {
 			// Third (and final) tap at +4500ms.
 			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS);
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(READY_MAX_TAPS);
-			// Budget exhausted — no further taps even though ready never matched.
+			// Budget exhausted - no further taps even though ready never matched.
 			await vi.advanceTimersByTimeAsync(READY_TAP_INTERVAL_MS * 5);
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(READY_MAX_TAPS);
 		});
@@ -383,7 +383,7 @@ describe('TuiDriver', () => {
 
 		it('counts the trust-regex fast-path Enter toward the tap budget', async () => {
 			await makeDriver();
-			// Trust prompt arrives immediately — fast-path writes Enter (tap 1/3).
+			// Trust prompt arrives immediately - fast-path writes Enter (tap 1/3).
 			feed('❯1.Yes,Itrustthisfolder\n');
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
 			// Interval still has 2 taps remaining if ready still doesn't match.
@@ -547,7 +547,7 @@ describe('TuiDriver', () => {
 			feed('❯ \n');
 			mockPtyProcess.write.mockClear();
 			driver.send('hello world');
-			// First write is the text body alone — no trailing \r, because
+			// First write is the text body alone - no trailing \r, because
 			// claude's TUI swallows a same-chunk \r as a literal newline in its
 			// multi-line input editor and the prompt sits unsubmitted.
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
@@ -592,7 +592,7 @@ describe('TuiDriver', () => {
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
 			triggerExit(1);
 			vi.advanceTimersByTime(SEND_ENTER_DELAY_MS);
-			// No second write — we'd otherwise be writing to a dead PTY.
+			// No second write - we'd otherwise be writing to a dead PTY.
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(1);
 		});
 	});

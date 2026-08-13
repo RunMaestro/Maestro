@@ -1,6 +1,8 @@
 import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
+import { getTabDisplayName } from '../../../utils/tabHelpers';
+import { useModalStore } from '../../../stores/modalStore';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -141,7 +143,8 @@ export function buildTabCommands({
 	toggleInputMode,
 }: BuildTabCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [];
-	const { isTerminalMode, hasActiveTab, activeUnifiedIndex, unifiedTabCount } = activeTabInfo;
+	const { isTerminalMode, hasActiveTab, activeUnifiedIndex, unifiedTabCount, activeTabType } =
+		activeTabInfo;
 
 	if (activeSession) {
 		commands.push({
@@ -248,7 +251,10 @@ export function buildTabCommands({
 			id: 'closeAllTabs',
 			label: 'Close All Tabs',
 			shortcut: tabShortcuts?.closeAllTabs,
-			subtext: `Close all ${activeSession.aiTabs.length} tabs (creates new tab)`,
+			subtext:
+				activeSession.aiTabs.length === 1
+					? 'Close 1 tab'
+					: `Close all ${activeSession.aiTabs.length} tabs`,
 			action: () => {
 				onCloseAllTabs();
 				setQuickActionOpen(false);
@@ -309,6 +315,36 @@ export function buildTabCommands({
 			},
 		});
 	}
+
+	// Snooze the active AI tab. AI-only: file/terminal/browser tabs have no
+	// conversation to come back to.
+	if (activeSession && activeTabType === 'ai') {
+		const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
+		if (activeTab) {
+			commands.push({
+				id: 'snoozeTab',
+				label: 'Snooze Tab',
+				subtext: 'Hide this tab until later, then get a reminder',
+				action: () => {
+					setQuickActionOpen(false);
+					useModalStore.getState().openModal('snoozeTab', {
+						tabId: activeTab.id,
+						tabLabel: getTabDisplayName(activeTab, activeSession.agentSessionId),
+					});
+				},
+			});
+		}
+	}
+
+	commands.push({
+		id: 'showSnoozedTabs',
+		label: 'See All Snoozed Tabs',
+		subtext: 'Unsnooze, reschedule, or dismiss snoozed tabs',
+		action: () => {
+			setQuickActionOpen(false);
+			useModalStore.getState().openModal('snoozedTabs');
+		},
+	});
 
 	if (hasActiveTab && activeUnifiedIndex > 0 && onMoveTabToFirst) {
 		commands.push({

@@ -27,7 +27,7 @@ import type { Session, Group, Theme } from '../types';
 /**
  * True when a Claude Code agent has not bound to any provider session yet.
  *
- * `Session.agentSessionId` was deprecated by commit 505ce17c6 — Claude Code
+ * `Session.agentSessionId` was deprecated by commit 505ce17c6 - Claude Code
  * stopped writing it to avoid storing throwaway fork IDs that break `--resume`.
  * Per-tab `aiTabs[].agentSessionId` is now the source of truth, so check both:
  * the agent is only "unbound" when no tab has an ID either.
@@ -215,9 +215,16 @@ export const SessionItem = memo(function SessionItem({
 	const startupCommandIndicatorActive =
 		showLeftPanelStartupCommandIndicator && startupCommandTabCount > 0;
 
-	// Parent agents (sessions with worktreeConfig) get an inline chevron toggle.
+	// Parent agents get an inline chevron toggle. Keyed off worktreeConfig OR an
+	// actual child count: several spawn paths (Auto Run worktree dispatch in
+	// worktreeSpawn.ts, quick-create, watcher discovery) attach children via
+	// parentSessionId without ever writing worktreeConfig on the parent. Gating
+	// on worktreeConfig alone left those parents with a permanently expanded,
+	// uncollapsible subtree. SessionList renders children off the same child
+	// count, so this keeps the toggle present whenever a subtree is visible.
 	// Default to expanded when worktreesExpanded is undefined to match useSortedSessions.
-	const isWorktreeParent = variant !== 'worktree' && Boolean(session.worktreeConfig);
+	const isWorktreeParent =
+		variant !== 'worktree' && (Boolean(session.worktreeConfig) || (worktreeChildCount ?? 0) > 0);
 	const worktreesExpanded = session.worktreesExpanded ?? true;
 	const showCollapsedCountBadge =
 		isWorktreeParent && !worktreesExpanded && (worktreeChildCount ?? 0) > 0;
@@ -293,7 +300,7 @@ export const SessionItem = memo(function SessionItem({
 						onBlur={(e) => onFinishRename(e.target.value)}
 						onKeyDown={(e) => {
 							e.stopPropagation();
-							// Commit through onBlur only — calling onFinishRename here AND
+							// Commit through onBlur only - calling onFinishRename here AND
 							// letting blur fire would double-fire the IPC. Forcing blur on
 							// Enter funnels both code paths through the single handler.
 							if (e.key === 'Enter') {

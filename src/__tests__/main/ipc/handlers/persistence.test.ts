@@ -29,6 +29,11 @@ vi.mock('electron', () => ({
 		getPath: vi.fn().mockReturnValue('/mock/user/data'),
 		on: vi.fn(),
 	},
+	// settings:set notifies peer windows so a renderer never gets its own write
+	// echoed back as an external change (see notifyPeerWindows).
+	BrowserWindow: {
+		getAllWindows: vi.fn(() => []),
+	},
 }));
 
 // Mock fs/promises
@@ -287,6 +292,28 @@ describe('persistence IPC handlers', () => {
 				key: 't',
 			});
 			expect(result).toBe(true);
+		});
+
+		it('should notify other windows but never the window that wrote', async () => {
+			const { BrowserWindow } = await import('electron');
+			const makeWindow = (id: number) => ({
+				isDestroyed: () => false,
+				webContents: { id, send: vi.fn(), isDestroyed: () => false },
+			});
+			const writer = makeWindow(1);
+			const peer = makeWindow(2);
+			(BrowserWindow.getAllWindows as unknown as ReturnType<typeof vi.fn>).mockReturnValue([
+				writer,
+				peer,
+			]);
+
+			const handler = handlers.get('settings:set');
+			await handler!({ sender: { id: 1 } } as any, 'fontSize', 16);
+
+			// Echoing the write back to its own window makes that renderer reload
+			// settings asynchronously on top of whatever is being typed.
+			expect(writer.webContents.send).not.toHaveBeenCalled();
+			expect(peer.webContents.send).toHaveBeenCalledWith('settings:externalChange');
 		});
 
 		it('should broadcast theme changes to connected web clients', async () => {
@@ -737,7 +764,7 @@ describe('persistence IPC handlers', () => {
 			it('does not broadcast when cliActivity reference changes but fields match', async () => {
 				mockSessionsStore.get.mockReturnValue([{ ...baseSession, cliActivity: playbookA }]);
 				const handler = handlers.get('sessions:setAll');
-				// New object, same field values — should be treated as unchanged.
+				// New object, same field values - should be treated as unchanged.
 				await handler!({} as any, [{ ...baseSession, cliActivity: { ...playbookA } }]);
 				expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
 			});
@@ -1059,7 +1086,7 @@ describe('persistence IPC handlers', () => {
 			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
 
 			const handler = handlers.get('sessions:setMany');
-			// New object with identical primitives — should be silent.
+			// New object with identical primitives - should be silent.
 			await handler!({} as any, [{ ...baseSession }], []);
 
 			expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();

@@ -1,5 +1,5 @@
 /**
- * DebugApplicationStatsModal — runtime memory / footprint breakdown for every
+ * DebugApplicationStatsModal - runtime memory / footprint breakdown for every
  * loaded agent. Used to verify that session data is loaded opportunistically
  * (cold on launch, warm as the user switches between agents).
  */
@@ -42,7 +42,7 @@ interface SessionFootprint {
 
 type SortKey = 'name' | 'state' | 'tabs' | 'logs' | 'fileTree' | 'data' | 'rss';
 
-// Cheap estimator — summing `.length` of strings roughly approximates the
+// Cheap estimator - summing `.length` of strings roughly approximates the
 // JS engine's byte footprint for text-heavy data without the perf cost of
 // JSON.stringify across every session. Numbers/booleans are ignored.
 function estimateStringBytes(obj: unknown, depth = 0): number {

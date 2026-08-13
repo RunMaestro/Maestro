@@ -10,8 +10,10 @@ import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrd
 import { logger } from '../../../utils/logger';
 import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
+import { getOpenedMediaKind } from '../../../utils/mediaItems';
 import { buildReplacementNavigationHistory, getFileNameParts } from './filePreviewTabHelpers';
-import type { FilePreviewTabHandlersReturn, FileTabOpenParams } from './types';
+import type { FilePreviewTabHandlersReturn, FileTabOpenParams, MediaOpenMode } from './types';
 
 export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 	const handleOpenFileTab = useCallback(
@@ -20,12 +22,46 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			options?: {
 				openInNewTab?: boolean;
 				targetSessionId?: string;
+				mediaMode?: MediaOpenMode;
 			}
 		) => {
 			const openInNewTab = options?.openInNewTab ?? true;
 			const { setSessions } = useSessionStore.getState();
 			const activeSessionId =
 				options?.targetSessionId || useSessionStore.getState().activeSessionId;
+
+			// Media never becomes a tab. Audio and video go straight to the floating
+			// player, which is the only surface they ever appear on: no entry in the
+			// tab bar, no main panel takeover, so a podcast does not cost the user
+			// their workspace. This is the single choke point every open path funnels
+			// through, which is why the diversion belongs here rather than in each
+			// caller. Non-playable media (a remote file, which has no local stream)
+			// falls through to the normal binary preview.
+			const mediaKind = getOpenedMediaKind(file.name, file.content);
+			if (mediaKind) {
+				const session = useSessionStore
+					.getState()
+					.sessions.find((s: Session) => s.id === activeSessionId);
+				if (session) {
+					const request = {
+						path: file.path,
+						name: file.name,
+						kind: mediaKind,
+						sessionId: session.id,
+						sessionName: session.name,
+					};
+					const store = useMediaPlaybackStore.getState();
+					// Queue mode is how a multi-file open stays sane: the first file
+					// plays and the rest line up behind it, instead of ten opens each
+					// stealing the player from the one before.
+					if (options?.mediaMode === 'queue') {
+						store.enqueueMedia([request]);
+					} else {
+						store.openMedia(request);
+					}
+					return;
+				}
+			}
 
 			setSessions((prev: Session[]) =>
 				prev.map((s) => {
@@ -45,6 +81,8 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 											file.pendingScrollToLine !== undefined
 												? file.pendingScrollToLine
 												: tab.pendingScrollToLine,
+										// Re-opening the file already in this tab: leave playback
+										// alone rather than restarting something mid-listen.
 									}
 								: tab
 						);

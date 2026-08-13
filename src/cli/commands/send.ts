@@ -15,7 +15,7 @@ interface SendOptions {
 	tab?: boolean;
 	// Commander auto-negates `--no-system-prompt` into `systemPrompt: false`,
 	// defaulting to true when the flag is omitted. Bots calling
-	// `maestro-cli send` get the Maestro system context by default — parity
+	// `maestro-cli send` get the Maestro system context by default - parity
 	// with desktop spawn sites that all pass `appendSystemPrompt`.
 	systemPrompt?: boolean;
 }
@@ -130,7 +130,7 @@ export async function send(
 		? await prepareMaestroSystemPromptCli(agent)
 		: undefined;
 
-	// Spawn agent — spawnAgent handles --resume vs fresh session internally
+	// Spawn agent - spawnAgent handles --resume vs fresh session internally
 	const result = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
 		readOnlyMode: options.readOnly,
 		customModel: agent.customModel,

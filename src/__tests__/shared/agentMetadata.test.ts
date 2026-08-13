@@ -1,5 +1,5 @@
 /**
- * Tests for shared/agentMetadata.ts — Display names and classification sets
+ * Tests for shared/agentMetadata.ts - Display names and classification sets
  */
 
 import { describe, it, expect } from 'vitest';

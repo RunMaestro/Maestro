@@ -3,9 +3,13 @@ import {
 	useSettingsStore,
 	loadAllSettings,
 	selectIsLeaderboardRegistered,
+	FILE_PREVIEW_TOOLBAR_BUTTON_KEYS,
+	DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
+import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
@@ -152,6 +156,12 @@ describe('settingsStore', () => {
 				setEnabled: vi.fn().mockResolvedValue(undefined),
 			};
 		}
+
+		// Cue stats mock (not in global setup). loadAllSettings calls this for the
+		// one-time cueTimeMs backfill; default to "no retained history".
+		(window.maestro as any).cueStats = {
+			getHistoricalConductorCredit: vi.fn().mockResolvedValue(0),
+		};
 
 		vi.clearAllMocks();
 	});
@@ -1044,6 +1054,49 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().autoRunStats.cumulativeTimeMs).toBe(60000);
 		});
 
+		it('updateAutoRunProgress keeps Auto Run time out of the Cue subtotal', () => {
+			useSettingsStore.setState({
+				autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 50000, cueTimeMs: 5000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().updateAutoRunProgress(10000);
+			expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(5000);
+		});
+
+		it('updateAutoRunProgress accrues Cue credit into both cumulative and Cue time', () => {
+			useSettingsStore.setState({
+				autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 50000, cueTimeMs: 5000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().updateAutoRunProgress(10000, 'cue');
+			const stats = useSettingsStore.getState().autoRunStats;
+			expect(stats.cumulativeTimeMs).toBe(60000);
+			expect(stats.cueTimeMs).toBe(15000);
+		});
+
+		it('updateAutoRunProgress treats legacy stats without cueTimeMs as all Auto Run', () => {
+			const { cueTimeMs: _dropped, ...legacy } = DEFAULT_AUTO_RUN_STATS;
+			useSettingsStore.setState({
+				autoRunStats: { ...legacy, cumulativeTimeMs: 50000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().updateAutoRunProgress(10000, 'cue');
+			expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(10000);
+		});
+
+		it('recordAutoRunComplete preserves the Cue subtotal', () => {
+			useSettingsStore.setState({
+				autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 60000, cueTimeMs: 15000 },
+			});
+			vi.clearAllMocks();
+
+			useSettingsStore.getState().recordAutoRunComplete(30000);
+			expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(15000);
+		});
+
 		it('updateAutoRunProgress detects new badge level', () => {
 			// Just below 15min threshold
 			const justBelow15Min = 15 * 60 * 1000 - 1000;
@@ -1450,6 +1503,127 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
 		});
 
+		it('keeps edits made while a reload is in flight', async () => {
+			// A reload (system resume, or another window's write) takes several IPC
+			// round trips. Anything typed during that window must not be reverted to
+			// the older on-disk snapshot - that loses characters and, because the
+			// textarea is controlled, snaps the caret to the end of the field.
+			useSettingsStore.setState({ settingsLoaded: true, conductorProfile: 'abc' });
+			vi.mocked(window.maestro.settings.getAll).mockImplementation(async () => {
+				useSettingsStore.getState().setConductorProfile('abcdef');
+				return { conductorProfile: 'abc', fontSize: 16 };
+			});
+
+			await loadAllSettings();
+
+			const state = useSettingsStore.getState();
+			expect(state.conductorProfile).toBe('abcdef');
+			// Untouched keys still load normally.
+			expect(state.fontSize).toBe(16);
+		});
+
+		it('applies the disk value on the initial load even for touched keys', async () => {
+			useSettingsStore.setState({ settingsLoaded: false, conductorProfile: '' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				conductorProfile: 'from disk',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().conductorProfile).toBe('from disk');
+		});
+
+		describe('media player geometry', () => {
+			it('restores the position and each kind width', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					mediaPlayerFloatRect: { top: 80, left: 90, widths: { audio: 420, video: 900 } },
+				});
+
+				await loadAllSettings();
+
+				const state = useMediaPlaybackStore.getState();
+				expect(state.floatPosition).toEqual({ top: 80, left: 90 });
+				expect(state.floatWidths).toEqual({ audio: 420, video: 900 });
+			});
+
+			it('keeps the position from the older full-rect shape and drops its width', async () => {
+				// Height is derived from the media now, and that width was saved
+				// without recording which kind it belonged to.
+				useMediaPlaybackStore.setState({ floatPosition: null, floatWidths: {} });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					mediaPlayerFloatRect: { top: 10, left: 20, width: 480, height: 336 },
+				});
+
+				await loadAllSettings();
+
+				const state = useMediaPlaybackStore.getState();
+				expect(state.floatPosition).toEqual({ top: 10, left: 20 });
+				expect(state.floatWidths).toEqual({});
+			});
+		});
+
+		describe('media play queue', () => {
+			const stored = {
+				items: [
+					{
+						path: '/files/podcast.mp3',
+						name: 'podcast.mp3',
+						sessionId: 's1',
+						sessionName: 'Agent One',
+						kind: 'audio',
+					},
+					{ path: '/files/junk', name: 'junk', sessionId: 's1', kind: 'nonsense' },
+				],
+				activeItemId: 's1::/files/podcast.mp3',
+				resumeTimes: { 's1::/files/podcast.mp3': 42, 'gone::x': 9 },
+				durations: { 's1::/files/podcast.mp3': 266, 'gone::x': 30 },
+			};
+
+			it('restores the queue, the loaded item, and its position', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					mediaPlayerQueue: stored,
+				});
+
+				await loadAllSettings();
+
+				const state = useMediaPlaybackStore.getState();
+				// The malformed entry is dropped rather than handed to a media element.
+				expect(state.items.map((i) => i.name)).toEqual(['podcast.mp3']);
+				expect(state.activeItemId).toBe('s1::/files/podcast.mp3');
+				expect(state.resumeTimes).toEqual({ 's1::/files/podcast.mp3': 42 });
+				// Lengths come back too, so the queue list is not a column of `--:--`
+				// until every entry has been played.
+				expect(state.durations).toEqual({ 's1::/files/podcast.mp3': 266 });
+			});
+
+			it('comes back hidden and silent, so nothing plays at launch', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					mediaPlayerQueue: stored,
+				});
+
+				await loadAllSettings();
+
+				const state = useMediaPlaybackStore.getState();
+				expect(state.dismissed).toBe(true);
+				expect(state.playing).toBe(false);
+				expect(state.pendingAutoplay).toBe(false);
+				// History is per-boot by design: a fresh session must not open onto a
+				// log of last week's files.
+				expect(state.history).toEqual([]);
+			});
+
+			it('ignores a stored queue with nothing usable left in it', async () => {
+				useMediaPlaybackStore.setState({ items: [], activeItemId: null });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					mediaPlayerQueue: { items: [], activeItemId: 'gone', resumeTimes: {} },
+				});
+
+				await loadAllSettings();
+
+				expect(useMediaPlaybackStore.getState().activeItemId).toBeNull();
+			});
+		});
+
 		it('uses defaults when settings are empty/undefined', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
 
@@ -1459,6 +1633,93 @@ describe('settingsStore', () => {
 			expect(state.settingsLoaded).toBe(true);
 			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
 			expect(state.fontSize).toBe(14);
+		});
+
+		describe('cue time backfill', () => {
+			const HOUR = 60 * 60 * 1000;
+
+			/** Let the un-awaited backfill promise chain settle. */
+			const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+			it('re-attributes historical Cue credit into cueTimeMs', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					concurrentAutoRunTimeMigrationApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 100 * HOUR },
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockResolvedValue(25 * HOUR);
+
+				await loadAllSettings();
+				await flush();
+
+				const stats = useSettingsStore.getState().autoRunStats;
+				expect(stats.cueTimeMs).toBe(25 * HOUR);
+				// Re-attribution only - the total must not grow.
+				expect(stats.cumulativeTimeMs).toBe(100 * HOUR);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('cueTimeBackfillApplied', true);
+			});
+
+			it('never lets the Cue subtotal exceed the cumulative total', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					concurrentAutoRunTimeMigrationApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 10 * HOUR },
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockResolvedValue(50 * HOUR);
+
+				await loadAllSettings();
+				await flush();
+
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(10 * HOUR);
+			});
+
+			it('keeps live-accrued credit when it already exceeds the historical total', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					autoRunStats: {
+						...DEFAULT_AUTO_RUN_STATS,
+						cumulativeTimeMs: 100 * HOUR,
+						cueTimeMs: 30 * HOUR,
+					},
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockResolvedValue(25 * HOUR);
+
+				await loadAllSettings();
+				await flush();
+
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(30 * HOUR);
+			});
+
+			it('does not run once the backfill flag is set', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					cueTimeBackfillApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 100 * HOUR },
+				});
+
+				await loadAllSettings();
+				await flush();
+
+				expect(
+					(window.maestro as any).cueStats.getHistoricalConductorCredit
+				).not.toHaveBeenCalled();
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(0);
+			});
+
+			it('leaves the flag unset when the Cue database read fails, so it retries', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					concurrentAutoRunTimeMigrationApplied: true,
+					autoRunStats: { ...DEFAULT_AUTO_RUN_STATS, cumulativeTimeMs: 100 * HOUR },
+				});
+				(window.maestro as any).cueStats.getHistoricalConductorCredit.mockRejectedValue(
+					new Error('cue.db unavailable')
+				);
+
+				await loadAllSettings();
+				await flush();
+
+				expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+					'cueTimeBackfillApplied',
+					true
+				);
+				expect(useSettingsStore.getState().autoRunStats.cueTimeMs).toBe(0);
+			});
 		});
 
 		it('loads persisted starredSessionsCollapsed into the settings store', async () => {
@@ -1661,6 +1922,45 @@ describe('settingsStore', () => {
 			expect(
 				vi.mocked(window.maestro.settings.set).mock.calls.some(([k]) => k === 'shortcuts')
 			).toBe(false);
+		});
+
+		it('moves focusActiveTab off Opt+Cmd+F so cross-tab search can claim it', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					focusActiveTab: {
+						id: 'focusActiveTab',
+						label: 'Focus Active Tab',
+						keys: ['Alt', 'Meta', 'f'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.focusActiveTab.keys).toEqual(['Alt', 'Meta', 'ArrowUp']);
+			// The freed combo now belongs to cross-tab message search.
+			expect(shortcuts.searchAllTabs.keys).toEqual(['Alt', 'Meta', 'f']);
+		});
+
+		it('leaves a user-customized focusActiveTab binding alone', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					focusActiveTab: {
+						id: 'focusActiveTab',
+						label: 'Focus Active Tab',
+						keys: ['Meta', 'Shift', 'j'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.focusActiveTab.keys).toEqual([
+				'Meta',
+				'Shift',
+				'j',
+			]);
 		});
 
 		it('merges shortcuts: preserves user keys but updates labels from defaults', async () => {
@@ -2031,6 +2331,43 @@ describe('settingsStore', () => {
 			useSettingsStore.getState().setFontSize(22);
 			expect(useSettingsStore.getState().fontSize).toBe(22);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('fontSize', 22);
+		});
+	});
+
+	// ========================================================================
+	// 15. File Preview Toolbar Metadata Parity
+	// ========================================================================
+
+	// The SETTINGS_METADATA default is a plain object literal, so TypeScript
+	// can't catch a key that drifts out of sync with the canonical key list the
+	// way it does for the Record<FilePreviewToolbarButton, ...> maps. `editImage`
+	// went missing here once already; `maestro-cli settings reset` writes this
+	// literal verbatim, so a gap ships an incomplete map to disk.
+	describe('filePreviewToolbarVisibility metadata parity', () => {
+		it('metadata default covers exactly the canonical toolbar button keys', () => {
+			const metaDefault = SETTINGS_METADATA.filePreviewToolbarVisibility.default as Record<
+				string,
+				boolean
+			>;
+
+			expect(Object.keys(metaDefault).sort()).toEqual([...FILE_PREVIEW_TOOLBAR_BUTTON_KEYS].sort());
+		});
+
+		it('metadata default and the store default agree on every button', () => {
+			const metaDefault = SETTINGS_METADATA.filePreviewToolbarVisibility.default as Record<
+				string,
+				boolean
+			>;
+
+			expect(metaDefault).toEqual(DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY);
+		});
+
+		it('metadata description lists every toolbar button key', () => {
+			const { description } = SETTINGS_METADATA.filePreviewToolbarVisibility;
+
+			for (const key of FILE_PREVIEW_TOOLBAR_BUTTON_KEYS) {
+				expect(description).toContain(key);
+			}
 		});
 	});
 });

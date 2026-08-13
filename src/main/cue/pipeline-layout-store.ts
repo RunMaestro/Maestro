@@ -4,7 +4,7 @@
  * data directory so layout survives across app launches.
  *
  * The IPC handler delegates to this module so that the file location and the
- * read/write semantics live in exactly one place — see Phase 6 cleanup.
+ * read/write semantics live in exactly one place - see Phase 6 cleanup.
  *
  * V1 → V2 migration: older files have a top-level `selectedPipelineId` and
  * `viewport` without the `perProject` map. On load, we fold those values into
@@ -77,7 +77,7 @@ function migrateLegacyLayout(layout: PipelineLayoutState): PipelineLayoutState {
 
 export function savePipelineLayout(layout: PipelineLayoutState): void {
 	const filePath = getLayoutFilePath();
-	// Deduplicate pipelines by `id` before persisting — the renderer's save
+	// Deduplicate pipelines by `id` before persisting - the renderer's save
 	// path writes `state.pipelines` verbatim, so the file naturally drops
 	// entries for deleted pipelines on every save. Dedup here is a defensive
 	// backstop so a buggy caller that sends duplicate IDs (e.g. a race
@@ -113,7 +113,7 @@ export function loadPipelineLayout(): PipelineLayoutState | null {
 		// Defend against valid-JSON-but-wrong-shape files: `null`, arrays,
 		// strings, and primitives all parse successfully but would crash
 		// migrateLegacyLayout's spread/property access. Treat them as if
-		// the file didn't exist — a fresh empty state is safer than a hard
+		// the file didn't exist - a fresh empty state is safer than a hard
 		// error on app launch.
 		if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
 			captureException(new Error('pipeline layout JSON was not a plain object'), {

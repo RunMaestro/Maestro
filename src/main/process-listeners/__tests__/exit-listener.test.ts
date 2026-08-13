@@ -158,7 +158,7 @@ describe('Exit Listener', () => {
 	describe('Group Chat Cross-Domain Containment', () => {
 		// Regression: if a sessionId starts with GROUP_CHAT_PREFIX but does NOT
 		// match either the moderator branch or the participant-parse branch,
-		// the exit handler MUST drop it — never forwarding to process:exit,
+		// the exit handler MUST drop it - never forwarding to process:exit,
 		// never broadcasting to web clients, and never calling
 		// cueEngine.notifyAgentCompleted. Otherwise a mis-shaped group-chat
 		// sessionId leaks into the regular exit channel and fires Cue's

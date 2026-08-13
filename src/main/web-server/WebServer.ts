@@ -244,6 +244,10 @@ export class WebServer {
 			path.join(__dirname, '..', '..', 'web'),
 			// Alternative: relative to __dirname going up to dist
 			path.join(__dirname, '..', 'web'),
+			// Production build may output to web-desktop instead of web
+			path.join(process.cwd(), 'dist', 'web-desktop'),
+			path.join(__dirname, '..', '..', 'web-desktop'),
+			path.join(__dirname, '..', 'web-desktop'),
 		];
 
 		for (const p of possiblePaths) {
@@ -985,7 +989,7 @@ export class WebServer {
 				sourceAgentId?: string
 			) => this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt, sourceAgentId),
 			// Cue pipeline-layout mutations operate directly on the
-			// main-process layout file via the mutation primitives — no
+			// main-process layout file via the mutation primitives - no
 			// renderer round-trip needed. The Pipeline Editor (when open)
 			// keeps its own in-memory state, so CLI edits made while the
 			// editor is open will be overwritten on the editor's next

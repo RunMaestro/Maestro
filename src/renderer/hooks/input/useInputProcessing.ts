@@ -14,6 +14,8 @@ import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
+import { SHELL_COMMAND_PREFIX, stripShellCommandEscape } from '../../utils/shellCommandInput';
+import { runShellCommand } from '../../services/shellCommand';
 import { gitService } from '../../services/git';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
@@ -57,6 +59,13 @@ export interface UseInputProcessingDeps {
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Read the current input value at call time (non-reactive; reads the store) */
 	getInputValue: () => string;
+	/**
+	 * Whether the AI composer is in command mode, read at call time for the same
+	 * reason as getInputValue (no stale closure). Defaults to "not in command
+	 * mode" when omitted, so a caller that doesn't know about the mode can never
+	 * accidentally route a message into a shell.
+	 */
+	isCommandMode?: () => boolean;
 	/** Input value setter */
 	setInputValue: (value: string) => void;
 	/** Staged images for the current message */
@@ -146,6 +155,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		activeSessionId,
 		setSessions,
 		getInputValue,
+		isCommandMode = () => false,
 		setInputValue,
 		stagedImages,
 		setStagedImages,
@@ -190,7 +200,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// This ensures AI output appears before the user's new message
 			flushBatchedUpdates?.();
 
-			const effectiveInputValue = overrideInputValue ?? getInputValue();
+			// `let` because command mode's escape (`\!foo`) is unwrapped in place
+			// below once we know we're in AI mode.
+			let effectiveInputValue = overrideInputValue ?? getInputValue();
 			// When the caller passes explicit images (e.g. Force Send button replaying a
 			// queued item), use those instead of the active tab's stagedImages. This avoids
 			// the stale-closure race when the caller does setStagedImages() right before
@@ -210,6 +222,70 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					logger.info('[ForcedParallel] Early return: no session or empty input');
 				}
 				return;
+			}
+
+			// Handle command mode: the composer is in `!` mode, so the draft is a
+			// shell command rather than a message. Checked before everything else
+			// because the agent is bypassed entirely - no queueing, no busy state,
+			// no spawn. The command runs immediately even while the agent is
+			// working, which is the point: check something without interrupting
+			// the turn.
+			//
+			// Gated on the composer's mode flag, NOT on a leading `!` in the text:
+			// the bang is consumed on entry, so by here the draft is the bare
+			// command (and may legitimately contain bangs of its own).
+			const inCommandMode = activeSession.inputMode === 'ai' && isCommandMode();
+			if (inCommandMode && !isWizardActive) {
+				const shellCommand = effectiveInputValue.trim();
+				if (shellCommand) {
+					const targetTab = getActiveTab(activeSession);
+					if (!targetTab) {
+						logger.error('[processInput] Command mode: no active tab to render output into');
+						return;
+					}
+
+					setInputValue('');
+					setSlashCommandOpen(false);
+					syncAiInputToSession('');
+					if (inputRef.current) inputRef.current.style.height = 'auto';
+
+					// Record it bang-prefixed. aiCommandHistory mixes agent messages and
+					// shell commands, and the `!` is what tells them apart on the way
+					// back out (up-arrow recall, and the command-mode completion source).
+					const historyEntry = `${SHELL_COMMAND_PREFIX}${shellCommand}`;
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === activeSessionId
+								? {
+										...s,
+										aiCommandHistory: [
+											...(s.aiCommandHistory || []).filter((c) => c !== historyEntry),
+											historyEntry,
+										].slice(-50),
+									}
+								: s
+						)
+					);
+
+					runShellCommand({
+						session: activeSession,
+						tabId: targetTab.id,
+						command: shellCommand,
+					}).catch((error) => {
+						logger.error('[processInput] Command mode run failed:', undefined, error);
+					});
+					return;
+				}
+				// Empty command line: nothing to run, and it must not fall through to
+				// the agent - the user is sitting in a shell prompt, not composing.
+				return;
+			}
+
+			if (activeSession.inputMode === 'ai') {
+				// Not command mode, so unwrap the escape: `\!foo` was the user asking
+				// for a literal `!foo` message. AI mode only - in the shell, `\!` is
+				// the shell's own escape and must survive untouched.
+				effectiveInputValue = stripShellCommandEscape(effectiveInputValue);
 			}
 
 			// Handle slash commands
@@ -329,7 +405,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// AutoRun runs in isolation and doesn't set session to busy, so we check it explicitly
 							const isAutoRunActive = getBatchState(activeSession.id).isRunning;
 							// Forced parallel: explicit user override (Cmd+Shift+Enter / Force Send button).
-							// Mirrors the regular message path — only THIS tab's state matters; cross-tab
+							// Mirrors the regular message path - only THIS tab's state matters; cross-tab
 							// busyness and AutoRun are intentionally bypassed.
 							const forceParallel =
 								options?.forceParallel === true &&
@@ -561,7 +637,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
 			// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an explicit user
-			// override — skip the Auto Run gate, but still honor the tab's own readOnlyMode setting.
+			// override - skip the Auto Run gate, but still honor the tab's own readOnlyMode setting.
 			const activeTabForEntry = currentMode === 'ai' ? getActiveTab(activeSession) : null;
 			const currentBatchState = getBatchState(activeSession.id);
 			const isForceParallelEntry =
@@ -786,7 +862,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				namingNotInFlight
 			) {
 				// Build the naming prompt from accumulated user messages plus the current one,
-				// capped at 2000 chars. Mirrors the manual Auto handler — richer context produces
+				// capped at 2000 chars. Mirrors the manual Auto handler - richer context produces
 				// more reliable LLM output that survives extractTabName's filters.
 				const MAX_PROMPT_CHARS = 2000;
 				const priorUserMessages: string[] = [];
@@ -1049,7 +1125,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 						// Check CURRENT session's Auto Run state (not any session's) and respect worktree bypass.
 						// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an
-						// explicit override — skip the Auto Run gate, but still honor the tab's own
+						// explicit override - skip the Auto Run gate, but still honor the tab's own
 						// readOnlyMode setting.
 						const currentSessionBatchState = getBatchState(activeSessionId);
 						const isAutoRunReadOnly =
@@ -1118,7 +1194,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Prepare Maestro system prompt. Always send it; the main-process handler
 						// decides how to deliver it based on agent capabilities:
 						//  - Native --append-system-prompt agents (e.g. Claude Code): re-send every
-						//    invocation — the flag isn't persisted into the session transcript.
+						//    invocation - the flag isn't persisted into the session transcript.
 						//  - Fallback-embed agents (e.g. Copilot-CLI, Codex): embed only on first
 						//    turn; on resume the prompt is already in the transcript.
 						const appendSystemPrompt = await prepareMaestroSystemPrompt({
@@ -1305,6 +1381,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			activeSession,
 			activeSessionId,
 			getInputValue,
+			isCommandMode,
 			stagedImages,
 			customAICommands,
 			setInputValue,
@@ -1321,6 +1398,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			flushBatchedUpdates,
 			onHistoryCommand,
 			onWizardCommand,
+			isWizardActive,
 		]
 	);
 

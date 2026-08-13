@@ -8,7 +8,7 @@
  * maps, so any handler calling `ctx.isShortcut(e, 'somethingOnlyInFixed')`
  * silently never fires.
  *
- * This has bitten us multiple times — most recently with `clearTerminal`
+ * This has bitten us multiple times - most recently with `clearTerminal`
  * (Cmd+Shift+K), which was moved into FIXED_SHORTCUTS by mistake and
  * stopped working entirely.
  *

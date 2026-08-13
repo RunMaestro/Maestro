@@ -20,7 +20,12 @@ import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
-import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
+import {
+	checkBinaryExists,
+	checkCustomPath,
+	findAllBinaryPaths,
+	getExpandedEnv,
+} from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
@@ -42,7 +47,7 @@ function readCopilotConfiguredModel(): string | null {
 			return config.model;
 		}
 	} catch {
-		// Config may not exist or be malformed — fall through to null.
+		// Config may not exist or be malformed - fall through to null.
 	}
 	return null;
 }
@@ -189,17 +194,55 @@ export class AgentDetector {
 				}
 			}
 
+			// Enumerate every detected installation so the renderer can offer a
+			// chooser when multiple valid binaries exist (e.g. nvm-managed codex
+			// alongside a wrapper like codex-multi-auth-codex). Bash is on every
+			// system and not user-selectable, so we skip the extra probe for it.
+			let allPaths: string[] | undefined;
+			if (detection.exists && agentDef.binaryName !== 'bash') {
+				try {
+					const found = await findAllBinaryPaths(agentDef.binaryName);
+					// Always include the active path (custom or detected) so the
+					// chooser reflects what is currently in use, even if it isn't
+					// one of the auto-probed locations. Compared by canonical path, not
+					// raw string, so a symlink alias (or a Windows casing difference)
+					// that resolves to an entry already in `found` doesn't show up as a
+					// second, phantom install.
+					const active = detection.path;
+					let isActiveAlreadyFound = false;
+					if (active) {
+						const normalize = async (p: string): Promise<string> => {
+							const resolved = await fs.promises.realpath(p).catch(() => p);
+							return isWindows() ? resolved.toLowerCase() : resolved;
+						};
+						const activeKey = await normalize(active);
+						const foundKeys = await Promise.all(found.map(normalize));
+						isActiveAlreadyFound = foundKeys.includes(activeKey);
+					}
+					const merged = active && !isActiveAlreadyFound ? [active, ...found] : found;
+					if (merged.length > 1) {
+						allPaths = merged;
+					}
+				} catch (err) {
+					// Non-fatal: chooser is just a nice-to-have, single-path mode still works.
+					logger.debug(`findAllBinaryPaths failed for ${agentDef.binaryName}`, LOG_CONTEXT, {
+						err,
+					});
+				}
+			}
+
 			agents.push({
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
 				customPath: customPath || undefined,
+				allPaths,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
 
 			// Mirror detection into the capability snapshot store so the
 			// renderer has a persisted readiness pill for every agent. Skip
-			// the internal `terminal` agent — it isn't user-facing.
+			// the internal `terminal` agent - it isn't user-facing.
 			//
 			// Each agent is only written when its observed state actually
 			// changed (status differs, or the detected path differs). This
@@ -209,7 +252,7 @@ export class AgentDetector {
 				const existing = capabilitySnapshots.get(agentDef.id);
 				if (detection.exists) {
 					// Preserve any reactive auth_required state set by a recent
-					// spawn failure — detection alone shouldn't clear it. The
+					// spawn failure - detection alone shouldn't clear it. The
 					// next successful spawn (or explicit re-probe) flips it back.
 					if (existing?.status === 'auth_required') {
 						// no-op: leave reactive state intact

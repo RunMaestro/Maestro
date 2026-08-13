@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/hooks/usePrStatusSync — batch PR-status check and
+ * Tests for SymphonyModal/hooks/usePrStatusSync - batch PR-status check and
  * per-contribution sync. Asserts message strings, 5s auto-clear via fake timers,
  * error paths, and id-tracking during in-flight syncs.
  */
@@ -157,7 +157,7 @@ describe('usePrStatusSync', () => {
 			await result.current.checkPRStatuses();
 		});
 		expect(result.current.prStatusMessage).toBe('1 PR merged');
-		// Advance 4s — still visible
+		// Advance 4s - still visible
 		await act(async () => {
 			vi.advanceTimersByTime(4000);
 		});
@@ -170,7 +170,7 @@ describe('usePrStatusSync', () => {
 		await act(async () => {
 			vi.advanceTimersByTime(2000);
 		});
-		// 2s passed since second message — still visible
+		// 2s passed since second message - still visible
 		expect(result.current.prStatusMessage).toBe('1 PR closed');
 		await act(async () => {
 			vi.advanceTimersByTime(3500);

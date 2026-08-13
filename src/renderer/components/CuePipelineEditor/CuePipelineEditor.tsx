@@ -1,5 +1,5 @@
 /**
- * CuePipelineEditor — React Flow-based visual pipeline editor for Maestro Cue.
+ * CuePipelineEditor - React Flow-based visual pipeline editor for Maestro Cue.
  *
  * Thin shell that composes domain hooks:
  *   - usePipelineSelection       → selection state (owns selected*Id + setters)
@@ -76,19 +76,19 @@ function CuePipelineEditorInner({
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
-	// Root element of the editor — used by usePipelineKeyboard to distinguish
+	// Root element of the editor - used by usePipelineKeyboard to distinguish
 	// inputs inside the editor (where typing should pass through) from inputs
 	// behind the modal (where the modal must claim the keystroke).
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	// Local drawer state — consumed by multiple hooks and children
+	// Local drawer state - consumed by multiple hooks and children
 	const [triggerDrawerOpen, setTriggerDrawerOpen] = useState(false);
 	const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
 
 	// Canvas interaction mode: hand (pan on drag) vs pointer (box-select on drag).
 	const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>('hand');
 
-	// Canvas lock — when true, drag / select / connect are disabled (pan + zoom
+	// Canvas lock - when true, drag / select / connect are disabled (pan + zoom
 	// still work). Lifted here so the L keyboard shortcut can toggle it.
 	const [isLocked, setIsLocked] = useState(false);
 
@@ -227,7 +227,7 @@ function CuePipelineEditorInner({
 	// Wrap the manual-trigger handler so the click produces immediate UI feedback:
 	// mark the owning pipeline as optimistically triggered so the trigger
 	// spinner flips synchronously and every edge in the pipeline animates for
-	// a brief window — covers fast shell-only triggers that would otherwise
+	// a brief window - covers fast shell-only triggers that would otherwise
 	// complete before activeRuns polling caught the run. Success/failure toast
 	// comes from useCue.triggerSubscription downstream.
 	const handleTriggerPipeline = useCallback(
@@ -269,8 +269,8 @@ function CuePipelineEditorInner({
 
 	// ─── Viewport (stableYOffsets, initial fit, re-fit on selection change) ─
 	// Must be called BEFORE computedNodes (which depends on stableYOffsets).
-	// usePipelineViewport does not need computedNodes — it only needs the count
-	// for the fitView gating — so the computedNodeCount is known from
+	// usePipelineViewport does not need computedNodes - it only needs the count
+	// for the fitView gating - so the computedNodeCount is known from
 	// pipelineState alone (sum of nodes across visible pipelines).
 	const totalNodeCount = useMemo(() => {
 		if (pipelineState.selectedPipelineId === null) {

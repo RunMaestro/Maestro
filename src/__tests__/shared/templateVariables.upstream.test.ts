@@ -35,7 +35,7 @@ function createTestContext(overrides: Partial<TemplateContext> = {}): TemplateCo
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('substituteTemplateVariables — per-source upstream output', () => {
+describe('substituteTemplateVariables - per-source upstream output', () => {
 	// Pin Date so date/time variables don't interfere with assertions
 	const mockDate = new Date('2026-04-15T10:00:00.000Z');
 

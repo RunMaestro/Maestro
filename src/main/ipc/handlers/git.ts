@@ -2,8 +2,9 @@ import { ipcMain, BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
-import { execFileNoThrow, execFileBufferNoThrow } from '../../utils/execFile';
+import { execFileNoThrow, execFileBufferNoThrow, execFileStreaming } from '../../utils/execFile';
 import { execGit } from '../../utils/remote-git';
+import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { logger } from '../../utils/logger';
 import { getSshRemoteById } from '../../stores';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -26,6 +27,7 @@ import {
 	isWorktreeAlreadyUsedError,
 	parseWorktreePathForBranch,
 } from '../../../shared/gitUtils';
+import type { GitRunCommandResult, GitStreamingOperation } from '../../../shared/gitUtils';
 import {
 	worktreeInfoRemote,
 	worktreeSetupRemote,
@@ -91,6 +93,141 @@ async function findLocalWorktreeForBranch(
 		return existingPath;
 	} catch {
 		return null;
+	}
+}
+
+// Cancel callbacks for in-flight streaming git commands, keyed by runId.
+const streamingGitRuns = new Map<string, () => void>();
+
+/**
+ * Build the argv for a streaming git operation.
+ *
+ * `--progress` is required because git suppresses transfer progress when stdout
+ * isn't a TTY, which is exactly our case - without it the modal would sit blank
+ * until the command finished.
+ */
+function buildStreamingGitArgs(
+	operation: GitStreamingOperation,
+	branch: string | null,
+	setUpstream: boolean
+): string[] {
+	if (operation === 'push') {
+		return setUpstream && branch
+			? ['push', '--progress', '--set-upstream', 'origin', branch]
+			: ['push', '--progress'];
+	}
+	return [operation, '--progress'];
+}
+
+/**
+ * Run a network git operation, forwarding output to the requesting window as it
+ * arrives and resolving once the process exits.
+ */
+async function runStreamingGitCommand(
+	event: Electron.IpcMainInvokeEvent,
+	options: {
+		runId: string;
+		operation: GitStreamingOperation;
+		cwd: string;
+		sshRemoteId?: string;
+		remoteCwd?: string;
+		setUpstream?: boolean;
+	}
+): Promise<GitRunCommandResult> {
+	const { runId, operation, cwd, sshRemoteId, remoteCwd, setUpstream = false } = options;
+
+	const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+	// The user explicitly opted into SSH - running against the local repo instead
+	// would push/pull the wrong tree, so fail loudly.
+	if (sshRemoteId && !sshRemote) {
+		return {
+			success: false,
+			exitCode: 1,
+			cancelled: false,
+			error: `SSH remote not found: ${sshRemoteId}`,
+		};
+	}
+	const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+
+	// `--set-upstream` needs the branch name spelled out.
+	let branch: string | null = null;
+	if (operation === 'push' && setUpstream) {
+		const branchResult = await execGit(
+			['rev-parse', '--abbrev-ref', 'HEAD'],
+			cwd,
+			sshRemote,
+			effectiveRemoteCwd
+		);
+		branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+		if (!branch) {
+			return {
+				success: false,
+				exitCode: 1,
+				cancelled: false,
+				error: 'Could not determine the current branch to set upstream for',
+			};
+		}
+	}
+
+	const gitArgs = buildStreamingGitArgs(operation, branch, setUpstream);
+
+	// Full shell PATH so git hooks (Husky pre-push running npm, etc.) resolve
+	// their tooling, and GIT_TERMINAL_PROMPT=0 so a missing credential fails
+	// fast with a readable error instead of hanging on a prompt nobody can see.
+	let env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+	try {
+		const shellPath = await getShellPath();
+		if (shellPath) env = { ...env, PATH: shellPath };
+	} catch (error) {
+		captureMessage(
+			`git:runCommand falling back to default PATH: ${error instanceof Error ? error.message : String(error)}`,
+			'warning'
+		);
+	}
+
+	let command = 'git';
+	let args = gitArgs;
+	let spawnCwd: string | undefined = cwd;
+	if (sshRemote) {
+		const sshCommand = await buildSshCommand(sshRemote, {
+			command: 'git',
+			args: gitArgs,
+			cwd: effectiveRemoteCwd,
+			env: sshRemote.remoteEnv,
+		});
+		command = sshCommand.command;
+		args = sshCommand.args;
+		// The remote cwd is applied inside the SSH payload; the local process
+		// shouldn't inherit a path that may not exist on this machine.
+		spawnCwd = undefined;
+	}
+
+	const send = (chunk: string, stream: 'stdout' | 'stderr') => {
+		if (event.sender.isDestroyed()) return;
+		event.sender.send('git:commandOutput', { runId, stream, chunk });
+	};
+
+	const handle = execFileStreaming(command, args, {
+		cwd: spawnCwd,
+		env,
+		onChunk: send,
+	});
+	streamingGitRuns.set(runId, handle.cancel);
+
+	try {
+		const result = await handle.result;
+		const cancelled = result.exitCode === 'SIGTERM';
+		return {
+			success: result.exitCode === 0,
+			exitCode: result.exitCode,
+			cancelled,
+			error:
+				result.exitCode === 0 || cancelled
+					? undefined
+					: result.stderr.trim() || `git ${operation} exited with ${result.exitCode}`,
+		};
+	} finally {
+		streamingGitRuns.delete(runId);
 	}
 }
 
@@ -165,7 +302,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 			handlerOpts('init'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// Fail fast if an SSH remote was requested but can't be resolved —
+				// Fail fast if an SSH remote was requested but can't be resolved -
 				// otherwise we'd silently `git init` the wrong (local) directory.
 				if (sshRemoteId && !sshRemote) {
 					return {
@@ -380,6 +517,100 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				});
 
 				return { entries, error: null };
+			}
+		)
+	);
+
+	// --- Streaming remote-sync commands (pull / push / fetch) ---
+	//
+	// These are the only git operations the user watches happen: they hit the
+	// network, can take a while, and their progress output is the point. Instead
+	// of buffering, the child's stdout/stderr are forwarded chunk-by-chunk to the
+	// requesting window on `git:commandOutput` so the Git command modal can
+	// render a live console.
+	ipcMain.handle(
+		'git:runCommand',
+		async (
+			event,
+			options: {
+				runId: string;
+				operation: GitStreamingOperation;
+				cwd: string;
+				sshRemoteId?: string;
+				remoteCwd?: string;
+				/** push only: also set the upstream to origin/<current branch>. */
+				setUpstream?: boolean;
+			}
+		): Promise<GitRunCommandResult> => {
+			const { runId, operation, cwd, sshRemoteId, remoteCwd, setUpstream } = options;
+			try {
+				return await runStreamingGitCommand(event, {
+					runId,
+					operation,
+					cwd,
+					sshRemoteId,
+					remoteCwd,
+					setUpstream,
+				});
+			} catch (error) {
+				logger.error('runCommand error', LOG_CONTEXT, {
+					operation,
+					message: error instanceof Error ? error.message : String(error),
+				});
+				return {
+					success: false,
+					exitCode: 1,
+					cancelled: false,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}
+	);
+
+	// Terminate an in-flight `git:runCommand` (the modal's Cancel button).
+	ipcMain.handle(
+		'git:cancelCommand',
+		withIpcErrorLogging(handlerOpts('cancelCommand'), async (runId: string) => {
+			const cancel = streamingGitRuns.get(runId);
+			if (!cancel) return { success: false };
+			cancel();
+			return { success: true };
+		})
+	);
+
+	// Switch the working tree to another branch. `createTracking` checks out a
+	// remote-only branch (`git checkout -b <name> --track origin/<name>`), which
+	// is what the branch switcher needs for branches that exist only on origin.
+	ipcMain.handle(
+		'git:checkoutBranch',
+		withIpcErrorLogging(
+			handlerOpts('checkoutBranch'),
+			async (
+				cwd: string,
+				branch: string,
+				createTracking?: boolean,
+				sshRemoteId?: string,
+				remoteCwd?: string
+			) => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				// The user opted into SSH; silently checking out the local repo
+				// instead would switch the wrong working tree.
+				if (sshRemoteId && !sshRemote) {
+					return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
+				}
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const args = createTracking
+					? ['checkout', '-b', branch, '--track', `origin/${branch}`]
+					: ['checkout', branch];
+				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
+				if (result.exitCode !== 0) {
+					return {
+						success: false,
+						error: result.stderr?.trim() || result.stdout?.trim() || 'git checkout failed',
+					};
+				}
+				// git checkout reports "Switched to branch 'x'" on stderr.
+				return { success: true, output: (result.stderr || result.stdout).trim() };
 			}
 		)
 	);
@@ -759,7 +990,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				}
 
 				if (createResult.exitCode !== 0) {
-					// Recover from "already used / already checked out" — the branch is
+					// Recover from "already used / already checked out" - the branch is
 					// already registered with another worktree on disk. Resolve that path
 					// from `git worktree list --porcelain` so the caller can open it.
 					const errMsg = createResult.stderr || '';
@@ -1197,7 +1428,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 							const err = new Error(
 								`Failed to read remote directory ${dir}: ${result.error || 'unknown error'}`
 							) as NodeJS.ErrnoException;
-							// Tag as ENOENT so the outer catch's Sentry-quieting branch applies —
+							// Tag as ENOENT so the outer catch's Sentry-quieting branch applies -
 							// remote read failures are typically "path no longer exists / not reachable",
 							// not bugs worth paging on.
 							err.code = 'ENOENT';
@@ -1236,7 +1467,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 						sshRemote
 					);
 					if (toplevelResult.exitCode !== 0) {
-						return null; // Git command failed — treat as invalid
+						return null; // Git command failed - treat as invalid
 					}
 					const toplevel = toplevelResult.stdout.trim();
 					// For local paths, canonicalize via realpath so that symlinked base
@@ -1284,7 +1515,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 							repoRoot = path.dirname(commonDirAbs);
 						}
 					} else {
-						// For non-worktree git repos, the toplevel IS the repo root —
+						// For non-worktree git repos, the toplevel IS the repo root -
 						// reuse the value we already fetched above instead of re-running
 						// `git rev-parse --show-toplevel`.
 						repoRoot = toplevel;
@@ -1302,7 +1533,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				// Walk a directory level: inspect each subdir, then recurse into any
 				// non-git subdirs (up to MAX_DEPTH below the original parentPath).
 				// Failures while reading a nested directory are swallowed by the
-				// inner try/catch — a missing or unreadable group dir shouldn't fail
+				// inner try/catch - a missing or unreadable group dir shouldn't fail
 				// the entire scan. Top-level failure propagates up to the outer
 				// try/catch so scanFailed is surfaced and the renderer skips removal.
 				const scanLevel = async (dir: string, depthRemaining: number): Promise<ScanEntry[]> => {
@@ -1338,7 +1569,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					return { gitSubdirs };
 				} catch (err) {
 					// ENOENT is expected when the configured parent path has been moved
-					// or deleted from disk — surface to logs but don't pollute Sentry.
+					// or deleted from disk - surface to logs but don't pollute Sentry.
 					const code = (err as NodeJS.ErrnoException | undefined)?.code;
 					if (code !== 'ENOENT') {
 						void captureException(err);
@@ -1380,7 +1611,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					};
 				}
 
-				// Stop existing watcher if any — delete from map BEFORE awaiting close
+				// Stop existing watcher if any - delete from map BEFORE awaiting close
 				// to prevent race conditions with concurrent unwatch/watch IPC calls
 				const existingWatcher = worktreeWatchers.get(sessionId);
 				if (existingWatcher) {
@@ -1519,7 +1750,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					// removed and the empty parent is cleaned up. We forward the event
 					// regardless because (a) the dir is gone so we can't run git checks
 					// to validate, and (b) the renderer's onWorktreeRemoved handler
-					// already filters by registered child cwds — an unknown path is a
+					// already filters by registered child cwds - an unknown path is a
 					// no-op, not a session removal. See useWorktreeHandlers.ts.
 					watcher.on('unlinkDir', (dirPath: string) => {
 						if (dirPath === worktreePath) return;
@@ -1552,7 +1783,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					return { success: true };
 				} catch (err) {
 					// ENOENT is expected when the worktree parent path has been moved
-					// or deleted; the renderer surfaces this as "stale" — no need to
+					// or deleted; the renderer surfaces this as "stale" - no need to
 					// page Sentry on user filesystem state.
 					const code = (err as NodeJS.ErrnoException | undefined)?.code;
 					if (code !== 'ENOENT') {

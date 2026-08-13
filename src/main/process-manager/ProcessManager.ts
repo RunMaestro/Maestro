@@ -21,6 +21,7 @@ import { expandTilde } from '../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
+import { killPty } from './utils/commandKill';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -242,7 +243,7 @@ export class ProcessManager extends EventEmitter {
 	 * `shutdown: true` switches PTYs to SIGKILL with no escalation timer or
 	 * onExit listener. This collapses the window in which node-pty's worker
 	 * thread is still posting via napi_threadsafe_function while Electron
-	 * begins tearing down the Node environment — that race aborts inside
+	 * begins tearing down the Node environment - that race aborts inside
 	 * `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock` on macOS
 	 * (Sentry MAESTRO-3B). A SIGTERM grace period serves no purpose during
 	 * shutdown anyway since the user has already confirmed quit.
@@ -271,7 +272,7 @@ export class ProcessManager extends EventEmitter {
 					// reaches EOF, node-pty's worker thread exits, and its TSFN releases
 					// before Electron's environment teardown runs CleanupHandles.
 					try {
-						proc.ptyProcess.kill('SIGKILL');
+						killPty(proc.ptyProcess, 'SIGKILL');
 					} catch {
 						// Process may already be dead
 					}
@@ -281,7 +282,7 @@ export class ProcessManager extends EventEmitter {
 
 					// Use SIGTERM (not the default SIGHUP which shells may survive on macOS)
 					try {
-						ptyProc.kill('SIGTERM');
+						killPty(ptyProc, 'SIGTERM');
 					} catch {
 						// Process may already be dead
 					}
@@ -289,14 +290,14 @@ export class ProcessManager extends EventEmitter {
 					// Escalate to SIGKILL if the process doesn't exit promptly.
 					const escalationTimer = setTimeout(() => {
 						try {
-							ptyProc.kill('SIGKILL');
+							killPty(ptyProc, 'SIGKILL');
 							logger.warn(
 								'[ProcessManager] PTY did not exit after SIGTERM, escalated to SIGKILL',
 								'ProcessManager',
 								{ sessionId, pid }
 							);
 						} catch {
-							// Process already exited — expected after normal SIGTERM
+							// Process already exited - expected after normal SIGTERM
 						}
 					}, PTY_KILL_ESCALATION_MS);
 
@@ -467,5 +468,13 @@ export class ProcessManager extends EventEmitter {
 			return this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars);
 		}
 		return this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
+	}
+
+	/**
+	 * Terminate an in-flight `runCommand()` for a sessionId (local or SSH).
+	 * Returns false when nothing is running under that id.
+	 */
+	cancelCommand(sessionId: string): boolean {
+		return this.localCommandRunner.cancel(sessionId) || this.sshCommandRunner.cancel(sessionId);
 	}
 }

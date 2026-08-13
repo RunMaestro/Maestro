@@ -840,7 +840,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			// Cmd+J opens a new terminal tab — safe in wizard tabs since it doesn't
+			// Cmd+J opens a new terminal tab - safe in wizard tabs since it doesn't
 			// touch the wizard tab's input/state.
 			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
 		});
@@ -1079,7 +1079,7 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Should NOT close directly — should show confirmation modal
+				// Should NOT close directly - should show confirmation modal
 				expect(mockPerformTabClose).not.toHaveBeenCalled();
 				expect(useModalStore.getState().isOpen('confirm')).toBe(true);
 				const modal = useModalStore.getState().modals.get('confirm');
@@ -1713,7 +1713,7 @@ describe('useMainKeyboardHandler', () => {
 						filePreviewTabs: [
 							{ id: 'file-tab-1', path: '/test/file.ts', name: 'file', extension: '.ts' },
 						],
-						activeFileTabId: 'file-tab-1', // File tab is active — inputMode stays 'ai'
+						activeFileTabId: 'file-tab-1', // File tab is active - inputMode stays 'ai'
 						unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
 						inputMode: 'ai',
 					},
@@ -1761,7 +1761,7 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
-		// Unified tab shortcuts in terminal mode — verifies that tab navigation and
+		// Unified tab shortcuts in terminal mode - verifies that tab navigation and
 		// management shortcuts work identically whether AI, file, or terminal tabs are active.
 		// The keyboard handler uses a single unified block for all tab types; these tests
 		// confirm terminal mode is NOT excluded. Prior regressions:
@@ -3092,7 +3092,7 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(focusBrowserAddressBar).toHaveBeenCalledTimes(1);
 			expect(openBrowserFind).not.toHaveBeenCalled();
-			// Must NOT re-dispatch — that's what made the older implementation race
+			// Must NOT re-dispatch - that's what made the older implementation race
 			// with the overlay guard.
 			expect(dispatched.find((e) => e.key === 'l' && e.metaKey)).toBeUndefined();
 		});
@@ -3176,7 +3176,7 @@ describe('useMainKeyboardHandler', () => {
 			});
 			expect(browserBack).toHaveBeenCalledTimes(1);
 
-			// Now focus on an HTMLInputElement and re-fire — must NOT navigate
+			// Now focus on an HTMLInputElement and re-fire - must NOT navigate
 			// (preserves macOS line-navigation inside text inputs)
 			const input = document.createElement('input');
 			document.body.appendChild(input);
@@ -3501,6 +3501,96 @@ describe('useMainKeyboardHandler', () => {
 			expect(openModalSpy).not.toHaveBeenCalledWith('editGroupChat', expect.anything());
 
 			openModalSpy.mockRestore();
+		});
+	});
+
+	describe('searchAllTabs (cross-tab message search)', () => {
+		/**
+		 * The handler must resolve the agent from the store, NOT from
+		 * `ctx.activeSession`. The multi-window work drops `activeSession` from the
+		 * keyboard context, and a branch reading it there went silently dead: the
+		 * guard was always falsy while preventDefault had already run, so the
+		 * shortcut ate the keystroke with no visible effect. These tests pin the
+		 * store-resolved behavior by omitting `activeSession` from the context.
+		 */
+		const dispatchOptCmdF = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'ƒ', // macOS rewrites Alt+F
+						code: 'KeyF',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		it('opens cross-tab search using the store-resolved agent', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: 't1', aiTabs: [{ id: 't1' }] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				// Deliberately omitted: activeSession. The branch must not need it.
+				activeSession: undefined,
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			dispatchOptCmdF();
+			expect(handleOpenCrossTabSearch).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not fire in a group chat', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: 't1', aiTabs: [{ id: 't1' }] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeGroupChatId: 'gc1',
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			dispatchOptCmdF();
+			expect(handleOpenCrossTabSearch).not.toHaveBeenCalled();
+		});
+
+		it('leaves the keystroke unconsumed when the agent has no AI tabs', () => {
+			const handleOpenCrossTabSearch = vi.fn();
+			useSessionStore.setState({
+				sessions: [{ id: 's1', activeTabId: null, aiTabs: [] }],
+				activeSessionId: 's1',
+			} as any);
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'searchAllTabs',
+				handleOpenCrossTabSearch,
+			});
+
+			const evt = new KeyboardEvent('keydown', {
+				key: 'ƒ',
+				code: 'KeyF',
+				altKey: true,
+				metaKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			act(() => {
+				window.dispatchEvent(evt);
+			});
+
+			expect(handleOpenCrossTabSearch).not.toHaveBeenCalled();
+			// Must not silently swallow the key when it cannot act.
+			expect(evt.defaultPrevented).toBe(false);
 		});
 	});
 });

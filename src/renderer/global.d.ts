@@ -214,7 +214,7 @@ interface MaestroAPI {
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
 		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
-		 * debounced flushes — avoids cloning + serializing the entire sessions
+		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
 		setMany: (updates: any[], removeIds?: string[]) => Promise<boolean>;
@@ -260,6 +260,8 @@ interface MaestroAPI {
 				syncHistory?: boolean;
 			};
 		}) => Promise<{ exitCode: number }>;
+		/** Terminate an in-flight `runCommand`. False when nothing is running under that id. */
+		cancelCommand: (sessionId: string) => Promise<boolean>;
 		getActiveProcesses: () => Promise<
 			Array<{
 				sessionId: string;
@@ -280,6 +282,16 @@ interface MaestroAPI {
 			}>
 		>;
 		isTerminalBusy: (sessionId: string) => Promise<boolean>;
+		/**
+		 * Provider Failover: pin an agent to a backup endpoint's env vars (plus its
+		 * model, when it declares one), or pass `env: null` to return to primary.
+		 * Main layers this over `sessionCustomEnvVars` on every subsequent spawn.
+		 */
+		setFailoverOverlay: (
+			sessionId: string,
+			env: Record<string, string> | null,
+			model?: string
+		) => Promise<void>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
 		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
@@ -677,7 +689,7 @@ interface MaestroAPI {
 				currentDocumentIndex?: number;
 				totalTasksAcrossAllDocs?: number;
 				completedTasksAcrossAllDocs?: number;
-				// Error pause fields — surfaced to web/mobile so they can show recovery UI
+				// Error pause fields - surfaced to web/mobile so they can show recovery UI
 				errorPaused?: boolean;
 				errorMessage?: string;
 				errorType?: string;
@@ -790,6 +802,32 @@ interface MaestroAPI {
 			}>;
 			error: string | null;
 		}>;
+		/**
+		 * Run a network git operation (pull/push/fetch) and stream its output.
+		 * Subscribe via `onCommandOutput` before calling.
+		 */
+		runCommand: (options: {
+			runId: string;
+			operation: import('../shared/gitUtils').GitStreamingOperation;
+			cwd: string;
+			sshRemoteId?: string;
+			remoteCwd?: string;
+			setUpstream?: boolean;
+		}) => Promise<import('../shared/gitUtils').GitRunCommandResult>;
+		/** Terminate an in-flight `runCommand`. */
+		cancelCommand: (runId: string) => Promise<{ success: boolean }>;
+		/** Subscribe to streamed `runCommand` output. Returns an unsubscribe. */
+		onCommandOutput: (
+			callback: (data: import('../shared/gitUtils').GitCommandOutputChunk) => void
+		) => () => void;
+		/** Check out a branch (pass createTracking for an origin-only branch). */
+		checkoutBranch: (
+			cwd: string,
+			branch: string,
+			createTracking?: boolean,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ success: boolean; output?: string; error?: string }>;
 		commitCount: (
 			cwd: string,
 			sshRemoteId?: string
@@ -1084,7 +1122,7 @@ interface MaestroAPI {
 			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 
-		// Capability snapshots — persisted per-agent readiness + version info.
+		// Capability snapshots - persisted per-agent readiness + version info.
 		getSnapshot: (
 			agentId: string,
 			sshRemoteId?: string
@@ -1331,7 +1369,13 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			sessionName?: string
+			sessionName?: string,
+			reason?: 'starred' | 'snoozed'
+		) => Promise<void>;
+		releaseSnoozedTranscript: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string
 		) => Promise<void>;
 	};
 	dialog: {
@@ -1476,7 +1520,7 @@ interface MaestroAPI {
 				shift: boolean;
 			}) => void
 		) => () => void;
-		/** @see ParsedDeepLink in src/shared/types.ts — keep in sync */
+		/** @see ParsedDeepLink in src/shared/types.ts - keep in sync */
 		onDeepLink: (
 			callback: (deepLink: {
 				action: 'focus' | 'session' | 'group';
@@ -2934,12 +2978,15 @@ interface MaestroAPI {
 		// Clear initialization result (after user has acknowledged the notification)
 		clearInitializationResult: () => Promise<boolean>;
 	};
-	// Cue Stats API (Phase 03 — Cue Dashboard aggregation query)
+	// Cue Stats API (Phase 03 - Cue Dashboard aggregation query)
 	// Throws 'CueStatsDisabled' when either encoreFeatures.usageStats or
 	// encoreFeatures.maestroCue is off; consumers should catch and render
 	// the "feature off" state.
 	cueStats: {
 		getAggregation: (range: CueStatsTimeRange) => Promise<CueStatsAggregation>;
+		// Conductor time (ms) the retained Cue run history would have credited.
+		// Ungated, unlike getAggregation; resolves 0 when there is no history.
+		getHistoricalConductorCredit: () => Promise<number>;
 	};
 	// Document Graph API (file watching for graph visualization)
 	documentGraph: {
@@ -3328,7 +3375,7 @@ interface MaestroAPI {
 	directorNotes: {
 		getUnifiedHistory: (options: {
 			lookbackDays: number;
-			filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+			filter?: HistoryEntryType | HistoryEntryType[] | null;
 			limit?: number;
 			offset?: number;
 			graphBucketCount?: number;
@@ -3361,15 +3408,16 @@ interface MaestroAPI {
 				autoCount: number;
 				userCount: number;
 				cueCount: number;
+				agentEntryCount: number;
 				totalCount: number;
 			};
-			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
+			graphBuckets?: Array<{ auto: number; user: number; cue: number; agent: number }>;
 		}>;
 		getGraphData: (
 			bucketCount: number,
 			lookbackHours: number | null
 		) => Promise<{
-			buckets: Array<{ auto: number; user: number; cue: number }>;
+			buckets: Array<{ auto: number; user: number; cue: number; agent: number }>;
 			bucketCount: number;
 			earliestTimestamp: number;
 			latestTimestamp: number;
@@ -3377,6 +3425,7 @@ interface MaestroAPI {
 			autoCount: number;
 			userCount: number;
 			cueCount: number;
+			agentCount: number;
 			cached: boolean;
 			stats: {
 				agentCount: number;
@@ -3384,6 +3433,7 @@ interface MaestroAPI {
 				autoCount: number;
 				userCount: number;
 				cueCount: number;
+				agentEntryCount: number;
 				totalCount: number;
 			};
 		}>;
@@ -3391,9 +3441,49 @@ interface MaestroAPI {
 			timestamp: number,
 			options?: {
 				lookbackDays?: number;
-				filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+				filter?: HistoryEntryType | HistoryEntryType[] | null;
 			}
 		) => Promise<number>;
+		/**
+		 * Deterministic Rich Mode stats computed in the main process over
+		 * history entries (never inferred by the AI synopsis).
+		 */
+		getRichOverviewStats: (options: { lookbackDays: number; bucketCount?: number }) => Promise<{
+			totalEntries: number;
+			agentCount: number;
+			sessionCount: number;
+			autoCount: number;
+			userCount: number;
+			cueCount: number;
+			agentEntryCount: number;
+			successCount: number;
+			failureCount: number;
+			successRate: number;
+			totalElapsedMs: number;
+			avgElapsedMs: number;
+			timelineBuckets: Array<{
+				startTime: number;
+				auto: number;
+				user: number;
+				cue: number;
+				agent: number;
+			}>;
+			perAgent: Array<{
+				sessionId: string;
+				agentName: string;
+				entryCount: number;
+				successCount: number;
+				failureCount: number;
+				/**
+				 * True when retention capped this count rather than the lookback
+				 * window, so the real total is larger and unknown. Optional: a
+				 * cached payload predating the field reads as "not truncated".
+				 */
+				truncated?: boolean;
+			}>;
+			lookbackDays: number;
+			generatedAt: number;
+		}>;
 		generateSynopsis: (options: {
 			lookbackDays: number;
 			provider: string;
@@ -3410,6 +3500,12 @@ interface MaestroAPI {
 				durationMs: number;
 			};
 			error?: string;
+			/** Parsed structured narrative, from a clean parse or a salvage. */
+			narrative?: import('../shared/directorNotesNarrative').DirectorNotesNarrative;
+			/** Set when the raw synopsis could not be parsed into a structured narrative. */
+			narrativeError?: string;
+			/** Set when `narrative` was salvaged; explains what had to be recovered. */
+			narrativeRecovery?: string;
 		}>;
 		/** Subscribe to synopsis generation progress updates. Returns cleanup function. */
 		onSynopsisProgress: (

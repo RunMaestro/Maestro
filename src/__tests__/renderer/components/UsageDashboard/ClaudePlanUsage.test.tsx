@@ -50,7 +50,7 @@ function seedSnapshots(snapshots: Record<string, any>) {
 
 function seedSessions(configDirs: string[]) {
 	// Build minimal claude-code session records that carry the requested
-	// CLAUDE_CONFIG_DIR values via customEnvVars — that's all the dashboard
+	// CLAUDE_CONFIG_DIR values via customEnvVars - that's all the dashboard
 	// needs to enumerate them as configured accounts.
 	const sessions = configDirs.map((dir, i) => ({
 		id: `sess-${i}`,
@@ -72,7 +72,7 @@ describe('ClaudePlanUsage — empty state', () => {
 
 describe('ClaudePlanUsage — configured account without snapshot', () => {
 	it('renders a "hit Refresh" CTA for a session-configured account that has no snapshot yet', () => {
-		// Session declares CLAUDE_CONFIG_DIR but the snapshot store is empty —
+		// Session declares CLAUDE_CONFIG_DIR but the snapshot store is empty -
 		// the tab list should still surface the account, and the per-tab body
 		// should guide the user to hit Refresh instead of showing nothing.
 		seedSessions(['/Users/me/.claude-pending']);
@@ -102,7 +102,7 @@ describe('ClaudePlanUsage — configured account without snapshot', () => {
 		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-tab-pending')).toBeInTheDocument();
 
-		// Switch to the pending tab — CTA visible, no bars.
+		// Switch to the pending tab - CTA visible, no bars.
 		fireEvent.click(screen.getByTestId('claude-plan-tab-pending'));
 		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
@@ -260,7 +260,7 @@ describe('ClaudePlanUsage — unauthenticated row', () => {
 		expect(screen.getByTestId('claude-plan-row-0din-unauthenticated')).toBeInTheDocument();
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 
-		// Switch to the authenticated tab — CTA disappears, three bars appear.
+		// Switch to the authenticated tab - CTA disappears, three bars appear.
 		fireEvent.click(screen.getByTestId('claude-plan-tab-default'));
 		expect(screen.queryByTestId('claude-plan-row-0din-unauthenticated')).toBeNull();
 		expect(screen.getAllByRole('progressbar')).toHaveLength(3);

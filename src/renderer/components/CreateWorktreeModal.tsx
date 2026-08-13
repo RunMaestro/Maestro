@@ -70,7 +70,7 @@ export function CreateWorktreeModal({
 	}, [isOpen]);
 
 	// Fetch branches when the modal opens so the user can pick a base.
-	// Sort current branch first, then main/master, then alphabetical — same
+	// Sort current branch first, then main/master, then alphabetical - same
 	// ordering as the Auto Run worktree picker so the two flows feel uniform.
 	useEffect(() => {
 		if (!isOpen) return;
@@ -263,7 +263,7 @@ export function CreateWorktreeModal({
 						</select>
 						{branchLoadError && (
 							<p className="text-xs mt-1" style={{ color: theme.colors.error }}>
-								Could not load branches — new branch will be created from current HEAD.
+								Could not load branches - new branch will be created from current HEAD.
 							</p>
 						)}
 					</div>

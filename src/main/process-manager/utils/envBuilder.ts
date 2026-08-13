@@ -76,11 +76,11 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 		// (~/.local/bin, ~/.claude/local, ~/.opencode/bin, Homebrew, npm-global, etc.)
 		// are available even when the user's shell doesn't source an rc file that
 		// augments PATH. bash falls through to .bashrc for login+interactive on
-		// Debian, but zsh only sources .zprofile/.zshrc if they exist — users
+		// Debian, but zsh only sources .zprofile/.zshrc if they exist - users
 		// without those would otherwise see `command not found` for tools like
 		// `claude` and `codex` that live in ~/.local/bin.
 		// Use buildSpawnPath() so the user's cached login-shell PATH is also
-		// included — covers custom node/python installs outside the standard
+		// included - covers custom node/python installs outside the standard
 		// version-manager paths we hardcode in buildExpandedPath().
 		env = {
 			...process.env,
@@ -128,12 +128,12 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
  * @see buildChildProcessEnv() for where these are applied
  */
 const STRIPPED_ENV_VARS = [
-	// Electron internals — can cause Electron-based CLIs (e.g. Claude Code) to
+	// Electron internals - can cause Electron-based CLIs (e.g. Claude Code) to
 	// misidentify their execution context
 	'ELECTRON_RUN_AS_NODE',
 	'ELECTRON_NO_ASAR',
 	'ELECTRON_EXTRA_LAUNCH_ARGS',
-	// VSCode / Claude Code extension markers — when inherited, agents may use
+	// VSCode / Claude Code extension markers - when inherited, agents may use
 	// IDE-specific credentials or API paths instead of their own CLI auth
 	'CLAUDECODE',
 	'CLAUDE_CODE_ENTRYPOINT',
@@ -230,7 +230,7 @@ const STRIPPED_ENV_VARS = [
  * spawned process, in the same precedence order as the build* helpers below
  * (global → session-level, with session overriding global). The MAESTRO_SESSION_RESUMED
  * marker is included when applicable. Inherited system env vars are deliberately
- * excluded — this is the set the user can act on (Settings → Shell Configuration
+ * excluded - this is the set the user can act on (Settings → Shell Configuration
  * and per-agent / per-session overrides), surfaced in the Process Details modal.
  *
  * Applies `~/` path expansion the same way the build helpers do.
@@ -264,7 +264,8 @@ export function buildChildProcessEnv(
 	customEnvVars?: Record<string, string>,
 	isResuming?: boolean,
 	globalShellEnvVars?: Record<string, string>,
-	extraPathDirs?: string[]
+	extraPathDirs?: string[],
+	unsetEnvKeys?: string[]
 ): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 
@@ -298,6 +299,17 @@ export function buildChildProcessEnv(
 	if (customEnvVars && Object.keys(customEnvVars).length > 0) {
 		for (const [key, value] of Object.entries(customEnvVars)) {
 			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+		}
+	}
+
+	// Removal runs LAST, after every layer above has had its say, because a merge
+	// cannot express "this must not be present". Provider Failover uses it to make
+	// sure a backup endpoint never receives the primary provider's credential -
+	// which can arrive from the agent's own vars, the global shell settings, or
+	// the inherited `process.env` of whatever shell launched Maestro.
+	if (unsetEnvKeys && unsetEnvKeys.length > 0) {
+		for (const key of unsetEnvKeys) {
+			delete env[key];
 		}
 	}
 

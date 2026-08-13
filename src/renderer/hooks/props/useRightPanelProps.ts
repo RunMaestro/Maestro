@@ -18,13 +18,14 @@ import type {
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
+import type { FileClickOptions } from '../ui/useAppHandlers';
 
 /**
  * Dependencies for computing RightPanel props.
- * Only handlers and externally-computed values remain — stores are read directly inside the component.
+ * Only handlers and externally-computed values remain - stores are read directly inside the component.
  */
 export interface UseRightPanelPropsDeps {
-	// Theme (computed from settingsStore by App.tsx — not a raw store value)
+	// Theme (computed from settingsStore by App.tsx - not a raw store value)
 	theme: Theme;
 
 	// Refs
@@ -45,7 +46,7 @@ export interface UseRightPanelPropsDeps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,
@@ -107,7 +108,7 @@ export interface UseRightPanelPropsDeps {
 	// Document Graph handlers
 	handleFocusFileInGraph: (relativePath: string) => void;
 
-	// Browser tab handler — used by file-tree "Open in Maestro Browser"
+	// Browser tab handler - used by file-tree "Open in Maestro Browser"
 	handleOpenBrowserTabAt: (url: string, options?: { title?: string }) => void;
 }
 
