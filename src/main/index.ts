@@ -7,6 +7,7 @@ import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
+import { clearAllFailoverOverlays } from './process-manager/failover-overlay';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { getAgentDefinition } from './agents/definitions';
@@ -507,8 +508,14 @@ function createWindow() {
 	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
 	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
 	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
+	//
+	// Also drop all Provider Failover overlays here. They live only in main-process
+	// memory; the renderer's own failoverStore resets on reload, but without this,
+	// main keeps routing spawns to whatever backup endpoint was pinned before the
+	// crash, with nothing in the reloaded UI to show it.
 	mainWindow.webContents.on('render-process-gone', () => {
 		processManager?.killAll();
+		clearAllFailoverOverlays();
 	});
 }
 
