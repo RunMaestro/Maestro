@@ -953,3 +953,24 @@ describe('error-patterns', () => {
 		});
 	});
 });
+
+describe('Codex upstream HTTP status classification', () => {
+	const codex = getErrorPatterns('codex');
+
+	it('classifies a generic upstream status as a retryable provider failure', () => {
+		const m = matchErrorPattern(codex, 'unexpected status 404 Not Found: {"detail":"Not Found"}', {
+			minLength: 0,
+		});
+		expect(m?.type).toBe('network_error');
+	});
+
+	// network_error is matched BEFORE auth_expired, so an auth status caught by
+	// the generic matcher would tell the user to "retry" a bad API key forever.
+	it.each(['401 Unauthorized', '403 Forbidden'])(
+		'leaves %s to the auth bank instead of calling it a provider blip',
+		(status) => {
+			const m = matchErrorPattern(codex, `unexpected status ${status}`, { minLength: 0 });
+			expect(m?.type).toBe('auth_expired');
+		}
+	);
+});

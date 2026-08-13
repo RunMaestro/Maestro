@@ -1674,4 +1674,34 @@ describe('CodexOutputParser', () => {
 			expect(event?.text).toBe('Plain thinking text');
 		});
 	});
+
+	describe('stream_error stays out of the final answer', () => {
+		// streamedText is what ExitHandler emits as the result when a turn ends
+		// without a result message. Retry diagnostics must never land there.
+		it('marks a retrying stream_error as reasoning', () => {
+			const parser = new CodexOutputParser();
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: { type: 'stream_error', message: 'stream error: reset; retrying 1/5' },
+				})
+			);
+
+			expect(event?.type).toBe('text');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBe(true);
+		});
+
+		it('still treats a real error payload as an error', () => {
+			const parser = new CodexOutputParser();
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: { type: 'error', message: 'Error running remote compact task' },
+				})
+			);
+
+			expect(event?.type).toBe('error');
+		});
+	});
 });

@@ -400,6 +400,15 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
+			// 403 from OpenAI means the key is valid but not permitted here (model
+			// not enabled for the org, unsupported region). Retrying cannot fix it,
+			// so it must not fall into the network_error bank's "please retry".
+			pattern: /\b403\b|forbidden/i,
+			message:
+				'Access denied (HTTP 403). The key is valid but not permitted for this model, organization, or region.',
+			recoverable: true,
+		},
+		{
 			pattern: /api.*key.*expired/i,
 			message: 'Your API key has expired. Please renew your credentials.',
 			recoverable: true,
@@ -491,7 +500,13 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			// Codex's HTTP client renders upstream failures as
 			// "unexpected status <code> <reason>". 429 is claimed earlier by the
 			// rate_limited bank (which runs first), so this covers the rest.
-			pattern: /unexpected status (\d{3})\b/i,
+			//
+			// 401/403 are excluded deliberately. `network_error` is matched BEFORE
+			// `auth_expired` (see ERROR_TYPES_BY_HIT_FREQUENCY), so without this
+			// carve-out a bad API key would be reported as a transient provider blip
+			// with "please retry" - advice that can never work - instead of falling
+			// through to the auth bank's "check your credentials".
+			pattern: /unexpected status (?!401\b|403\b)(\d{3})\b/i,
 			message: (match) =>
 				`Codex request failed upstream (HTTP ${match[1]}). This is a provider-side failure - please retry.`,
 			recoverable: true,

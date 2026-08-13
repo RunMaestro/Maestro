@@ -537,11 +537,18 @@ export class CodexOutputParser implements AgentOutputParser {
 		// recover on its own, and the once-only `errorEmitted` latch in
 		// StdoutHandler would then swallow the real error if the retries do run
 		// out.
+		//
+		// `isReasoning` keeps it OUT of `streamedText`. That buffer is what
+		// ExitHandler emits as the final answer when a turn ends without a result
+		// message - so on a turn that retries and then dies, the user would have
+		// been handed "stream error: ...; retrying 1/5" as the agent's response.
+		// Visible as progress, never the answer.
 		if (payload.type === 'stream_error' && payload.message) {
 			return {
 				type: 'text',
 				text: payload.message,
 				isPartial: true,
+				isReasoning: true,
 				raw: msg,
 			};
 		}
