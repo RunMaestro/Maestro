@@ -11,7 +11,11 @@
  * per-agent (`session.customArgs`) while config options are shared by every
  * agent using that provider. These helpers let the UI expose a dedicated
  * "OpenCode Agent" field that reads and rewrites just that one token, leaving
- * everything else in the string untouched.
+ * every other token in the string untouched.
+ *
+ * Note the rewrite re-joins tokens with a single space, so runs of whitespace
+ * between OTHER args are normalized. The tokens themselves are preserved
+ * verbatim; only the spacing between them changes.
  */
 
 const AGENT_FLAG = '--agent';
@@ -32,9 +36,20 @@ function unquote(token: string): string {
 	return token;
 }
 
-/** Wrap a value in double quotes when it contains whitespace. */
-function quoteIfNeeded(value: string): string {
-	return /\s/.test(value) ? `"${value}"` : value;
+/**
+ * Make a value safe to emit as ONE token, and quote it if it needs quoting.
+ *
+ * Quote characters are STRIPPED rather than escaped. {@link tokenize} has no
+ * escape syntax - `"[^"]*"` stops at the first closing quote - so there is no
+ * spelling of `my"agent` that survives a write -> read round trip. Emitting it
+ * raw was worse: the name split into two tokens on the next read and the
+ * trailing fragment silently became a separate argument. An OpenCode agent name
+ * is an identifier (`build`, `plan`), so dropping quotes costs nothing real and
+ * keeps the argument list well-formed.
+ */
+function sanitizeAndQuote(value: string): string {
+	const stripped = value.replace(/["']/g, '');
+	return /\s/.test(stripped) ? `"${stripped}"` : stripped;
 }
 
 /**
@@ -88,13 +103,13 @@ export function writeOpenCodeAgentArg(customArgs: string | undefined, agentName:
 
 		// Keep the first occurrence's position; drop any later duplicates.
 		if (trimmedName && !replaced) {
-			kept.push(AGENT_FLAG, quoteIfNeeded(trimmedName));
+			kept.push(AGENT_FLAG, sanitizeAndQuote(trimmedName));
 			replaced = true;
 		}
 	}
 
 	if (trimmedName && !replaced) {
-		kept.push(AGENT_FLAG, quoteIfNeeded(trimmedName));
+		kept.push(AGENT_FLAG, sanitizeAndQuote(trimmedName));
 	}
 
 	return kept.join(' ');

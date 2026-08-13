@@ -749,10 +749,15 @@ export function AgentConfigPanel({
 					className={`${padding} rounded border`}
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>
-					<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+					<label
+						className="block text-xs font-medium mb-2"
+						style={{ color: theme.colors.textDim }}
+						htmlFor="opencode-agent-input"
+					>
 						OpenCode Agent (optional)
 					</label>
 					<input
+						id="opencode-agent-input"
 						type="text"
 						value={readOpenCodeAgentArg(customArgs)}
 						onChange={(e) => onCustomArgsChange(writeOpenCodeAgentArg(customArgs, e.target.value))}

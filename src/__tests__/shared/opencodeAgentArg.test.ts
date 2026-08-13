@@ -91,4 +91,27 @@ describe('writeOpenCodeAgentArg', () => {
 		const written = writeOpenCodeAgentArg('--model gpt-5.2', 'oracle');
 		expect(readOpenCodeAgentArg(written)).toBe('oracle');
 	});
+
+	// tokenize() has no escape syntax, so a quote in the name cannot round-trip.
+	// Stripping keeps the argument list well-formed; emitting it raw split the
+	// name in two and turned the tail into a separate argument.
+	it('strips quote characters instead of corrupting the argument list', () => {
+		const written = writeOpenCodeAgentArg('--print', 'my"agent');
+		expect(readOpenCodeAgentArg(written)).toBe('myagent');
+		expect(written).toContain('--print');
+	});
+
+	it('strips single quotes too', () => {
+		const written = writeOpenCodeAgentArg('--print', "o'brien");
+		expect(readOpenCodeAgentArg(written)).toBe('obrien');
+	});
+
+	it('still quotes a name containing whitespace', () => {
+		const written = writeOpenCodeAgentArg('', 'my agent');
+		expect(readOpenCodeAgentArg(written)).toBe('my agent');
+	});
+
+	it('leaves a plain name unquoted', () => {
+		expect(writeOpenCodeAgentArg('', 'build')).toBe('--agent build');
+	});
 });
