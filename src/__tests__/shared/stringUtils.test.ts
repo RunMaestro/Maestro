@@ -221,4 +221,18 @@ describe('safeDecodeURIComponent', () => {
 		expect(safeDecodeURIComponent('')).toBe('');
 		expect(safeDecodeURIComponent('plain-text')).toBe('plain-text');
 	});
+
+	// Only URIError means "this was not valid encoding". Anything else is a real
+	// fault and must reach Sentry rather than be silently returned as the input.
+	it('rethrows a non-URIError so it is not silently swallowed', () => {
+		const boom = new RangeError('unexpected');
+		const spy = vi.spyOn(globalThis, 'decodeURIComponent').mockImplementation(() => {
+			throw boom;
+		});
+		try {
+			expect(() => safeDecodeURIComponent('anything')).toThrow(boom);
+		} finally {
+			spy.mockRestore();
+		}
+	});
 });

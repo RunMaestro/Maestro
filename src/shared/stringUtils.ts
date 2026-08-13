@@ -66,11 +66,19 @@ export function escapeRegExp(text: string): string {
 export function safeDecodeURIComponent(value: string): string {
 	try {
 		return decodeURIComponent(value);
-	} catch {
-		// Malformed percent encoding (e.g. a bare '%' or a truncated '%E0%A4')
-		// throws URIError. Callers handle user-supplied strings that may not be
-		// encoded at all, so fall back to the original value instead of failing.
-		return value;
+	} catch (err) {
+		// Malformed percent encoding (a bare '%', a truncated '%E0%A4') throws
+		// URIError. Callers handle user-supplied strings that may not be encoded at
+		// all, so fall back to the original value instead of failing.
+		//
+		// ONLY URIError is swallowed. A bare catch here would also hide unexpected
+		// failures (a RangeError from a pathological input, a TypeError from a
+		// future refactor) and keep them out of Sentry, which is exactly the
+		// silent-failure pattern CLAUDE.md warns about. This also matches the
+		// implementation already on rc, so the two branches converge instead of
+		// conflicting on this function.
+		if (err instanceof URIError) return value;
+		throw err;
 	}
 }
 
