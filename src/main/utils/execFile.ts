@@ -81,16 +81,27 @@ export function needsWindowsShell(command: string): boolean {
 	return !hasExtension;
 }
 
+/** The only field names `ExecOptions` defines. */
+const EXEC_OPTIONS_FIELDS = new Set(['input', 'timeout', 'env']);
+
 /**
  * Distinguish the legacy `options: NodeJS.ProcessEnv` signature from the
  * structured `ExecOptions` form. Key presence alone is ambiguous - a real
- * environment variable can be named `input`, `timeout`, or `env` - so this
- * also checks the value has the shape ExecOptions actually uses: a number
- * for `timeout`, an object for `env`. `process.env` values are always
- * strings, so a legacy env dict can never satisfy either check, no matter
- * what its keys are named. `input` alone stays a presence+type check (both
- * a real ExecOptions.input and a same-named env var are strings), matching
- * the pre-existing behavior for that one case.
+ * environment variable can be named `input`, `timeout`, or `env` - and value
+ * type alone isn't enough either: a real ExecOptions.input and a same-named
+ * env var are both strings, and `{ timeout: undefined }` is valid
+ * ExecOptions that no type check can distinguish from "key absent".
+ *
+ * What actually is unambiguous: every real caller's legacy env dict carries
+ * other environment variables alongside anything that happens to collide
+ * with a reserved name (PATH, HOME, ... - checked against every call site in
+ * this codebase). So if literally every key present is one of the three
+ * ExecOptions fields, it cannot be a real environment - a lone `{ input:
+ * 'x' }` is ExecOptions, but `{ input: 'x', PATH: '/bin' }` is a legacy env
+ * dict that happens to define a var called `input`. Combined with the
+ * value-shape checks (which still catch the case where an ExecOptions value
+ * is typed but sits alongside a field this function doesn't know about) that
+ * closes the gap for both known collision shapes.
  */
 function resolveExecOptions(options: ExecOptions | NodeJS.ProcessEnv | undefined): {
 	env: NodeJS.ProcessEnv | undefined;
@@ -102,10 +113,13 @@ function resolveExecOptions(options: ExecOptions | NodeJS.ProcessEnv | undefined
 	}
 
 	const opts = options as ExecOptions;
+	const keys = Object.keys(opts);
+	const allKeysAreExecOptionsFields =
+		keys.length > 0 && keys.every((k) => EXEC_OPTIONS_FIELDS.has(k));
 	const isExecOptions =
+		allKeysAreExecOptionsFields ||
 		('timeout' in opts && typeof opts.timeout === 'number') ||
-		('env' in opts && opts.env !== null && typeof opts.env === 'object') ||
-		('input' in opts && typeof opts.input === 'string');
+		('env' in opts && opts.env !== null && typeof opts.env === 'object');
 
 	if (isExecOptions) {
 		return { env: opts.env, input: opts.input, timeout: opts.timeout };

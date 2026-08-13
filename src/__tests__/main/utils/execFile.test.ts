@@ -92,6 +92,24 @@ describe('execFile.ts', () => {
 		// the child_process mock only replaces execFile, not spawn.
 		const NODE = process.execPath;
 
+		// A lone `{ input }` with no other fields is a real call shape (git.ts
+		// pipes gist content to `gh` this way) - the discriminator fix for the
+		// legacy-env-named-"input" collision must not break it.
+		it('treats a lone { input } as ExecOptions and delivers it to stdin', async () => {
+			const { execFileNoThrow } = await import('../../../main/utils/execFile');
+
+			const result = await execFileNoThrow(
+				NODE,
+				['-e', 'process.stdin.on("data", (d) => process.stdout.write(d))'],
+				undefined,
+				{
+					input: 'hello from stdin',
+				}
+			);
+
+			expect(result.stdout).toBe('hello from stdin');
+		});
+
 		// Regression: when `input` is set, execFileNoThrow hands off to
 		// execFileWithInput, which never received or forwarded `env` - a caller
 		// passing { input, env } silently got process.env in the child instead
@@ -310,6 +328,60 @@ describe('execFile.ts', () => {
 					'mycmd',
 					[],
 					expect.objectContaining({ env: { MY_VAR: 'value' }, timeout: 5000 }),
+					expect.any(Function)
+				);
+			});
+
+			// Regression (CodeRabbit, PR #1383): a lone `{ input: 'x' }` is a real
+			// ExecOptions call (git.ts uses exactly this shape to pipe gist content
+			// to stdin), but `{ input: 'x', PATH: '/bin' }` is a legacy env dict that
+			// happens to define a variable called `input` - the extra PATH key is
+			// what tells them apart. Getting this wrong would silently feed the
+			// caller's PATH override to the child's stdin instead of its environment.
+			it('treats a legacy env dict with a var literally named "input" as the whole environment, not stdin content', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const legacyEnv = { input: 'not stdin content', PATH: '/custom/path' };
+				await execFileNoThrow('mycmd', [], '/cwd', legacyEnv);
+
+				// Legacy interpretation goes through execFileAsync (mocked here), not
+				// the spawn-based stdin path - if this were misread as ExecOptions.input,
+				// mockExecFile would never be called at all.
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: legacyEnv }),
+					expect.any(Function)
+				);
+			});
+
+			// Regression (Greptile, PR #1383): `{ timeout: undefined }` is valid
+			// ExecOptions (equivalent to omitting timeout), but the key is still
+			// present, so a value-type check alone can't tell it apart from "key
+			// absent". The all-keys-known check recognizes it regardless of value.
+			it('still recognizes ExecOptions when a known field is explicitly undefined', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('mycmd', [], '/cwd', { timeout: undefined });
+
+				// If misread as legacy, env would be the literal { timeout: undefined }
+				// object instead of undefined (inherit the parent environment).
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: undefined }),
 					expect.any(Function)
 				);
 			});
