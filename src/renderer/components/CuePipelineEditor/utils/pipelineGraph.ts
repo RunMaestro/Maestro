@@ -13,6 +13,7 @@ import type {
 	CommandNodeData,
 	ErrorNodeData,
 } from '../../../../shared/cue-pipeline-types';
+import { normalizeWebhookPath } from '../../../../shared/cue';
 import type { Theme } from '../../../../shared/theme-types';
 import type { TriggerNodeDataProps } from '../nodes/TriggerNode';
 import type { AgentNodeDataProps } from '../nodes/AgentNode';
@@ -60,6 +61,11 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 			return 'agent done';
 		case 'cli.trigger':
 			return 'cli';
+		case 'webhook.received':
+			// Mirror TriggerConfig: an unset path defaults to a slug of the
+			// trigger's label, so the node should show the URL that will
+			// actually be served rather than a bare `/cue/`.
+			return `/cue/${normalizeWebhookPath(config.webhook_path || data.customLabel || data.label || '')}`;
 		default:
 			return '';
 	}

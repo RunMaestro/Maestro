@@ -70,6 +70,16 @@ export interface TriggerNodeData {
 		/** Per-item re-trigger cap. See `CueSubscription.max_notifications`.
 		 *  `0` in the wire format = unlimited; the UI renders this as "∞". */
 		max_notifications?: number;
+		/** Listener config for `webhook.received` triggers. See `CueWebhookConfig`. */
+		webhook_path?: string;
+		webhook_secret_env?: string;
+		webhook_signature_header?: string;
+		/** Literal secret carried through from hand-written YAML. The config
+		 *  panel renders it read-only and never offers a way to type one in -
+		 *  the editor always writes `secret_env` for new triggers. It is still
+		 *  hydrated and re-emitted so that opening and saving a pipeline in the
+		 *  editor doesn't silently strip a working secret off disk. */
+		webhook_secret?: string;
 	};
 	/** Name of the underlying Cue subscription this trigger represents on disk.
 	 *  Populated on load by `yamlToPipeline`. Every trigger node in a multi-

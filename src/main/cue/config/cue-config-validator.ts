@@ -5,6 +5,7 @@ import {
 	CUE_SCHEDULE_DAYS,
 	type CueGitHubState,
 	type CueScheduleDay,
+	normalizeWebhookPath,
 } from '../../../shared/cue';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
@@ -537,6 +538,13 @@ function validateEventSpecificFields(
 		// No additional required fields for the startup trigger.
 	} else if (event === 'cli.trigger') {
 		// No additional required fields - triggered manually via maestro-cli.
+	} else if (event === 'webhook.received') {
+		validateWebhookConfig(
+			sub.webhook,
+			typeof sub.name === 'string' ? sub.name : '',
+			prefix,
+			errors
+		);
 	} else if (
 		sub.event &&
 		typeof sub.event === 'string' &&
@@ -544,6 +552,60 @@ function validateEventSpecificFields(
 	) {
 		errors.push(
 			`${prefix}: unknown event type "${event}". Valid types: ${CUE_EVENT_TYPES.join(', ')}`
+		);
+	}
+}
+
+/**
+ * Validate the `webhook` block of a `webhook.received` subscription.
+ *
+ * A secret is mandatory, not optional-with-a-warning: an unauthenticated
+ * webhook path is a remote trigger for an AI agent with the user's
+ * credentials, so a config that omits one must fail loudly at load rather than
+ * quietly start listening. `secret` and `secret_env` are mutually exclusive so
+ * there is never ambiguity about which value is live.
+ */
+function validateWebhookConfig(
+	rawWebhook: unknown,
+	subName: string,
+	prefix: string,
+	errors: string[]
+): void {
+	if (rawWebhook === undefined || rawWebhook === null) {
+		errors.push(`${prefix}: "webhook" is required for webhook.received events`);
+		return;
+	}
+	if (typeof rawWebhook !== 'object' || Array.isArray(rawWebhook)) {
+		errors.push(`${prefix}: "webhook" must be an object for webhook.received events`);
+		return;
+	}
+
+	const webhook = rawWebhook as Record<string, unknown>;
+	for (const key of ['path', 'secret', 'secret_env', 'signature_header']) {
+		if (webhook[key] !== undefined && typeof webhook[key] !== 'string') {
+			errors.push(`${prefix}: "webhook.${key}" must be a string`);
+		}
+	}
+
+	const hasSecret = typeof webhook.secret === 'string' && webhook.secret.trim().length > 0;
+	const hasSecretEnv =
+		typeof webhook.secret_env === 'string' && webhook.secret_env.trim().length > 0;
+	if (!hasSecret && !hasSecretEnv) {
+		errors.push(
+			`${prefix}: "webhook.secret" or "webhook.secret_env" is required for webhook.received events - an unauthenticated webhook would let any local process trigger this agent`
+		);
+	} else if (hasSecret && hasSecretEnv) {
+		errors.push(
+			`${prefix}: "webhook.secret" and "webhook.secret_env" are mutually exclusive - keep the value out of cue.yaml and use "webhook.secret_env"`
+		);
+	}
+
+	// The path defaults to a slug of the subscription name, so a name made
+	// entirely of punctuation with no explicit path yields no route at all.
+	const rawPath = typeof webhook.path === 'string' ? webhook.path : subName;
+	if (normalizeWebhookPath(rawPath) === '') {
+		errors.push(
+			`${prefix}: "webhook.path" must contain at least one letter or digit (it becomes the URL segment under /cue/)`
 		);
 	}
 }

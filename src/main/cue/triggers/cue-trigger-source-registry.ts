@@ -25,6 +25,7 @@ import { createCueOnceTriggerSource } from './cue-once-trigger-source';
 import { createCueScheduledTriggerSource } from './cue-scheduled-trigger-source';
 import { createCueTaskScannerTriggerSource } from './cue-task-scanner-trigger-source';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
+import { createCueWebhookTriggerSource } from './cue-webhook-trigger-source';
 
 export function createTriggerSource(
 	eventType: CueEventType,
@@ -44,6 +45,8 @@ export function createTriggerSource(
 		case 'github.pull_request':
 		case 'github.issue':
 			return createCueGitHubPollerTriggerSource(ctx);
+		case 'webhook.received':
+			return createCueWebhookTriggerSource(ctx);
 		case 'agent.completed':
 		case 'app.startup':
 		case 'cli.trigger':

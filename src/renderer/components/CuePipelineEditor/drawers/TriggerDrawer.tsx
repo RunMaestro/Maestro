@@ -75,6 +75,13 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		icon: EVENT_ICONS['cli.trigger'],
 		color: EVENT_COLORS['cli.trigger'],
 	},
+	{
+		eventType: 'webhook.received',
+		label: 'Webhook',
+		description: 'HTTP POST from any external service',
+		icon: EVENT_ICONS['webhook.received'],
+		color: EVENT_COLORS['webhook.received'],
+	},
 ];
 
 function handleDragStart(e: React.DragEvent, item: TriggerItem) {

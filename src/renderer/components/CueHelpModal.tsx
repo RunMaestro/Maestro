@@ -465,6 +465,56 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							.
 						</p>
 					</div>
+					<div>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Webhook</strong>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								webhook.received
+							</code>
+						</p>
+						<p className="mt-1">
+							Fires when an external service POSTs to Maestro's local webhook listener (default{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								127.0.0.1:17997
+							</code>
+							) at{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								/cue/&lt;path&gt;
+							</code>
+							. Works with GitHub, GitLab, Slack, CI systems, or any script that can send an HTTP
+							request. Every subscription needs a secret - set{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								webhook.secret_env
+							</code>{' '}
+							to keep it out of the committed file, or{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								webhook.signature_header
+							</code>{' '}
+							for senders that sign the body. The payload is exposed as{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{'{{CUE_WEBHOOK_BODY}}'}
+							</code>
+							.
+						</p>
+					</div>
 					<div
 						className="font-mono text-xs p-3 rounded border space-y-3"
 						style={{
@@ -665,7 +715,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> - Event
 							type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed,
-							github.pull_request, github.issue, task.pending, cli.trigger)
+							github.pull_request, github.issue, task.pending, cli.trigger, webhook.received)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> -

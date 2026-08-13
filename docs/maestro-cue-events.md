@@ -1,10 +1,10 @@
 ---
 title: Cue Event Types
-description: Detailed reference for all ten Maestro Cue event types with configuration, payloads, and examples.
+description: Detailed reference for all eleven Maestro Cue event types with configuration, payloads, and examples.
 icon: calendar-check
 ---
 
-Cue supports ten event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
+Cue supports eleven event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
 
 ## app.startup
 
@@ -550,3 +550,103 @@ maestro-cli cue list
 | `{{CUE_CLI_PROMPT}}`   | Prompt text passed via `--prompt` flag      | `Deploy to staging` |
 | `{{CUE_TRIGGER_NAME}}` | Name of the subscription that was triggered | `deploy`            |
 | `{{CUE_EVENT_TYPE}}`   | Always `cli.trigger`                        | `cli.trigger`       |
+
+---
+
+## webhook.received
+
+Fires when an external service POSTs to Maestro's local webhook listener. This is the generic escape hatch: anything that can send an HTTP request - GitHub, GitLab, Slack, a CI system, a cron box, your own script - can drive a Cue pipeline, and the filter decides which payloads matter.
+
+**Required fields:**
+
+| Field     | Type   | Description                                |
+| --------- | ------ | ------------------------------------------ |
+| `webhook` | object | Listener config. See the sub-fields below. |
+
+**`webhook` sub-fields:**
+
+| Field              | Type   | Description                                                                                                          |
+| ------------------ | ------ | -------------------------------------------------------------------------------------------------------------------- |
+| `path`             | string | URL segment under `/cue/`. Defaults to a slug of the subscription name.                                              |
+| `secret_env`       | string | Name of an environment variable holding the shared secret. Preferred - keeps the value out of a committed cue.yaml.  |
+| `secret`           | string | Literal shared secret. Mutually exclusive with `secret_env`.                                                         |
+| `signature_header` | string | When set, authenticate by HMAC-SHA256 over the raw body using this header instead of presenting the secret directly. |
+
+A secret is mandatory. A webhook path with no authentication is a remote trigger for an AI agent running with your credentials, so a subscription without `secret` or `secret_env` fails config validation rather than quietly starting to listen.
+
+**The listener:**
+
+- One listener serves every webhook subscription across every agent. It starts when the first one loads and stops when the last one unloads.
+- Binds to `127.0.0.1:17997` by default. Override with `MAESTRO_CUE_WEBHOOK_PORT` and `MAESTRO_CUE_WEBHOOK_HOST`.
+- To take deliveries from the public internet, point a tunnel (ngrok, cloudflared) or a reverse proxy at the loopback port. Binding the listener itself to `0.0.0.0` is possible but puts an agent trigger directly on your network.
+- Only `POST` is accepted. Bodies over 1 MB are rejected with `413`.
+- Multiple subscriptions may share a `path`. Each authenticates independently, and every one that passes receives the delivery.
+
+**Authenticating a delivery:**
+
+Without `signature_header`, the sender presents the secret:
+
+```bash
+curl -X POST http://127.0.0.1:17997/cue/gh-pr \
+  -H "X-Maestro-Cue-Secret: $GH_WEBHOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"opened","number":42}'
+```
+
+`Authorization: Bearer <secret>` works too.
+
+With `signature_header`, the sender signs the raw body with HMAC-SHA256 and sends the digest in that header. Both bare hex and the `sha256=<hex>` form GitHub and GitLab use are accepted - so pointing a GitHub webhook at Maestro with `signature_header: X-Hub-Signature-256` and the same secret works with no glue code.
+
+**Example:**
+
+```yaml
+subscriptions:
+  - name: pr-opened
+    event: webhook.received
+    webhook:
+      path: gh-pr
+      secret_env: GH_WEBHOOK_SECRET
+      signature_header: X-Hub-Signature-256
+    filter:
+      webhook_event: pull_request
+      body.action: opened
+    prompt: |
+      A pull request was just opened. Review it for correctness and test coverage.
+
+      {{CUE_WEBHOOK_BODY}}
+```
+
+**Filtering:**
+
+Filters read the event payload with dot-notation, so one endpoint can fan different payloads to different pipelines:
+
+```yaml
+filter:
+  webhook_event: pull_request # from X-GitHub-Event / X-GitLab-Event
+  body.action: opened # any field in the JSON body
+  headers.x-custom-source: ci # any request header
+```
+
+**Payload fields:**
+
+| Field           | Type   | Description                                                     |
+| --------------- | ------ | --------------------------------------------------------------- |
+| `path`          | string | Path segment the delivery arrived on                            |
+| `webhook_event` | string | Vendor event name from `X-GitHub-Event`, `X-GitLab-Event`, etc. |
+| `delivery_id`   | string | Vendor delivery id, or a locally generated UUID                 |
+| `received_at`   | string | ISO-8601 receipt timestamp                                      |
+| `headers`       | object | Request headers, with auth material stripped                    |
+| `body`          | object | Parsed JSON body, or `null` when the body was not JSON          |
+| `raw_body`      | string | Raw request body, truncated to 64 KB                            |
+
+**Template variables:**
+
+| Variable                      | Description                                                                   |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| `{{CUE_WEBHOOK_BODY}}`        | Payload as pretty-printed JSON (raw text if not JSON), truncated to 10K chars |
+| `{{CUE_WEBHOOK_EVENT}}`       | Vendor event name                                                             |
+| `{{CUE_WEBHOOK_PATH}}`        | Path segment the delivery arrived on                                          |
+| `{{CUE_WEBHOOK_DELIVERY_ID}}` | Vendor delivery id                                                            |
+| `{{CUE_WEBHOOK_HEADERS}}`     | Request headers as `key: value` lines, secrets redacted                       |
+
+Secrets never reach the payload: the `Authorization`, `Cookie`, `X-Maestro-Cue-Secret`, and configured signature headers are stripped before the event is built, so they cannot leak into a prompt, the activity log, or the Cue database.
