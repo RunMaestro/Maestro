@@ -173,13 +173,19 @@ export function useAgentConfigurationPanel({
 		}
 	}, [configuringAgentId, sshRemoteConfig]);
 
-	const handleCustomPathBlur = useCallback(async () => {
-		if (configuringAgentId) {
-			const pathToSet = customPath.trim() || null;
-			await window.maestro.agents.setCustomPath(configuringAgentId, pathToSet);
-		}
-		await refreshAgentDetection();
-	}, [configuringAgentId, customPath, refreshAgentDetection]);
+	// Optional `value` covers the chooser: it calls this in the same handler as
+	// the state update that sets customPath, so reading customPath back out of
+	// this closure would still see the path from before that update landed.
+	const handleCustomPathBlur = useCallback(
+		async (value?: string) => {
+			if (configuringAgentId) {
+				const pathToSet = (value ?? customPath).trim() || null;
+				await window.maestro.agents.setCustomPath(configuringAgentId, pathToSet);
+			}
+			await refreshAgentDetection();
+		},
+		[configuringAgentId, customPath, refreshAgentDetection]
+	);
 
 	const handleConfigChange = useCallback((key: string, value: any) => {
 		const updatedConfig = { ...agentConfigRef.current, [key]: value };

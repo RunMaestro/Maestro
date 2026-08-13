@@ -18,6 +18,7 @@ import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
+import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -225,7 +226,8 @@ export class ChildProcessSpawner {
 				customEnvVars,
 				isResuming,
 				shellEnvVars,
-				config.extraPathDirs
+				config.extraPathDirs,
+				config.unsetEnvKeys
 			);
 
 			// Log environment variable application for troubleshooting
@@ -462,7 +464,24 @@ export class ChildProcessSpawner {
 				maestroEnvVars: collectMaestroEnvVars(shellEnvVars, customEnvVars, isResuming),
 			};
 
+			// A killed process keeps emitting stdio and fires `close` well after
+			// ProcessManager has registered a replacement under the same sessionId
+			// key (`spawn()` kills the predecessor first, then the spawner re-uses
+			// the key). Everything downstream is keyed by sessionId alone, so those
+			// late events get attributed to the live successor: its `close` reports
+			// the dead turn's exit code (143 after SIGTERM) as the live agent
+			// crashing AND deletes the successor's tracking entry, orphaning a
+			// process the user can no longer stop.
+			//
+			// Generation, not map identity: the map answers "am I still the entry?",
+			// which stops working the moment the successor finishes and deletes its
+			// own entry - at which point a predecessor still draining would look
+			// current again. See process-manager/generation.ts.
+			managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 			this.processes.set(sessionId, managedProcess);
+
+			const isSuperseded = (): boolean =>
+				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
 
 			logger.debug('[ProcessManager] Setting up stdout/stderr/exit handlers', 'ProcessManager', {
 				sessionId,
@@ -503,6 +522,7 @@ export class ChildProcessSpawner {
 					});
 				});
 				childProcess.stdout.on('data', (data: Buffer | string) => {
+					if (isSuperseded()) return;
 					const output = data.toString();
 					// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
 					// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
@@ -536,6 +556,7 @@ export class ChildProcessSpawner {
 					});
 				});
 				childProcess.stderr.on('data', (data: Buffer | string) => {
+					if (isSuperseded()) return;
 					const stderrData = data.toString();
 					this.stderrHandler.handleData(sessionId, stderrData);
 				});
@@ -547,6 +568,14 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
+				if (isSuperseded()) {
+					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
+						sessionId,
+						pid: childProcess.pid,
+						exitCode: code,
+					});
+					return;
+				}
 				void this.exitHandler.handleExit(sessionId, code || 0).catch((err) => {
 					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 						sessionId,
@@ -557,6 +586,14 @@ export class ChildProcessSpawner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				if (isSuperseded()) {
+					logger.warn('[ProcessManager] Ignoring error from superseded process', 'ProcessManager', {
+						sessionId,
+						pid: childProcess.pid,
+						error: String(error),
+					});
+					return;
+				}
 				this.exitHandler.handleError(sessionId, error);
 			});
 

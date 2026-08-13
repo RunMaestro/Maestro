@@ -13,8 +13,11 @@ import {
 	FolderOpen,
 	Files,
 	Download,
+	ListPlus,
+	Play,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
+import { isMediaFile } from '../../../../shared/mediaTypes';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
@@ -29,6 +32,8 @@ interface FileTreeContextMenuProps {
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
+	/** How many of the selected files are playable audio/video. */
+	selectedMediaCount?: number;
 	onCopyPath: () => void;
 	onCopyFileName: () => void;
 	onDownloadFile: () => void;
@@ -40,6 +45,7 @@ interface FileTreeContextMenuProps {
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
 	onPreviewMulti: () => void;
+	onQueueMedia: () => void;
 	onOpenInDefaultAppMulti: () => void;
 	onOpenDeleteMulti: () => void;
 	onFocusInGraph: () => void;
@@ -57,6 +63,7 @@ export function FileTreeContextMenu({
 	onOpenBrowserTabAt,
 	isMultiSelectionContext = false,
 	selectedCount = 0,
+	selectedMediaCount = 0,
 	onCopyPath,
 	onCopyFileName,
 	onDownloadFile,
@@ -68,6 +75,7 @@ export function FileTreeContextMenu({
 	onPreviewFile,
 	onPreviewAllInFolder,
 	onPreviewMulti,
+	onQueueMedia,
 	onOpenInDefaultAppMulti,
 	onOpenDeleteMulti,
 	onFocusInGraph,
@@ -92,6 +100,10 @@ export function FileTreeContextMenu({
 	const platform = window.maestro?.platform ?? 'unknown';
 	const isHtml = isFile && (nodeName.endsWith('.html') || nodeName.endsWith('.htm'));
 	const isMarkdown = isFile && (nodeName.endsWith('.md') || nodeName.endsWith('.markdown'));
+	// Media plays in the floating player, which only serves local files - over
+	// SSH there is nothing to stream, so the playback actions stay hidden.
+	const isMedia = isFile && !sshRemoteId && isMediaFile(nodeName);
+	const queueableCount = sshRemoteId ? 0 : selectedMediaCount;
 
 	return createPortal(
 		<div
@@ -126,6 +138,19 @@ export function FileTreeContextMenu({
 							<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 							<span>Preview {selectedCount} items</span>
 						</button>
+						{/* Opening the selection already plays the first media file and
+						    queues the rest. This is the other half: add everything to the
+						    queue and leave what is playing alone. */}
+						{queueableCount > 0 && (
+							<button
+								onClick={onQueueMedia}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Add {queueableCount} to Play Queue</span>
+							</button>
+						)}
 						{!sshRemoteId && (
 							<button
 								onClick={onOpenInDefaultAppMulti}
@@ -201,15 +226,32 @@ export function FileTreeContextMenu({
 							</>
 						)}
 
-						{/* Preview option - for files only */}
+						{/* Preview option - for files only. Media has no tab to preview, so
+						    it says what it actually does: play now, or line up behind
+						    whatever is already playing. */}
 						{isFile && (
 							<button
 								onClick={onPreviewFile}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-								<span>Preview</span>
+								{isMedia ? (
+									<Play className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								) : (
+									<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								)}
+								<span>{isMedia ? 'Play' : 'Preview'}</span>
+							</button>
+						)}
+
+						{isMedia && (
+							<button
+								onClick={onQueueMedia}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Add to Play Queue</span>
 							</button>
 						)}
 

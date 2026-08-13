@@ -699,4 +699,14 @@ describe('shared/formatters', () => {
 			expect(formatSshTarget({ host: 'host', username: 'me' })).toBe('me@host:22');
 		});
 	});
+
+	// Duration formatters live in shared/duration.ts and are covered by
+	// duration.test.ts. This asserts the compatibility re-export still resolves,
+	// since ~50 call sites import them from this module's path.
+	describe('duration re-exports', () => {
+		it('re-exports the duration formatters', () => {
+			expect(formatActiveTime(2 * 60 * 60 * 1000 + 30 * 60 * 1000)).toBe('2H 30M');
+			expect(formatElapsedTime(500)).toBe('500ms');
+		});
+	});
 });

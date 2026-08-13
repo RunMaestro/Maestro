@@ -264,7 +264,8 @@ export function buildChildProcessEnv(
 	customEnvVars?: Record<string, string>,
 	isResuming?: boolean,
 	globalShellEnvVars?: Record<string, string>,
-	extraPathDirs?: string[]
+	extraPathDirs?: string[],
+	unsetEnvKeys?: string[]
 ): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 
@@ -298,6 +299,17 @@ export function buildChildProcessEnv(
 	if (customEnvVars && Object.keys(customEnvVars).length > 0) {
 		for (const [key, value] of Object.entries(customEnvVars)) {
 			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+		}
+	}
+
+	// Removal runs LAST, after every layer above has had its say, because a merge
+	// cannot express "this must not be present". Provider Failover uses it to make
+	// sure a backup endpoint never receives the primary provider's credential -
+	// which can arrive from the agent's own vars, the global shell settings, or
+	// the inherited `process.env` of whatever shell launched Maestro.
+	if (unsetEnvKeys && unsetEnvKeys.length > 0) {
+		for (const key of unsetEnvKeys) {
+			delete env[key];
 		}
 	}
 

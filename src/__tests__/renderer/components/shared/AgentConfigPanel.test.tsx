@@ -5,6 +5,7 @@
  * Regression test for: MAESTRO_SESSION_RESUMED env var display in group chat moderator customization
  */
 
+import { useState, useCallback } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
@@ -568,5 +569,140 @@ describe('AgentConfigPanel', () => {
 
 			expect(screen.getByText('Maestro-P Path (optional)')).toBeInTheDocument();
 		});
+	});
+});
+
+// =============================================================================
+// DETECTED INSTALLATION CHOOSER TESTS
+// =============================================================================
+
+describe('AgentConfigPanel - detected installation chooser', () => {
+	const CODEX_PATHS = [
+		'/opt/homebrew/bin/codex',
+		'/Users/test/.nvm/versions/node/v20.11.0/bin/codex',
+		'/usr/local/bin/codex-multi-auth-codex',
+	];
+
+	function renderWithPaths(
+		overrides: Partial<Parameters<typeof AgentConfigPanel>[0]> = {},
+		agentOverrides: Partial<AgentConfig> = {}
+	) {
+		const props = createDefaultProps({
+			agent: createMockAgent({
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: CODEX_PATHS[0],
+				allPaths: CODEX_PATHS,
+				...agentOverrides,
+			}),
+			...overrides,
+		});
+		render(<AgentConfigPanel {...props} />);
+		return props;
+	}
+
+	it('does not render a chooser when only one installation was detected', () => {
+		renderWithPaths({}, { allPaths: ['/opt/homebrew/bin/codex'] });
+
+		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
+	});
+
+	it('does not render a chooser when detection reported no alternatives', () => {
+		renderWithPaths({}, { allPaths: undefined });
+
+		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
+	});
+
+	it('lists every detected installation when more than one exists', () => {
+		renderWithPaths();
+
+		expect(screen.getByText('Detected installations (3)')).toBeInTheDocument();
+		for (const p of CODEX_PATHS) {
+			expect(screen.getByRole('option', { name: p })).toBeInTheDocument();
+		}
+	});
+
+	it('preselects the detected path when no custom path is set', () => {
+		renderWithPaths();
+
+		const select = screen.getByRole('combobox') as HTMLSelectElement;
+		expect(select.value).toBe(CODEX_PATHS[0]);
+	});
+
+	it('preselects the custom path when it matches a detected installation', () => {
+		renderWithPaths({ customPath: CODEX_PATHS[2] });
+
+		const select = screen.getByRole('combobox') as HTMLSelectElement;
+		expect(select.value).toBe(CODEX_PATHS[2]);
+	});
+
+	it('persists the selection immediately when a path is chosen', () => {
+		const props = renderWithPaths();
+
+		const select = screen.getByRole('combobox');
+		fireEvent.change(select, { target: { value: CODEX_PATHS[1] } });
+
+		expect(props.onCustomPathChange).toHaveBeenCalledWith(CODEX_PATHS[1]);
+		expect(props.onCustomPathBlur).toHaveBeenCalled();
+	});
+
+	it('surfaces a hand-typed wrapper as an explicit Custom entry', () => {
+		// A wrapper that detection never found (e.g. not on PATH) must not be
+		// silently misrepresented as the first detected option.
+		renderWithPaths({ customPath: '~/bin/codex-wrapper' });
+
+		const select = screen.getByRole('combobox') as HTMLSelectElement;
+		expect(screen.getByRole('option', { name: 'Custom: ~/bin/codex-wrapper' })).toBeInTheDocument();
+		expect(select.value).not.toBe(CODEX_PATHS[0]);
+	});
+
+	it('hides the chooser when the agent runs over SSH', () => {
+		renderWithPaths({ isSshEnabled: true });
+
+		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
+	});
+
+	// Regression: a blur handler wired the way real call sites do it (reading
+	// its own committed value back out of React state, e.g. the wizard's
+	// useAgentConfigurationPanel.ts) used to see the PREVIOUS path, not the one
+	// just picked - onCustomPathChange only schedules a state update, and
+	// onCustomPathBlur fired synchronously right after it, before that update
+	// committed. The bare vi.fn() mocks above can't catch this since they have
+	// no real state to go stale. This wraps the panel in that exact pattern.
+	it('a stateful onCustomPathBlur receives the newly selected path, not the stale one', () => {
+		const persisted: (string | undefined)[] = [];
+
+		function StatefulWrapper() {
+			const [customPath, setCustomPath] = useState('');
+			// Mirrors the real bug shape: falls back to the stale closure value
+			// when no value is passed, but should receive the fresh one directly.
+			const handleBlur = useCallback(
+				(value?: string) => {
+					persisted.push(value ?? customPath);
+				},
+				[customPath]
+			);
+
+			const props = createDefaultProps({
+				agent: createMockAgent({
+					id: 'codex',
+					name: 'Codex',
+					binaryName: 'codex',
+					path: CODEX_PATHS[0],
+					allPaths: CODEX_PATHS,
+				}),
+				customPath,
+				onCustomPathChange: setCustomPath,
+				onCustomPathBlur: handleBlur,
+			});
+			return <AgentConfigPanel {...props} />;
+		}
+
+		render(<StatefulWrapper />);
+		const select = screen.getByRole('combobox');
+		fireEvent.change(select, { target: { value: CODEX_PATHS[1] } });
+
+		expect(persisted).toEqual([CODEX_PATHS[1]]);
 	});
 });

@@ -19,7 +19,7 @@ import { BellRing, RotateCcw, StickyNote } from 'lucide-react';
 
 import type { LogEntry, Theme } from '../types';
 import { formatSnoozeTarget } from '../../shared/snooze';
-import { formatDuration } from '../../shared/performance-metrics';
+import { formatDurationWords } from '../../shared/formatters';
 
 interface SnoozeReturnCardProps {
 	log: LogEntry;
@@ -32,10 +32,12 @@ export function SnoozeReturnCard({ log, theme }: SnoozeReturnCardProps): React.R
 	// How long the tab was actually away, measured to the moment it came back
 	// rather than to its due time - "brought back early" is a real outcome and
 	// the elapsed gap should reflect what happened, not what was scheduled.
+	// Worded rather than a seconds count: a tab can sleep for months, and
+	// "130127.72s" tells nobody anything.
 	const awayFor = useMemo(() => {
 		if (!snooze) return null;
 		const elapsed = log.timestamp - snooze.snoozedAt;
-		return elapsed > 0 ? formatDuration(elapsed) : null;
+		return elapsed >= 1000 ? formatDurationWords(elapsed) : null;
 	}, [log.timestamp, snooze]);
 
 	if (!snooze) return null;

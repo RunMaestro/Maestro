@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Session, Theme } from '../../../types';
 import type { FileNode } from '../../../types/fileTree';
+import type { FileClickOptions } from '../../../hooks/ui/useAppHandlers';
+import { isMediaFile } from '../../../../shared/mediaTypes';
 import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../../../hooks/ui/useContextMenuPosition';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
@@ -19,7 +21,7 @@ interface UseFileContextMenuArgs {
 	onShowFlash?: (msg: string) => void;
 	onFocusFileInGraph?: (relativePath: string) => void;
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	openRenameModal: (node: FileNode, path: string) => void;
 	openDeleteModal: (node: FileNode, path: string) => Promise<void>;
 	openNewFileModal: (parentFolderPath: string, parentFolderAbsolutePath: string) => void;
@@ -57,6 +59,7 @@ interface UseFileContextMenuResult {
 	handlePreviewFile: () => Promise<void>;
 	handlePreviewAllInFolder: () => void;
 	handlePreviewMulti: () => Promise<void>;
+	handleQueueMedia: () => Promise<void>;
 	handleOpenInDefaultAppMulti: () => void;
 	handleOpenDeleteMulti: () => void;
 	handleDeleteMulti: () => Promise<void>;
@@ -154,11 +157,34 @@ export function useFileContextMenu({
 		setContextMenu(null);
 	}, [contextMenu, onFocusFileInGraph]);
 
+	/**
+	 * Open a run of files, playing the first media file and queueing the rest.
+	 *
+	 * Media never becomes a tab, so without this every audio or video file in a
+	 * multi-file open would take the player over from the one before it and only
+	 * the last would survive. Media-ness is judged by extension here purely to
+	 * decide ordering; whether a file is really playable is still settled inside
+	 * the open path, which is the only place that knows if it can be streamed.
+	 */
+	const openFilesInOrder = useCallback(
+		async (files: { node: FileNode; path: string }[]) => {
+			let playedMedia = false;
+			for (const file of files) {
+				const media = isMediaFile(file.node.name);
+				await handleFileClick(file.node, file.path, {
+					mediaMode: media && playedMedia ? 'queue' : 'play',
+				});
+				if (media) playedMedia = true;
+			}
+		},
+		[handleFileClick]
+	);
+
 	const handlePreviewFile = useCallback(async () => {
 		const menu = contextMenu;
 		try {
 			if (menu && menu.node && menu.node.type === 'file') {
-				await handleFileClick(menu.node, menu.path, session);
+				await handleFileClick(menu.node, menu.path);
 			}
 		} catch (error) {
 			if (isMissingFileError(error)) {
@@ -197,9 +223,7 @@ export function useFileContextMenu({
 
 			const openAll = async () => {
 				try {
-					for (const file of files) {
-						await handleFileClick(file.node, file.path, session);
-					}
+					await openFilesInOrder(files);
 					onShowFlash?.(
 						`Opened ${files.length} file${files.length !== 1 ? 's' : ''} from "${folderNode.name}"`
 					);
@@ -232,7 +256,7 @@ export function useFileContextMenu({
 		} finally {
 			setContextMenu(null);
 		}
-	}, [contextMenu, handleFileClick, session, onShowFlash]);
+	}, [contextMenu, openFilesInOrder, session.id, onShowFlash]);
 
 	const resolveSelectedNodes = useCallback((): { node: FileNode; path: string }[] => {
 		const result: { node: FileNode; path: string }[] = [];
@@ -257,9 +281,7 @@ export function useFileContextMenu({
 
 		const openAll = async () => {
 			try {
-				for (const file of previewable) {
-					await handleFileClick(file.node, file.path, session);
-				}
+				await openFilesInOrder(previewable);
 				onShowFlash?.(`Opened ${previewable.length} file${previewable.length !== 1 ? 's' : ''}`);
 			} catch (error) {
 				if (isMissingFileError(error)) {
@@ -285,7 +307,55 @@ export function useFileContextMenu({
 			return;
 		}
 		await openAll();
-	}, [resolveSelectedNodes, handleFileClick, session, onShowFlash]);
+	}, [resolveSelectedNodes, openFilesInOrder, session.id, onShowFlash]);
+
+	/**
+	 * Line media up behind whatever is playing, without taking the player over.
+	 *
+	 * Routed through the same open path as playing a file rather than talking to
+	 * the playback store directly: that path is what resolves the stream URL and
+	 * rejects a file it cannot serve, so a remote or unreadable file cannot end
+	 * up as a queue entry that only fails when it reaches the front.
+	 */
+	const handleQueueMedia = useCallback(async () => {
+		const menu = contextMenu;
+		setContextMenu(null);
+		const selected = resolveSelectedNodes();
+		// Right-clicking one row inside a multi-selection queues the selection;
+		// right-clicking outside one queues just that row.
+		const candidates =
+			selected.length > 1 && menu && selected.some((entry) => entry.path === menu.path)
+				? selected
+				: menu?.node && menu.node.type === 'file'
+					? [{ node: menu.node, path: menu.path }]
+					: [];
+
+		const media = candidates.filter(({ node }) => isMediaFile(node.name));
+		if (media.length === 0) {
+			onShowFlash?.('No playable media in selection');
+			return;
+		}
+
+		try {
+			for (const file of media) {
+				await handleFileClick(file.node, file.path, { mediaMode: 'queue' });
+			}
+			onShowFlash?.(`Queued ${media.length} file${media.length !== 1 ? 's' : ''}`);
+		} catch (error) {
+			if (isMissingFileError(error)) {
+				onShowFlash?.('A selected file was no longer available');
+				return;
+			}
+			captureException(error, {
+				extra: {
+					action: 'queue-media',
+					paths: media.map((file) => file.path),
+					sessionId: session.id,
+				},
+			});
+			throw error;
+		}
+	}, [contextMenu, resolveSelectedNodes, handleFileClick, session.id, onShowFlash]);
 
 	const handleOpenInDefaultAppMulti = useCallback(() => {
 		const selectedNodes = resolveSelectedNodes();
@@ -551,6 +621,7 @@ export function useFileContextMenu({
 		handlePreviewFile,
 		handlePreviewAllInFolder,
 		handlePreviewMulti,
+		handleQueueMedia,
 		handleOpenInDefaultAppMulti,
 		handleOpenDeleteMulti,
 		handleDeleteMulti,

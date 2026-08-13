@@ -3,6 +3,7 @@
 // (run-doc) so both share one source of truth for busy detection and --wait.
 
 import { getCliActivityForSession, isSessionBusyWithCli } from '../../shared/cli-activity';
+import { humanizeDuration } from '../../shared/duration';
 import { formatWarning, formatInfo } from '../output/formatter';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -79,19 +80,16 @@ export function checkAgentBusy(agentId: string): { busy: boolean; reason?: strin
 }
 
 /**
- * Format a wait duration in human-readable form.
+ * Format a wait duration in human-readable form ("500ms", "5s", "2m 30s").
  *
- * NOTE: This is intentionally different from shared/formatters.ts formatElapsedTime,
- * which uses a combined format like "5m 12s". This function uses a simpler format
- * (e.g., "5s", "2m 30s") appropriate for CLI wait messages.
+ * NOTE: the ladder deliberately stops at minutes, unlike formatElapsedTime,
+ * which rolls up into hours. A CLI wait is bounded by a timeout, so a long one
+ * is more legible as "90m 0s" than as "1h 30m" - the minute count is what the
+ * caller set and what they are watching.
  */
 export function formatWaitDuration(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
+	return humanizeDuration(ms, { units: ['minute', 'second'], keepZeroUnits: true });
 }
 
 /**

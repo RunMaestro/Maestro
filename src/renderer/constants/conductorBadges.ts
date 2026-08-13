@@ -5,6 +5,8 @@
  * Inspired by the hierarchy of orchestral conductors, from apprentice to legendary.
  */
 
+import { humanizeDuration, DURATION_MS } from '../../shared/duration';
+
 export interface ConductorBadge {
 	id: string;
 	level: number;
@@ -319,27 +321,19 @@ export function formatTimeRemaining(
 }
 
 /**
- * Format cumulative time for display
+ * Format cumulative time for display: "45s", "5m 30s", "2h 15m", "3d 2h 15m",
+ * "1y 35d".
+ *
+ * Weeks and months are left off the ladder on purpose - a day count is the unit
+ * badge thresholds are expressed in, so the number here should stay comparable
+ * to the next milestone. Once a full day is on the clock the minutes still show,
+ * because watching them climb is the point of the badge.
  */
 export function formatCumulativeTime(timeMs: number): string {
-	const days = Math.floor(timeMs / DAY);
-	const hours = Math.floor((timeMs % DAY) / HOUR);
-	const minutes = Math.floor((timeMs % HOUR) / MINUTE);
-	const seconds = Math.floor((timeMs % MINUTE) / 1000);
-
-	if (days >= 365) {
-		const years = Math.floor(days / 365);
-		const remainingDays = days % 365;
-		return `${years}y ${remainingDays}d`;
-	}
-	if (days > 0) {
-		return `${days}d ${hours}h ${minutes}m`;
-	}
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
+	const withinDayRange = timeMs >= DURATION_MS.day && timeMs < DURATION_MS.year;
+	return humanizeDuration(timeMs, {
+		units: ['year', 'day', 'hour', 'minute', 'second'],
+		maxUnits: withinDayRange ? 3 : 2,
+		keepZeroUnits: true,
+	});
 }

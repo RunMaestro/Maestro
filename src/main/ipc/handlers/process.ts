@@ -18,6 +18,12 @@ import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../stores/claudeUsageStore';
 import { isWindows } from '../../../shared/platformDetection';
 import { REGEX_AI_SUFFIX } from '../../constants';
+import {
+	getFailoverOverlay,
+	getFailoverModel,
+	setFailoverOverlay,
+} from '../../process-manager/failover-overlay';
+import { resolveFailoverEnv, failoverUnsetEnvKeys } from '../../../shared/providerFailover';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb, captureException } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -286,6 +292,47 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// renderer mirror (`process:claude-mode-resolved`) already strips this suffix on
 				// its side, so it still receives `config.sessionId` unchanged.
 				const baseSessionId = config.sessionId.replace(REGEX_AI_SUFFIX, '');
+
+				/** Credential keys the live failover endpoint must not inherit; see below. */
+				let failoverUnsetKeysForSpawn: string[] | undefined;
+
+				// Provider Failover: when the renderer has pinned this agent to a backup
+				// endpoint, layer that endpoint's env over the session's own vars here -
+				// the single choke point every renderer spawn surface passes through, so
+				// Auto Run / Cue / tab naming / synopsis all inherit the swap without each
+				// having to know failover exists. Endpoint env wins over the agent's own
+				// customEnvVars: overriding ANTHROPIC_BASE_URL/token is the entire point.
+				// Applied to the BARE agent id because AI-tab spawns carry a compound id.
+				const failoverEnv = getFailoverOverlay(baseSessionId);
+				if (failoverEnv) {
+					config.sessionCustomEnvVars = resolveFailoverEnv(
+						config.sessionCustomEnvVars,
+						failoverEnv
+					);
+					// Auth is all-or-nothing per endpoint. `resolveFailoverEnv` drops an
+					// unsupplied credential from the agent's own vars, but the same key can
+					// also reach the child from the global shell settings or the inherited
+					// `process.env`, and neither is visible here. Carry the removal down to
+					// the spawner, which applies it after every env layer has been merged.
+					const unsetEnvKeys = failoverUnsetEnvKeys(failoverEnv);
+					// Backup providers publish their own model ids (Z.AI wants `glm-4.6`,
+					// a local server wants whatever it loaded), so carrying the primary's
+					// model across would trade a quota error for an unknown-model error.
+					const failoverModel = getFailoverModel(baseSessionId);
+					if (failoverModel) config.sessionCustomModel = failoverModel;
+					logger.info('Spawning on failover endpoint', LOG_CONTEXT, {
+						sessionId: baseSessionId,
+						// Keys only - endpoint env carries auth tokens.
+						keys: Object.keys(failoverEnv),
+						// Surfaced because a backup running with a stripped credential will
+						// fail to authenticate, and that is the expected, safe outcome -
+						// worth being able to see in the log rather than guess at.
+						strippedCredentialKeys: unsetEnvKeys,
+						model: failoverModel,
+					});
+					failoverUnsetKeysForSpawn = unsetEnvKeys;
+				}
+
 				// Resolve the Claude token source (maestro-p TUI vs `claude --print`)
 				// through the shared resolver. Token-mode fields are read from the
 				// persisted session record (authoritative) with the spawn payload as
@@ -1130,6 +1177,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					contextWindow, // Pass configured context window to process manager
 					// When using SSH, env vars are passed in the stdin script, not locally
 					customEnvVars: customEnvVarsToPass,
+					// Provider Failover credential strip. Applied after every env layer,
+					// so a backup endpoint cannot inherit the primary's token from the
+					// global settings or the shell that launched Maestro.
+					unsetEnvKeys: failoverUnsetKeysForSpawn,
 					imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
 					imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
 					promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
@@ -1328,6 +1379,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			await addBreadcrumb('agent', `Kill: ${sessionId}`, { sessionId });
 			return processManager.kill(sessionId);
 		})
+	);
+
+	// Provider Failover: pin an agent to a backup endpoint's env (or clear the pin
+	// with `env: null` to go back to primary). The renderer awaits this before it
+	// fires the failover retry, so the very next spawn already carries the swap -
+	// relying on session persistence to propagate it would race the spawn.
+	ipcMain.handle(
+		'process:setFailoverOverlay',
+		withIpcErrorLogging(
+			handlerOpts('setFailoverOverlay'),
+			async (sessionId: string, env: Record<string, string> | null, model?: string) => {
+				setFailoverOverlay(sessionId.replace(REGEX_AI_SUFFIX, ''), env, model);
+			}
+		)
 	);
 
 	// Resize PTY dimensions
