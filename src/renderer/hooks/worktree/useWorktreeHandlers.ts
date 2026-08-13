@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { Session } from '../../types';
+import type { Session, SessionWorktreeConfig } from '../../types';
 import type { PRDetails } from '../../components/CreatePRModal';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
@@ -31,6 +31,7 @@ import {
 	normalizePath,
 	sessionMatchesWorktreeRoot,
 } from '../../utils/worktreeDedup';
+import { runWorktreeSetupScript } from '../../utils/worktreeSetupScript';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { generateId } from '../../utils/ids';
@@ -54,7 +55,7 @@ export interface WorktreeHandlersReturn {
 	handleDeleteWorktreeSession: (session: Session) => void;
 	handleToggleWorktreeExpanded: (sessionId: string) => void;
 	handleCloseWorktreeConfigModal: () => void;
-	handleSaveWorktreeConfig: (config: { basePath: string; watchEnabled: boolean }) => Promise<void>;
+	handleSaveWorktreeConfig: (config: SessionWorktreeConfig) => Promise<void>;
 	handleDisableWorktreeConfig: () => void;
 	handleCreateWorktreeFromConfig: (branchName: string, basePath: string) => Promise<void>;
 	handleCloseCreateWorktreeModal: () => void;
@@ -210,107 +211,104 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		getModalActions().setWorktreeConfigModalOpen(false);
 	}, []);
 
-	const handleSaveWorktreeConfig = useCallback(
-		async (config: { basePath: string; watchEnabled: boolean }) => {
-			const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
-			const activeSession = currentSessions.find((s) => s.id === activeSessionId);
-			if (!activeSession) return;
-			const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
-				useSettingsStore.getState();
+	const handleSaveWorktreeConfig = useCallback(async (config: SessionWorktreeConfig) => {
+		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
+		const activeSession = currentSessions.find((s) => s.id === activeSessionId);
+		if (!activeSession) return;
+		const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
+			useSettingsStore.getState();
 
-			// Save the config first
-			useSessionStore.getState().updateSession(activeSession.id, { worktreeConfig: config });
+		// Save the config first
+		useSessionStore.getState().updateSession(activeSession.id, { worktreeConfig: config });
 
-			// Scan for worktrees and create sub-agent sessions
-			const parentSshRemoteId = getSshRemoteId(activeSession);
-			try {
-				const scanResult = await window.maestro.git.scanWorktreeDirectory(
-					config.basePath,
-					parentSshRemoteId
-				);
-				const { gitSubdirs } = scanResult;
+		// Scan for worktrees and create sub-agent sessions
+		const parentSshRemoteId = getSshRemoteId(activeSession);
+		try {
+			const scanResult = await window.maestro.git.scanWorktreeDirectory(
+				config.basePath,
+				parentSshRemoteId
+			);
+			const { gitSubdirs } = scanResult;
 
-				if (gitSubdirs.length > 0) {
-					const newWorktreeSessions: Session[] = [];
+			if (gitSubdirs.length > 0) {
+				const newWorktreeSessions: Session[] = [];
 
-					// Same repo-identity guard as scanWorktreeConfigs: if the user just
-					// pointed this agent at a basePath that contains worktrees from a
-					// different repo, skip those subdirs instead of attaching them.
-					const parentRepoRoot = await resolveRepoRoot(activeSession.cwd, parentSshRemoteId);
+				// Same repo-identity guard as scanWorktreeConfigs: if the user just
+				// pointed this agent at a basePath that contains worktrees from a
+				// different repo, skip those subdirs instead of attaching them.
+				const parentRepoRoot = await resolveRepoRoot(activeSession.cwd, parentSshRemoteId);
 
-					for (const subdir of gitSubdirs) {
-						// Skip main/master/HEAD branches - they're typically the main repo
-						if (isSkippableBranch(subdir.branch)) continue;
+				for (const subdir of gitSubdirs) {
+					// Skip main/master/HEAD branches - they're typically the main repo
+					if (isSkippableBranch(subdir.branch)) continue;
 
-						// Repo-identity check (mirrors scanWorktreeConfigs). Falls back to
-						// legacy behavior when either side can't be resolved.
-						if (
-							parentRepoRoot &&
-							subdir.repoRoot &&
-							normalizePath(subdir.repoRoot) !== parentRepoRoot
-						) {
-							continue;
-						}
-
-						// Skip a path spawnWorktreeAgentAndDispatch is still building the
-						// owning child for (mirrors the chokidar + rescan paths).
-						if (isRecentlyCreatedWorktreePath(subdir.path)) continue;
-
-						// Check if session already exists (read latest state each iteration).
-						// Both checks are scoped to THIS parent: with per-parent ownership a
-						// same-repo sibling can hold its own child at the same cwd/branch, so
-						// a global match would wrongly skip this parent and leave it without a
-						// child until a later rescan (no chokidar add fires for an existing
-						// directory). Mirrors the per-parent dedup in scanWorktreeConfigs.
-						const latestSessions = useSessionStore.getState().sessions;
-						const existingByBranch = latestSessions.find(
-							(s) => s.parentSessionId === activeSession.id && s.worktreeBranch === subdir.branch
-						);
-						if (existingByBranch) continue;
-
-						// Also check by path (normalize for comparison), scoped to this parent.
-						const normalizedSubdirPath = normalizePath(subdir.path);
-						const existingByPath = latestSessions.find(
-							(s) =>
-								s.parentSessionId === activeSession.id &&
-								normalizePath(s.cwd) === normalizedSubdirPath
-						);
-						if (existingByPath) continue;
-
-						const gitInfo = await fetchGitInfo(subdir.path, parentSshRemoteId);
-
-						newWorktreeSessions.push(
-							buildWorktreeSession({
-								parentSession: activeSession,
-								path: subdir.path,
-								branch: subdir.branch,
-								name: subdir.branch || subdir.name,
-								defaultSaveToHistory: savToHist,
-								defaultShowThinking: showThink,
-								...gitInfo,
-							})
-						);
+					// Repo-identity check (mirrors scanWorktreeConfigs). Falls back to
+					// legacy behavior when either side can't be resolved.
+					if (
+						parentRepoRoot &&
+						subdir.repoRoot &&
+						normalizePath(subdir.repoRoot) !== parentRepoRoot
+					) {
+						continue;
 					}
 
-					if (newWorktreeSessions.length > 0) {
-						useSessionStore.getState().setSessions((prev) => [...prev, ...newWorktreeSessions]);
-						// Expand worktrees on parent
-						useSessionStore.getState().updateSession(activeSession.id, { worktreesExpanded: true });
-						notifyToast({
-							type: 'success',
-							title: 'Worktrees Discovered',
-							message: `Found ${newWorktreeSessions.length} worktree sub-agent${
-								newWorktreeSessions.length > 1 ? 's' : ''
-							}`,
-						});
-					}
+					// Skip a path spawnWorktreeAgentAndDispatch is still building the
+					// owning child for (mirrors the chokidar + rescan paths).
+					if (isRecentlyCreatedWorktreePath(subdir.path)) continue;
+
+					// Check if session already exists (read latest state each iteration).
+					// Both checks are scoped to THIS parent: with per-parent ownership a
+					// same-repo sibling can hold its own child at the same cwd/branch, so
+					// a global match would wrongly skip this parent and leave it without a
+					// child until a later rescan (no chokidar add fires for an existing
+					// directory). Mirrors the per-parent dedup in scanWorktreeConfigs.
+					const latestSessions = useSessionStore.getState().sessions;
+					const existingByBranch = latestSessions.find(
+						(s) => s.parentSessionId === activeSession.id && s.worktreeBranch === subdir.branch
+					);
+					if (existingByBranch) continue;
+
+					// Also check by path (normalize for comparison), scoped to this parent.
+					const normalizedSubdirPath = normalizePath(subdir.path);
+					const existingByPath = latestSessions.find(
+						(s) =>
+							s.parentSessionId === activeSession.id &&
+							normalizePath(s.cwd) === normalizedSubdirPath
+					);
+					if (existingByPath) continue;
+
+					const gitInfo = await fetchGitInfo(subdir.path, parentSshRemoteId);
+
+					newWorktreeSessions.push(
+						buildWorktreeSession({
+							parentSession: activeSession,
+							path: subdir.path,
+							branch: subdir.branch,
+							name: subdir.branch || subdir.name,
+							defaultSaveToHistory: savToHist,
+							defaultShowThinking: showThink,
+							...gitInfo,
+						})
+					);
 				}
-			} catch (err) {
-				logger.error('Failed to scan for worktrees:', undefined, err);
+
+				if (newWorktreeSessions.length > 0) {
+					useSessionStore.getState().setSessions((prev) => [...prev, ...newWorktreeSessions]);
+					// Expand worktrees on parent
+					useSessionStore.getState().updateSession(activeSession.id, { worktreesExpanded: true });
+					notifyToast({
+						type: 'success',
+						title: 'Worktrees Discovered',
+						message: `Found ${newWorktreeSessions.length} worktree sub-agent${
+							newWorktreeSessions.length > 1 ? 's' : ''
+						}`,
+					});
+				}
 			}
-		},
-		[]
-	);
+		} catch (err) {
+			logger.error('Failed to scan for worktrees:', undefined, err);
+		}
+	}, []);
 
 	const handleDisableWorktreeConfig = useCallback(() => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
@@ -402,6 +400,15 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				// avoid re-marking - there was nothing newly created on disk to race with.
 				if (reusedExisting) {
 					recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
+				} else if (result.created) {
+					// Fresh worktree on disk - bootstrap it with the agent's setup script.
+					await runWorktreeSetupScript({
+						parentSession: activeSession,
+						mainRepoPath: activeSession.cwd,
+						worktreePath,
+						branchName,
+						sshRemoteId,
+					});
 				}
 
 				// If a session for the existing worktree path already exists, focus it
@@ -519,6 +526,16 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 			if (reusedExisting) {
 				recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
+			} else if (result.created) {
+				// Fresh worktree on disk - bootstrap it with the agent's setup script.
+				await runWorktreeSetupScript({
+					parentSession: createWtSession,
+					mainRepoPath: createWtSession.cwd,
+					worktreePath,
+					branchName,
+					baseBranch,
+					sshRemoteId,
+				});
 			}
 
 			// If a session for the existing worktree path already exists, focus it
@@ -559,7 +576,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					if (s.id !== createWtSession.id) return s;
 					const updates: Partial<Session> = { worktreesExpanded: true };
 					if (needsConfig) {
-						updates.worktreeConfig = { basePath, watchEnabled: true };
+						// Spread the existing config so a setup script survives a
+						// quick-create that only fills in the missing basePath.
+						updates.worktreeConfig = { ...s.worktreeConfig, basePath, watchEnabled: true };
 					}
 					return { ...s, ...updates };
 				}),

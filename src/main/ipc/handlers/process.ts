@@ -8,6 +8,8 @@ import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import { logger } from '../../utils/logger';
+import { setFailoverOverlay } from '../../process-manager/failover-overlay';
+import { REGEX_AI_SUFFIX } from '../../constants';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -237,6 +239,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			await addBreadcrumb('agent', `Kill: ${sessionId}`, { sessionId });
 			return processManager.kill(sessionId);
 		})
+	);
+
+	// Provider Failover: pin an agent to a backup endpoint's env (or clear the pin
+	// with `env: null` to go back to primary). The renderer awaits this before it
+	// fires the failover retry, so the very next spawn already carries the swap -
+	// relying on session persistence to propagate it would race the spawn.
+	ipcMain.handle(
+		'process:setFailoverOverlay',
+		withIpcErrorLogging(
+			handlerOpts('setFailoverOverlay'),
+			async (sessionId: string, env: Record<string, string> | null, model?: string) => {
+				setFailoverOverlay(sessionId.replace(REGEX_AI_SUFFIX, ''), env, model);
+			}
+		)
 	);
 
 	// Resize PTY dimensions

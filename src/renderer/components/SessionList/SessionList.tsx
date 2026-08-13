@@ -76,6 +76,19 @@ import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
 
+/**
+ * Sidebar width below which the now-playing pill drops its filename and shows
+ * only the note icon.
+ *
+ * The header's left cluster does not scroll or wrap, so every element in it has
+ * to earn its width: at a default sidebar the logo, the badge pill and the
+ * LIVE/OFFLINE pill already fill the row, and a filename on top of them pushes
+ * the hamburger off the edge. The threshold is the OFFLINE one plus room for a
+ * label, and the icon alone still says audio is playing - the tooltip names the
+ * file either way.
+ */
+const NOW_PLAYING_LABEL_MIN_WIDTH = 440;
+
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
 // ============================================================================
@@ -1244,8 +1257,12 @@ function SessionListInner(props: SessionListProps) {
 							)}
 							{/* Now playing - only while the floating player is hidden, so the
 							    user can always see that audio is coming from Maestro and get
-							    the widget back with one click. */}
-							<NowPlayingIndicator theme={theme} />
+							    the widget back with one click. Sheds its label on a narrow
+							    sidebar, the same way the LIVE pill below does. */}
+							<NowPlayingIndicator
+								theme={theme}
+								compact={leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH}
+							/>
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}

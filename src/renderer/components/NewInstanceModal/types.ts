@@ -1,5 +1,12 @@
 import type React from 'react';
-import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	Session,
+	ToolType,
+	Theme,
+	FailoverConfig,
+} from '../../types';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -94,7 +101,8 @@ export interface EditAgentModalProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
-		contextWindowSource?: 'user-edited'
+		contextWindowSource?: 'user-edited',
+		failoverConfig?: FailoverConfig
 	) => void;
 	theme: Theme;
 	session: Session | null;

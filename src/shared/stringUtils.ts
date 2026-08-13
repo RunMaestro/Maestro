@@ -34,35 +34,6 @@
  * ```
  */
 /**
- * Percent-decode a string, falling back to the raw input when the escapes are
- * malformed.
- *
- * `decodeURIComponent` throws `URIError: URI malformed` on any lone or
- * truncated escape (`%`, `%ZZ`, `%E0%A4%A`). Markdown and file paths reaching
- * us from agents, Windows shells, and non-ASCII locales routinely contain a
- * bare `%`, so callers that decode untrusted text need this instead of the
- * bare built-in. Only `URIError` is swallowed - anything else is unexpected and
- * rethrown, since masking it would hide real bugs. (MAESTRO-XS)
- *
- * @param value - Possibly percent-encoded string
- * @returns The decoded string, or `value` unchanged if it isn't valid encoding
- *
- * @example
- * ```typescript
- * safeDecodeURIComponent('my%20file.ts'); // 'my file.ts'
- * safeDecodeURIComponent('100% done');    // '100% done' (no throw)
- * ```
- */
-export function safeDecodeURIComponent(value: string): string {
-	try {
-		return decodeURIComponent(value);
-	} catch (err) {
-		if (err instanceof URIError) return value;
-		throw err;
-	}
-}
-
-/**
  * Escape special regex characters so a literal string can be embedded in a
  * `RegExp` without being interpreted as a pattern.
  *
@@ -73,6 +44,42 @@ export function safeDecodeURIComponent(value: string): string {
  */
 export function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Percent-decode a string, returning it unchanged when decoding would throw
+ *
+ * `decodeURIComponent` throws `URIError` on malformed percent encoding, which
+ * is easy to hit with user-supplied input: a Windows path containing `%`, a
+ * hand-typed deep link, or a markdown image src that was never encoded. Use
+ * this wherever the input is not guaranteed to be well-formed.
+ *
+ * @param value - The possibly percent-encoded string
+ * @returns The decoded string, or the original value if decoding fails
+ *
+ * @example
+ * ```typescript
+ * safeDecodeURIComponent('my%20file.md'); // 'my file.md'
+ * safeDecodeURIComponent('100%');         // '100%' (would throw URIError)
+ * ```
+ */
+export function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch (err) {
+		// Malformed percent encoding (a bare '%', a truncated '%E0%A4') throws
+		// URIError. Callers handle user-supplied strings that may not be encoded at
+		// all, so fall back to the original value instead of failing.
+		//
+		// ONLY URIError is swallowed. A bare catch here would also hide unexpected
+		// failures (a RangeError from a pathological input, a TypeError from a
+		// future refactor) and keep them out of Sentry, which is exactly the
+		// silent-failure pattern CLAUDE.md warns about. This also matches the
+		// implementation already on rc, so the two branches converge instead of
+		// conflicting on this function.
+		if (err instanceof URIError) return value;
+		throw err;
+	}
 }
 
 export function stripAnsiCodes(text: string): string {

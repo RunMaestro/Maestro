@@ -21,6 +21,8 @@ import type { AgentConfigsData } from '../../../stores/types';
 import { logger } from '../../../utils/logger';
 import { isWindows } from '../../../../shared/platformDetection';
 import { REGEX_AI_SUFFIX } from '../../../constants';
+import { getFailoverOverlay, getFailoverModel } from '../../../process-manager/failover-overlay';
+import { resolveFailoverEnv, failoverUnsetEnvKeys } from '../../../../shared/providerFailover';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
 import {
@@ -140,6 +142,46 @@ export async function handleProcessSpawn(
 				}
 			: null,
 	});
+	/** Credential keys the live failover endpoint must not inherit; see below. */
+	let failoverUnsetKeysForSpawn: string[] | undefined;
+
+	// Provider Failover: when the renderer has pinned this agent to a backup
+	// endpoint, layer that endpoint's env over the session's own vars here - the
+	// single choke point every renderer spawn surface passes through, so Auto Run
+	// / Cue / tab naming / synopsis all inherit the swap without each having to
+	// know failover exists. Endpoint env wins over the agent's own customEnvVars:
+	// overriding ANTHROPIC_BASE_URL/token is the entire point. Applied to the
+	// BARE agent id because AI-tab spawns carry a compound id.
+	{
+		const failoverSessionId = config.sessionId.replace(REGEX_AI_SUFFIX, '');
+		const failoverEnv = getFailoverOverlay(failoverSessionId);
+		if (failoverEnv) {
+			config.sessionCustomEnvVars = resolveFailoverEnv(config.sessionCustomEnvVars, failoverEnv);
+			// Auth is all-or-nothing per endpoint. `resolveFailoverEnv` drops an
+			// unsupplied credential from the agent's own vars, but the same key can
+			// also reach the child from the global shell settings or the inherited
+			// `process.env`, and neither is visible here. Carry the removal down to
+			// the spawner, which applies it after every env layer has been merged.
+			const unsetEnvKeys = failoverUnsetEnvKeys(failoverEnv);
+			// Backup providers publish their own model ids (Z.AI wants `glm-4.6`, a
+			// local server wants whatever it loaded), so carrying the primary's model
+			// across would trade a quota error for an unknown-model error.
+			const failoverModel = getFailoverModel(failoverSessionId);
+			if (failoverModel) config.sessionCustomModel = failoverModel;
+			logger.info('Spawning on failover endpoint', LOG_CONTEXT, {
+				sessionId: failoverSessionId,
+				// Keys only - endpoint env carries auth tokens.
+				keys: Object.keys(failoverEnv),
+				// Surfaced because a backup running with a stripped credential will
+				// fail to authenticate, and that is the expected, safe outcome - worth
+				// being able to see in the log rather than guess at.
+				strippedCredentialKeys: unsetEnvKeys,
+				model: failoverModel,
+			});
+			failoverUnsetKeysForSpawn = unsetEnvKeys;
+		}
+	}
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
@@ -874,6 +916,10 @@ export async function handleProcessSpawn(
 		ompModelCatalogKey, // Identity for the omp model catalog (local omp only)
 		// When using SSH, env vars are passed in the stdin script, not locally
 		customEnvVars: customEnvVarsToPass,
+		// Provider Failover credential strip. Applied after every env layer, so a
+		// backup endpoint cannot inherit the primary's token from the global
+		// settings or the shell that launched Maestro.
+		unsetEnvKeys: failoverUnsetKeysForSpawn,
 		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
 		imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
 		promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)

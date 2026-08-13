@@ -193,6 +193,20 @@ export function createProcessCoreApi() {
 		kill: (sessionId: string): Promise<boolean> => ipcRenderer.invoke('process:kill', sessionId),
 
 		/**
+		 * Provider Failover: pin an agent to a backup endpoint's env vars (and its
+		 * model, when the endpoint declares one), or pass `env: null` to return the
+		 * agent to its primary provider. Main layers this over `sessionCustomEnvVars`
+		 * for every subsequent spawn of this agent, so all spawn surfaces (interactive
+		 * turn, Auto Run, Cue, tab naming) inherit the swap. Not persisted - agents
+		 * come back on their primary after a restart.
+		 */
+		setFailoverOverlay: (
+			sessionId: string,
+			env: Record<string, string> | null,
+			model?: string
+		): Promise<void> => ipcRenderer.invoke('process:setFailoverOverlay', sessionId, env, model),
+
+		/**
 		 * Resize process terminal
 		 */
 		resize: (sessionId: string, cols: number, rows: number): Promise<boolean> =>

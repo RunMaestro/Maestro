@@ -332,8 +332,9 @@ describe('EditAgentModal', () => {
 				true,
 				true,
 				undefined, // additionalDirectories
-				undefined // contextWindowSource: the window was not touched, so no
+				undefined, // contextWindowSource: the window was not touched, so no
 				// provenance is recorded and P1 precedence stands (finding AD1)
+				undefined // failoverConfig (not configured on this agent)
 			);
 		});
 
@@ -429,10 +430,47 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			undefined // failoverConfig (not configured on this agent)
 		);
 		expect(onClose).toHaveBeenCalled();
+	});
+
+	it('round-trips an existing Provider Failover config through save', async () => {
+		const failoverConfig = {
+			enabled: true,
+			returnToPrimaryMinutes: 45,
+			endpoints: [
+				{
+					id: 'zai',
+					label: 'Z.AI',
+					env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' },
+					model: 'glm-4.6',
+				},
+			],
+		};
+		const session = createSession({ id: 'test-id', name: 'Original Name', failoverConfig });
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={session}
+				existingSessions={[]}
+			/>
+		);
+
+		// The endpoint should load into the editor rather than starting blank.
+		expect(await screen.findByDisplayValue('Z.AI')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		// Saving without touching failover must hand the config back unchanged -
+		// a dropped arg anywhere in the save chain silently disarms the feature.
+		expect(onSave.mock.calls[0][19]).toEqual(failoverConfig);
 	});
 
 	it('should trigger save on Cmd+Enter when form is valid', async () => {
@@ -663,8 +701,9 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			undefined // failoverConfig (not configured on this agent)
 		);
 	});
 
@@ -737,8 +776,9 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			undefined // failoverConfig (not configured on this agent)
 		);
 	});
 
@@ -817,8 +857,9 @@ describe('EditAgentModal', () => {
 			true, // retryOnAvailabilityErrors
 			true, // retryOnTokenExhaustion
 			undefined, // additionalDirectories
-			undefined // contextWindowSource: the window was not touched, so no
+			undefined, // contextWindowSource: the window was not touched, so no
 			// provenance is recorded and P1 precedence stands (finding AD1)
+			undefined // failoverConfig (not configured on this agent)
 		);
 	});
 

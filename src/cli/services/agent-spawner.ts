@@ -152,7 +152,8 @@ function resolveAgentOverrides(
 	toolType: ToolType,
 	def: ReturnType<typeof getAgentDefinition>,
 	baseArgs: string[],
-	overrides: SpawnOverrides
+	overrides: SpawnOverrides,
+	readOnlyMode?: boolean
 ): { args: string[]; userCustomEnvVars?: Record<string, string> } {
 	const agentConfigValues = readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
@@ -161,6 +162,7 @@ function resolveAgentOverrides(
 		sessionCustomEffort: overrides.customEffort,
 		sessionCustomArgs: overrides.customArgs,
 		sessionCustomEnvVars: overrides.customEnvVars,
+		readOnlyMode,
 	});
 	const userCustomEnvVars =
 		overrides.customEnvVars ??
@@ -432,7 +434,8 @@ async function spawnClaudeAgent(
 		'claude-code',
 		def,
 		preOverrideArgs,
-		overrides
+		overrides,
+		readOnlyMode
 	);
 
 	// Inject the Maestro system prompt via `--append-system-prompt(-file)`. The
@@ -843,7 +846,8 @@ async function spawnJsonLineAgent(
 		toolType,
 		def,
 		preOverrideArgs,
-		overrides
+		overrides,
+		readOnlyMode
 	);
 
 	// Pass only the user-level env (no agent defaults) so shell-provided values

@@ -546,6 +546,42 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
+		// error: the turn failed server-side. Codex reports these through
+		// EventMsg::Error, which carries its text in `payload.message` rather
+		// than the top-level `error` field the legacy shapes use. Without this
+		// branch the event fell through to a benign `system` event and the user
+		// just watched the agent go quiet with no explanation (see #1378, where
+		// remote compaction 404'd mid-conversation).
+		if (payload.type === 'error' && payload.message) {
+			return {
+				type: 'error',
+				text: payload.message,
+				raw: msg,
+			};
+		}
+
+		// stream_error: a transient stream failure that Codex retries on its own
+		// ("stream error: ...; retrying 1/5"). Surface it as progress text, NOT
+		// as an error - flagging it would pause a session that is about to
+		// recover on its own, and the once-only `errorEmitted` latch in
+		// StdoutHandler would then swallow the real error if the retries do run
+		// out.
+		//
+		// `isReasoning` keeps it OUT of `streamedText`. That buffer is what
+		// ExitHandler emits as the final answer when a turn ends without a result
+		// message - so on a turn that retries and then dies, the user would have
+		// been handed "stream error: ...; retrying 1/5" as the agent's response.
+		// Visible as progress, never the answer.
+		if (payload.type === 'stream_error' && payload.message) {
+			return {
+				type: 'text',
+				text: payload.message,
+				isPartial: true,
+				isReasoning: true,
+				raw: msg,
+			};
+		}
+
 		// task_started, user_message, and other event types - system events
 		return {
 			type: 'system',
@@ -944,10 +980,27 @@ export class CodexOutputParser implements AgentOutputParser {
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 
-		if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
+		// Current format (v0.111.0+): errors arrive wrapped in an `event_msg`
+		// envelope with the text in `payload.message`. `stream_error` is
+		// deliberately NOT treated as an error here - Codex retries those
+		// itself, and raising one would both pause a recovering session and
+		// burn StdoutHandler's once-only `errorEmitted` latch.
+		if (obj.type === 'event_msg') {
+			const payload = obj.payload as CodexPayload | undefined;
+			if (payload?.type === 'error' && typeof payload.message === 'string' && payload.message) {
+				parsedJson = parsed;
+				errorText = payload.message;
+			}
+		} else if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
 			parsedJson = parsed;
-			errorText = extractErrorText(obj.error as CodexRawMessage['error']);
-			if (errorText === 'Unknown error') errorText = null;
+			// Legacy shapes carry the text in `error`; the bare exec-JSON `error`
+			// event carries it in `message`. Fall back to `message` instead of
+			// discarding the event as "Unknown error".
+			errorText = extractErrorText(obj.error as CodexRawMessage['error'], '');
+			if (!errorText && typeof obj.message === 'string') {
+				errorText = obj.message;
+			}
+			if (!errorText || errorText === 'Unknown error') errorText = null;
 		}
 
 		if (!errorText) {

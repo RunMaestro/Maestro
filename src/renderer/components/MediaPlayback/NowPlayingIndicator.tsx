@@ -10,7 +10,11 @@ import type { Theme } from '../../types';
 
 interface NowPlayingIndicatorProps {
 	theme: Theme;
-	/** Icon-only, for the collapsed Left Bar where there is no room for a label. */
+	/**
+	 * Icon-only, for a Left Bar with no room for a label - the collapsed rail,
+	 * or an expanded sidebar too narrow to take a filename without pushing the
+	 * hamburger off the edge.
+	 */
 	compact?: boolean;
 }
 
@@ -44,7 +48,10 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 			type="button"
 			data-testid="now-playing-indicator"
 			onClick={restore}
-			className={`flex items-center gap-1 rounded text-[10px] font-bold transition-colors hover:bg-white/10 ${
+			// `shrink-0` on the icon and a capped, truncating label: the header row
+			// neither wraps nor scrolls, so this pill must never be the thing that
+			// pushes the hamburger menu off the edge.
+			className={`flex items-center gap-1 shrink-0 rounded text-[10px] font-bold transition-colors hover:bg-white/10 ${
 				compact ? 'p-1' : 'px-1.5 py-0.5'
 			}`}
 			style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
@@ -53,7 +60,7 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 		>
 			{/* Animated only while it is actually making sound, so the pill reads as
 			    a live indicator rather than a permanent button. */}
-			<Music className={`w-3 h-3${playing ? ' animate-pulse' : ''}`} />
+			<Music className={`w-3 h-3 shrink-0${playing ? ' animate-pulse' : ''}`} />
 			{!compact && <span className="max-w-[7rem] truncate font-normal">{active.name}</span>}
 		</button>
 	);

@@ -59,6 +59,7 @@ vi.mock('../../../../main/parsers', () => ({
 		extractSlashCommands: vi.fn(),
 		isResultMessage: vi.fn(),
 		detectErrorFromLine: vi.fn(),
+		detectErrorFromExit: vi.fn(() => null),
 	})),
 }));
 
@@ -215,7 +216,13 @@ describe('ChildProcessSpawner', () => {
 				})
 			);
 
-			expect(buildChildProcessEnv).toHaveBeenCalledWith(undefined, true, undefined, undefined);
+			expect(buildChildProcessEnv).toHaveBeenCalledWith(
+				undefined,
+				true,
+				undefined,
+				undefined,
+				undefined
+			);
 		});
 
 		it('should enable stream-json mode when sendPromptViaStdin is true', () => {
@@ -595,6 +602,97 @@ describe('ChildProcessSpawner', () => {
 			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
 			const eventNames = onCalls.map(([event]) => event);
 			expect(eventNames).toContain('error');
+		});
+	});
+
+	// Regression (issue #1044): ProcessManager.spawn() kills the process holding a
+	// sessionId before registering the replacement under the same key. The killed
+	// process drains stdio and fires `close` afterwards, and every downstream
+	// handler is keyed by sessionId alone - so those late events used to be
+	// attributed to the live successor, surfacing "Agent exited with code 143"
+	// (SIGTERM) on a healthy turn and deleting the successor's tracking entry.
+	describe('late events from a superseded generation', () => {
+		function spawnTwoGenerations() {
+			const ctx = createTestContext();
+			const config = createBaseConfig({ prompt: 'first turn' });
+
+			ctx.spawner.spawn(config);
+			const first = mockChildProcess;
+			const firstHandlers = new Map<string, Function>(
+				(first.on.mock.calls as [string, Function][]).map(([event, fn]) => [event, fn])
+			);
+
+			// ProcessManager.spawn() kills the predecessor (dropping its map entry)
+			// before the spawner registers the successor under the same key.
+			ctx.processes.delete(config.sessionId);
+			ctx.spawner.spawn(createBaseConfig({ prompt: 'second turn' }));
+			const second = ctx.processes.get(config.sessionId);
+
+			return { ...ctx, config, first, firstHandlers, second };
+		}
+
+		it('ignores a late close from the killed predecessor', async () => {
+			const { emitter, processes, config, firstHandlers, second } = spawnTwoGenerations();
+			const onExit = vi.fn();
+			const onAgentError = vi.fn();
+			emitter.on('exit', onExit);
+			emitter.on('agent-error', onAgentError);
+
+			// Predecessor finally reports its SIGTERM death (128 + 15).
+			firstHandlers.get('close')?.(143);
+			// handleExit is async - give the (suppressed) exit path room to run.
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(onAgentError).not.toHaveBeenCalled();
+			// The live process stays tracked, so the user can still stop it.
+			expect(processes.get(config.sessionId)).toBe(second);
+		});
+
+		it('ignores a late error from the killed predecessor', () => {
+			const { emitter, processes, config, firstHandlers, second } = spawnTwoGenerations();
+			const onExit = vi.fn();
+			const onAgentError = vi.fn();
+			emitter.on('exit', onExit);
+			emitter.on('agent-error', onAgentError);
+
+			firstHandlers.get('error')?.(new Error('EPIPE'));
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(processes.get(config.sessionId)).toBe(second);
+		});
+
+		it('ignores late stdout/stderr from the killed predecessor', () => {
+			const { emitter, bufferManager, first, second } = spawnTwoGenerations();
+			const onRawStdout = vi.fn();
+			emitter.on('raw-stdout', onRawStdout);
+
+			first.stdout.emit('data', 'stale output from the dead turn');
+			first.stderr.emit('data', 'stale stderr');
+
+			expect(onRawStdout).not.toHaveBeenCalled();
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(second?.stderrBuffer).toBe('');
+		});
+
+		it('still reports exit for the current generation', async () => {
+			const { emitter, processes, spawner } = createTestContext();
+			const baseConfig = createBaseConfig({ prompt: 'only turn' });
+
+			spawner.spawn(baseConfig);
+			const handlers = new Map<string, Function>(
+				(mockChildProcess.on.mock.calls as [string, Function][]).map(([event, fn]) => [event, fn])
+			);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			handlers.get('close')?.(0);
+			// handleExit is async (post-exit reconciliation) - let it settle.
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+
+			expect(onExit).toHaveBeenCalledWith(baseConfig.sessionId, 0);
+			expect(processes.has(baseConfig.sessionId)).toBe(false);
 		});
 	});
 

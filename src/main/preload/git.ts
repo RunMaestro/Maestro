@@ -117,6 +117,35 @@ export interface GitWorktreeSetupResult {
 }
 
 /**
+ * Context passed to the post-create setup script, surfaced to it as MAESTRO_*
+ * environment variables.
+ */
+export interface WorktreeSetupScriptContext {
+	/** Absolute path of the newly created worktree (the script's cwd) */
+	worktreePath: string;
+	/** Branch checked out in the new worktree */
+	branchName: string;
+	/** Absolute path of the main repository the worktree was created from */
+	mainRepoPath: string;
+	/** Branch the new branch was based on, when one was specified */
+	baseBranch?: string;
+}
+
+/**
+ * Result of the `git.worktreeRunSetup` IPC.
+ */
+export interface GitWorktreeRunSetupResult {
+	/** True when the script ran and exited 0 (also true when nothing was configured) */
+	success: boolean;
+	/** False when no script was configured, so nothing was executed */
+	ran: boolean;
+	exitCode?: number | string;
+	stdout: string;
+	stderr: string;
+	error?: string;
+}
+
+/**
  * Result of the `git.worktreeCheckout` IPC.
  */
 export interface GitWorktreeCheckoutResult {
@@ -388,6 +417,17 @@ export function createGitApi() {
 				sshRemoteId,
 				baseBranch
 			),
+
+		/**
+		 * Run the configured post-create setup script inside a new worktree.
+		 * A blank script resolves to `{ success: true, ran: false }`.
+		 */
+		worktreeRunSetup: (
+			script: string,
+			context: WorktreeSetupScriptContext,
+			sshRemoteId?: string
+		): Promise<GitWorktreeRunSetupResult> =>
+			ipcRenderer.invoke('git:worktreeRunSetup', script, context, sshRemoteId),
 
 		/**
 		 * Checkout a branch in a worktree

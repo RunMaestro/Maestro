@@ -62,6 +62,14 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 
+// Provider Failover types (pure module, shared with the main process).
+export type {
+	FailoverConfig,
+	FailoverEndpoint,
+	FailoverState,
+} from '../../shared/providerFailover';
+import type { FailoverConfig } from '../../shared/providerFailover';
+
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
 export type RightPanelTab = 'files' | 'history' | 'autorun';
@@ -387,6 +395,16 @@ export interface HistoryEntry extends BaseHistoryEntry {
 // Renderer-specific WorktreeConfig extends the shared base with UI-specific fields
 export interface WorktreeConfig extends BaseWorktreeConfig {
 	ghPath?: string; // Custom path to gh CLI binary (optional, UI-specific)
+}
+
+// Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
+// Distinct from `WorktreeConfig` above, which describes a single batch run's worktree.
+export interface SessionWorktreeConfig {
+	basePath: string; // Directory where worktrees are stored
+	watchEnabled: boolean; // Whether to watch for new worktrees via chokidar
+	// Shell command run inside each newly created worktree (copy .env files,
+	// run setup.sh, install deps). Blank/undefined disables it.
+	setupScript?: string;
 }
 
 // Worktree path validation state (used by useWorktreeValidation hook)
@@ -985,10 +1003,7 @@ export interface Session {
 	gitTags?: string[];
 	gitRefsCacheTime?: number; // Timestamp when branches/tags were last fetched
 	// Worktree configuration (only set on parent sessions that manage worktrees)
-	worktreeConfig?: {
-		basePath: string; // Directory where worktrees are stored
-		watchEnabled: boolean; // Whether to watch for new worktrees via chokidar
-	};
+	worktreeConfig?: SessionWorktreeConfig;
 	// Worktree child indicator (only set on worktree child sessions)
 	parentSessionId?: string; // Links back to parent agent session
 	worktreeBranch?: string; // The git branch this worktree is checked out to
@@ -1244,6 +1259,13 @@ export interface Session {
 	// covers plan-quota exhaustion (wait-until-reset, else hourly).
 	retryOnAvailabilityErrors?: boolean;
 	retryOnTokenExhaustion?: boolean;
+
+	// Provider Failover: ordered Anthropic-compatible backup endpoints (local
+	// vLLM/Ollama, Z.AI, an enterprise proxy, or a second account) this agent hands
+	// off to when resilience would otherwise sit out the primary's reset window.
+	// Off unless explicitly armed - swapping providers mid-task changes who sees
+	// the prompt and what it costs. See shared/providerFailover.
+	failoverConfig?: FailoverConfig;
 
 	// Last resolved Claude headless-mode state (only meaningful for Claude Code
 	// sessions with `enableMaestroP === true`). The spawner writes this after

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { AdditionalDirectory, Theme, Session, ToolType } from '../../types';
+import type { AdditionalDirectory, Theme, Session, ToolType, FailoverConfig } from '../../types';
 
 // Session Management Modal Components
 import { NewInstanceModal, EditAgentModal } from '../NewInstanceModal';
@@ -83,7 +83,8 @@ export interface AppSessionModalsProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
-		contextWindowSource?: 'user-edited'
+		contextWindowSource?: 'user-edited',
+		failoverConfig?: FailoverConfig
 	) => void;
 	editAgentSession: Session | null;
 

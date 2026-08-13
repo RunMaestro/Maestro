@@ -70,8 +70,18 @@ describe('NowPlayingIndicator', () => {
 		expect(screen.getByLabelText(/^Paused podcast\.mp3/)).toBeTruthy();
 	});
 
-	it('drops the label in the collapsed Left Bar, where there is no room', () => {
+	it('drops the label where there is no room, keeping the icon and the tooltip', () => {
+		// The collapsed rail, and any sidebar too narrow to take a filename without
+		// pushing the hamburger off the header.
 		render(<NowPlayingIndicator theme={mockTheme} compact />);
-		expect(screen.getByTestId('now-playing-indicator').textContent).toBe('');
+		const pill = screen.getByTestId('now-playing-indicator');
+		expect(pill.textContent).toBe('');
+		// The file is still named, just not in the row itself.
+		expect(pill.getAttribute('title')).toContain('podcast.mp3');
+	});
+
+	it('never shrinks, so it cannot be the thing that squeezes the header', () => {
+		render(<NowPlayingIndicator theme={mockTheme} />);
+		expect(screen.getByTestId('now-playing-indicator').className).toContain('shrink-0');
 	});
 });

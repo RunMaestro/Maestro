@@ -383,6 +383,25 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 			message: 'Session not found. Starting fresh conversation.',
 			recoverable: true,
 		},
+		{
+			pattern: /invalid.*session/i,
+			message: 'Invalid session. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			// Google/Gemini answers with a bare 400 INVALID_ARGUMENT when the
+			// replayed conversation is malformed - most often a tool call left
+			// without its matching result after a turn was aborted mid-stream.
+			// OpenCode replays its whole stored session on every prompt, so once
+			// that lands in session storage the provider rejects every later
+			// prompt identically and the session is unusable (issue #307).
+			// Classify as session_not_found: the stored provider session is dead,
+			// and retrying it can never succeed - only a fresh session can.
+			pattern: /\brequest contains an invalid argument\b/i,
+			message:
+				'The provider rejected this conversation (400 INVALID_ARGUMENT). The stored session history is unusable - start a new session to continue.',
+			recoverable: true,
+		},
 	],
 };
 
@@ -405,6 +424,15 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			pattern: /unauthorized/i,
 			message: 'Unauthorized access. Please check your API key.',
+			recoverable: true,
+		},
+		{
+			// 403 from OpenAI means the key is valid but not permitted here (model
+			// not enabled for the org, unsupported region). Retrying cannot fix it,
+			// so it must not fall into the network_error bank's "please retry".
+			pattern: /\b403\b|forbidden/i,
+			message:
+				'Access denied (HTTP 403). The key is valid but not permitted for this model, organization, or region.',
 			recoverable: true,
 		},
 		{
@@ -481,6 +509,33 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			pattern: /network\s+(error|failure|unavailable)/i,
 			message: 'Network error occurred. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			// Codex's server-side conversation compaction failing mid-turn (#1378).
+			// Reported as a 404 from .../codex/responses/compact, but the status
+			// varies, so key off the task name instead. The failure is turn-scoped
+			// rather than session-fatal, so keep it recoverable and say so - the
+			// reporter's session looked permanently dead only because nothing was
+			// ever surfaced.
+			pattern: /error running remote compact task/i,
+			message:
+				'Codex could not compact this conversation on its server. The turn was dropped but the session is intact - retry the prompt, and start a new tab if it keeps failing.',
+			recoverable: true,
+		},
+		{
+			// Codex's HTTP client renders upstream failures as
+			// "unexpected status <code> <reason>". 429 is claimed earlier by the
+			// rate_limited bank (which runs first), so this covers the rest.
+			//
+			// 401/403 are excluded deliberately. `network_error` is matched BEFORE
+			// `auth_expired` (see ERROR_TYPES_BY_HIT_FREQUENCY), so without this
+			// carve-out a bad API key would be reported as a transient provider blip
+			// with "please retry" - advice that can never work - instead of falling
+			// through to the auth bank's "check your credentials".
+			pattern: /unexpected status (?!401\b|403\b)(\d{3})\b/i,
+			message: (match) =>
+				`Codex request failed upstream (HTTP ${match[1]}). This is a provider-side failure - please retry.`,
 			recoverable: true,
 		},
 	],

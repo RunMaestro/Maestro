@@ -166,7 +166,12 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
-import type { GitWorktreeSetupResult, GitWorktreeCheckoutResult } from '../main/preload/git';
+import type {
+	GitWorktreeSetupResult,
+	GitWorktreeCheckoutResult,
+	GitWorktreeRunSetupResult,
+	WorktreeSetupScriptContext,
+} from '../main/preload/git';
 import type { PianolaRule } from '../shared/pianola/types';
 import type {
 	PianolaDecisionRecord,
@@ -324,6 +329,16 @@ interface MaestroAPI {
 			}>
 		>;
 		isTerminalBusy: (sessionId: string) => Promise<boolean>;
+		/**
+		 * Provider Failover: pin an agent to a backup endpoint's env vars (plus its
+		 * model, when it declares one), or pass `env: null` to return to primary.
+		 * Main layers this over `sessionCustomEnvVars` on every subsequent spawn.
+		 */
+		setFailoverOverlay: (
+			sessionId: string,
+			env: Record<string, string> | null,
+			model?: string
+		) => Promise<void>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		onUserInput: (
 			callback: (payload: {
@@ -1261,6 +1276,11 @@ interface MaestroAPI {
 			sshRemoteId?: string,
 			baseBranch?: string
 		) => Promise<GitWorktreeSetupResult>;
+		worktreeRunSetup: (
+			script: string,
+			context: WorktreeSetupScriptContext,
+			sshRemoteId?: string
+		) => Promise<GitWorktreeRunSetupResult>;
 		worktreeCheckout: (
 			worktreePath: string,
 			branchName: string,

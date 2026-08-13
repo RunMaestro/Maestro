@@ -173,6 +173,57 @@ describe('error-patterns', () => {
 					expect(result).toBeNull();
 				}
 			});
+
+			// Regression: a bare INVALID_ARGUMENT status describes any rejected
+			// request, not just a corrupted stored session - e.g. an invalid model
+			// id. Classifying every occurrence as session_not_found would tell the
+			// user to abandon their conversation for a problem a fresh session
+			// can't fix, since the same bad model id fails identically again.
+			it('should NOT match an unrelated INVALID_ARGUMENT caused by something other than a dead session', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'{ "error": { "code": 400, "message": "Model \'foo-bar\' is not a valid model", "status": "INVALID_ARGUMENT" } }'
+				);
+				expect(result).toBeNull();
+			});
+			it('should NOT match normal text mentioning arguments', () => {
+				const falsePositives = [
+					'passing an invalid argument name would fail',
+					'the function takes three arguments',
+					'validate arguments before use',
+				];
+
+				for (const text of falsePositives) {
+					const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, text);
+					expect(result).toBeNull();
+				}
+			});
+			// Issue #307: Gemini rejects a malformed stored transcript with a bare
+			// 400 INVALID_ARGUMENT, and every later prompt on that session fails
+			// identically. Classifying it as session_not_found is what surfaces the
+			// "Start New Session" recovery action instead of a futile retry.
+			it('should match the Gemini "Request contains an invalid argument" 400', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'Request contains an invalid argument.'
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+				expect(result?.recoverable).toBe(true);
+			});
+			it('should match the INVALID_ARGUMENT status from a provider response body', () => {
+				const result = matchErrorPattern(
+					OPENCODE_ERROR_PATTERNS,
+					'{ "error": { "code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT" } }'
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+			it('should still match "session not found"', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'session not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
 		});
 	});
 
@@ -1124,4 +1175,25 @@ describe('error-patterns', () => {
 			expect(result?.type).toBe('rate_limited');
 		});
 	});
+});
+
+describe('Codex upstream HTTP status classification', () => {
+	const codex = getErrorPatterns('codex');
+
+	it('classifies a generic upstream status as a retryable provider failure', () => {
+		const m = matchErrorPattern(codex, 'unexpected status 404 Not Found: {"detail":"Not Found"}', {
+			minLength: 0,
+		});
+		expect(m?.type).toBe('network_error');
+	});
+
+	// network_error is matched BEFORE auth_expired, so an auth status caught by
+	// the generic matcher would tell the user to "retry" a bad API key forever.
+	it.each(['401 Unauthorized', '403 Forbidden'])(
+		'leaves %s to the auth bank instead of calling it a provider blip',
+		(status) => {
+			const m = matchErrorPattern(codex, `unexpected status ${status}`, { minLength: 0 });
+			expect(m?.type).toBe('auth_expired');
+		}
+	);
 });
