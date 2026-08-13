@@ -24,8 +24,6 @@ import {
 	splitPaneRectsByKind,
 } from '../../utils/panelLayout';
 import { updateSessionWith } from '../../stores/sessionStore';
-import { MediaViewportSlot } from '../MediaPlayback';
-import { getFileTabMediaKind } from '../../utils/mediaTabs';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -650,24 +648,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// focus so keyboard navigation lands in the modal instead of the page. Driving
 	// isActive off this re-blurs the webview the moment a layer opens.
 	const { layerCount } = useLayerStack();
-
-	// A playable audio/video tab is a player, not a document, so it skips
-	// FilePreview entirely: the panel is the player and nothing else. Routing it
-	// through FilePreview meant a filename header and a size/modified strip over
-	// what is functionally a transport - and the slot, a `flex-1` child of
-	// FilePreview's block-layout scroll container, measured zero tall, so the
-	// player had nowhere to dock and the tab rendered empty. Bypassing also keeps
-	// the heavy markdown/mermaid/syntax chunk out of memory for an MP3.
-	const mediaTabKind = React.useMemo(
-		() =>
-			activeFileTab
-				? getFileTabMediaKind(
-						`${activeFileTab.name}${activeFileTab.extension}`,
-						activeFileTab.content
-					)
-				: null,
-		[activeFileTab]
-	);
 	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
 	// point at the active (visible) tab's handle so resolveBrowserContent reads that webview.
 	const fallbackBrowserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
@@ -754,18 +734,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							</div>
 						</div>
 					</div>
-				</div>
-			) : activeSession.inputMode === 'ai' && activeFileTabId && mediaTabKind ? (
-				// Media goes straight to the player. The element itself lives in
-				// MediaPlaybackHost so playback survives this unmounting on every tab
-				// switch; the slot only reserves the area and reports where to park it.
-				<div
-					ref={filePreviewContainerRef}
-					tabIndex={-1}
-					className="flex-1 min-h-0 flex flex-col outline-none"
-					style={{ backgroundColor: theme.colors.bgMain }}
-				>
-					<MediaViewportSlot tabId={activeFileTabId} />
 				</div>
 			) : activeSession.inputMode === 'ai' &&
 			  activeFileTabId &&

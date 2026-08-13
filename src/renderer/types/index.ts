@@ -712,12 +712,6 @@ export interface FilePreviewTab {
 	// FilePreview consumes it (flips to edit mode if needed, scrolls + places
 	// the caret) and then clears it.
 	pendingScrollToLine?: number;
-	// Transient request to start playing as soon as the media is ready. Set when
-	// the user opens an audio/video file (any open path: new tab, or an existing
-	// tab repurposed to a new file); consumed exactly once by the player, which
-	// then clears it. Absent on tabs restored from disk, which is what keeps a
-	// launch from replaying every podcast that happened to be open last time.
-	autoplayMedia?: boolean;
 }
 
 /**

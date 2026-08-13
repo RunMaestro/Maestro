@@ -1,46 +1,54 @@
 /**
- * SvgContextMenu - right-click menu for rendered SVG diagrams: agent-authored
- * inline <svg> in chat markdown, and Mermaid charts. Offers "Copy Image"
- * (rasterized PNG to the clipboard) and "Save Image" (a standalone .svg written
- * into the project's `.maestro/diagrams/` folder).
+ * ImageContextMenu - right-click menu for any image anywhere in the app: raster
+ * `<img>` (markdown embeds, transcript attachments, thumbnails, the lightbox)
+ * and inline `<svg>` (agent-authored diagrams, Mermaid charts). Offers "Copy
+ * Image", "Save to Project..." (into the project's own folder, via
+ * ImageDestinationModal) and "Save As..." (native OS dialog).
  *
- * Mirrors LinkContextMenu / FileContextMenu: the host (Markdown.tsx,
- * MermaidRenderer, MarkdownPreviewFast) owns the menu state via
- * useSvgContextMenu and renders this component; positioning is handled by
- * useContextMenuPosition.
+ * Mirrors LinkContextMenu / FileContextMenu, but no surface wires this up: one
+ * delegated listener in ImageContextMenuHost opens it for every image on screen.
+ * Positioning is handled by useContextMenuPosition so it opens at the pointer.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Download } from 'lucide-react';
+import { Copy, Download, FolderOpen } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
-import { copySvgToClipboard, downloadSvg, saveSvgToProject } from '../utils/svgExport';
+import {
+	copyImageElementToClipboard,
+	saveImageElementToDisk,
+	isSvgElement,
+	type ExportableImage,
+} from '../utils/imageExport';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { notifyToast } from '../stores/notificationStore';
-import { useActiveSession } from '../hooks/session/useActiveSession';
+import { getBasename } from '../../shared/formatters';
 
-export interface SvgContextMenuState {
+export interface ImageContextMenuState {
 	x: number;
 	y: number;
-	svg: SVGSVGElement;
+	target: ExportableImage;
 }
 
-interface SvgContextMenuProps {
-	menu: SvgContextMenuState;
+interface ImageContextMenuProps {
+	menu: ImageContextMenuState;
 	theme: Theme;
 	onDismiss: () => void;
+	/** Opens the destination modal. Omitted when there is no project to save into. */
+	onSaveToProject?: () => void;
 }
 
-export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) {
+export function ImageContextMenu({
+	menu,
+	theme,
+	onDismiss,
+	onSaveToProject,
+}: ImageContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
-	// Diagrams are saved into the project they were rendered in. Every surface
-	// that shows an SVG lives inside the active agent's view, so the active
-	// session is the project - no host has to thread a path down to the menu.
-	const session = useActiveSession();
 
 	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
@@ -65,48 +73,38 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 
 	const handleCopy = useCallback(async () => {
 		onDismiss();
-		const result = await copySvgToClipboard(menu.svg);
+		const result = await copyImageElementToClipboard(menu.target);
 		if (result === 'image') {
 			flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
-		} else if (result === 'markup') {
-			// The raster pass failed, so the clipboard holds SVG markup, not an
+		} else if (result === 'text') {
+			// The raster pass failed, so the clipboard holds markup or a URL, not an
 			// image. Say so rather than claiming a paste-able image.
-			flashCopiedToClipboard('Rasterizing failed', 'SVG Markup Copied to Clipboard');
+			flashCopiedToClipboard(
+				'Rasterizing failed',
+				isSvgElement(menu.target) ? 'SVG Markup Copied to Clipboard' : 'Image URL Copied'
+			);
 		} else {
-			notifyCenterFlash({ message: 'Could Not Copy Image', color: 'red' });
+			notifyToast({
+				color: 'red',
+				title: 'Copy Failed',
+				message: 'Could not read this image to copy it.',
+			});
 		}
-	}, [menu.svg, onDismiss]);
+	}, [menu.target, onDismiss]);
 
 	const handleSave = useCallback(async () => {
 		onDismiss();
-		const projectRoot = session?.projectRoot || session?.cwd;
-		if (!projectRoot) {
-			// No project to save into (e.g. a wizard preview) - fall back to a
-			// plain browser download rather than silently doing nothing.
-			downloadSvg(menu.svg);
-			return;
-		}
-
-		try {
-			const saved = await saveSvgToProject(menu.svg, {
-				projectRoot,
-				sshRemoteId: session.sshRemoteId,
-			});
-			notifyToast({
+		const result = await saveImageElementToDisk(menu.target);
+		if (result.saved) {
+			notifyCenterFlash({
+				message: 'Image Saved',
+				detail: result.path ? getBasename(result.path) : undefined,
 				color: 'green',
-				title: 'Diagram Saved',
-				message: saved.relativePath,
-				sessionId: session.id,
-				clickAction: { kind: 'open-file', sessionId: session.id, path: saved.path },
 			});
-		} catch (e) {
-			notifyToast({
-				color: 'red',
-				title: 'Could Not Save Diagram',
-				message: e instanceof Error ? e.message : String(e),
-			});
+		} else if (result.error) {
+			notifyToast({ color: 'red', title: 'Save Failed', message: result.error });
 		}
-	}, [menu.svg, onDismiss, session]);
+	}, [menu.target, onDismiss]);
 
 	return createPortal(
 		<div
@@ -130,13 +128,26 @@ export function SvgContextMenu({ menu, theme, onDismiss }: SvgContextMenuProps) 
 				<Copy className="w-3.5 h-3.5" />
 				Copy Image
 			</button>
+			{onSaveToProject && (
+				<button
+					onClick={() => {
+						onDismiss();
+						onSaveToProject();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<FolderOpen className="w-3.5 h-3.5" />
+					Save to Project...
+				</button>
+			)}
 			<button
 				onClick={handleSave}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
 				<Download className="w-3.5 h-3.5" />
-				Save Image (SVG)
+				{isSvgElement(menu.target) ? 'Save As... (SVG or PNG)' : 'Save As...'}
 			</button>
 		</div>,
 		document.body

@@ -19,6 +19,7 @@ import { Share2, Copy, Download, Check } from 'lucide-react';
 import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } from '../types';
 import { getBadgeForTime, formatCumulativeTime } from '../constants/conductorBadges';
 import { formatTokensCompact } from '../utils/formatters';
+import { humanizeDuration } from '../../shared/duration';
 import maestroWandIcon from '../assets/icon-wand.png';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
 import { logger } from '../utils/logger';
@@ -68,14 +69,11 @@ const GOLD_COLOR = '#FFD700';
  * canvas math stays predictable.
  */
 function formatHandsOnTime(ms: number): string {
-	if (ms < 1000) return '0m';
-	const totalMinutes = Math.floor(ms / 60000);
-	const hours = Math.floor(totalMinutes / 60);
-	const minutes = totalMinutes % 60;
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	return `${minutes}m`;
+	return humanizeDuration(ms, {
+		units: ['hour', 'minute'],
+		keepZeroUnits: true,
+		fallback: '0m',
+	});
 }
 
 /**

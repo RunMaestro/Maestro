@@ -29,8 +29,6 @@ import {
 } from '../../utils/markdownConfig';
 import { LinkContextMenu, type LinkContextMenuState } from '../LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from '../FileContextMenu';
-import { SvgContextMenu } from '../SvgContextMenu';
-import { useSvgContextMenu } from '../../hooks/ui/useSvgContextMenu';
 import { buildMarkdownPlugins } from './plugins';
 import { preprocessMarkdown } from './preprocess';
 import { createChatMarkdownComponents } from './chatComponents';
@@ -156,7 +154,6 @@ export const Markdown = memo(function Markdown({
 	const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
 	const [fileMenu, setFileMenu] = useState<FileContextMenuState | null>(null);
 	const dismissFileMenu = useCallback(() => setFileMenu(null), []);
-	const { svgMenu, dismissSvgMenu, openSvgMenu } = useSvgContextMenu();
 
 	// Build the remark/rehype plugin stack per preset.
 	const { remarkPlugins, rehypePlugins } = useMemo(() => {
@@ -216,7 +213,6 @@ export const Markdown = memo(function Markdown({
 					onLinkContextMenu: (e, url) => setLinkMenu({ x: e.clientX, y: e.clientY, url }),
 					onFileContextMenu: (e, absPath, fileName) =>
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
-					onSvgContextMenu: (e) => openSvgMenu(e.currentTarget, e.clientX, e.clientY),
 				});
 			case 'wizard-bubble':
 				return createWizardBubbleMarkdownComponents(theme);
@@ -256,7 +252,6 @@ export const Markdown = memo(function Markdown({
 		containerRef,
 		searchHighlight,
 		codeBlockStyle,
-		openSvgMenu,
 	]);
 
 	// Memoize the ReactMarkdown element: react-markdown re-runs the full remark+
@@ -304,7 +299,6 @@ export const Markdown = memo(function Markdown({
 					sshRemote={!!sshRemoteId}
 				/>
 			)}
-			{svgMenu && <SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />}
 		</div>
 	);
 });

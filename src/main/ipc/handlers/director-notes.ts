@@ -14,7 +14,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, HistoryEntryType, ToolType } from '../../../shared/types';
-import { paginateEntries } from '../../../shared/history';
+import { MAX_ENTRIES_PER_SESSION, paginateEntries } from '../../../shared/history';
 import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
@@ -259,6 +259,15 @@ export interface RichAgentStat {
 	entryCount: number;
 	successCount: number;
 	failureCount: number;
+	/**
+	 * True when RETENTION, not the lookback window, is what bounded this count:
+	 * the agent's history file sits at `MAX_ENTRIES_PER_SESSION` and its oldest
+	 * surviving entry is still inside the window, so older runs were already
+	 * evicted and the real total is unknown and larger. Without this, a busy
+	 * agent's bar silently pins to the cap and reads as an exact figure - two
+	 * agents at wildly different volumes both render "5.0K" and tie for top.
+	 */
+	truncated: boolean;
 }
 
 /**
@@ -718,12 +727,27 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 								entryCount: 0,
 								successCount: 0,
 								failureCount: 0,
+								truncated: false,
 							};
 							perAgentMap.set(sid, agentStat);
 						}
 						agentStat.entryCount++;
 						if (entry.success === true) agentStat.successCount++;
 						else if (entry.success === false) agentStat.failureCount++;
+					}
+
+					// Retention already evicted this agent's older runs if the file is
+					// full AND its oldest survivor is still inside the window - nothing
+					// was dropped by the cutoff, so the cap is what bounded the count.
+					// A file at the cap whose tail predates the window is fine: the
+					// window did the trimming and the number is exact.
+					const agentStat = perAgentMap.get(sid);
+					if (agentStat && entries.length >= MAX_ENTRIES_PER_SESSION) {
+						const oldest = entries.reduce(
+							(min, e) => Math.min(min, e.timestamp),
+							Number.POSITIVE_INFINITY
+						);
+						if (oldest >= cutoffTime) agentStat.truncated = true;
 					}
 				}
 

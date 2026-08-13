@@ -253,52 +253,6 @@ describe('MainPanelContent', () => {
 		expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
 	});
 
-	it('sends a media tab straight to the player, skipping FilePreview', async () => {
-		const props = makeDefaultProps();
-		props.activeFileTabId = 'file-1';
-		props.activeFileTab = {
-			id: 'file-1',
-			name: 'podcast',
-			extension: '.mp3',
-			content: 'maestro-media://stream/tok3n/2f746573742f706f64636173742e6d7033',
-			path: '/test/podcast.mp3',
-			editMode: false,
-		} as FilePreviewTab;
-		props.memoizedFilePreviewFile = {
-			name: 'podcast.mp3',
-			content: 'maestro-media://stream/tok3n/2f746573742f706f64636173742e6d7033',
-			path: '/test/podcast.mp3',
-		};
-		const { container } = render(<MainPanelContent {...props} />);
-
-		// The slot the app-level player docks into, rendered as the whole panel.
-		expect(container.querySelector('[data-media-slot="file-1"]')).toBeInTheDocument();
-		// No filename header, no size/modified strip - a player is not a document.
-		expect(screen.queryByTestId('file-preview')).not.toBeInTheDocument();
-	});
-
-	it('still previews a remote media file, which has no playable stream', async () => {
-		// Only local files get a maestro-media:// URL, so a remote .mp3 keeps the
-		// binary "download and open externally" path inside FilePreview.
-		const props = makeDefaultProps();
-		props.activeFileTabId = 'file-1';
-		props.activeFileTab = {
-			id: 'file-1',
-			name: 'podcast',
-			extension: '.mp3',
-			content: '<binary>',
-			path: '/test/podcast.mp3',
-			editMode: false,
-		} as FilePreviewTab;
-		props.memoizedFilePreviewFile = {
-			name: 'podcast.mp3',
-			content: '<binary>',
-			path: '/test/podcast.mp3',
-		};
-		render(<MainPanelContent {...props} />);
-		expect(await screen.findByTestId('file-preview')).toBeInTheDocument();
-	});
-
 	it('renders loading spinner when active file tab is in loading state', () => {
 		const props = makeDefaultProps();
 		props.activeFileTabId = 'file-1';

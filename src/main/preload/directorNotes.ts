@@ -145,6 +145,12 @@ export interface RichAgentStat {
 	entryCount: number;
 	successCount: number;
 	failureCount: number;
+	/**
+	 * True when retention capped this count rather than the lookback window, so
+	 * the real total is larger and unknown. Optional on the wire: a cached
+	 * payload from before this field existed simply reads as "not truncated".
+	 */
+	truncated?: boolean;
 }
 
 /**

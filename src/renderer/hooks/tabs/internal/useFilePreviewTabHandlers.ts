@@ -11,6 +11,8 @@ import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrd
 import { logger } from '../../../utils/logger';
 import { useModalStore } from '../../../stores/modalStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
+import { getOpenedMediaKind } from '../../../utils/mediaItems';
 import { buildReplacementNavigationHistory, getFileNameParts } from './filePreviewTabHelpers';
 import type { FilePreviewTabHandlersReturn, FileTabOpenParams } from './types';
 
@@ -27,6 +29,30 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			const { setSessions } = useSessionStore.getState();
 			const activeSessionId =
 				options?.targetSessionId || useSessionStore.getState().activeSessionId;
+
+			// Media never becomes a tab. Audio and video go straight to the floating
+			// player, which is the only surface they ever appear on: no entry in the
+			// tab bar, no main panel takeover, so a podcast does not cost the user
+			// their workspace. This is the single choke point every open path funnels
+			// through, which is why the diversion belongs here rather than in each
+			// caller. Non-playable media (a remote file, which has no local stream)
+			// falls through to the normal binary preview.
+			const mediaKind = getOpenedMediaKind(file.name, file.content);
+			if (mediaKind) {
+				const session = useSessionStore
+					.getState()
+					.sessions.find((s: Session) => s.id === activeSessionId);
+				if (session) {
+					useMediaPlaybackStore.getState().openMedia({
+						path: file.path,
+						name: file.name,
+						kind: mediaKind,
+						sessionId: session.id,
+						sessionName: session.name,
+					});
+					return;
+				}
+			}
 
 			setSessions((prev: Session[]) =>
 				prev.map((s) => {
@@ -120,9 +146,6 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 								navigationHistory: finalHistory,
 								navigationIndex: finalHistory.length - 1,
 								pendingScrollToLine: file.pendingScrollToLine,
-								// This tab is being repurposed to a file the user just opened,
-								// so it plays on arrival if it turns out to be media.
-								autoplayMedia: true,
 							};
 						});
 						return {
@@ -156,8 +179,6 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
 						navigationIndex: 0,
 						pendingScrollToLine: file.pendingScrollToLine,
-						// Freshly opened by the user, so media starts playing on arrival.
-						autoplayMedia: true,
 					};
 
 					const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };

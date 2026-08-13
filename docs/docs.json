@@ -55,6 +55,7 @@
 					"group-chat",
 					"cross-agent-mentions",
 					"image-annotator",
+					"media-player",
 					"remote-control",
 					"ssh-remote-execution",
 					"feedback",

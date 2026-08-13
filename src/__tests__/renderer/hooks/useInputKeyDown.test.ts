@@ -89,6 +89,7 @@ function createKeyEvent(
 	return {
 		key,
 		preventDefault: vi.fn(),
+		stopPropagation: vi.fn(),
 		shiftKey: false,
 		metaKey: false,
 		ctrlKey: false,
@@ -1589,18 +1590,25 @@ describe('General edge cases - additional', () => {
 			expect(deps.setCommandMode).not.toHaveBeenCalled();
 		});
 
-		it('keeps focus in the composer after exiting', () => {
-			// Exiting hands the input back to the agent - the user is still typing,
-			// so dropping focus would send the next keystroke nowhere.
+		it('stops the event so the window Escape handler cannot steal focus', () => {
+			// The real defect, and the reason the earlier `focus()` fix was not
+			// enough: `useKeyboardNavigation.handleEscapeInMain` is a WINDOW-level
+			// keydown listener that blurs the composer on any Escape pressed while
+			// it has focus. This handler runs first (it is on the element), so
+			// without stopping propagation that listener fires straight afterwards
+			// and undoes the focus. A mock inputRef cannot observe that - see
+			// useInputKeyDown.focus.test.tsx for the real-DOM proof.
 			setActiveSession({ inputMode: 'ai' });
 			const deps = commandModeDeps({ inputValue: '' });
 			const { result } = renderHook(() => useInputKeyDown(deps));
+			const e = createKeyEvent('Escape');
 
 			act(() => {
-				result.current.handleInputKeyDown(createKeyEvent('Escape'));
+				result.current.handleInputKeyDown(e);
 			});
 
 			expect(deps.setCommandMode).toHaveBeenCalledWith(false);
+			expect(e.stopPropagation).toHaveBeenCalled();
 			expect(deps.inputRef.current!.focus).toHaveBeenCalled();
 			expect(deps.inputRef.current!.blur).not.toHaveBeenCalled();
 			expect(deps.terminalOutputRef.current!.focus).not.toHaveBeenCalled();

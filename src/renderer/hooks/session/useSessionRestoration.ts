@@ -23,6 +23,7 @@ import { generateId } from '../../utils/ids';
 import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
+import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 
@@ -481,7 +482,20 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			const restoredActiveTabId = validAiTabIds.has(correctedSession.activeTabId)
 				? correctedSession.activeTabId
 				: resetAiTabs[0]?.id || correctedSession.activeTabId;
-			let restoredActiveFileTabId = correctedSession.activeFileTabId ?? null;
+			// Media no longer gets a file preview tab - it opens in the floating
+			// player instead - so drop any left behind by an older build. Without
+			// this they come back as a permanent "Binary File" card the user has to
+			// close by hand. The stream URL's per-boot token is already stale, but
+			// the check is a prefix test, so they are still recognizable.
+			const restoredFilePreviewTabs = (correctedSession.filePreviewTabs || []).filter(
+				(tab) => !isMediaStreamUrl(tab.content)
+			);
+			const validFileTabIds = new Set(restoredFilePreviewTabs.map((tab) => tab.id));
+
+			let restoredActiveFileTabId =
+				correctedSession.activeFileTabId && validFileTabIds.has(correctedSession.activeFileTabId)
+					? correctedSession.activeFileTabId
+					: null;
 			let restoredActiveBrowserTabId =
 				correctedSession.activeBrowserTabId &&
 				validBrowserTabIds.has(correctedSession.activeBrowserTabId)
@@ -508,13 +522,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...correctedSession,
 				aiTabs: resetAiTabs,
 				activeTabId: restoredActiveTabId,
-				// autoplayMedia is a one-shot request from a user action, so it must
-				// never survive a restart. It is normally cleared the moment the
-				// player consumes it; stripping it here covers a quit that lands in
-				// between, which would otherwise start playing on next launch.
-				filePreviewTabs: (correctedSession.filePreviewTabs || []).map((tab) =>
-					tab.autoplayMedia ? { ...tab, autoplayMedia: undefined } : tab
-				),
+				filePreviewTabs: restoredFilePreviewTabs,
 				activeFileTabId: restoredActiveFileTabId,
 				browserTabs: resetBrowserTabs,
 				activeBrowserTabId: restoredActiveBrowserTabId,

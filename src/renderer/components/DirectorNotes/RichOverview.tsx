@@ -30,6 +30,7 @@ import { Spinner } from '../ui/Spinner';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 import { formatNumber, formatDurationLong } from '../../../shared/formatters';
+import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -194,6 +195,7 @@ export function RichOverview({
 	const agentBars: BarDatum[] = (richStats?.perAgent ?? []).map((a) => ({
 		label: a.agentName,
 		value: a.entryCount,
+		atLeast: a.truncated,
 	}));
 
 	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
@@ -260,7 +262,8 @@ export function RichOverview({
 				</SectionCard>
 			</div>
 
-			{/* Per-agent activity */}
+			{/* Per-agent activity. The unit is spelled out: a bare "5.0K" beside an
+			    agent name is unreadable without knowing what was counted. */}
 			<SectionCard
 				theme={theme}
 				id={richSectionId('Agent Activity')}
@@ -268,7 +271,14 @@ export function RichOverview({
 				icon={Users}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Agent Activity">
-					<AgentActivityBars theme={theme} data={agentBars} />
+					<AgentActivityBars
+						theme={theme}
+						data={agentBars}
+						unitLabel="history entries in this window"
+						atLeastHint={`At least this many. This agent's history file is full at its ${formatNumber(
+							MAX_ENTRIES_PER_SESSION
+						)}-entry retention limit, so older runs were already discarded and the real total is higher.`}
+					/>
 				</ChartErrorBoundary>
 			</SectionCard>
 

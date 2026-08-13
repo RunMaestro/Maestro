@@ -20,6 +20,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { readSessions } from '../services/storage';
 import { generateUUID } from '../../shared/uuid';
+import { humanizeDuration, DURATION_LADDER_DAYS } from '../../shared/duration';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { CUE_CONFIG_PATH, LEGACY_CUE_CONFIG_PATH, MAESTRO_DIR } from '../../shared/maestro-paths';
 import { loadCueConfigDetailed } from '../../main/cue/cue-yaml-loader';
@@ -115,21 +116,7 @@ function truncateLabel(text: string): string {
 /** Render `ms` as a compact human duration (`5m 30s`, `2h 15m`, `expired`). */
 function formatRelativeDuration(ms: number): string {
 	if (ms < 0) return 'expired';
-	const totalSeconds = Math.floor(ms / 1000);
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-	const totalMinutes = Math.floor(totalSeconds / 60);
-	if (totalMinutes < 60) {
-		const seconds = totalSeconds % 60;
-		return seconds === 0 ? `${totalMinutes}m` : `${totalMinutes}m ${seconds}s`;
-	}
-	const totalHours = Math.floor(totalMinutes / 60);
-	if (totalHours < 24) {
-		const minutes = totalMinutes % 60;
-		return minutes === 0 ? `${totalHours}h` : `${totalHours}h ${minutes}m`;
-	}
-	const days = Math.floor(totalHours / 24);
-	const hours = totalHours % 24;
-	return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
+	return humanizeDuration(ms, { units: DURATION_LADDER_DAYS, adjacentUnits: true });
 }
 
 /**

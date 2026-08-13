@@ -18,6 +18,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
+import { ImageContextMenuHost } from './ImageContextMenuHost';
 import { MediaPlaybackHost } from './MediaPlayback';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
@@ -312,10 +313,16 @@ export function AppShell({
 
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
+			{/* --- IMAGE CONTEXT MENU (single, app-wide) ---
+			    One delegated listener gives every image and diagram on screen a
+			    right-click Copy / Save. Surfaces wire up nothing. See
+			    ImageContextMenuHost. */}
+			<ImageContextMenuHost theme={theme} />
 			{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
-			    Owns every <audio>/<video> element so playback survives switching
-			    tabs and agents. Each element is parked over the MediaViewportSlot
-			    its file preview tab renders. See MediaPlaybackHost. */}
+			    Owns the one <audio>/<video> element so playback survives switching
+			    tabs and agents. Media never gets a tab: it renders only as the
+			    floating player, which the user can drag anywhere. See
+			    MediaPlaybackHost. */}
 			<MediaPlaybackHost theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
 			{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}

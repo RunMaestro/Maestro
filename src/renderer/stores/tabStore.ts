@@ -384,8 +384,6 @@ export interface TabStoreActions {
 	setFileTabHtmlRenderMode: (tabId: string, value: boolean) => void;
 	/** Clear the transient deep-link line jump after FilePreview has consumed it. */
 	clearFileTabPendingScrollToLine: (tabId: string) => void;
-	/** Clear the one-shot media autoplay request once the player has acted on it. */
-	clearFileTabAutoplayMedia: (tabId: string) => void;
 }
 
 export type TabStore = TabStoreState & TabStoreActions;
@@ -782,6 +780,4 @@ export const useTabStore = create<TabStore>()((set) => ({
 	setFileTabHtmlRenderMode: (tabId, value) => updateFileTab(tabId, { htmlRenderMode: value }),
 	clearFileTabPendingScrollToLine: (tabId) =>
 		updateFileTab(tabId, { pendingScrollToLine: undefined }),
-
-	clearFileTabAutoplayMedia: (tabId) => updateFileTab(tabId, { autoplayMedia: undefined }),
 }));

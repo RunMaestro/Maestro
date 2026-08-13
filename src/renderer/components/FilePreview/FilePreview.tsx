@@ -54,7 +54,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { isImageFile } from '../../../shared/gitUtils';
-import { getFileTabMediaKind } from '../../utils/mediaTabs';
+import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
 	getLanguageFromFilename,
@@ -349,17 +349,13 @@ export const FilePreview = React.memo(
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
-		// Playable audio/video. Shares one predicate with MediaPlaybackHost and the
-		// Command palette so all three agree on what counts as media.
-		// `file.name` already carries the extension (tab name + extension, joined
-		// upstream), which is what getFileTabMediaKind needs.
-		//
-		// A media file tab never reaches this component - MainPanelContent routes it
-		// straight to the player. This flag is the guard for any other caller, so a
-		// stream URL renders the "open externally" card instead of being dumped on
-		// screen as text.
+		// Playable audio/video never reaches this component: the open path diverts
+		// it to the floating player before a tab can be created. This flag is the
+		// backstop for anything that slips through (a tab restored from a build
+		// that still made them), so a stream URL renders the "open externally" card
+		// instead of being dumped on screen as text.
 		const isMedia = useMemo(
-			() => (file ? getFileTabMediaKind(file.name, file.content) !== null : false),
+			() => (file ? getOpenedMediaKind(file.name, file.content) !== null : false),
 			[file]
 		);
 
