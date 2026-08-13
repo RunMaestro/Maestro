@@ -81,8 +81,16 @@ export function needsWindowsShell(command: string): boolean {
 	return !hasExtension;
 }
 
-/** The only field names `ExecOptions` defines. */
-const EXEC_OPTIONS_FIELDS = new Set(['input', 'timeout', 'env']);
+/**
+ * Keyed by `keyof ExecOptions` so adding a field to the interface without
+ * listing it here is a compile error, not a silent misclassification.
+ */
+const EXEC_OPTIONS_FIELD_NAMES: Record<keyof ExecOptions, true> = {
+	input: true,
+	timeout: true,
+	env: true,
+};
+const EXEC_OPTIONS_FIELDS = new Set(Object.keys(EXEC_OPTIONS_FIELD_NAMES));
 
 /**
  * Distinguish the legacy `options: NodeJS.ProcessEnv` signature from the
