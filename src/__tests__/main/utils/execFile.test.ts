@@ -87,6 +87,29 @@ describe('execFile.ts', () => {
 		});
 	});
 
+	describe('execFileNoThrow with input (stdin path)', () => {
+		// Spawns a real short-lived node process, same as execFileStreaming below -
+		// the child_process mock only replaces execFile, not spawn.
+		const NODE = process.execPath;
+
+		// Regression: when `input` is set, execFileNoThrow hands off to
+		// execFileWithInput, which never received or forwarded `env` - a caller
+		// passing { input, env } silently got process.env in the child instead
+		// of the environment it asked for.
+		it('passes env through to the spawned process', async () => {
+			const { execFileNoThrow } = await import('../../../main/utils/execFile');
+
+			const result = await execFileNoThrow(
+				NODE,
+				['-e', 'process.stdout.write(process.env.MAESTRO_TEST_VAR || "MISSING")'],
+				undefined,
+				{ input: 'unused stdin content', env: { MAESTRO_TEST_VAR: 'present' } }
+			);
+
+			expect(result.stdout).toBe('present');
+		});
+	});
+
 	describe('execFileStreaming', () => {
 		// These spawn real short-lived node processes: the child_process mock above
 		// only replaces execFile, so spawn is the genuine implementation.
@@ -219,6 +242,74 @@ describe('execFile.ts', () => {
 					expect.objectContaining({
 						env: customEnv,
 					}),
+					expect.any(Function)
+				);
+			});
+
+			// Regression: the legacy/ExecOptions discriminator used to check only
+			// whether a key named `input`/`timeout`/`env` was present, not its
+			// value's shape. A real environment variable can be named any of
+			// those, so a plain legacy env dict containing one got misread as the
+			// structured form and had its actual entries dropped or mangled.
+			it('treats a legacy env dict with a var literally named "timeout" as the whole environment', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				// A real env var's value is always a string, never the number
+				// ExecOptions.timeout expects.
+				const legacyEnv = { timeout: '30', PATH: '/custom/path' };
+				await execFileNoThrow('mycmd', [], '/cwd', legacyEnv);
+
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: legacyEnv, timeout: undefined }),
+					expect.any(Function)
+				);
+			});
+
+			it('treats a legacy env dict with a var literally named "env" as the whole environment', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				// A real env var's value is always a string, never the object
+				// ExecOptions.env expects.
+				const legacyEnv = { env: 'production', PATH: '/custom/path' };
+				await execFileNoThrow('mycmd', [], '/cwd', legacyEnv);
+
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: legacyEnv }),
+					expect.any(Function)
+				);
+			});
+
+			it('still recognizes the structured ExecOptions form when env is a real object', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('mycmd', [], '/cwd', { env: { MY_VAR: 'value' }, timeout: 5000 });
+
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: { MY_VAR: 'value' }, timeout: 5000 }),
 					expect.any(Function)
 				);
 			});

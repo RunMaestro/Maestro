@@ -82,6 +82,39 @@ export function needsWindowsShell(command: string): boolean {
 }
 
 /**
+ * Distinguish the legacy `options: NodeJS.ProcessEnv` signature from the
+ * structured `ExecOptions` form. Key presence alone is ambiguous - a real
+ * environment variable can be named `input`, `timeout`, or `env` - so this
+ * also checks the value has the shape ExecOptions actually uses: a number
+ * for `timeout`, an object for `env`. `process.env` values are always
+ * strings, so a legacy env dict can never satisfy either check, no matter
+ * what its keys are named. `input` alone stays a presence+type check (both
+ * a real ExecOptions.input and a same-named env var are strings), matching
+ * the pre-existing behavior for that one case.
+ */
+function resolveExecOptions(options: ExecOptions | NodeJS.ProcessEnv | undefined): {
+	env: NodeJS.ProcessEnv | undefined;
+	input: string | undefined;
+	timeout: number | undefined;
+} {
+	if (!options) {
+		return { env: undefined, input: undefined, timeout: undefined };
+	}
+
+	const opts = options as ExecOptions;
+	const isExecOptions =
+		('timeout' in opts && typeof opts.timeout === 'number') ||
+		('env' in opts && opts.env !== null && typeof opts.env === 'object') ||
+		('input' in opts && typeof opts.input === 'string');
+
+	if (isExecOptions) {
+		return { env: opts.env, input: opts.input, timeout: opts.timeout };
+	}
+	// Legacy signature: the whole object is the env to use.
+	return { env: options as NodeJS.ProcessEnv, input: undefined, timeout: undefined };
+}
+
+/**
  * Safely execute a command without shell injection vulnerabilities
  * Uses execFile instead of exec to prevent shell interpretation
  *
@@ -99,23 +132,7 @@ export async function execFileNoThrow(
 	cwd?: string,
 	options?: ExecOptions | NodeJS.ProcessEnv
 ): Promise<ExecResult> {
-	// Handle backward compatibility: options can be env (old signature) or ExecOptions (new)
-	let env: NodeJS.ProcessEnv | undefined;
-	let input: string | undefined;
-	let timeout: number | undefined;
-
-	if (options) {
-		if ('input' in options || 'timeout' in options || 'env' in options) {
-			// New signature with ExecOptions
-			const execOpts = options as ExecOptions;
-			input = execOpts.input;
-			timeout = execOpts.timeout;
-			env = execOpts.env;
-		} else {
-			// Old signature with just env
-			env = options as NodeJS.ProcessEnv;
-		}
-	}
+	const { env, input, timeout } = resolveExecOptions(options);
 
 	// If input is provided, use spawn instead of execFile to write to stdin
 	if (input !== undefined) {
