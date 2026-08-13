@@ -330,4 +330,41 @@ describe('PtySpawner', () => {
 			expect(processes.has('live-session')).toBe(false);
 		});
 	});
+
+	// Regression: `flushDataBuffer()` and the `exit` emit below are both
+	// synchronous, and EventEmitter runs listeners in-line. If a listener on
+	// either event re-spawns this session id (e.g. a Cue completion chain
+	// reacting to output) before this callback finishes, the trailing cleanup
+	// must not delete the successor's fresh entry.
+	describe('successor spawned synchronously during the final flush', () => {
+		it('does not emit exit or untrack the successor', () => {
+			const { emitter, processes, bufferManager, spawner } = createTestContext();
+			const config = createBaseConfig({ sessionId: 'reused-session', shell: 'zsh' });
+
+			spawner.spawn(config);
+			const onExit = mockPtyProcess.onExit.mock.calls[0][0] as (e: {
+				exitCode: number;
+				signal?: number;
+			}) => void;
+			const predecessor = processes.get('reused-session');
+
+			let successor: ManagedProcess | undefined;
+			bufferManager.flushDataBuffer.mockImplementation((sid: string) => {
+				// Simulate a listener on 'data' re-spawning the session while the
+				// flush is still running.
+				spawner.spawn(config);
+				successor = processes.get(sid);
+			});
+
+			const onExitEvent = vi.fn();
+			emitter.on('exit', onExitEvent);
+
+			onExit({ exitCode: 143, signal: 15 });
+
+			expect(onExitEvent).not.toHaveBeenCalled();
+			expect(successor).toBeDefined();
+			expect(successor).not.toBe(predecessor);
+			expect(processes.get('reused-session')).toBe(successor);
+		});
+	});
 });

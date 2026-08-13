@@ -210,6 +210,22 @@ export class PtySpawner {
 				// Flush any remaining buffered data before exit
 				this.bufferManager.flushDataBuffer(sessionId);
 
+				// flushDataBuffer() above synchronously emits 'data', and EventEmitter
+				// runs listeners in-line - a listener that reacts to output by
+				// re-spawning this session id (e.g. a Cue completion chain) can claim
+				// the key before we get here. Re-check before the side effects below,
+				// which are both keyed by sessionId alone and would otherwise land on
+				// the successor: `exit` would report this process's code as the live
+				// agent dying, and the unconditional delete would untrack it.
+				if (isSuperseded()) {
+					logger.warn(
+						'[ProcessManager] Session re-spawned during PTY final flush, suppressing exit',
+						'ProcessManager',
+						{ sessionId, pid: ptyProcess.pid, exitCode, signal }
+					);
+					return;
+				}
+
 				logger.debug('[ProcessManager] PTY onExit', 'ProcessManager', {
 					sessionId,
 					exitCode,
@@ -218,7 +234,11 @@ export class PtySpawner {
 				// Forward `signal` so consumers can tell a shell the user exited from
 				// one that was killed out from under them (OOM killer, SIGHUP, crash).
 				this.emitter.emit('exit', sessionId, exitCode, signal);
-				this.processes.delete(sessionId);
+				// Only delete OUR entry - mirrors ExitHandler.handleExit. A successor
+				// that claimed the key during the emit above must not be untracked.
+				if (this.processes.get(sessionId) === managedProcess) {
+					this.processes.delete(sessionId);
+				}
 			});
 
 			logger.debug('[ProcessManager] PTY process created', 'ProcessManager', {
