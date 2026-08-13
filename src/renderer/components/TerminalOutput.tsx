@@ -28,8 +28,6 @@ import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from
 import type { FileNode } from '../types/fileTree';
 import Convert from 'ansi-to-html';
 import { useLayerStack } from '../contexts/LayerStackContext';
-import { ImageContextMenu } from './ImageContextMenu';
-import { useImageContextMenu } from '../hooks/ui/useImageContextMenu';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
 import { useDebouncedValue, useThrottledCallback, useProgressiveRenderWindow } from '../hooks';
@@ -367,9 +365,6 @@ const LogItemComponent = memo(
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
 
-		// Right-click menu for this entry's attached image thumbnails.
-		const { imageMenu, dismissImageMenu, openImageMenuFromEvent } = useImageContextMenu();
-
 		// Handle expand toggle with scroll adjustment
 		const handleExpandToggle = useCallback(() => {
 			const wasExpanded = isExpanded;
@@ -627,35 +622,26 @@ const LogItemComponent = memo(
 						</div>
 					)}
 					{log.images && log.images.length > 0 && (
-						<>
-							<div
-								className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
-								style={{ overscrollBehavior: 'contain' }}
-								// Right-click any thumbnail for Copy Image / Save Image. The
-								// handler resolves which <img> the click landed on, so one
-								// listener covers the whole strip.
-								onContextMenu={openImageMenuFromEvent}
-							>
-								{log.images.map((img, imgIdx) => (
-									<button
-										key={`${img}-${imgIdx}`}
-										type="button"
-										className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
-										onClick={() => setLightboxImage(img, log.images, 'history')}
-									>
-										<img
-											src={img}
-											alt={`Terminal output image ${imgIdx + 1}`}
-											className="h-20 rounded border cursor-zoom-in block"
-											style={{ objectFit: 'contain', maxWidth: '200px' }}
-										/>
-									</button>
-								))}
-							</div>
-							{imageMenu && (
-								<ImageContextMenu menu={imageMenu} theme={theme} onDismiss={dismissImageMenu} />
-							)}
-						</>
+						<div
+							className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
+							style={{ overscrollBehavior: 'contain' }}
+						>
+							{log.images.map((img, imgIdx) => (
+								<button
+									key={`${img}-${imgIdx}`}
+									type="button"
+									className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
+									onClick={() => setLightboxImage(img, log.images, 'history')}
+								>
+									<img
+										src={img}
+										alt={`Terminal output image ${imgIdx + 1}`}
+										className="h-20 rounded border cursor-zoom-in block"
+										style={{ objectFit: 'contain', maxWidth: '200px' }}
+									/>
+								</button>
+							))}
+						</div>
 					)}
 					{log.source === 'stderr' && (
 						<div className="mb-2">

@@ -337,20 +337,24 @@ interface GroupChatStoreState {
 **File:** `src/renderer/stores/mediaPlaybackStore.ts`
 **Hook:** `useMediaPlaybackStore`
 
-State for the app's single audio/video player. Only the float geometry persists.
+State for the app's single audio/video player. The queue and the float geometry
+persist; history deliberately does not.
 
 ```typescript
 interface MediaPlaybackStoreState {
-	items: MediaItem[]; // play queue, in open order
-	activeItemId: string | null; // the one item with a mounted player
-	history: string[]; // item IDs, most recently played first
+	items: MediaItem[]; // play queue, in open order (persisted)
+	activeItemId: string | null; // the one item with a mounted player (persisted)
+	history: MediaItem[]; // recently played, newest first (per-boot)
 	playing: boolean;
 	dismissed: boolean; // player hidden (playback continues)
 	minimized: boolean; // collapsed to a pill
 	pendingAutoplay: boolean; // one-shot: play when ready
 	toggleRequest: number; // nonce; each increment toggles play/pause
-	resumeTimes: Record<string, number>; // per item, so coming back resumes
-	floatRect: MediaFloatRect | null; // persisted via settings
+	resumeTimes: Record<string, number>; // per item, so coming back resumes (persisted)
+	durations: Record<string, number>; // per item length, for the list rows (persisted)
+	floatPosition: { top; left } | null; // where the player sits (persisted)
+	floatWidths: Partial<Record<MediaKind, number>>; // width per kind (persisted)
+	aspects: Record<string, number>; // item -> picture shape, learned on load (per-boot)
 }
 ```
 
@@ -371,7 +375,14 @@ or in-panel mode. Do not add one.
 **One player, always.** Overlapping audio is structurally impossible rather than
 a rule to enforce: switching items unmounts the previous element. Use
 `stepMediaItem()` (`utils/mediaItems.ts`) for prev/next, which walks the queue in
-open order, and `resolveMediaHistory()` for the recency menu.
+open order, and `advanceAfterEnded()` for the end-of-file hand-off.
+
+**Queue and history have opposite lifetimes.** The queue survives a restart (the
+`mediaPlayerQueue` setting, written debounced and hydrated in `settingsStore`);
+history is per-boot. That is why history holds whole `MediaItem`s rather than IDs
+into the queue: it has to be able to name a file the queue no longer holds, and
+dropping a queue entry must not rewrite what the user already heard. Picking a
+history entry re-queues it.
 
 ### Gotchas
 
@@ -385,8 +396,25 @@ open order, and `resolveMediaHistory()` for the recency menu.
   position instead of stacking a duplicate that starts from zero.
 - **Re-opening preserves queue position.** `openMedia` replaces in place rather
   than moving to the end, so prev/next order stays open order.
-- **`history` holds IDs, not items.** A closed entry falls out of the menu on its
-  own instead of leaving it pointing at something that no longer exists.
+- **`history` holds items, not IDs.** It outlives the queue, so a history entry
+  can name a file that is no longer queued. `removeHistoryItem` and `closeItem`
+  are separate actions on separate lists.
+- **`enqueueMedia` does not interrupt.** The one exception is an idle player:
+  with nothing loaded there is no widget on screen, so the first queued file
+  becomes active (paused) rather than landing in a queue nobody can see.
+- **Multi-file opens must pass `mediaMode: 'queue'` after the first media file**
+  (`openFilesInOrder()` in `useFileContextMenu.ts`), or each open steals the
+  player and only the last file survives.
+- **A restored queue comes back `dismissed`.** Nothing plays at launch;
+  `NowPlayingIndicator` in the Left Bar header is what advertises it.
+- **Durations outlive the queue in memory but not on disk.** A history row still
+  shows the length of a file dropped from the queue, so `closeItem` leaves the
+  entry alone; `writeQueueNow` prunes to the queued IDs instead, or every file
+  ever played would accumulate in settings.
+- **The player's height is never stored.** It is derived from the loaded file:
+  chrome for audio, chrome plus `width / aspect` for video (`mediaFloatGeometry`).
+  Persisting a height is what let a video sit in black bars. Width is stored per
+  kind, because a movie's width is absurd on the next podcast.
 - **`closeItem` is stop, not skip.** Closing the active item releases the player
   rather than auto-advancing to the next one.
 - `toggleRequest` is a nonce, not a callback in state, so the pill's play button

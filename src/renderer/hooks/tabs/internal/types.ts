@@ -59,10 +59,21 @@ export interface AITabHandlersReturn {
 	handleToggleTabEnterToSend: () => void;
 }
 
+/**
+ * What opening a playable audio/video file should do.
+ *
+ * `play` (the default) hands it to the floating player and starts it. `queue`
+ * appends it instead, leaving whatever is playing alone - that is how opening
+ * ten files at once plays the first and lines up the other nine.
+ *
+ * Ignored for everything that is not media.
+ */
+export type MediaOpenMode = 'play' | 'queue';
+
 export interface FilePreviewTabHandlersReturn {
 	handleOpenFileTab: (
 		file: FileTabOpenParams,
-		options?: { openInNewTab?: boolean; targetSessionId?: string }
+		options?: { openInNewTab?: boolean; targetSessionId?: string; mediaMode?: MediaOpenMode }
 	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;
 	handleCloseFileTab: (tabId: string) => void;

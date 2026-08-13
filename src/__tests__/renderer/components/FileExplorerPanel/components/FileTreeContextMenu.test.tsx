@@ -38,6 +38,7 @@ const folderNode: FileNode = {
 };
 const emptyFolderNode: FileNode = { name: 'empty', type: 'folder', children: [] };
 const htmlNode: FileNode = { name: 'index.html', type: 'file' };
+const mediaNode: FileNode = { name: 'podcast.mp3', type: 'file' };
 const mdNode: FileNode = { name: 'README.MD', type: 'file' };
 
 const makeContextMenu = (node: FileNode): ContextMenuState => ({
@@ -65,6 +66,7 @@ const defaultProps = {
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
 	onPreviewMulti: vi.fn(),
+	onQueueMedia: vi.fn(),
 	onOpenInDefaultAppMulti: vi.fn(),
 	onOpenDeleteMulti: vi.fn(),
 	onFocusInGraph: vi.fn(),
@@ -290,6 +292,61 @@ describe('FileTreeContextMenu', () => {
 		(window as any).maestro = undefined;
 		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
 		expect(screen.getByText('Reveal in Finder')).toBeTruthy();
+	});
+
+	describe('media actions', () => {
+		it('says Play rather than Preview, since media never becomes a tab', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mediaNode)} />);
+			expect(screen.getByText('Play')).toBeTruthy();
+			expect(screen.queryByText('Preview')).toBeNull();
+			expect(screen.getByText('Add to Play Queue')).toBeTruthy();
+		});
+
+		it('offers no playback actions for an ordinary file', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+			expect(screen.queryByText('Add to Play Queue')).toBeNull();
+		});
+
+		it('hides playback over SSH, where there is nothing to stream', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mediaNode)}
+					sshRemoteId="remote-1"
+				/>
+			);
+			expect(screen.getByText('Preview')).toBeTruthy();
+			expect(screen.queryByText('Add to Play Queue')).toBeNull();
+		});
+
+		it('counts the media in a multi-selection', () => {
+			const onQueueMedia = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mediaNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					selectedMediaCount={3}
+					onQueueMedia={onQueueMedia}
+				/>
+			);
+			fireEvent.click(screen.getByText('Add 3 to Play Queue'));
+			expect(onQueueMedia).toHaveBeenCalled();
+		});
+
+		it('leaves the multi menu alone when nothing selected is playable', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(fileNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					selectedMediaCount={0}
+				/>
+			);
+			expect(screen.queryByText(/Add \d+ to Play Queue/)).toBeNull();
+		});
 	});
 
 	it('applies opacity 0 when contextMenuPos.ready is false', () => {

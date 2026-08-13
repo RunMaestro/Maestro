@@ -357,6 +357,7 @@ describe('process IPC handlers', () => {
 				'process:write',
 				'process:interrupt',
 				'process:kill',
+				'process:setFailoverOverlay',
 				'process:resize',
 				'process:getActiveProcesses',
 				'process:isTerminalBusy',

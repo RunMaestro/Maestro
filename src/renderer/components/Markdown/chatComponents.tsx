@@ -39,8 +39,6 @@ export interface ChatMarkdownComponentsOptions {
 	/** Right-click handlers (owned by the shell so it can render the menus). */
 	onLinkContextMenu: (e: React.MouseEvent, url: string) => void;
 	onFileContextMenu: (e: React.MouseEvent, absPath: string, fileName: string) => void;
-	/** Right-click handler for images: raster <img> and inline <svg> diagrams. */
-	onImageContextMenu: (target: SVGSVGElement | HTMLImageElement, x: number, y: number) => void;
 }
 
 export function createChatMarkdownComponents(
@@ -57,7 +55,6 @@ export function createChatMarkdownComponents(
 		bionifyAlgorithm,
 		onLinkContextMenu,
 		onFileContextMenu,
-		onImageContextMenu,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -152,17 +149,7 @@ export function createChatMarkdownComponents(
 			const width = widthStr ? parseInt(widthStr, 10) : undefined;
 
 			return (
-				<LocalImage
-					src={src}
-					alt={alt}
-					theme={theme}
-					width={width}
-					sshRemoteId={sshRemoteId}
-					onContextMenu={(e) => {
-						e.preventDefault();
-						onImageContextMenu(e.currentTarget, e.clientX, e.clientY);
-					}}
-				/>
+				<LocalImage src={src} alt={alt} theme={theme} width={width} sshRemoteId={sshRemoteId} />
 			);
 		},
 		table: ({ node: _node, style, ...props }: JSX.IntrinsicElements['table'] & ExtraProps) => (
@@ -207,20 +194,11 @@ export function createChatMarkdownComponents(
 				{withReadableTransforms(children)}
 			</td>
 		),
-		// Inline SVG diagrams (rehype-raw + sanitize let agents draw). Attach a
-		// right-click menu so the rendered image can be copied or saved. With
-		// nested <svg> the handler bubbles, so the outermost element wins (its
-		// currentTarget is captured last).
+		// Inline SVG diagrams (rehype-raw + sanitize let agents draw). The
+		// right-click Copy/Save menu comes from the app-wide delegated listener in
+		// ImageContextMenuHost, so nothing is wired here.
 		svg: ({ node: _node, children, ...props }: JSX.IntrinsicElements['svg'] & ExtraProps) => (
-			<svg
-				{...props}
-				onContextMenu={(e) => {
-					e.preventDefault();
-					onImageContextMenu(e.currentTarget, e.clientX, e.clientY);
-				}}
-			>
-				{children}
-			</svg>
+			<svg {...props}>{children}</svg>
 		),
 		// Strip event handler attributes (e.g. onToggle) that rehype-raw may
 		// pass through as strings from AI-generated HTML, which React rejects.

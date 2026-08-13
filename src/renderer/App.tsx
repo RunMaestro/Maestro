@@ -168,6 +168,7 @@ import { useActiveSession } from './hooks/session/useActiveSession';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 import { CenterFlash } from './components/CenterFlash';
+import { ImageContextMenuHost } from './components/ImageContextMenuHost';
 import { MediaPlaybackHost } from './components/MediaPlayback';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
 
@@ -3480,6 +3481,12 @@ function MaestroConsoleInner() {
 
 				{/* --- CENTER FLASH (single, app-wide; mounted via portal) --- */}
 				<CenterFlash theme={theme} />
+
+				{/* --- IMAGE CONTEXT MENU (single, app-wide) ---
+				    One delegated listener gives every image and diagram on screen a
+				    right-click Copy / Save. Surfaces wire up nothing. See
+				    ImageContextMenuHost. */}
+				<ImageContextMenuHost theme={theme} />
 
 				{/* --- MEDIA PLAYBACK (single, app-wide, never unmounted) ---
 				    Owns the one <audio>/<video> element so playback survives switching

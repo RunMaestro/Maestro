@@ -979,6 +979,9 @@ export const AnnotatorCanvas = forwardRef<SVGSVGElement, AnnotatorCanvasProps>(
 				}}
 			>
 				<div
+					// The annotator owns this surface's gestures and its own tools; the
+					// app-wide Copy/Save image menu must not open on top of them.
+					data-no-image-menu
 					style={{
 						position: 'absolute',
 						top: 0,
