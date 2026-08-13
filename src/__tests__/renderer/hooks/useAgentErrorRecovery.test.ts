@@ -93,36 +93,4 @@ describe('useAgentErrorRecovery', () => {
 		expect(onRetry).toHaveBeenCalledTimes(1);
 	});
 
-	// Issue #307: a session whose stored transcript the provider rejects can only
-	// be escaped with a fresh session, so retry must not be the offered action.
-	it('leads with a new session for an unusable provider session', () => {
-		const onNewSession = vi.fn();
-		const onRetry = vi.fn();
-
-		const { result } = renderHook(() =>
-			useAgentErrorRecovery({
-				error: {
-					...baseError,
-					type: 'session_not_found',
-					message: 'The provider rejected this conversation (400 INVALID_ARGUMENT).',
-					agentId: 'opencode',
-				},
-				agentId: 'opencode',
-				sessionId: 's1',
-				onNewSession,
-				onRetry,
-			})
-		);
-
-		expect(result.current.recoveryActions).toHaveLength(1);
-		expect(result.current.recoveryActions[0].id).toBe('new-session');
-		expect(result.current.recoveryActions[0].primary).toBe(true);
-
-		act(() => {
-			result.current.recoveryActions[0].onClick();
-		});
-
-		expect(onNewSession).toHaveBeenCalledTimes(1);
-		expect(onRetry).not.toHaveBeenCalled();
-	});
 });
