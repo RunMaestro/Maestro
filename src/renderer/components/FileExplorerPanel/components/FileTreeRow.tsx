@@ -77,7 +77,7 @@ interface FileTreeRowProps {
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string) => Promise<void>;
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 }
 
@@ -167,7 +167,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 			onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
 			return;
 		}
-		void handleFileClick(node, fullPath, session);
+		void handleFileClick(node, fullPath);
 	};
 
 	// Generate indent guides for each depth level

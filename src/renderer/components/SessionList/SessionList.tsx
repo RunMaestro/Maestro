@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
+import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -1241,6 +1242,10 @@ function SessionListInner(props: SessionListProps) {
 									<span>{autoRunStats.currentBadgeLevel}</span>
 								</button>
 							)}
+							{/* Now playing - only while the floating player is hidden, so the
+							    user can always see that audio is coming from Maestro and get
+							    the widget back with one click. */}
+							<NowPlayingIndicator theme={theme} />
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}
@@ -1335,6 +1340,7 @@ function SessionListInner(props: SessionListProps) {
 					</>
 				) : (
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
+						<NowPlayingIndicator theme={theme} compact />
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
 								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}${

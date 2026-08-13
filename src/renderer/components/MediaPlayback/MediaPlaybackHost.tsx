@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 
 import { MediaViewer } from '../FilePreview/MediaViewer';
 import { FloatingMediaPlayer } from './FloatingMediaPlayer';
 import { stepMediaItem } from '../../utils/mediaItems';
-import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { flushMediaQueuePersist, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import type { Theme } from '../../types';
 
 interface MediaPlaybackHostProps {
@@ -40,6 +41,18 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 	const setPlaying = useMediaPlaybackStore((s) => s.setPlaying);
 	const consumeAutoplay = useMediaPlaybackStore((s) => s.consumeAutoplay);
 	const rememberTime = useMediaPlaybackStore((s) => s.rememberTime);
+	const advanceAfterEnded = useMediaPlaybackStore((s) => s.advanceAfterEnded);
+	const aspects = useMediaPlaybackStore((s) => s.aspects);
+	const rememberAspect = useMediaPlaybackStore((s) => s.rememberAspect);
+	const rememberDuration = useMediaPlaybackStore((s) => s.rememberDuration);
+
+	// One measurement for the whole app: the transport is the same strip whatever
+	// is loaded, so re-measuring per file would only re-report the same number.
+	const [transportHeight, setTransportHeight] = useState<number | null>(null);
+
+	// Queue writes are debounced, so a window closing mid-debounce would lose the
+	// last position (or the last thing queued). Flush before it goes away.
+	useEventListener('beforeunload', flushMediaQueuePersist);
 
 	const active = activeItemId ? items.find((item) => item.id === activeItemId) : undefined;
 
@@ -58,6 +71,20 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			if (activeItemId) rememberTime(activeItemId, seconds);
 		},
 		[activeItemId, rememberTime]
+	);
+
+	const handleAspectChange = useCallback(
+		(aspect: number) => {
+			if (activeItemId) rememberAspect(activeItemId, aspect);
+		},
+		[activeItemId, rememberAspect]
+	);
+
+	const handleDurationKnown = useCallback(
+		(seconds: number) => {
+			if (activeItemId) rememberDuration(activeItemId, seconds);
+		},
+		[activeItemId, rememberDuration]
 	);
 
 	// Hand the one-shot back to the store once the player has it. In an effect,
@@ -81,6 +108,16 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			compact
 			onTimeUpdate={handleTimeUpdate}
 			onPlayingChange={setPlaying}
+			// A finished file hands off to the next queued one, which is what makes
+			// "queue an mp4 behind this mp3" mean anything.
+			onEnded={advanceAfterEnded}
+			// The frame sizes itself to the file, so it needs the file's own shape
+			// and the true height of the controls under it.
+			onAspectChange={handleAspectChange}
+			// Only the loaded file is ever mounted, so this is the one chance to
+			// learn how long it is for the queue and history lists.
+			onDurationKnown={handleDurationKnown}
+			onTransportHeightChange={setTransportHeight}
 			onPrev={stepMediaItem(items, activeItemId, -1) ? () => navigate(-1) : undefined}
 			onNext={stepMediaItem(items, activeItemId, 1) ? () => navigate(1) : undefined}
 			toggleRequest={toggleRequest}
@@ -117,6 +154,8 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			title={active.name}
 			subtitle={active.sessionName}
 			kind={active.kind}
+			aspect={aspects[active.id]}
+			transportHeight={transportHeight}
 			playing={playing}
 			theme={theme}
 		>

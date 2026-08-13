@@ -54,7 +54,14 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	mediaPlayerFloatRect: {
 		description:
-			'Position and size of the floating media player, remembered across restarts. Null until the user moves or resizes it.',
+			'Position of the floating media player and the width it was last given for each media kind, remembered across restarts. Its height is derived from whatever is playing, so it is not stored. Null until the user moves or resizes it.',
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
+	mediaPlayerQueue: {
+		description:
+			'Media play queue, the loaded item, and remembered playback positions, kept across restarts. Null until something is queued. Recently-played history is deliberately not stored here - it is per-session.',
 		type: 'object',
 		default: null,
 		category: 'appearance',

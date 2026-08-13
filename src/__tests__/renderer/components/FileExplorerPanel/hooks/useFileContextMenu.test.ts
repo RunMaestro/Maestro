@@ -327,7 +327,7 @@ describe('useFileContextMenu', () => {
 		await act(async () => {
 			await result.current.handlePreviewFile();
 		});
-		expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx', session);
+		expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx');
 	});
 
 	it('handleFocusInGraph calls onFocusFileInGraph with the path', () => {
@@ -571,9 +571,119 @@ describe('useFileContextMenu', () => {
 		expect(handleFileClick).toHaveBeenCalledWith(
 			expect.objectContaining({ name: 'README.md' }),
 			'README.md',
-			session
+			// Not media, so the mode is irrelevant, but the multi-open path is what
+			// decides play-vs-queue and it always says which it means.
+			{ mediaMode: 'play' }
 		);
 		expect(handleFileClick).toHaveBeenCalledTimes(1);
+	});
+
+	describe('media', () => {
+		const podcast: FileNode = { name: 'podcast.mp3', type: 'file' };
+		const talk: FileNode = { name: 'talk.mp4', type: 'file' };
+		const mediaSession = {
+			...session,
+			fileTree: [...session.fileTree, podcast, talk],
+		} as any;
+
+		/** Right-click `path`, with `selected` already selected in the tree. */
+		function openMenu(
+			result: { current: ReturnType<typeof useFileContextMenu> },
+			node: FileNode,
+			path: string
+		) {
+			const e = {
+				clientX: 10,
+				clientY: 10,
+				preventDefault: vi.fn(),
+				stopPropagation: vi.fn(),
+			} as unknown as React.MouseEvent;
+			act(() => {
+				result.current.openContextMenu(e, node, path, 0);
+			});
+		}
+
+		it('plays the first media file of a multi-open and queues the rest', async () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const selectedPathsRef = { current: new Set(['podcast.mp3', 'talk.mp4']) };
+			const { result } = renderHook(() =>
+				useFileContextMenu({
+					...defaultArgs,
+					session: mediaSession,
+					selectedPathsRef,
+					handleFileClick,
+				})
+			);
+			openMenu(result, podcast, 'podcast.mp3');
+			await act(async () => {
+				await result.current.handlePreviewMulti();
+			});
+
+			// Without this every file would steal the player from the one before and
+			// only the last would survive.
+			expect(handleFileClick.mock.calls.map((call) => [call[1], call[2]])).toEqual([
+				['podcast.mp3', { mediaMode: 'play' }],
+				['talk.mp4', { mediaMode: 'queue' }],
+			]);
+		});
+
+		it('queues a single file without disturbing what is playing', async () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const { result } = renderHook(() =>
+				useFileContextMenu({ ...defaultArgs, session: mediaSession, handleFileClick })
+			);
+			openMenu(result, podcast, 'podcast.mp3');
+			await act(async () => {
+				await result.current.handleQueueMedia();
+			});
+
+			expect(handleFileClick).toHaveBeenCalledWith(podcast, 'podcast.mp3', {
+				mediaMode: 'queue',
+			});
+		});
+
+		it('queues the whole selection when the click lands inside it', async () => {
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const selectedPathsRef = { current: new Set(['podcast.mp3', 'talk.mp4', 'README.md']) };
+			const { result } = renderHook(() =>
+				useFileContextMenu({
+					...defaultArgs,
+					session: mediaSession,
+					selectedPathsRef,
+					handleFileClick,
+				})
+			);
+			openMenu(result, talk, 'talk.mp4');
+			await act(async () => {
+				await result.current.handleQueueMedia();
+			});
+
+			// The non-media file in the selection is simply skipped.
+			expect(handleFileClick.mock.calls.map((call) => call[1])).toEqual([
+				'podcast.mp3',
+				'talk.mp4',
+			]);
+		});
+
+		it('says so when the selection has nothing playable', async () => {
+			const onShowFlash = vi.fn();
+			const handleFileClick = vi.fn().mockResolvedValue(undefined);
+			const { result } = renderHook(() =>
+				useFileContextMenu({
+					...defaultArgs,
+					session: mediaSession,
+					handleFileClick,
+					onShowFlash,
+				})
+			);
+			openMenu(result, fileNode, 'App.tsx');
+			await act(async () => {
+				await result.current.handleQueueMedia();
+			});
+
+			expect(handleFileClick).not.toHaveBeenCalled();
+			expect(onShowFlash).toHaveBeenCalledWith('No playable media in selection');
+		});
 	});
 
 	it('handleOpenDeleteMulti opens the multi-delete modal', () => {

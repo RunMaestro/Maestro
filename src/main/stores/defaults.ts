@@ -60,6 +60,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	customFonts: [],
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,
+	mediaPlayerQueue: null,
 	logLevel: 'info',
 	defaultShell: getDefaultShell(),
 	webAuthEnabled: false,

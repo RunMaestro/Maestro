@@ -260,7 +260,11 @@ multi-GB recording never crosses IPC or lands in the renderer heap.
 | `getOpenedMediaKind(name, content)`     | `(string, string) => MediaKind \| null`                      | The one predicate for "is this opened file playable media".                 |
 | `mediaItemId(sessionId, path)`          | `(string, string) => string`                                 | Queue identity. Same agent + path re-uses the entry, so re-opening resumes. |
 | `stepMediaItem(items, activeId, steps)` | `(MediaItem[], string \| null, number) => MediaItem \| null` | Prev/next target. Open order, no wrapping; null at the ends.                |
-| `resolveMediaHistory(items, history)`   | `(MediaItem[], string[]) => MediaItem[]`                     | History IDs -> items, newest first, dropping closed entries.                |
+| `pushMediaHistory(history, item, max)`  | `(MediaItem[], MediaItem, number) => MediaItem[]`            | Recently played, newest first, deduped and capped.                          |
+| `trimMediaQueue(items, limit, keepId)`  | `(MediaItem[], number, string \| null) => MediaItem[]`       | Caps the persisted queue, oldest first, never dropping the loaded item.     |
+| `sanitizeMediaItems(value)`             | `(unknown) => MediaItem[]`                                   | Coerce a persisted queue off disk, dropping anything malformed.             |
+| `sanitizeMediaTimes(value, knownIds)`   | `(unknown, Set<string>) => Record<string, number>`           | Same for the seconds maps (positions, durations); drops unqueued IDs.       |
+| `formatMediaTime(seconds)`              | `(number \| undefined) => string`                            | Clock time for a fractional media second; `--:--` when unknown.             |
 
 **Media never becomes a file preview tab.** `handleOpenFileTab()` diverts it to
 `useMediaPlaybackStore.openMedia()` before a tab can be created, and the only
@@ -273,8 +277,18 @@ directly classifies everything as non-media. The content check is what keeps a
 remote file (no local stream to serve) on the binary "open externally" path.
 
 Floating-widget geometry math lives in `src/renderer/utils/mediaFloatGeometry.ts`
-(`clampMediaFloatRect`, `initialMediaFloatRect`), split out of the component so
-the off-screen-recovery cases are testable without a DOM.
+(`fitMediaFloatRect`, `initialMediaFloatRect`, `mediaFloatHeight`,
+`mediaFloatResizeWidth`, `sanitizeMediaFloat`), split out of the component so the
+off-screen-recovery and aspect-fitting cases are testable without a DOM.
+
+**Height is derived, never stored.** The frame is chrome plus a stage, and the
+stage belongs to the media: audio has no picture so the frame collapses to the
+controls, and video gets exactly its own `videoWidth / videoHeight` or it plays
+inside black bars. So width is the only size the user picks, and it is remembered
+per kind. The chrome half of the math is measured at runtime (`transportHeight`
+reported by `MediaViewer`) because the transport's height comes out of font
+metrics - a hard-coded constant letterboxes video on whichever platform it was
+not tuned on.
 
 ---
 

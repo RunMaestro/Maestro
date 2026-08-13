@@ -17,7 +17,21 @@
  * landing in a player that has no bytes to read.
  */
 
+import { formatElapsedTimeColon } from '../../shared/formatters';
 import { getMediaKind, isMediaStreamUrl, type MediaKind } from '../../shared/mediaTypes';
+
+/**
+ * A media clock time (`4:26`, `1:02:30`), or `--:--` when it is not known yet.
+ *
+ * Media times are fractional and can be `Infinity` for a live stream, while
+ * `formatElapsedTimeColon` wants whole seconds - this is the one place that
+ * bridges the two, so the transport and the queue/history lists cannot drift
+ * into showing the same file's length two different ways.
+ */
+export function formatMediaTime(seconds: number | undefined): string {
+	if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return '--:--';
+	return formatElapsedTimeColon(Math.floor(Math.max(0, seconds)));
+}
 
 /**
  * Media kind for a file the user just opened, or `null` when it is not playable
@@ -83,21 +97,89 @@ export function stepMediaItem(
 }
 
 /**
- * Queue entries in most-recently-played order, for the history menu.
+ * Put an item at the front of the recently-played list, deduped and capped.
  *
- * History holds IDs rather than items so a closed entry drops out on its own
- * instead of leaving the menu pointing at something that no longer exists.
+ * History holds whole items rather than IDs into the queue: the two lists have
+ * different lifetimes (the queue is persisted, history is per-boot) and
+ * different owners (removing something from the queue must not rewrite what the
+ * user already listened to), so history has to be able to name a file the queue
+ * no longer holds. Selecting such an entry re-queues it.
  */
-export function resolveMediaHistory(items: MediaItem[], history: string[]): MediaItem[] {
-	const byId = new Map(items.map((item) => [item.id, item]));
-	const seen = new Set<string>();
-	const resolved: MediaItem[] = [];
-	for (const id of history) {
-		if (seen.has(id)) continue;
-		const item = byId.get(id);
-		if (!item) continue;
-		seen.add(id);
-		resolved.push(item);
+export function pushMediaHistory(
+	history: MediaItem[],
+	item: MediaItem,
+	limit: number
+): MediaItem[] {
+	return [item, ...history.filter((entry) => entry.id !== item.id)].slice(0, limit);
+}
+
+/**
+ * Trim a queue to `limit` entries, dropping the oldest queue positions first.
+ *
+ * The queue persists across restarts, so without a cap every media file the
+ * user ever opened would pile up forever. `keepId` is never dropped, so the
+ * loaded file survives even when it is the oldest entry.
+ */
+export function trimMediaQueue(
+	items: MediaItem[],
+	limit: number,
+	keepId: string | null
+): MediaItem[] {
+	if (items.length <= limit) return items;
+	const trimmed: MediaItem[] = [];
+	// Walk newest-first, keeping the tail; the active item is always kept.
+	for (let i = items.length - 1; i >= 0; i--) {
+		const item = items[i];
+		if (trimmed.length < limit || item.id === keepId) trimmed.unshift(item);
 	}
-	return resolved;
+	return trimmed;
+}
+
+/**
+ * Coerce a persisted queue back into media items, dropping anything malformed.
+ *
+ * Entries are read straight off disk and handed to a media element, so a
+ * hand-edited or half-written settings file must not be able to put a
+ * non-string path into the player.
+ */
+export function sanitizeMediaItems(value: unknown): MediaItem[] {
+	if (!Array.isArray(value)) return [];
+	const seen = new Set<string>();
+	const items: MediaItem[] = [];
+	for (const entry of value) {
+		if (typeof entry !== 'object' || entry === null) continue;
+		const { path, name, sessionId, sessionName, kind } = entry as Record<string, unknown>;
+		if (typeof path !== 'string' || !path) continue;
+		if (typeof name !== 'string' || !name) continue;
+		if (typeof sessionId !== 'string' || !sessionId) continue;
+		if (kind !== 'audio' && kind !== 'video') continue;
+		const id = mediaItemId(sessionId, path);
+		if (seen.has(id)) continue;
+		seen.add(id);
+		items.push({
+			id,
+			path,
+			name,
+			sessionId,
+			sessionName: typeof sessionName === 'string' ? sessionName : '',
+			kind,
+		});
+	}
+	return items;
+}
+
+/**
+ * Coerce a persisted map of item ID -> seconds, dropping anything that is not a
+ * real time. Used for both remembered positions and known durations.
+ */
+export function sanitizeMediaTimes(value: unknown, knownIds: Set<string>): Record<string, number> {
+	if (typeof value !== 'object' || value === null) return {};
+	const times: Record<string, number> = {};
+	for (const [id, seconds] of Object.entries(value as Record<string, unknown>)) {
+		// Times for files no longer queued are dead weight.
+		if (!knownIds.has(id)) continue;
+		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) continue;
+		times[id] = seconds;
+	}
+	return times;
 }

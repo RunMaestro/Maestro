@@ -14,7 +14,7 @@ import { useSettingsStore } from '../../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
 import { getOpenedMediaKind } from '../../../utils/mediaItems';
 import { buildReplacementNavigationHistory, getFileNameParts } from './filePreviewTabHelpers';
-import type { FilePreviewTabHandlersReturn, FileTabOpenParams } from './types';
+import type { FilePreviewTabHandlersReturn, FileTabOpenParams, MediaOpenMode } from './types';
 
 export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 	const handleOpenFileTab = useCallback(
@@ -23,6 +23,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			options?: {
 				openInNewTab?: boolean;
 				targetSessionId?: string;
+				mediaMode?: MediaOpenMode;
 			}
 		) => {
 			const openInNewTab = options?.openInNewTab ?? true;
@@ -43,13 +44,22 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					.getState()
 					.sessions.find((s: Session) => s.id === activeSessionId);
 				if (session) {
-					useMediaPlaybackStore.getState().openMedia({
+					const request = {
 						path: file.path,
 						name: file.name,
 						kind: mediaKind,
 						sessionId: session.id,
 						sessionName: session.name,
-					});
+					};
+					const store = useMediaPlaybackStore.getState();
+					// Queue mode is how a multi-file open stays sane: the first file
+					// plays and the rest line up behind it, instead of ten opens each
+					// stealing the player from the one before.
+					if (options?.mediaMode === 'queue') {
+						store.enqueueMedia([request]);
+					} else {
+						store.openMedia(request);
+					}
 					return;
 				}
 			}
