@@ -18,7 +18,7 @@ export interface SessionState {
 	triggerSources: CueTriggerSource[];
 	/**
 	 * Filesystem watchers for every cue.yaml that contributes to this session's
-	 * config — usually one (the local or ancestor file) but two when the session
+	 * config - usually one (the local or ancestor file) but two when the session
 	 * has its OWN local cue.yaml AND merges in subs from a higher ancestor that
 	 * explicitly target it (cross-root pipelines). Each watcher fires
 	 * `onRefreshRequested` so any of them changing reloads the merged view.
@@ -33,7 +33,7 @@ export interface SessionState {
 }
 
 /**
- * Returns true when `sub` is reported as "active for" the given session — the
+ * Returns true when `sub` is reported as "active for" the given session - the
  * session is either the owner (by agent_id) OR an unowned legacy sub OR a
  * participating fan-out target.
  *
@@ -107,12 +107,12 @@ export interface OwnershipCandidate {
  * Compute the ownership warning for a session that just loaded `config`.
  *
  * Returns `undefined` when the session is the effective owner (no warning is
- * needed). Returns a human-readable string otherwise — that string is the
+ * needed). Returns a human-readable string otherwise - that string is the
  * single source of truth: presence means the Cue dashboard shows a red `!`
  * and uses the string as the tooltip; absence means no indicator.
  *
  * `candidates` must be pre-filtered by the caller to only include sessions
- * that would actually load this same cue.yaml — i.e. sessions whose
+ * that would actually load this same cue.yaml - i.e. sessions whose
  * `projectRoot` contains a readable cue config. Sessions without a config
  * must not be included, otherwise a config-less agent could "win" the
  * implicit-first race and silently disable automation for the workspace.
@@ -160,23 +160,23 @@ export function computeOwnershipWarning(params: {
 				owner = byName[0];
 			} else if (byName.length > 1) {
 				const matchingIds = byName.map((s) => s.id).join(', ');
-				return `settings.owner_agent_id "${explicitOwner}" is ambiguous — matches ${byName.length} agents in this projectRoot by display name (ids: ${matchingIds}). Unowned subscriptions are disabled until this is fixed; use a full agent id to disambiguate.`;
+				return `settings.owner_agent_id "${explicitOwner}" is ambiguous - matches ${byName.length} agents in this projectRoot by display name (ids: ${matchingIds}). Unowned subscriptions are disabled until this is fixed; use a full agent id to disambiguate.`;
 			}
 		}
 
 		if (!owner) {
-			return `settings.owner_agent_id "${explicitOwner}" does not match any agent in this projectRoot — unowned subscriptions are disabled until this is fixed.`;
+			return `settings.owner_agent_id "${explicitOwner}" does not match any agent in this projectRoot - unowned subscriptions are disabled until this is fixed.`;
 		}
 		if (owner.id === session.id) return undefined;
 		// Show the resolved display name rather than the raw `explicitOwner`
-		// value, which is often a UUID — the dashboard tooltip is meant to be
+		// value, which is often a UUID - the dashboard tooltip is meant to be
 		// human-readable, and a bare uuid is unhelpful at a glance.
-		return `settings.owner_agent_id targets "${owner.name}" — unowned subscriptions run on that agent instead.`;
+		return `settings.owner_agent_id targets "${owner.name}" - unowned subscriptions run on that agent instead.`;
 	}
 
 	const firstForRoot = sameRoot[0];
 	if (firstForRoot && firstForRoot.id !== session.id) {
-		return `"${firstForRoot.name}" was selected as the owner of this projectRoot (no settings.owner_agent_id set — first agent wins). Set settings.owner_agent_id in cue.yaml to choose a different owner.`;
+		return `"${firstForRoot.name}" was selected as the owner of this projectRoot (no settings.owner_agent_id set - first agent wins). Set settings.owner_agent_id in cue.yaml to choose a different owner.`;
 	}
 	return undefined;
 }

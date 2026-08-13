@@ -22,7 +22,7 @@ interface TabBarProps {
 	onStarTab?: (tabId: string, starred: boolean) => void;
 	onReorderTab?: (fromIndex: number, toIndex: number) => void;
 	onOpenTabSearch?: () => void;
-	/** Current input mode — determines which tab type is visually active */
+	/** Current input mode - determines which tab type is visually active */
 	inputMode?: 'ai' | 'terminal';
 	/** Called when the terminal tab is selected */
 	onSelectTerminal?: () => void;
@@ -588,13 +588,13 @@ export function TabBar({
 		return () => document.removeEventListener('mousedown', handleClickOutside);
 	}, [showNewTabMenu]);
 
-	// Bell filter — derived state for whether the indicator dot should appear
+	// Bell filter - derived state for whether the indicator dot should appear
 	// on the bell button and which tabs to render. The button stays clickable
 	// even when there are no unread tabs (matches the desktop Left Bar bell):
 	// toggling it on with everything quiet just narrows the bar to the active
 	// tab.
 	//
-	// Exclude the currently focused AI tab from the badge calc — its activity
+	// Exclude the currently focused AI tab from the badge calc - its activity
 	// is already in front of the user, so flagging it as off-tab unread would
 	// be misleading and toggling the bell wouldn't reveal anything new.
 	const hasUnreadTabs = tabs.some(
@@ -634,7 +634,7 @@ export function TabBar({
 					gap: '6px',
 				}}
 			>
-				{/* Bell filter — narrows the bar to the active tab plus any with
+				{/* Bell filter - narrows the bar to the active tab plus any with
 				    unread/busy activity. Always clickable so users can hide quiet
 				    tabs even when nothing is currently unread. */}
 				<button

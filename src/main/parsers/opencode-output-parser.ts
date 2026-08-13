@@ -170,7 +170,7 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 		}
 
 		// Handle text messages (final response content)
-		// OpenCode sends text as a single complete event (not streamed chunks) —
+		// OpenCode sends text as a single complete event (not streamed chunks) -
 		// time.start === time.end in practice. Emitting as 'result' ensures it flows
 		// through the result path and does NOT appear as thinking-stream content.
 		if (msg.type === 'text') {

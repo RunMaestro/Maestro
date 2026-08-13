@@ -75,7 +75,7 @@ export function AutoRunIndicator({
 	const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 	const currentTask = currentTaskIndex + 1;
 
-	// errorPaused takes visual precedence over isStopping — the user can still
+	// errorPaused takes visual precedence over isStopping - the user can still
 	// abort from a paused state, so we want them to see the error context first.
 	const bannerColor = errorPaused ? colors.error : isStopping ? colors.warning : colors.accent;
 	const badgeTextColor = errorPaused ? colors.error : isStopping ? colors.warning : colors.accent;

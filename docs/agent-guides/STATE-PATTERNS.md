@@ -337,56 +337,86 @@ interface GroupChatStoreState {
 **File:** `src/renderer/stores/mediaPlaybackStore.ts`
 **Hook:** `useMediaPlaybackStore`
 
-State for the app's single audio/video player. Only the float geometry persists.
+State for the app's single audio/video player. The queue and the float geometry
+persist; history deliberately does not.
 
 ```typescript
 interface MediaPlaybackStoreState {
-	activeTabId: string | null; // the one file tab with a mounted player
+	items: MediaItem[]; // play queue, in open order (persisted)
+	activeItemId: string | null; // the one item with a mounted player (persisted)
+	history: MediaItem[]; // recently played, newest first (per-boot)
 	playing: boolean;
-	dismissed: boolean; // floating widget hidden (playback continues)
+	dismissed: boolean; // player hidden (playback continues)
 	minimized: boolean; // collapsed to a pill
 	pendingAutoplay: boolean; // one-shot: play when ready
 	toggleRequest: number; // nonce; each increment toggles play/pause
-	slots: Record<string, { rect: MediaSlotRect; visible: boolean }>; // docked placement
-	resumeTimes: Record<string, number>; // per tab, so navigating back resumes
-	floatRect: MediaFloatRect | null; // persisted via settings
+	resumeTimes: Record<string, number>; // per item, so coming back resumes (persisted)
+	durations: Record<string, number>; // per item length, for the list rows (persisted)
+	floatPosition: { top; left } | null; // where the player sits (persisted)
+	floatWidths: Partial<Record<MediaKind, number>>; // width per kind (persisted)
+	aspects: Record<string, number>; // item -> picture shape, learned on load (per-boot)
 }
 ```
 
 ### Why this store exists
 
-`MainPanelContent` renders `FilePreview` only for the **active file tab of the
-active session**, so switching tabs or agents unmounts it. Removing a media
+**Media never becomes a tab.** `handleOpenFileTab()` diverts a playable file to
+`openMedia()` before a tab can be created, so the queue lives here rather than
+being derived from `session.filePreviewTabs`. That is a product decision (a
+podcast should not cost the user their workspace) and a technical one: anything
+rendered per-tab or per-agent is unmounted on switch, and removing a media
 element from the document runs the HTML spec's internal pause steps, which would
 kill playback every time the user looked at something else.
 
-So the element lives in `MediaPlaybackHost`, mounted once in `App.tsx` and never
-unmounted. It renders in one of two placements:
-
-- **Docked** - `FilePreview` renders a `MediaViewportSlot` in place of the
-  player; the slot publishes its rect here and the host parks a `position: fixed`
-  box over it.
-- **Floating** - `FloatingMediaPlayer`, a draggable/resizable now-playing widget,
-  when the owning tab is off screen.
+The element lives in `MediaPlaybackHost`, mounted once in `App.tsx` and never
+unmounted. `FloatingMediaPlayer` is its **only** placement - there is no docked
+or in-panel mode. Do not add one.
 
 **One player, always.** Overlapping audio is structurally impossible rather than
-a rule to enforce: switching files unmounts the previous element. Use
-`stepMediaTab()` (`utils/mediaTabs.ts`) to navigate between open media tabs.
+a rule to enforce: switching items unmounts the previous element. Use
+`stepMediaItem()` (`utils/mediaItems.ts`) for prev/next, which walks the queue in
+open order, and `advanceAfterEnded()` for the end-of-file hand-off.
+
+**Queue and history have opposite lifetimes.** The queue survives a restart (the
+`mediaPlayerQueue` setting, written debounced and hydrated in `settingsStore`);
+history is per-boot. That is why history holds whole `MediaItem`s rather than IDs
+into the queue: it has to be able to name a file the queue no longer holds, and
+dropping a queue entry must not rewrite what the user already heard. Picking a
+history entry re-queues it.
 
 ### Gotchas
 
 - **Dismissing does not stop playback.** Hiding a control must not have the side
-  effect of stopping media. The widget returns via the "Show Floating Media
+  effect of stopping media. The player returns via the "Show Floating Media
   Player" palette command or by opening a media file.
 - **Minimizing must not unmount the player.** `FloatingMediaPlayer` hides the body
   with a class; unmounting it would pause the media.
-- A visible media tab always owns the player - `MediaViewportSlot` claims it on
-  mount. Without that, viewing file B while A floats would leave B's tab showing
-  an empty slot.
-- `setSlotRect` bails out on an identical rect. Without that, ResizeObserver churn
-  re-renders the host and with it the media element.
-- `hideSlot` retains the rect; only `clearTab` (tab closed) forgets it. Never
-  zero-size a docked player: a collapsed video can lose its decode pipeline.
+- **Item IDs are `sessionId::path`, not generated.** That is what makes
+  re-opening a file land on its existing queue entry and pick up its remembered
+  position instead of stacking a duplicate that starts from zero.
+- **Re-opening preserves queue position.** `openMedia` replaces in place rather
+  than moving to the end, so prev/next order stays open order.
+- **`history` holds items, not IDs.** It outlives the queue, so a history entry
+  can name a file that is no longer queued. `removeHistoryItem` and `closeItem`
+  are separate actions on separate lists.
+- **`enqueueMedia` does not interrupt.** The one exception is an idle player:
+  with nothing loaded there is no widget on screen, so the first queued file
+  becomes active (paused) rather than landing in a queue nobody can see.
+- **Multi-file opens must pass `mediaMode: 'queue'` after the first media file**
+  (`openFilesInOrder()` in `useFileContextMenu.ts`), or each open steals the
+  player and only the last file survives.
+- **A restored queue comes back `dismissed`.** Nothing plays at launch;
+  `NowPlayingIndicator` in the Left Bar header is what advertises it.
+- **Durations outlive the queue in memory but not on disk.** A history row still
+  shows the length of a file dropped from the queue, so `closeItem` leaves the
+  entry alone; `writeQueueNow` prunes to the queued IDs instead, or every file
+  ever played would accumulate in settings.
+- **The player's height is never stored.** It is derived from the loaded file:
+  chrome for audio, chrome plus `width / aspect` for video (`mediaFloatGeometry`).
+  Persisting a height is what let a video sit in black bars. Width is stored per
+  kind, because a movie's width is absurd on the next podcast.
+- **`closeItem` is stop, not skip.** Closing the active item releases the player
+  rather than auto-advancing to the next one.
 - `toggleRequest` is a nonce, not a callback in state, so the pill's play button
   can drive the element without a ref crossing the frame boundary.
 

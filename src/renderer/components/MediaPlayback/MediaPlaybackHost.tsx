@@ -1,12 +1,10 @@
-import { memo, useCallback, useEffect, useMemo } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 
 import { MediaViewer } from '../FilePreview/MediaViewer';
 import { FloatingMediaPlayer } from './FloatingMediaPlayer';
-import { collectMediaTabs, getMediaTabLabel, stepMediaTab } from '../../utils/mediaTabs';
-import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
-import { useSessionStore } from '../../stores/sessionStore';
-import { useTabStore } from '../../stores/tabStore';
-import { fileTabFocusFields } from '../../utils/tabHelpers';
+import { stepMediaItem } from '../../utils/mediaItems';
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { flushMediaQueuePersist, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import type { Theme } from '../../types';
 
 interface MediaPlaybackHostProps {
@@ -16,90 +14,77 @@ interface MediaPlaybackHostProps {
 /**
  * App-level owner of the one audio/video element.
  *
- * Mounted exactly once, near the root, and never unmounted. `MainPanelContent`
- * renders `FilePreview` only for the active file tab of the active session, so a
- * player living inside the tab would be torn down the moment the user looked
- * elsewhere - and removing a media element from the document runs the HTML
- * spec's internal pause steps, killing playback. Hosting it here is what lets a
- * podcast keep playing while the user works in other tabs and agents.
+ * Mounted exactly once, near the root, and never unmounted. Media does not get
+ * a file preview tab, a main panel view, or any other placement: opening an
+ * audio or video file shows the floating player and nothing else. That is both
+ * a product decision (a podcast should not cost the user their workspace) and a
+ * technical one - anything rendered per-tab or per-agent is torn down on every
+ * switch, and removing a media element from the document runs the HTML spec's
+ * internal pause steps, killing playback.
  *
- * Exactly one player exists at a time, which makes overlapping audio structurally
- * impossible instead of a rule to enforce. It renders in one of two placements:
- *
- *  - **Docked** over the `MediaViewportSlot` that `FilePreview` renders in place
- *    of its content, when the owning tab is on screen.
- *  - **Floating** as a draggable now-playing widget, when it is not.
- *
- * Which file is active follows the user: opening one activates it, viewing a
- * media tab claims it (see `MediaViewportSlot`), and the widget's prev/next step
- * through the open media tabs.
+ * Exactly one player exists at a time, which makes overlapping audio
+ * structurally impossible instead of a rule to enforce. Which file it holds
+ * follows the user: opening one activates it, the transport's prev/next step
+ * through the queue in open order, and the history menu jumps by recency.
  */
 export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 	theme,
 }: MediaPlaybackHostProps) {
-	const sessions = useSessionStore((s) => s.sessions);
-	const setSessions = useSessionStore((s) => s.setSessions);
-	const setActiveSessionId = useSessionStore((s) => s.setActiveSessionId);
-	const clearAutoplayFlag = useTabStore((s) => s.clearFileTabAutoplayMedia);
-
-	const activeTabId = useMediaPlaybackStore((s) => s.activeTabId);
+	const items = useMediaPlaybackStore((s) => s.items);
+	const activeItemId = useMediaPlaybackStore((s) => s.activeItemId);
 	const playing = useMediaPlaybackStore((s) => s.playing);
 	const dismissed = useMediaPlaybackStore((s) => s.dismissed);
 	const pendingAutoplay = useMediaPlaybackStore((s) => s.pendingAutoplay);
 	const toggleRequest = useMediaPlaybackStore((s) => s.toggleRequest);
-	const slots = useMediaPlaybackStore((s) => s.slots);
 	const resumeTimes = useMediaPlaybackStore((s) => s.resumeTimes);
-	const setActiveTab = useMediaPlaybackStore((s) => s.setActiveTab);
+	const setActiveItem = useMediaPlaybackStore((s) => s.setActiveItem);
 	const setPlaying = useMediaPlaybackStore((s) => s.setPlaying);
 	const consumeAutoplay = useMediaPlaybackStore((s) => s.consumeAutoplay);
-	const clearTab = useMediaPlaybackStore((s) => s.clearTab);
 	const rememberTime = useMediaPlaybackStore((s) => s.rememberTime);
+	const advanceAfterEnded = useMediaPlaybackStore((s) => s.advanceAfterEnded);
+	const aspects = useMediaPlaybackStore((s) => s.aspects);
+	const rememberAspect = useMediaPlaybackStore((s) => s.rememberAspect);
+	const rememberDuration = useMediaPlaybackStore((s) => s.rememberDuration);
 
-	const mediaTabs = useMemo(() => collectMediaTabs(sessions), [sessions]);
-	const active = activeTabId ? mediaTabs.find((t) => t.tabId === activeTabId) : undefined;
+	// One measurement for the whole app: the transport is the same strip whatever
+	// is loaded, so re-measuring per file would only re-report the same number.
+	const [transportHeight, setTransportHeight] = useState<number | null>(null);
 
-	// Release the player when its tab closes. Guards the palette and the widget
-	// against pointing at a tab that no longer exists.
-	useEffect(() => {
-		if (activeTabId && !mediaTabs.some((t) => t.tabId === activeTabId)) clearTab(activeTabId);
-	}, [activeTabId, mediaTabs, clearTab]);
+	// Queue writes are debounced, so a window closing mid-debounce would lose the
+	// last position (or the last thing queued). Flush before it goes away.
+	useEventListener('beforeunload', flushMediaQueuePersist);
 
-	// A freshly opened media file claims the player and starts playing. This is
-	// the only place the tab-level one-shot is read, and it is cleared right after
-	// so no later re-render can replay a file the user has since paused.
-	useEffect(() => {
-		const opened = mediaTabs.find((t) => t.autoplay);
-		if (!opened) return;
-		setActiveTab(opened.tabId, { autoplay: true });
-		clearAutoplayFlag(opened.tabId);
-	}, [mediaTabs, setActiveTab, clearAutoplayFlag]);
+	const active = activeItemId ? items.find((item) => item.id === activeItemId) : undefined;
 
 	const navigate = useCallback(
 		(steps: number) => {
-			const target = stepMediaTab(mediaTabs, activeTabId, steps);
+			const target = stepMediaItem(items, activeItemId, steps);
 			// Navigating with the transport means "play this now", matching what the
 			// buttons look like they do.
-			if (target) setActiveTab(target.tabId, { autoplay: true });
+			if (target) setActiveItem(target.id, { autoplay: true });
 		},
-		[mediaTabs, activeTabId, setActiveTab]
+		[items, activeItemId, setActiveItem]
 	);
-
-	/** Focus the active file's tab, which re-docks the player into it. */
-	const returnToTab = useCallback(() => {
-		if (!active) return;
-		setSessions((prev) =>
-			prev.map((s) =>
-				s.id === active.sessionId ? { ...s, ...fileTabFocusFields(active.tabId) } : s
-			)
-		);
-		setActiveSessionId(active.sessionId);
-	}, [active, setSessions, setActiveSessionId]);
 
 	const handleTimeUpdate = useCallback(
 		(seconds: number) => {
-			if (activeTabId) rememberTime(activeTabId, seconds);
+			if (activeItemId) rememberTime(activeItemId, seconds);
 		},
-		[activeTabId, rememberTime]
+		[activeItemId, rememberTime]
+	);
+
+	const handleAspectChange = useCallback(
+		(aspect: number) => {
+			if (activeItemId) rememberAspect(activeItemId, aspect);
+		},
+		[activeItemId, rememberAspect]
+	);
+
+	const handleDurationKnown = useCallback(
+		(seconds: number) => {
+			if (activeItemId) rememberDuration(activeItemId, seconds);
+		},
+		[activeItemId, rememberDuration]
 	);
 
 	// Hand the one-shot back to the store once the player has it. In an effect,
@@ -110,56 +95,41 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 
 	if (!active) return null;
 
-	const slot = slots[active.tabId];
-	const docked = slot?.visible ?? false;
-	const autoplay = active.autoplay || pendingAutoplay;
-
 	const player = (
 		<MediaViewer
-			// Keyed on the tab so switching files gets a fresh element rather than a
+			// Keyed on the item so switching files gets a fresh element rather than a
 			// reused one carrying the previous file's state.
-			key={active.tabId}
+			key={active.id}
 			kind={active.kind}
-			name={getMediaTabLabel(active)}
+			name={active.name}
 			path={active.path}
-			autoplay={autoplay}
-			resumeTime={resumeTimes[active.tabId] ?? 0}
-			compact={!docked}
+			autoplay={active.id === activeItemId && pendingAutoplay}
+			resumeTime={resumeTimes[active.id] ?? 0}
+			compact
 			onTimeUpdate={handleTimeUpdate}
 			onPlayingChange={setPlaying}
-			onPrev={stepMediaTab(mediaTabs, activeTabId, -1) ? () => navigate(-1) : undefined}
-			onNext={stepMediaTab(mediaTabs, activeTabId, 1) ? () => navigate(1) : undefined}
+			// A finished file hands off to the next queued one, which is what makes
+			// "queue an mp4 behind this mp3" mean anything.
+			onEnded={advanceAfterEnded}
+			// The frame sizes itself to the file, so it needs the file's own shape
+			// and the true height of the controls under it.
+			onAspectChange={handleAspectChange}
+			// Only the loaded file is ever mounted, so this is the one chance to
+			// learn how long it is for the queue and history lists.
+			onDurationKnown={handleDurationKnown}
+			onTransportHeightChange={setTransportHeight}
+			onPrev={stepMediaItem(items, activeItemId, -1) ? () => navigate(-1) : undefined}
+			onNext={stepMediaItem(items, activeItemId, 1) ? () => navigate(1) : undefined}
 			toggleRequest={toggleRequest}
 			theme={theme}
 		/>
 	);
 
-	if (docked) {
-		return (
-			<div
-				data-media-frame={active.tabId}
-				style={{
-					position: 'fixed',
-					top: slot.rect.top,
-					left: slot.rect.left,
-					width: slot.rect.width,
-					height: slot.rect.height,
-					// Above the file preview content it covers, far below modals (9999)
-					// and Center Flash (100001) so it can never sit over an overlay.
-					zIndex: 5,
-					backgroundColor: theme.colors.bgMain,
-				}}
-			>
-				{player}
-			</div>
-		);
-	}
-
 	if (dismissed) {
 		// Hidden by the user. Kept mounted and off screen so playback continues -
-		// dismissing hides a control, it does not stop media. `visibility: hidden`
-		// (not unmounting, not zero size) is what keeps a video's decode pipeline
-		// alive, the same reason the terminal and browser tab overlays use it.
+		// hiding a control does not stop media. `visibility: hidden` (not
+		// unmounting, not zero size) is what keeps a video's decode pipeline alive,
+		// the same reason the terminal and browser tab overlays use it.
 		return (
 			<div
 				data-testid="media-player-hidden"
@@ -181,11 +151,12 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 
 	return (
 		<FloatingMediaPlayer
-			title={getMediaTabLabel(active)}
+			title={active.name}
 			subtitle={active.sessionName}
 			kind={active.kind}
+			aspect={aspects[active.id]}
+			transportHeight={transportHeight}
 			playing={playing}
-			onReturnToTab={returnToTab}
 			theme={theme}
 		>
 			{player}

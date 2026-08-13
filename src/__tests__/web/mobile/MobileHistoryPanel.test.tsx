@@ -917,7 +917,7 @@ describe('MobileHistoryPanel', () => {
 		});
 
 		// Issue #844: on resumed Claude sessions, inputTokens carries only the
-		// uncached delta — the cache partitions must be added back so the
+		// uncached delta - the cache partitions must be added back so the
 		// detail view does not display single-digit values for a long session.
 		it('adds Claude cache partitions to the detail view input total', async () => {
 			const entries = [

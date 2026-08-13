@@ -12,6 +12,7 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
 import { buildNameMap } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
 
@@ -24,7 +25,7 @@ interface ProviderTrendsChartProps {
 }
 
 // Mirrors `getAgentColor` in AgentComparisonChart so the two charts use the
-// same color per provider — important when reading them side-by-side.
+// same color per provider - important when reading them side-by-side.
 function getProviderColor(index: number, theme: Theme, colorBlindMode: boolean): string {
 	if (colorBlindMode) {
 		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
@@ -62,14 +63,10 @@ function formatXAxisDate(dateStr: string, timeRange: StatsTimeRange): string {
 	}
 }
 
+/** One unit only, so tick labels stay narrow; a zero tick is bare "0". */
 function formatYAxisDuration(ms: number): string {
 	if (ms === 0) return '0';
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor(totalSeconds / 60);
-	if (hours > 0) return `${hours}h`;
-	if (minutes > 0) return `${minutes}m`;
-	return `${totalSeconds}s`;
+	return humanizeDuration(ms, { units: DURATION_LADDER_HOURS, maxUnits: 1 });
 }
 
 export const ProviderTrendsChart = memo(function ProviderTrendsChart({

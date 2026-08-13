@@ -486,7 +486,7 @@ describe('parseParticipantSessionId', () => {
 	});
 
 	it('should reject non-UUID groupChatIds', () => {
-		// Legacy non-UUID groupChatIds must not parse — callers rely on the
+		// Legacy non-UUID groupChatIds must not parse - callers rely on the
 		// strict UUID anchor for routing safety.
 		expect(
 			parseParticipantSessionId('group-chat-my-complex-chat-id-participant-Agent-1705678901234')

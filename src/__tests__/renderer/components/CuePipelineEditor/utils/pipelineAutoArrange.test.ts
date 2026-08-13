@@ -247,7 +247,7 @@ describe('arrangePipelineNodes', () => {
 
 	it('keeps independent chains on their own row bands instead of merging columns', () => {
 		// Two independent trigger→agent chains. The old single-rank Tidy stacked
-		// BOTH triggers into one column and BOTH agents into the next — collapsing
+		// BOTH triggers into one column and BOTH agents into the next - collapsing
 		// the chains on top of each other ("rearranging the graph"). Per-component
 		// Tidy keeps each chain on its own horizontal band.
 		const p = pipeline({
@@ -383,7 +383,7 @@ describe('untanglePipelineNodes', () => {
 		// buttons lay it out in the same band. Tidy keeps the A/B columns in
 		// current Y order (the a→b edges cross); Arrange reorders the B column to
 		// remove the crossings. (Independent t→a pairs would land in separate
-		// bands and could never cross — that's the per-component behavior covered
+		// bands and could never cross - that's the per-component behavior covered
 		// by the Tidy banding test above.)
 		const perm = [2, 0, 3, 1, 5, 4];
 		const nodes: PipelineNode[] = [triggerNode('t', 0, 0)];
@@ -602,7 +602,7 @@ describe('arrangePipelineGroups', () => {
 		// Masonry keeps the layout no taller than the giant (the short cards fit
 		// beside it in other columns). The old uniform grid stacked the short
 		// cards into extra ROWS below the giant, making the layout giant + several
-		// short rows tall — this asserts that dead space is gone.
+		// short rows tall - this asserts that dead space is gone.
 		const smallHeight = (() => {
 			const r = cardRect(smalls[0], result.get('s0')!);
 			return r.bottom - r.top;

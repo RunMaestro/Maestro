@@ -35,7 +35,7 @@ const MAX_SUGGESTION_RESULTS = 15;
  * PERF: Once this many exact substring matches are found (and we have MAX_SUGGESTION_RESULTS),
  * stop searching. Exact matches score highest in fuzzyMatchWithScore (they receive a +50
  * bonus in search.ts), so once we have 50 exact substring matches the top-15 results are
- * virtually guaranteed to be optimal — any remaining files would only contribute weaker
+ * virtually guaranteed to be optimal - any remaining files would only contribute weaker
  * fuzzy-only matches that cannot outscore them. 50 provides a comfortable margin over
  * MAX_SUGGESTION_RESULTS (15) to account for score ties and type-based sorting.
  */

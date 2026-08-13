@@ -1,5 +1,5 @@
 /**
- * RetryCountdownBanner — live countdown for an in-progress Agent Resilience
+ * RetryCountdownBanner - live countdown for an in-progress Agent Resilience
  * auto-retry. Renders directly above the input area for the active AI tab
  * whenever `retryStore` holds a pending retry for it, showing when the next
  * resend fires plus Cancel / Retry Now controls. Renders nothing when there is
@@ -11,6 +11,7 @@ import { RefreshCw, X, Zap } from 'lucide-react';
 
 import { useRetryStore, cancelRetry, retryNow } from '../stores/retryStore';
 import type { Theme } from '../types';
+import { humanizeDuration, DURATION_LADDER_HOURS } from '../../shared/duration';
 
 interface RetryCountdownBannerProps {
 	sessionId: string;
@@ -18,15 +19,18 @@ interface RetryCountdownBannerProps {
 	theme: Theme;
 }
 
-/** "1h 4m" / "3m 20s" / "12s" remaining. */
+/**
+ * "1h 4m" / "3m 20s" / "12s" remaining.
+ *
+ * Rounds up, unlike every other duration in the app: a live countdown that
+ * floors reads "0s" for a whole second while the retry has not fired yet.
+ */
 function formatRemaining(ms: number): string {
-	const totalSec = Math.max(0, Math.ceil(ms / 1000));
-	const h = Math.floor(totalSec / 3600);
-	const m = Math.floor((totalSec % 3600) / 60);
-	const s = totalSec % 60;
-	if (h > 0) return `${h}h ${m}m`;
-	if (m > 0) return `${m}m ${s}s`;
-	return `${s}s`;
+	return humanizeDuration(ms, {
+		units: DURATION_LADDER_HOURS,
+		keepZeroUnits: true,
+		round: 'ceil',
+	});
 }
 
 export function RetryCountdownBanner({

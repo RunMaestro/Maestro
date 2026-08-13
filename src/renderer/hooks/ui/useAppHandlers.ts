@@ -12,13 +12,14 @@ import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { closeFileTab as closeFileTabHelper } from '../../utils/tabHelpers';
+import type { MediaOpenMode } from '../tabs/internal/types';
 import { logger } from '../../utils/logger';
 
 /**
  * If a remote-file loading tab is still in flight in the target session,
  * close it. Used when the SSH read failed or returned null without the user
  * having closed the tab themselves. Tabs that are no longer loading (or no
- * longer present at all) are left alone — the user may have already closed
+ * longer present at all) are left alone - the user may have already closed
  * them, or the path may have been replaced by a different file.
  */
 function closeLoadingTabIfStillLoading(
@@ -51,7 +52,7 @@ export interface FileTabInfo {
 	lastModified?: number;
 	/** Open the tab in loading state (no content yet). Used for slow remote reads. */
 	isLoading?: boolean;
-	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
+	/** While isLoading, the in-flight fs:readFile requestId - cancelled if the tab is closed mid-load. */
 	loadRequestId?: string;
 }
 
@@ -62,6 +63,21 @@ export interface FileTabOpenOptions {
 	openInNewTab?: boolean;
 	/** Override which session the tab is created in (defaults to current active session). */
 	targetSessionId?: string;
+	/**
+	 * What to do when the file turns out to be playable media, which never gets
+	 * a tab. Defaults to playing it.
+	 */
+	mediaMode?: MediaOpenMode;
+}
+
+/** Options for opening a file from the file tree. */
+export interface FileClickOptions {
+	/**
+	 * Line up media behind whatever is playing instead of taking the player
+	 * over. Set by the multi-file open paths so the first selected file plays
+	 * and the rest queue.
+	 */
+	mediaMode?: MediaOpenMode;
 }
 
 export interface UseAppHandlersDeps {
@@ -106,7 +122,7 @@ export interface UseAppHandlersReturn {
 
 	// File handlers
 	/** Handle file click in file explorer */
-	handleFileClick: (node: FileNode, path: string) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	/** Update working directory via folder selection dialog */
 	updateSessionWorkingDirectory: () => Promise<void>;
 
@@ -305,7 +321,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 		// Mouse release always ends a session drag, period. `dragend` covers the
 		// HTML5 drag lifecycle, but releasing the button is the user's mental
-		// model of "the drag is over" — clear the ghosting flag unconditionally
+		// model of "the drag is over" - clear the ghosting flag unconditionally
 		// on mouseup so a row can never stay faded once the mouse is up.
 		const handleMouseUp = () => {
 			if (useUIStore.getState().draggingSessionId !== null) {
@@ -336,7 +352,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	// --- FILE HANDLERS ---
 
 	const handleFileClick = useCallback(
-		async (node: FileNode, path: string) => {
+		async (node: FileNode, path: string, options?: FileClickOptions) => {
 			if (!activeSession) return; // Guard against null session
 			if (node.type !== 'file') return;
 
@@ -433,7 +449,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 						sshRemoteId,
 						lastModified,
 					},
-					{ targetSessionId }
+					{ targetSessionId, mediaMode: options?.mediaMode }
 				);
 				setActiveFocus('main');
 			} catch (error) {

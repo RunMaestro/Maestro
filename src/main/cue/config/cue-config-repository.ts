@@ -1,5 +1,5 @@
 /**
- * Cue config repository — single owner of `.maestro/cue.yaml` and the
+ * Cue config repository - single owner of `.maestro/cue.yaml` and the
  * `.maestro/prompts/` directory on disk. All filesystem reads, writes, deletes,
  * and watches for Cue config files flow through this module so that path
  * resolution, directory creation, and the canonical-vs-legacy fallback are
@@ -82,7 +82,7 @@ export function deleteCueConfigFile(projectRoot: string): boolean {
  * Remove `.maestro/prompts/` if it exists and contains no files. Called
  * after pruning with an empty keep-set (e.g. from `cue:deleteYaml`) so
  * the project's `.maestro` footprint collapses cleanly. Non-empty
- * directories are left alone — a non-`.md` file the user placed here
+ * directories are left alone - a non-`.md` file the user placed here
  * manually is none of Cue's business.
  *
  * Returns `true` if the directory was removed, `false` otherwise. Swallows
@@ -110,7 +110,7 @@ export function removeEmptyPromptsDir(projectRoot: string): boolean {
  * Remove `.maestro/` if it exists and is completely empty. Called after
  * deleting `cue.yaml` (and after pruning prompts) so the project's footprint
  * collapses fully when there is nothing left to own. Non-empty directories
- * are left untouched — user-placed files (memories, other configs) are none
+ * are left untouched - user-placed files (memories, other configs) are none
  * of Cue's business.
  *
  * Returns `true` if the directory was removed, `false` otherwise. Swallows
@@ -150,14 +150,14 @@ export function writeCuePromptFile(
 	}
 	const promptsDir = path.resolve(path.join(projectRoot, CUE_PROMPTS_DIR));
 	const absPath = path.resolve(path.join(projectRoot, relativePath));
-	// Must be strictly inside .maestro/prompts/ — equality with promptsDir would
+	// Must be strictly inside .maestro/prompts/ - equality with promptsDir would
 	// mean the caller asked to write to the directory path itself.
 	if (!absPath.startsWith(promptsDir + path.sep)) {
 		throw new Error(
 			`writeCuePromptFile: path "${relativePath}" resolves outside the prompts directory`
 		);
 	}
-	// Must be a .md file — pruneOrphanedPromptFiles only removes .md files,
+	// Must be a .md file - pruneOrphanedPromptFiles only removes .md files,
 	// so any other extension would create a permanently orphaned file. Enforce
 	// the same trust boundary here as in the IPC layer (defense in depth).
 	if (path.extname(absPath).toLowerCase() !== '.md') {
@@ -263,8 +263,8 @@ export function pruneOrphanedPromptFiles(
  * under `.maestro/prompts/`. Debounces onChange by 1 second.
  *
  * Prompt files are watched so that a "YAML written first, prompt files
- * written later" sequence — common when an agent uses a generic file-write
- * tool instead of `cue:writeYaml` — still triggers a reload once the
+ * written later" sequence - common when an agent uses a generic file-write
+ * tool instead of `cue:writeYaml` - still triggers a reload once the
  * referenced prompt files appear on disk. Without this, the YAML watcher
  * fires a reload while the prompt files are missing, the normalizer caches
  * empty prompts, and the editor renders blank textareas indefinitely
@@ -272,10 +272,10 @@ export function pruneOrphanedPromptFiles(
  *
  * Uses a `torn` flag and instance check so any event that slips past
  * `watcher.close()` (chokidar emits an `unlink` for in-flight events on some
- * platforms) is rejected — preventing a stale watcher from triggering a
+ * platforms) is rejected - preventing a stale watcher from triggering a
  * refresh on a session that has been torn down or re-registered.
  *
- * `opts.onReady` fires once chokidar finishes its initial scan — use it in
+ * `opts.onReady` fires once chokidar finishes its initial scan - use it in
  * tests so they don't have to sleep on a timer while chokidar registers
  * watched paths (that sleep was a flakiness source on slow CI runners).
  * Production callers can ignore the opt; file changes before `ready` are
@@ -289,7 +289,7 @@ export function watchCueConfigFile(
 	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
 	const legacyPath = path.join(projectRoot, LEGACY_CUE_CONFIG_PATH);
 	// Glob pattern (chokidar v3 supports globs in absolute paths). Matches
-	// every `.md` file directly inside `.maestro/prompts/` — recursive
+	// every `.md` file directly inside `.maestro/prompts/` - recursive
 	// subdirectories aren't part of the prompt layout, so a single-level
 	// glob keeps the watch set focused. The directory itself can be missing;
 	// chokidar starts watching once it appears.

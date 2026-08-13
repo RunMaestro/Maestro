@@ -10,12 +10,12 @@ choco install maestro-ai
 The package downloads the official signed NSIS installer
 (`Maestro-Setup-<version>-x64.exe`) from
 [GitHub Releases](https://github.com/RunMaestro/Maestro/releases) and installs it
-silently. The installer binary is never bundled or modified — see
+silently. The installer binary is never bundled or modified - see
 [`tools/VERIFICATION.txt`](tools/VERIFICATION.txt).
 
 > **Status:** this provides the package definition. Listing `maestro-ai` on the
 > [Chocolatey Community Repository](https://community.chocolatey.org/packages)
-> is a one-time maintainer step (requires a chocolatey.org account + API key) —
+> is a one-time maintainer step (requires a chocolatey.org account + API key) -
 > see [Publishing](#publishing) below.
 
 ## Contents

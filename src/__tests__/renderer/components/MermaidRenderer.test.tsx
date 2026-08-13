@@ -70,6 +70,64 @@ describe('MermaidRenderer', () => {
 		expect(container.querySelector('.mermaid-container svg image')).not.toBeNull();
 	});
 
+	describe('foreignObject labels (htmlLabels: true)', () => {
+		// Mermaid renders flowchart labels as HTML inside <foreignObject>, so a
+		// `<br/>` in `A[Visibility only.<br/>Observation]` is a real <br> element.
+		// DOMPurify's defaults (SVG-only profile + foreignObject not being an HTML
+		// integration point) used to delete that whole subtree and leave the bare
+		// text, which collapsed the line break, re-wrapped the text at the
+		// foreignObject width, and clipped whatever no longer fit the height
+		// mermaid had measured. Diagram content was lost, not just restyled.
+		const labelSvg = (inner: string) =>
+			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><g><foreignObject width="120" height="40">${inner}</foreignObject></g></svg>`;
+
+		it('keeps the <br> and its wrapper markup in a node label', async () => {
+			renderMock.mockResolvedValue({
+				svg: labelSvg(
+					'<div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell;" class="labelBkg"><span class="nodeLabel"><p>Visibility only.<br/>Observation, not control</p></span></div>'
+				),
+			});
+
+			const { container } = render(
+				<MermaidRenderer chart="flowchart LR\nA[x]" theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+
+			const label = container.querySelector('.mermaid-container foreignObject');
+			expect(label).not.toBeNull();
+			expect(label?.querySelector('br')).not.toBeNull();
+			expect(label?.querySelector('span.nodeLabel')).not.toBeNull();
+			// The break must sit BETWEEN the two halves, not be dropped so the text
+			// collapses into "Visibility only.Observation".
+			expect(label?.innerHTML).toContain('Visibility only.<br>Observation, not control');
+		});
+
+		it('still strips scripts and event handlers from inside a foreignObject', async () => {
+			renderMock.mockResolvedValue({
+				svg: labelSvg(
+					'<div xmlns="http://www.w3.org/1999/xhtml"><script>globalThis.pwned = 1;</script><img src="x" onerror="globalThis.pwned = 1"/><iframe src="javascript:1"></iframe><a href="javascript:1">z</a></div>'
+				),
+			});
+
+			const { container } = render(
+				<MermaidRenderer chart="flowchart LR\nA[x]" theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+
+			const mounted = container.querySelector('.mermaid-container')!;
+			expect(mounted.querySelector('script')).toBeNull();
+			expect(mounted.querySelector('iframe')).toBeNull();
+			expect(mounted.querySelector('[onerror]')).toBeNull();
+			expect(mounted.querySelector('a[href]')).toBeNull();
+		});
+	});
+
 	it('renders a standard flowchart SVG', async () => {
 		renderMock.mockResolvedValue({
 			svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><g><rect width="10" height="10"/></g></svg>',

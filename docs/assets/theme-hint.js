@@ -20,7 +20,7 @@
 		try {
 			localStorage.setItem('mintlify-color-scheme', theme);
 		} catch {
-			// localStorage unavailable — ignore
+			// localStorage unavailable - ignore
 		}
 
 		// Apply the class immediately to prevent flash of wrong theme

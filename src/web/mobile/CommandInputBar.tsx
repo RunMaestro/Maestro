@@ -77,7 +77,7 @@ const MOBILE_EXPANDED_HEIGHT_VH = 50;
 const MAX_STAGED_IMAGES = 5;
 
 /** Maximum decoded byte size accepted per pasted image. Base64 inflates
- *  payloads ~33%, so a 2 MB raw image becomes ~2.7 MB on the wire — high
+ *  payloads ~33%, so a 2 MB raw image becomes ~2.7 MB on the wire - high
  *  enough to cover screenshots, low enough to keep a single message well
  *  under typical WebSocket frame budgets. */
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -294,7 +294,7 @@ export function CommandInputBar({
 	const isSendBlocked = inputMode === 'ai' && isSessionBusy;
 
 	// Disable send when there's no text AND no AI-mode image attachments.
-	// Image-only sends are explicitly AI-mode only — terminal mode never
+	// Image-only sends are explicitly AI-mode only - terminal mode never
 	// considers staged images as a reason to enable the send button.
 	const isSendDisabledForCurrentInput =
 		isDisabled || (!value.trim() && (inputMode !== 'ai' || stagedImages.length === 0));
@@ -316,7 +316,7 @@ export function CommandInputBar({
 	/**
 	 * Report container height changes to parent so it can reserve matching space
 	 * in the scroll area above (keeps last chat line visible when bar expands).
-	 * Report the *border-box* height — the container's own padding (including
+	 * Report the *border-box* height - the container's own padding (including
 	 * safe-area inset on notched devices) must be part of the reserved space,
 	 * and `contentRect` excludes it, which would cause the reserved gap to
 	 * shrink after the first observer tick.
@@ -364,7 +364,7 @@ export function CommandInputBar({
 	}, [value]);
 
 	/**
-	 * Handle clipboard paste — extract any image items, base64-encode them, and
+	 * Handle clipboard paste - extract any image items, base64-encode them, and
 	 * push them onto `stagedImages`. Only active in AI mode (terminal mode
 	 * doesn't have a meaningful image-attach concept). Text paste is left to
 	 * the browser default so existing autocomplete/expansion logic stays put.
@@ -372,7 +372,7 @@ export function CommandInputBar({
 	 * Enforces both a count cap (MAX_STAGED_IMAGES) and a per-image byte cap
 	 * (MAX_IMAGE_BYTES) so a runaway paste can't produce multi-megabyte
 	 * WebSocket frames. Failures (oversize image, FileReader error) are
-	 * logged via webLogger so they're visible in production — silent drops
+	 * logged via webLogger so they're visible in production - silent drops
 	 * would mislead users into thinking the attachment was sent.
 	 */
 	const handlePaste = useCallback(
@@ -415,7 +415,7 @@ export function CommandInputBar({
 					});
 				};
 				reader.onerror = () => {
-					// Surface the failure rather than silently swallowing it —
+					// Surface the failure rather than silently swallowing it -
 					// without this the user would see the paste 'work' (event
 					// fired, no error in console) but no thumbnail would appear.
 					webLogger.error(
@@ -449,7 +449,7 @@ export function CommandInputBar({
 	);
 
 	/**
-	 * Handle form submission. Image attachments are AI-mode only — terminal
+	 * Handle form submission. Image attachments are AI-mode only - terminal
 	 * sends ignore any staged images entirely so a user who pasted images and
 	 * then switched to terminal can't accidentally ship them as a payload.
 	 */
@@ -689,7 +689,7 @@ export function CommandInputBar({
 					/>
 				)}
 
-			{/* Staged images preview — base64 thumbnails of pasted images, with
+			{/* Staged images preview - base64 thumbnails of pasted images, with
 			    a remove button per item. AI mode only; matches desktop layout.
 			    Stable ids are used as React keys so reconciliation doesn't
 			    have to compare full data URLs across renders. */}
@@ -1068,7 +1068,7 @@ export function CommandInputBar({
 									}}
 								>
 									{/* Action buttons stacked on the left so the bottom row stays balanced
-									    when the textarea grows — otherwise the lone send button floats far
+									    when the textarea grows - otherwise the lone send button floats far
 									    from the composer and the gap looks awkward. */}
 									{voiceSupported && (
 										<VoiceInputButton

@@ -132,13 +132,13 @@ export function compareVersions(a: string, b: string): number {
 		if (na < nb) return -1;
 	}
 
-	// Numeric parts are equal — apply semver pre-release rules:
+	// Numeric parts are equal - apply semver pre-release rules:
 	// A version without a pre-release suffix has higher precedence
 	if (!preA && preB) return 1; // 0.15.0 > 0.15.0-rc.1
 	if (preA && !preB) return -1; // 0.15.0-rc.1 < 0.15.0
 	if (!preA && !preB) return 0; // both stable, equal
 
-	// Both have pre-release suffixes — compare lexically
+	// Both have pre-release suffixes - compare lexically
 	if (preA! < preB!) return -1;
 	if (preA! > preB!) return 1;
 	return 0;

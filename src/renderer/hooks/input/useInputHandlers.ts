@@ -1,5 +1,5 @@
 /**
- * useInputHandlers — extracted from App.tsx (Phase 2J)
+ * useInputHandlers - extracted from App.tsx (Phase 2J)
  *
  * Orchestrates all input-related state and handlers by:
  *   - Managing dual input state (AI per-tab + terminal per-session)
@@ -533,7 +533,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		conductorProfile,
 	});
 
-	// processInputRef — maintained for access in memoized callbacks without stale closures
+	// processInputRef - maintained for access in memoized callbacks without stale closures
 	const processInputRef = useRef<
 		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
 	>(() => {});
@@ -542,7 +542,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	}, [processInput]);
 
 	// ====================================================================
-	// useInputKeyDown (absorb — keyboard handler for input textarea)
+	// useInputKeyDown (absorb - keyboard handler for input textarea)
 	// ====================================================================
 
 	const { handleInputKeyDown } = useInputKeyDown({
@@ -759,7 +759,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							internalPaths = parsed.filter((p): p is string => typeof p === 'string');
 						}
 					} catch {
-						// Malformed payload — fall back to the single path below.
+						// Malformed payload - fall back to the single path below.
 					}
 				}
 				if (internalPaths.length === 0 && internalSingle) internalPaths = [internalSingle];

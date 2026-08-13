@@ -1,5 +1,5 @@
 /**
- * usePipelineContextMenu — right-click context menu state and handlers for nodes.
+ * usePipelineContextMenu - right-click context menu state and handlers for nodes.
  *
  * Owns the contextMenu state and the Configure/Delete/Duplicate handlers.
  * All three handlers re-check isAllPipelinesView even after open guard:

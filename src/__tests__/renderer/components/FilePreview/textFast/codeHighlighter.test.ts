@@ -211,12 +211,12 @@ describe('createTextCodeHighlighter', () => {
 	});
 
 	it('no-ops gracefully when IntersectionObserver is unavailable', () => {
-		// Preserve the global so we restore it even on failure — otherwise the
+		// Preserve the global so we restore it even on failure - otherwise the
 		// deleted constructor leaks into whatever test runs next in this worker.
 		const originalIO = (
 			globalThis as typeof globalThis & { IntersectionObserver: typeof IntersectionObserver }
 		).IntersectionObserver;
-		// @ts-expect-error — simulate older environment.
+		// @ts-expect-error - simulate older environment.
 		delete globalThis.IntersectionObserver;
 		try {
 			const root = makeRoot('<pre><code class="language-ts">x</code></pre>');

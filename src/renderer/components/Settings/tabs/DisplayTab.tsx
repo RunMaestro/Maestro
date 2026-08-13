@@ -697,7 +697,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 						</button>
 					</div>
 
-					{/* Show Cue indicator — hidden entirely when the Cue Encore Feature is off */}
+					{/* Show Cue indicator - hidden entirely when the Cue Encore Feature is off */}
 					{maestroCueEnabled && (
 						<div
 							className="flex items-center justify-between pt-3 border-t"
@@ -1619,7 +1619,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</div>
 			</div>
 
-			{/* File Indexing — groups ignore patterns + file panel limits */}
+			{/* File Indexing - groups ignore patterns + file panel limits */}
 			<div data-setting-id="display-file-indexing">
 				<SettingsSectionHeading icon={FolderSearch}>File Indexing</SettingsSectionHeading>
 				<div className="space-y-3">

@@ -12,6 +12,7 @@ import { registerDirectorNotesHandlers } from '../../../../main/ipc/handlers/dir
 import * as historyManagerModule from '../../../../main/history-manager';
 import type { HistoryManager } from '../../../../main/history-manager';
 import type { HistoryEntry } from '../../../../shared/types';
+import { MAX_ENTRIES_PER_SESSION } from '../../../../shared/history';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -588,6 +589,64 @@ describe('director-notes IPC handlers', () => {
 			expect(page3.entries[0].id).toBe('e5');
 			expect(page3.total).toBe(5);
 			expect(page3.hasMore).toBe(false);
+		});
+	});
+
+	describe('director-notes:getRichOverviewStats', () => {
+		const DAY = 24 * 60 * 60 * 1000;
+
+		/** A full history file whose entries all land within `spanDays` of now. */
+		const fullFile = (spanDays: number, prefix: string): HistoryEntry[] => {
+			const now = Date.now();
+			const step = (spanDays * DAY) / MAX_ENTRIES_PER_SESSION;
+			return Array.from({ length: MAX_ENTRIES_PER_SESSION }, (_, i) =>
+				createMockEntry({ id: `${prefix}-${i}`, timestamp: now - i * step })
+			);
+		};
+
+		// A busy agent's history file evicts its own oldest entries at the retention
+		// cap, so its bar silently pins to exactly 5000 and reads as an exact figure.
+		// Two agents at wildly different volumes then tie for top. `truncated` is
+		// what lets the chart say "at least" instead of stating a number it cannot know.
+		it('flags an agent whose count was bounded by retention, not the window', async () => {
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['busy']);
+			// 5000 entries spanning 5 days, well inside a 30-day window: the cutoff
+			// dropped nothing, so the cap is what produced this number.
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(fullFile(5, 'busy'));
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 30 });
+
+			expect(result.perAgent[0].entryCount).toBe(MAX_ENTRIES_PER_SESSION);
+			expect(result.perAgent[0].truncated).toBe(true);
+		});
+
+		it('does not flag a full file whose older entries fall outside the window', async () => {
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['spread']);
+			// Also at the cap, but spread over 60 days: a 7-day window did the
+			// trimming, so the count it reports is exact.
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(fullFile(60, 'spread'));
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.perAgent[0].entryCount).toBeLessThan(MAX_ENTRIES_PER_SESSION);
+			expect(result.perAgent[0].truncated).toBe(false);
+		});
+
+		it('does not flag an agent below the retention cap', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['quiet']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'q1', timestamp: now - 1000 }),
+				createMockEntry({ id: 'q2', timestamp: now - 2000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.perAgent[0].entryCount).toBe(2);
+			expect(result.perAgent[0].truncated).toBe(false);
 		});
 	});
 

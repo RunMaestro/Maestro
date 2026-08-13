@@ -38,7 +38,7 @@ export interface AgentCompletionData {
 	/** Outputs from upstream agents that should be forwarded through this agent
 	 *  to downstream agents. Keyed by source session name. */
 	forwardedOutputs?: Record<string, string>;
-	/** Phase 01 — chain lineage carriers for stats. The completing run's own
+	/** Phase 01 - chain lineage carriers for stats. The completing run's own
 	 *  `runId` (becomes the next event's `parentEventId`) and its `chainRootId`
 	 *  (which the next event inherits, or falls back to `parentRunId` if the
 	 *  parent was itself a root). Both are absent for non-Cue completions

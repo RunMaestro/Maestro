@@ -13,7 +13,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { HistoryEntry, ToolType } from '../../../shared/types';
-import { paginateEntries } from '../../../shared/history';
+import { MAX_ENTRIES_PER_SESSION, paginateEntries } from '../../../shared/history';
 import type { PaginatedResult } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
@@ -74,7 +74,7 @@ async function countAgentsAndSessions(
 ): Promise<{ agentCount: number; sessionCount: number }> {
 	const agentSet = new Set<string>();
 	const providerSessionSet = new Set<string>();
-	// Parallel reads — independent files. Falls through to flat() so we can
+	// Parallel reads - independent files. Falls through to flat() so we can
 	// associate each result with its sessionId in the loop below.
 	const allEntriesArrays = await Promise.all(
 		sessionIds.map((sid) => historyManager.getEntries(sid))
@@ -201,6 +201,15 @@ export interface RichAgentStat {
 	entryCount: number;
 	successCount: number;
 	failureCount: number;
+	/**
+	 * True when RETENTION, not the lookback window, is what bounded this count:
+	 * the agent's history file sits at `MAX_ENTRIES_PER_SESSION` and its oldest
+	 * surviving entry is still inside the window, so older runs were already
+	 * evicted and the real total is unknown and larger. Without this, a busy
+	 * agent's bar silently pins to the cap and reads as an exact figure - two
+	 * agents at wildly different volumes both render "5.0K" and tie for top.
+	 */
+	truncated: boolean;
 }
 
 /**
@@ -281,7 +290,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 			> => {
 				const { lookbackDays, filter, limit, offset, graphBucketCount } = options;
 				const now = Date.now();
-				// lookbackDays <= 0 means "all time" — no cutoff
+				// lookbackDays <= 0 means "all time" - no cutoff
 				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 
 				// Get all session IDs from history manager
@@ -432,10 +441,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				// Stats need session/agent counts that aren't part of the bucket
 				// aggregate. Compute them once per cache miss; on hit, derive
 				// what we can from the cached aggregate and re-walk only when
-				// stats are stale (rare — they invalidate with the buckets).
+				// stats are stale (rare - they invalidate with the buckets).
 				const hit = await cache.get(cacheKey, fp);
 				if (hit) {
-					// agent/session counts aren't in the cache schema — re-walk
+					// agent/session counts aren't in the cache schema - re-walk
 					// once. Cheap relative to bucketing.
 					const { agentCount, sessionCount } = await countAgentsAndSessions(
 						historyManager,
@@ -481,7 +490,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				}
 
 				const agg = buildBucketAggregate(allEntries, safeBucketCount, { lookbackMs });
-				// Fire-and-forget the disk write — the renderer doesn't need to
+				// Fire-and-forget the disk write - the renderer doesn't need to
 				// wait for it; the in-memory cache layer was already updated.
 				void cache.set({
 					version: HISTORY_BUCKET_CACHE_VERSION,
@@ -631,12 +640,27 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 								entryCount: 0,
 								successCount: 0,
 								failureCount: 0,
+								truncated: false,
 							};
 							perAgentMap.set(sid, agentStat);
 						}
 						agentStat.entryCount++;
 						if (entry.success === true) agentStat.successCount++;
 						else if (entry.success === false) agentStat.failureCount++;
+					}
+
+					// Retention already evicted this agent's older runs if the file is
+					// full AND its oldest survivor is still inside the window - nothing
+					// was dropped by the cutoff, so the cap is what bounded the count.
+					// A file at the cap whose tail predates the window is fine: the
+					// window did the trimming and the number is exact.
+					const agentStat = perAgentMap.get(sid);
+					if (agentStat && entries.length >= MAX_ENTRIES_PER_SESSION) {
+						const oldest = entries.reduce(
+							(min, e) => Math.min(min, e.timestamp),
+							Number.POSITIVE_INFINITY
+						);
+						if (oldest >= cutoffTime) agentStat.truncated = true;
 					}
 				}
 
@@ -814,15 +838,24 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						logger.warn('Synopsis narrative parse failed', LOG_CONTEXT, {
 							narrativeError: parsed.error,
 							recovered: recovered.ok,
+							lossless: recovered.ok ? recovered.lossless : undefined,
 							recoveryReason: recovered.ok ? recovered.reason : undefined,
 						});
-						narrativeFields = recovered.ok
-							? {
-									narrative: recovered.narrative,
-									narrativeError: parsed.error,
-									narrativeRecovery: recovered.reason,
-								}
-							: { narrativeError: parsed.error };
+						// A lossless repair (an agent that stopped one brace short of
+						// finishing, a stray line break inside a string) produced the whole
+						// report. Shipping the error fields anyway put a red banner over a
+						// complete document and told the user it might be missing parts.
+						if (recovered.ok && recovered.lossless) {
+							narrativeFields = { narrative: recovered.narrative };
+						} else if (recovered.ok) {
+							narrativeFields = {
+								narrative: recovered.narrative,
+								narrativeError: parsed.error,
+								narrativeRecovery: recovered.reason,
+							};
+						} else {
+							narrativeFields = { narrativeError: parsed.error };
+						}
 					}
 
 					return {

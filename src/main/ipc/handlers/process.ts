@@ -18,6 +18,12 @@ import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { resolveConfigDirKey } from '../../stores/claudeUsageStore';
 import { isWindows } from '../../../shared/platformDetection';
 import { REGEX_AI_SUFFIX } from '../../constants';
+import {
+	getFailoverOverlay,
+	getFailoverModel,
+	setFailoverOverlay,
+} from '../../process-manager/failover-overlay';
+import { resolveFailoverEnv, failoverUnsetEnvKeys } from '../../../shared/providerFailover';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb, captureException } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -257,7 +263,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// the auto-resolver picks between maestro-p (interactive / Time Limits)
 				// and `claude --print` (api / API Limits) based on the latest usage
 				// snapshot. When the toggle is off, the spawner stays on the api path
-				// regardless of usage state. SSH-enabled tabs always skip interactive —
+				// regardless of usage state. SSH-enabled tabs always skip interactive -
 				// the wrapper needs the real claude binary on the local machine.
 				let claudeResolvedMode: 'interactive' | 'api' = 'api';
 				let claudeResolvedReason: 'auto' | 'limit' = 'auto';
@@ -286,6 +292,47 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// renderer mirror (`process:claude-mode-resolved`) already strips this suffix on
 				// its side, so it still receives `config.sessionId` unchanged.
 				const baseSessionId = config.sessionId.replace(REGEX_AI_SUFFIX, '');
+
+				/** Credential keys the live failover endpoint must not inherit; see below. */
+				let failoverUnsetKeysForSpawn: string[] | undefined;
+
+				// Provider Failover: when the renderer has pinned this agent to a backup
+				// endpoint, layer that endpoint's env over the session's own vars here -
+				// the single choke point every renderer spawn surface passes through, so
+				// Auto Run / Cue / tab naming / synopsis all inherit the swap without each
+				// having to know failover exists. Endpoint env wins over the agent's own
+				// customEnvVars: overriding ANTHROPIC_BASE_URL/token is the entire point.
+				// Applied to the BARE agent id because AI-tab spawns carry a compound id.
+				const failoverEnv = getFailoverOverlay(baseSessionId);
+				if (failoverEnv) {
+					config.sessionCustomEnvVars = resolveFailoverEnv(
+						config.sessionCustomEnvVars,
+						failoverEnv
+					);
+					// Auth is all-or-nothing per endpoint. `resolveFailoverEnv` drops an
+					// unsupplied credential from the agent's own vars, but the same key can
+					// also reach the child from the global shell settings or the inherited
+					// `process.env`, and neither is visible here. Carry the removal down to
+					// the spawner, which applies it after every env layer has been merged.
+					const unsetEnvKeys = failoverUnsetEnvKeys(failoverEnv);
+					// Backup providers publish their own model ids (Z.AI wants `glm-4.6`,
+					// a local server wants whatever it loaded), so carrying the primary's
+					// model across would trade a quota error for an unknown-model error.
+					const failoverModel = getFailoverModel(baseSessionId);
+					if (failoverModel) config.sessionCustomModel = failoverModel;
+					logger.info('Spawning on failover endpoint', LOG_CONTEXT, {
+						sessionId: baseSessionId,
+						// Keys only - endpoint env carries auth tokens.
+						keys: Object.keys(failoverEnv),
+						// Surfaced because a backup running with a stripped credential will
+						// fail to authenticate, and that is the expected, safe outcome -
+						// worth being able to see in the log rather than guess at.
+						strippedCredentialKeys: unsetEnvKeys,
+						model: failoverModel,
+					});
+					failoverUnsetKeysForSpawn = unsetEnvKeys;
+				}
+
 				// Resolve the Claude token source (maestro-p TUI vs `claude --print`)
 				// through the shared resolver. Token-mode fields are read from the
 				// persisted session record (authoritative) with the spawn payload as
@@ -486,7 +533,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// turn is preserved in the agent's session transcript, so on resume we skip
 				// re-embedding to avoid polluting every subsequent user message with the
 				// full system prompt (which would be redundant context and waste tokens).
-				// Agents with native support re-send per invocation — that flag is metadata,
+				// Agents with native support re-send per invocation - that flag is metadata,
 				// not conversation content, and some agents (e.g. Claude Code) require it
 				// every turn because it isn't persisted into the session transcript.
 				// ========================================================================
@@ -580,7 +627,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// each run by calling the `task_complete` tool. The built-in autopilot
 				// system prompt biases the model toward calling that tool *early*,
 				// which manifests in Maestro as "the turn came back to me but the
-				// task wasn't actually done". The remedy isn't a CLI flag — it's a
+				// task wasn't actually done". The remedy isn't a CLI flag - it's a
 				// user-message preamble injected on every batch invocation that
 				// pushes back on premature completion and instructs the model to
 				// put its real conclusion in `task_complete.summary` (which is what
@@ -601,7 +648,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							});
 						}
 					} catch (err) {
-						// Prompt not loaded yet (initializePrompts not called) — skip silently.
+						// Prompt not loaded yet (initializePrompts not called) - skip silently.
 						// This path is hit by tests that stub the IPC handler without bootstrapping
 						// prompts. Production code always runs initializePrompts() at app start.
 						logger.debug('copilot-preamble unavailable; skipping injection', LOG_CONTEXT, {
@@ -805,7 +852,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				//   - We need to clear stale `mode === 'interactive'` from a prior
 				//     turn (both `resolvedConfigDirKey` above branches resolve it,
 				//     gate on `!== undefined`).
-				// When none of those apply we leave `claudeInteractive` alone — the
+				// When none of those apply we leave `claudeInteractive` alone - the
 				// popover hides itself anyway when `enableMaestroP` is false.
 				if (isClaudeCode && resolvedConfigDirKey) {
 					try {
@@ -1090,7 +1137,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// For local (non-SSH) spawns, prepend the parent dir of the binary
 				// we're actually about to spawn to PATH. Covers npm-style script
 				// agents (codex, claude, etc.) installed alongside a non-standard
-				// `node` that's outside our hardcoded version-manager paths —
+				// `node` that's outside our hardcoded version-manager paths -
 				// the script's `#!/usr/bin/env node` shebang needs that node on
 				// PATH. SSH path is built separately on the remote and must not
 				// inherit any local directories.
@@ -1129,6 +1176,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					contextWindow, // Pass configured context window to process manager
 					// When using SSH, env vars are passed in the stdin script, not locally
 					customEnvVars: customEnvVarsToPass,
+					// Provider Failover credential strip. Applied after every env layer,
+					// so a backup endpoint cannot inherit the primary's token from the
+					// global settings or the shell that launched Maestro.
+					unsetEnvKeys: failoverUnsetKeysForSpawn,
 					imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
 					imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
 					promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
@@ -1179,7 +1230,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						prompt: replayPrompt,
 						buildApiSpawnConfig: ({ prompt }): ProcessSpawnConfig | null => {
 							// Pull the freshest agentSessionId for this session/tab off the
-							// sessions store — maestro-p's session-id watcher may have stamped
+							// sessions store - maestro-p's session-id watcher may have stamped
 							// one between spawn and exit.
 							let freshAgentSessionId: string | undefined = originalConfig.agentSessionId;
 							try {
@@ -1329,6 +1380,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 
+	// Provider Failover: pin an agent to a backup endpoint's env (or clear the pin
+	// with `env: null` to go back to primary). The renderer awaits this before it
+	// fires the failover retry, so the very next spawn already carries the swap -
+	// relying on session persistence to propagate it would race the spawn.
+	ipcMain.handle(
+		'process:setFailoverOverlay',
+		withIpcErrorLogging(
+			handlerOpts('setFailoverOverlay'),
+			async (sessionId: string, env: Record<string, string> | null, model?: string) => {
+				setFailoverOverlay(sessionId.replace(REGEX_AI_SUFFIX, ''), env, model);
+			}
+		)
+	);
+
 	// Resize PTY dimensions
 	ipcMain.handle(
 		'process:resize',
@@ -1431,7 +1496,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				shellEnvVars?: Record<string, string>;
 				cols?: number;
 				rows?: number;
-				// Agent type (e.g. 'claude-code') — used to resolve agent-level customEnvVars
+				// Agent type (e.g. 'claude-code') - used to resolve agent-level customEnvVars
 				toolType?: string;
 				// Session-level custom env vars (override agent-level)
 				sessionCustomEnvVars?: Record<string, string>;

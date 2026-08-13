@@ -81,7 +81,7 @@ describe('useAgentThinkingListener', () => {
 		handler!('sess-1-ai-tab-1', 'hello ');
 		handler!('sess-1-ai-tab-1', 'world');
 
-		// Before flush — no log yet.
+		// Before flush - no log yet.
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toHaveLength(0);
 
 		flushRaf();
@@ -105,7 +105,7 @@ describe('useAgentThinkingListener', () => {
 	});
 
 	it('cancels pending RAF on unmount and post-unmount flushRaf is a no-op', () => {
-		// First mount with no events scheduled — nothing to cancel.
+		// First mount with no events scheduled - nothing to cancel.
 		renderHook(() => useAgentThinkingListener()).unmount();
 		expect(cancelRafSpy).not.toHaveBeenCalled();
 

@@ -90,7 +90,7 @@ export function MarketplaceSheet({
 	// Import state
 	const [isImporting, setIsImporting] = useState(false);
 	const [importError, setImportError] = useState<string | null>(null);
-	// Preview-fetch errors (README / document load) — shown in the preview
+	// Preview-fetch errors (README / document load) - shown in the preview
 	// area, not in the import footer, so users aren't misled into thinking
 	// an import failed when only the preview fetch did.
 	const [previewError, setPreviewError] = useState<string | null>(null);
@@ -147,7 +147,7 @@ export function MarketplaceSheet({
 			} catch (err) {
 				if (cancelled) return;
 				// Web bundle has no Sentry, so log the underlying exception to
-				// devtools — without this the catch only surfaces the typed
+				// devtools - without this the catch only surfaces the typed
 				// "Failed to load …" message and the original cause is lost.
 				console.error('[MarketplaceSheet] marketplace_get_manifest failed', err);
 				setManifestError(err instanceof Error ? err.message : 'Failed to load marketplace data');
@@ -187,7 +187,7 @@ export function MarketplaceSheet({
 
 	// Fetch the README for `playbook` and update preview state. Extracted so
 	// both `handleSelectPlaybook` (initial load) and `handleSelectDocument(null)`
-	// (back-from-doc) share the same fetch path — without this, returning from
+	// (back-from-doc) share the same fetch path - without this, returning from
 	// a doc preview can leave the sheet stuck on the previous error / "No
 	// README available" placeholder when the initial README fetch failed.
 	const loadReadmeFor = useCallback(
@@ -236,7 +236,7 @@ export function MarketplaceSheet({
 			if (filename === null) {
 				// Returning to the README view from a doc preview. Cancel any
 				// in-flight document fetch (bump the request id), clear stale
-				// preview error state, and re-load the README — the user may
+				// preview error state, and re-load the README - the user may
 				// have arrived here after the initial README fetch failed or
 				// after a doc fetch errored, and the sheet would otherwise stay
 				// stuck on that error / "No README available" placeholder.

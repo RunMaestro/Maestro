@@ -118,6 +118,17 @@ describe('parseDirectorNotesNarrative', () => {
 			expect(result).toEqual({ ok: true, narrative: braced });
 		});
 
+		it('says the object was cut off, not that no object was found', () => {
+			// Reporting "no JSON object found" about a response that visibly starts
+			// with one sends the reader hunting for the wrong problem.
+			const truncated = JSON.stringify(WELL_FORMED).slice(0, -1);
+			const result = parseDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(false);
+			if (result.ok) throw new Error('expected failure');
+			expect(result.error).toContain('cut off');
+			expect(result.error).not.toContain('No JSON object found');
+		});
+
 		it('accepts an empty sections array', () => {
 			const result = parseDirectorNotesNarrative('{ "version": 1, "sections": [] }');
 			expect(result).toEqual({ ok: true, narrative: { version: 1, sections: [] } });
@@ -225,7 +236,12 @@ describe('parseDirectorNotesNarrative', () => {
 		});
 
 		it('rejects a closing brace appearing before any opening brace', () => {
-			expectParseError('} then {', 'No JSON object found in the response.');
+			// The scan starts at the FIRST `{`, so the leading `}` is not structure -
+			// what is left is an object that opened and never closed.
+			expectParseError(
+				'} then {',
+				'The JSON object was never closed - the response was cut off before it finished.'
+			);
 		});
 	});
 
@@ -582,6 +598,73 @@ describe('recoverDirectorNotesNarrative', () => {
 		expect(md).toContain('## Accomplishments');
 		expect(md).not.toContain('"version"');
 		expect(md).not.toContain('"sections"');
+	});
+
+	// The field failure this distinction exists for: an agent writing right up
+	// against its output limit finishes the whole structure and loses only the
+	// final `}`. Every section and bullet is present, so the report is COMPLETE -
+	// and must not be handed to the user under a "may be incomplete" banner.
+	describe('lossless repair (report survives intact)', () => {
+		it('reports lossless when only the closing brace is missing', () => {
+			const truncated = fullResponse.slice(0, -1);
+			expect(parseDirectorNotesNarrative(truncated).ok).toBe(false);
+
+			const result = recoverDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(true);
+			// Every section and bullet of the original response survived.
+			expect(result.narrative).toEqual(JSON.parse(fullResponse));
+			expect(result.reason).toContain('closing punctuation');
+			expect(result.reason).toContain('No report content was lost');
+			expect(result.reason).not.toContain('cut off');
+		});
+
+		it('reports lossless for a stray line break inside a bullet', () => {
+			const raw =
+				'{"version":1,"sections":[{"kind":"accomplishments","title":"Accomplishments",' +
+				'"items":[{"text":"First line\nsecond line"}]}]}';
+			const result = recoverDirectorNotesNarrative(raw);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(true);
+		});
+
+		it('reports NOT lossless when the cut landed mid-report', () => {
+			const truncated = fullResponse.slice(0, fullResponse.indexOf('Fixed the platform') + 8);
+			const result = recoverDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(false);
+			expect(result.reason).toContain('cut off');
+		});
+
+		it('reports NOT lossless when a bullet had to be dropped', () => {
+			const raw = JSON.stringify({
+				version: 1,
+				sections: [
+					{
+						kind: 'accomplishments',
+						title: 'Accomplishments',
+						items: [{ text: 'Kept this one' }, { agent: 'no text field' }],
+					},
+				],
+			});
+			const result = recoverDirectorNotesNarrative(raw);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(false);
+		});
+
+		it('reports NOT lossless when the sections array itself never closed', () => {
+			// Same "nothing discarded" shape as the brace-only case, but the agent
+			// stopped mid-list: more sections were still coming, so content IS lost.
+			const truncated = fullResponse.slice(0, fullResponse.indexOf('},{"kind":"challenges"') + 1);
+			const result = recoverDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(false);
+		});
 	});
 
 	it('refuses output with no narrative content in it', () => {

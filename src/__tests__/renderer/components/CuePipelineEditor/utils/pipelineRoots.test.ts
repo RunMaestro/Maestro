@@ -160,7 +160,7 @@ describe('resolvePipelineOwnerCwds', () => {
 
 		it('returns every distinct cwd when agents are in unrelated trees', () => {
 			// The previous model rejected this as "spans unrelated project
-			// roots". Per-agent-cwd has no such restriction — each agent's
+			// roots". Per-agent-cwd has no such restriction - each agent's
 			// cue.yaml is independent; cross-tree references resolve at
 			// runtime via agent_id lookups.
 			const pipeline = makePipeline([
@@ -200,7 +200,7 @@ describe('resolvePipelineOwnerCwds', () => {
 
 		it("returns 'unresolved' when ANY agent is unresolvable (atomic save semantics)", () => {
 			// We surface this as a per-pipeline error rather than silently
-			// dropping the unresolvable agent's contribution — the user needs
+			// dropping the unresolvable agent's contribution - the user needs
 			// to either fix the dangling reference or explicitly remove the
 			// node.
 			const pipeline = makePipeline([

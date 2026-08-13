@@ -30,7 +30,7 @@ describe('shared search contract', () => {
 			scrollToMatch: () => {},
 		};
 		expect(adapter.findHits('foo')).toEqual([]);
-		// scrollToMatch returns void — call with a valid hit, ensure no throw.
+		// scrollToMatch returns void - call with a valid hit, ensure no throw.
 		expect(() =>
 			adapter.scrollToMatch({
 				sourceOffset: 0,

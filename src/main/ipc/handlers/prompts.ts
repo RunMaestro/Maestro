@@ -102,7 +102,7 @@ export function registerPromptsHandlers(): void {
 		}
 	});
 
-	// Get the current bundled (un-customized) content for a prompt — used by the
+	// Get the current bundled (un-customized) content for a prompt - used by the
 	// drift-detection "View current default" affordance.
 	ipcMain.handle('prompts:getBundledDefault', async (_, id: string) => {
 		try {

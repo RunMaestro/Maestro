@@ -17,7 +17,10 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx prettier --check .
-      - run: npx eslint src/
+      # Use the npm script rather than a bare `eslint src/` so CI and a local
+      # `npm run lint:eslint` cannot drift apart. It chains the second,
+      # dash-rule-only pass over src/__tests__ and scripts.
+      - run: npm run lint:eslint
       - run: npm run lint # TypeScript type checking
 
   test:

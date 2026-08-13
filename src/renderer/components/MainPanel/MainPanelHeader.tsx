@@ -96,7 +96,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 
 	// Claude Max plan usage (5-hour / weekly windows). Shown for any Claude
-	// Code session — the source account is always derivable from session env
+	// Code session - the source account is always derivable from session env
 	// vars (override > agent default > implicit ~/.claude), so the popover
 	// doesn't need a separate account picker. The snapshot is keyed by
 	// canonical CLAUDE_CONFIG_DIR. When the spawner has already stamped
@@ -182,6 +182,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 			remote={gitInfo?.remote || undefined}
 			ahead={gitInfo?.ahead ?? gitActions.ahead}
 			behind={gitInfo?.behind ?? gitActions.behind}
+			changes={gitActions.changes}
 			onViewLog={runAction(() => {
 				// The header always targets the active agent, which is what the
 				// prop-driven viewer already shows.
@@ -576,7 +577,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													</div>
 												)}
 
-												{/* TUI usage limits — shown for Claude Code tabs driving the TUI
+												{/* TUI usage limits - shown for Claude Code tabs driving the TUI
 												    (Adaptive Mode toggle OR static maestro-p Path) when a usage
 												    snapshot is cached. Bar color rules match the Usage Dashboard
 												    so the same percent reads the same way in both places:

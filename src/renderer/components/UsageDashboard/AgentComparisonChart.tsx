@@ -21,7 +21,7 @@ import { findSessionByStatId, isWorktreeAgent, buildNameMap } from './chartUtils
 import { ChartTooltip } from './ChartTooltip';
 
 interface AgentData {
-	/** Stable React key — `${agent}` for regular, `${agent}__worktree` for worktree variant. */
+	/** Stable React key - `${agent}` for regular, `${agent}__worktree` for worktree variant. */
 	key: string;
 	/** Provider name shown in the bar label, optionally suffixed with "(Worktree)". */
 	label: string;
@@ -41,9 +41,9 @@ interface AgentComparisonChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-	/** Current sessions list — when provided, worktree agents are split into separate bars. */
+	/** Current sessions list - when provided, worktree agents are split into separate bars. */
 	sessions?: Session[];
-	/** Drill-down click handler — fires with the bar's `key`/`label` on click. */
+	/** Drill-down click handler - fires with the bar's `key`/`label` on click. */
 	onAgentClick?: (key: string, displayName: string) => void;
 	/**
 	 * Active drill-down filter key. When set, the matching bar gets an accent
@@ -101,7 +101,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 
 	// Compute per-(provider, worktree-status) aggregation when sessions are
 	// available and the underlying per-session breakdown identifies any
-	// worktree agents. Returns null if differentiation isn't possible — the
+	// worktree agents. Returns null if differentiation isn't possible - the
 	// caller falls back to the legacy by-provider aggregation.
 	const splitAggregation = useMemo((): Record<
 		string,
@@ -122,7 +122,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 
 		for (const [statSessionId, days] of Object.entries(bySessionByDay)) {
 			const session = findSessionByStatId(statSessionId, sessions);
-			if (!session) continue; // Historical session no longer present — skip.
+			if (!session) continue; // Historical session no longer present - skip.
 			const provider = session.toolType;
 			const isWt = isWorktreeAgent(session);
 			if (isWt) foundWorktree = true;
@@ -140,7 +140,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 			}
 		}
 
-		// If no worktree agents were found, splitting adds no signal — let the
+		// If no worktree agents were found, splitting adds no signal - let the
 		// chart render the simpler byAgent view to avoid losing historical data
 		// from sessions that aren't currently in the sessions list.
 		if (!foundWorktree) return null;
@@ -148,7 +148,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 		// Reconcile against data.byAgent so providers whose stat-session IDs
 		// no longer resolve (deleted/historical agents) keep their full
 		// historical totals. The unmatched remainder lands in the regular
-		// bucket — we can't infer worktree status without the live session.
+		// bucket - we can't infer worktree status without the live session.
 		for (const [provider, agentTotals] of Object.entries(data.byAgent)) {
 			if (!result[provider]) {
 				result[provider] = {
@@ -290,7 +290,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 	);
 
 	// Get hovered agent data for tooltip (matched by row key, since the same
-	// provider can appear twice — once as regular and once as worktree).
+	// provider can appear twice - once as regular and once as worktree).
 	const hoveredAgentData = useMemo(() => {
 		if (!hoveredAgent) return null;
 		return agentData.find((d) => d.key === hoveredAgent) || null;

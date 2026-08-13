@@ -242,7 +242,7 @@ export class ContextSummarizationService {
 			// the user. Wrapping with a generic string here used to swallow the
 			// real cause (e.g. "Agent X is not available", spawn ENAMETOOLONG)
 			// and the resulting "Compaction Failed" toast told users to "check
-			// the tab" — but no tab actually showed details.
+			// the tab" - but no tab actually showed details.
 			if (err instanceof Error) throw err;
 			throw new Error(typeof err === 'string' ? err : 'Context summarization failed');
 		}

@@ -18,6 +18,7 @@ import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
+import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -225,7 +226,8 @@ export class ChildProcessSpawner {
 				customEnvVars,
 				isResuming,
 				shellEnvVars,
-				config.extraPathDirs
+				config.extraPathDirs,
+				config.unsetEnvKeys
 			);
 
 			// Log environment variable application for troubleshooting
@@ -272,7 +274,7 @@ export class ChildProcessSpawner {
 
 			// Auto-enable shell for Windows when command is a batch file (.cmd/.bat).
 			// Node.js refuses to spawn .cmd/.bat directly (throws "spawn EINVAL") after
-			// the CVE-2024-27980 fix — they must be launched through a shell. npm-installed
+			// the CVE-2024-27980 fix - they must be launched through a shell. npm-installed
 			// agent CLIs resolve to shims like claude.cmd / codex.cmd / opencode.cmd, which
 			// is exactly what tab naming spawns on Windows. Fixes MAESTRO-Q8.
 			if (isWindows() && !useShell && (commandExt === '.cmd' || commandExt === '.bat')) {
@@ -333,8 +335,8 @@ export class ChildProcessSpawner {
 
 			// When spawning through the default Windows shell (cmd.exe via ComSpec),
 			// Node concatenates the command and args into a single command line without
-			// quoting the command itself. A command path that contains spaces — e.g. an
-			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" — would
+			// quoting the command itself. A command path that contains spaces - e.g. an
+			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" - would
 			// be split by cmd.exe and fail. Quote it defensively. We only do this for the
 			// boolean (cmd.exe) shell path; an explicit shell string carries its own
 			// quoting rules and is the caller's responsibility.
@@ -448,7 +450,7 @@ export class ChildProcessSpawner {
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
-				// for resumed sessions — without the seed, the post-exit disk
+				// for resumed sessions - without the seed, the post-exit disk
 				// reconciliation (`ExitHandler.awaitCopilotShutdown` →
 				// `readCopilotFinalAnswer` + `readCopilotShutdownUsage`)
 				// short-circuits at its `if (!agentSessionId) return` guard and
@@ -462,7 +464,24 @@ export class ChildProcessSpawner {
 				maestroEnvVars: collectMaestroEnvVars(shellEnvVars, customEnvVars, isResuming),
 			};
 
+			// A killed process keeps emitting stdio and fires `close` well after
+			// ProcessManager has registered a replacement under the same sessionId
+			// key (`spawn()` kills the predecessor first, then the spawner re-uses
+			// the key). Everything downstream is keyed by sessionId alone, so those
+			// late events get attributed to the live successor: its `close` reports
+			// the dead turn's exit code (143 after SIGTERM) as the live agent
+			// crashing AND deletes the successor's tracking entry, orphaning a
+			// process the user can no longer stop.
+			//
+			// Generation, not map identity: the map answers "am I still the entry?",
+			// which stops working the moment the successor finishes and deletes its
+			// own entry - at which point a predecessor still draining would look
+			// current again. See process-manager/generation.ts.
+			managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 			this.processes.set(sessionId, managedProcess);
+
+			const isSuperseded = (): boolean =>
+				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
 
 			logger.debug('[ProcessManager] Setting up stdout/stderr/exit handlers', 'ProcessManager', {
 				sessionId,
@@ -503,6 +522,7 @@ export class ChildProcessSpawner {
 					});
 				});
 				childProcess.stdout.on('data', (data: Buffer | string) => {
+					if (isSuperseded()) return;
 					const output = data.toString();
 					// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
 					// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
@@ -536,6 +556,7 @@ export class ChildProcessSpawner {
 					});
 				});
 				childProcess.stderr.on('data', (data: Buffer | string) => {
+					if (isSuperseded()) return;
 					const stderrData = data.toString();
 					this.stderrHandler.handleData(sessionId, stderrData);
 				});
@@ -547,6 +568,14 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
+				if (isSuperseded()) {
+					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
+						sessionId,
+						pid: childProcess.pid,
+						exitCode: code,
+					});
+					return;
+				}
 				void this.exitHandler.handleExit(sessionId, code || 0).catch((err) => {
 					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 						sessionId,
@@ -557,6 +586,14 @@ export class ChildProcessSpawner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				if (isSuperseded()) {
+					logger.warn('[ProcessManager] Ignoring error from superseded process', 'ProcessManager', {
+						sessionId,
+						pid: childProcess.pid,
+						error: String(error),
+					});
+					return;
+				}
 				this.exitHandler.handleError(sessionId, error);
 			});
 

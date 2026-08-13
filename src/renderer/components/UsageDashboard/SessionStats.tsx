@@ -140,7 +140,7 @@ export const SessionStats = memo(function SessionStats({
 			}
 
 			// Worktree children (sessions spawned from a parent) vs regular agents.
-			// A "regular" session here is anything that is NOT a worktree child —
+			// A "regular" session here is anything that is NOT a worktree child -
 			// parent agents are counted as regular alongside standalone agents.
 			if (isWorktreeAgent(session)) {
 				worktreeChildren++;

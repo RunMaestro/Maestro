@@ -679,7 +679,7 @@ function HistoryTabContent({
 }
 
 /**
- * Auto Run tab content — single-document editor with full desktop parity.
+ * Auto Run tab content - single-document editor with full desktop parity.
  * Wraps {@link AutoRunInline} so the inline tab matches the full-screen
  * `AutoRunPanel` exactly.
  */

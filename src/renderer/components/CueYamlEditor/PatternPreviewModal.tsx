@@ -1,5 +1,5 @@
 /**
- * PatternPreviewModal — Shows pattern YAML with explanation and copy button.
+ * PatternPreviewModal - Shows pattern YAML with explanation and copy button.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -32,7 +32,7 @@ export function PatternPreviewModal({ pattern, theme, onClose }: PatternPreviewM
 			setCopied(true);
 			copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
 		} catch {
-			// Clipboard API may fail in some contexts — non-fatal
+			// Clipboard API may fail in some contexts - non-fatal
 		}
 	}, [pattern.yaml]);
 

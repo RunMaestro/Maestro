@@ -23,7 +23,7 @@ export interface BuildBlocksOptions {
  * Top-level orchestrator: takes a raw markdown source string and returns the
  * ordered block array that the virtualizer will render.
  *
- * Pure (no DOM, no React) — fully unit-testable.
+ * Pure (no DOM, no React) - fully unit-testable.
  *
  * Pipeline stages:
  *   1. Strip and render YAML frontmatter (frontmatter.ts).
@@ -48,7 +48,7 @@ export function buildBlocks(source: string, options: BuildBlocksOptions = {}): M
 	const all: MarkdownBlock[] = [];
 	let id = 0;
 	if (frontmatterHtml) {
-		// Synthesized block — covers the stripped frontmatter region in the
+		// Synthesized block - covers the stripped frontmatter region in the
 		// source. Marking its range lets Fast-tier search land a match inside
 		// frontmatter on this block.
 		all.push({

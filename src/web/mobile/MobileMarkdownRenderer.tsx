@@ -391,7 +391,7 @@ export const MobileMarkdownRenderer = memo(
 							return <pre>{children}</pre>;
 						},
 
-						// Inline code only — block code is handled by pre above
+						// Inline code only - block code is handled by pre above
 						code: ({ className: _className, children }: any) => {
 							const hexColor = extractHexColor(children);
 							return (

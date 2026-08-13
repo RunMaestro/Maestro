@@ -330,7 +330,7 @@ describe('estimateAccumulatedGrowth', () => {
 
 	it('should not be capped internally (caller handles threshold cap)', () => {
 		// At 98% with substantial output, growth of 3% still applies (bounded max).
-		// The function intentionally does not cap at 100% — the caller in App.tsx
+		// The function intentionally does not cap at 100% - the caller in App.tsx
 		// applies Math.min(estimated, yellowThreshold - 5) to prevent exceeding thresholds.
 		const result = estimateAccumulatedGrowth(98, 50000, 500000, 200000);
 		// prevTokens=196000, estCalls=3, singleTurnGrowth=16667, growthPercent=8 → cap 3%
@@ -383,7 +383,7 @@ describe('calculateContextDisplay', () => {
 
 	it('should cap percentage at 100 when fallback tokens fill the entire window', () => {
 		// Raw overflow with a fallback percentage at the window cap derives tokens
-		// equal to the full window — percentage must clamp to 100 (not 100.x).
+		// equal to the full window - percentage must clamp to 100 (not 100.x).
 		const result = calculateContextDisplay(
 			{ inputTokens: 190000, cacheReadInputTokens: 15000, cacheCreationInputTokens: 0 },
 			200000,
@@ -492,7 +492,7 @@ describe('calculateDisplayInputTokens', () => {
 			cacheReadInputTokens: 47_382,
 			cacheCreationInputTokens: 1_204,
 		};
-		// Before the fix this displayed as 5 — see issue #844.
+		// Before the fix this displayed as 5 - see issue #844.
 		expect(calculateDisplayInputTokens(stats, 'claude-code')).toBe(48_591);
 	});
 
@@ -529,7 +529,7 @@ describe('calculateDisplayInputTokens', () => {
 
 	it('treats unknown agent types as Claude-family', () => {
 		// If a new agent is added and this helper isn't updated, the Claude formula
-		// is the safer default — the worst case is an over-count on a single entry,
+		// is the safer default - the worst case is an over-count on a single entry,
 		// not an "abnormally low" under-count that regresses issue #844.
 		const stats: Partial<UsageStats> = {
 			inputTokens: 3,

@@ -1,5 +1,5 @@
 /**
- * retryStore — Agent Resilience auto-retry engine (renderer).
+ * retryStore - Agent Resilience auto-retry engine (renderer).
  *
  * When an agent turn fails with a recoverable upstream error and the agent has
  * resilience enabled, this store schedules an automatic resend of the exact
@@ -12,7 +12,7 @@
  *   - Keyed per `${sessionId}:${tabId}` so parallel tabs retry independently.
  *   - The prompt to resend is the exact `QueuedItem` + `ProcessQueuedItemDeps`
  *     snapshotted at dispatch time (see `noteDispatch`) and replayed through
- *     `agentStore.processQueuedItem` — same spawn path, so images and slash
+ *     `agentStore.processQueuedItem` - same spawn path, so images and slash
  *     commands survive unchanged, across every provider.
  *   - Entry status is its own state machine: `'scheduled'` (timer pending) →
  *     `'in-flight'` (resend dispatched, awaiting outcome). Because agent-error
@@ -20,7 +20,7 @@
  *     entry back to `'scheduled'` before exit fires; so the exit listener
  *     clears an entry only when it is still `'in-flight'` (== clean completion).
  *   - Timers live at module scope (not React state) so re-renders never disturb
- *     a pending retry. Retries do NOT survive an app quit — intentional: a
+ *     a pending retry. Retries do NOT survive an app quit - intentional: a
  *     closed app should not silently burn quota/hours in the background.
  */
 
@@ -34,6 +34,8 @@ import {
 	type ClassifiableError,
 } from '../../shared/retryClassification';
 import { resilienceEnabled } from '../../shared/agentConstants';
+import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
+import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById } from './sessionStore';
@@ -48,9 +50,9 @@ export type RetryStatus = 'scheduled' | 'in-flight';
 
 /**
  * How the retry re-runs the failed work:
- *  - `resend` — interactive turn: replay the snapshotted QueuedItem through
+ *  - `resend` - interactive turn: replay the snapshotted QueuedItem through
  *    `processQueuedItem`.
- *  - `batch-resume` — an Auto Run batch owns the turn: the batch loop is parked
+ *  - `batch-resume` - an Auto Run batch owns the turn: the batch loop is parked
  *    at its error-resolution await, so we resume it (goal-based or spec-driven
  *    alike) via the registered resumer instead of resending a prompt.
  */
@@ -74,7 +76,23 @@ export interface RetryEntry {
 	nextRetryAt: number;
 	/** The failing message, for the countdown UI. */
 	lastMessage: string;
+	/**
+	 * Provider Failover: this retry will first swap the agent onto its next backup
+	 * endpoint (see `failoverStore.switchToNextEndpoint`), so it fires after a short
+	 * handover delay instead of the strategy's wait. The actual switch happens in
+	 * `fireRetry` - deciding here and acting there keeps `scheduleRetryForError`
+	 * synchronous for its callers.
+	 */
+	failingOver?: boolean;
 }
+
+/**
+ * Handover delay before a failover retry fires. Short by design: the whole point
+ * of having a spare tire is not waiting out the primary's reset window. Not zero,
+ * so the countdown banner renders and the user gets a beat to cancel before their
+ * prompt goes to a different provider.
+ */
+export const FAILOVER_HANDOVER_DELAY_MS = 3 * 1000;
 
 /** Lifecycle of an outage as shown on its transcript status card. */
 export type OutageStatus = 'active' | 'recovered' | 'stopped';
@@ -83,7 +101,7 @@ export type OutageStatus = 'active' | 'recovered' | 'stopped';
  * Persistent record of a single Agent Resilience outage, powering the collapsed
  * status card in the transcript. Unlike `RetryEntry` (which exists only while a
  * retry is pending and is keyed per tab), an `OutageRecord` is keyed by a stable
- * `outageId` and survives resolution — so the card can show a final "recovered"
+ * `outageId` and survives resolution - so the card can show a final "recovered"
  * or "stopped" summary, and multiple historical outages on the same tab each
  * keep their own card. Kept in the reactive store so the card ticks live.
  */
@@ -118,9 +136,9 @@ interface RetryStoreState {
 }
 
 interface RetryStoreActions {
-	/** Internal setter — callers use the exported functions below. */
+	/** Internal setter - callers use the exported functions below. */
 	setEntry: (key: string, entry: RetryEntry | null) => void;
-	/** Internal upsert/patch for an outage record — callers use exported helpers. */
+	/** Internal upsert/patch for an outage record - callers use exported helpers. */
 	patchOutage: (outageId: string, patch: Partial<OutageRecord> | null) => void;
 }
 
@@ -234,6 +252,19 @@ function resolveStrategy(sessionId: string, error: ClassifiableError): RetryStra
 }
 
 /**
+ * Whether this agent has an armed failover config with at least one endpoint it
+ * hasn't already burned during the current outage. Pure store reads, so it can be
+ * called from the synchronous scheduling path.
+ */
+function canFailover(sessionId: string): boolean {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const config = session?.failoverConfig;
+	if (!failoverArmed(config)) return false;
+	const state = useFailoverStore.getState().states[sessionId];
+	return selectNextEndpoint(config, state) !== null;
+}
+
+/**
  * Try to take over an agent error with an automatic retry. Returns `true` if a
  * retry was scheduled (the caller should then suppress the error modal), or
  * `false` if the error is not auto-retryable / resilience is off / we have no
@@ -252,12 +283,12 @@ export function scheduleRetryForError(
 	const key = keyFor(sessionId, tabId);
 
 	if (mode === 'resend' && !snapshots.has(key)) {
-		// No captured prompt — we can't reliably resend, so let the modal handle it.
+		// No captured prompt - we can't reliably resend, so let the modal handle it.
 		logger.warn('[retry] No prompt snapshot to resend; falling back to modal', undefined, { key });
 		return false;
 	}
 	if (mode === 'batch-resume' && !batchResumer) {
-		// No resume hook wired — fall back to the batch's manual error controls.
+		// No resume hook wired - fall back to the batch's manual error controls.
 		logger.warn('[retry] No batch resumer registered; falling back', undefined, { key });
 		return false;
 	}
@@ -272,8 +303,15 @@ export function scheduleRetryForError(
 	// transcript card counts one continuous outage instead of restarting.
 	const outageId = existing?.outageId ?? generateId();
 	const startedAt = existing?.startedAt ?? now;
-	const nextRetryAt =
-		strategy === 'availability'
+
+	// Provider Failover: if this agent carries an untried backup endpoint, hand the
+	// turn over to it instead of waiting out the primary. This is the whole value of
+	// the feature for token-exhaustion, where the strategy wait can be hours. We only
+	// DECIDE here (a pure store read); `fireRetry` performs the async switch.
+	const failingOver = canFailover(sessionId);
+	const nextRetryAt = failingOver
+		? now + FAILOVER_HANDOVER_DELAY_MS
+		: strategy === 'availability'
 			? now + availabilityDelayMs(attempt)
 			: tokenExhaustionResetAt(error, now);
 
@@ -290,6 +328,7 @@ export function scheduleRetryForError(
 		startedAt,
 		nextRetryAt,
 		lastMessage: error.message,
+		failingOver,
 	};
 	useRetryStore.getState().setEntry(key, entry);
 
@@ -343,9 +382,30 @@ async function fireRetry(key: string): Promise<void> {
 		mode: entry.mode,
 		strategy: entry.strategy,
 		attempt: entry.attempt,
+		failingOver: entry.failingOver,
 	});
 
 	try {
+		// Provider Failover: swap the agent onto its next backup endpoint before the
+		// resend. Awaited so main holds the new env by the time we spawn. A null
+		// result means the config changed under us (endpoint deleted, failover
+		// disarmed) - harmless, we just resend on whatever endpoint is live.
+		//
+		// Contained in its own try: a failed overlay write must degrade to "retry on
+		// the current endpoint", never swallow the retry itself. Letting it escape to
+		// the outer catch would skip the resend and strand the entry in-flight, which
+		// is strictly worse than not failing over.
+		if (entry.failingOver) {
+			try {
+				await switchToNextEndpoint(entry.sessionId);
+			} catch (error) {
+				logger.error('[retry] Failover switch failed; retrying on current endpoint', undefined, {
+					key,
+					error,
+				});
+			}
+		}
+
 		if (entry.mode === 'batch-resume') {
 			// The batch loop is parked at its error-resolution await; resuming it
 			// re-reads the doc and re-dispatches the current task itself. Works for
@@ -401,7 +461,7 @@ function resolveOutage(outageId: string, status: Exclude<OutageStatus, 'active'>
 /**
  * Called from the process-exit listener. If the entry is still `'in-flight'` at
  * exit time, no retryable agent-error re-scheduled it, so the resent turn
- * completed (successfully, or with a non-retryable error the modal now owns) —
+ * completed (successfully, or with a non-retryable error the modal now owns) -
  * clear it. A rescheduled entry (status back to `'scheduled'`) is left alone.
  */
 export function clearRetryIfSettled(sessionId: string, tabId: string): void {

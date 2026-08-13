@@ -23,6 +23,7 @@ import {
 	Star,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
@@ -61,7 +62,7 @@ import type { StarredItem } from '../../hooks/session/useStarredItems';
 // ============================================================================
 
 interface SessionListProps {
-	// Computed values (not in stores — remain as props)
+	// Computed values (not in stores - remain as props)
 	theme: Theme;
 	sortedSessions: Session[];
 	navIndexMap?: Map<string, number>;
@@ -228,7 +229,7 @@ function SessionListInner(props: SessionListProps) {
 	}, [wizardActiveSessions, sessions]);
 
 	// Cue session status map: sessionId → { count, active }
-	// Always fetched — the indicator shows whenever a .maestro/cue.yaml has subscriptions,
+	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
 	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
 	const [cueSessionMap, setCueSessionMap] = useState<
 		Map<string, { count: number; active: boolean }>
@@ -249,7 +250,7 @@ function SessionListInner(props: SessionListProps) {
 						});
 					}
 				}
-				// Preserve referential identity when nothing changed — the map is fed
+				// Preserve referential identity when nothing changed - the map is fed
 				// to every SessionItem as a prop, and a fresh reference busts memo even
 				// when contents are equal. With cue activity ticks coming in at ~1Hz this
 				// would otherwise re-render all sidebar rows on every tick.
@@ -460,7 +461,7 @@ function SessionListInner(props: SessionListProps) {
 		? sessions.find((s) => s.id === contextMenu.sessionId)
 		: null;
 
-	// Group context menu state — opened by right-clicking a group header
+	// Group context menu state - opened by right-clicking a group header
 	const [groupContextMenu, setGroupContextMenu] = useState<{
 		x: number;
 		y: number;
@@ -647,7 +648,7 @@ function SessionListInner(props: SessionListProps) {
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
 	// These Maps store stable function references keyed by session id. They only
-	// depend on the *set of session ids* — not on per-session field changes — so
+	// depend on the *set of session ids* - not on per-session field changes - so
 	// rebuilding them on every sidebar field change (state/name/etc.) was
 	// wasted work that broke SessionItem's React.memo bail-out (5 × N closures
 	// per flush). Key off a derived id signature instead.
@@ -798,7 +799,7 @@ function SessionListInner(props: SessionListProps) {
 
 		const content = (
 			<>
-				{/* Parent session — chevron in SessionItem toggles worktree expansion. */}
+				{/* Parent session - chevron in SessionItem toggles worktree expansion. */}
 				<SessionItem
 					session={session}
 					variant={effectiveVariant}
@@ -1032,6 +1033,10 @@ function SessionListInner(props: SessionListProps) {
 									<span>{autoRunStats.currentBadgeLevel}</span>
 								</button>
 							)}
+							{/* Now playing - only while the floating player is hidden, so the
+							    user can always see that audio is coming from Maestro and get
+							    the widget back with one click. */}
+							<NowPlayingIndicator theme={theme} />
 							{/* Global LIVE Toggle */}
 							<div className="ml-2 relative z-10" ref={liveOverlayRef} data-tour="remote-control">
 								<button
@@ -1125,6 +1130,7 @@ function SessionListInner(props: SessionListProps) {
 					</>
 				) : (
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
+						<NowPlayingIndicator theme={theme} compact />
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
 								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}${

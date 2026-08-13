@@ -25,7 +25,7 @@ export function useSshRemoteName(
 		window.maestro.sshRemote
 			.getConfigs()
 			.then((result) => {
-				if (callSeq !== seqRef.current) return; // Stale response — skip
+				if (callSeq !== seqRef.current) return; // Stale response - skip
 				if (result.success && result.configs) {
 					const remote = result.configs.find((r: { id: string }) => r.id === remoteId);
 					setSshRemoteName(remote?.name || null);
@@ -34,7 +34,7 @@ export function useSshRemoteName(
 				}
 			})
 			.catch((error) => {
-				if (callSeq !== seqRef.current) return; // Stale — skip
+				if (callSeq !== seqRef.current) return; // Stale - skip
 				captureException(error, {
 					extra: { message: 'useSshRemoteName: failed to load SSH remote configs', remoteId },
 				});

@@ -142,7 +142,7 @@ afterEach(() => {
 });
 
 // ============================================================================
-// restoreSession — Migration logic
+// restoreSession - Migration logic
 // ============================================================================
 
 describe('restoreSession — Migration logic', () => {
@@ -448,7 +448,7 @@ describe('restoreSession — Migration logic', () => {
 });
 
 // ============================================================================
-// restoreSession — Corruption recovery
+// restoreSession - Corruption recovery
 // ============================================================================
 
 describe('restoreSession — Corruption recovery', () => {
@@ -566,6 +566,22 @@ describe('restoreSession — Corruption recovery', () => {
 	it('preserves activeFileTabId when inputMode is ai', async () => {
 		const session = createMockSession({
 			inputMode: 'ai',
+			// The tab has to actually exist: restoration validates the active ID
+			// against the surviving tabs, so an orphan is cleared like any other.
+			filePreviewTabs: [
+				{
+					id: 'valid-file-tab',
+					path: '/projects/myapp/README.md',
+					name: 'README.md',
+					content: '# docs',
+					scrollTop: 0,
+					searchQuery: '',
+					editMode: false,
+					createdAt: 1,
+					lastModified: 1,
+					isLoading: false,
+				},
+			] as any,
 			activeFileTabId: 'valid-file-tab',
 		});
 		const { result } = renderHook(() => useSessionRestoration());
@@ -576,6 +592,54 @@ describe('restoreSession — Corruption recovery', () => {
 		});
 
 		expect(restored!.activeFileTabId).toBe('valid-file-tab');
+	});
+
+	it('clears an activeFileTabId whose tab no longer exists', async () => {
+		const session = createMockSession({
+			inputMode: 'ai',
+			filePreviewTabs: [],
+			activeFileTabId: 'gone',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeFileTabId).toBeNull();
+	});
+
+	it('drops media tabs left behind by an older build', async () => {
+		// Media now opens in the floating player, never a tab. A stale one would
+		// come back as a permanent "Binary File" card the user has to close.
+		const session = createMockSession({
+			inputMode: 'ai',
+			filePreviewTabs: [
+				{
+					id: 'media-tab',
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: 'maestro-media://stream/tok3n/2f66696c65732f612e6d7033',
+					scrollTop: 0,
+					searchQuery: '',
+					editMode: false,
+					createdAt: 1,
+					lastModified: 1,
+					isLoading: false,
+				},
+			] as any,
+			activeFileTabId: 'media-tab',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.filePreviewTabs).toEqual([]);
+		expect(restored!.activeFileTabId).toBeNull();
 	});
 
 	it('gives active file selection precedence over stale browser selection in ai mode', async () => {
@@ -627,7 +691,7 @@ describe('restoreSession — Corruption recovery', () => {
 });
 
 // ============================================================================
-// restoreSession — Runtime state reset
+// restoreSession - Runtime state reset
 // ============================================================================
 
 describe('restoreSession — Runtime state reset', () => {
@@ -841,7 +905,7 @@ describe('restoreSession — Runtime state reset', () => {
 		});
 
 		// When unifiedTabOrder is undefined and terminalTabs is missing,
-		// restoration builds order from AI tabs only — no default terminal tab is created.
+		// restoration builds order from AI tabs only - no default terminal tab is created.
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
 		expect(restored!.terminalTabs).toHaveLength(0);
 	});
@@ -860,7 +924,7 @@ describe('restoreSession — Runtime state reset', () => {
 });
 
 // ============================================================================
-// restoreSession — Git info for local sessions
+// restoreSession - Git info for local sessions
 // ============================================================================
 
 describe('restoreSession — Git info (local sessions)', () => {
@@ -944,7 +1008,7 @@ describe('restoreSession — Git info (local sessions)', () => {
 });
 
 // ============================================================================
-// restoreSession — Error handling
+// restoreSession - Error handling
 // ============================================================================
 
 describe('restoreSession — Error handling', () => {
@@ -1485,7 +1549,7 @@ describe('Session & Group loading effect', () => {
 });
 
 // ============================================================================
-// restoreSession — Terminal tab persistence
+// restoreSession - Terminal tab persistence
 // ============================================================================
 
 describe('restoreSession — Terminal tab persistence', () => {
@@ -1636,7 +1700,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		// Migration only ensures the array exists — it does not add a default tab
+		// Migration only ensures the array exists - it does not add a default tab
 		expect(restored!.terminalTabs).toHaveLength(0);
 		expect(restored!.activeTerminalTabId).toBeNull();
 	});

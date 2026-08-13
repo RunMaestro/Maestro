@@ -124,7 +124,7 @@ const AGENTS: AgentConfig[] = [
 		 */
 		buildArgs: (prompt: string, options?: { images?: string[] }) => {
 			// `-C` precedes `exec` because Codex treats it as a root-level global
-			// flag — placing it after the subcommand makes it silently ignored (#959).
+			// flag - placing it after the subcommand makes it silently ignored (#959).
 			const args = [
 				'-C',
 				TEST_CWD,

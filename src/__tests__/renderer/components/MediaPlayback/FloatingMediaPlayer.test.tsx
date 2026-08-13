@@ -1,38 +1,73 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { FloatingMediaPlayer } from '../../../../renderer/components/MediaPlayback/FloatingMediaPlayer';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
+import {
+	MEDIA_FLOAT_DEFAULT_WIDTH,
+	mediaFloatChromeHeight,
+} from '../../../../renderer/utils/mediaFloatGeometry';
+import type { MediaItem } from '../../../../renderer/utils/mediaItems';
 import { mockTheme } from '../../../helpers/mockTheme';
 
-function renderPlayer(overrides: { kind?: 'audio' | 'video'; playing?: boolean } = {}) {
-	const onReturnToTab = vi.fn();
-	render(
+function item(overrides: Partial<MediaItem> = {}): MediaItem {
+	return {
+		id: 's1::/files/podcast.mp3',
+		path: '/files/podcast.mp3',
+		name: 'podcast.mp3',
+		sessionId: 's1',
+		sessionName: 'Agent One',
+		kind: 'audio',
+		...overrides,
+	};
+}
+
+interface PlayerOverrides {
+	kind?: 'audio' | 'video';
+	playing?: boolean;
+	aspect?: number;
+	transportHeight?: number | null;
+}
+
+function playerElement(overrides: PlayerOverrides = {}) {
+	return (
 		<FloatingMediaPlayer
 			title="podcast.mp3"
 			subtitle="Agent One"
 			kind={overrides.kind ?? 'audio'}
+			aspect={overrides.aspect}
+			transportHeight={overrides.transportHeight ?? null}
 			playing={overrides.playing ?? false}
-			onReturnToTab={onReturnToTab}
 			theme={mockTheme}
 		>
 			<div data-testid="player-body">player</div>
 		</FloatingMediaPlayer>
 	);
-	return { onReturnToTab };
 }
+
+function renderPlayer(overrides: PlayerOverrides = {}) {
+	return render(playerElement(overrides));
+}
+
+/** Frame height with nothing measured yet: title bar plus the fallback strip. */
+const CHROME = mediaFloatChromeHeight(null);
+const frame = () => screen.getByTestId('floating-media-player') as HTMLElement;
 
 describe('FloatingMediaPlayer', () => {
 	beforeEach(() => {
 		useMediaPlaybackStore.setState({
-			activeTabId: 'tab-1',
+			items: [],
+			activeItemId: null,
+			history: [],
 			playing: false,
 			dismissed: false,
 			minimized: false,
 			pendingAutoplay: false,
 			toggleRequest: 0,
-			slots: {},
 			resumeTimes: {},
-			floatRect: null,
+			durations: {},
+			floatPosition: null,
+			floatWidths: {},
+			aspects: {},
 		});
 		(window as unknown as { maestro?: unknown }).maestro = { settings: { set: vi.fn() } };
 	});
@@ -85,31 +120,23 @@ describe('FloatingMediaPlayer', () => {
 		expect(useMediaPlaybackStore.getState().playing).toBe(true);
 	});
 
-	it('returns to the tab from the title and from a double-click', () => {
-		const { onReturnToTab } = renderPlayer();
-		fireEvent.click(screen.getByTitle("Go to this file's tab"));
-		expect(onReturnToTab).toHaveBeenCalledOnce();
-
-		fireEvent.doubleClick(screen.getByTestId('floating-media-player').firstElementChild!);
-		expect(onReturnToTab).toHaveBeenCalledTimes(2);
-	});
-
-	it('seeds position from the persisted rect', () => {
+	it('seeds from the remembered position and this kind width', () => {
 		useMediaPlaybackStore.setState({
-			floatRect: { top: 120, left: 240, width: 420, height: 260 },
+			floatPosition: { top: 120, left: 240 },
+			floatWidths: { audio: 420, video: 800 },
 		});
 		renderPlayer();
-		const el = screen.getByTestId('floating-media-player') as HTMLElement;
-		expect(el.style.top).toBe('120px');
-		expect(el.style.left).toBe('240px');
-		expect(el.style.width).toBe('420px');
+		expect(frame().style.top).toBe('120px');
+		expect(frame().style.left).toBe('240px');
+		expect(frame().style.width).toBe('420px');
 	});
 
 	it('moves on drag and persists only on release', () => {
 		const set = vi.fn();
 		(window as unknown as { maestro: unknown }).maestro = { settings: { set } };
 		useMediaPlaybackStore.setState({
-			floatRect: { top: 200, left: 200, width: 400, height: 240 },
+			floatPosition: { top: 200, left: 200 },
+			floatWidths: { audio: 400 },
 		});
 		renderPlayer();
 
@@ -125,57 +152,51 @@ describe('FloatingMediaPlayer', () => {
 
 		fireEvent.mouseUp(window);
 		expect(set).toHaveBeenCalledOnce();
-		expect(useMediaPlaybackStore.getState().floatRect).toEqual({
-			top: 230,
-			left: 240,
-			width: 400,
-			height: 240,
-		});
+		expect(useMediaPlaybackStore.getState().floatPosition).toEqual({ top: 230, left: 240 });
+		expect(useMediaPlaybackStore.getState().floatWidths).toEqual({ audio: 400 });
 	});
 
 	it('drags from the title text, which is most of the handle', () => {
 		useMediaPlaybackStore.setState({
-			floatRect: { top: 200, left: 200, width: 400, height: 240 },
+			floatPosition: { top: 200, left: 200 },
+			floatWidths: { audio: 400 },
 		});
-		const { onReturnToTab } = renderPlayer();
+		renderPlayer();
 		const el = screen.getByTestId('floating-media-player') as HTMLElement;
 
 		// The title used to swallow its own mousedown, so grabbing the widget where
 		// it looks most grabbable did nothing at all.
-		fireEvent.mouseDown(screen.getByTitle("Go to this file's tab"), {
+		fireEvent.mouseDown(screen.getByTitle('podcast.mp3'), {
 			button: 0,
 			clientX: 300,
 			clientY: 300,
 		});
 		fireEvent.mouseMove(window, { clientX: 350, clientY: 320 });
 		fireEvent.mouseUp(window);
-		fireEvent.click(screen.getByTitle("Go to this file's tab"));
 
 		expect(el.style.left).toBe('250px');
 		expect(el.style.top).toBe('220px');
-		// A drag is not a click: it must not yank the user to the file's tab.
-		expect(onReturnToTab).not.toHaveBeenCalled();
 	});
 
-	it('still treats a steady click on the title as go-to-tab', () => {
+	it('ignores movement below the slop threshold, so a click does not nudge it', () => {
 		useMediaPlaybackStore.setState({
-			floatRect: { top: 200, left: 200, width: 400, height: 240 },
+			floatPosition: { top: 200, left: 200 },
+			floatWidths: { audio: 400 },
 		});
-		const { onReturnToTab } = renderPlayer();
-		const title = screen.getByTitle("Go to this file's tab");
+		renderPlayer();
+		const el = screen.getByTestId('floating-media-player') as HTMLElement;
 
-		fireEvent.mouseDown(title, { button: 0, clientX: 300, clientY: 300 });
-		// Below the slop threshold - a shaky hand, not a drag.
+		fireEvent.mouseDown(el.firstElementChild!, { button: 0, clientX: 300, clientY: 300 });
 		fireEvent.mouseMove(window, { clientX: 301, clientY: 301 });
-		fireEvent.mouseUp(window);
-		fireEvent.click(title);
 
-		expect(onReturnToTab).toHaveBeenCalledOnce();
+		expect(el.style.left).toBe('200px');
+		expect(el.style.top).toBe('200px');
 	});
 
 	it('ignores a non-left mouse button', () => {
 		useMediaPlaybackStore.setState({
-			floatRect: { top: 200, left: 200, width: 400, height: 240 },
+			floatPosition: { top: 200, left: 200 },
+			floatWidths: { audio: 400 },
 		});
 		renderPlayer();
 		const el = screen.getByTestId('floating-media-player') as HTMLElement;
@@ -185,9 +206,10 @@ describe('FloatingMediaPlayer', () => {
 		expect(el.style.left).toBe('200px');
 	});
 
-	it('resizes from the grip', () => {
+	it('resizes from the grip, with the height following the picture', () => {
 		useMediaPlaybackStore.setState({
-			floatRect: { top: 100, left: 100, width: 400, height: 240 },
+			floatPosition: { top: 100, left: 100 },
+			floatWidths: { video: 400 },
 		});
 		renderPlayer({ kind: 'video' });
 
@@ -196,16 +218,250 @@ describe('FloatingMediaPlayer', () => {
 			clientX: 500,
 			clientY: 340,
 		});
-		fireEvent.mouseMove(window, { clientX: 560, clientY: 380 });
+		fireEvent.mouseMove(window, { clientX: 560, clientY: 340 });
 
-		const el = screen.getByTestId('floating-media-player') as HTMLElement;
-		expect(el.style.width).toBe('460px');
-		expect(el.style.height).toBe('280px');
+		expect(frame().style.width).toBe('460px');
+		// 16:9 of the new width, not the dragged height - a video frame that is not
+		// its own shape just paints black bars.
+		expect(frame().style.height).toBe(`${CHROME + Math.round((460 * 9) / 16)}px`);
+	});
+
+	describe('fitting the frame to the media', () => {
+		it('collapses audio to the controls, since it has no picture', () => {
+			renderPlayer();
+			expect(frame().style.height).toBe(`${CHROME}px`);
+			expect(frame().style.width).toBe(`${MEDIA_FLOAT_DEFAULT_WIDTH.audio}px`);
+		});
+
+		it('opens video wide enough to watch, at its own aspect ratio', () => {
+			renderPlayer({ kind: 'video' });
+			const width = MEDIA_FLOAT_DEFAULT_WIDTH.video;
+			expect(frame().style.width).toBe(`${width}px`);
+			expect(frame().style.height).toBe(`${CHROME + Math.round((width * 9) / 16)}px`);
+		});
+
+		it('fits a vertical clip rather than showing it inside black bars', () => {
+			renderPlayer({ kind: 'video', aspect: 9 / 16 });
+			const width = parseInt(frame().style.width, 10);
+			expect(frame().style.height).toBe(`${CHROME + Math.round(width / (9 / 16))}px`);
+		});
+
+		it('reshapes as the queue steps from audio to video and back', () => {
+			// The point of the whole exercise: ten mixed files should each get the
+			// right form factor without the user touching the grip.
+			const { rerender } = renderPlayer();
+			const audioHeight = frame().style.height;
+
+			rerender(playerElement({ kind: 'video' }));
+			expect(frame().style.width).toBe(`${MEDIA_FLOAT_DEFAULT_WIDTH.video}px`);
+			expect(parseInt(frame().style.height, 10)).toBeGreaterThan(parseInt(audioHeight, 10));
+
+			rerender(playerElement({ kind: 'audio' }));
+			expect(frame().style.height).toBe(audioHeight);
+			expect(frame().style.width).toBe(`${MEDIA_FLOAT_DEFAULT_WIDTH.audio}px`);
+		});
+
+		it('gives each kind back the width the user chose for it', () => {
+			useMediaPlaybackStore.setState({
+				floatPosition: { top: 40, left: 40 },
+				floatWidths: { audio: 420, video: 880 },
+			});
+			const { rerender } = renderPlayer();
+			expect(frame().style.width).toBe('420px');
+
+			rerender(playerElement({ kind: 'video' }));
+			expect(frame().style.width).toBe('880px');
+		});
+
+		it('stays put across a kind switch, so the widget does not wander', () => {
+			useMediaPlaybackStore.setState({
+				floatPosition: { top: 120, left: 200 },
+				floatWidths: {},
+			});
+			const { rerender } = renderPlayer();
+			rerender(playerElement({ kind: 'video' }));
+			expect(frame().style.left).toBe('200px');
+			expect(frame().style.top).toBe('120px');
+		});
+
+		it('uses the measured transport height once it arrives', () => {
+			const { rerender } = renderPlayer();
+			expect(frame().style.height).toBe(`${CHROME}px`);
+			// The real strip is shorter than the fallback on this platform; the frame
+			// has to follow it, or every video below it sits in a letterbox.
+			rerender(playerElement({ transportHeight: 70 }));
+			expect(frame().style.height).toBe(`${mediaFloatChromeHeight(70)}px`);
+		});
 	});
 
 	it('hides the resize grip while minimized', () => {
 		useMediaPlaybackStore.setState({ minimized: true });
 		renderPlayer();
 		expect(screen.queryByTestId('modal-resize-grip')).toBeNull();
+	});
+
+	describe('queue and history menus', () => {
+		const a = item();
+		const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+
+		function seedQueue() {
+			useMediaPlaybackStore.setState({
+				items: [a, b],
+				activeItemId: b.id,
+				history: [b, a],
+			});
+		}
+
+		it('hides both buttons when there is nothing to list', () => {
+			renderPlayer();
+			expect(screen.queryByLabelText('Recently played')).toBeNull();
+			expect(screen.queryByLabelText(/Play queue/)).toBeNull();
+		});
+
+		it('shows the queue button once something is queued', () => {
+			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: a.id });
+			renderPlayer();
+			expect(screen.getByLabelText('Play queue, 2 items')).toBeTruthy();
+			// Nothing has been played, so there is no history button yet.
+			expect(screen.queryByLabelText('Recently played')).toBeNull();
+		});
+
+		it('lists the queue in open order, not recency', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+
+			const menu = screen.getByTestId('media-queue-menu');
+			expect(menu.textContent!.indexOf('podcast.mp3')).toBeLessThan(
+				menu.textContent!.indexOf('talk.mp4')
+			);
+		});
+
+		it('plays a queue entry and removes one from the queue', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+			const menu = screen.getByTestId('media-queue-menu');
+			fireEvent.click(within(menu).getByText('podcast.mp3'));
+			expect(useMediaPlaybackStore.getState().activeItemId).toBe(a.id);
+
+			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+			fireEvent.click(screen.getByLabelText('Remove talk.mp4 from the queue'));
+			expect(useMediaPlaybackStore.getState().items.map((i) => i.id)).toEqual([a.id]);
+		});
+
+		it('clears the whole queue', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+			fireEvent.click(screen.getByText('Clear'));
+
+			expect(useMediaPlaybackStore.getState().items).toEqual([]);
+			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
+		});
+
+		it('lists recently played entries, newest first', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+
+			const menu = screen.getByTestId('media-history-menu');
+			expect(menu.textContent).toContain('talk.mp4');
+			expect(menu.textContent).toContain('podcast.mp3');
+			expect(menu.textContent!.indexOf('talk.mp4')).toBeLessThan(
+				menu.textContent!.indexOf('podcast.mp3')
+			);
+		});
+
+		it('re-queues a history entry the queue no longer holds', () => {
+			// History outlives the queue, so its entries have to be able to bring a
+			// file back rather than pointing at a queue slot that is gone.
+			useMediaPlaybackStore.setState({ items: [b], activeItemId: b.id, history: [b, a] });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+			const menu = screen.getByTestId('media-history-menu');
+			fireEvent.click(within(menu).getByText('podcast.mp3'));
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.items.map((i) => i.id)).toEqual([b.id, a.id]);
+			expect(state.activeItemId).toBe(a.id);
+			expect(state.pendingAutoplay).toBe(true);
+			// Choosing an entry closes the menu.
+			expect(screen.queryByTestId('media-history-menu')).toBeNull();
+		});
+
+		it('removing from history leaves the queue alone', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+			fireEvent.click(screen.getByLabelText('Remove podcast.mp3 from the history'));
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.history.map((i) => i.id)).toEqual([b.id]);
+			expect(state.items).toHaveLength(2);
+		});
+
+		it('opens one list at a time', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+
+			expect(screen.getByTestId('media-queue-menu')).toBeTruthy();
+			expect(screen.queryByTestId('media-history-menu')).toBeNull();
+		});
+
+		it('shows how long each entry runs', () => {
+			seedQueue();
+			useMediaPlaybackStore.setState({ durations: { [a.id]: 266, [b.id]: 95 } });
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+
+			const menu = screen.getByTestId('media-history-menu');
+			expect(within(menu).getByText('4:26')).toBeTruthy();
+			expect(within(menu).getByText('1:35')).toBeTruthy();
+		});
+
+		it('says how much is left of something part-played', () => {
+			seedQueue();
+			useMediaPlaybackStore.setState({
+				durations: { [a.id]: 266 },
+				resumeTimes: { [a.id]: 60 },
+			});
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+
+			const menu = screen.getByTestId('media-queue-menu');
+			expect(within(menu).getByText('-3:26')).toBeTruthy();
+			// Nothing known about the other file, so it says so rather than lying.
+			expect(within(menu).getByText('--:--')).toBeTruthy();
+		});
+
+		it('leaves off the remaining time at either end of a file', () => {
+			// A second in is "not started" and a second from the end is "finished";
+			// in both cases the plain length already says everything useful.
+			seedQueue();
+			useMediaPlaybackStore.setState({
+				durations: { [a.id]: 266, [b.id]: 266 },
+				resumeTimes: { [a.id]: 0.5, [b.id]: 265.8 },
+			});
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+
+			const menu = screen.getByTestId('media-queue-menu');
+			expect(within(menu).queryByText(/^-/)).toBeNull();
+		});
+
+		it('closes on an outside click', () => {
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Recently played'));
+			expect(screen.getByTestId('media-history-menu')).toBeTruthy();
+
+			// The list is portaled to the body, so it is not a DOM descendant of the
+			// button - the outside-click check has to know about both.
+			fireEvent.mouseDown(document.body);
+			expect(screen.queryByTestId('media-history-menu')).toBeNull();
+		});
 	});
 });

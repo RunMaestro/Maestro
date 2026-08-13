@@ -6,7 +6,7 @@
  * subscription name, agent that ran it, and a short event-payload detail
  * (issue/PR title, file changed, task count, etc.).
  *
- * Pure / runtime-agnostic — safe to import from main and renderer alike.
+ * Pure / runtime-agnostic - safe to import from main and renderer alike.
  */
 
 import { stripMarkdown } from '../markdown';
@@ -145,7 +145,7 @@ export function parseSubscriptionName(name: string): {
 /**
  * Compact one-line summary of a Cue run for list views.
  *
- * Format: `"<trigger>" · <agent>[ #N] — <detail>`
+ * Format: `"<trigger>" · <agent>[ #N] - <detail>`
  * - `<trigger>` is `pipelineName` when set, else the base subscription name
  *   (with `-chain-N` / `-fanin` stripped). This mirrors the user-facing
  *   pipeline label they see in the Cue Modal so chains are identified by
@@ -159,9 +159,9 @@ export function parseSubscriptionName(name: string): {
  *   file changed, task count, etc.) and is omitted when none is meaningful.
  *
  * Examples:
- *   `"PR Triage Main" · rc #2 — #891 Feature: Support arbitrary CLI agents…`
- *   `"Issue Triage" · rc — #909 fix(cli): register copilot-cli…`
- *   `"Maestro" · rc #2 — #891 Feature: …` (legacy YAML, no pipeline_name)
+ *   `"PR Triage Main" · rc #2 - #891 Feature: Support arbitrary CLI agents…`
+ *   `"Issue Triage" · rc - #909 fix(cli): register copilot-cli…`
+ *   `"Maestro" · rc #2 - #891 Feature: …` (legacy YAML, no pipeline_name)
  *   `"Hourly Sync"` (no agent distinction, no payload)
  */
 export function buildCueRunSummary(result: CueRunResult): string {
@@ -183,19 +183,19 @@ export function buildCueRunSummary(result: CueRunResult): string {
 	else if (chainTag) head = `${trigger} ${chainTag}`;
 
 	const detail = getCueEventDetail(result.event);
-	return detail ? `${head} — ${detail}` : head;
+	return detail ? `${head} - ${detail}` : head;
 }
 
 /**
  * Extract a short, sentence-aligned excerpt from a Cue run's stdout for use as
  * the History list-row body. Falls back to `undefined` when the output is
  * empty, only whitespace, or so structured that no clean sentence boundary
- * fits within the cap — the caller then substitutes the trigger-label summary.
+ * fits within the cap - the caller then substitutes the trigger-label summary.
  *
  * Strips ANSI escape codes and markdown, collapses whitespace, then greedily
  * accumulates up to `maxSentences` complete sentences while staying within
  * `maxChars`. Sentence boundaries are detected as `.!?` followed by whitespace
- * and a capital letter or digit — good enough to avoid splitting on filenames
+ * and a capital letter or digit - good enough to avoid splitting on filenames
  * like `2026-05-13-AM.md` or numbers like `2.34M`.
  */
 export function extractCueOutputExcerpt(

@@ -1,5 +1,5 @@
 /**
- * Cue Cleanup Service — periodic sweep of stale fan-in trackers and
+ * Cue Cleanup Service - periodic sweep of stale fan-in trackers and
  * time.scheduled dedup keys.
  *
  * Designed to be called on every heartbeat tick via an `onTick` callback

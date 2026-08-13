@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/components/BuildToolsWarningDialog —
+ * Tests for SymphonyModal/components/BuildToolsWarningDialog -
  * the gh-CLI pre-flight state machine (checking → not installed / not
  * authenticated / all clear) and the close vs confirm action paths.
  */

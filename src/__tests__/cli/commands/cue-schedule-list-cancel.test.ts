@@ -2,7 +2,7 @@
  * @file cue-schedule-list-cancel.test.ts
  * @description Tests for the `--list` and `--cancel` modes of the
  * `maestro-cli cue schedule` command. The create branch is exercised
- * elsewhere — this file focuses on the read/delete paths added in Phase 03
+ * elsewhere - this file focuses on the read/delete paths added in Phase 03
  * task 2 of the time.once feature.
  */
 
@@ -278,7 +278,7 @@ describe('cue schedule --cancel <name>', () => {
 
 	it('exits 1 with "No pending task" when the name matches nothing', async () => {
 		// Switch to throwing exit so errorOut behaves like real process termination
-		// — without this the code under test keeps running past the failure point.
+		// - without this the code under test keeps running past the failure point.
 		processExitSpy.mockImplementation(() => {
 			throw new Error('process.exit');
 		});

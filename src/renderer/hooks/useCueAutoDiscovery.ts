@@ -6,7 +6,7 @@ import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
 
 /**
- * useCueAutoDiscovery — auto-discovers .maestro/cue.yaml files for sessions.
+ * useCueAutoDiscovery - auto-discovers .maestro/cue.yaml files for sessions.
  *
  * Integration points:
  * 1. After sessions are restored on app launch, refreshes all sessions
@@ -29,7 +29,7 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 	// that disagrees with the observed flag value.
 	const toggleChainRef = useRef<Promise<void>>(Promise.resolve());
 
-	// Track session additions and removals — always runs regardless of encore flag
+	// Track session additions and removals - always runs regardless of encore flag
 	useEffect(() => {
 		if (!sessionsLoaded) return;
 
@@ -79,7 +79,7 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 
 	// Track encore feature toggle. Queues enable/disable calls on a single
 	// chain so rapid ON/OFF/ON toggles always apply in the order the user
-	// triggered them — not in IPC-response order.
+	// triggered them - not in IPC-response order.
 	useEffect(() => {
 		if (!sessionsLoaded) return;
 

@@ -12,7 +12,7 @@
  *      to `false || true === true`. Spinner renders, CTA never shows.
  *
  * Fix: the editor now gates `!pipelinesLoaded` behind `graphSessions.length > 0`
- * — empty graphSessions after the parent fetch completes correctly falls
+ * - empty graphSessions after the parent fetch completes correctly falls
  * through to the CTA.
  *
  * These tests assert the four-way truth table on the `isLoading` prop that
@@ -176,7 +176,7 @@ const mockTheme = {
 	},
 } as any;
 
-// Synthetic non-empty graph session — content doesn't matter, only `length > 0`.
+// Synthetic non-empty graph session - content doesn't matter, only `length > 0`.
 const SOME_GRAPH_SESSION: CueGraphSession = {
 	sessionId: 's1',
 	sessionName: 'Agent 1',
@@ -204,7 +204,7 @@ function renderEditor({
 	);
 }
 
-describe('CuePipelineEditor — isLoading gate (regression: empty graph spinner stayed forever)', () => {
+describe('CuePipelineEditor - isLoading gate (regression: empty graph spinner stayed forever)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		capturedIsLoading = undefined;

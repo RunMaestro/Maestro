@@ -15,9 +15,16 @@ import type { Session } from '../../../../renderer/types';
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 4, behind: 1 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
 const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
+const DEFAULT_FILE_DETAILS = { totalAdditions: 206, totalDeletions: 37, modifiedCount: 5 };
+const mockGetFileDetails = vi.fn(() => DEFAULT_FILE_DETAILS);
+const mockGetFileCount = vi.fn(() => 5);
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({ getBranchInfo: mockGetBranchInfo }),
-	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
+	useGitDetail: () => ({
+		getFileDetails: mockGetFileDetails,
+		refreshGitStatus: mockRefreshGitStatus,
+	}),
+	useGitFileStatus: () => ({ getFileCount: mockGetFileCount }),
 }));
 
 const mockGetDiff = vi.fn();
@@ -110,7 +117,42 @@ describe('useGitAgentActions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBranchInfo.mockReturnValue(DEFAULT_BRANCH_INFO);
+		mockGetFileDetails.mockReturnValue(DEFAULT_FILE_DETAILS);
+		mockGetFileCount.mockReturnValue(5);
 		mockGetDiff.mockResolvedValue({ diff: 'diff --git a/x b/x' });
+	});
+
+	// Every git surface badges its diff row off these, so they have to survive
+	// the trip out of the two separate contexts that carry them.
+	it('surfaces the working-tree change totals', () => {
+		const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+		expect(result.current.changes).toEqual({
+			fileCount: 5,
+			additions: 206,
+			deletions: 37,
+			modified: 5,
+		});
+	});
+
+	it('reports zero line counts for an agent with no detail polled', () => {
+		// Only the active agent gets numstat, so the others have counts but no lines.
+		mockGetFileDetails.mockReturnValue(undefined as unknown as typeof DEFAULT_FILE_DETAILS);
+		mockGetFileCount.mockReturnValue(4);
+		const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+		expect(result.current.changes).toEqual({
+			fileCount: 4,
+			additions: 0,
+			deletions: 0,
+			modified: 0,
+		});
+	});
+
+	it('reports a clean tree for a null session', () => {
+		const { result } = renderHook(() => useGitAgentActions(null));
+
+		expect(result.current.changes.fileCount).toBe(0);
 	});
 
 	it('surfaces the polled branch and ahead/behind counts', () => {

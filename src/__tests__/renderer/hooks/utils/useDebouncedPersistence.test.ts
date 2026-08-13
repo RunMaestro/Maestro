@@ -1952,7 +1952,7 @@ describe('useDebouncedPersistence', () => {
 				({ sessions }) => useDebouncedPersistence(sessions, initialLoadRef),
 				{ initialProps: { sessions: [s1, s2] } }
 			);
-			// First flush — establishes baseline via setAll. Async because
+			// First flush - establishes baseline via setAll. Async because
 			// persistInternal awaits the IPC; the baseline is only captured
 			// after the mock's resolved promise flushes through microtasks.
 			await act(async () => {
@@ -1960,7 +1960,7 @@ describe('useDebouncedPersistence', () => {
 			});
 			expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
 
-			// Mutate s1 only — Zustand pattern produces a new session object
+			// Mutate s1 only - Zustand pattern produces a new session object
 			const s1Updated = { ...s1, name: 'One Updated' };
 			rerender({ sessions: [s1Updated, s2] });
 			await act(async () => {
@@ -1992,7 +1992,7 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setAll).mockClear();
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			// Same array reference — re-render forces effect to re-run but the
+			// Same array reference - re-render forces effect to re-run but the
 			// diff finds nothing changed.
 			rerender({ sessions: [s1] });
 			await act(async () => {
@@ -2168,7 +2168,7 @@ describe('useDebouncedPersistence', () => {
 		});
 
 		// Retry contract: when the IPC reports a recoverable failure, the
-		// baseline must NOT advance and isPending must NOT clear — otherwise
+		// baseline must NOT advance and isPending must NOT clear - otherwise
 		// beforeunload (which gates on isPending) would have no chance to
 		// retry, and the next debounce flush would diff against a baseline
 		// that doesn't reflect what's actually on disk.
@@ -2254,7 +2254,7 @@ describe('useDebouncedPersistence', () => {
 			});
 			vi.mocked(window.maestro.sessions.setMany).mockClear();
 
-			// Same s1 reference inside a new array — the diff sees no per-session change
+			// Same s1 reference inside a new array - the diff sees no per-session change
 			rerender({ sessions: [s1] });
 			act(() => {
 				vi.advanceTimersByTime(2000);
@@ -2268,7 +2268,7 @@ describe('useDebouncedPersistence', () => {
 		it('does not report a recoverable disk error to Sentry', async () => {
 			// `setAll` returning false is the main process deliberately signalling a
 			// recoverable disk error (e.g. transient ENOSPC). persistInternal throws
-			// only to preserve `isPending` for retry — it's an expected user-env
+			// only to preserve `isPending` for retry - it's an expected user-env
 			// condition, not a Maestro bug, so it must stay out of Sentry.
 			vi.mocked(window.maestro.sessions.setAll).mockResolvedValueOnce(false);
 			const session = makeSession({ id: 'session-qf' });

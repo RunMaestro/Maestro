@@ -10,7 +10,7 @@
  *
  * The fix gates the initial viewport step on ReactFlow's
  * `useNodesInitialized()` and coordinates saved-viewport restoration
- * (owned by usePipelineLayout) with fitView in a single effect — no race.
+ * (owned by usePipelineLayout) with fitView in a single effect - no race.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -50,7 +50,7 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/PipelineContextMenu',
 	PipelineContextMenu: () => null,
 }));
 
-// Stable references across renders — returning a new object literal from the
+// Stable references across renders - returning a new object literal from the
 // mock every render caused a setState loop in `useEffect(() => setDisplayNodes,
 // [computedNodes])`, which OOM'd the Node worker.
 const mockPendingSavedViewportRef = {
@@ -115,7 +115,7 @@ vi.mock('../../../../renderer/hooks/cue/usePipelineState', () => ({
 	validatePipelines: vi.fn(),
 }));
 
-// Stable mock — see note on stableStateHook above.
+// Stable mock - see note on stableStateHook above.
 const stableSelectionHook = {
 	selectedNodeId: null,
 	setSelectedNodeId: vi.fn(),
@@ -185,7 +185,7 @@ function renderEditor() {
 	);
 }
 
-describe('CuePipelineEditor — initial viewport (regression: empty canvas on first open)', () => {
+describe('CuePipelineEditor - initial viewport (regression: empty canvas on first open)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockNodesInitialized = false;
@@ -193,7 +193,7 @@ describe('CuePipelineEditor — initial viewport (regression: empty canvas on fi
 	});
 
 	it('does NOT fitView when nodes have not yet been measured', () => {
-		// Simulates the first render after layout restore — nodes are present
+		// Simulates the first render after layout restore - nodes are present
 		// in state but ReactFlow's dimension measurement has not completed.
 		mockNodesInitialized = false;
 		renderEditor();
@@ -231,7 +231,7 @@ describe('CuePipelineEditor — initial viewport (regression: empty canvas on fi
 	});
 
 	it('restores saved viewport immediately on mount (no need to wait for measurement)', () => {
-		// setViewport is a pure (x, y, zoom) restore — it doesn't depend on
+		// setViewport is a pure (x, y, zoom) restore - it doesn't depend on
 		// node measurement, so it fires immediately. Waiting for
 		// nodesInitialized would briefly show the wrong viewport before
 		// snapping to the saved one.
@@ -271,7 +271,7 @@ describe('CuePipelineEditor — initial viewport (regression: empty canvas on fi
 
 		expect(mockFitView).toHaveBeenCalledTimes(1);
 
-		// Subsequent renders must NOT re-fit — that's the job of the
+		// Subsequent renders must NOT re-fit - that's the job of the
 		// selection-change fitView effect, not the initial one.
 		rerender(
 			<CuePipelineEditor

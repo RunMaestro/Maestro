@@ -5,7 +5,7 @@
  * - AutoRunContext: document list, tree, loading state, task counts
  * - useBatchProcessor: batch run states (via reducer), custom prompts
  *
- * The batch reducer logic is reused directly — dispatchBatch applies the
+ * The batch reducer logic is reused directly - dispatchBatch applies the
  * existing batchReducer function to the current state. Hooks retain their
  * async orchestration; this store owns the state layer only.
  *
@@ -22,7 +22,7 @@ import { batchReducer, type BatchAction } from '../hooks/batch/batchReducer';
 // ============================================================================
 
 /**
- * Task count entry — tracks completed vs total tasks for a document.
+ * Task count entry - tracks completed vs total tasks for a document.
  * Moved from AutoRunContext.
  */
 export interface TaskCountEntry {
@@ -129,7 +129,7 @@ export const useBatchStore = create<BatchStore>()((set) => ({
 	setDocumentList: (v) =>
 		set((s) => {
 			const next = resolve(v, s.documentList);
-			// Skip update when content is unchanged — prevents reference churn from
+			// Skip update when content is unchanged - prevents reference churn from
 			// SSH polling (every 3s the loader replaces the array with a fresh
 			// reference, retriggering downstream effects like BatchRunnerModal's
 			// task-count loader). See useAutoRunDocumentLoader runRemotePoll.

@@ -90,7 +90,7 @@ export interface UseBatchRunnerReturn {
 }
 
 /**
- * The Auto Run orchestrator. Owns `startBatchRun` — initial validation,
+ * The Auto Run orchestrator. Owns `startBatchRun` - initial validation,
  * worktree setup, the per-document/per-task loop, stall detection, progress
  * polling, history recording, the natural-completion final-summary path
  * (claiming the flush state via `claimFlushState`), `onComplete`, and the
@@ -130,7 +130,7 @@ export function useBatchRunner({
 	/**
 	 * Start a batch processing run for a specific session with multi-document support.
 	 * Note: sessionId and folderPath can belong to different sessions when running
-	 * in a worktree — the parent session owns the Auto Run documents (folderPath)
+	 * in a worktree - the parent session owns the Auto Run documents (folderPath)
 	 * while the worktree agent (sessionId) executes the tasks.
 	 */
 	const startBatchRun = useCallback(
@@ -222,7 +222,7 @@ export function useBatchRunner({
 			if (config.worktreeTarget) {
 				// Worktree dispatch was already handled by useAutoRunHandlers
 				// (spawnWorktreeAgentAndDispatch created the worktree and session).
-				// Skip setupWorktree — calling it again would fail because the session's
+				// Skip setupWorktree - calling it again would fail because the session's
 				// CWD is already a worktree, not the main repo, causing a
 				// "belongs to a different repository" false positive.
 				effectiveCwd = session.cwd;
@@ -320,7 +320,7 @@ export function useBatchRunner({
 			// Broadcast state change. Mirrors the START_BATCH payload above so mobile
 			// /web clients see the same pre-checked count the reducer just stored
 			// (avoids a brief "0/N" flicker before the next progress update arrives).
-			// `completedTasks` is intentionally 0 — the reducer also hardcodes the
+			// `completedTasks` is intentionally 0 - the reducer also hardcodes the
 			// legacy field to 0 in START_BATCH.
 			broadcastAutoRunState(sessionId, {
 				isRunning: true,
@@ -463,7 +463,7 @@ export function useBatchRunner({
 			const stalledDocuments: Map<string, string> = new Map();
 
 			// Track the line of the currently-active HITL gate (null when none).
-			// Used to (a) dedupe the sticky toast on Resume-without-tick —
+			// Used to (a) dedupe the sticky toast on Resume-without-tick -
 			// pauseBatchOnError fires every iteration that re-detects the same
 			// marker, but the user should only see one notification per real
 			// gate; and (b) flag that a returning 'resume' action came from a
@@ -646,7 +646,7 @@ export function useBatchRunner({
 							// HITL-scoped resume: when the pause we're resuming from was a
 							// HITL gate, re-read the document so the next iteration's gate
 							// check (and processTask) see whatever the user did during
-							// the pause — most importantly, ticking the human-approval
+							// the pause - most importantly, ticking the human-approval
 							// checkbox. Without this the in-memory `docContent` still
 							// contains the unchecked task and we'd re-pause forever.
 							//
@@ -697,7 +697,7 @@ export function useBatchRunner({
 							// Dedupe: only fire the user-facing toast the first time we
 							// pause at a given gate. Resume-without-tick re-runs this
 							// detection on the next iteration, but the user already has
-							// the same banner up — stacking another sticky toast each
+							// the same banner up - stacking another sticky toast each
 							// time would force them to clear N notifications.
 							const isNewGate = activeHitlGateLine !== hitlGate.line;
 							activeHitlGateLine = hitlGate.line;
@@ -714,7 +714,7 @@ export function useBatchRunner({
 									}
 								);
 
-								// Sticky toast — the user must acknowledge a review gate,
+								// Sticky toast - the user must acknowledge a review gate,
 								// so it should not auto-dismiss. Click jumps to the agent
 								// so the user can see the AutoRunErrorBanner with the
 								// Resume/Abort buttons.
@@ -731,11 +731,11 @@ export function useBatchRunner({
 							}
 
 							// Next loop iteration's await-on-errorResolution block handles
-							// the actual wait — keeps the pause control flow in one place.
+							// the actual wait - keeps the pause control flow in one place.
 							continue;
 						}
 
-						// No pending gate — clear the active-gate marker so a future
+						// No pending gate - clear the active-gate marker so a future
 						// gate on a different line is treated as a fresh notification.
 						activeHitlGateLine = null;
 
@@ -744,8 +744,8 @@ export function useBatchRunner({
 						// session registration, re-reading document, and synopsis generation
 
 						// Poll only the currently-processing document. Other documents in the
-						// playbook can't change during this task — the agent is working on
-						// docEntry — so snapshot their counts once and reuse them across ticks.
+						// playbook can't change during this task - the agent is working on
+						// docEntry - so snapshot their counts once and reuse them across ticks.
 						const progressPoll = createProgressPoll({
 							documents,
 							docEntry,
@@ -812,7 +812,7 @@ export function useBatchRunner({
 							// Detect stalling via task-count invariance: if no tasks were checked off AND
 							// the set of tasks didn't change (none added, none removed), the agent made
 							// no real progress this iteration. This ignores prose/addendum churn in the
-							// document — an agent writing "why I did nothing" into the file doesn't
+							// document - an agent writing "why I did nothing" into the file doesn't
 							// count as progress.
 							const prevCheckedCount = docCheckedCount;
 							const prevUncheckedCount = remainingTasks;
@@ -836,7 +836,7 @@ export function useBatchRunner({
 								consecutiveNoChangeCount = 0;
 							}
 
-							// AUTORUN LOG: stall detection trace — logged every iteration so field
+							// AUTORUN LOG: stall detection trace - logged every iteration so field
 							// reports can reconstruct why the counter did or did not increment.
 							// `appendOnlyNoProgress` flags the "agent appended explanation text instead
 							// of doing work" pattern: doc bytes grew but the task set is unchanged.
@@ -1035,7 +1035,7 @@ export function useBatchRunner({
 								);
 
 								// Whether another playbook document follows this one. `documents.length > 1`
-								// was wrong for the last doc in a multi-doc run — it would tell the
+								// was wrong for the last doc in a multi-doc run - it would tell the
 								// user we were skipping to the next document when the batch was
 								// actually about to end.
 								const hasNextDocument = docIndex < documents.length - 1;
@@ -1073,7 +1073,7 @@ export function useBatchRunner({
 								});
 
 								// Surface the stall in a toast so the user sees it without having to
-								// open the history panel — pre-toast, silent stalls (token exhaustion,
+								// open the history panel - pre-toast, silent stalls (token exhaustion,
 								// watchdog timeouts, agents that loop writing "I did nothing" notes)
 								// could go unnoticed for hours. Yellow/warning conveys "we noticed
 								// something is wrong and stopped this doc," click jumps to the session.
@@ -1120,7 +1120,7 @@ export function useBatchRunner({
 									break;
 								}
 
-								// 'resume' — re-read document to get accurate task count before continuing
+								// 'resume' - re-read document to get accurate task count before continuing
 								const {
 									taskCount,
 									checkedCount,
@@ -1132,7 +1132,7 @@ export function useBatchRunner({
 								continue;
 							}
 
-							// No error resolution pending — continue to next task on error
+							// No error resolution pending - continue to next task on error
 							remainingTasks--;
 						}
 					}

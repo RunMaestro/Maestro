@@ -1,4 +1,4 @@
-/* DualPaneFileEditor — shared split-pane editor chrome */
+/* DualPaneFileEditor - shared split-pane editor chrome */
 
 .dual-pane-file-editor {
 	display: flex;
@@ -211,7 +211,7 @@
 }
 
 /* Shared textarea styling used by consumers (Memory Viewer, Maestro Prompts).
- * Lives here so the shared editor chrome owns its own look — consumers that drop
+ * Lives here so the shared editor chrome owns its own look - consumers that drop
  * a textarea into renderEditorBody don't have to depend on unrelated stylesheets
  * being loaded. */
 .dual-pane-textarea {

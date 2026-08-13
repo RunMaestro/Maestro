@@ -54,7 +54,7 @@ describe('CueSelect', () => {
 		fireEvent.click(screen.getByRole('button', { name: /alpha/i }));
 		fireEvent.click(screen.getByText('Gamma'));
 		expect(onChange).toHaveBeenCalledWith('c');
-		// Dropdown should close — only the trigger button visible
+		// Dropdown should close - only the trigger button visible
 		expect(screen.queryAllByText('Beta')).toHaveLength(0);
 	});
 
@@ -221,7 +221,7 @@ describe('CueSelect', () => {
 			fireEvent.click(screen.getByText('Alpha').closest('button')!);
 			const input = screen.getByPlaceholderText('Filter…');
 
-			// Narrow to Beta + Gamma (labels containing "a" — Alpha, Beta, Gamma all contain 'a')
+			// Narrow to Beta + Gamma (labels containing "a" - Alpha, Beta, Gamma all contain 'a')
 			fireEvent.change(input, { target: { value: 'a' } });
 			// Active resets to first match. ArrowDown → next match. Enter selects it.
 			fireEvent.keyDown(input, { key: 'ArrowDown' });

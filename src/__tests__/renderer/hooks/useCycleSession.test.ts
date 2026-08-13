@@ -198,7 +198,7 @@ describe('useCycleSession', () => {
 	});
 
 	// =========================================================================
-	// Empty visual order — no-op
+	// Empty visual order - no-op
 	// =========================================================================
 	describe('empty visual order', () => {
 		it('does nothing when no sessions, groups, or group chats exist', () => {
@@ -228,13 +228,13 @@ describe('useCycleSession', () => {
 				result.current.cycleSession('next');
 			});
 
-			// activeSessionId should remain 'a' because visual order is empty — no-op
+			// activeSessionId should remain 'a' because visual order is empty - no-op
 			expect(useSessionStore.getState().activeSessionId).toBe('a');
 		});
 	});
 
 	// =========================================================================
-	// Ungrouped sessions — sidebar open, bookmarks collapsed, no groups, no group chats
+	// Ungrouped sessions - sidebar open, bookmarks collapsed, no groups, no group chats
 	// =========================================================================
 	describe('next cycling — ungrouped sessions', () => {
 		it('moves to the next session in alphabetical order', () => {
@@ -296,7 +296,7 @@ describe('useCycleSession', () => {
 	});
 
 	// =========================================================================
-	// Prev cycling — reverse direction
+	// Prev cycling - reverse direction
 	// =========================================================================
 	describe('prev cycling', () => {
 		it('moves to the previous session in alphabetical order', () => {
@@ -446,7 +446,7 @@ describe('useCycleSession', () => {
 			});
 
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
-			// cyclePosition should be 0 (first occurrence — bookmark slot)
+			// cyclePosition should be 0 (first occurrence - bookmark slot)
 			expect(useSessionStore.getState().cyclePosition).toBe(0);
 		});
 
@@ -457,7 +457,7 @@ describe('useCycleSession', () => {
 
 			useSessionStore.setState({
 				sessions: [sessA, sessB],
-				// Start active on B — cyclePosition=0 means we're on the bookmark slot
+				// Start active on B - cyclePosition=0 means we're on the bookmark slot
 				activeSessionId: 'b',
 				cyclePosition: 0,
 			} as any);
@@ -931,7 +931,7 @@ describe('useCycleSession', () => {
 			});
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 
-			// wrap around — Beta → Alpha (not Hidden)
+			// wrap around - Beta → Alpha (not Hidden)
 			act(() => {
 				result.current.cycleSession('next');
 			});
@@ -1229,7 +1229,7 @@ describe('useCycleSession', () => {
 			const deps = makeDeps({ handleOpenGroupChat });
 			const { result } = renderHook(() => useCycleSession(deps));
 
-			// Visual order: [Alpha(0), Active Chat(1)] — Archived Chat excluded
+			// Visual order: [Alpha(0), Active Chat(1)] - Archived Chat excluded
 			// next from Alpha → Active Chat
 			act(() => {
 				result.current.cycleSession('next');
@@ -1251,7 +1251,7 @@ describe('useCycleSession', () => {
 	});
 
 	// =========================================================================
-	// Sidebar collapsed — uses sortedSessions from deps
+	// Sidebar collapsed - uses sortedSessions from deps
 	// =========================================================================
 	describe('sidebar collapsed', () => {
 		it('uses sortedSessions from deps when sidebar is closed', () => {
@@ -1315,7 +1315,7 @@ describe('useCycleSession', () => {
 	});
 
 	// =========================================================================
-	// Current item not visible — selects first visible item
+	// Current item not visible - selects first visible item
 	// =========================================================================
 	describe('current item not visible', () => {
 		it('selects first visible item when active session is not in visual order', () => {
@@ -1522,7 +1522,7 @@ describe('useCycleSession', () => {
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
 
-			// Visual order: [Beta, Parent] — child is excluded, parent is ungrouped
+			// Visual order: [Beta, Parent] - child is excluded, parent is ungrouped
 			// Active = 'p' (Parent, index 1), next → wraps to Beta(0)
 			act(() => {
 				result.current.cycleSession('next');
@@ -1601,7 +1601,7 @@ describe('useCycleSession', () => {
 			const deps = makeDeps();
 			const { result } = renderHook(() => useCycleSession(deps));
 
-			// Visual order: [Parent(0), child(1)] — child appears once, under parent
+			// Visual order: [Parent(0), child(1)] - child appears once, under parent
 			// Active = c (index 1); next → wraps to Parent(0)
 			act(() => {
 				result.current.cycleSession('next');
@@ -1703,7 +1703,7 @@ describe('useCycleSession', () => {
 			act(() => {
 				result.current.cycleSession('next');
 			});
-			// Falls back to findIndex — Alpha found at 0 → next is Beta at 1
+			// Falls back to findIndex - Alpha found at 0 → next is Beta at 1
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 			expect(useSessionStore.getState().cyclePosition).toBe(1);
 		});
@@ -1729,7 +1729,7 @@ describe('useCycleSession', () => {
 			act(() => {
 				result.current.cycleSession('next');
 			});
-			// Falls back to findIndex — Alpha at 0, next is Beta at 1
+			// Falls back to findIndex - Alpha at 0, next is Beta at 1
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 			expect(useSessionStore.getState().cyclePosition).toBe(1);
 		});
@@ -1854,7 +1854,7 @@ describe('useCycleSession', () => {
 	});
 
 	// =========================================================================
-	// Unread filter — showUnreadAgentsOnly restricts cycling
+	// Unread filter - showUnreadAgentsOnly restricts cycling
 	// =========================================================================
 	describe('unread agents filter', () => {
 		it('cycles only through unread sessions when filter is active', () => {
@@ -2027,7 +2027,7 @@ describe('useCycleSession', () => {
 				result.current.cycleSession('next');
 			});
 
-			// All sessions visible — Alpha → Beta
+			// All sessions visible - Alpha → Beta
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 	});

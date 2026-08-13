@@ -27,10 +27,10 @@ export interface LeftPanelProps {
 	onResizeStart?: (e: React.MouseEvent) => void;
 	/** When true, renders as a full-screen overlay (mobile) instead of an inline side panel */
 	isFullScreen?: boolean;
-	/** Lifted group collapse state — persists across panel open/close */
+	/** Lifted group collapse state - persists across panel open/close */
 	collapsedGroups: Set<string>;
 	setCollapsedGroups: React.Dispatch<React.SetStateAction<Set<string>>>;
-	/** Lifted bell filter state — persists across panel open/close */
+	/** Lifted bell filter state - persists across panel open/close */
 	showUnreadOnly: boolean;
 	setShowUnreadOnly: React.Dispatch<React.SetStateAction<boolean>>;
 	/** Available groups for move-to-group */
@@ -146,7 +146,7 @@ function passesUnreadFilter(
  * filtering out worktree children from the top-level list.
  *
  * When `includeBookmarks` is true, bookmarked top-level sessions also appear in
- * a dedicated "Bookmarks" section at the top — in addition to their normal
+ * a dedicated "Bookmarks" section at the top - in addition to their normal
  * group. This mirrors the desktop Left Bar and the mobile AllSessionsView /
  * SessionPillBar. The bookmarks section is suppressed under the unread filter
  * (same as the desktop Left Bar) so the filtered list only shows agents that
@@ -698,7 +698,7 @@ export function LeftPanel({
 		[setCollapsedGroups]
 	);
 
-	// Bell filter — when enabled, show only sessions that are active, busy,
+	// Bell filter - when enabled, show only sessions that are active, busy,
 	// have unread tabs, or have a worktree child that is busy/unread.
 	// State is lifted to the parent so it persists across panel unmount/remount.
 	const worktreeChildrenByParent = useMemo(() => buildWorktreeChildrenMap(sessions), [sessions]);

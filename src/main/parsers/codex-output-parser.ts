@@ -477,7 +477,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (payload.type === 'agent_message' && payload.message) {
 			const isCommentary = payload.phase === 'commentary';
 			if (isCommentary) {
-				// Commentary is intermediate progress text — emit as partial text
+				// Commentary is intermediate progress text - emit as partial text
 				return {
 					type: 'text',
 					text: payload.message,
@@ -517,7 +517,7 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// task_started, user_message, and other event types — system events
+		// task_started, user_message, and other event types - system events
 		return {
 			type: 'system',
 			raw: msg,
@@ -552,7 +552,7 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 			}
 
-			// User/developer/system messages — skip (system events)
+			// User/developer/system messages - skip (system events)
 			return {
 				type: 'system',
 				raw: msg,
@@ -619,7 +619,7 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Unknown response_item type — system event
+		// Unknown response_item type - system event
 		return {
 			type: 'system',
 			raw: msg,
@@ -712,7 +712,7 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'tool_call':
-				// Legacy: Agent is using a tool — store tool name for the subsequent tool_result
+				// Legacy: Agent is using a tool - store tool name for the subsequent tool_result
 				this.lastToolName = item.tool || null;
 				return {
 					type: 'tool_use',
@@ -725,7 +725,7 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'tool_result': {
-				// Legacy: Tool execution completed — carry over tool name from preceding tool_call
+				// Legacy: Tool execution completed - carry over tool name from preceding tool_call
 				const toolName = this.lastToolName || undefined;
 				this.lastToolName = null;
 				return {

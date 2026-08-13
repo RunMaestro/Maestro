@@ -1,5 +1,5 @@
 /**
- * useInputKeyDown — extracted from App.tsx (Phase 2F)
+ * useInputKeyDown - extracted from App.tsx (Phase 2F)
  *
  * Owns the handleInputKeyDown keyboard event handler for the main input area.
  * Handles tab completion, @ mentions, slash commands, enter-to-send,
@@ -164,11 +164,19 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				((e.key === 'Escape' && !inputValue.trim()) || (e.key === 'Backspace' && !inputValue))
 			) {
 				e.preventDefault();
+				// stopPropagation is what actually keeps the caret here, and it is not
+				// optional. `useKeyboardNavigation.handleEscapeInMain` is a WINDOW-level
+				// keydown listener that blurs the composer and focuses the transcript on
+				// any Escape pressed while the composer has focus. This handler is on
+				// the element, so it runs first - and without stopping the event, that
+				// window listener fires immediately afterwards and undoes the focus()
+				// below. Verified: with propagation the composer ends up blurred, with
+				// it stopped the caret stays put.
+				e.stopPropagation();
 				setCommandMode(false);
-				// Keep the caret in the composer. Exiting command mode hands the input
-				// back to the agent, so the user is still typing - dropping focus would
-				// make the next keystroke go nowhere. Explicit rather than relying on
-				// React not remounting the textarea when the mode bar and `$` prefix
+				// Belt and braces alongside the line above: exiting hands the input back
+				// to the agent, so the user is still typing. Explicit rather than relying
+				// on React not remounting the textarea when the mode bar and `$` prefix
 				// unmount around it.
 				inputRef.current?.focus();
 				return;
@@ -289,7 +297,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			}
 
 			// Read enter-to-send settings at call time (not closure).
-			// A per-tab override wins over the global default — set when the user
+			// A per-tab override wins over the global default - set when the user
 			// clicks the chip or runs the palette toggle on a specific tab.
 			const settings = useSettingsStore.getState();
 			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);

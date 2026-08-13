@@ -7,10 +7,24 @@ import { openUrl } from '../utils/openUrl';
 import { formatDurationParts as formatDuration } from '../../shared/formatters';
 import { getToastWidthDimensions } from '../../shared/toastWidth';
 import { Z_LAYERS } from '../constants/zLayers';
+import { CopyIconButton } from './ui';
 
 interface ToastContainerProps {
 	theme: Theme;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
+}
+
+/**
+ * Flatten a toast into the plain text a user would want on the clipboard:
+ * the context line, the title, the body, and any action URL. Exported for tests.
+ */
+export function buildToastClipboardText(toast: ToastType): string {
+	const context = [toast.group, toast.project, toast.tabName].filter(Boolean).join(' · ');
+	const lines = [context, toast.title, toast.message, toast.actionUrl];
+	return lines
+		.filter((line): line is string => Boolean(line && line.trim()))
+		.join('\n')
+		.trim();
 }
 
 const ToastItem = memo(function ToastItem({
@@ -102,7 +116,7 @@ const ToastItem = memo(function ToastItem({
 					</svg>
 				);
 			case 'red':
-				// XCircle — error. Circled so it's not mistaken for the bare close (X) button.
+				// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -114,7 +128,7 @@ const ToastItem = memo(function ToastItem({
 					</svg>
 				);
 			case 'yellow':
-				// Info-style "i" — yellow is a soft heads-up.
+				// Info-style "i" - yellow is a soft heads-up.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -126,7 +140,7 @@ const ToastItem = memo(function ToastItem({
 					</svg>
 				);
 			case 'orange':
-				// AlertTriangle — more emphatic warning than yellow.
+				// AlertTriangle - more emphatic warning than yellow.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -139,7 +153,7 @@ const ToastItem = memo(function ToastItem({
 				);
 			case 'theme':
 			default:
-				// Sparkles — themed default, no semantic.
+				// Sparkles - themed default, no semantic.
 				return (
 					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -153,7 +167,7 @@ const ToastItem = memo(function ToastItem({
 		}
 	};
 
-	/** Fixed orange — no theme defines this slot. Matches CenterFlash. */
+	/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
 	const ORANGE_HEX = '#f97316';
 
 	const getTypeColor = () => {
@@ -300,34 +314,46 @@ const ToastItem = memo(function ToastItem({
 					)}
 				</div>
 
-				{/* Close button — emphasized when toast is dismissible (sticky) */}
-				<button
-					onClick={handleClose}
-					className="flex-shrink-0 p-1 rounded transition-colors"
-					style={
-						toast.dismissible
-							? {
-									color: getTypeColor(),
-									backgroundColor: `${getTypeColor()}1F`,
-									boxShadow: `0 0 0 1px ${getTypeColor()}40 inset`,
-								}
-							: { color: theme.colors.textDim }
-					}
-					title={toast.dismissible ? 'Dismiss' : undefined}
-					aria-label={toast.dismissible ? 'Dismiss notification' : 'Close'}
-				>
-					<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M6 18L18 6M6 6l12 12"
-						/>
-					</svg>
-				</button>
+				{/* Right rail: close on top, copy pinned to the bottom */}
+				<div className="flex-shrink-0 self-stretch flex flex-col items-center justify-between gap-2">
+					{/* Close button - emphasized when toast is dismissible (sticky) */}
+					<button
+						onClick={handleClose}
+						className="p-1 rounded transition-colors"
+						style={
+							toast.dismissible
+								? {
+										color: getTypeColor(),
+										backgroundColor: `${getTypeColor()}1F`,
+										boxShadow: `0 0 0 1px ${getTypeColor()}40 inset`,
+									}
+								: { color: theme.colors.textDim }
+						}
+						title={toast.dismissible ? 'Dismiss' : undefined}
+						aria-label={toast.dismissible ? 'Dismiss notification' : 'Close'}
+					>
+						<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+
+					{/* Copy the toast text - never navigates, even on a clickable toast */}
+					<CopyIconButton
+						value={() => buildToastClipboardText(toast)}
+						theme={theme}
+						title="Copy notification text"
+						iconClassName="w-3.5 h-3.5"
+						testId="toast-copy-button"
+					/>
+				</div>
 			</div>
 
-			{/* Progress bar — hidden for dismissible (sticky) toasts */}
+			{/* Progress bar - hidden for dismissible (sticky) toasts */}
 			{!toast.dismissible && toast.duration && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"

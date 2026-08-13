@@ -373,11 +373,11 @@ export function parseWorktreePathForBranch(stdout: string, branchName: string): 
  * be entered left-to-right without cursor backtracking.
  *
  * Used by both the WorktreeRunSection (Auto Run "Create New Worktree") and the
- * CreateWorktreeModal so the same input — e.g. "Cue Dashboard" — produces the
+ * CreateWorktreeModal so the same input - e.g. "Cue Dashboard" - produces the
  * same sanitized branch ("Cue-Dashboard") regardless of entry point.
  */
 // Built from string form so the source file doesn't carry raw control bytes.
-// Matches ASCII control characters (U+0000–U+001F, U+007F) which git rejects in refs.
+// Matches ASCII control characters (U+0000-U+001F, U+007F) which git rejects in refs.
 const GIT_REF_CONTROL_CHARS_RE = new RegExp('[\\u0000-\\u001f\\u007f]', 'g');
 
 export interface SanitizeGitBranchNameOptions {
@@ -400,7 +400,7 @@ export function sanitizeGitBranchName(
 	s = s.replace(/\s+/g, '-');
 	// Replace characters git forbids in ref names
 	s = s.replace(/[~^:?*[\\]/g, '-');
-	// `..` and `@{` are illegal sequences — flatten them
+	// `..` and `@{` are illegal sequences - flatten them
 	s = s.replace(/\.\.+/g, '.');
 	s = s.replace(/@\{/g, '-');
 	// No consecutive slashes
@@ -415,6 +415,45 @@ export function sanitizeGitBranchName(
 		s = s.replace(/[/.]+$/, '');
 	}
 	return s;
+}
+
+/**
+ * Uncommitted-change totals for one repo, as the renderer's git status polling
+ * reports them. Line-level counts are only collected for the active agent, so
+ * `additions`/`deletions`/`modified` are all 0 for every other agent even when
+ * `fileCount` is not - anything rendering these must fall back to the count.
+ */
+export interface GitChangeTotals {
+	/** Number of changed files in the working tree. */
+	fileCount: number;
+	/** Added lines (0 when line-level detail was not collected). */
+	additions: number;
+	/** Removed lines (0 when line-level detail was not collected). */
+	deletions: number;
+	/** Modified files (0 when line-level detail was not collected). */
+	modified: number;
+}
+
+/**
+ * One-line readout of a working tree's uncommitted changes, for tooltips and
+ * command-palette subtext.
+ *
+ * @param totals - Change totals from git status polling
+ * @returns e.g. `+206 −37 ~5 in 5 files`, `5 files changed`, or `No uncommitted changes`
+ */
+export function formatGitChangeSummary(totals: GitChangeTotals): string {
+	const { fileCount, additions, deletions, modified } = totals;
+	if (fileCount <= 0) return 'No uncommitted changes';
+
+	const files = `${fileCount} file${fileCount === 1 ? '' : 's'}`;
+	const parts: string[] = [];
+	if (additions > 0) parts.push(`+${additions}`);
+	if (deletions > 0) parts.push(`−${deletions}`);
+	if (modified > 0) parts.push(`~${modified}`);
+
+	// No line-level detail (a non-active agent, or untracked files only).
+	if (parts.length === 0) return `${files} changed`;
+	return `${parts.join(' ')} in ${files}`;
 }
 
 /**

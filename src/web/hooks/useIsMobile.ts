@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-/** Default breakpoint in pixels — at or below this width is considered mobile */
+/** Default breakpoint in pixels - at or below this width is considered mobile */
 const MOBILE_BREAKPOINT = 768;
 
 /** Debounce delay in milliseconds for resize events */

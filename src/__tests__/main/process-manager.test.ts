@@ -22,7 +22,7 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock platform detection — delegates to process.platform by default so
+// Mock platform detection - delegates to process.platform by default so
 // pre-existing tests that override process.platform still work. Kill-method
 // tests override via mockReturnValueOnce / mockReturnValue.
 const { mockIsWindows } = vi.hoisted(() => ({
@@ -681,7 +681,7 @@ describe('process-manager.ts', () => {
 						shell: 'zsh',
 					});
 				} catch {
-					// spawn may fail due to mock — we only care about the kill call
+					// spawn may fail due to mock - we only care about the kill call
 				}
 
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGTERM');
@@ -774,7 +774,7 @@ describe('process-manager.ts', () => {
 
 				processManager.killAll({ shutdown: true });
 
-				// SIGKILL only — no SIGTERM, no escalation timer, no onExit listener.
+				// SIGKILL only - no SIGTERM, no escalation timer, no onExit listener.
 				expect(mockPtyKill).toHaveBeenCalledTimes(1);
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGKILL');
 				expect(mockOnExit).not.toHaveBeenCalled();

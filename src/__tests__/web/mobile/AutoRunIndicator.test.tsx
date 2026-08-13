@@ -677,7 +677,7 @@ describe('AutoRunIndicator', () => {
 	describe('keyboard activation', () => {
 		// Review feedback: the banner exposes button semantics (role=button,
 		// tabIndex=0) but the original implementation only fired onTap on mouse
-		// click — keyboard users couldn't open the Auto Run panel from the
+		// click - keyboard users couldn't open the Auto Run panel from the
 		// banner. These tests pin the Enter / Space / legacy Spacebar bindings
 		// and verify they mirror the mouse-click enablement.
 
@@ -737,7 +737,7 @@ describe('AutoRunIndicator', () => {
 
 		it('does not invoke onTap when onTap is not provided', () => {
 			// If the banner is purely informational (no onTap), keyboard
-			// activation should be a no-op — no handler, no role=button.
+			// activation should be a no-op - no handler, no role=button.
 			const state = createAutoRunState();
 			const { container } = render(<AutoRunIndicator state={state} />);
 			const banner = container.firstChild as HTMLElement;

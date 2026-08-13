@@ -9,14 +9,14 @@
  *   highlighter instance lives at runtime, with languages loaded on demand.
  *
  * Public API:
- *   - `getHighlighter()` — returns a Promise that resolves to the singleton.
+ *   - `getHighlighter()` - returns a Promise that resolves to the singleton.
  *     Triggers the dynamic `import('shiki')` on first call.
- *   - `ensureLanguage(highlighter, lang)` — lazily loads a language grammar
+ *   - `ensureLanguage(highlighter, lang)` - lazily loads a language grammar
  *     after the initial bundle. Returns the resolved language id (after alias
  *     normalisation) or `null` if Shiki doesn't ship that language.
- *   - `resolveLanguage(input)` — normalise a raw fence tag (`'ts'`,
+ *   - `resolveLanguage(input)` - normalise a raw fence tag (`'ts'`,
  *     `'TypeScript'`, `'sh'`) to a bundled Shiki language id, or null.
- *   - `themeNameForMode(mode)` — pick `github-light` / `github-dark` from a
+ *   - `themeNameForMode(mode)` - pick `github-light` / `github-dark` from a
  *     Theme.mode.
  */
 
@@ -35,7 +35,7 @@ type ShikiApi = Pick<
  * Dynamic imports through Vite 8 / Rolldown sometimes hand back a module
  * where the runtime API lives under `.default` (CJS interop) instead of the
  * top-level namespace. This matches the same defensive normaliser the
- * `languageDetect` module applies to `highlight.js` — silently picking the
+ * `languageDetect` module applies to `highlight.js` - silently picking the
  * wrong shape is exactly what would produce "Shiki loaded but
  * `createHighlighter` is undefined → catch → fallback → no colors".
  */
@@ -204,7 +204,7 @@ export function resolveLanguageSync(input: string | null | undefined): string | 
 	if (input == null) return null;
 	const lower = input.toLowerCase().trim();
 	if ((PRELOADED_LANGUAGES as readonly string[]).includes(lower)) return lower;
-	// Hit the alias table even for empty strings — `LANGUAGE_ALIASES['']` maps
+	// Hit the alias table even for empty strings - `LANGUAGE_ALIASES['']` maps
 	// the no-fence-tag case to `'text'`.
 	if (lower in LANGUAGE_ALIASES) return LANGUAGE_ALIASES[lower];
 	return null;
@@ -258,7 +258,7 @@ export async function ensureLanguage(
 }
 
 /**
- * Reset the singleton. Test-only — production code should never need this.
+ * Reset the singleton. Test-only - production code should never need this.
  */
 export function __resetForTests(): void {
 	highlighterPromise = null;

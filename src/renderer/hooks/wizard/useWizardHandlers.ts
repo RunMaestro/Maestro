@@ -1,5 +1,5 @@
 /**
- * useWizardHandlers — extracted from App.tsx
+ * useWizardHandlers - extracted from App.tsx
  *
  * Orchestrates all wizard-related handlers:
  *   - Inline wizard lifecycle (start, complete, thinking toggle)
@@ -73,9 +73,9 @@ import { logger } from '../../utils/logger';
 // ============================================================================
 
 export interface UseWizardHandlersDeps {
-	/** Inline wizard context — the full return value from useInlineWizard */
+	/** Inline wizard context - the full return value from useInlineWizard */
 	inlineWizardContext: UseInlineWizardReturn;
-	/** Onboarding wizard context — state, completeWizard, clearResumeState, openWizard, restoreState */
+	/** Onboarding wizard context - state, completeWizard, clearResumeState, openWizard, restoreState */
 	wizardContext: {
 		state: WizardState;
 		completeWizard: (sessionId: string | null) => Promise<void>;
@@ -128,11 +128,11 @@ export interface UseWizardHandlersDeps {
 export interface UseWizardHandlersReturn {
 	/** Wrapper for sendInlineWizardMessage that routes thinking chunks to tab state */
 	sendWizardMessageWithThinking: (content: string, images?: string[]) => Promise<void>;
-	/** Handler for /history command — spawns synopsis and saves to history */
+	/** Handler for /history command - spawns synopsis and saves to history */
 	handleHistoryCommand: () => Promise<void>;
-	/** Handler for /skills command — lists Claude Code skills */
+	/** Handler for /skills command - lists Claude Code skills */
 	handleSkillsCommand: () => Promise<void>;
-	/** Handler for /wizard command — starts inline wizard */
+	/** Handler for /wizard command - starts inline wizard */
 	handleWizardCommand: (args: string) => void;
 	/** Launch wizard in a new tab from Auto Run panel */
 	handleLaunchWizardTab: () => void;
@@ -454,7 +454,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			const tabId = activeTab?.id;
 
 			// Pass the active tab id explicitly so the message lands on the wizard the user is
-			// looking at — useInlineWizard's currentTabId fallback can point at a stale tab when
+			// looking at - useInlineWizard's currentTabId fallback can point at a stale tab when
 			// multiple wizards (e.g. council seats) are open concurrently.
 			await sendInlineWizardMessage(
 				content,
@@ -534,7 +534,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	);
 
 	// ========================================================================
-	// handleHistoryCommand — /history slash command
+	// handleHistoryCommand - /history slash command
 	// ========================================================================
 	const handleHistoryCommand = useCallback(async () => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
@@ -724,7 +724,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	}, [activeSession?.id, spawnBackgroundSynopsis, addHistoryEntry, setSessions]);
 
 	// ========================================================================
-	// handleSkillsCommand — /skills slash command
+	// handleSkillsCommand - /skills slash command
 	// ========================================================================
 	const handleSkillsCommand = useCallback(async () => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
@@ -827,7 +827,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	}, [activeSession?.id]);
 
 	// ========================================================================
-	// handleWizardCommand — /wizard slash command
+	// handleWizardCommand - /wizard slash command
 	// ========================================================================
 	const handleWizardCommand = useCallback(
 		(args: string) => {
@@ -896,7 +896,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	);
 
 	// ========================================================================
-	// handleLaunchWizardTab — launches wizard in a new tab
+	// handleLaunchWizardTab - launches wizard in a new tab
 	// ========================================================================
 	const handleLaunchWizardTab = useCallback(() => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
@@ -967,13 +967,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	}, [activeSession?.id, startInlineWizard, setSessions]);
 
 	// ========================================================================
-	// isWizardActiveForCurrentTab — derived value
+	// isWizardActiveForCurrentTab - derived value
 	// ========================================================================
 	const isWizardActiveForCurrentTab = useMemo(() => {
 		if (!activeSession) return false;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return false;
-		// Use the per-tab primitive instead of the hook's singleton currentTabId — the latter only
+		// Use the per-tab primitive instead of the hook's singleton currentTabId - the latter only
 		// tracks the last-touched wizard and is wrong when concurrent wizards run on multiple tabs.
 		return isInlineWizardActiveForTab(activeTab.id);
 	}, [activeSession, activeSession?.activeTabId, isInlineWizardActiveForTab]);
@@ -996,7 +996,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	]);
 
 	// ========================================================================
-	// completeWizardImpl — shared logic for wizard completion
+	// completeWizardImpl - shared logic for wizard completion
 	// Converts the wizard tab to a normal session. When `startAutoRun` is true,
 	// also points the session's Auto Run folder at the freshly generated
 	// subfolder and opens the Batch Runner modal so the user can kick off the
@@ -1108,7 +1108,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	);
 
 	// ========================================================================
-	// handleWizardLetsGo — generates documents for active tab
+	// handleWizardLetsGo - generates documents for active tab
 	// ========================================================================
 	const handleWizardLetsGo = useCallback(() => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
@@ -1151,7 +1151,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	}, [activeSession?.id, setSessions]);
 
 	// ========================================================================
-	// handleWizardLaunchSession — creates session from onboarding wizard
+	// handleWizardLaunchSession - creates session from onboarding wizard
 	// ========================================================================
 	const handleWizardLaunchSession = useCallback(
 		async (wantsTour: boolean) => {

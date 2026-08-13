@@ -64,7 +64,7 @@ export interface StructuredAgentResponse {
 	/**
 	 * Short human-readable name for the playbook/project, derived from the
 	 * conversation (e.g. "HTML Chat Interface"). Used to name the dated
-	 * subfolder created under Auto Run Docs. Optional — when absent, the
+	 * subfolder created under Auto Run Docs. Optional - when absent, the
 	 * caller falls back to the session name.
 	 */
 	projectName?: string;

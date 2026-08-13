@@ -1,5 +1,5 @@
 /**
- * PipelineCanvas — ReactFlow canvas area with drawers, overlays, legend, and config panels.
+ * PipelineCanvas - ReactFlow canvas area with drawers, overlays, legend, and config panels.
  *
  * Pure composition container: renders the ReactFlow canvas with all surrounding UI
  * (drawers, empty states, pipeline legend, settings panel, node/edge config panels).
@@ -64,11 +64,11 @@ const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true } as const;
  * Custom drag-preview component for the connection line.
  *
  * ReactFlow's default `<ConnectionLine>` paints `.react-flow__connection-path`
- * with `stroke: #b1b1b7` at 1px — invisible against our dark theme. Setting
+ * with `stroke: #b1b1b7` at 1px - invisible against our dark theme. Setting
  * `connectionLineStyle` alone proved insufficient (no visible line during
  * drag, only the committed edge appearing on release). A custom component
  * bypasses any styling/specificity issues with the default render path
- * entirely — we own the `<path>` element and its attributes.
+ * entirely - we own the `<path>` element and its attributes.
  *
  * Visual contract: dashed orthogonal step line in CUE_COLOR at 2px, matching the
  * look of committed edges (which also use a sharp-cornered smoothstep path +
@@ -264,7 +264,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	// Stabilize ReactFlow child props on `theme`. PipelineCanvas re-renders on
 	// every node drag / pan / zoom (it owns `nodes` and `edges`), so inline
 	// objects/functions here would bust the memoization on MiniMap, Controls,
-	// and Background — producing both wasted renders and a flood of WDYR logs.
+	// and Background - producing both wasted renders and a flood of WDYR logs.
 	const reactFlowStyle = React.useMemo(
 		() => ({ backgroundColor: theme.colors.bgMain }),
 		[theme.colors.bgMain]
@@ -329,7 +329,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	const miniMapMaskColor = React.useMemo(() => `${theme.colors.bgMain}cc`, [theme.colors.bgMain]);
 	// Drag-preview line shown while connecting one handle to another. Without
 	// an explicit style, ReactFlow uses its default `stroke: #b1b1b7` at 1px
-	// — invisible against most theme backgrounds. Match the committed-edge
+	// - invisible against most theme backgrounds. Match the committed-edge
 	// look (CUE_COLOR, 2px, dashed) so the user sees a clear preview while
 	// dragging and a smooth visual transition into the final edge on release.
 	const connectionLineStyle = React.useMemo(
@@ -373,7 +373,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				theme={theme}
 			/>
 
-			{/* Empty state overlay (Phase 14B — extracted + memoized) */}
+			{/* Empty state overlay (Phase 14B - extracted + memoized) */}
 			<PipelineEmptyState
 				nodeCount={nodes.length}
 				pipelineCount={pipelineCount}
@@ -410,11 +410,11 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				minZoom={0.1}
 				maxZoom={2}
 				// All Pipelines view is read-only. These ReactFlow props are the
-				// first line of defense — the parent also guards each callback.
+				// first line of defense - the parent also guards each callback.
 				// Hand mode disables node/group dragging so left-drag on a node
 				// falls through to the canvas pan instead of moving the node.
 				// Connections, however, are scoped to handles (not the node
-				// body) and should always work regardless of canvas mode —
+				// body) and should always work regardless of canvas mode -
 				// matches n8n / Zapier / Figma's behavior, where handle
 				// affordances are unaffected by pan vs. select. The
 				// drag-preview line also requires nodesConnectable=true to
@@ -462,7 +462,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				theme={theme}
 			/>
 
-			{/* Pipeline legend — extracted + memoized (Phase 14B) */}
+			{/* Pipeline legend - extracted + memoized (Phase 14B) */}
 			<PipelineLegend
 				pipelines={pipelines}
 				selectedPipelineId={selectedPipelineId}
@@ -493,12 +493,12 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 						{
 							mode: 'hand' as const,
 							Icon: Hand,
-							title: 'Pan — left-drag to move canvas (P)',
+							title: 'Pan - left-drag to move canvas (P)',
 						},
 						{
 							mode: 'pointer' as const,
 							Icon: MousePointer2,
-							title: 'Select — left-drag for bounding box (S). Hold Shift to pan.',
+							title: 'Select - left-drag for bounding box (S). Hold Shift to pan.',
 						},
 					] satisfies {
 						mode: CanvasInteractionMode;
@@ -532,7 +532,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				})}
 			</div>
 
-			{/* Layout buttons — top-right corner. "Tidy" aligns the current layout
+			{/* Layout buttons - top-right corner. "Tidy" aligns the current layout
 			    into flow columns without reshuffling; "Arrange" also reorders nodes
 			    within each column to minimize crossing edges. In All-Pipelines view
 			    there are no edges between cards to cross, so only "Arrange" shows and
@@ -581,7 +581,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				</div>
 			)}
 
-			{/* Config panels — suppressed in read-only (All Pipelines) view so
+			{/* Config panels - suppressed in read-only (All Pipelines) view so
 			    any selection carried over from a previous single-pipeline view
 			    does not expose editable fields. */}
 			{!isReadOnly &&

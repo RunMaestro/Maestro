@@ -1,212 +1,408 @@
 /**
  * Media Playback Store
  *
- * Transient state for the app's single audio/video player.
+ * State for the app's single audio/video player.
  *
- * Exactly one media file plays at a time. Several media tabs can be open, but
- * only the **active** one has a mounted player; the widget navigates between
- * them rather than stacking one control per file. Switching pauses whatever was
- * playing, which is what keeps two audio streams from ever overlapping.
+ * Media never becomes a file preview tab. Opening an audio or video file adds
+ * it to this queue and shows the floating player - that widget is the only
+ * surface media appears on, and it can be dragged anywhere, minimized to a
+ * pill, or hidden without stopping playback. Nothing takes over the main panel,
+ * so a podcast plays while the user keeps working.
  *
- * The player has two placements, both driven from here:
- *  - **Docked** - the owning tab is on screen, so the player fills the
- *    `MediaViewportSlot` that `FilePreview` renders in place of its content.
- *  - **Floating** - the owning tab is not on screen, so the player becomes a
- *    draggable, resizable now-playing widget that survives switching tabs and
- *    agents.
+ * Exactly one item plays at a time. Several can be queued, but only the
+ * **active** one has a mounted player; the transport's prev/next move between
+ * them, a finished item hands off to the next, and the history menu jumps by
+ * recency. Switching pauses whatever was playing, which is what keeps two audio
+ * streams from ever overlapping.
  *
- * Why the element cannot live in FilePreview: `MainPanelContent` renders it only
- * for the active file tab of the active session, so switching tabs or agents
- * unmounts it, and removing a media element from the document runs the HTML
- * spec's internal pause steps. The element therefore lives in
- * `MediaPlaybackHost`, mounted once in `App.tsx`; this store is how the in-tab
- * slot and that host talk to each other.
+ * The element itself lives in `MediaPlaybackHost`, mounted once in `App.tsx`
+ * and never unmounted: removing a media element from the document runs the HTML
+ * spec's internal pause steps, so anything that renders per-tab or per-agent
+ * would kill playback on every switch.
  *
- * Only the float geometry persists (via settings). Which file was playing does
- * not survive a restart, and `maestro-media://` stream URLs are re-minted per
- * boot anyway.
+ * **Queue and history are two lists, not one.** The queue is what plays next,
+ * in open order, and it survives a restart (via the `mediaPlayerQueue` setting,
+ * along with the loaded item and every remembered position) so a half-listened
+ * playlist is still there tomorrow. History is what was played, newest first,
+ * and it is deliberately per-boot: a fresh session should not open onto a log
+ * of last week's files. Because they outlive each other in opposite directions,
+ * history holds whole items rather than pointers into the queue - removing
+ * something from the queue must not rewrite what the user already heard, and
+ * picking it out of history re-queues it.
  *
- * Multi-window note: each renderer holds its own copy of this store. On a build
- * with multiple windows, two windows each showing a media tab would each mount a
- * player. Single-window builds cannot hit this.
+ * `maestro-media://` stream URLs are minted per boot, so only paths are
+ * persisted; the player re-resolves the URL when an item loads.
+ *
+ * Float geometry is position plus a width **per kind**: the frame's height is
+ * always derived from the media (audio has no picture, video wants its own
+ * aspect ratio), so it is not a number anyone stores. See `mediaFloatGeometry`.
+ *
+ * Multi-window note: each renderer holds its own copy of this store, so on a
+ * multi-window build two windows can each own a player.
  */
 
 import { create } from 'zustand';
 
-/** Viewport rect (CSS pixels, viewport-relative) of a media tab's docked slot. */
-export interface MediaSlotRect {
-	top: number;
-	left: number;
-	width: number;
-	height: number;
-}
+import { mediaItemId, pushMediaHistory, trimMediaQueue, type MediaItem } from '../utils/mediaItems';
+import { normalizeMediaAspect, type PersistedMediaFloat } from '../utils/mediaFloatGeometry';
+import type { MediaKind } from '../../shared/mediaTypes';
 
-/** Position and size of the floating widget. */
-export interface MediaFloatRect {
-	top: number;
-	left: number;
-	width: number;
-	height: number;
-}
+/** Everything needed to queue a file, minus the derived ID. */
+export type MediaOpenRequest = Omit<MediaItem, 'id'>;
 
-export interface MediaSlotState {
+/**
+ * Entries kept in the history menu. Deep enough to cover a listening session,
+ * shallow enough that the menu stays scannable.
+ */
+export const MEDIA_HISTORY_LIMIT = 20;
+
+/**
+ * Entries kept in the queue. The queue persists, so without a cap every file
+ * the user ever opened would accumulate on disk forever.
+ */
+export const MEDIA_QUEUE_LIMIT = 50;
+
+/** Settings key holding the queue across restarts. */
+export const MEDIA_QUEUE_SETTINGS_KEY = 'mediaPlayerQueue';
+
+/** Settings key holding the player's position and per-kind widths. */
+export const MEDIA_FLOAT_SETTINGS_KEY = 'mediaPlayerFloatRect';
+
+/** What `mediaPlayerQueue` stores. Stream URLs are not persisted, only paths. */
+export interface PersistedMediaQueue {
+	items: MediaItem[];
+	activeItemId: string | null;
+	resumeTimes: Record<string, number>;
 	/**
-	 * Last known rect of the in-tab slot. Retained even while hidden so a docked
-	 * player keeps non-zero dimensions - a zero-sized video can get its decode
-	 * pipeline torn down, the same failure `visibility: hidden` (rather than
-	 * unmounting) exists to avoid for terminals and browser tabs.
+	 * Known lengths. Persisted because only the loaded file is ever mounted: with
+	 * nothing on disk, a restored queue would show a length for one row and
+	 * `--:--` for the other nine until each was played.
 	 */
-	rect: MediaSlotRect;
-	/** Whether the owning tab is currently on screen. */
-	visible: boolean;
+	durations: Record<string, number>;
 }
 
 interface MediaPlaybackStoreState {
-	/** File tab whose player is mounted. Null when no media is loaded. */
-	activeTabId: string | null;
+	/** Play queue, in open order. Persisted. */
+	items: MediaItem[];
+	/** Item whose player is mounted. Null when nothing is loaded. Persisted. */
+	activeItemId: string | null;
+	/** Recently played, newest first. Per-boot: never persisted. */
+	history: MediaItem[];
 	/** Whether the active player is currently playing. */
 	playing: boolean;
 	/**
-	 * User closed the floating widget. Playback continues - dismissing hides a
-	 * control, it does not stop media. Cleared by opening a media file or by the
-	 * "Show Floating Media Player" command.
+	 * User hid the player. Playback continues - hiding a control does not stop
+	 * media. Cleared by opening a media file, by the now-playing indicator in the
+	 * Left Bar header, or by the "Show Floating Media Player" command.
 	 */
 	dismissed: boolean;
-	/** Floating widget collapsed to a compact pill. */
+	/** Player collapsed to a compact pill. */
 	minimized: boolean;
-	/** One-shot: start playing once the active file is ready. */
+	/** One-shot: start playing once the active item is ready. */
 	pendingAutoplay: boolean;
 	/**
 	 * Incremented to ask the player to toggle play/pause. A nonce rather than a
 	 * function in state, so the minimized pill's button can drive the element
-	 * without anyone holding a ref across the floating frame boundary.
+	 * without anyone holding a ref across the frame boundary.
 	 */
 	toggleRequest: number;
-	/** File tab ID -> where to park a docked player. */
-	slots: Record<string, MediaSlotState>;
-	/** File tab ID -> last playback position, so navigating back resumes. */
+	/** Item ID -> last playback position, so coming back resumes. Persisted. */
 	resumeTimes: Record<string, number>;
-	/** Floating widget geometry. Null until the user moves or resizes it. */
-	floatRect: MediaFloatRect | null;
+	/**
+	 * Item ID -> length in seconds, learned when a file loads. Persisted, so the
+	 * queue and history lists can show how long something is without having to
+	 * mount it first.
+	 */
+	durations: Record<string, number>;
+	/** Where the player sits. Null until the user moves or resizes it. Persisted. */
+	floatPosition: { top: number; left: number } | null;
+	/**
+	 * Width the user last chose, per media kind. Height is derived from the
+	 * media, so it is never stored. Persisted.
+	 */
+	floatWidths: Partial<Record<MediaKind, number>>;
+	/**
+	 * Item ID -> picture aspect ratio, learned from the file when it loads.
+	 *
+	 * Per boot: it costs one frame to re-learn and would otherwise be one more
+	 * thing on disk that could disagree with the file.
+	 */
+	aspects: Record<string, number>;
 
 	/**
-	 * Make a tab the active player, un-dismissing the widget.
+	 * Queue a file the user just opened and play it.
 	 *
-	 * @param tabId - Media file tab to activate.
-	 * @param opts.autoplay - Start playing when ready. Set when the user opened
-	 *   the file or navigated here with the widget's own controls.
+	 * Re-opening a file already in the queue reuses its entry rather than
+	 * stacking a duplicate, so it resumes where it left off.
 	 */
-	setActiveTab: (tabId: string, opts?: { autoplay?: boolean }) => void;
+	openMedia: (request: MediaOpenRequest) => void;
+	/**
+	 * Add files to the end of the queue without interrupting what is playing.
+	 *
+	 * The one exception is an idle player: with nothing loaded there is no
+	 * widget on screen, so the first queued file becomes the active one (paused,
+	 * not autoplaying) rather than landing in a queue the user cannot see.
+	 *
+	 * @returns How many files were newly queued. Already-queued files are left
+	 *   where they are, so "add to queue" twice does not reorder anything.
+	 */
+	enqueueMedia: (requests: MediaOpenRequest[]) => number;
+	/**
+	 * Make a queued item the active player, un-hiding the widget.
+	 *
+	 * @param itemId - Queue entry to activate.
+	 * @param opts.autoplay - Start playing when ready. Set when the user opened
+	 *   the file or navigated here with the player's own controls.
+	 */
+	setActiveItem: (itemId: string, opts?: { autoplay?: boolean }) => void;
 	setPlaying: (playing: boolean) => void;
+	/**
+	 * Hand off to the next queued item when one finishes.
+	 *
+	 * Distinct from the transport's next button only in what happens at the end
+	 * of the queue: there is nothing to advance to, so the finished item stays
+	 * loaded and paused rather than the player going blank.
+	 */
+	advanceAfterEnded: () => void;
 	/** Consume the one-shot autoplay request. */
 	consumeAutoplay: () => void;
 	/** Ask the active player to toggle play/pause. */
 	requestToggle: () => void;
-	/** Publish the docked slot rect and mark the tab visible. */
-	setSlotRect: (tabId: string, rect: MediaSlotRect) => void;
-	/** Mark a slot off screen, keeping its last rect. */
-	hideSlot: (tabId: string) => void;
-	/** Drop everything for a tab. Called when the tab itself goes away. */
-	clearTab: (tabId: string) => void;
-	/** Hide the floating widget without stopping playback. */
+	/** Drop an item from the queue. Releases the player if it was active. */
+	closeItem: (itemId: string) => void;
+	/** Empty the queue and release the player. */
+	clearQueue: () => void;
+	/** Drop one entry from the recently-played list. Leaves the queue alone. */
+	removeHistoryItem: (itemId: string) => void;
+	/** Forget everything played this session. */
+	clearHistory: () => void;
+	/** Hide the player without stopping playback. */
 	dismiss: () => void;
-	/** Bring the floating widget back. */
+	/** Bring the player back. */
 	restore: () => void;
 	setMinimized: (minimized: boolean) => void;
-	setFloatRect: (rect: MediaFloatRect) => void;
-	/** Remember where a tab was paused, so returning to it resumes. */
-	rememberTime: (tabId: string, seconds: number) => void;
+	/**
+	 * Remember where the user put the player, and how wide they made it for this
+	 * kind of media.
+	 */
+	setFloatGeometry: (kind: MediaKind, rect: { top: number; left: number; width: number }) => void;
+	/** Remember where an item was paused, so returning to it resumes. */
+	rememberTime: (itemId: string, seconds: number) => void;
+	/** Record how long a file is, for the queue and history lists. */
+	rememberDuration: (itemId: string, seconds: number) => void;
+	/** Record a video's real shape, so the frame can fit it. */
+	rememberAspect: (itemId: string, aspect: number) => void;
 }
 
-function persistFloatRect(rect: MediaFloatRect): void {
-	window.maestro?.settings?.set('mediaPlayerFloatRect', rect);
+function persistFloat(float: PersistedMediaFloat): void {
+	window.maestro?.settings?.set(MEDIA_FLOAT_SETTINGS_KEY, float);
 }
 
-export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set) => ({
-	activeTabId: null,
+/**
+ * Queue writes are debounced because `rememberTime` fires several times a
+ * second while media plays. Half a second is short enough that a restart loses
+ * nothing a listener would notice, and long enough to collapse a burst of
+ * position updates (or a ten-file "add to queue") into one settings write.
+ */
+const QUEUE_PERSIST_DELAY_MS = 500;
+let queuePersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Write the queue, the loaded item, and every remembered position to settings. */
+function writeQueueNow(): void {
+	const { items, activeItemId, resumeTimes, durations } = useMediaPlaybackStore.getState();
+	const queued = new Set(items.map((item) => item.id));
+	// Durations outlive the queue in memory, because history rows still show the
+	// length of a file that was removed. On disk they are pruned to the queue, or
+	// every file the user ever played would accumulate there forever.
+	const persistedDurations: Record<string, number> = {};
+	for (const [id, seconds] of Object.entries(durations)) {
+		if (queued.has(id)) persistedDurations[id] = seconds;
+	}
+	const payload: PersistedMediaQueue = {
+		items,
+		activeItemId,
+		resumeTimes,
+		durations: persistedDurations,
+	};
+	window.maestro?.settings?.set(MEDIA_QUEUE_SETTINGS_KEY, payload);
+}
+
+function persistQueue(): void {
+	if (queuePersistTimer) clearTimeout(queuePersistTimer);
+	queuePersistTimer = setTimeout(() => {
+		queuePersistTimer = null;
+		writeQueueNow();
+	}, QUEUE_PERSIST_DELAY_MS);
+}
+
+/** Flush a pending queue write immediately. Used when the window is going away. */
+export function flushMediaQueuePersist(): void {
+	if (!queuePersistTimer) return;
+	clearTimeout(queuePersistTimer);
+	queuePersistTimer = null;
+	writeQueueNow();
+}
+
+export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get) => ({
+	items: [],
+	activeItemId: null,
+	history: [],
 	playing: false,
 	dismissed: false,
 	minimized: false,
 	pendingAutoplay: false,
 	toggleRequest: 0,
-	slots: {},
 	resumeTimes: {},
-	floatRect: null,
+	durations: {},
+	floatPosition: null,
+	floatWidths: {},
+	aspects: {},
 
-	setActiveTab: (tabId, opts) =>
+	openMedia: (request) => {
 		set((state) => {
+			const id = mediaItemId(request.sessionId, request.path);
+			const existing = state.items.find((item) => item.id === id);
+			const item: MediaItem = { ...request, id };
+			const items = existing
+				? // Keep its queue position (prev/next order is open order) but refresh
+					// the metadata, since the agent may have been renamed since.
+					state.items.map((current) => (current.id === id ? item : current))
+				: [...state.items, item];
+
+			return {
+				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, id),
+				activeItemId: id,
+				history: pushMediaHistory(state.history, item, MEDIA_HISTORY_LIMIT),
+				// Opening is an explicit request to hear it, even if it was already
+				// active and paused.
+				pendingAutoplay: true,
+				dismissed: false,
+				// Switching items unmounts the outgoing player, which pauses it. Only
+				// one element is ever mounted, so overlapping audio is structurally
+				// impossible rather than something we have to remember to prevent.
+				...(state.activeItemId === id ? {} : { playing: false }),
+			};
+		});
+		persistQueue();
+	},
+
+	enqueueMedia: (requests) => {
+		if (requests.length === 0) return 0;
+		let added = 0;
+		set((state) => {
+			const items = [...state.items];
+			const known = new Set(items.map((item) => item.id));
+			for (const request of requests) {
+				const id = mediaItemId(request.sessionId, request.path);
+				if (known.has(id)) continue;
+				known.add(id);
+				items.push({ ...request, id });
+				added++;
+			}
+			if (added === 0) return state;
+
+			// Nothing loaded means no widget on screen, so the queue would be
+			// invisible. Load the first entry paused: the user asked to queue, not
+			// to listen, so it does not start itself.
+			const activeItemId = state.activeItemId ?? items[0].id;
+			return {
+				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, activeItemId),
+				activeItemId,
+				...(state.activeItemId ? {} : { dismissed: false }),
+			};
+		});
+		if (added > 0) persistQueue();
+		return added;
+	},
+
+	setActiveItem: (itemId, opts) => {
+		set((state) => {
+			const target = state.items.find((item) => item.id === itemId);
+			if (!target) return state;
 			const autoplay = opts?.autoplay ?? false;
-			if (state.activeTabId === tabId) {
-				// Already active. Still honor a fresh autoplay request (re-opening a
-				// paused file should play it) and un-dismiss, but do not restart.
+			if (state.activeItemId === itemId) {
+				// Already active. Honor a fresh autoplay request and un-hide, but do
+				// not restart something mid-listen.
 				if (!autoplay && !state.dismissed) return state;
 				return {
 					dismissed: false,
 					pendingAutoplay: state.pendingAutoplay || autoplay,
 				};
 			}
-			// Switching files: the outgoing player unmounts, which pauses it. Only
-			// one media element is ever mounted, so overlapping audio is structurally
-			// impossible rather than something we have to remember to prevent.
 			return {
-				activeTabId: tabId,
+				activeItemId: itemId,
+				history: pushMediaHistory(state.history, target, MEDIA_HISTORY_LIMIT),
 				playing: false,
 				dismissed: false,
 				pendingAutoplay: autoplay,
 			};
-		}),
+		});
+		persistQueue();
+	},
 
 	setPlaying: (playing) => set((state) => (state.playing === playing ? state : { playing })),
+
+	advanceAfterEnded: () => {
+		const { items, activeItemId, setActiveItem, rememberTime } = get();
+		const index = items.findIndex((item) => item.id === activeItemId);
+		// A finished file should start from the top next time, not from its own
+		// end - otherwise coming back to it plays nothing.
+		if (activeItemId) rememberTime(activeItemId, 0);
+		if (index === -1) return;
+		const next = items[index + 1];
+		if (!next) return;
+		setActiveItem(next.id, { autoplay: true });
+	},
 
 	consumeAutoplay: () =>
 		set((state) => (state.pendingAutoplay ? { pendingAutoplay: false } : state)),
 
 	requestToggle: () => set((state) => ({ toggleRequest: state.toggleRequest + 1 })),
 
-	setSlotRect: (tabId, rect) =>
+	closeItem: (itemId) => {
+		let changed = false;
 		set((state) => {
-			const prev = state.slots[tabId];
-			if (
-				prev?.visible &&
-				prev.rect.top === rect.top &&
-				prev.rect.left === rect.left &&
-				prev.rect.width === rect.width &&
-				prev.rect.height === rect.height
-			) {
-				// Identical rect: bail out so ResizeObserver churn does not re-render
-				// the host and with it the media element.
-				return state;
-			}
-			return { slots: { ...state.slots, [tabId]: { rect, visible: true } } };
-		}),
-
-	hideSlot: (tabId) =>
-		set((state) => {
-			const prev = state.slots[tabId];
-			if (!prev || !prev.visible) return state;
-			return { slots: { ...state.slots, [tabId]: { ...prev, visible: false } } };
-		}),
-
-	clearTab: (tabId) =>
-		set((state) => {
-			const hasSlot = state.slots[tabId] !== undefined;
-			const hasTime = state.resumeTimes[tabId] !== undefined;
-			const isActive = state.activeTabId === tabId;
-			if (!hasSlot && !hasTime && !isActive) return state;
-
-			const slots = { ...state.slots };
+			if (!state.items.some((item) => item.id === itemId)) return state;
+			changed = true;
+			const items = state.items.filter((item) => item.id !== itemId);
 			const resumeTimes = { ...state.resumeTimes };
-			delete slots[tabId];
-			delete resumeTimes[tabId];
+			delete resumeTimes[itemId];
 
 			return {
-				slots,
+				items,
 				resumeTimes,
-				// Closing the playing tab releases the player. The host picks a
-				// remaining media tab on its next pass if there is one.
-				...(isActive ? { activeTabId: null, playing: false, pendingAutoplay: false } : {}),
+				// Closing the playing item releases the player rather than
+				// auto-advancing: closing is "stop", not "skip".
+				...(state.activeItemId === itemId
+					? { activeItemId: null, playing: false, pendingAutoplay: false }
+					: {}),
 			};
+		});
+		if (changed) persistQueue();
+	},
+
+	clearQueue: () => {
+		set((state) =>
+			state.items.length === 0
+				? state
+				: {
+						items: [],
+						activeItemId: null,
+						resumeTimes: {},
+						playing: false,
+						pendingAutoplay: false,
+					}
+		);
+		persistQueue();
+	},
+
+	removeHistoryItem: (itemId) =>
+		set((state) => {
+			const history = state.history.filter((entry) => entry.id !== itemId);
+			return history.length === state.history.length ? state : { history };
 		}),
+
+	clearHistory: () => set((state) => (state.history.length === 0 ? state : { history: [] })),
 
 	dismiss: () => set((state) => (state.dismissed ? state : { dismissed: true })),
 
@@ -215,28 +411,61 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set) => 
 	setMinimized: (minimized) =>
 		set((state) => (state.minimized === minimized ? state : { minimized })),
 
-	setFloatRect: (rect) => {
-		persistFloatRect(rect);
-		set({ floatRect: rect });
+	setFloatGeometry: (kind, rect) => {
+		set((state) => {
+			const float: PersistedMediaFloat = {
+				top: rect.top,
+				left: rect.left,
+				widths: { ...state.floatWidths, [kind]: rect.width },
+			};
+			persistFloat(float);
+			return { floatPosition: { top: float.top, left: float.left }, floatWidths: float.widths };
+		});
 	},
 
-	rememberTime: (tabId, seconds) =>
-		set((state) => ({ resumeTimes: { ...state.resumeTimes, [tabId]: seconds } })),
+	rememberTime: (itemId, seconds) => {
+		set((state) => ({ resumeTimes: { ...state.resumeTimes, [itemId]: seconds } }));
+		persistQueue();
+	},
+
+	rememberDuration: (itemId, seconds) => {
+		// A live or unknown-length stream reports Infinity; the lists show `--:--`
+		// for it rather than a nonsense number.
+		if (!Number.isFinite(seconds) || seconds <= 0) return;
+		if (useMediaPlaybackStore.getState().durations[itemId] === seconds) return;
+		set((state) => ({ durations: { ...state.durations, [itemId]: seconds } }));
+		persistQueue();
+	},
+
+	rememberAspect: (itemId, aspect) =>
+		set((state) => {
+			const value = normalizeMediaAspect(aspect);
+			if (state.aspects[itemId] === value) return state;
+			return { aspects: { ...state.aspects, [itemId]: value } };
+		}),
 }));
 
 /** Non-React access, for callers outside the component tree. */
 export function getMediaPlaybackActions() {
 	const state = useMediaPlaybackStore.getState();
 	return {
-		setActiveTab: state.setActiveTab,
+		openMedia: state.openMedia,
+		enqueueMedia: state.enqueueMedia,
+		setActiveItem: state.setActiveItem,
 		setPlaying: state.setPlaying,
 		dismiss: state.dismiss,
 		restore: state.restore,
-		clearTab: state.clearTab,
+		closeItem: state.closeItem,
 	};
 }
 
-/** Whether a floating widget could be restored right now. */
+/** Whether a hidden player could be brought back right now. */
 export function selectCanRestoreFloatingPlayer(state: MediaPlaybackStoreState): boolean {
-	return state.dismissed && state.activeTabId !== null;
+	return state.dismissed && state.activeItemId !== null;
+}
+
+/** The loaded item, or null when the player is idle. */
+export function selectActiveMediaItem(state: MediaPlaybackStoreState): MediaItem | null {
+	if (!state.activeItemId) return null;
+	return state.items.find((item) => item.id === state.activeItemId) ?? null;
 }

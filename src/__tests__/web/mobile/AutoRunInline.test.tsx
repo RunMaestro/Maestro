@@ -43,7 +43,7 @@ vi.mock('../../../web/mobile/AutoRunIndicator', () => ({
 	AutoRunIndicator: () => null,
 }));
 
-// Default useAutoRun mock — empty docs list so the empty state renders.
+// Default useAutoRun mock - empty docs list so the empty state renders.
 vi.mock('../../../web/hooks/useAutoRun', () => ({
 	useAutoRun: () => ({
 		documents: [],

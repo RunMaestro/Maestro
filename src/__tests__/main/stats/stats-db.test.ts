@@ -284,7 +284,7 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// Migrations v1–v7: initial schema, is_remote column, session_lifecycle
+			// Migrations v1-v7: initial schema, is_remote column, session_lifecycle
 			// table, compound indexes, is_worktree column, image_annotations table,
 			// shortcut_usage_daily table.
 			expect(db.getTargetVersion()).toBe(7);

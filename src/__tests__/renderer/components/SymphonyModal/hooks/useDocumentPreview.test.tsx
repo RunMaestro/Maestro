@@ -1,5 +1,5 @@
 /**
- * Tests for SymphonyModal/hooks/useDocumentPreview — external fetch path,
+ * Tests for SymphonyModal/hooks/useDocumentPreview - external fetch path,
  * repo-relative placeholder path, no-repo bail, loading lifecycle.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

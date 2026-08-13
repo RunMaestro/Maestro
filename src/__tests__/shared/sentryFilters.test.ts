@@ -1,10 +1,10 @@
 /**
- * Tests for shouldDropSentryEvent — the shared classifier used by both the
+ * Tests for shouldDropSentryEvent - the shared classifier used by both the
  * main and renderer Sentry initializers to suppress noise events we cannot
  * fix from inside the app.
  *
  * Strategy: one representative event per documented category gets dropped,
- * and a "real bug" exception passes through. Don't enumerate every regex —
+ * and a "real bug" exception passes through. Don't enumerate every regex -
  * the file's comment block is authoritative on which categories exist; we
  * just confirm the dispatch table works.
  */

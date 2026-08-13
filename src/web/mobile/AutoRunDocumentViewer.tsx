@@ -96,7 +96,7 @@ export function AutoRunDocumentViewer({
 				}
 			} catch (err) {
 				if (!cancelled) {
-					// Same reasoning as the success path — if the request fails after
+					// Same reasoning as the success path - if the request fails after
 					// switching documents, a stray Cmd+Z could otherwise resurrect the
 					// previous file's buffer and let it be saved into this filename.
 					undoStackRef.current = [];
@@ -104,7 +104,7 @@ export function AutoRunDocumentViewer({
 					setContent('');
 					setEditContent('');
 					setHistoryTick((t) => t + 1);
-					// Web bundle has no Sentry — log to console so the failure is at
+					// Web bundle has no Sentry - log to console so the failure is at
 					// least visible in browser devtools instead of silently swallowed.
 					console.error('[AutoRunDocumentViewer] get_auto_run_document failed', {
 						sessionId,
@@ -127,7 +127,7 @@ export function AutoRunDocumentViewer({
 
 	// If the Auto Run starts while the user is editing, drop them back to preview
 	// AND discard any unsaved local edits so the locked view reflects the live
-	// file the run will be mutating — keeping a dirty buffer would let the
+	// file the run will be mutating - keeping a dirty buffer would let the
 	// preview render stale text on top of the file the agent is editing.
 	useEffect(() => {
 		if (isLocked && isEditing) {
@@ -146,7 +146,7 @@ export function AutoRunDocumentViewer({
 		};
 	}, []);
 
-	// Focus textarea when entering edit mode — but skip when search is open,
+	// Focus textarea when entering edit mode - but skip when search is open,
 	// otherwise the search-toggle path that flips isEditing to true would steal
 	// focus from the search input and start typing into the document.
 	useEffect(() => {
@@ -178,10 +178,10 @@ export function AutoRunDocumentViewer({
 		if (isLocked) return;
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 		if (isEditing) {
-			// Switching to preview — if dirty, keep editContent but show preview of editContent
+			// Switching to preview - if dirty, keep editContent but show preview of editContent
 			setIsEditing(false);
 		} else {
-			// Switching to edit — sync editContent with latest
+			// Switching to edit - sync editContent with latest
 			setEditContent(isDirty ? editContent : content);
 			setIsEditing(true);
 		}
@@ -192,7 +192,7 @@ export function AutoRunDocumentViewer({
 		if (undoStackRef.current.length > MAX_UNDO_HISTORY) {
 			undoStackRef.current.shift();
 		}
-		// Any new edit invalidates the redo stack — same behavior as native editors.
+		// Any new edit invalidates the redo stack - same behavior as native editors.
 		redoStackRef.current = [];
 		setHistoryTick((t) => t + 1);
 	}, []);
@@ -326,7 +326,7 @@ export function AutoRunDocumentViewer({
 			// Switch to edit mode when opening search so the textarea can
 			// highlight and scroll to the active match. We skip this when the
 			// viewer is locked (an Auto Run is in progress) since editing is
-			// disabled there — in that case the match counter still updates but
+			// disabled there - in that case the match counter still updates but
 			// Next/Prev won't move a selection.
 			if (next && !isEditing && !isLocked) {
 				setEditContent(isDirty ? editContent : content);
