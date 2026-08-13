@@ -1,0 +1,74 @@
+name: Guard - rc must carry main
+
+# The mirror of "Guard - main must not carry rc".
+#
+# That guard enforces one half of the branch contract (main must stay off the rc
+# line). This one enforces the other half: **rc is always main plus in-soak
+# work**, so every fix that lands on main has to reach rc too.
+#
+# Why it exists: on 2026-08-13 the media player's now-playing indicator was
+# reported as "not implemented". It was implemented, and it was on main - but rc
+# had not been merged in three commits, so the rc build genuinely did not
+# contain it. Nothing failed; the drift was only visible by diffing the branches
+# by hand. A fix that never reaches rc is a fix nobody testing rc can see, and
+# it silently reappears as a bug report.
+#
+# Failure here is not "someone did something wrong" - it just means main has
+# moved and rc is due a merge:
+#
+#     git fetch origin
+#     git switch -c rc-sync-main origin/rc     # never work in the rc worktree
+#     git merge origin/main
+#     # resolve, verify, then: git push origin HEAD:rc
+#
+# Deliberately NOT run on push to main: rc is legitimately behind for the few
+# minutes between a main landing and the follow-up merge, and a check that is
+# red by design teaches people to ignore it. The daily schedule is what catches
+# real drift, and the rc push check keeps a merge from dropping main commits.
+
+on:
+  schedule:
+    # Daily. Drift matters in days, not minutes - anything tighter would fire
+    # during the normal window where main has landed and rc has not merged yet.
+    - cron: '0 15 * * *'
+  push:
+    branches: [rc]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rc-carries-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Both branch tips plus enough history for an ancestry test.
+          fetch-depth: 0
+
+      - name: Check rc contains every commit on main
+        run: |
+          set -euo pipefail
+
+          git fetch --quiet origin main rc
+
+          MAIN=$(git rev-parse origin/main)
+          RC=$(git rev-parse origin/rc)
+
+          echo "main : ${MAIN}"
+          echo "rc   : ${RC}"
+
+          if git merge-base --is-ancestor "${MAIN}" "${RC}"; then
+            echo "OK: rc contains all of main."
+            exit 0
+          fi
+
+          MISSING=$(git rev-list --count "${RC}..${MAIN}")
+          echo
+          echo "Commits on main that rc does not have (${MISSING}):"
+          git log --oneline --no-decorate "${RC}..${MAIN}"
+          echo
+
+          echo "::error title=rc is behind main::${MISSING} commit(s) on main are missing from rc. rc is meant to be main plus in-soak work, so anyone testing an rc build is missing these fixes. Merge main into rc (see the header of .github/workflows/guard-rc-carries-main.yml)."
+          exit 1
