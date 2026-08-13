@@ -29,8 +29,6 @@ import {
 } from '../../utils/markdownConfig';
 import { LinkContextMenu, type LinkContextMenuState } from '../LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from '../FileContextMenu';
-import { ImageContextMenu } from '../ImageContextMenu';
-import { useImageContextMenu } from '../../hooks/ui/useImageContextMenu';
 import { buildMarkdownPlugins } from './plugins';
 import { preprocessMarkdown } from './preprocess';
 import { createChatMarkdownComponents } from './chatComponents';
@@ -155,7 +153,6 @@ export const Markdown = memo(function Markdown({
 	const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
 	const [fileMenu, setFileMenu] = useState<FileContextMenuState | null>(null);
 	const dismissFileMenu = useCallback(() => setFileMenu(null), []);
-	const { imageMenu, dismissImageMenu, openImageMenu } = useImageContextMenu();
 
 	// Build the remark/rehype plugin stack per preset.
 	const { remarkPlugins, rehypePlugins } = useMemo(() => {
@@ -214,7 +211,6 @@ export const Markdown = memo(function Markdown({
 					onLinkContextMenu: (e, url) => setLinkMenu({ x: e.clientX, y: e.clientY, url }),
 					onFileContextMenu: (e, absPath, fileName) =>
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
-					onImageContextMenu: openImageMenu,
 				});
 			case 'wizard-bubble':
 				return createWizardBubbleMarkdownComponents(theme);
@@ -247,7 +243,6 @@ export const Markdown = memo(function Markdown({
 		enableBionifyReadingMode,
 		bionifyIntensity,
 		bionifyAlgorithm,
-		openImageMenu,
 		imageRenderer,
 		customLanguageRenderers,
 		onExternalLinkClick,
@@ -290,9 +285,6 @@ export const Markdown = memo(function Markdown({
 					projectRoot={projectRoot}
 					sshRemote={!!sshRemoteId}
 				/>
-			)}
-			{imageMenu && (
-				<ImageContextMenu menu={imageMenu} theme={theme} onDismiss={dismissImageMenu} />
 			)}
 		</div>
 	);

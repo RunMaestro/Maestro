@@ -34,6 +34,7 @@ import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import type { FileNode } from '../types/fileTree';
+import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 
 export interface RightPanelHandle {
@@ -66,7 +67,7 @@ interface RightPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,

@@ -18,6 +18,7 @@ import type {
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
+import type { FileClickOptions } from '../ui/useAppHandlers';
 
 /**
  * Dependencies for computing RightPanel props.
@@ -45,7 +46,7 @@ export interface UseRightPanelPropsDeps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,

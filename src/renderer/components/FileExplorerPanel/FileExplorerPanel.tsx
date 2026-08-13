@@ -26,6 +26,7 @@ import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { dragHasOsFiles } from '../../utils/osFileDrop';
 
 import type { FileExplorerPanelProps } from './types';
+import { isMediaFile } from '../../../shared/mediaTypes';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from './types';
 
 // Sub-components
@@ -148,6 +149,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			setSelectedFileIndex,
 			flattenedTreeRef,
 		});
+
+	// Drives the context menu's "Add N to Play Queue" entry. Judged by extension,
+	// which is all the menu needs to decide whether to offer the action.
+	const selectedMediaCount = useMemo(
+		() => Array.from(selectedPaths).filter((path) => isMediaFile(path)).length,
+		[selectedPaths]
+	);
 
 	// ── Virtualizer ───────────────────────────────────────────────────────────
 
@@ -331,6 +339,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handlePreviewFile,
 		handlePreviewAllInFolder,
 		handlePreviewMulti,
+		handleQueueMedia,
 		handleOpenInDefaultAppMulti,
 		handleOpenDeleteMulti,
 		handleDeleteMulti,
@@ -884,6 +893,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenBrowserTabAt={onOpenBrowserTabAt}
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
+					selectedMediaCount={selectedMediaCount}
 					onCopyPath={handleCopyPath}
 					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}
@@ -895,6 +905,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					onPreviewMulti={handlePreviewMulti}
+					onQueueMedia={handleQueueMedia}
 					onOpenInDefaultAppMulti={handleOpenInDefaultAppMulti}
 					onOpenDeleteMulti={handleOpenDeleteMulti}
 					onFocusInGraph={handleFocusInGraph}

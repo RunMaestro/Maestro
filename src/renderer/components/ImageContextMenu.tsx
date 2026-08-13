@@ -1,17 +1,18 @@
 /**
- * ImageContextMenu - right-click menu for any image rendered in AI chat: raster
- * `<img>` (markdown embeds, pasted transcript attachments) and inline `<svg>`
- * (agent-authored diagrams, mermaid). Offers "Copy Image" (to the clipboard) and
- * "Save Image" (native save dialog).
+ * ImageContextMenu - right-click menu for any image anywhere in the app: raster
+ * `<img>` (markdown embeds, transcript attachments, thumbnails, the lightbox)
+ * and inline `<svg>` (agent-authored diagrams, Mermaid charts). Offers "Copy
+ * Image", "Save to Project..." (into the project's own folder, via
+ * ImageDestinationModal) and "Save As..." (native OS dialog).
  *
- * Mirrors LinkContextMenu / FileContextMenu: the surface owns the menu state
- * (see useImageContextMenu) and renders this component; positioning is handled
- * by useContextMenuPosition so the menu opens at the pointer.
+ * Mirrors LinkContextMenu / FileContextMenu, but no surface wires this up: one
+ * delegated listener in ImageContextMenuHost opens it for every image on screen.
+ * Positioning is handled by useContextMenuPosition so it opens at the pointer.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Download } from 'lucide-react';
+import { Copy, Download, FolderOpen } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import {
@@ -35,9 +36,16 @@ interface ImageContextMenuProps {
 	menu: ImageContextMenuState;
 	theme: Theme;
 	onDismiss: () => void;
+	/** Opens the destination modal. Omitted when there is no project to save into. */
+	onSaveToProject?: () => void;
 }
 
-export function ImageContextMenu({ menu, theme, onDismiss }: ImageContextMenuProps) {
+export function ImageContextMenu({
+	menu,
+	theme,
+	onDismiss,
+	onSaveToProject,
+}: ImageContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
@@ -65,14 +73,23 @@ export function ImageContextMenu({ menu, theme, onDismiss }: ImageContextMenuPro
 
 	const handleCopy = useCallback(async () => {
 		onDismiss();
-		const ok = await copyImageElementToClipboard(menu.target);
-		if (ok) flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
-		else
+		const result = await copyImageElementToClipboard(menu.target);
+		if (result === 'image') {
+			flashCopiedToClipboard(undefined, 'Image Copied to Clipboard');
+		} else if (result === 'text') {
+			// The raster pass failed, so the clipboard holds markup or a URL, not an
+			// image. Say so rather than claiming a paste-able image.
+			flashCopiedToClipboard(
+				'Rasterizing failed',
+				isSvgElement(menu.target) ? 'SVG Markup Copied to Clipboard' : 'Image URL Copied'
+			);
+		} else {
 			notifyToast({
 				color: 'red',
 				title: 'Copy Failed',
 				message: 'Could not read this image to copy it.',
 			});
+		}
 	}, [menu.target, onDismiss]);
 
 	const handleSave = useCallback(async () => {
@@ -111,13 +128,26 @@ export function ImageContextMenu({ menu, theme, onDismiss }: ImageContextMenuPro
 				<Copy className="w-3.5 h-3.5" />
 				Copy Image
 			</button>
+			{onSaveToProject && (
+				<button
+					onClick={() => {
+						onDismiss();
+						onSaveToProject();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<FolderOpen className="w-3.5 h-3.5" />
+					Save to Project...
+				</button>
+			)}
 			<button
 				onClick={handleSave}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
 				<Download className="w-3.5 h-3.5" />
-				{isSvgElement(menu.target) ? 'Save Image (SVG or PNG)...' : 'Save Image...'}
+				{isSvgElement(menu.target) ? 'Save As... (SVG or PNG)' : 'Save As...'}
 			</button>
 		</div>,
 		document.body

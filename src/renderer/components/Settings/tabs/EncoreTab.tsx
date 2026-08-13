@@ -222,10 +222,16 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		minHeight: 120,
 	});
 
-	const persistDnCustomConfig = () => {
+	// Shared by onCustomPathBlur/onCustomArgsBlur/onEnvVarsBlur. Optional
+	// `pathValue` is for the path chooser specifically: it calls this in the
+	// same handler as the change that sets ac.customPath, so reading
+	// ac.customPath back out of this closure would still see the path from
+	// before that update landed. The args/env-var blur paths call this with no
+	// argument, unaffected, and keep reading current state as before.
+	const persistDnCustomConfig = (pathValue?: string) => {
 		setDirectorNotesSettings({
 			...directorNotesSettings,
-			customPath: ac.customPath || undefined,
+			customPath: (pathValue ?? ac.customPath) || undefined,
 			customArgs: ac.customArgs || undefined,
 			customEnvVars: Object.keys(ac.customEnvVars).length > 0 ? ac.customEnvVars : undefined,
 		});

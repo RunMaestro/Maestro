@@ -67,7 +67,7 @@ interface FileTreeRowProps {
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string) => Promise<void>;
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 }
 
@@ -279,7 +279,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 					onOpenBrowserTabAt(`file://${encodedPath}`, { title: node.name });
 					return;
 				}
-				handleFileClick(node, fullPath, session);
+				handleFileClick(node, fullPath);
 			}}
 			onContextMenu={(e) => handleContextMenu(e, node, fullPath, globalIndex)}
 		>

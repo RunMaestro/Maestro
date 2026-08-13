@@ -1661,8 +1661,7 @@ describe('FileExplorerPanel', () => {
 
 			expect(defaultProps.handleFileClick).toHaveBeenCalledWith(
 				expect.objectContaining({ name: 'helpers.ts' }),
-				'src/utils/helpers.ts',
-				expect.any(Object)
+				'src/utils/helpers.ts'
 			);
 		});
 	});
