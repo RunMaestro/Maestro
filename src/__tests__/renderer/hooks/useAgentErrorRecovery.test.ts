@@ -92,5 +92,4 @@ describe('useAgentErrorRecovery', () => {
 
 		expect(onRetry).toHaveBeenCalledTimes(1);
 	});
-
 });
