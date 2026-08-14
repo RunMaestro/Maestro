@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Music } from 'lucide-react';
+import { Maximize2, Pause, Play } from 'lucide-react';
 
 import {
 	selectActiveMediaItem,
@@ -11,57 +11,74 @@ import type { Theme } from '../../types';
 interface NowPlayingIndicatorProps {
 	theme: Theme;
 	/**
-	 * Icon-only, for a Left Bar with no room for a label - the collapsed rail,
-	 * or an expanded sidebar too narrow to take a filename without pushing the
-	 * hamburger off the edge.
+	 * Drop the filename, for a Left Bar with no room for it - the collapsed
+	 * rail, or an expanded sidebar too narrow to take a label without pushing
+	 * the hamburger off the edge. Both buttons still render: they are the only
+	 * controls a minimized player has.
 	 */
 	compact?: boolean;
 }
 
 /**
- * "Maestro is the thing making noise" - the Left Bar's stand-in for the hidden
- * floating player.
+ * The minimized media player: a play/pause button in the Left Bar header.
  *
- * Hiding the player does not stop playback, which without this leaves audio
- * coming from nowhere and no obvious way back: the widget is gone, and the only
- * route to it is a command palette entry the user has to know about. So the
- * moment the player is hidden with something loaded, its file name shows up
- * here, and one click brings the widget back.
+ * Minimizing the floating widget parks it here rather than stopping it, so this
+ * is both the "Maestro is the thing making noise" indicator and the transport
+ * for it. The icon is the current state's *action*, the way a media control
+ * always is: a pause glyph while it plays, a play glyph while it is paused.
  *
- * It appears only while the player is hidden - with the widget on screen it
- * would just be a second copy of the same information - and it disappears with
- * the last queue entry.
+ * The restore button next to it is what brings the widget back, and it is
+ * deliberately separate rather than sharing the click - a single control that
+ * both toggled playback and reopened a window would do one of them by accident
+ * every time. It renders in compact mode too: a narrow sidebar must not be the
+ * one place with no way back to the player.
+ *
+ * Shown only while the player is minimized (with the widget on screen it would
+ * be a second copy of its own transport), and it disappears when the player is
+ * closed or the queue empties.
  */
 export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 	theme,
 	compact = false,
 }: NowPlayingIndicatorProps) {
-	const hidden = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
+	const minimized = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
 	const active = useMediaPlaybackStore(selectActiveMediaItem);
 	const playing = useMediaPlaybackStore((s) => s.playing);
 	const restore = useMediaPlaybackStore((s) => s.restore);
+	const requestToggle = useMediaPlaybackStore((s) => s.requestToggle);
 
-	if (!hidden || !active) return null;
+	if (!minimized || !active) return null;
 
+	// Never shrinks: the header row neither wraps nor scrolls, so these controls
+	// must not be what gets squeezed. The wordmark is the row's shrink target.
 	return (
-		<button
-			type="button"
-			data-testid="now-playing-indicator"
-			onClick={restore}
-			// `shrink-0` on the icon and a capped, truncating label: the header row
-			// neither wraps nor scrolls, so this pill must never be the thing that
-			// pushes the hamburger menu off the edge.
-			className={`flex items-center gap-1 shrink-0 rounded text-[10px] font-bold transition-colors hover:bg-white/10 ${
-				compact ? 'p-1' : 'px-1.5 py-0.5'
-			}`}
-			style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
-			title={`${playing ? 'Playing' : 'Paused'}: ${active.name} - click to show the player`}
-			aria-label={`${playing ? 'Playing' : 'Paused'} ${active.name}. Show the media player`}
-		>
-			{/* Animated only while it is actually making sound, so the pill reads as
-			    a live indicator rather than a permanent button. */}
-			<Music className={`w-3 h-3 shrink-0${playing ? ' animate-pulse' : ''}`} />
-			{!compact && <span className="max-w-[7rem] truncate font-normal">{active.name}</span>}
-		</button>
+		<div data-testid="now-playing-indicator" className="flex items-center shrink-0">
+			<button
+				type="button"
+				data-testid="now-playing-toggle"
+				onClick={requestToggle}
+				className={`flex items-center gap-1 rounded text-[10px] font-bold transition-colors hover:bg-white/10 ${
+					compact ? 'p-1' : 'pl-1.5 pr-1 py-0.5'
+				}`}
+				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
+				title={`${active.name} - click to ${playing ? 'pause' : 'play'}`}
+				aria-label={playing ? `Pause ${active.name}` : `Play ${active.name}`}
+			>
+				{playing ? <Pause className="w-3 h-3 shrink-0" /> : <Play className="w-3 h-3 shrink-0" />}
+				{!compact && <span className="max-w-[7rem] truncate font-normal">{active.name}</span>}
+			</button>
+
+			<button
+				type="button"
+				data-testid="now-playing-restore"
+				onClick={restore}
+				className="p-1 rounded transition-colors hover:bg-white/10"
+				style={{ color: theme.colors.textDim }}
+				title="Show the media player"
+				aria-label="Show the media player"
+			>
+				<Maximize2 className="w-3 h-3 shrink-0" />
+			</button>
+		</div>
 	);
 });

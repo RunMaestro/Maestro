@@ -37,7 +37,6 @@ function reset() {
 		history: [],
 		playing: false,
 		dismissed: false,
-		minimized: false,
 		pendingAutoplay: false,
 		toggleRequest: 0,
 		resumeTimes: {},

@@ -347,8 +347,7 @@ interface MediaPlaybackStoreState {
 	activeItemId: string | null; // the one item with a mounted player (persisted)
 	history: MediaItem[]; // recently played, newest first (per-boot)
 	playing: boolean;
-	dismissed: boolean; // player hidden (playback continues)
-	minimized: boolean; // collapsed to a pill
+	dismissed: boolean; // minimized to the Left Bar (playback continues)
 	pendingAutoplay: boolean; // one-shot: play when ready
 	toggleRequest: number; // nonce; each increment toggles play/pause
 	resumeTimes: Record<string, number>; // per item, so coming back resumes (persisted)
@@ -387,11 +386,11 @@ history entry re-queues it.
 
 ### Gotchas
 
-- **Dismissing does not stop playback.** Hiding a control must not have the side
-  effect of stopping media. The player returns via the "Show Floating Media
-  Player" palette command or by opening a media file.
-- **Minimizing must not unmount the player.** `FloatingMediaPlayer` hides the body
-  with a class; unmounting it would pause the media.
+- **`dismissed` is minimize, `closeItem` is close.** Minimizing keeps the element
+  mounted and playing (the header pill drives it through `requestToggle`);
+  closing releases the player and the sound stops. Collapsing the two is how you
+  get either a hide button that kills audio or a close button that leaves sound
+  coming from nowhere.
 - **Item IDs are `sessionId::path`, not generated.** That is what makes
   re-opening a file land on its existing queue entry and pick up its remembered
   position instead of stacking a duplicate that starts from zero.

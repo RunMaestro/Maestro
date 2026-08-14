@@ -5,9 +5,16 @@
  *
  * Media never becomes a file preview tab. Opening an audio or video file adds
  * it to this queue and shows the floating player - that widget is the only
- * surface media appears on, and it can be dragged anywhere, minimized to a
- * pill, or hidden without stopping playback. Nothing takes over the main panel,
+ * surface media appears on, and it can be dragged anywhere or minimized to the
+ * Left Bar header without stopping playback. Nothing takes over the main panel,
  * so a podcast plays while the user keeps working.
+ *
+ * **Minimizing and closing are different things**, which is what `dismissed`
+ * and `closeItem` express: minimizing (`dismissed`) only hides the widget and
+ * playback carries on from the header pill, while closing releases the player
+ * and the sound stops. A control that hides itself must not silently also stop
+ * the audio, and a close button that only hid it would leave sound coming from
+ * nowhere.
  *
  * Exactly one item plays at a time. Several can be queued, but only the
  * **active** one has a mounted player; the transport's prev/next move between
@@ -91,18 +98,16 @@ interface MediaPlaybackStoreState {
 	/** Whether the active player is currently playing. */
 	playing: boolean;
 	/**
-	 * User hid the player. Playback continues - hiding a control does not stop
-	 * media. Cleared by opening a media file, by the now-playing indicator in the
-	 * Left Bar header, or by the "Show Floating Media Player" command.
+	 * Player minimized to the Left Bar header. Playback continues - minimizing is
+	 * not stopping. Cleared by opening a media file, by the now-playing pill's
+	 * restore button, or by the "Show Floating Media Player" command.
 	 */
 	dismissed: boolean;
-	/** Player collapsed to a compact pill. */
-	minimized: boolean;
 	/** One-shot: start playing once the active item is ready. */
 	pendingAutoplay: boolean;
 	/**
 	 * Incremented to ask the player to toggle play/pause. A nonce rather than a
-	 * function in state, so the minimized pill's button can drive the element
+	 * function in state, so the Left Bar's now-playing pill can drive the element
 	 * without anyone holding a ref across the frame boundary.
 	 */
 	toggleRequest: number;
@@ -180,7 +185,6 @@ interface MediaPlaybackStoreState {
 	dismiss: () => void;
 	/** Bring the player back. */
 	restore: () => void;
-	setMinimized: (minimized: boolean) => void;
 	/**
 	 * Remember where the user put the player, and how wide they made it for this
 	 * kind of media.
@@ -249,7 +253,6 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	history: [],
 	playing: false,
 	dismissed: false,
-	minimized: false,
 	pendingAutoplay: false,
 	toggleRequest: 0,
 	resumeTimes: {},
@@ -407,9 +410,6 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	dismiss: () => set((state) => (state.dismissed ? state : { dismissed: true })),
 
 	restore: () => set((state) => (state.dismissed ? { dismissed: false } : state)),
-
-	setMinimized: (minimized) =>
-		set((state) => (state.minimized === minimized ? state : { minimized })),
 
 	setFloatGeometry: (kind, rect) => {
 		set((state) => {

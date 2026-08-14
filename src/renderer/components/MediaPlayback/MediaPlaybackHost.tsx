@@ -32,7 +32,6 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 }: MediaPlaybackHostProps) {
 	const items = useMediaPlaybackStore((s) => s.items);
 	const activeItemId = useMediaPlaybackStore((s) => s.activeItemId);
-	const playing = useMediaPlaybackStore((s) => s.playing);
 	const dismissed = useMediaPlaybackStore((s) => s.dismissed);
 	const pendingAutoplay = useMediaPlaybackStore((s) => s.pendingAutoplay);
 	const toggleRequest = useMediaPlaybackStore((s) => s.toggleRequest);
@@ -126,10 +125,11 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 	);
 
 	if (dismissed) {
-		// Hidden by the user. Kept mounted and off screen so playback continues -
-		// hiding a control does not stop media. `visibility: hidden` (not
-		// unmounting, not zero size) is what keeps a video's decode pipeline alive,
-		// the same reason the terminal and browser tab overlays use it.
+		// Minimized to the Left Bar. Kept mounted and off screen so playback
+		// continues - minimizing is not stopping, and the header pill drives this
+		// same element. `visibility: hidden` (not unmounting, not zero size) is
+		// what keeps a video's decode pipeline alive, the same reason the terminal
+		// and browser tab overlays use it.
 		return (
 			<div
 				data-testid="media-player-hidden"
@@ -156,7 +156,6 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			kind={active.kind}
 			aspect={aspects[active.id]}
 			transportHeight={transportHeight}
-			playing={playing}
 			theme={theme}
 		>
 			{player}

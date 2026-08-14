@@ -23,7 +23,6 @@ function item(overrides: Partial<MediaItem> = {}): MediaItem {
 
 interface PlayerOverrides {
 	kind?: 'audio' | 'video';
-	playing?: boolean;
 	aspect?: number;
 	transportHeight?: number | null;
 }
@@ -36,7 +35,6 @@ function playerElement(overrides: PlayerOverrides = {}) {
 			kind={overrides.kind ?? 'audio'}
 			aspect={overrides.aspect}
 			transportHeight={overrides.transportHeight ?? null}
-			playing={overrides.playing ?? false}
 			theme={mockTheme}
 		>
 			<div data-testid="player-body">player</div>
@@ -60,7 +58,6 @@ describe('FloatingMediaPlayer', () => {
 			history: [],
 			playing: false,
 			dismissed: false,
-			minimized: false,
 			pendingAutoplay: false,
 			toggleRequest: 0,
 			resumeTimes: {},
@@ -78,46 +75,54 @@ describe('FloatingMediaPlayer', () => {
 		expect(screen.getByText('Agent One')).toBeTruthy();
 	});
 
-	it('keeps the player mounted while minimized, so playback continues', () => {
+	it('minimizes to the Left Bar without stopping playback', () => {
+		useMediaPlaybackStore.setState({ items: [item()], activeItemId: item().id, playing: true });
 		renderPlayer();
-		fireEvent.click(screen.getByLabelText('Minimize player'));
 
-		expect(useMediaPlaybackStore.getState().minimized).toBe(true);
-		// Unmounting the element would pause the media, which is the whole thing
-		// this component exists to avoid.
-		expect(screen.getByTestId('player-body')).toBeTruthy();
+		fireEvent.click(screen.getByLabelText('Minimize player to the Left Bar'));
+
+		const state = useMediaPlaybackStore.getState();
+		expect(state.dismissed).toBe(true);
+		// Minimizing is not stopping: the audio keeps going and the header pill
+		// takes over as its transport.
+		expect(state.playing).toBe(true);
+		expect(state.activeItemId).toBe(item().id);
+		// The queue entry survives, so restoring finds the same file loaded.
+		expect(state.items).toHaveLength(1);
 	});
 
-	it('offers play/pause on the pill only while minimized', () => {
+	it('closing stops playback and releases the player', () => {
+		const a = item();
+		useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id, playing: true });
 		renderPlayer();
-		// Expanded, the transport inside the player owns play/pause.
-		expect(screen.queryByLabelText('Play')).toBeNull();
 
-		fireEvent.click(screen.getByLabelText('Minimize player'));
-		expect(screen.getByLabelText('Play')).toBeTruthy();
+		fireEvent.click(screen.getByLabelText('Close player and stop playback'));
+
+		const state = useMediaPlaybackStore.getState();
+		// Unlike minimize, close releases the element - which is what actually
+		// stops the sound - rather than leaving audio coming from nowhere.
+		expect(state.activeItemId).toBeNull();
+		expect(state.playing).toBe(false);
+		expect(state.dismissed).toBe(false);
 	});
 
-	it('drives playback through the toggle nonce rather than a ref', () => {
+	it('leaves the rest of the queue alone when closing', () => {
+		const a = item();
+		const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
+		useMediaPlaybackStore.setState({ items: [a, b], activeItemId: a.id });
 		renderPlayer();
-		fireEvent.click(screen.getByLabelText('Minimize player'));
-		fireEvent.click(screen.getByLabelText('Play'));
-		expect(useMediaPlaybackStore.getState().toggleRequest).toBe(1);
+
+		fireEvent.click(screen.getByLabelText('Close player and stop playback'));
+
+		// Close is "stop", not "throw away my playlist".
+		expect(useMediaPlaybackStore.getState().items.map((i) => i.id)).toEqual([b.id]);
 	});
 
-	it('labels the pill button Pause when playing', () => {
-		useMediaPlaybackStore.setState({ minimized: true });
-		renderPlayer({ playing: true });
-		expect(screen.getByLabelText('Pause')).toBeTruthy();
-	});
-
-	it('dismisses without stopping playback', () => {
-		useMediaPlaybackStore.setState({ playing: true });
-		renderPlayer({ playing: true });
-
-		fireEvent.click(screen.getByLabelText('Hide player'));
-
-		expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
-		expect(useMediaPlaybackStore.getState().playing).toBe(true);
+	it('no longer owns play/pause - that moved to the header pill', () => {
+		useMediaPlaybackStore.setState({ items: [item()], activeItemId: item().id });
+		renderPlayer();
+		// Expanded, the transport inside the player is the only play/pause.
+		expect(screen.queryByLabelText(/^(Play|Pause)$/)).toBeNull();
 	});
 
 	it('seeds from the remembered position and this kind width', () => {
@@ -292,12 +297,6 @@ describe('FloatingMediaPlayer', () => {
 			rerender(playerElement({ transportHeight: 70 }));
 			expect(frame().style.height).toBe(`${mediaFloatChromeHeight(70)}px`);
 		});
-	});
-
-	it('hides the resize grip while minimized', () => {
-		useMediaPlaybackStore.setState({ minimized: true });
-		renderPlayer();
-		expect(screen.queryByTestId('modal-resize-grip')).toBeNull();
 	});
 
 	describe('queue and history menus', () => {

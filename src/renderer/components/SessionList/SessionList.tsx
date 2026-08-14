@@ -77,15 +77,14 @@ import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
 
 /**
- * Sidebar width below which the now-playing pill drops its filename and shows
- * only the note icon.
+ * Sidebar width below which the now-playing pill drops its filename, keeping
+ * just its play/pause and restore buttons.
  *
- * The header's left cluster does not scroll or wrap, so every element in it has
- * to earn its width: at a default sidebar the logo, the badge pill and the
- * LIVE/OFFLINE pill already fill the row, and a filename on top of them pushes
- * the hamburger off the edge. The threshold is the OFFLINE one plus room for a
- * label, and the icon alone still says audio is playing - the tooltip names the
- * file either way.
+ * Every element in this header has to earn its width: at a default sidebar the
+ * logo, the badge pill and the LIVE/OFFLINE pill already fill the row, so a
+ * filename on top of them is the first thing worth giving up. The buttons are
+ * never dropped - they are the whole transport a minimized player has - and the
+ * tooltip names the file at any width.
  */
 const NOW_PLAYING_LABEL_MIN_WIDTH = 440;
 
@@ -1216,7 +1215,12 @@ function SessionListInner(props: SessionListProps) {
 			>
 				{leftSidebarOpen ? (
 					<>
-						<div className="flex items-center gap-2">
+						{/* `min-w-0` here plus `truncate` on the wordmark below give this row
+						    a legitimate shrink target. It neither wraps nor scrolls, so without
+						    one, adding any control (the now-playing pill, a badge) pushes the
+						    hamburger menu off the edge on a narrow sidebar. Branding is what
+						    yields; every control stays shrink-0. */}
+						<div className="flex items-center gap-2 min-w-0">
 							<button
 								type="button"
 								onClick={() => {
@@ -1236,7 +1240,7 @@ function SessionListInner(props: SessionListProps) {
 								/>
 							</button>
 							<h1
-								className="font-bold tracking-widest text-lg"
+								className="font-bold tracking-widest text-lg truncate min-w-0"
 								style={{ color: theme.colors.textMain }}
 							>
 								MAESTRO

@@ -1,16 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-	FileAudio,
-	FileVideo,
-	GripVertical,
-	History,
-	ListMusic,
-	Minus,
-	Pause,
-	Play,
-	Square,
-	X,
-} from 'lucide-react';
+import { FileAudio, FileVideo, GripVertical, History, ListMusic, Minus, X } from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
@@ -49,15 +38,14 @@ interface FloatingMediaPlayerProps {
 	 * measured rather than assumed.
 	 */
 	transportHeight?: number | null;
-	/** Whether the media is playing, for the minimized pill's button. */
-	playing: boolean;
-	/** The player. Kept mounted while minimized so playback continues. */
+	/**
+	 * The player. Stays mounted while minimized - unmounting it would pause the
+	 * media, which is the whole thing this component exists to avoid.
+	 */
 	children: ReactNode;
 	theme: Theme;
 }
 
-/** Height of the collapsed pill; the player is clipped but still mounted. */
-const PILL_HEIGHT = 40;
 /** Movement below this is a click, not a drag, so a shaky hand still clicks. */
 const DRAG_SLOP_PX = 4;
 /**
@@ -75,16 +63,18 @@ const viewport = () => ({ width: window.innerWidth, height: window.innerHeight }
  * This is the only surface media appears on. Opening an audio or video file
  * does not create a tab or take over the main panel, so the widget floats over
  * whatever the user is actually working on and follows them across agents and
- * tabs. It can be dragged anywhere on screen, collapsed to a pill, or hidden.
+ * tabs. It can be dragged anywhere on screen, or minimized to the Left Bar.
  *
  * There is only ever one, because only one media file plays at a time - the
  * transport's prev/next step through the queue instead of spawning a second
  * widget, and the history menu jumps to anything played earlier.
  *
- * Hiding it does not stop playback: hiding a control should not have the side
- * effect of stopping media. It comes back by opening a media file or via the
- * "Show Floating Media Player" command. The transport's own controls are what
- * actually pause.
+ * **Minimize and close mean different things.** Minimizing parks the widget in
+ * the Left Bar header and the audio keeps going, because hiding a control
+ * should not have the side effect of stopping media; the header pill becomes
+ * the play/pause button and brings the widget back. Closing releases the player
+ * outright and the sound stops, which is what a close button has to do or the
+ * user is left with audio coming from nowhere.
  *
  * The frame is sized to whatever is loaded rather than to a remembered box: an
  * audio file collapses it to the controls, and a video expands it to that
@@ -99,17 +89,13 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	kind,
 	aspect = DEFAULT_MEDIA_ASPECT,
 	transportHeight,
-	playing,
 	children,
 	theme,
 }: FloatingMediaPlayerProps) {
 	const storedPosition = useMediaPlaybackStore((s) => s.floatPosition);
 	const storedWidths = useMediaPlaybackStore((s) => s.floatWidths);
 	const setFloatGeometry = useMediaPlaybackStore((s) => s.setFloatGeometry);
-	const minimized = useMediaPlaybackStore((s) => s.minimized);
-	const setMinimized = useMediaPlaybackStore((s) => s.setMinimized);
 	const dismiss = useMediaPlaybackStore((s) => s.dismiss);
-	const requestToggle = useMediaPlaybackStore((s) => s.requestToggle);
 	const items = useMediaPlaybackStore((s) => s.items);
 	const history = useMediaPlaybackStore((s) => s.history);
 	const activeItemId = useMediaPlaybackStore((s) => s.activeItemId);
@@ -279,7 +265,6 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	}, [fit, kind, storedWidths]);
 
 	const KindIcon = kind === 'video' ? FileVideo : FileAudio;
-	const height = minimized ? PILL_HEIGHT : rect.height;
 
 	return (
 		<div
@@ -289,7 +274,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				top: rect.top,
 				left: rect.left,
 				width: rect.width,
-				height,
+				height: rect.height,
 				zIndex: FLOAT_Z_INDEX,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -299,7 +284,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 			<div
 				className="shrink-0 flex items-center gap-1.5 pl-1 pr-2 h-10 border-b"
 				style={{
-					borderColor: minimized ? 'transparent' : theme.colors.border,
+					borderColor: theme.colors.border,
 					cursor: gesturing ? 'grabbing' : 'grab',
 				}}
 				onMouseDown={beginMove}
@@ -323,29 +308,10 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					>
 						{title}
 					</span>
-					{!minimized && (
-						<span
-							className="text-[10px] truncate max-w-full"
-							style={{ color: theme.colors.textDim }}
-						>
-							{subtitle}
-						</span>
-					)}
+					<span className="text-[10px] truncate max-w-full" style={{ color: theme.colors.textDim }}>
+						{subtitle}
+					</span>
 				</div>
-
-				{/* Minimized keeps a play/pause on the pill, since the transport is
-				    clipped out of view. */}
-				{minimized && (
-					<GhostIconButton
-						onClick={requestToggle}
-						onMouseDown={(e) => e.stopPropagation()}
-						title={playing ? 'Pause' : 'Play'}
-						ariaLabel={playing ? 'Pause' : 'Play'}
-						color={theme.colors.textMain}
-					>
-						{playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-					</GhostIconButton>
-				)}
 
 				{/* Queue and history. Each button appears only when its list has
 				    something in it, so a single file playing on its own shows neither
@@ -379,21 +345,26 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					</GhostIconButton>
 				)}
 
-				<GhostIconButton
-					onClick={() => setMinimized(!minimized)}
-					onMouseDown={(e) => e.stopPropagation()}
-					title={minimized ? 'Expand' : 'Minimize'}
-					ariaLabel={minimized ? 'Expand player' : 'Minimize player'}
-					color={theme.colors.textDim}
-				>
-					{minimized ? <Square className="w-3 h-3" /> : <Minus className="w-3.5 h-3.5" />}
-				</GhostIconButton>
-
+				{/* Minimize and close are deliberately different: minimizing parks the
+				    player in the Left Bar header and the audio keeps going, closing
+				    stops it. Hiding a control should not silently stop media, and a
+				    close button that only hid it would leave sound coming from
+				    nowhere. */}
 				<GhostIconButton
 					onClick={dismiss}
 					onMouseDown={(e) => e.stopPropagation()}
-					title="Hide player (keeps playing - click the note in the Left Bar to bring it back)"
-					ariaLabel="Hide player"
+					title="Minimize to the Left Bar (keeps playing)"
+					ariaLabel="Minimize player to the Left Bar"
+					color={theme.colors.textDim}
+				>
+					<Minus className="w-3.5 h-3.5" />
+				</GhostIconButton>
+
+				<GhostIconButton
+					onClick={() => activeItemId && closeItem(activeItemId)}
+					onMouseDown={(e) => e.stopPropagation()}
+					title="Close player (stops playback)"
+					ariaLabel="Close player and stop playback"
 					color={theme.colors.textDim}
 				>
 					<X className="w-3.5 h-3.5" />
@@ -451,22 +422,18 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				/>
 			)}
 
-			{/* The player stays mounted while minimized - unmounting it would pause
-			    the media, which is the whole thing this component exists to avoid. */}
-			<div className={`flex-1 min-h-0 ${minimized ? 'hidden' : ''}`}>{children}</div>
+			<div className="flex-1 min-h-0">{children}</div>
 
-			{!minimized && (
-				<ModalResizeGrip
-					theme={theme}
-					onResizeStart={beginResize}
-					onReset={() => {
-						const width = MEDIA_FLOAT_DEFAULT_WIDTH[kind];
-						setRect((prev) => fitMediaFloatRect({ ...prev, width }, fit, viewport()));
-						setFloatGeometry(kind, { top: rect.top, left: rect.left, width });
-					}}
-					canReset
-				/>
-			)}
+			<ModalResizeGrip
+				theme={theme}
+				onResizeStart={beginResize}
+				onReset={() => {
+					const width = MEDIA_FLOAT_DEFAULT_WIDTH[kind];
+					setRect((prev) => fitMediaFloatRect({ ...prev, width }, fit, viewport()));
+					setFloatGeometry(kind, { top: rect.top, left: rect.left, width });
+				}}
+				canReset
+			/>
 		</div>
 	);
 });

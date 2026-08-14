@@ -95,20 +95,26 @@ Recently played is per session and is deliberately **not** saved across restarts
 
 Closing the file that is currently playing stops playback - closing is stop, not skip.
 
-## Minimizing and hiding
+## Minimizing and closing
 
-**Minimize** (the `-` button) collapses the player to a compact pill that keeps a play/pause button. It is still fully draggable, and playback continues - the transport is only clipped out of view, not unloaded.
+The two buttons in the title bar do genuinely different things.
 
-**Hide** (the `x` button) removes the player from the screen _without stopping playback_. Hiding a control should not have the side effect of stopping your audio.
+**Minimize** (the `-` button) parks the player in the Left Bar header, next to the Maestro logo. **Playback continues** - minimizing is not stopping. The pill that appears there becomes the player's transport:
 
-While the player is hidden, a small **note icon** appears in the Left Bar header next to the Maestro logo, with the name of the loaded file. It pulses while something is playing, so you can always see that the audio is coming from Maestro. Click it to bring the player back. It disappears when you show the player again or empty the queue.
+- While something is playing it shows a **pause** button. Click it and the audio pauses.
+- Paused, it shows a **play** button. Click it and the audio resumes.
+- The button next to it brings the full player back.
 
-You can also open the Command Palette and run **Show Floating Media Player**, or just open another media file.
+The pill names the file it is holding, and drops to just the two buttons on a narrow sidebar (the tooltip still names it). It stays put while paused, so a half-listened podcast is never stranded, and it disappears when you close the player.
+
+**Close** (the `x` button) stops playback and puts the player away. The rest of your queue is left intact, so opening any media file brings the player back with the playlist still there.
+
+You can also reopen a minimized player from the Command Palette with **Show Floating Media Player**.
 
 ## Tips
 
 - Speed and volume changes take effect instantly and carry to the next file, so you can set up a listening session once and open files freely.
-- Minimize the player and drag it into a corner for long listening; the pill is small enough to leave parked over the Left Bar.
+- Minimize for long listening: the player gets out of the way entirely and the header pill still pauses and resumes it.
 - The player sits above your workspace but always below modals and the Command Palette, so it can never cover a dialog you are trying to read.
 - Playing a video? Resize the player larger by dragging its bottom-right grip, or press `F` for real fullscreen.
 - Queue a batch before a long task: select the files in the Files pane, right-click, **Add N to Play Queue**, and they play through one after another while you work.
