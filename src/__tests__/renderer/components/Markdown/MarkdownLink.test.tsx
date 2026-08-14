@@ -135,6 +135,47 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		expect((window as any).maestro.shell.openPath).toHaveBeenCalledWith('/tmp/x.txt');
 	});
 
+	it('plays a file:// media link in Maestro rather than the OS default app', () => {
+		// Files outside the project root are linked as file://, which used to send
+		// an MP3 straight to the system player - a second app over the workspace to
+		// do what Maestro's own player already does.
+		const onFileClick = vi.fn();
+		const el = renderLink(chat({ onFileClick }), {
+			href: 'file:///Users/me/Scratch/ndr-identity.mp3',
+			children: 'x',
+		});
+		el.props.onClick(makeEvent());
+
+		expect(onFileClick).toHaveBeenCalledWith('/Users/me/Scratch/ndr-identity.mp3');
+		expect((window as any).maestro.shell.openPath).not.toHaveBeenCalled();
+	});
+
+	it('sends a file:// video link to the player too', () => {
+		const onFileClick = vi.fn();
+		const el = renderLink(chat({ onFileClick }), {
+			href: 'file:///tmp/clip.mp4',
+			children: 'x',
+		});
+		el.props.onClick(makeEvent());
+		expect(onFileClick).toHaveBeenCalledWith('/tmp/clip.mp4');
+	});
+
+	it('still hands a non-playable container to the OS', () => {
+		// Chromium cannot demux mkv, so there is no player to route it to.
+		const onFileClick = vi.fn();
+		const el = renderLink(chat({ onFileClick }), { href: 'file:///tmp/movie.mkv', children: 'x' });
+		el.props.onClick(makeEvent());
+
+		expect((window as any).maestro.shell.openPath).toHaveBeenCalledWith('/tmp/movie.mkv');
+		expect(onFileClick).not.toHaveBeenCalled();
+	});
+
+	it('falls back to the OS when the surface has no file-click handler', () => {
+		const el = renderLink(chat(), { href: 'file:///tmp/song.mp3', children: 'x' });
+		el.props.onClick(makeEvent());
+		expect((window as any).maestro.shell.openPath).toHaveBeenCalledWith('/tmp/song.mp3');
+	});
+
 	it('converts git@ URLs to https and opens them', () => {
 		const el = renderLink(chat(), { href: 'git@github.com:user/repo.git', children: 'x' });
 		el.props.onClick(makeEvent());

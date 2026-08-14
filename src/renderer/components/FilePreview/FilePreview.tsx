@@ -53,6 +53,7 @@ import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
@@ -633,23 +634,28 @@ export const FilePreview = React.memo(
 		// web-desktop build that bridge targets the HOST machine, not the browser
 		// user's device, so opening a local path there is meaningless - surface a
 		// toast instead. http/mailto links open the same way in both builds.
-		const handleExternalLinkClick = useCallback((href: string, opts?: { ctrlKey?: boolean }) => {
-			if (/^file:\/\//.test(href)) {
-				if (isWebDesktop()) {
-					notifyToast({
-						color: 'theme',
-						title: 'Open file',
-						message: 'Available in the desktop app',
-					});
+		const handleExternalLinkClick = useCallback(
+			(href: string, opts?: { ctrlKey?: boolean }) => {
+				if (/^file:\/\//.test(href)) {
+					if (isWebDesktop()) {
+						notifyToast({
+							color: 'theme',
+							title: 'Open file',
+							message: 'Available in the desktop app',
+						});
+						return;
+					}
+					// Playable media stays in Maestro's own player rather than being
+					// handed to the OS; everything else opens externally as before.
+					openFileUrl(href, (path) => onFileClick?.(path));
 					return;
 				}
-				void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
-				return;
-			}
-			if (/^https?:\/\/|^mailto:/.test(href)) {
-				openUrl(href, opts);
-			}
-		}, []);
+				if (/^https?:\/\/|^mailto:/.test(href)) {
+					openUrl(href, opts);
+				}
+			},
+			[onFileClick]
+		);
 
 		// Ticking a task checkbox in the rendered preview writes the file straight
 		// to disk, so back-to-back clicks need two guards. `pendingTaskContentRef`

@@ -12,6 +12,8 @@ Open an audio or video file and Maestro plays it in a small floating player. It 
 
 Double-click any supported audio or video file - in the Files pane, from a link in a chat transcript, or through Fuzzy File Search. The player appears in the bottom-right corner and starts playing.
 
+This holds for a file anywhere on disk, not just inside the project. A media path an agent mentions is a link, and clicking it plays the file in Maestro rather than handing it to your system's default player.
+
 Audio opens as a slim control strip, since there is nothing to look at. Video opens as a proper frame, sized to that file's own aspect ratio - a 4:3 screen recording and a vertical phone clip each get a box that fits them, so nothing ever plays inside black bars.
 
 There is only ever **one** player. Opening a second file switches to it and keeps the first in the queue, so two things can never play over each other.

@@ -266,6 +266,12 @@ multi-GB recording never crosses IPC or lands in the renderer heap.
 | `sanitizeMediaTimes(value, knownIds)`   | `(unknown, Set<string>) => Record<string, number>`           | Same for the seconds maps (positions, durations); drops unqueued IDs.       |
 | `formatMediaTime(seconds)`              | `(number \| undefined) => string`                            | Clock time for a fractional media second; `--:--` when unknown.             |
 
+`openFileUrl(href, onFileClick)` in `src/renderer/utils/openFileUrl.ts` is the one
+handler for a `file://` link clicked in markdown. The file-link plugins emit
+`file://` for any path OUTSIDE the project root, so sending every one of them to
+`shell.openPath` quietly routed media around the player and into the OS. It
+returns whether it took the href, so callers `if (openFileUrl(...)) return;`.
+
 **Media never becomes a file preview tab.** `handleOpenFileTab()` diverts it to
 `useMediaPlaybackStore.openMedia()` before a tab can be created, and the only
 surface it appears on is the floating player. Do not add an in-panel placement.
