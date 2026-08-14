@@ -83,10 +83,10 @@ Click the player to focus it, then:
 
 The title bar has two lists, and each button only appears when its list has something in it.
 
-**Play queue** (the list icon) is what plays next, in the order you added files. When a file finishes, the next one starts on its own.
+**Play queue** (the list icon) is what plays **next**, in the order you added files - the track currently in the player is not in it, since that is the now-playing line at the top of the widget. When a file finishes, the next one starts on its own. The button appears only when something is actually queued behind the current track.
 
 - **Previous / Next** walk the same order. It never changes, so the buttons are predictable no matter how you got to the current file. They do not wrap, so they grey out at the ends.
-- Click any row to jump to it, the `x` on a row to drop it, or **Clear** to empty the queue.
+- Click any row to jump to it, the `x` on a row to drop it, or **Clear** to empty what is queued. Clear does not stop the music - it drops what is lined up behind it. Use the `x` in the title bar to stop playback.
 - Every row shows how long the file runs. If you are part way through one, a second, dimmer time underneath shows how much is left (`-3:26`).
 - Each file remembers where you paused it, so jumping away and coming back resumes rather than restarting.
 - **The queue is saved across restarts.** Reopen Maestro and a half-listened playlist is still there, paused, with your positions and times intact. Nothing starts playing on its own at launch.

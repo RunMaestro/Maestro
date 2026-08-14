@@ -97,6 +97,23 @@ export function stepMediaItem(
 }
 
 /**
+ * What is queued up behind the loaded track: everything except the one playing.
+ *
+ * A display filter, deliberately NOT a change to the stored queue. `items` has
+ * to keep the loaded track, because that is how `stepMediaItem` finds its
+ * position for prev/next; drop it there and the transport loses its place. But
+ * "Play Queue" reads as what is coming next, so showing the track you are
+ * already listening to inside it is just the now-playing line repeated.
+ *
+ * Order is preserved, and items BEFORE the loaded one stay listed - they are
+ * still reachable with prev, so hiding them would strand them.
+ */
+export function upcomingMediaItems(items: MediaItem[], activeItemId: string | null): MediaItem[] {
+	if (!activeItemId) return items;
+	return items.filter((item) => item.id !== activeItemId);
+}
+
+/**
  * Put an item at the front of the recently-played list, deduped and capped.
  *
  * History holds whole items rather than IDs into the queue: the two lists have

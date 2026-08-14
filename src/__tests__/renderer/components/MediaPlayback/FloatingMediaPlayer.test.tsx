@@ -303,11 +303,12 @@ describe('FloatingMediaPlayer', () => {
 		const a = item();
 		const b = item({ id: 's1::/files/talk.mp4', path: '/files/talk.mp4', name: 'talk.mp4' });
 
+		/** b is loaded and a is queued behind it, with a also already played. */
 		function seedQueue() {
 			useMediaPlaybackStore.setState({
 				items: [a, b],
 				activeItemId: b.id,
-				history: [b, a],
+				history: [a],
 			});
 		}
 
@@ -317,59 +318,98 @@ describe('FloatingMediaPlayer', () => {
 			expect(screen.queryByLabelText(/Play queue/)).toBeNull();
 		});
 
-		it('shows the queue button once something is queued', () => {
+		it('counts only what is queued behind the loaded track', () => {
+			// Two entries, one of them playing - so one thing is actually "up next".
 			useMediaPlaybackStore.setState({ items: [a, b], activeItemId: a.id });
 			renderPlayer();
-			expect(screen.getByLabelText('Play queue, 2 items')).toBeTruthy();
-			// Nothing has been played, so there is no history button yet.
+			expect(screen.getByLabelText('Play queue, 1 item')).toBeTruthy();
+			// Nothing has departed the player, so there is no history button yet.
 			expect(screen.queryByLabelText('Recently played')).toBeNull();
 		});
 
-		it('lists the queue in open order, not recency', () => {
+		it('hides the queue button when the only track is the one playing', () => {
+			// "Play Queue (0)" is just noise: there is nothing coming next.
+			useMediaPlaybackStore.setState({ items: [a], activeItemId: a.id });
+			renderPlayer();
+			expect(screen.queryByLabelText(/Play queue/)).toBeNull();
+		});
+
+		it('leaves the playing track out of the queue list', () => {
 			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+
+			const menu = screen.getByTestId('media-queue-menu');
+			expect(within(menu).getByText('podcast.mp3')).toBeTruthy();
+			// talk.mp4 is loaded, so it is the now-playing line, not a queue entry.
+			expect(within(menu).queryByText('talk.mp4')).toBeNull();
+		});
+
+		it('lists the queue in open order, not recency', () => {
+			const c = item({ id: 's1::/files/c.mp3', path: '/files/c.mp3', name: 'c.mp3' });
+			useMediaPlaybackStore.setState({ items: [a, b, c], activeItemId: b.id });
 			renderPlayer();
 			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
 
 			const menu = screen.getByTestId('media-queue-menu');
 			expect(menu.textContent!.indexOf('podcast.mp3')).toBeLessThan(
-				menu.textContent!.indexOf('talk.mp4')
+				menu.textContent!.indexOf('c.mp3')
 			);
 		});
 
-		it('plays a queue entry and removes one from the queue', () => {
+		it('plays a queue entry, which then leaves the queue list', () => {
 			seedQueue();
 			renderPlayer();
-			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
-			const menu = screen.getByTestId('media-queue-menu');
-			fireEvent.click(within(menu).getByText('podcast.mp3'));
-			expect(useMediaPlaybackStore.getState().activeItemId).toBe(a.id);
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+			fireEvent.click(within(screen.getByTestId('media-queue-menu')).getByText('podcast.mp3'));
 
-			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
-			fireEvent.click(screen.getByLabelText('Remove talk.mp4 from the queue'));
-			expect(useMediaPlaybackStore.getState().items.map((i) => i.id)).toEqual([a.id]);
+			expect(useMediaPlaybackStore.getState().activeItemId).toBe(a.id);
+			// The two swap places: a is now playing, b is what is queued.
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+			const menu = screen.getByTestId('media-queue-menu');
+			expect(within(menu).getByText('talk.mp4')).toBeTruthy();
+			expect(within(menu).queryByText('podcast.mp3')).toBeNull();
 		});
 
-		it('clears the whole queue', () => {
+		it('removes a queued entry without touching the loaded one', () => {
 			seedQueue();
 			renderPlayer();
-			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
+			fireEvent.click(screen.getByLabelText('Remove podcast.mp3 from the queue'));
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.items.map((i) => i.id)).toEqual([b.id]);
+			expect(state.activeItemId).toBe(b.id);
+		});
+
+		it('clears what is queued without stopping the music', () => {
+			useMediaPlaybackStore.setState({ playing: true });
+			seedQueue();
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
 			fireEvent.click(screen.getByText('Clear'));
 
-			expect(useMediaPlaybackStore.getState().items).toEqual([]);
+			const state = useMediaPlaybackStore.getState();
+			// Clear empties what plays NEXT. Stopping is what the x button is for.
+			expect(state.items.map((i) => i.id)).toEqual([b.id]);
+			expect(state.activeItemId).toBe(b.id);
+			expect(state.playing).toBe(true);
 			expect(screen.queryByTestId('media-queue-menu')).toBeNull();
 		});
 
 		it('lists recently played entries, newest first', () => {
-			seedQueue();
+			const c = item({ id: 's1::/files/c.mp3', path: '/files/c.mp3', name: 'c.mp3' });
+			// c is loaded; b then a departed, most recent first.
+			useMediaPlaybackStore.setState({ items: [c], activeItemId: c.id, history: [b, a] });
 			renderPlayer();
 			fireEvent.click(screen.getByLabelText('Recently played'));
 
 			const menu = screen.getByTestId('media-history-menu');
-			expect(menu.textContent).toContain('talk.mp4');
-			expect(menu.textContent).toContain('podcast.mp3');
 			expect(menu.textContent!.indexOf('talk.mp4')).toBeLessThan(
 				menu.textContent!.indexOf('podcast.mp3')
 			);
+			// The loaded track is never its own history.
+			expect(within(menu).queryByText('c.mp3')).toBeNull();
 		});
 
 		it('re-queues a history entry the queue no longer holds', () => {
@@ -396,7 +436,7 @@ describe('FloatingMediaPlayer', () => {
 			fireEvent.click(screen.getByLabelText('Remove podcast.mp3 from the history'));
 
 			const state = useMediaPlaybackStore.getState();
-			expect(state.history.map((i) => i.id)).toEqual([b.id]);
+			expect(state.history).toEqual([]);
 			expect(state.items).toHaveLength(2);
 		});
 
@@ -404,15 +444,20 @@ describe('FloatingMediaPlayer', () => {
 			seedQueue();
 			renderPlayer();
 			fireEvent.click(screen.getByLabelText('Recently played'));
-			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
 
 			expect(screen.getByTestId('media-queue-menu')).toBeTruthy();
 			expect(screen.queryByTestId('media-history-menu')).toBeNull();
 		});
 
 		it('shows how long each entry runs', () => {
-			seedQueue();
-			useMediaPlaybackStore.setState({ durations: { [a.id]: 266, [b.id]: 95 } });
+			const c = item({ id: 's1::/files/c.mp3', path: '/files/c.mp3', name: 'c.mp3' });
+			useMediaPlaybackStore.setState({
+				items: [c],
+				activeItemId: c.id,
+				history: [b, a],
+				durations: { [a.id]: 266, [b.id]: 95 },
+			});
 			renderPlayer();
 			fireEvent.click(screen.getByLabelText('Recently played'));
 
@@ -422,8 +467,10 @@ describe('FloatingMediaPlayer', () => {
 		});
 
 		it('says how much is left of something part-played', () => {
-			seedQueue();
+			const c = item({ id: 's1::/files/c.mp3', path: '/files/c.mp3', name: 'c.mp3' });
 			useMediaPlaybackStore.setState({
+				items: [a, b, c],
+				activeItemId: b.id,
 				durations: { [a.id]: 266 },
 				resumeTimes: { [a.id]: 60 },
 			});
@@ -445,7 +492,7 @@ describe('FloatingMediaPlayer', () => {
 				resumeTimes: { [a.id]: 0.5, [b.id]: 265.8 },
 			});
 			renderPlayer();
-			fireEvent.click(screen.getByLabelText('Play queue, 2 items'));
+			fireEvent.click(screen.getByLabelText('Play queue, 1 item'));
 
 			const menu = screen.getByTestId('media-queue-menu');
 			expect(within(menu).queryByText(/^-/)).toBeNull();

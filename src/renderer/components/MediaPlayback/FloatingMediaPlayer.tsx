@@ -17,6 +17,7 @@ import {
 	type MediaFloatFit,
 	type MediaFloatRect,
 } from '../../utils/mediaFloatGeometry';
+import { upcomingMediaItems } from '../../utils/mediaItems';
 import type { MediaKind } from '../../../shared/mediaTypes';
 import type { Theme } from '../../types';
 
@@ -116,6 +117,11 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	const resumeTimes = useMediaPlaybackStore((s) => s.resumeTimes);
 	const setActiveItem = useMediaPlaybackStore((s) => s.setActiveItem);
 	const closeItem = useMediaPlaybackStore((s) => s.closeItem);
+
+	// The queue menu lists what is coming NEXT, so the loaded track is filtered
+	// out of it. It stays in `items` because that is how prev/next find their
+	// place - this is a display filter only.
+	const upcoming = useMemo(() => upcomingMediaItems(items, activeItemId), [items, activeItemId]);
 
 	// Everything that decides the frame's height. Held in a ref too, so the
 	// window-level drag handlers can read it without re-subscribing.
@@ -337,13 +343,13 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				{/* Queue and history. Each button appears only when its list has
 				    something in it, so a single file playing on its own shows neither
 				    and the title bar stays uncluttered. */}
-				{items.length > 0 && (
+				{upcoming.length > 0 && (
 					<GhostIconButton
 						ref={queueButtonRef}
 						onClick={() => setOpenList((open) => (open === 'queue' ? null : 'queue'))}
 						onMouseDown={(e) => e.stopPropagation()}
-						title={`Play queue (${items.length})`}
-						ariaLabel={`Play queue, ${items.length} item${items.length === 1 ? '' : 's'}`}
+						title={`Play queue (${upcoming.length})`}
+						ariaLabel={`Play queue, ${upcoming.length} item${upcoming.length === 1 ? '' : 's'}`}
 						color={openList === 'queue' ? theme.colors.accent : theme.colors.textDim}
 					>
 						<ListMusic className="w-3.5 h-3.5" />
@@ -396,10 +402,9 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				<MediaListMenu
 					anchorRef={queueButtonRef}
 					menuRef={listMenuRef}
-					title={`Play Queue (${items.length})`}
+					title={`Play Queue (${upcoming.length})`}
 					listLabel="queue"
-					entries={items}
-					activeItemId={activeItemId}
+					entries={upcoming}
 					durations={durations}
 					resumeTimes={resumeTimes}
 					onSelect={(item) => {
@@ -423,7 +428,6 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					title="Recently Played"
 					listLabel="history"
 					entries={history}
-					activeItemId={activeItemId}
 					durations={durations}
 					resumeTimes={resumeTimes}
 					// A history entry can name a file that is no longer queued (the

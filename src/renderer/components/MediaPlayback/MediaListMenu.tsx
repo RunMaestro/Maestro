@@ -1,6 +1,6 @@
 import { memo, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { FileAudio, FileVideo, Volume2, X } from 'lucide-react';
+import { FileAudio, FileVideo, X } from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
@@ -16,7 +16,6 @@ interface MediaListMenuProps {
 	title: string;
 	listLabel: string;
 	entries: MediaItem[];
-	activeItemId: string | null;
 	/** Item ID -> length in seconds, for the time on each row. */
 	durations: Record<string, number>;
 	/** Item ID -> where playback was left, so a part-played row can say so. */
@@ -48,7 +47,6 @@ export const MediaListMenu = memo(function MediaListMenu({
 	title,
 	listLabel,
 	entries,
-	activeItemId,
 	durations,
 	resumeTimes,
 	onSelect,
@@ -93,7 +91,6 @@ export const MediaListMenu = memo(function MediaListMenu({
 			</div>
 
 			{entries.map((entry) => {
-				const isActive = entry.id === activeItemId;
 				const KindIcon = entry.kind === 'video' ? FileVideo : FileAudio;
 				const duration = durations[entry.id];
 				const resume = resumeTimes[entry.id] ?? 0;
@@ -110,10 +107,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 						key={entry.id}
 						className="group flex items-center gap-2 px-3 py-1 hover:bg-white/10 transition-colors"
 					>
-						<KindIcon
-							className="w-3.5 h-3.5 shrink-0"
-							style={{ color: isActive ? theme.colors.accent : theme.colors.textDim }}
-						/>
+						<KindIcon className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
 						<button
 							onClick={() => onSelect(entry)}
 							className="flex flex-col items-start min-w-0 flex-1 text-left"
@@ -121,7 +115,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 						>
 							<span
 								className="text-xs truncate max-w-full"
-								style={{ color: isActive ? theme.colors.accent : theme.colors.textMain }}
+								style={{ color: theme.colors.textMain }}
 							>
 								{entry.name}
 							</span>
@@ -136,10 +130,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 						{/* How long it runs, and how much of it is left if the user is
 						    part way through. Tabular figures so the column lines up. */}
 						<div className="flex flex-col items-end shrink-0 font-mono tabular-nums">
-							<span
-								className="text-[11px]"
-								style={{ color: isActive ? theme.colors.accent : theme.colors.textDim }}
-							>
+							<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
 								{formatMediaTime(duration)}
 							</span>
 							{remaining !== null && (
@@ -152,12 +143,6 @@ export const MediaListMenu = memo(function MediaListMenu({
 								</span>
 							)}
 						</div>
-
-						{/* Marks what is loaded right now, so the list reads as a place you
-						    are in rather than a flat log. */}
-						{isActive && (
-							<Volume2 className="w-3 h-3 shrink-0" style={{ color: theme.colors.accent }} />
-						)}
 
 						<GhostIconButton
 							onClick={() => onRemove(entry.id)}

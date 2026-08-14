@@ -8,6 +8,7 @@ import {
 	sanitizeMediaTimes,
 	stepMediaItem,
 	trimMediaQueue,
+	upcomingMediaItems,
 	type MediaItem,
 } from '../../../renderer/utils/mediaItems';
 
@@ -83,6 +84,26 @@ describe('stepMediaItem', () => {
 	it('treats an unknown active item as starting from the ends', () => {
 		expect(stepMediaItem(items, null, 1)?.id).toBe('a');
 		expect(stepMediaItem(items, null, -1)?.id).toBe('c');
+	});
+});
+
+describe('upcomingMediaItems', () => {
+	const items = ['a', 'b', 'c'].map((id) => item({ id }));
+
+	it('leaves out the loaded track, since the queue means what plays next', () => {
+		expect(upcomingMediaItems(items, 'b').map((i) => i.id)).toEqual(['a', 'c']);
+	});
+
+	it('keeps items before the loaded one, which prev can still reach', () => {
+		expect(upcomingMediaItems(items, 'c').map((i) => i.id)).toEqual(['a', 'b']);
+	});
+
+	it('lists everything when nothing is loaded', () => {
+		expect(upcomingMediaItems(items, null)).toBe(items);
+	});
+
+	it('is empty when the only entry is the one playing', () => {
+		expect(upcomingMediaItems([item({ id: 'a' })], 'a')).toEqual([]);
 	});
 });
 

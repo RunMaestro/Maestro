@@ -146,6 +146,29 @@ describe('mediaPlaybackStore', () => {
 			expect(useMediaPlaybackStore.getState().history).toEqual([]);
 		});
 
+		it('replaying a track pulls it back out of history', () => {
+			// Otherwise it sits at the top of "recently played" while audibly
+			// playing - the same double-listing, one step removed.
+			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			initial.openMedia(a);
+			initial.openMedia(b); // a departs to history
+			expect(useMediaPlaybackStore.getState().history.map((h) => h.id)).toEqual([idOf(a)]);
+
+			initial.openMedia(a); // a comes back; b departs
+			expect(useMediaPlaybackStore.getState().history.map((h) => h.id)).toEqual([idOf(b)]);
+		});
+
+		it('re-opening a closed track clears its history entry', () => {
+			const a = request();
+			initial.openMedia(a);
+			initial.closeItem(idOf(a)); // player idle, a is history
+			expect(useMediaPlaybackStore.getState().history.map((h) => h.id)).toEqual([idOf(a)]);
+
+			initial.openMedia(a);
+			expect(useMediaPlaybackStore.getState().history).toEqual([]);
+		});
+
 		it('never lists the same item twice', () => {
 			const a = request();
 			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
@@ -491,17 +514,41 @@ describe('mediaPlaybackStore', () => {
 	});
 
 	describe('list maintenance', () => {
-		it('clearQueue empties the queue and releases the player', () => {
-			initial.openMedia(request());
+		it('clearQueue drops what is queued and keeps the track playing', () => {
+			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			initial.openMedia(a);
+			initial.enqueueMedia([b]);
 			initial.setPlaying(true);
 			initial.clearQueue();
 
 			const state = useMediaPlaybackStore.getState();
-			expect(state.items).toEqual([]);
-			expect(state.activeItemId).toBeNull();
-			expect(state.playing).toBe(false);
-			// What was played is a separate record and survives.
-			expect(state.history).toHaveLength(1);
+			// "Clear" empties what plays NEXT. Stopping the music is what the close
+			// button does, and it is one button away.
+			expect(state.items.map((i) => i.id)).toEqual([idOf(a)]);
+			expect(state.activeItemId).toBe(idOf(a));
+			expect(state.playing).toBe(true);
+		});
+
+		it('clearQueue keeps the loaded track resume position, drops the rest', () => {
+			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			initial.openMedia(a);
+			initial.enqueueMedia([b]);
+			initial.rememberTime(idOf(a), 42);
+			initial.rememberTime(idOf(b), 10);
+			initial.clearQueue();
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.resumeTimes[idOf(a)]).toBe(42);
+			expect(state.resumeTimes[idOf(b)]).toBeUndefined();
+		});
+
+		it('clearQueue with nothing queued behind is a no-op', () => {
+			initial.openMedia(request());
+			const before = useMediaPlaybackStore.getState();
+			initial.clearQueue();
+			expect(useMediaPlaybackStore.getState()).toBe(before);
 		});
 
 		it('closing the loaded track records it as played', () => {

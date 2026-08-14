@@ -411,6 +411,14 @@ history entry re-queues it.
   shows the length of a file dropped from the queue, so `closeItem` leaves the
   entry alone; `writeQueueNow` prunes to the queued IDs instead, or every file
   ever played would accumulate in settings.
+- **Neither list shows the loaded track.** The queue menu filters it out at
+  display time via `upcomingMediaItems()` - it must STAY in `items`, because
+  that is how `stepMediaItem` finds its position for prev/next. History excludes
+  it by invariant instead (`historyForActiveChange` strips the incoming id), so
+  replaying something out of history does not leave it listed while it plays.
+- **`clearQueue` keeps the loaded track.** The menu it lives in means "what
+  plays next", so emptying it must not also stop the music; `closeItem` is what
+  stops playback.
 - **History records departures, not arrivals.** A track joins `history` when it
   stops being active (next track, close, clear), never when it becomes active -
   so the loaded track is never in its own "recently played". Pushing on arrival
