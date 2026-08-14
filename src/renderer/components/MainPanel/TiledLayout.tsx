@@ -42,6 +42,7 @@ import {
 	updateSplitSizes,
 } from '../../utils/panelLayout';
 import { usePaneDrag } from '../../hooks/tabs/usePaneDrag';
+import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
@@ -920,10 +921,23 @@ function PaneFrame({
 }
 
 /**
- * Draggable divider between two sibling panes in a split. Mirrors
- * useResizablePanel: during the drag it writes flex-grow directly onto the two
- * neighboring pane wrappers (no re-render per frame), and on mouseup it commits
- * the final fractional sizes to the group's layout via a single store update.
+ * Draggable divider between two sibling panes in a split. During the drag it
+ * writes flex-grow directly onto the two neighboring pane wrappers (no re-render
+ * per frame), and on release it commits the final fractional sizes to the group's
+ * layout via a single store update.
+ *
+ * Runs on usePointerDrag - the same pointer-capture primitive behind every other
+ * drag in the app - rather than hand-rolled document mouse listeners, because the
+ * hand-rolled version could get stuck mid-resize and never release:
+ *   - It committed BEFORE removing its listeners, so a throw anywhere in the
+ *     store update (which re-renders every pane synchronously) left `mousemove`
+ *     attached and the divider kept following the pointer with no button held.
+ *   - No pointer capture: a tiled browser pane is a <webview> overlay stacked
+ *     above this layout (and a tiled terminal pane re-enables pointer events over
+ *     its own rect), so a drag whose pointer crossed one could lose the event
+ *     stream and never see its mouseup.
+ *   - No `pointercancel` and no unmount cleanup, so a gesture the system took
+ *     over, or a group/tab switch mid-drag, leaked the listeners permanently.
  */
 function SplitDivider({
 	direction,
@@ -938,38 +952,36 @@ function SplitDivider({
 	onCommit: () => void;
 }) {
 	const [isDragging, setIsDragging] = React.useState(false);
+	const startDrag = usePointerDrag();
+	const isRow = direction === 'row';
 
-	const onMouseDown = React.useCallback(
-		(e: React.MouseEvent) => {
-			e.preventDefault();
-			e.stopPropagation();
+	const onPointerDown = React.useCallback(
+		(e: React.PointerEvent<HTMLElement>) => {
+			// Left button only. A right-click on the divider used to arm a phantom
+			// drag that nothing would ever release.
+			if (e.button !== 0) return;
 			setIsDragging(true);
-			const start = direction === 'row' ? e.clientX : e.clientY;
-
-			const handleMove = (moveEvent: MouseEvent) => {
-				const current = direction === 'row' ? moveEvent.clientX : moveEvent.clientY;
-				onDrag(current - start);
-			};
-			const handleUp = () => {
-				setIsDragging(false);
-				onCommit();
-				document.removeEventListener('mousemove', handleMove);
-				document.removeEventListener('mouseup', handleUp);
-			};
-			document.addEventListener('mousemove', handleMove);
-			document.addEventListener('mouseup', handleUp);
+			startDrag(e, (dx, dy) => onDrag(isRow ? dx : dy), {
+				stopPropagation: true,
+				onEnd: () => {
+					setIsDragging(false);
+					onCommit();
+				},
+			});
 		},
-		[direction, onDrag, onCommit]
+		[isRow, onDrag, onCommit, startDrag]
 	);
 
-	const isRow = direction === 'row';
 	return (
 		<div
-			onMouseDown={onMouseDown}
+			onPointerDown={onPointerDown}
 			className={`shrink-0 ${isRow ? 'cursor-col-resize' : 'cursor-row-resize'}`}
 			style={{
 				[isRow ? 'width' : 'height']: '4px',
 				backgroundColor: isDragging ? theme.colors.accent : 'transparent',
+				// Keep the browser from claiming the gesture as a scroll/pan on touch,
+				// which would cancel the drag the moment it started.
+				touchAction: 'none',
 			}}
 			// Wider transparent hit area is handled by the 4px band; keep the visual
 			// subtle until hover/drag so the layout reads clean.

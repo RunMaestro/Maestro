@@ -136,6 +136,58 @@ describe('usePointerDrag', () => {
 		expect(releasePointerCapture).toHaveBeenCalledWith(7);
 	});
 
+	it('fires onEnd on pointerup, after the listeners are torn down', () => {
+		const onDrag = vi.fn();
+		const onEnd = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), onDrag, { onEnd }));
+		act(() => window.dispatchEvent(pointer('pointerup', 40, 50, 7)));
+
+		expect(onEnd).toHaveBeenCalledOnce();
+		// Torn down first: capture released and further moves ignored.
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+		act(() => window.dispatchEvent(pointer('pointermove', 90, 90, 7)));
+		expect(onDrag).not.toHaveBeenCalled();
+	});
+
+	it('fires onEnd on pointercancel so a system-intercepted gesture still releases', () => {
+		const onEnd = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onEnd }));
+		act(() => window.dispatchEvent(pointer('pointercancel', 40, 50, 7)));
+
+		expect(onEnd).toHaveBeenCalledOnce();
+		expect(releasePointerCapture).toHaveBeenCalledWith(7);
+	});
+
+	it('tears the drag down BEFORE running onEnd', () => {
+		// The ordering is the fix: a commit that throws must not strand the
+		// gesture. Because teardown already ran, the handle stops tracking the
+		// pointer no matter what the commit does.
+		const onEnd = vi.fn();
+		const { result } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onEnd }));
+		act(() => window.dispatchEvent(pointer('pointerup', 40, 50, 7)));
+
+		expect(releasePointerCapture.mock.invocationCallOrder[0]).toBeLessThan(
+			onEnd.mock.invocationCallOrder[0]
+		);
+	});
+
+	it('does not fire onEnd for an abandoned gesture (unmount)', () => {
+		const onEnd = vi.fn();
+		const { result, unmount } = renderHook(() => usePointerDrag());
+
+		act(() => result.current(dragEvent(), vi.fn(), { onEnd }));
+		unmount();
+
+		// Nothing to commit, and the component is gone.
+		expect(onEnd).not.toHaveBeenCalled();
+	});
+
 	it('cancels the previous pointer before tracking a new drag', () => {
 		const firstDrag = vi.fn();
 		const secondDrag = vi.fn();
