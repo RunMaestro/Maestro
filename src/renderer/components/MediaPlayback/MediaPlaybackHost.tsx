@@ -124,31 +124,12 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 		/>
 	);
 
-	if (dismissed) {
-		// Minimized to the Left Bar. Kept mounted and off screen so playback
-		// continues - minimizing is not stopping, and the header pill drives this
-		// same element. `visibility: hidden` (not unmounting, not zero size) is
-		// what keeps a video's decode pipeline alive, the same reason the terminal
-		// and browser tab overlays use it.
-		return (
-			<div
-				data-testid="media-player-hidden"
-				style={{
-					position: 'fixed',
-					top: 0,
-					left: 0,
-					width: 480,
-					height: 270,
-					visibility: 'hidden',
-					pointerEvents: 'none',
-					zIndex: -1,
-				}}
-			>
-				{player}
-			</div>
-		);
-	}
-
+	// ONE render path, minimized or not. Branching here - a bare wrapper div when
+	// minimized, the frame otherwise - put the media element at a different
+	// position in the React tree, so toggling minimize unmounted and remounted
+	// it. Removing a media element from the document runs the HTML spec's
+	// internal pause steps, which is exactly how minimizing ended up silently
+	// stopping playback. The frame hides itself instead.
 	return (
 		<FloatingMediaPlayer
 			title={active.name}
@@ -156,6 +137,7 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			kind={active.kind}
 			aspect={aspects[active.id]}
 			transportHeight={transportHeight}
+			hidden={dismissed}
 			theme={theme}
 		>
 			{player}

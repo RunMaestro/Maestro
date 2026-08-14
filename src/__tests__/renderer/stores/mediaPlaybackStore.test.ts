@@ -62,7 +62,10 @@ describe('mediaPlaybackStore', () => {
 			expect(state.items).toHaveLength(1);
 			expect(state.activeItemId).toBe(idOf(r));
 			expect(state.pendingAutoplay).toBe(true);
-			expect(state.history.map((h) => h.id)).toEqual([idOf(r)]);
+			// The track you are listening to is not "recently played" - it is named
+			// in the title bar, and listing it in both places at once is what made a
+			// single open file appear twice.
+			expect(state.history).toEqual([]);
 		});
 
 		it('re-opening the same file reuses its entry instead of stacking a duplicate', () => {
@@ -117,27 +120,46 @@ describe('mediaPlaybackStore', () => {
 	});
 
 	describe('history', () => {
-		it('orders by most recently played, newest first', () => {
+		it('records a track when it leaves the player, newest departure first', () => {
 			const a = request();
 			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			const c = request({ path: '/files/c.mp3', name: 'c.mp3' });
 			initial.openMedia(a);
-			initial.openMedia(b);
-			initial.setActiveItem(idOf(a), { autoplay: true });
+			initial.openMedia(b); // a departs
+			initial.openMedia(c); // b departs
 
-			expect(useMediaPlaybackStore.getState().history.map((h) => h.id)).toEqual([idOf(a), idOf(b)]);
+			const state = useMediaPlaybackStore.getState();
+			expect(state.history.map((h) => h.id)).toEqual([idOf(b), idOf(a)]);
+			// c is loaded, so it is not in its own history.
+			expect(state.history.some((h) => h.id === idOf(c))).toBe(false);
+		});
+
+		it('leaves history empty while the first track is still playing', () => {
+			initial.openMedia(request());
+			expect(useMediaPlaybackStore.getState().history).toEqual([]);
+		});
+
+		it('re-opening the loaded track is not a departure', () => {
+			const a = request();
+			initial.openMedia(a);
+			initial.openMedia(a);
+			expect(useMediaPlaybackStore.getState().history).toEqual([]);
 		});
 
 		it('never lists the same item twice', () => {
 			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
 			initial.openMedia(a);
-			initial.openMedia(request({ path: '/files/b.mp3', name: 'b.mp3' }));
-			initial.openMedia(a);
+			initial.openMedia(b); // a departs
+			initial.openMedia(a); // b departs, a is loaded again
+			initial.openMedia(b); // a departs again
 
 			const history = useMediaPlaybackStore.getState().history;
 			expect(history.filter((entry) => entry.id === idOf(a))).toHaveLength(1);
 		});
 
 		it('caps at the limit so the menu stays scannable', () => {
+			// Each open departs the previous track, so N opens leave N-1 entries.
 			for (let i = 0; i < MEDIA_HISTORY_LIMIT + 5; i++) {
 				initial.openMedia(request({ path: `/files/${i}.mp3`, name: `${i}.mp3` }));
 			}
@@ -480,6 +502,24 @@ describe('mediaPlaybackStore', () => {
 			expect(state.playing).toBe(false);
 			// What was played is a separate record and survives.
 			expect(state.history).toHaveLength(1);
+		});
+
+		it('closing the loaded track records it as played', () => {
+			// It left the player, same as if the next one had started. Without this,
+			// playing something and then closing it vanishes from "recently played".
+			const a = request();
+			initial.openMedia(a);
+			initial.closeItem(idOf(a));
+			expect(useMediaPlaybackStore.getState().history.map((h) => h.id)).toEqual([idOf(a)]);
+		});
+
+		it('closing a queued track that never played leaves history alone', () => {
+			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			initial.openMedia(a);
+			initial.enqueueMedia([b]);
+			initial.closeItem(idOf(b));
+			expect(useMediaPlaybackStore.getState().history).toEqual([]);
 		});
 
 		it('removing a history entry leaves the queue alone', () => {

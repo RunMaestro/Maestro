@@ -247,6 +247,35 @@ export function flushMediaQueuePersist(): void {
 	writeQueueNow();
 }
 
+/**
+ * History entry for the track LEAVING the player.
+ *
+ * "Recently played" means what you already heard, so the loaded track is not in
+ * it - it is the thing you are listening to, and it is named in the title bar
+ * two inches away. It joins the list at the moment it departs: the next track
+ * starts, or the player is closed. Recording it on arrival instead put the one
+ * track you were playing at the top of its own history, which is why a single
+ * open file showed up in both lists at once.
+ *
+ * @returns A `history` patch, or nothing when there is no outgoing track (the
+ *   player was idle) or it is the same track (a re-open, which is not a
+ *   departure).
+ */
+function departingHistory(
+	state: MediaPlaybackStoreState,
+	incomingId: string | null
+): { history: MediaItem[] } | undefined {
+	const outgoingId = state.activeItemId;
+	if (!outgoingId || outgoingId === incomingId) return undefined;
+	// Prefer the queue's copy for fresh metadata, but fall back to the history
+	// entry so a track dropped from the queue still records its departure.
+	const outgoing =
+		state.items.find((item) => item.id === outgoingId) ??
+		state.history.find((item) => item.id === outgoingId);
+	if (!outgoing) return undefined;
+	return { history: pushMediaHistory(state.history, outgoing, MEDIA_HISTORY_LIMIT) };
+}
+
 export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get) => ({
 	items: [],
 	activeItemId: null,
@@ -275,7 +304,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			return {
 				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, id),
 				activeItemId: id,
-				history: pushMediaHistory(state.history, item, MEDIA_HISTORY_LIMIT),
+				...departingHistory(state, id),
 				// Opening is an explicit request to hear it, even if it was already
 				// active and paused.
 				pendingAutoplay: true,
@@ -334,7 +363,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			}
 			return {
 				activeItemId: itemId,
-				history: pushMediaHistory(state.history, target, MEDIA_HISTORY_LIMIT),
+				...departingHistory(state, itemId),
 				playing: false,
 				dismissed: false,
 				pendingAutoplay: autoplay,
@@ -375,9 +404,17 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				items,
 				resumeTimes,
 				// Closing the playing item releases the player rather than
-				// auto-advancing: closing is "stop", not "skip".
+				// auto-advancing: closing is "stop", not "skip". The track is leaving
+				// the player, so it lands in history the same as if the next one had
+				// started - otherwise playing something and then closing it would
+				// lose it from "recently played" entirely.
 				...(state.activeItemId === itemId
-					? { activeItemId: null, playing: false, pendingAutoplay: false }
+					? {
+							activeItemId: null,
+							playing: false,
+							pendingAutoplay: false,
+							...departingHistory(state, null),
+						}
 					: {}),
 			};
 		});
@@ -394,6 +431,10 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 						resumeTimes: {},
 						playing: false,
 						pendingAutoplay: false,
+						// The loaded track is leaving the player, same as closing it, so
+						// it still lands in "recently played". Emptying the queue is not
+						// meant to erase what you already heard.
+						...departingHistory(state, null),
 					}
 		);
 		persistQueue();

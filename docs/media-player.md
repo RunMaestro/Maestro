@@ -91,7 +91,7 @@ The title bar has two lists, and each button only appears when its list has some
 - Each file remembers where you paused it, so jumping away and coming back resumes rather than restarting.
 - **The queue is saved across restarts.** Reopen Maestro and a half-listened playlist is still there, paused, with your positions and times intact. Nothing starts playing on its own at launch.
 
-**Recently played** (the clock icon) lists what you have already played, newest first, with the currently loaded file marked and the same times on each row. Click any entry to jump straight to it - that is how you get back to something that is neither adjacent in the queue nor currently loaded. An entry works even after you drop the file from the queue; picking it puts the file back.
+**Recently played** (the clock icon) lists what you have already played, newest first, with the same times on each row. The track in the player is **not** in it - it is named in the title bar, and it joins the list the moment it leaves: the next track starts, or you close the player. Click any entry to jump straight to it - that is how you get back to something that is neither adjacent in the queue nor currently loaded. An entry works even after you drop the file from the queue; picking it puts the file back.
 
 Recently played is per session and is deliberately **not** saved across restarts. A fresh session opens on your queue, not on a log of last week's files.
 

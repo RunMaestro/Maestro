@@ -102,6 +102,19 @@ describe('NowPlayingIndicator', () => {
 		expect(screen.getByLabelText('Play podcast.mp3')).toBeTruthy();
 	});
 
+	it('groups the two buttons into one bordered pill with a divider', () => {
+		// Without the shared border and the rule between them they read as two
+		// unrelated header icons that happen to sit next to each other.
+		render(<NowPlayingIndicator theme={mockTheme} />);
+		const pill = screen.getByTestId('now-playing-indicator');
+
+		expect(pill.className).toContain('border');
+		expect(pill.className).toContain('rounded');
+		// One divider element between the two buttons.
+		expect(pill.querySelectorAll('[aria-hidden]')).toHaveLength(1);
+		expect(pill.querySelectorAll('button')).toHaveLength(2);
+	});
+
 	it('keeps both buttons where there is no room for the label', () => {
 		// A narrow sidebar must not be the one place with no way back to the
 		// player, so only the filename is dropped.

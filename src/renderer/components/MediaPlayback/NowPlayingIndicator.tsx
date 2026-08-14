@@ -49,16 +49,23 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 
 	if (!minimized || !active) return null;
 
-	// Never shrinks: the header row neither wraps nor scrolls, so these controls
-	// must not be what gets squeezed. The wordmark is the row's shrink target.
+	// One bordered pill with a divider between the halves, so the two buttons
+	// read as the minimized player rather than as unrelated header icons that
+	// happen to sit together. Never shrinks: the header row neither wraps nor
+	// scrolls, so these controls must not be what gets squeezed - the wordmark
+	// is the row's shrink target.
 	return (
-		<div data-testid="now-playing-indicator" className="flex items-center shrink-0">
+		<div
+			data-testid="now-playing-indicator"
+			className="flex items-stretch shrink-0 rounded border overflow-hidden"
+			style={{ borderColor: theme.colors.border }}
+		>
 			<button
 				type="button"
 				data-testid="now-playing-toggle"
 				onClick={requestToggle}
-				className={`flex items-center gap-1 rounded text-[10px] font-bold transition-colors hover:bg-white/10 ${
-					compact ? 'p-1' : 'pl-1.5 pr-1 py-0.5'
+				className={`flex items-center gap-1 text-[10px] font-bold transition-colors hover:bg-white/10 ${
+					compact ? 'px-1 py-1' : 'pl-1.5 pr-1.5 py-0.5'
 				}`}
 				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
 				title={`${active.name} - click to ${playing ? 'pause' : 'play'}`}
@@ -68,11 +75,15 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 				{!compact && <span className="max-w-[7rem] truncate font-normal">{active.name}</span>}
 			</button>
 
+			{/* The divider is what makes the pill read as two controls rather than
+			    one wide button, so a click lands where the user meant. */}
+			<div className="w-px shrink-0" style={{ backgroundColor: theme.colors.border }} aria-hidden />
+
 			<button
 				type="button"
 				data-testid="now-playing-restore"
 				onClick={restore}
-				className="p-1 rounded transition-colors hover:bg-white/10"
+				className="px-1 transition-colors hover:bg-white/10"
 				style={{ color: theme.colors.textDim }}
 				title="Show the media player"
 				aria-label="Show the media player"

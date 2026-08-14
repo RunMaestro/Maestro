@@ -39,6 +39,18 @@ interface FloatingMediaPlayerProps {
 	 */
 	transportHeight?: number | null;
 	/**
+	 * Minimized to the Left Bar: the frame hides itself instead of being
+	 * unmounted by the caller.
+	 *
+	 * This is a style flag rather than a `return null`, and that is load-bearing.
+	 * The caller renders this component in exactly one place either way, so the
+	 * media element keeps its position in the React tree; swapping to a different
+	 * wrapper would unmount it, and removing a media element from the document
+	 * runs the HTML spec's internal pause steps - silently stopping the audio
+	 * that minimizing is supposed to preserve.
+	 */
+	hidden?: boolean;
+	/**
 	 * The player. Stays mounted while minimized - unmounting it would pause the
 	 * media, which is the whole thing this component exists to avoid.
 	 */
@@ -89,6 +101,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	kind,
 	aspect = DEFAULT_MEDIA_ASPECT,
 	transportHeight,
+	hidden = false,
 	children,
 	theme,
 }: FloatingMediaPlayerProps) {
@@ -269,15 +282,23 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	return (
 		<div
 			data-testid="floating-media-player"
+			// Minimized keeps the frame mounted and merely invisible. `visibility:
+			// hidden` (not unmounting, not zero size) is what keeps a video's decode
+			// pipeline alive - the same reason the terminal and browser tab overlays
+			// use it - and `aria-hidden` keeps the off-screen controls out of the
+			// accessibility tree while the header pill stands in for them.
+			aria-hidden={hidden || undefined}
 			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none"
 			style={{
 				top: rect.top,
 				left: rect.left,
 				width: rect.width,
 				height: rect.height,
-				zIndex: FLOAT_Z_INDEX,
+				zIndex: hidden ? -1 : FLOAT_Z_INDEX,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
+				visibility: hidden ? 'hidden' : undefined,
+				pointerEvents: hidden ? 'none' : undefined,
 			}}
 		>
 			{/* Title bar doubles as the drag handle */}

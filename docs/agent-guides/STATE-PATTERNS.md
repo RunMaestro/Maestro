@@ -345,7 +345,7 @@ persist; history deliberately does not.
 interface MediaPlaybackStoreState {
 	items: MediaItem[]; // play queue, in open order (persisted)
 	activeItemId: string | null; // the one item with a mounted player (persisted)
-	history: MediaItem[]; // recently played, newest first (per-boot)
+	history: MediaItem[]; // DEPARTED tracks, newest first (per-boot; excludes the loaded one)
 	playing: boolean;
 	dismissed: boolean; // minimized to the Left Bar (playback continues)
 	pendingAutoplay: boolean; // one-shot: play when ready
@@ -411,6 +411,16 @@ history entry re-queues it.
   shows the length of a file dropped from the queue, so `closeItem` leaves the
   entry alone; `writeQueueNow` prunes to the queued IDs instead, or every file
   ever played would accumulate in settings.
+- **History records departures, not arrivals.** A track joins `history` when it
+  stops being active (next track, close, clear), never when it becomes active -
+  so the loaded track is never in its own "recently played". Pushing on arrival
+  put a single open file in the queue AND the history at once. See
+  `departingHistory()`.
+- **`MediaPlaybackHost` must render ONE tree.** Minimized and expanded differ by
+  a style flag on `FloatingMediaPlayer` (`hidden`), never by which wrapper the
+  player is rendered under: branching there moves the media element in the React
+  tree, and an unmount runs the HTML spec's internal pause steps, silently
+  stopping the audio minimizing is meant to preserve.
 - **The player's height is never stored.** It is derived from the loaded file:
   chrome for audio, chrome plus `width / aspect` for video (`mediaFloatGeometry`).
   Persisting a height is what let a video sit in black bars. Width is stored per
