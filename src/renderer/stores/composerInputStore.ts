@@ -13,8 +13,11 @@
  * keystroke. See CLAUDE-PERFORMANCE.md -> "React State Bail-out".
  *
  * Two slices, mirroring the previous dual `useState`:
- *  - `aiValue`: the active AI tab's draft. Flushed to `tab.inputValue` on
- *    blur / submit / tab-switch (owned by useInputHandlers).
+ *  - `aiValue`: the active AI tab's draft. Written back to `tab.inputValue` on
+ *    a short typing timer, and immediately on blur / submit / tab-switch (see
+ *    useInputSync). The timer is what makes this slot safe to hold text in:
+ *    it is a single global slot, so anything that skipped those three flush
+ *    points used to lose what the user typed.
  *  - `terminalValue`: the active session's terminal command draft. Flushed to
  *    `session.terminalDraftInput` on blur / session-switch.
  *

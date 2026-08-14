@@ -65,11 +65,13 @@ vi.mock('../../../renderer/contexts/InputContext', () => ({
 // ============================================================================
 
 const mockSyncAiInputToSession = vi.fn();
+const mockQueueAiDraftFlush = vi.fn();
 const mockSyncTerminalInputToSession = vi.fn();
 
 vi.mock('../../../renderer/hooks/input/useInputSync', () => ({
 	useInputSync: vi.fn(() => ({
 		syncAiInputToSession: mockSyncAiInputToSession,
+		queueAiDraftFlush: mockQueueAiDraftFlush,
 		syncTerminalInputToSession: mockSyncTerminalInputToSession,
 	})),
 }));
@@ -737,10 +739,32 @@ describe('useInputHandlers', () => {
 
 			rerender();
 
-			// Verify tab-1 had the typed input saved (check session store)
-			const sessions = useSessionStore.getState().sessions;
-			const tab1 = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
-			expect(tab1?.inputValue).toBe('typed in tab 1');
+			// The draft is written back to the tab it was typed in, by id. Passing
+			// the id is the point: without it the flush would target whatever tab
+			// is active when it runs, which is already tab-2 here.
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('typed in tab 1', { tabId: 'tab-1' });
+		});
+
+		it('queues a write-back to the typed-in tab on every keystroke', () => {
+			// No blur, no submit, no tab switch: the draft still has to reach
+			// session state on its own, or a quit loses it.
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				result.current.setInputValue('half a thought');
+			});
+
+			expect(mockQueueAiDraftFlush).toHaveBeenCalledWith('tab-1', 'half a thought', false);
+		});
+
+		it('queues the write-back with command mode so the two cannot drift', () => {
+			renderHook(() => useInputHandlers(createMockDeps()));
+
+			act(() => {
+				useComposerInputStore.getState().setAiCommandMode(true);
+			});
+
+			expect(mockQueueAiDraftFlush).toHaveBeenLastCalledWith('tab-1', expect.any(String), true);
 		});
 	});
 
@@ -950,6 +974,30 @@ describe('useInputHandlers', () => {
 			});
 
 			expect(mockSyncAiInputToSession).toHaveBeenCalled();
+		});
+
+		it('attributes the blurred draft to the tab it was typed in', () => {
+			// Blur can arrive after the active tab already moved. Writing the text
+			// to "the active tab" then overwrites a different tab's draft with it.
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+				activeSessionIdRef: { current: 'session-1' },
+			});
+
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			act(() => {
+				result.current.setInputValue('hello from AI');
+			});
+			act(() => {
+				result.current.handleMainPanelInputBlur();
+			});
+
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith(
+				'hello from AI',
+				expect.objectContaining({ tabId: 'tab-1' })
+			);
 		});
 
 		it('syncs terminal input to session in terminal mode', () => {

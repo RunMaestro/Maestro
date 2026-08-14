@@ -125,9 +125,23 @@ The flag lives in two places, and they must move together:
 | Where                              | Scope              | Set by                                                     |
 | ---------------------------------- | ------------------ | ---------------------------------------------------------- |
 | `composerInputStore.aiCommandMode` | live, active tab   | the `!` gesture; Escape/Backspace on an empty command line |
-| `AITab.commandMode`                | persisted, per tab | flushed with `inputValue` on blur / submit / tab switch    |
+| `AITab.commandMode`                | persisted, per tab | flushed with `inputValue` (see draft write-back below)     |
 
-**The invariant:** the same string is a shell command or a message to the agent depending only on this flag. Any path that persists or restores `inputValue` MUST carry `commandMode` with it, or a restored draft routes the wrong way. `syncAiInputToSession` reads the mode from the store itself rather than taking it as an argument, precisely so a caller cannot forget it; the tab-switch save in `useInputHandlers` writes both in the same `setSessions`.
+**The invariant:** the same string is a shell command or a message to the agent depending only on this flag. Any path that persists or restores `inputValue` MUST carry `commandMode` with it, or a restored draft routes the wrong way. `syncAiInputToSession` reads the mode from the store itself rather than taking it as an argument, precisely so a caller cannot forget it; the queued write-back carries it too.
+
+### Drafts are written back on a typing timer, and always to the tab they were typed in
+
+`useInputSync` owns both halves of draft persistence:
+
+| Function                                       | When                                                     |
+| ---------------------------------------------- | -------------------------------------------------------- |
+| `queueAiDraftFlush(tabId, value, commandMode)` | every keystroke, coalesced over ~300ms of idle           |
+| `syncAiInputToSession(value, tabId?)`          | blur / submit / tab switch - supersedes any queued write |
+
+Two rules keep drafts from being lost, and both exist because they were broken before:
+
+1. **No flush point is load bearing.** The live text lives in `composerInputStore` (one global slot, deliberately outside session state so a keystroke doesn't re-render the app). Anything that skipped blur/submit/tab-switch - a quit while typing, an unmount, focus that never left the textarea - used to throw the text away. The keystroke-driven write-back means session state is never more than a typing pause behind, and window blur / visibility hide flush it immediately. A write whose text and mode already match the tab returns the same session reference, so the timer costs nothing when nothing changed.
+2. **Every write is attributed to a tab id, never to "the active tab".** A flush that lands after the active tab moved (blur arriving late, an async continuation) would otherwise stamp its text onto the newly active tab - erasing that tab's draft with text from another one. Pass the tab id whenever the write can land later than the moment it was scheduled.
 
 `utils/shellCommandInput.ts` is down to two helpers:
 
