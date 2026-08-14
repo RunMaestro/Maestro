@@ -117,6 +117,34 @@ export function toSafeDocumentFileName(name: string): string | null {
 }
 
 /**
+ * Pick a file name that does not collide with one already used in this batch.
+ *
+ * Reducing names to their last segment means two distinct references such as
+ * `docs/architecture.md` and `spec/architecture.md` both arrive here as
+ * `architecture.md`. Writing both would silently leave only the second, so the
+ * later one is suffixed instead. `used` is mutated to record the result.
+ */
+export function uniqueDocumentFileName(fileName: string, used: Set<string>): string {
+	const key = fileName.toLowerCase();
+	if (!used.has(key)) {
+		used.add(key);
+		return fileName;
+	}
+	const dot = fileName.lastIndexOf('.');
+	const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
+	const ext = dot > 0 ? fileName.slice(dot) : '';
+	for (let i = 2; i < 1000; i++) {
+		const candidate = `${stem}-${i}${ext}`;
+		if (!used.has(candidate.toLowerCase())) {
+			used.add(candidate.toLowerCase());
+			return candidate;
+		}
+	}
+	// Pathological input only. The caller skips the document.
+	return '';
+}
+
+/**
  * Confirm a recorded local path really is the clone Symphony made for this
  * contribution, before anything deletes it recursively.
  *
@@ -128,7 +156,13 @@ export function toSafeDocumentFileName(name: string): string | null {
  * contribution is for.
  *
  * The repository name is matched rather than the full slug, because fork setup
- * rewrites origin to the contributor's own fork.
+ * rewrites origin to the contributor's own fork. The comparison is against the
+ * final segment of the origin only: an origin URL also carries the host and the
+ * owner, so a substring test would accept an unrelated checkout such as
+ * `https://github.com/maestro/some-other-project.git` for slug `owner/maestro`.
+ *
+ * This predicate authorises a recursive delete, so every unknown case fails
+ * closed.
  */
 export async function isContributionClone(localPath: string, repoSlug?: string): Promise<boolean> {
 	if (!localPath || typeof localPath !== 'string' || !path.isAbsolute(localPath)) {
@@ -141,18 +175,22 @@ export async function isContributionClone(localPath: string, repoSlug?: string):
 	} catch {
 		return false;
 	}
-	// When the caller knows which repository the contribution is for, also
-	// confirm origin points at it. Callers that do not have the slug still get
-	// the checkout requirement above.
-	const repoName = repoSlug?.split('/')[1];
+	const repoName = repoSlug?.split('/')[1]?.toLowerCase();
 	if (!repoName) {
-		return true;
+		return false;
 	}
 	const result = await execFileNoThrow('git', ['remote', 'get-url', 'origin'], localPath);
 	if (result.exitCode !== 0) {
 		return false;
 	}
-	return result.stdout.toLowerCase().includes(repoName.toLowerCase());
+	// Handles both https URLs and scp-style remotes (git@host:owner/repo.git).
+	const originRepo = result.stdout
+		.trim()
+		.replace(/\.git$/i, '')
+		.split(/[/:]/)
+		.pop()
+		?.toLowerCase();
+	return !!originRepo && originRepo === repoName;
 }
 
 /**

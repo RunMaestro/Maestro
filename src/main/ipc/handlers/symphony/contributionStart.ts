@@ -25,6 +25,7 @@ import {
 	createDraftPR,
 	validateContributionId,
 	toSafeDocumentFileName,
+	uniqueDocumentFileName,
 	SymphonyHandlerDependencies,
 } from './shared';
 
@@ -600,6 +601,9 @@ This PR will be updated automatically when the Auto Run completes.`;
 
 					// Track resolved document paths for Auto Run
 					const resolvedDocs: { name: string; path: string; isExternal: boolean }[] = [];
+					// Names already written in this batch, so two references that reduce
+					// to the same file name do not overwrite each other.
+					const usedFileNames = new Set<string>();
 
 					for (const doc of documentPaths) {
 						if (doc.isExternal) {
@@ -613,7 +617,20 @@ This PR will be updated automatically when the Auto Run completes.`;
 								});
 								continue;
 							}
-							const destPath = path.join(symphonyDocsDir, safeFileName);
+							const uniqueFileName = uniqueDocumentFileName(safeFileName, usedFileNames);
+							if (!uniqueFileName) {
+								logger.warn('Skipping document, cannot find a free file name', LOG_CONTEXT, {
+									name: doc.name,
+								});
+								continue;
+							}
+							if (uniqueFileName !== safeFileName) {
+								logger.info('Renamed document to avoid a name collision', LOG_CONTEXT, {
+									name: doc.name,
+									to: uniqueFileName,
+								});
+							}
+							const destPath = path.join(symphonyDocsDir, uniqueFileName);
 							try {
 								logger.info('Downloading external document', LOG_CONTEXT, {
 									name: doc.name,

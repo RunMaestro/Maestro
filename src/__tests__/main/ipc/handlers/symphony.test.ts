@@ -3308,6 +3308,60 @@ describe('Symphony IPC handlers', () => {
 				expect(result.cancelled).toBe(true);
 			});
 
+			// The stored contribution is owner/repo, so the origin's final segment
+			// must be exactly "repo". These origins all contain "repo" somewhere but
+			// point at a different checkout, and each one gates a recursive delete.
+			it.each([
+				['https://github.com/repo/some-other-project.git', 'owner is the repo name'],
+				['git@host:other/repo-tools.git', 'repo name is a prefix of another repo'],
+				['https://repo.example.com/other/thing.git', 'repo name appears in the host'],
+				['https://github.com/other/myrepo.git', 'repo name is a suffix of another repo'],
+			])('should not accept origin %s (%s)', async (origin) => {
+				vi.mocked(fs.readFile).mockResolvedValue(
+					JSON.stringify(createStateWithActiveContributions())
+				);
+				vi.mocked(fs.rm).mockResolvedValue(undefined);
+				vi.mocked(fs.access).mockResolvedValue(undefined);
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					stdout: origin,
+					stderr: '',
+					exitCode: 0,
+				} as never);
+
+				const handler = getCancelHandler();
+				const result = await handler!({} as any, 'contrib_to_cancel', true);
+
+				expect(fs.rm).not.toHaveBeenCalled();
+				expect(result.cancelled).toBe(true);
+			});
+
+			it.each([
+				'https://github.com/owner/repo.git',
+				'https://github.com/owner/repo',
+				'git@github.com:owner/repo.git',
+				// Fork setup rewrites origin to the contributor's own fork.
+				'https://github.com/contributor/repo.git',
+			])("should accept the contribution's own origin %s", async (origin) => {
+				vi.mocked(fs.readFile).mockResolvedValue(
+					JSON.stringify(createStateWithActiveContributions())
+				);
+				vi.mocked(fs.rm).mockResolvedValue(undefined);
+				vi.mocked(fs.access).mockResolvedValue(undefined);
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					stdout: origin,
+					stderr: '',
+					exitCode: 0,
+				} as never);
+
+				const handler = getCancelHandler();
+				await handler!({} as any, 'contrib_to_cancel', true);
+
+				expect(fs.rm).toHaveBeenCalledWith('/tmp/symphony/repos/repo-contrib_to_cancel', {
+					recursive: true,
+					force: true,
+				});
+			});
+
 			it('should preserve local directory when cleanup=false', async () => {
 				vi.mocked(fs.readFile).mockResolvedValue(
 					JSON.stringify(createStateWithActiveContributions())

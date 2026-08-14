@@ -23,7 +23,10 @@ import {
 	registerSymphonyHandlers,
 	SymphonyHandlerDependencies,
 } from '../../main/ipc/handlers/symphony';
-import { toSafeDocumentFileName } from '../../main/ipc/handlers/symphony/shared';
+import {
+	toSafeDocumentFileName,
+	uniqueDocumentFileName,
+} from '../../main/ipc/handlers/symphony/shared';
 import {
 	REGISTRY_CACHE_TTL_MS,
 	ISSUES_CACHE_TTL_MS,
@@ -2735,6 +2738,20 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 			expect(toSafeDocumentFileName('../../..')).toBeNull();
 			expect(toSafeDocumentFileName('.')).toBeNull();
 			expect(toSafeDocumentFileName('')).toBeNull();
+		});
+
+		it('should not let two references collide onto one file name', () => {
+			// docs/architecture.md and spec/architecture.md both reduce to
+			// architecture.md. Writing both would leave only the second.
+			const used = new Set<string>();
+			expect(uniqueDocumentFileName('architecture.md', used)).toBe('architecture.md');
+			expect(uniqueDocumentFileName('architecture.md', used)).toBe('architecture-2.md');
+			expect(uniqueDocumentFileName('architecture.md', used)).toBe('architecture-3.md');
+			// Matching is case-insensitive, since the destination may be too.
+			expect(uniqueDocumentFileName('ARCHITECTURE.MD', used)).toBe('ARCHITECTURE-4.MD');
+			// An extensionless name still disambiguates.
+			expect(uniqueDocumentFileName('README', used)).toBe('README');
+			expect(uniqueDocumentFileName('README', used)).toBe('README-2');
 		});
 
 		it('should keep real issue-body document names working', () => {
