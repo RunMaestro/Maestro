@@ -71,6 +71,7 @@ import {
 	computeUnreadGroupIds,
 	computeQueuedTabIds,
 	filterUnifiedTabOrderForUnread,
+	groupFocusFields,
 } from '../../../renderer/utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
@@ -1350,6 +1351,154 @@ describe('tabHelpers', () => {
 			expect(next.activeBrowserTabId).toBeNull();
 			expect(next.activeTabId).toBe('tab-1');
 			expect(next.inputMode).toBe('ai');
+		});
+	});
+
+	// Shared group-activation patch. The bug it fixes: the shared AI input targets
+	// session.activeTabId, so a group activated without syncing that id sends the
+	// user's message into a standalone tab that isn't even in the group.
+	describe('groupFocusFields', () => {
+		/** A group of `refs`, focused on the pane at `focusedIndex` (-1 = no focus). */
+		const makeGroup = (
+			refs: Array<{ type: 'ai' | 'file' | 'terminal' | 'browser'; id: string }>,
+			focusedIndex: number,
+			overrides: Record<string, unknown> = {}
+		) =>
+			({
+				id: 'g1',
+				name: 'Group',
+				createdAt: 0,
+				focusedPaneId: focusedIndex >= 0 ? `leaf-${focusedIndex}` : null,
+				layout: {
+					kind: 'split',
+					id: 'split-1',
+					direction: 'row',
+					sizes: refs.map(() => 1 / refs.length),
+					children: refs.map((tab, i) => ({ kind: 'leaf', id: `leaf-${i}`, tab })),
+				},
+				...overrides,
+			}) as never;
+
+		it('points activeTabId at the focused AI pane', () => {
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'ai', id: 'tab-1' },
+						{ type: 'ai', id: 'tab-2' },
+					],
+					1
+				)
+			);
+
+			expect(fields).toEqual({
+				activeGroupId: 'g1',
+				activeTabId: 'tab-2',
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('retargets a stale activeTabId that points outside the group', () => {
+			// The reported bug: clicking the group chip while a standalone tab was
+			// active left the composer aimed at that standalone tab, so messages typed
+			// into a visible tile landed in an invisible conversation.
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'standalone' }),
+					createMockTab({ id: 'tiled-1' }),
+					createMockTab({ id: 'tiled-2' }),
+				],
+				activeTabId: 'standalone',
+				activeGroupId: null,
+			});
+			const group = makeGroup(
+				[
+					{ type: 'ai', id: 'tiled-1' },
+					{ type: 'ai', id: 'tiled-2' },
+				],
+				0
+			);
+
+			const next = { ...session, ...groupFocusFields(group) };
+
+			expect(next.activeGroupId).toBe('g1');
+			expect(next.activeTabId).toBe('tiled-1');
+		});
+
+		it('clears the standalone ids that outrank the group in render precedence', () => {
+			const session = createMockSession({
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				activeBrowserTabId: 'browser-1',
+				inputMode: 'terminal',
+			});
+
+			const next = {
+				...session,
+				...groupFocusFields(makeGroup([{ type: 'ai', id: 'tab-1' }], 0)),
+			};
+
+			expect(next.activeFileTabId).toBeNull();
+			expect(next.activeTerminalTabId).toBeNull();
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.inputMode).toBe('ai');
+		});
+
+		it('leaves activeTabId alone when the focused pane is a non-AI tab', () => {
+			// MainPanelContent hides the input entirely in this case, so there is
+			// nothing to target and retargeting would be noise.
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'ai', id: 'tab-1' },
+						{ type: 'file', id: 'file-1' },
+					],
+					1
+				)
+			);
+
+			expect(fields).not.toHaveProperty('activeTabId');
+			expect(fields.activeGroupId).toBe('g1');
+		});
+
+		it('falls back to the first AI pane when the group has no focused pane', () => {
+			// With no resolvable focused leaf the input still RENDERS (the non-AI check
+			// needs a leaf to conclude anything), so it needs a target inside the group.
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'file', id: 'file-1' },
+						{ type: 'ai', id: 'tab-2' },
+					],
+					-1
+				)
+			);
+
+			expect(fields.activeTabId).toBe('tab-2');
+		});
+
+		it('falls back to the first AI pane when focusedPaneId is stale', () => {
+			const fields = groupFocusFields(
+				makeGroup([{ type: 'ai', id: 'tab-1' }], 0, { focusedPaneId: 'leaf-gone' })
+			);
+
+			expect(fields.activeTabId).toBe('tab-1');
+		});
+
+		it('omits activeTabId for an all-non-AI group', () => {
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'terminal', id: 'term-1' },
+						{ type: 'browser', id: 'browser-1' },
+					],
+					-1
+				)
+			);
+
+			expect(fields).not.toHaveProperty('activeTabId');
 		});
 	});
 

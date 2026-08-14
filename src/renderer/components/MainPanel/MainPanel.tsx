@@ -40,6 +40,7 @@ import {
 	computeUnreadGroupIds,
 	focusAiTabInSession,
 	getTabDisplayName,
+	groupFocusFields,
 } from '../../utils/tabHelpers';
 import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useModalStore } from '../../stores/modalStore';
@@ -406,25 +407,24 @@ export const MainPanel = React.memo(
 			[setLogViewerOpen, setActiveSessionId, setSessions]
 		);
 
-		// Activate a tiled tab group: set activeGroupId (so MainPanelContent renders
-		// the group's layout) and clear the standalone active-tab ids/inputMode so no
-		// single-view content competes with the group for the panel.
+		// Activate a tiled tab group (clicking its chip in the tab strip): render the
+		// group's layout and clear the standalone active-tab ids so no single-view
+		// content competes with it for the panel.
+		//
+		// Via groupFocusFields, which also points activeTabId at the group's focused AI
+		// pane. This handler used to set activeGroupId alone, so the shared input area -
+		// which always targets activeTabId - stayed aimed at the standalone tab that was
+		// active before the click. Typing into a visible tile delivered the message to a
+		// conversation that isn't even in the group.
 		const handleGroupSelect = useCallback(
 			(groupId: string) => {
 				if (!activeSession) return;
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === activeSession.id
-							? {
-									...s,
-									activeGroupId: groupId,
-									activeFileTabId: null,
-									activeBrowserTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai',
-								}
-							: s
-					)
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						const group = s.tabGroups?.find((g) => g.id === groupId);
+						return group ? { ...s, ...groupFocusFields(group) } : s;
+					})
 				);
 			},
 			[activeSession, setSessions]
