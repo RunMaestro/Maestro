@@ -17,6 +17,7 @@ import {
 	checkGhAuthentication,
 	getDefaultBranch,
 	createDraftPR,
+	validateContributionId,
 	SymphonyHandlerDependencies,
 } from './shared';
 
@@ -48,6 +49,11 @@ export function registerContributionFinishHandlers({
 				error?: string;
 			}> => {
 				const { contributionId } = params;
+
+				const idValidation = validateContributionId(contributionId);
+				if (!idValidation.valid) {
+					return { success: false, error: idValidation.error };
+				}
 
 				// Read contribution metadata
 				const metadataPath = path.join(

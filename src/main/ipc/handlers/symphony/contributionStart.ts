@@ -23,6 +23,8 @@ import {
 	checkGhAuthentication,
 	getDefaultBranch,
 	createDraftPR,
+	validateContributionId,
+	toSafeDocumentFileName,
 	SymphonyHandlerDependencies,
 } from './shared';
 
@@ -497,6 +499,11 @@ This PR will be updated automatically when the Auto Run completes.`;
 				} = params;
 
 				// Validate inputs
+				const idValidation = validateContributionId(contributionId);
+				if (!idValidation.valid) {
+					return { success: false, error: idValidation.error };
+				}
+
 				const slugValidation = validateRepoSlug(repoSlug);
 				if (!slugValidation.valid) {
 					return { success: false, error: slugValidation.error };
@@ -596,8 +603,17 @@ This PR will be updated automatically when the Auto Run completes.`;
 
 					for (const doc of documentPaths) {
 						if (doc.isExternal) {
-							// Download external file (GitHub attachment) to cache directory
-							const destPath = path.join(symphonyDocsDir, doc.name);
+							// Download external file (GitHub attachment) to cache directory.
+							// The name is link text from the issue body, so reduce it to a
+							// bare file name before joining it onto the cache directory.
+							const safeFileName = toSafeDocumentFileName(doc.name);
+							if (!safeFileName) {
+								logger.warn('Skipping document with unusable name', LOG_CONTEXT, {
+									name: doc.name,
+								});
+								continue;
+							}
+							const destPath = path.join(symphonyDocsDir, safeFileName);
 							try {
 								logger.info('Downloading external document', LOG_CONTEXT, {
 									name: doc.name,

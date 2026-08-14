@@ -13,11 +13,16 @@ import { resolveGhPath } from '../utils/cliDetection';
 import type { DocumentReference } from '../../shared/symphony-types';
 import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
 import { captureException } from '../utils/sentry';
+import { toSafeDocumentFileName } from '../ipc/handlers/symphony/shared';
 
 const LOG_CONTEXT = '[SymphonyRunner]';
 
 /**
  * Clean up local repository directory on failure.
+ *
+ * No provenance check here, unlike symphony:cancel: this runner clones into
+ * localPath itself earlier in the same call, so the directory is known to be
+ * ours, and a half-finished clone still has to be removable.
  */
 async function cleanupLocalRepo(localPath: string): Promise<void> {
 	try {
@@ -193,7 +198,14 @@ async function setupAutoRunDocs(
 	await fs.mkdir(autoRunPath, { recursive: true });
 
 	for (const doc of documentPaths) {
-		const destPath = path.posix.join(autoRunPath, doc.name);
+		// The name is link text from the issue body, so reduce it to a bare file
+		// name before joining it onto the Auto Run docs directory.
+		const safeFileName = toSafeDocumentFileName(doc.name);
+		if (!safeFileName) {
+			logger.warn('Skipping document with unusable name', LOG_CONTEXT, { name: doc.name });
+			continue;
+		}
+		const destPath = path.posix.join(autoRunPath, safeFileName);
 
 		if (doc.isExternal) {
 			// Download external file (GitHub attachment)

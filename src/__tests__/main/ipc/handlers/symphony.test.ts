@@ -3272,6 +3272,14 @@ describe('Symphony IPC handlers', () => {
 					JSON.stringify(createStateWithActiveContributions())
 				);
 				vi.mocked(fs.rm).mockResolvedValue(undefined);
+				// A real contribution path is a clone, so the directory has a .git
+				// entry and an origin pointing at the contribution's repository.
+				vi.mocked(fs.access).mockResolvedValue(undefined);
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					stdout: 'https://github.com/owner/repo.git',
+					stderr: '',
+					exitCode: 0,
+				} as never);
 
 				const handler = getCancelHandler();
 				await handler!({} as any, 'contrib_to_cancel', true);
@@ -3281,6 +3289,23 @@ describe('Symphony IPC handlers', () => {
 					recursive: true,
 					force: true,
 				});
+			});
+
+			it("should refuse to remove a path that is not this contribution's clone", async () => {
+				vi.mocked(fs.readFile).mockResolvedValue(
+					JSON.stringify(createStateWithActiveContributions())
+				);
+				vi.mocked(fs.rm).mockResolvedValue(undefined);
+				// No .git entry, so the stored path is an ordinary directory rather
+				// than a clone and must not be recursively removed.
+				vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+
+				const handler = getCancelHandler();
+				const result = await handler!({} as any, 'contrib_to_cancel', true);
+
+				expect(fs.rm).not.toHaveBeenCalled();
+				// The contribution is still cancelled, only the deletion is skipped.
+				expect(result.cancelled).toBe(true);
 			});
 
 			it('should preserve local directory when cleanup=false', async () => {
