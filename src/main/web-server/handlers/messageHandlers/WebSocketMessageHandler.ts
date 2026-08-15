@@ -21,6 +21,7 @@
  * - get_file_tree: Read directory tree from filesystem for web file explorer
  * - get_settings: Fetch current web settings
  * - set_setting: Modify a single setting (allowlisted keys only)
+ * - acappella_signal: WebRTC signaling for a paired A Cappella voice device
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  *
@@ -41,6 +42,7 @@ import type {
 	MessageHandlerContext,
 } from './types';
 import { handleSendCommand, handleSwitchMode, handleSelectSession } from './commands';
+import { ACAPPELLA_SIGNAL_MESSAGE, handleACappellaSignal } from './acappellaSignal';
 import {
 	handleGetSessions,
 	handleCreateSession,
@@ -635,6 +637,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_session_history':
 				handleGetSessionHistory(this.ctx, client, message);
+				break;
+
+			case ACAPPELLA_SIGNAL_MESSAGE:
+				handleACappellaSignal(this.ctx, client, message);
 				break;
 
 			case 'bridge.invoke':

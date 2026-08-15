@@ -87,7 +87,21 @@ export interface RosterAgent {
 // ---------------------------------------------------------------------------
 
 /** How a session was woken. */
-export type WakeSource = 'wake-word' | 'hotkey' | 'client-button';
+export type WakeSource = 'wake-word' | 'hotkey' | 'client-button' | 'remote-device';
+
+/**
+ * Which microphone the session is being held by.
+ *
+ * A remote session is not a different KIND of session - routing, dispatch,
+ * translation, and TTS run the identical code path either way, which is the
+ * whole point of terminating the phone's audio in the same pipeline the local
+ * microphone feeds. The origin exists so a client can SAY which microphone is
+ * open, because a Mac whose HUD claims to be listening while its own microphone
+ * is shut is describing something that is not happening in the room.
+ */
+export type VoiceOrigin =
+	| { kind: 'local' }
+	| { kind: 'remote'; deviceId: string; deviceName: string };
 
 /**
  * Inbound, requests a session in `scope`. Outbound, announces `idle -> arming`.
@@ -96,6 +110,8 @@ export interface WakeEvent extends VoiceEventBase {
 	type: 'wake';
 	source: WakeSource;
 	scope: VoiceScope;
+	/** Absent means `local`, which is what every pre-Phase-10 producer emitted. */
+	origin?: VoiceOrigin;
 }
 
 /** The floor is open and audio is being consumed. */
@@ -104,6 +120,8 @@ export interface ListenStartEvent extends VoiceEventBase {
 	scope: VoiceScope;
 	/** Named so provider substitution can never be silent. */
 	sttProviderId: string;
+	/** Which microphone is open. Absent means this machine's. */
+	origin?: VoiceOrigin;
 }
 
 export type ListenStopReason = 'endpoint' | 'stopped' | 'interrupted' | 'error';

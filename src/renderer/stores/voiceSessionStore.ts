@@ -23,6 +23,7 @@ import type {
 	MicState,
 	RosterAgent,
 	VoiceEvent,
+	VoiceOrigin,
 	VoiceScope,
 } from '../../shared/acappella/protocol';
 import type { VoiceProviderSubstitution } from '../../shared/acappella/providers';
@@ -92,6 +93,15 @@ interface VoiceSessionStoreState {
 	sessionId: string | null;
 	state: VoiceSessionState;
 	scope: VoiceScope | null;
+	/**
+	 * Which microphone is holding the session.
+	 *
+	 * `local` unless a paired device took the floor, in which case the HUD says
+	 * which one. A Mac at home showing a listening indicator over its own shut
+	 * microphone is describing something that is not happening in the room, and
+	 * this is the field that stops it.
+	 */
+	origin: VoiceOrigin;
 	/** Last `seq` applied. */
 	seq: number;
 	/** True once a `seq` gap was seen. Sticky for the life of the session. */
@@ -172,6 +182,7 @@ const EMPTY_STATE: VoiceSessionStoreState = {
 	sessionId: null,
 	state: 'idle',
 	scope: null,
+	origin: { kind: 'local' },
 	seq: 0,
 	lostEvents: false,
 	providerIds: null,
@@ -273,9 +284,11 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 			switch (event.type) {
 				case 'wake':
 					patch.scope = event.scope;
+					patch.origin = event.origin ?? { kind: 'local' };
 					break;
 				case 'listen-start':
 					patch.scope = event.scope;
+					patch.origin = event.origin ?? { kind: 'local' };
 					patch.partialTranscript = '';
 					break;
 				case 'listen-stop':
@@ -457,6 +470,18 @@ export const selectVoiceAudioLevel = (s: VoiceSessionStore) => s.audioLevel;
 
 /** What is wrong with the microphone, or null when it is fine or unknown. */
 export const selectVoiceMicIssue = (s: VoiceSessionStore) => s.mic?.issue ?? null;
+
+/**
+ * The name of the paired device holding the floor, or null when it is this
+ * machine's own microphone.
+ *
+ * The HUD renders this next to the state, so a Mac at home visibly reflects that
+ * a phone is the thing listening. Without it, the desktop shows a listening
+ * indicator over a microphone that is not open, which is the one thing the HUD
+ * must never do.
+ */
+export const selectVoiceRemoteDevice = (s: VoiceSessionStore): string | null =>
+	s.origin.kind === 'remote' ? s.origin.deviceName : null;
 
 /** What the HUD binds to, in words. */
 export const selectVoiceScopeLabel = (s: VoiceSessionStore): string => {

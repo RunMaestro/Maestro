@@ -11,6 +11,7 @@ related:
   - '[[system-overview]]'
   - '[[voice-session-protocol]]'
   - '[[adr-002-main-process-session]]'
+  - '[[transport-and-pairing]]'
 ---
 
 # ADR-001: WebRTC for the phone audio leg
@@ -127,3 +128,5 @@ duplex to a WebSocket design later) means rebuilding the transport.
 - [[system-overview]] - where the phone sits in the client model.
 - [[voice-session-protocol]] - the control-plane events that ride the WebSocket.
 - [[adr-002-main-process-session]] - why there is a session in main for the phone to be a peer of.
+- [[transport-and-pairing]] - how the decision was actually built: pairing, signaling, ICE, TURN,
+  and the connection matrix.

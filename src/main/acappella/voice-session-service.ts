@@ -24,6 +24,7 @@ import type {
 	VoiceEventBase,
 	VoiceEventPayload,
 	VoiceEventType,
+	VoiceOrigin,
 	VoiceScope,
 	VoiceSessionErrorCode,
 	WakeSource,
@@ -247,6 +248,11 @@ export interface VoiceSessionSnapshot {
 	sessionId: string | null;
 	state: VoiceSessionState;
 	scope: VoiceScope | null;
+	/**
+	 * Which microphone is holding the session, for a client that joined after the
+	 * `listen-start` went out. `local` while idle.
+	 */
+	origin: VoiceOrigin;
 	/** Last `seq` emitted. A client whose next event skips this has lost events. */
 	seq: number;
 	startedAt: number | null;
@@ -308,6 +314,12 @@ export class VoiceSessionService {
 	private stopping = false;
 	private sessionId: string | null = null;
 	private scope: VoiceScope | null = null;
+	/**
+	 * Which microphone is holding the session. Set at start and never mid-session:
+	 * a floor that changes hands starts a NEW session, so an origin that mutated
+	 * under a live session would be describing a handover that cannot happen.
+	 */
+	private origin: VoiceOrigin = { kind: 'local' };
 	private seq = 0;
 	private startedAt: number | null = null;
 
@@ -446,6 +458,7 @@ export class VoiceSessionService {
 			sessionId: this.sessionId,
 			state: this.state,
 			scope: this.scope,
+			origin: this.origin,
 			seq: this.seq,
 			startedAt: this.startedAt,
 			providerIds: {
@@ -470,6 +483,15 @@ export class VoiceSessionService {
 	async startSession(params: {
 		scope: VoiceScope;
 		source?: WakeSource;
+		/**
+		 * Which microphone is holding this session. Defaults to this machine's.
+		 *
+		 * It travels with the session rather than being looked up, because by the
+		 * time a `listen-start` is read the floor may already have moved: a client
+		 * showing "your iPhone is holding the microphone" has to be describing the
+		 * session it was told about, not whatever is true a second later.
+		 */
+		origin?: VoiceOrigin;
 	}): Promise<VoiceSessionSnapshot> {
 		if (this.state !== 'idle') {
 			await this.stopSession('replaced');
@@ -477,6 +499,7 @@ export class VoiceSessionService {
 
 		this.sessionId = generateUUID();
 		this.scope = params.scope;
+		this.origin = params.origin ?? { kind: 'local' };
 		this.seq = 0;
 		this.startedAt = Date.now();
 		this.recentUtterances = [];
@@ -487,7 +510,11 @@ export class VoiceSessionService {
 		this.turn += 1;
 
 		this.transition('arming');
-		this.emit('wake', { source: params.source ?? 'client-button', scope: params.scope });
+		this.emit('wake', {
+			source: params.source ?? 'client-button',
+			scope: params.scope,
+			origin: this.origin,
+		});
 
 		// Before the device, not after: a session that opened the microphone and
 		// then discovered it has nowhere to send the audio has already cost the user
@@ -519,7 +546,11 @@ export class VoiceSessionService {
 		}
 
 		this.transition('listening');
-		this.emit('listen-start', { scope: params.scope, sttProviderId: this.providers.stt.id });
+		this.emit('listen-start', {
+			scope: params.scope,
+			sttProviderId: this.providers.stt.id,
+			origin: this.origin,
+		});
 		// Immediately after the floor opens, so a client that joined mid-session
 		// never has to guess which engines it is actually talking to.
 		this.publishProviderState();
@@ -563,6 +594,7 @@ export class VoiceSessionService {
 
 		this.sessionId = null;
 		this.scope = null;
+		this.origin = { kind: 'local' };
 		this.startedAt = null;
 		this.recentUtterances = [];
 		// A question nobody answered, and a dispatch nobody can correct any more:
@@ -1557,6 +1589,7 @@ export class VoiceSessionService {
 		this.emit('listen-start', {
 			scope: this.scope ?? { kind: 'conductor' },
 			sttProviderId: this.providers.stt.id,
+			origin: this.origin,
 		});
 	}
 

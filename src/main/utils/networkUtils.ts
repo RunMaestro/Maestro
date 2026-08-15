@@ -88,6 +88,19 @@ function getIpViaUdp(): Promise<string> {
  * Prefers interfaces that look like they connect to the internet.
  */
 function getIpFromInterfaces(): string {
+	const candidates = rankedIpv4Candidates();
+	if (candidates.length === 0) {
+		return 'localhost';
+	}
+	return candidates[0].ip;
+}
+
+/**
+ * Every usable IPv4 address, sorted best-routing first. The one scoring pass
+ * behind both `getIpFromInterfaces` (takes the head) and
+ * `listLocalIpv4Addresses` (takes all of it).
+ */
+function rankedIpv4Candidates(): Array<{ ip: string; priority: number }> {
 	const interfaces = networkInterfaces();
 	const candidates: Array<{ ip: string; priority: number }> = [];
 
@@ -132,13 +145,9 @@ function getIpFromInterfaces(): string {
 		}
 	}
 
-	if (candidates.length === 0) {
-		return 'localhost';
-	}
-
-	// Sort by priority (highest first) and return the best
+	// Sort by priority (highest first) so the head is the best route out.
 	candidates.sort((a, b) => b.priority - a.priority);
-	return candidates[0].ip;
+	return candidates;
 }
 
 /**
@@ -166,4 +175,21 @@ function isPrivateIp(ip: string): boolean {
  */
 export function getLocalIpAddressSync(): string {
 	return getIpFromInterfaces();
+}
+
+/**
+ * Every non-internal IPv4 address on this machine, best-routing first.
+ *
+ * `getLocalIpAddress` answers "which one address should I advertise"; this
+ * answers "which addresses could someone reach me on", which is a different
+ * question with a different right answer. A machine on WiFi and a Tailscale-style
+ * overlay at the same time has two working addresses, and a pairing QR code that
+ * offered only the highest-priority one would send a phone that is on the overlay
+ * but not the WiFi to a relay for a connection it could have had directly.
+ *
+ * Ordering reuses the same interface-priority scoring as the single-address
+ * picker, so the two can never disagree about which address is the primary one.
+ */
+export function listLocalIpv4Addresses(): string[] {
+	return rankedIpv4Candidates().map((candidate) => candidate.ip);
 }

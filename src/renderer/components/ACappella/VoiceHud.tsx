@@ -45,7 +45,7 @@ import { DEFAULT_TTS_VOLUME } from '../../../shared/acappella/voice-controls';
 import type { MicIssue } from '../../../shared/acappella/protocol';
 import { micSettingsLabel, micSettingsUrl } from '../../../shared/acappella/mic-settings';
 import { getPlatform } from '../../utils/platformUtils';
-import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { selectVoiceRemoteDevice, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { VoiceDevHarness } from './VoiceDevHarness';
@@ -100,6 +100,13 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const substitutions = useVoiceSessionStore((s) => s.substitutions);
 	const lostEvents = useVoiceSessionStore((s) => s.lostEvents);
 	const dismissed = useVoiceSessionStore((s) => s.dismissed);
+	/**
+	 * The paired device holding the floor, or null for this machine's own
+	 * microphone. Rendered next to the state so a Mac at home visibly reflects
+	 * that a phone is the thing listening - a listening indicator over a shut
+	 * local microphone is the one lie this widget must never tell.
+	 */
+	const remoteDevice = useVoiceSessionStore(selectVoiceRemoteDevice);
 	const setDismissed = useVoiceSessionStore((s) => s.setDismissed);
 
 	const loadPrefs = useVoiceUiStore((s) => s.load);
@@ -277,7 +284,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// put the identical sentence on screen twice, one of them in red.
 	const showError = error && !(micIssue && error.code === 'audio-capture-failed');
 
-	const stateLabel = VOICE_HUD_STATE_LABELS[visualState];
+	const stateLabel = remoteDevice
+		? `${VOICE_HUD_STATE_LABELS[visualState]} on ${remoteDevice}`
+		: VOICE_HUD_STATE_LABELS[visualState];
 	const placement = position ?? { top: 0, left: 0 };
 
 	/*
@@ -359,7 +368,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 					<VoiceIndicator
 						theme={theme}
 						state={visualState}
-						deviceLabel={mic?.capturing ? mic.deviceLabel : null}
+						deviceLabel={remoteDevice ?? (mic?.capturing ? mic.deviceLabel : null)}
 					/>
 					<div className="min-w-0 flex-1">
 						{/* The scope is the prominent line, not the state: the state is

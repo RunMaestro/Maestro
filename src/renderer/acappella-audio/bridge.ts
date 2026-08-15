@@ -16,6 +16,7 @@ import type {
 	AudioHostCommand,
 	AudioHostStatus,
 } from '../../shared/acappella/audio-host';
+import type { WebRtcHostCommand, WebRtcHostEvent } from '../../shared/acappella/webrtc-host';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = 'ACappellaAudioHost';
@@ -25,6 +26,10 @@ export interface AudioHostBridge {
 	sendStatus(status: AudioHostStatus): void;
 	/** @returns Cleanup function to unsubscribe. */
 	onCommand(handler: (command: AudioHostCommand) => void): () => void;
+	/** Peer answers, candidates, connection state, stats, inbound device messages. */
+	sendWebRtcEvent(event: WebRtcHostEvent): void;
+	/** @returns Cleanup function to unsubscribe. */
+	onWebRtcCommand(handler: (command: WebRtcHostCommand) => void): () => void;
 }
 
 type VoiceAudioHostApi = NonNullable<Window['maestro']>['voiceAudioHost'] | undefined;
@@ -45,6 +50,8 @@ export function createAudioHostBridge(
 			sendFrame: () => {},
 			sendStatus: () => {},
 			onCommand: () => () => {},
+			sendWebRtcEvent: () => {},
+			onWebRtcCommand: () => () => {},
 		};
 	}
 
@@ -52,5 +59,7 @@ export function createAudioHostBridge(
 		sendFrame: (frame) => api.sendFrame(frame),
 		sendStatus: (status) => api.sendStatus(status),
 		onCommand: (handler) => api.onCommand(handler),
+		sendWebRtcEvent: (event) => api.sendWebRtcEvent(event),
+		onWebRtcCommand: (handler) => api.onWebRtcCommand(handler),
 	};
 }

@@ -19,6 +19,8 @@ import type {
 	AudioHostStatus,
 	AudioFrame,
 } from '../../../shared/acappella/audio-host';
+import type { WebRtcHostCommand, WebRtcHostEvent } from '../../../shared/acappella/webrtc-host';
+import { DEFAULT_REMOTE_AUDIO_CONFIG } from '../../../shared/acappella/webrtc-host';
 import type { AudioHostBridge } from '../../../renderer/acappella-audio/bridge';
 
 // The real module resolves a Vite `?worker&url` import, which has no meaning
@@ -36,20 +38,27 @@ interface Harness {
 	bridge: AudioHostBridge;
 	statuses: AudioHostStatus[];
 	frames: AudioFrame[];
+	/** Peer events the controller pushed back to main. */
+	peerEvents: WebRtcHostEvent[];
 	send(command: AudioHostCommand): void;
+	sendWebRtc(command: WebRtcHostCommand): void;
 	unsubscribed(): boolean;
 }
 
 function createHarness(): Harness {
 	const statuses: AudioHostStatus[] = [];
 	const frames: AudioFrame[] = [];
+	const peerEvents: WebRtcHostEvent[] = [];
 	let handler: ((command: AudioHostCommand) => void) | null = null;
+	let peerHandler: ((command: WebRtcHostCommand) => void) | null = null;
 	let unsubscribed = false;
 
 	return {
 		statuses,
 		frames,
+		peerEvents,
 		send: (command) => handler?.(command),
+		sendWebRtc: (command) => peerHandler?.(command),
 		unsubscribed: () => unsubscribed,
 		bridge: {
 			sendFrame: (frame) => frames.push(frame),
@@ -59,6 +68,13 @@ function createHarness(): Harness {
 				return () => {
 					unsubscribed = true;
 					handler = null;
+				};
+			},
+			sendWebRtcEvent: (event) => peerEvents.push(event),
+			onWebRtcCommand: (next) => {
+				peerHandler = next;
+				return () => {
+					peerHandler = null;
 				};
 			},
 		},
@@ -170,6 +186,68 @@ describe('createAudioHostController', () => {
 		expect(createContext).not.toHaveBeenCalled();
 	});
 
+	it('answers a peer offer and reports the answer back to main', async () => {
+		const harness = createHarness();
+		const controller = createAudioHostController({
+			bridge: harness.bridge,
+			createContext: () => createFakeAudioContext() as unknown as AudioContext,
+			createPeerConnection: () => createFakePeerConnection() as unknown as RTCPeerConnection,
+		});
+
+		harness.sendWebRtc({
+			kind: 'accept-offer',
+			deviceId: 'phone',
+			offer: { type: 'offer', sdp: 'v=0\r\na=rtpmap:111 opus/48000/2' },
+			iceServers: [],
+			audio: DEFAULT_REMOTE_AUDIO_CONFIG,
+		});
+
+		await vi.waitFor(() =>
+			expect(harness.peerEvents.some((event) => event.kind === 'answer')).toBe(true)
+		);
+		controller.dispose();
+	});
+
+	it('taps the shared playback output for the outbound voice track', async () => {
+		const harness = createHarness();
+		const context = createFakeAudioContext();
+		const peer = createFakePeerConnection();
+		const controller = createAudioHostController({
+			bridge: harness.bridge,
+			createContext: () => context as unknown as AudioContext,
+			createPeerConnection: () => peer as unknown as RTCPeerConnection,
+		});
+
+		harness.sendWebRtc({
+			kind: 'accept-offer',
+			deviceId: 'phone',
+			offer: { type: 'offer', sdp: 'v=0\r\na=rtpmap:111 opus/48000/2' },
+			iceServers: [],
+			audio: DEFAULT_REMOTE_AUDIO_CONFIG,
+		});
+
+		// One synthesis, two places it comes out: the phone hears the configured
+		// voice at the configured volume rather than a second rendering of it.
+		await vi.waitFor(() => expect(peer.addedTracks).toHaveLength(1));
+		controller.dispose();
+	});
+
+	it('ignores peer commands that arrive after dispose', () => {
+		const harness = createHarness();
+		const createPeerConnection = vi.fn(
+			() => createFakePeerConnection() as unknown as RTCPeerConnection
+		);
+		const controller = createAudioHostController({
+			bridge: harness.bridge,
+			createContext: () => createFakeAudioContext() as unknown as AudioContext,
+			createPeerConnection,
+		});
+
+		controller.dispose();
+		harness.sendWebRtc({ kind: 'set-floor-holder', deviceId: 'phone' });
+		expect(createPeerConnection).not.toHaveBeenCalled();
+	});
+
 	it('is safe to dispose twice', () => {
 		const harness = createHarness();
 		const controller = createAudioHostController({
@@ -191,3 +269,31 @@ describe('AudioHostRoot', () => {
 		expect(container.innerHTML).toBe('');
 	});
 });
+
+/**
+ * The smallest `RTCPeerConnection` the controller can answer an offer with.
+ * jsdom has none, and the peer's own behaviour is covered in
+ * `peer-connection.test.ts`.
+ */
+function createFakePeerConnection() {
+	const peer = {
+		connectionState: 'new',
+		localDescription: null as { type: string; sdp?: string } | null,
+		addedTracks: [] as unknown[],
+		onicecandidate: null,
+		onconnectionstatechange: null,
+		ontrack: null,
+		ondatachannel: null,
+		setRemoteDescription: vi.fn(async () => {}),
+		setLocalDescription: vi.fn(async (description: { type: string; sdp?: string }) => {
+			peer.localDescription = description;
+		}),
+		createAnswer: vi.fn(async () => ({ type: 'answer', sdp: 'v=0' })),
+		addTrack: vi.fn((track: unknown) => peer.addedTracks.push(track)),
+		getSenders: vi.fn(() => []),
+		addIceCandidate: vi.fn(async () => {}),
+		getStats: vi.fn(async () => ({ forEach: () => {} })),
+		close: vi.fn(),
+	};
+	return peer;
+}
