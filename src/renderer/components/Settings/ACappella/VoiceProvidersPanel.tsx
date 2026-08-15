@@ -22,7 +22,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { KeyRound, Radio, ShieldCheck, Sliders } from 'lucide-react';
+import { KeyRound, Radio, ShieldCheck } from 'lucide-react';
 
 import {
 	VOICE_CREDENTIALS,
@@ -55,13 +55,6 @@ const PIPELINE_OPTIONS: Array<{ value: VoicePipelineShape; label: string }> = [
 	{ value: 'cascade', label: 'Cascade' },
 	{ value: 'realtime', label: 'Realtime' },
 ];
-
-/** The line a Preview speaks. Fixed, so two voices can be compared fairly. */
-const PREVIEW_LINE = 'Backend agent finished the migration and all tests pass.';
-
-const RATE_MIN = 0.7;
-const RATE_MAX = 1.4;
-const RATE_STEP = 0.05;
 
 export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps) {
 	const selection = useVoiceProviderSelection(enabled);
@@ -222,9 +215,10 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 				</SectionCard>
 			)}
 
-			<div data-setting-id="encore-a-cappella-voice-picker">
-				<VoicePicker theme={theme} selection={selection} enabled={enabled} />
-			</div>
+			{/* Which voice, how fast, and how loud live in the Voice and Speed panel
+			    below, next to the HUD settings. Two voice pickers in one Settings tab
+			    is one picker too many, and the one that drifts is always the one the
+			    user is not looking at. */}
 		</div>
 	);
 }
@@ -525,114 +519,5 @@ function CredentialField({
 				</p>
 			)}
 		</div>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Voice and speed
-// ---------------------------------------------------------------------------
-
-function VoicePicker({
-	theme,
-	selection,
-	enabled,
-}: {
-	theme: Theme;
-	selection: ReturnType<typeof useVoiceProviderSelection>;
-	enabled: boolean;
-}) {
-	const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
-	const [preview, setPreview] = useState<string | null>(null);
-
-	const ttsProviderId = selection.providerIds.tts;
-
-	useEffect(() => {
-		let cancelled = false;
-		void (async () => {
-			// Listing voices is an authenticated request for a hosted provider, so it
-			// is not made until the feature is on and a provider that HAS voices is
-			// selected: drawing a settings panel must not spend an API call.
-			if (!enabled) return;
-			const listed = await window.maestro.voice.listVoices().catch(() => []);
-			if (!cancelled) setVoices(listed);
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, [enabled, ttsProviderId]);
-
-	const handlePreview = useCallback(async () => {
-		setPreview('Speaking...');
-		const spoken = await window.maestro.voice.previewVoice(PREVIEW_LINE).catch((error: Error) => {
-			setPreview(error.message);
-			return false;
-		});
-		setPreview(spoken ? null : 'That voice could not be previewed.');
-	}, []);
-
-	return (
-		<>
-			<SettingsSectionHeading icon={Sliders}>Voice</SettingsSectionHeading>
-			<SectionCard theme={theme}>
-				<div>
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						Which voice, and how fast
-					</div>
-					<p className="text-xs opacity-70 mt-0.5 mb-2">
-						Preview speaks one fixed line, so two voices can be compared on the same words.
-					</p>
-
-					<select
-						aria-label="Voice"
-						value={selection.voiceId ?? ''}
-						onChange={(event) => void selection.setVoiceId(event.target.value)}
-						disabled={voices.length === 0}
-						className="w-full px-2 py-1.5 rounded border text-sm disabled:opacity-50"
-						style={{
-							borderColor: theme.colors.border,
-							backgroundColor: theme.colors.bgMain,
-							color: theme.colors.textMain,
-						}}
-					>
-						<option value="">Provider default</option>
-						{voices.map((voice) => (
-							<option key={voice.id} value={voice.id}>
-								{voice.name}
-							</option>
-						))}
-					</select>
-				</div>
-
-				<div className="flex items-center gap-3">
-					<label className="text-xs opacity-70" htmlFor="acappella-rate">
-						Speed
-					</label>
-					<input
-						id="acappella-rate"
-						type="range"
-						min={RATE_MIN}
-						max={RATE_MAX}
-						step={RATE_STEP}
-						value={selection.rate}
-						onChange={(event) => void selection.setRate(Number(event.target.value))}
-						className="flex-1"
-					/>
-					<span className="text-xs tabular-nums opacity-70">{selection.rate.toFixed(2)}x</span>
-				</div>
-
-				<div className="flex items-center gap-2">
-					<button
-						type="button"
-						disabled={!enabled}
-						onClick={() => void handlePreview()}
-						className="px-2 py-1 rounded border text-xs disabled:opacity-50"
-						style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
-					>
-						Preview
-					</button>
-					{preview && <span className="text-xs opacity-70">{preview}</span>}
-				</div>
-			</SectionCard>
-		</>
 	);
 }

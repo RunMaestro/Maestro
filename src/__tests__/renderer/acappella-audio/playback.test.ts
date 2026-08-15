@@ -202,6 +202,55 @@ describe('TtsPlayback', () => {
 		expect(context.gains[0].gain.value).toBe(0);
 	});
 
+	it('applies the user volume as the base gain', () => {
+		const playback = build();
+
+		playback.setVolume(0.4);
+
+		expect(context.gains[0].gain.value).toBeCloseTo(0.4, 6);
+	});
+
+	it('ducks RELATIVE to the user volume, so a quiet session does not get louder', () => {
+		const playback = build();
+		playback.setVolume(0.5);
+
+		playback.duck(0.2, 0);
+
+		expect(context.gains[0].gain.value).toBeCloseTo(0.1, 6);
+	});
+
+	it('flush restores the user volume, not full output', async () => {
+		// The other order of this bug is the one that matters: a flush that
+		// restored gain to 1 would silently un-mute a muted session on the first
+		// barge-in, and there is nothing on screen to explain the noise.
+		const playback = build();
+		playback.setVolume(0.3);
+		await playback.enqueue({
+			utteranceId: 'u1',
+			format: 'pcm16',
+			sampleRate: 16000,
+			data: pcmChunk(1600),
+		});
+		playback.duck(0, 30);
+
+		playback.flush();
+
+		expect(context.gains[0].gain.value).toBeCloseTo(0.3, 6);
+	});
+
+	it('clamps a nonsensical volume rather than passing it to the gain node', () => {
+		const playback = build();
+
+		playback.setVolume(Number.NaN);
+		expect(context.gains[0].gain.value).toBe(1);
+
+		playback.setVolume(9);
+		expect(context.gains[0].gain.value).toBe(1);
+
+		playback.setVolume(-1);
+		expect(context.gains[0].gain.value).toBe(0);
+	});
+
 	it('keeps reporting the utterance while chunks may still be coming', async () => {
 		const playback = build();
 		await playback.enqueue({

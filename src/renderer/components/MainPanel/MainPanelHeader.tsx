@@ -392,9 +392,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 								}
 								className="px-1.5 py-1 rounded hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2"
 								style={{
-									color: voiceActions.hasVoiceFloor
-										? theme.colors.accent
-										: theme.colors.textDim,
+									color: voiceActions.hasVoiceFloor ? theme.colors.accent : theme.colors.textDim,
 								}}
 							>
 								<Mic

@@ -404,15 +404,96 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Voice timing',
 		description:
-			'How long a key press has to be before it counts as holding the key, and how long an untouched microphone stays open',
+			'How long a key press has to be before it counts as holding the key rather than tapping it. The same number classifies a press on the HUD talk button',
+		keywords: ['hold threshold', 'tap vs hold', 'push to talk', 'timing'],
+	},
+	{
+		id: 'encore-a-cappella-voice-audio-destination',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Audio destination',
+		description:
+			'Where the audio for the assistant voice goes under the current text-to-speech provider. Computed from the live selection, never written as copy',
 		keywords: [
-			'hold threshold',
-			'tap vs hold',
-			'push to talk',
-			'idle timeout',
-			'microphone timeout',
-			'timing',
+			'audio destination',
+			'where does my audio go',
+			'privacy',
+			'cloud',
+			'local',
+			'egress',
+			'leaves my machine',
 		],
+	},
+	{
+		id: 'encore-a-cappella-voice-selection',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Voice',
+		description:
+			'Which voice the active text-to-speech provider speaks in, with a Preview button per voice so you can hear one before you pick it',
+		keywords: ['voice', 'preview', 'which voice', 'voices', 'speaker', 'accent', 'audition'],
+	},
+	{
+		id: 'encore-a-cappella-speed-volume',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Speed and volume',
+		description:
+			'Speaking rate and output volume for the assistant voice. Both take effect on the next sentence spoken rather than the next session',
+		keywords: [
+			'speed',
+			'rate',
+			'speaking rate',
+			'volume',
+			'loudness',
+			'faster',
+			'slower',
+			'quieter',
+			'louder',
+		],
+	},
+	{
+		id: 'encore-a-cappella-background-announcements',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Background completions',
+		description:
+			'Whether an agent finishing outside the current turn is spoken about. Auto is on for the Conductor and off inside one agent session',
+		keywords: [
+			'background completions',
+			'announcements',
+			'announce',
+			'agent finished',
+			'speak completions',
+			'notifications',
+		],
+	},
+	{
+		id: 'encore-a-cappella-hud',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Voice HUD',
+		description:
+			'The live transcript with its route chips, what minimizing the HUD does, and a button that puts the widget back in its default corner',
+		keywords: [
+			'hud',
+			'voice hud',
+			'transcript',
+			'live transcript',
+			'minimize',
+			'reset hud position',
+			'route chips',
+			'scrollback',
+		],
+	},
+	{
+		id: 'encore-a-cappella-idle-timeout',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Idle timeout',
+		description:
+			'How long a listening microphone stays open with nothing said into it before the session closes on its own',
+		keywords: ['idle timeout', 'microphone timeout', 'auto close', 'silence', 'hot mic'],
 	},
 	{
 		id: 'encore-a-cappella-models',
@@ -599,15 +680,6 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		description:
 			'Stored in the OS keychain, never in settings.json and never in plain text on disk. Lets a user with a Claude key route without adding an OpenAI one',
 		keywords: ['anthropic key', 'claude key', 'api key', 'credential', 'keychain', 'secret'],
-	},
-	{
-		id: 'encore-a-cappella-voice-picker',
-		tab: 'encore',
-		tabLabel: 'Plugins',
-		label: 'Voice',
-		description:
-			'Which voice replies are spoken in and how fast, with a Preview that speaks one fixed line so two voices can be compared on the same words',
-		keywords: ['voice picker', 'voice', 'preview', 'speed', 'rate', 'faster', 'slower'],
 	},
 	{
 		id: 'encore-a-cappella-reclaim-disk',

@@ -126,7 +126,18 @@ export const useVoiceUiStore = create<VoiceUiStore>()((set, get) => ({
 	wakePhrases: {},
 	holdThresholdMs: DEFAULT_HOLD_THRESHOLD_MS,
 
+	/**
+	 * Once, and only once.
+	 *
+	 * Several surfaces call this on mount (the HUD, the Settings panel), and the
+	 * read is async: a second load whose disk read resolves after the user has
+	 * flipped a toggle would silently put the toggle back. This store is the only
+	 * writer of the `ui` section, so what is in memory after the first read is
+	 * authoritative. `refreshWakePhrases` covers the one section with another
+	 * writer.
+	 */
 	load: async () => {
+		if (get().loaded) return;
 		const stored = await readBlob();
 		set({
 			...readVoiceUiPrefs(stored.ui),
