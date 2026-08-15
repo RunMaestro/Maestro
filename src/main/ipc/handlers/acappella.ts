@@ -67,11 +67,27 @@ import {
 } from '../../acappella';
 import { readVoiceReadiness } from './acappella-models';
 import {
+	buildProviderState,
+	pipelineKey,
 	readVoiceProviderSettings,
-	resolveVoiceProviders,
-	type VoiceProviderSettings,
+	resolveVoicePipeline,
+	swapVoicePipeline,
+	type VoiceProviderResolution,
 	type VoiceProviderSubstitution,
 } from '../../acappella/providers/provider-registry';
+import {
+	clearCredential,
+	listCredentialStates,
+	setCredential,
+	validateCredential,
+	type CredentialState,
+	type CredentialValidation,
+} from '../../acappella/providers/credentials';
+import {
+	VOICE_CREDENTIAL_SERVICES,
+	type VoiceCredentialService,
+} from '../../../shared/acappella/provider-catalog';
+import { lastTurn, type TurnBreakdown } from '../../acappella/telemetry/turn-metrics';
 
 const LOG_CONTEXT = '[ACappella]';
 
@@ -112,11 +128,21 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 
 /**
  * The provider selection the live service was built from. A change here means
- * the next start rebuilds the service, which is how a Voice Setup change takes
- * effect without an app restart.
+ * the next start rebuilds the service, which is how a Voice Providers change
+ * takes effect without an app restart.
  */
 let activeProviderKey: string | null = null;
 let activeSubstitutions: VoiceProviderSubstitution[] = [];
+
+/**
+ * The live pipeline.
+ *
+ * Held here rather than inside the session service because it outlives one
+ * session and because it owns real resources - a Whisper model, an ONNX session,
+ * a llama context, a realtime socket. Dropping the reference without calling
+ * `dispose()` would leak every one of them.
+ */
+let activePipeline: VoiceProviderResolution | null = null;
 
 /**
  * The audio bridge for the live service. Module state for the same reason the
@@ -202,16 +228,26 @@ function parseInterruptSource(raw: unknown): InterruptSource {
 	return raw === 'voice' ? 'voice' : 'client-button';
 }
 
-function providerKey(settings: VoiceProviderSettings): string {
-	return `${settings.stt ?? ''}|${settings.tts ?? ''}|${settings.brain ?? ''}`;
+/**
+ * Validate a credential message.
+ *
+ * The service name is checked against the known set rather than passed through:
+ * it becomes a keychain account name, and an arbitrary string from the renderer
+ * would let a caller write entries into the user's credential store under any
+ * name it liked.
+ */
+function parseCredentialPayload(raw: unknown): { service: VoiceCredentialService; key: string } {
+	if (!isRecord(raw)) throw new Error('InvalidCredential');
+	const service = raw.service;
+	if (typeof service !== 'string' || !VOICE_CREDENTIAL_SERVICES.includes(service as never)) {
+		throw new Error('InvalidCredential');
+	}
+	return {
+		service: service as VoiceCredentialService,
+		key: typeof raw.key === 'string' ? raw.key : '',
+	};
 }
 
-/**
- * The live service, built on first use. Rebuilt when the provider selection has
- * changed since it was constructed; `initVoiceSessionService` disposes the old
- * instance, which drops its subscribers, so the fan-out is re-registered here
- * rather than accumulating a second copy.
- */
 /**
  * Attach audio wiring to a service that has none.
  *
@@ -231,12 +267,20 @@ function ensureAudioBridge(service: VoiceSessionService, deps: ACappellaHandlerD
 	audioBridge = createVoiceAudioBridge({ session: service, sendCommand: sendAudioHostCommand });
 }
 
+/**
+ * The live service, built on first use and rebuilt whenever the provider
+ * selection changes.
+ *
+ * `initVoiceSessionService` disposes the old instance, which drops its
+ * subscribers, so the fan-out is re-registered here rather than accumulating a
+ * second copy.
+ */
 async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 	service: VoiceSessionService;
 	substitutions: VoiceProviderSubstitution[];
 }> {
 	const settings = readVoiceProviderSettings(deps.settingsStore);
-	const key = providerKey(settings);
+	const key = pipelineKey(settings);
 
 	const existing = getVoiceSessionService();
 	if (existing && key === activeProviderKey) {
@@ -246,17 +290,38 @@ async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 		return { service: existing, substitutions: activeSubstitutions };
 	}
 
-	const { providers, substitutions } = resolveVoiceProviders({ settings });
+	// The old pipeline is torn down BEFORE the new one is built, so two loaded
+	// models are never resident at once.
+	await activePipeline?.pipeline.dispose();
+	const resolution = resolveVoicePipeline({ settings });
 	audioBridge?.dispose();
 	audioBridge = null;
 
+	const service = await buildService(resolution, deps);
+
+	activePipeline = resolution;
+	activeProviderKey = key;
+	activeSubstitutions = resolution.substitutions;
+	return { service, substitutions: resolution.substitutions };
+}
+
+/** Construct the session service around a resolved pipeline and wire its fan-out. */
+async function buildService(
+	resolution: VoiceProviderResolution,
+	deps: ACappellaHandlerDependencies
+): Promise<VoiceSessionService> {
 	const service = await initVoiceSessionService({
-		providers,
+		providers: resolution.providers,
+		pipelineShape: resolution.shape,
 		getRoster: readAgentRoster,
 		// The capability gate. The service refuses to start when a required slot is
 		// unsatisfied and names the missing piece; it never asks for, and cannot be
 		// handed, a replacement provider.
 		checkReadiness: () => readVoiceReadiness(deps.settingsStore),
+		// What is actually running, including any slot that could not be built. The
+		// service cannot derive this: it is handed a trio and never learns what was
+		// requested.
+		getProviderState: () => buildProviderState(resolution),
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow),
 		}),
@@ -265,12 +330,124 @@ async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 		onSpeechChunk: (chunk) => audioBridge?.handleSpeechChunk(chunk),
 	});
 	service.subscribe((event) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL, event));
-
 	ensureAudioBridge(service, deps);
+	return service;
+}
 
-	activeProviderKey = key;
-	activeSubstitutions = substitutions;
-	return { service, substitutions };
+/**
+ * Apply a provider change to the running app.
+ *
+ * Called by the settings panel after it writes a selection. A swap while a turn
+ * is in flight is REFUSED rather than queued: splicing two engines into one
+ * exchange would transcribe with one model, route with another, and answer in a
+ * third voice, and the user would have no idea why.
+ */
+export async function applyACappellaProviders(
+	deps: ACappellaHandlerDependencies
+): Promise<{ status: 'swapped' | 'unchanged' | 'refused'; reason?: string }> {
+	const settings = readVoiceProviderSettings(deps.settingsStore);
+	const service = getVoiceSessionService();
+
+	const result = await swapVoicePipeline({
+		settings,
+		current: activePipeline
+			? { pipeline: activePipeline.pipeline, key: activeProviderKey ?? '' }
+			: null,
+		isBusy: isTurnInFlight(service),
+	});
+
+	if (result.status !== 'swapped' || !result.resolution) {
+		return { status: result.status, reason: result.reason };
+	}
+
+	audioBridge?.dispose();
+	audioBridge = null;
+
+	const rebuilt = await buildService(result.resolution, deps);
+	activePipeline = result.resolution;
+	activeProviderKey = pipelineKey(settings);
+	activeSubstitutions = result.resolution.substitutions;
+	// Announce the new engines even though no session is open: a client showing
+	// "you are on Whisper" has to stop saying so the moment that stops being true.
+	rebuilt.publishProviderState();
+
+	return { status: 'swapped' };
+}
+
+/** A provider that can enumerate its voices. Duck-typed: not every one can. */
+interface VoiceListingProvider {
+	listVoices?: () =>
+		| Promise<Array<{ id: string; name: string }>>
+		| Array<{ id: string; name: string }>;
+}
+
+/**
+ * The voices the current TTS provider offers.
+ *
+ * Empty for a provider with one voice or none, which the picker renders as
+ * "Provider default" rather than as an error: a mock has no voices and that is
+ * not a failure.
+ */
+async function listVoiceOptions(
+	deps: ACappellaHandlerDependencies
+): Promise<Array<{ id: string; name: string }>> {
+	const resolution =
+		activePipeline ??
+		resolveVoicePipeline({
+			settings: readVoiceProviderSettings(deps.settingsStore),
+		});
+	// Not cached into `activePipeline`: this can run before any session has ever
+	// been started, and building the live pipeline as a side effect of drawing a
+	// settings panel would load models nobody asked for.
+	const provider = resolution.providers.tts as VoiceListingProvider;
+	if (typeof provider.listVoices !== 'function') return [];
+	return provider.listVoices();
+}
+
+/**
+ * Speak one fixed line through the configured voice.
+ *
+ * Refused while a session is live: the preview and the assistant would be
+ * talking over each other through the same output device, and the user would
+ * have no way to tell which voice they were hearing.
+ *
+ * @returns false when nothing could be spoken (no audio host, or a provider with
+ *          no audio behind it).
+ */
+async function previewVoiceLine(
+	deps: ACappellaHandlerDependencies,
+	text: string
+): Promise<boolean> {
+	const live = getVoiceSessionService();
+	if (live && live.getState() !== 'idle') return false;
+
+	if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+	await ensureService(deps);
+	if (!activePipeline || !audioBridge) return false;
+
+	const settings = readVoiceProviderSettings(deps.settingsStore);
+	let spoke = false;
+	for await (const chunk of activePipeline.providers.tts.speak(text, {
+		utteranceId: `preview-${Date.now()}`,
+		voiceId: settings.voiceId,
+		rate: settings.rate,
+	})) {
+		audioBridge.handleSpeechChunk(chunk);
+		spoke = spoke || Boolean(chunk.audio?.byteLength);
+	}
+	return spoke;
+}
+
+/**
+ * Whether a turn is mid-flight.
+ *
+ * `idle` and `listening` are the two safe moments: nothing has been said yet, or
+ * everything said has been answered. Every other state has a turn in it.
+ */
+function isTurnInFlight(service: VoiceSessionService | null): boolean {
+	if (!service) return false;
+	const state = service.getState();
+	return state !== 'idle' && state !== 'listening' && state !== 'error';
 }
 
 /**
@@ -384,6 +561,53 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		async (): Promise<RosterAgent[]> => readAgentRoster()
 	);
 
+	const wrappedListCredentials = withIpcErrorLogging(
+		handlerOpts('listCredentials'),
+		// Configured-or-not, never the key. Nothing in the renderer needs to read a
+		// credential back, and a channel that returned one would put it in a
+		// renderer heap and in every crash dump taken afterwards.
+		async (): Promise<CredentialState[]> => listCredentialStates()
+	);
+
+	const wrappedSetCredential = withIpcErrorLogging(
+		handlerOpts('setCredential'),
+		async (payload: unknown) => {
+			const { service, key } = parseCredentialPayload(payload);
+			return key ? setCredential(service, key) : clearCredential(service);
+		}
+	);
+
+	const wrappedValidateCredential = withIpcErrorLogging(
+		handlerOpts('validateCredential'),
+		// An optional key so Test works before Save: a user should be able to find
+		// out a key is wrong without storing it first.
+		async (payload: unknown): Promise<CredentialValidation> => {
+			const { service, key } = parseCredentialPayload(payload);
+			return validateCredential(service, key || undefined);
+		}
+	);
+
+	const wrappedApplyProviders = withIpcErrorLogging(handlerOpts('applyProviders'), async () =>
+		applyACappellaProviders(deps)
+	);
+
+	const wrappedListVoices = withIpcErrorLogging(handlerOpts('listVoices'), async () =>
+		listVoiceOptions(deps)
+	);
+
+	const wrappedPreviewVoice = withIpcErrorLogging(
+		handlerOpts('previewVoice'),
+		async (text: unknown): Promise<boolean> => {
+			if (typeof text !== 'string' || !text.trim()) throw new Error('InvalidPreviewText');
+			return previewVoiceLine(deps, text);
+		}
+	);
+
+	const wrappedLastTurn = withIpcErrorLogging(
+		handlerOpts('lastTurn'),
+		async (): Promise<TurnBreakdown | null> => lastTurn()
+	);
+
 	const wrappedGetState = withIpcErrorLogging(
 		handlerOpts('getState'),
 		// Null means the service has never been built, so no provider is resolved
@@ -448,6 +672,33 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		return wrappedGetState(event);
 	});
 
+	// The credential channels are ungated, like the microphone ones: a user has to
+	// be able to add or remove a key while the feature is off, and removing one is
+	// exactly what somebody switching the feature off may want to do.
+	ipcMain.handle('acappella:list-credentials', wrappedListCredentials);
+	ipcMain.handle('acappella:set-credential', wrappedSetCredential);
+	ipcMain.handle('acappella:validate-credential', wrappedValidateCredential);
+
+	ipcMain.handle('acappella:apply-providers', async (event) => {
+		requireEnabled(settingsStore);
+		return wrappedApplyProviders(event);
+	});
+
+	ipcMain.handle('acappella:list-voices', async (event) => {
+		requireEnabled(settingsStore);
+		return wrappedListVoices(event);
+	});
+
+	ipcMain.handle('acappella:preview-voice', async (event, text: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		return wrappedPreviewVoice(event, text);
+	});
+
+	ipcMain.handle('acappella:last-turn', async (event): Promise<TurnBreakdown | null> => {
+		requireEnabled(settingsStore);
+		return wrappedLastTurn(event);
+	});
+
 	// The audio host's own control link. `on`, not `handle`: frames arrive fifty
 	// times a second and nothing about them needs a reply, so a promise round trip
 	// per 20 ms of audio would be pure overhead.
@@ -500,6 +751,10 @@ export function disposeACappellaAudioBridge(): void {
 export function resetACappellaHandlerState(): void {
 	activeProviderKey = null;
 	activeSubstitutions = [];
+	// Fire and forget: this runs from `will-quit`, which is synchronous, and from
+	// tests, which do not care how long a model file takes to close.
+	void activePipeline?.pipeline.dispose();
+	activePipeline = null;
 	audioBridge?.dispose();
 	audioBridge = null;
 }

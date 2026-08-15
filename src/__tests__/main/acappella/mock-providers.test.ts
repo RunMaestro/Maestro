@@ -1,35 +1,27 @@
 /**
  * @file mock-providers.test.ts
  *
- * Unit tests for the mock provider tier and the provider registry: partial then
- * final ordering out of the mock STT, deterministic keyword routing out of the
- * mock Brain, cancellable sentence streaming out of the mock TTS, and the
- * registry rule that a missing provider always falls back to the mock and never
- * to a cloud one.
+ * Unit tests for the mock provider tier: partial then final ordering out of the
+ * mock STT, deterministic keyword routing out of the mock Brain, and cancellable
+ * sentence streaming out of the mock TTS.
+ *
+ * Resolution rules live in `provider-registry.test.ts`, because they are about
+ * what gets CHOSEN rather than about what the mocks do.
  *
  * Every provider is constructed with zero-delay timing so the suite runs
  * synchronously: the timers are a UX affordance, not behaviour under test.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { logger } from '../../../main/utils/logger';
 import { MockBrainProvider } from '../../../main/acappella/providers/mock/mock-brain';
 import { MockSttProvider } from '../../../main/acappella/providers/mock/mock-stt';
 import { MockTtsProvider } from '../../../main/acappella/providers/mock/mock-tts';
 import { createMockProviderTrio } from '../../../main/acappella/providers/mock';
-import { ECHO_STT_PROVIDER_ID } from '../../../main/acappella/providers/echo-stt';
-import {
-	MOCK_PROVIDER_IDS,
-	listVoiceProviders,
-	readVoiceProviderSettings,
-	registerVoiceProvider,
-	resolveVoiceProviders,
-} from '../../../main/acappella/providers/provider-registry';
 import type { RosterAgent } from '../../../shared/acappella/protocol';
 import type { SttCallbacks, TtsChunk } from '../../../shared/acappella/providers';
 import { splitIntoSpokenSentences } from '../../../shared/acappella/sentences';
@@ -420,187 +412,6 @@ describe('MockTtsProvider', () => {
 
 // ---------------------------------------------------------------------------
 // Registry
-// ---------------------------------------------------------------------------
-
-describe('provider registry', () => {
-	// The catalog is module-level, like the real one: registered once at startup.
-	beforeAll(() => {
-		registerVoiceProvider({
-			role: 'tts',
-			id: 'test-local-tts',
-			label: 'Test Local TTS',
-			tier: 'local',
-			create: () => new MockTtsProvider({ msPerCharacter: 0 }),
-		});
-		registerVoiceProvider({
-			role: 'stt',
-			id: 'test-cloud-stt',
-			label: 'Test Cloud STT',
-			tier: 'cloud',
-			create: () => new MockSttProvider({ partialDelayMs: 0 }),
-		});
-		registerVoiceProvider({
-			role: 'brain',
-			id: 'test-unavailable-brain',
-			label: 'Test Unavailable Brain',
-			tier: 'local',
-			isAvailable: () => false,
-			create: () => new MockBrainProvider(),
-		});
-	});
-
-	beforeEach(() => {
-		vi.mocked(logger.warn).mockClear();
-	});
-
-	it('returns the mock trio when nothing is configured', () => {
-		const { providers, substitutions, resolvedIds } = resolveVoiceProviders();
-
-		expect(resolvedIds).toEqual(MOCK_PROVIDER_IDS);
-		expect(providers.stt.tier).toBe('mock');
-		expect(providers.tts.tier).toBe('mock');
-		expect(providers.brain.tier).toBe('mock');
-		// The default path is documented behaviour, not something to warn about.
-		expect(substitutions).toEqual([]);
-	});
-
-	it('hands out a fresh trio each time', () => {
-		expect(resolveVoiceProviders().providers.stt).not.toBe(resolveVoiceProviders().providers.stt);
-	});
-
-	it('resolves a registered provider', () => {
-		const { resolvedIds, substitutions } = resolveVoiceProviders({
-			settings: { tts: 'test-local-tts' },
-		});
-
-		expect(resolvedIds.tts).toBe('test-local-tts');
-		expect(substitutions).toEqual([]);
-	});
-
-	it('falls back to the mock, never to a cloud provider, for an unknown local one', () => {
-		// A cloud STT is registered and available; it must still not be chosen.
-		const { resolvedIds, substitutions } = resolveVoiceProviders({
-			settings: { stt: 'test-whisper-that-is-not-installed' },
-		});
-
-		expect(resolvedIds.stt).toBe(MOCK_PROVIDER_IDS.stt);
-		expect(substitutions).toEqual([
-			expect.objectContaining({
-				role: 'stt',
-				requestedId: 'test-whisper-that-is-not-installed',
-				resolvedId: MOCK_PROVIDER_IDS.stt,
-				reason: 'unknown-provider',
-			}),
-		]);
-		expect(logger.warn).toHaveBeenCalled();
-	});
-
-	it('falls back to the mock when a registered provider reports itself unavailable', () => {
-		const { resolvedIds, substitutions } = resolveVoiceProviders({
-			settings: { brain: 'test-unavailable-brain' },
-		});
-
-		expect(resolvedIds.brain).toBe(MOCK_PROVIDER_IDS.brain);
-		expect(substitutions[0].reason).toBe('unavailable');
-	});
-
-	it('substitutes only the broken role and leaves the others alone', () => {
-		const { resolvedIds, substitutions } = resolveVoiceProviders({
-			settings: { stt: 'test-missing', tts: 'test-local-tts' },
-		});
-
-		expect(resolvedIds.stt).toBe(MOCK_PROVIDER_IDS.stt);
-		expect(resolvedIds.tts).toBe('test-local-tts');
-		expect(resolvedIds.brain).toBe(MOCK_PROVIDER_IDS.brain);
-		expect(substitutions).toHaveLength(1);
-	});
-
-	it('defaults STT to the echo provider in a development build', () => {
-		const previous = process.env.NODE_ENV;
-		process.env.NODE_ENV = 'development';
-		try {
-			const { resolvedIds, providers, substitutions } = resolveVoiceProviders();
-
-			// Nobody asked for it, so it is a default rather than a substitution: the
-			// point is that `npm run dev` exercises the audio path without a settings
-			// edit, not that anything was swapped out from under the user.
-			expect(resolvedIds.stt).toBe(ECHO_STT_PROVIDER_ID);
-			expect(providers.stt.acceptsAudio).toBe(true);
-			expect(substitutions).toEqual([]);
-		} finally {
-			process.env.NODE_ENV = previous;
-		}
-	});
-
-	it('falls back to the text-in mock when the echo default cannot run', () => {
-		const previous = process.env.NODE_ENV;
-		process.env.NODE_ENV = 'production';
-		try {
-			const { resolvedIds, substitutions } = resolveVoiceProviders();
-
-			expect(resolvedIds.stt).toBe(MOCK_PROVIDER_IDS.stt);
-			// A default the build cannot run is not news. Reporting it would put noise
-			// in front of the substitutions that actually matter.
-			expect(substitutions).toEqual([]);
-		} finally {
-			process.env.NODE_ENV = previous;
-		}
-	});
-
-	it('reports an explicitly requested echo provider a packaged build cannot run', () => {
-		const previous = process.env.NODE_ENV;
-		process.env.NODE_ENV = 'production';
-		try {
-			const { resolvedIds, substitutions } = resolveVoiceProviders({
-				settings: { stt: ECHO_STT_PROVIDER_ID },
-			});
-
-			expect(resolvedIds.stt).toBe(MOCK_PROVIDER_IDS.stt);
-			expect(substitutions).toEqual([
-				expect.objectContaining({
-					role: 'stt',
-					requestedId: ECHO_STT_PROVIDER_ID,
-					reason: 'unavailable',
-				}),
-			]);
-		} finally {
-			process.env.NODE_ENV = previous;
-		}
-	});
-
-	it('lists the mock tier as selectable and available', () => {
-		expect(listVoiceProviders('stt')).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ id: MOCK_PROVIDER_IDS.stt, tier: 'mock', available: true }),
-			])
-		);
-	});
-
-	it('reads provider ids out of settings and ignores malformed values', () => {
-		const store = {
-			get: (_key: string, _defaultValue: unknown) => ({
-				providers: { stt: ' whisper-local ', tts: 42, brain: '   ' },
-			}),
-		};
-
-		expect(readVoiceProviderSettings(store)).toEqual({
-			stt: 'whisper-local',
-			tts: undefined,
-			brain: undefined,
-		});
-	});
-
-	it('treats a missing settings key as unset', () => {
-		const store = { get: (_key: string, defaultValue: unknown) => defaultValue };
-
-		expect(readVoiceProviderSettings(store)).toEqual({
-			stt: undefined,
-			tts: undefined,
-			brain: undefined,
-		});
-	});
-});
-
 // ---------------------------------------------------------------------------
 // Trio wiring
 // ---------------------------------------------------------------------------

@@ -21,6 +21,9 @@ import type { VoiceModelListing } from '../ipc/handlers/acappella-models';
 import type { DownloadProgress, DownloadResult } from '../acappella/models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../acappella/models/model-store';
 import type { MicPermissionInfo } from '../acappella/permissions/mic-permission';
+import type { CredentialState, CredentialValidation } from '../acappella/providers/credentials';
+import type { VoiceCredentialService } from '../../shared/acappella/provider-catalog';
+import type { TurnBreakdown } from '../acappella/telemetry/turn-metrics';
 
 /**
  * `window.maestro.voice.models.*` - the model manager.
@@ -97,12 +100,76 @@ function createVoiceModelsApi() {
 }
 
 /**
+ * `window.maestro.voice.credentials.*` - API keys for the hosted tier.
+ *
+ * There is deliberately no `get`. Keys live in the OS keychain and are read only
+ * in the main process; a channel that handed one back would put it in a renderer
+ * heap, in a devtools frame, and in any crash dump taken afterwards, for no
+ * capability the panel actually needs.
+ */
+function createVoiceCredentialsApi() {
+	return {
+		/** Which services have a key stored, and whether this machine has a keychain. */
+		list: (): Promise<CredentialState[]> => ipcRenderer.invoke('acappella:list-credentials'),
+
+		/** Store a key, or clear it when `key` is empty. */
+		set: (service: VoiceCredentialService, key: string): Promise<{ ok: boolean; error?: string }> =>
+			ipcRenderer.invoke('acappella:set-credential', { service, key }),
+
+		/**
+		 * Check a key against the service. Pass one to test before saving; omit it to
+		 * test the stored one. Rate limiting comes back as its own status, because a
+		 * throttled account is not a bad key.
+		 */
+		validate: (service: VoiceCredentialService, key?: string): Promise<CredentialValidation> =>
+			ipcRenderer.invoke('acappella:validate-credential', { service, key }),
+	};
+}
+
+/**
  * Creates the A Cappella voice API object for contextBridge exposure.
  */
 export function createVoiceApi() {
 	return {
 		/** The model manager: catalog, downloads, verification, and disk. */
 		models: createVoiceModelsApi(),
+
+		/** API keys for the hosted tier, stored in the OS keychain. */
+		credentials: createVoiceCredentialsApi(),
+
+		/**
+		 * Apply a provider change to the running app.
+		 *
+		 * Called after the settings panel writes a selection. Refused while a turn
+		 * is in flight rather than queued, so two engines can never be spliced into
+		 * one exchange.
+		 */
+		applyProviders: (): Promise<{
+			status: 'swapped' | 'unchanged' | 'refused';
+			reason?: string;
+		}> => ipcRenderer.invoke('acappella:apply-providers'),
+
+		/**
+		 * The last turn's per-hop timings, or null before any turn has completed.
+		 * What turns "voice feels slow" into a specific hop.
+		 */
+		lastTurn: (): Promise<TurnBreakdown | null> => ipcRenderer.invoke('acappella:last-turn'),
+
+		/**
+		 * Voices the configured TTS provider offers. Empty for a provider with one
+		 * voice or none, which the picker shows as "Provider default".
+		 */
+		listVoices: (): Promise<Array<{ id: string; name: string }>> =>
+			ipcRenderer.invoke('acappella:list-voices'),
+
+		/**
+		 * Speak one line through the configured voice.
+		 *
+		 * @returns false when nothing could be spoken: no audio host, a silent
+		 *          provider, or a live session that the preview must not talk over.
+		 */
+		previewVoice: (text: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:preview-voice', text),
 
 		/**
 		 * Open a voice session. Omit the scope for conductor scope. Any live

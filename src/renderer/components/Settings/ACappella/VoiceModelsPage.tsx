@@ -24,6 +24,7 @@ import { StatCardGrid, type StatCardDatum } from '../../widgets';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { VoiceModelRow } from './VoiceModelRow';
+import { VoiceLatencyCard } from './VoiceLatencyCard';
 import { VoiceSelfTestCard } from './VoiceSelfTestCard';
 import { useVoiceModels } from './useVoiceModels';
 
@@ -140,6 +141,8 @@ export function VoiceModelsPage({ theme, enabled }: VoiceModelsPageProps) {
 			    of this actually working" comes after "what is installed" and before
 			    the detail of each one. */}
 			<VoiceSelfTestCard theme={theme} />
+
+			<VoiceLatencyCard theme={theme} />
 
 			{installed.map((listing) => (
 				<div key={listing.entry.id}>

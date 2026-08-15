@@ -622,6 +622,15 @@ const mockMaestro = {
 		getState: vi.fn().mockResolvedValue(null),
 		openMicSettings: vi.fn().mockResolvedValue(true),
 		onEvent: vi.fn().mockReturnValue(() => {}),
+		applyProviders: vi.fn().mockResolvedValue({ status: 'swapped' }),
+		lastTurn: vi.fn().mockResolvedValue(null),
+		listVoices: vi.fn().mockResolvedValue([]),
+		previewVoice: vi.fn().mockResolvedValue(true),
+		credentials: {
+			list: vi.fn().mockResolvedValue([]),
+			set: vi.fn().mockResolvedValue({ ok: true }),
+			validate: vi.fn().mockResolvedValue({ service: 'openai', status: 'valid', message: 'ok' }),
+		},
 		models: {
 			list: vi.fn().mockResolvedValue([]),
 			download: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
