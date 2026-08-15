@@ -33,6 +33,7 @@ import {
 	createRendererVoiceBridge,
 	createVoiceRouteExecutor,
 	type CommandReceipt,
+	type FocusTabResult,
 	type NewTabWithPromptResult,
 	type VoiceRendererBridge,
 } from '../../../main/acappella/dispatch/route-executor';
@@ -96,6 +97,13 @@ function makeBridge(overrides: Partial<FakeBridge> = {}): FakeBridge {
 		executeCommand: vi.fn<VoiceRendererBridge['executeCommand']>(
 			async (): Promise<CommandReceipt> => ({ accepted: true })
 		),
+		focusTab: vi.fn<VoiceRendererBridge['focusTab']>(
+			async (_agentSessionId, tabId): Promise<FocusTabResult> => ({
+				ok: true,
+				tabId,
+				action: 'focused',
+			})
+		),
 		...overrides,
 	};
 }
@@ -141,7 +149,12 @@ describe('buildAgentRoster', () => {
 			cwd: '/repo/api',
 		});
 		expect(roster[0].tabs.map((tab) => tab.id)).toEqual(['tab-auth', 'tab-migrations']);
-		expect(roster[1].tabs).toEqual([{ id: 'tab-ui', name: 'Sidebar', lastActiveAt: 2_000 }]);
+		expect(roster[1].tabs[0]).toMatchObject({
+			id: 'tab-ui',
+			name: 'Sidebar',
+			lastActiveAt: 2_000,
+			state: 'open',
+		});
 	});
 
 	it('dates a tab by its last log, not just its creation', () => {
@@ -163,7 +176,8 @@ describe('buildAgentRoster', () => {
 			}),
 		]);
 
-		expect(roster[0].tabs).toEqual([{ id: 'tab-visible', name: null, lastActiveAt: 1 }]);
+		expect(roster[0].tabs).toHaveLength(1);
+		expect(roster[0].tabs[0]).toMatchObject({ id: 'tab-visible', name: null, lastActiveAt: 1 });
 	});
 
 	it('survives a session with no tabs at all', () => {
@@ -303,7 +317,9 @@ describe('executeRouteDecision - recall', () => {
 			scope: CONDUCTOR_SCOPE,
 		});
 
-		expect(bridge.selectSession).toHaveBeenCalledWith('agent-backend', 'tab-migrations');
+		// A REQUEST, not a fire-and-forget send: the renderer is the only side that
+		// can tell a focus from a wake from a reopen.
+		expect(bridge.focusTab).toHaveBeenCalledWith('agent-backend', 'tab-migrations');
 		expect(result).toMatchObject({
 			tabId: 'tab-migrations',
 			tabName: 'DB Migrations',
@@ -322,7 +338,7 @@ describe('executeRouteDecision - recall', () => {
 				scope: CONDUCTOR_SCOPE,
 			})
 		).rejects.toThrow(/no longer open/);
-		expect(bridge.selectSession).not.toHaveBeenCalled();
+		expect(bridge.focusTab).not.toHaveBeenCalled();
 		expect(bridge.executeCommand).not.toHaveBeenCalled();
 	});
 
@@ -333,6 +349,182 @@ describe('executeRouteDecision - recall', () => {
 		await expect(
 			execute(makeDecision({ tabAction: 'recall' }), { roster: [], scope: CONDUCTOR_SCOPE })
 		).rejects.toThrow(VoiceDispatchError);
+	});
+
+	it('lands on the tab the renderer actually landed on', async () => {
+		// Waking a snooze whose conversation is already open focuses the copy that
+		// exists rather than restoring a duplicate.
+		const bridge = makeBridge({
+			focusTab: vi.fn<VoiceRendererBridge['focusTab']>(async () => ({
+				ok: true,
+				tabId: 'tab-auth',
+				action: 'woke',
+			})),
+		});
+		const execute = makeExecutor({ bridge });
+
+		const result = await execute(makeDecision({ tabAction: 'recall', tabId: 'tab-migrations' }), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+		});
+
+		expect(result.tabId).toBe('tab-auth');
+		expect(bridge.executeCommand).toHaveBeenCalledWith(
+			'agent-backend',
+			'tab-auth',
+			'refactor the auth middleware'
+		);
+	});
+
+	it('fails rather than announcing a recall the renderer did not perform', async () => {
+		const bridge = makeBridge({
+			focusTab: vi.fn<VoiceRendererBridge['focusTab']>(async () => ({
+				ok: false,
+				reason: 'renderer-timeout',
+			})),
+		});
+		const execute = makeExecutor({ bridge });
+
+		await expect(
+			execute(makeDecision({ tabAction: 'recall', tabId: 'tab-migrations' }), {
+				roster: [],
+				scope: CONDUCTOR_SCOPE,
+			})
+		).rejects.toThrow(/renderer-timeout/);
+		expect(bridge.executeCommand).not.toHaveBeenCalled();
+	});
+
+	it('wakes a snoozed tab rather than treating it as gone', async () => {
+		const sessions = makeSessions();
+		sessions[0].snoozedTabs = [
+			{
+				id: 'snooze-1',
+				tab: createMockAITab({ id: 'tab-spike', name: 'Rate Limit Spike', createdAt: 5 }),
+				unifiedIndex: 0,
+				snoozedAt: 1,
+				wakeAt: 999_999,
+			},
+		];
+		const bridge = makeBridge();
+		const execute = makeExecutor({ bridge, sessions });
+
+		const result = await execute(makeDecision({ tabAction: 'recall', tabId: 'tab-spike' }), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+		});
+
+		expect(bridge.focusTab).toHaveBeenCalledWith('agent-backend', 'tab-spike');
+		expect(result.action).toBe('recalled');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tab state
+// ---------------------------------------------------------------------------
+
+describe('executeRouteDecision - current', () => {
+	it('never treats a snoozed or closed tab as the current one', async () => {
+		// The roster lists them so recall can name them. "Carry on where we were"
+		// landing on a tab the user put away last week would be the worst possible
+		// reading of "current".
+		const sessions = [
+			makeSession({
+				id: 'agent-backend',
+				name: 'Backend',
+				activeTabId: null,
+				aiTabs: [createMockAITab({ id: 'tab-open', name: 'Open', createdAt: 1 })],
+				snoozedTabs: [
+					{
+						id: 'snooze-1',
+						tab: createMockAITab({ id: 'tab-snoozed', name: 'Snoozed', createdAt: 9_000 }),
+						unifiedIndex: 0,
+						snoozedAt: 1,
+						wakeAt: 999_999,
+					},
+				],
+			}),
+		];
+		const bridge = makeBridge();
+		const execute = makeExecutor({ bridge, sessions });
+
+		const result = await execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE });
+
+		expect(result.tabId).toBe('tab-open');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Idempotency
+// ---------------------------------------------------------------------------
+
+describe('executeRouteDecision - idempotency', () => {
+	it('replays an identical decision instead of opening a second tab', async () => {
+		const bridge = makeBridge();
+		const execute = createVoiceRouteExecutor({
+			bridge,
+			getSessions: () => makeSessions(),
+			getActiveSessionId: () => null,
+		});
+		const decision = makeDecision({ tabAction: 'new', tabName: 'Auth Refactor' });
+
+		const first = await execute(decision, { roster: [], scope: CONDUCTOR_SCOPE });
+		const second = await execute(decision, { roster: [], scope: CONDUCTOR_SCOPE });
+
+		expect(bridge.newTabWithPrompt).toHaveBeenCalledTimes(1);
+		expect(second).toEqual(first);
+	});
+
+	it('treats a different prompt to the same tab as a new dispatch', async () => {
+		const bridge = makeBridge();
+		const execute = createVoiceRouteExecutor({
+			bridge,
+			getSessions: () => makeSessions(),
+			getActiveSessionId: () => null,
+		});
+
+		await execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE });
+		await execute(makeDecision({ prompt: 'and run the linter' }), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+		});
+
+		expect(bridge.executeCommand).toHaveBeenCalledTimes(2);
+	});
+
+	it('lets the replay window expire, because a repeat later is intent', async () => {
+		const bridge = makeBridge();
+		const execute = createVoiceRouteExecutor({
+			bridge,
+			getSessions: () => makeSessions(),
+			getActiveSessionId: () => null,
+			replayWindowMs: 0,
+		});
+
+		await execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE });
+		await execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE });
+
+		expect(bridge.executeCommand).toHaveBeenCalledTimes(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Clarifications
+// ---------------------------------------------------------------------------
+
+describe('executeRouteDecision - clarifications', () => {
+	it('refuses to dispatch a question', async () => {
+		// Reaching the executor with one means a caller skipped the guard, and
+		// dispatching it would send the user their own half-finished request.
+		const bridge = makeBridge();
+		const execute = makeExecutor({ bridge });
+
+		await expect(
+			execute(makeDecision({ clarify: 'Backend or Frontend?' }), {
+				roster: [],
+				scope: CONDUCTOR_SCOPE,
+			})
+		).rejects.toThrow(/question, not a dispatch/);
+		expect(bridge.executeCommand).not.toHaveBeenCalled();
 	});
 });
 
@@ -413,7 +605,13 @@ describe('executeRouteDecision - target resolution', () => {
 
 describe('createRendererVoiceBridge', () => {
 	const send = vi.fn();
-	const win = { webContents: { send } } as never;
+	const show = vi.fn();
+	const win = {
+		webContents: { send },
+		isMinimized: () => false,
+		restore: vi.fn(),
+		show,
+	} as never;
 
 	beforeEach(() => {
 		send.mockClear();
@@ -480,5 +678,95 @@ describe('createRendererVoiceBridge', () => {
 		const bridge = createRendererVoiceBridge(() => null);
 
 		expect(() => bridge.selectSession('agent-1')).toThrow(VoiceDispatchError);
+	});
+
+	it('asks the renderer to focus a tab and reads back what that took', async () => {
+		vi.mocked(requestFromRenderer).mockResolvedValue({
+			ok: true,
+			tabId: 'tab-1',
+			action: 'woke',
+		});
+		const bridge = createRendererVoiceBridge(() => win);
+
+		const result = await bridge.focusTab('agent-1', 'tab-1');
+
+		const [, channel, options] = vi.mocked(requestFromRenderer).mock.calls[0];
+		expect(channel).toBe('remote:focusAiTab');
+		expect(options.args).toEqual(['agent-1', 'tab-1']);
+		expect(result).toEqual({ ok: true, tabId: 'tab-1', action: 'woke' });
+	});
+
+	it('treats a malformed focus reply as a failure rather than a success', async () => {
+		vi.mocked(requestFromRenderer).mockResolvedValue({ ok: true });
+		const bridge = createRendererVoiceBridge(() => win);
+
+		await bridge.focusTab('agent-1', 'tab-1');
+
+		// The parser runs inside `requestFromRenderer`, which is mocked here, so it
+		// is exercised directly: a truthy-looking reply must not become an `ok`.
+		const [, , options] = vi.mocked(requestFromRenderer).mock.calls[0];
+		expect(options.parse!({ ok: 'yes' })).toMatchObject({ ok: false });
+		expect(options.parse!('sure')).toMatchObject({ ok: false, reason: 'malformed-result' });
+		expect(options.fallback).toMatchObject({ ok: false, reason: 'renderer-timeout' });
+	});
+
+	// -- Multi-window --------------------------------------------------------
+
+	describe('multi-window', () => {
+		function makeWindow(label: string) {
+			return {
+				label,
+				webContents: { send: vi.fn() },
+				isMinimized: () => false,
+				restore: vi.fn(),
+				show: vi.fn(),
+			};
+		}
+
+		it('dispatches into the window that owns the agent, not whichever is main', () => {
+			// Agent ownership is per window while `activeSessionId` is global, so
+			// dispatching to "main" would activate an agent that window does not own.
+			const main = makeWindow('main');
+			const secondary = makeWindow('secondary');
+			const bridge = createRendererVoiceBridge(
+				() => main as never,
+				(sessionId) => (sessionId === 'agent-2' ? (secondary as never) : null)
+			);
+
+			bridge.selectSession('agent-2', 'tab-1');
+
+			expect(secondary.webContents.send).toHaveBeenCalledWith(
+				'remote:selectSession',
+				'agent-2',
+				'tab-1'
+			);
+			expect(main.webContents.send).not.toHaveBeenCalled();
+		});
+
+		it('raises the owning window: a dispatch behind another window did nothing', () => {
+			const secondary = makeWindow('secondary');
+			secondary.isMinimized = () => true;
+			const bridge = createRendererVoiceBridge(
+				() => null,
+				() => secondary as never
+			);
+
+			bridge.selectSession('agent-2', 'tab-1');
+
+			expect(secondary.restore).toHaveBeenCalled();
+			expect(secondary.show).toHaveBeenCalled();
+		});
+
+		it('falls back to the main window when no window claims the agent', () => {
+			const main = makeWindow('main');
+			const bridge = createRendererVoiceBridge(
+				() => main as never,
+				() => null
+			);
+
+			bridge.selectSession('agent-2', 'tab-1');
+
+			expect(main.webContents.send).toHaveBeenCalled();
+		});
 	});
 });

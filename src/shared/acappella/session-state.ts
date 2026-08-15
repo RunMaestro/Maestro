@@ -48,7 +48,13 @@ export const VOICE_STATE_TRANSITIONS: Record<VoiceSessionState, readonly VoiceSe
 	listening: ['transcribing', 'idle', 'error'],
 	/** Back to `listening` when the utterance was empty and there is nothing to route. */
 	transcribing: ['routing', 'listening', 'idle', 'error'],
-	routing: ['dispatching', 'idle', 'error'],
+	/**
+	 * `speaking` is the disambiguation path: below the confidence threshold the
+	 * router returns a question instead of a decision, and the session asks it out
+	 * loud rather than guessing which agent was meant. It never reaches
+	 * `dispatching` on that turn - the answer arrives as the next utterance.
+	 */
+	routing: ['dispatching', 'speaking', 'idle', 'error'],
 	/** Back to `listening` when the dispatch produced no reply worth speaking. */
 	dispatching: ['speaking', 'listening', 'idle', 'error'],
 	speaking: ['interrupted', 'listening', 'idle', 'error'],

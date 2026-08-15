@@ -199,6 +199,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'acappella-router',
+		filename: 'acappella-router.md',
+		description:
+			'A Cappella Conductor routing prompt: which agent a spoken instruction is for, and which tab it belongs in',
+		category: 'system',
+	},
+	{
 		id: 'feedback',
 		filename: 'feedback.md',
 		description: 'Feedback prompt',
@@ -311,6 +318,7 @@ export const PROMPT_IDS = {
 	// System
 	TAB_NAMING: 'tab-naming',
 	DIRECTOR_NOTES: 'director-notes',
+	ACAPPELLA_ROUTER: 'acappella-router',
 	FEEDBACK: 'feedback',
 	FEEDBACK_CONVERSATION: 'feedback-conversation',
 } as const;

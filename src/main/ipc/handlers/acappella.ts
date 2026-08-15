@@ -31,7 +31,25 @@ import { app, ipcMain, type BrowserWindow } from 'electron';
 
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
-import type { InterruptSource, RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
+import type {
+	InterruptSource,
+	RosterAgent,
+	VoiceEvent,
+	VoiceScope,
+} from '../../../shared/acappella/protocol';
+import { getSessionsStore } from '../../stores/getters';
+import { createConductorRouter } from '../../acappella/router/conductor-router';
+import { invalidateRoutingContext } from '../../acappella/router/routing-context';
+import {
+	flushRoutingLog,
+	lastRoutingTurn,
+	loadRoutingLog,
+	noteRoutingOutcome,
+	readRoutingLog,
+	routingQuality,
+	type RoutingLogEntry,
+	type RoutingQuality,
+} from '../../acappella/router/routing-log';
 import {
 	getMicPermission,
 	noteCaptureFailure,
@@ -145,6 +163,16 @@ export interface ACappellaHandlerDependencies {
 	};
 	/** The window the dispatch executor talks to. Main has no tab authority. */
 	getMainWindow: () => BrowserWindow | null;
+	/**
+	 * The window that OWNS an agent, for multi-window dispatch.
+	 *
+	 * Agent ownership is per window while `activeSessionId` is global, so
+	 * dispatching to whichever window is "main" would activate an agent that
+	 * window does not own - the documented way to make a window render "No
+	 * agents". Absent in tests and in any single-window host, where the main
+	 * window is the right answer by construction.
+	 */
+	getWindowForSession?: (agentSessionId: string) => BrowserWindow | null;
 	/** Broadcasts to every window and to the web-desktop bridge. */
 	safeSend: SafeSendFn;
 	/**
@@ -369,7 +397,15 @@ async function buildService(
 	deps: ACappellaHandlerDependencies
 ): Promise<VoiceSessionService> {
 	const service = await initVoiceSessionService({
-		providers: resolution.providers,
+		providers: {
+			...resolution.providers,
+			// The Conductor router wraps whichever Brain the registry resolved. It
+			// keeps that provider's id and tier, so `provider-state` still names the
+			// engine that is really running; what it adds is the bounded context, the
+			// recall shortlist, roster validation, one constrained retry, and the
+			// refusal to guess below the confidence threshold.
+			brain: createConductorRouter({ brain: resolution.providers.brain }),
+		},
 		pipelineShape: resolution.shape,
 		getRoster: readAgentRoster,
 		// The capability gate. The service refuses to start when a required slot is
@@ -381,15 +417,49 @@ async function buildService(
 		// requested.
 		getProviderState: () => buildProviderState(resolution),
 		executeRoute: createVoiceRouteExecutor({
-			bridge: createRendererVoiceBridge(deps.getMainWindow),
+			bridge: createRendererVoiceBridge(deps.getMainWindow, deps.getWindowForSession),
 		}),
 		// Read through the module variable rather than captured: the bridge cannot
 		// exist yet (it takes the service), and the two are replaced together.
 		onSpeechChunk: (chunk) => audioBridge?.handleSpeechChunk(chunk),
 	});
 	service.subscribe((event) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL, event));
+	service.subscribe(recordRoutingOutcome);
 	ensureAudioBridge(service, deps);
 	return service;
+}
+
+/**
+ * Close the routing log's loop from the event stream.
+ *
+ * The router records what it DECIDED; only the session knows what became of it,
+ * and the difference between those two is the entire value of the log. Doing it
+ * here rather than inside the service keeps the service free of the router's
+ * storage, and doing it from events rather than from call sites means a new
+ * failure path cannot forget to report itself.
+ */
+function recordRoutingOutcome(event: VoiceEvent): void {
+	const turnId = lastRoutingTurn()?.id;
+	if (!turnId) return;
+
+	if (event.type === 'dispatch') {
+		noteRoutingOutcome(turnId, 'dispatched', `${event.agentName} / ${event.action}`);
+		return;
+	}
+	if (event.type === 'route-correction') {
+		// The turn being corrected is the one BEFORE this correction's own entry,
+		// which is why the correction is matched on the dispatch it replaced.
+		const corrected = readRoutingLog()
+			.reverse()
+			.find((entry) => entry.outcome === 'dispatched');
+		if (corrected) {
+			noteRoutingOutcome(corrected.id, 'corrected', `moved to ${event.agentName}`);
+		}
+		return;
+	}
+	if (event.type === 'session-error' && event.code === 'dispatch-failed') {
+		noteRoutingOutcome(turnId, 'failed', event.message);
+	}
 }
 
 /**
@@ -517,6 +587,8 @@ function isTurnInFlight(service: VoiceSessionService | null): boolean {
  */
 export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): void {
 	const { settingsStore } = deps;
+
+	watchRosterChanges();
 
 	const wrappedStart = withIpcErrorLogging(
 		handlerOpts('startSession'),
@@ -714,6 +786,29 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		async (): Promise<void> => stopWakeTest()
 	);
 
+	const wrappedCorrectRoute = withIpcErrorLogging(
+		handlerOpts('correctRoute'),
+		// The HUD's "wrong tab" control. Returns false when there is nothing to
+		// move, so a stray click is a no-op rather than an error.
+		async (agentSessionId: unknown): Promise<boolean> => {
+			if (typeof agentSessionId !== 'string' || !agentSessionId) {
+				throw new Error('InvalidCorrectionTarget');
+			}
+			return (
+				(await getVoiceSessionService()?.correctLastDispatch(agentSessionId, 'client-button')) ??
+				false
+			);
+		}
+	);
+
+	const wrappedRoutingLog = withIpcErrorLogging(
+		handlerOpts('routingLog'),
+		async (): Promise<{ entries: RoutingLogEntry[]; quality: RoutingQuality }> => {
+			await loadRoutingLog();
+			return { entries: readRoutingLog(), quality: routingQuality() };
+		}
+	);
+
 	const wrappedGetState = withIpcErrorLogging(
 		handlerOpts('getState'),
 		// Null means the service has never been built, so no provider is resolved
@@ -777,6 +872,16 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		requireEnabled(settingsStore);
 		return wrappedGetState(event);
 	});
+
+	ipcMain.handle('acappella:correct-route', async (event, agentSessionId: unknown) => {
+		requireEnabled(settingsStore);
+		return wrappedCorrectRoute(event, agentSessionId);
+	});
+
+	// Ungated: the routing log is how somebody works out why yesterday's dispatch
+	// went where it did, and switching the feature off is a thing people do
+	// BECAUSE of a misroute.
+	ipcMain.handle('acappella:routing-log', wrappedRoutingLog);
 
 	// The credential channels are ungated, like the microphone ones: a user has to
 	// be able to add or remove a key while the feature is off, and removing one is
@@ -850,8 +955,33 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	app.on('will-quit', () => {
 		void disposeVoiceSessionService();
 		closeAcappellaAudioHostWindow();
+		// The log is written on a debounce, so the last few turns of a session are
+		// still in memory when the app is told to quit.
+		void flushRoutingLog();
 		resetACappellaHandlerState();
 	});
+}
+
+/**
+ * Drop the cached routing context whenever an agent or a tab changes.
+ *
+ * The cache has a short TTL as a backstop, but a TTL alone is not good enough
+ * here: within those seconds the roster can lose the very tab a decision is
+ * about to name, and a routing turn is exactly the moment a user has just
+ * finished rearranging their workspace.
+ *
+ * Best-effort by design. A store with no change feed (tests, an older
+ * electron-store) simply falls back to the TTL rather than failing registration.
+ */
+function watchRosterChanges(): void {
+	try {
+		const store = getSessionsStore() as unknown as {
+			onDidChange?: (key: string, callback: () => void) => void;
+		};
+		store.onDidChange?.('sessions', invalidateRoutingContext);
+	} catch {
+		/* no store to watch: the context cache falls back to its TTL */
+	}
 }
 
 /**

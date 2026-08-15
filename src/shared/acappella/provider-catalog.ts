@@ -124,6 +124,15 @@ export const LOCAL_STT_PROVIDER_ID = 'whisper-local';
 export const LOCAL_TTS_PROVIDER_ID = 'kokoro-local';
 export const LOCAL_BRAIN_PROVIDER_ID = 'qwen3-local';
 
+/**
+ * The Conductor run as a real Maestro agent rather than as a classifier.
+ *
+ * `local` tier because it runs whichever agent the user already configured, on
+ * their own machine (or their own SSH remote): the egress is whatever that agent
+ * was already doing, not a new destination this feature chose for them.
+ */
+export const CONDUCTOR_AGENT_BRAIN_PROVIDER_ID = 'conductor-agent';
+
 export const OPENAI_STT_PROVIDER_ID = 'openai-stt';
 export const OPENAI_BRAIN_PROVIDER_ID = 'openai-brain';
 export const ANTHROPIC_BRAIN_PROVIDER_ID = 'anthropic-brain';
@@ -272,6 +281,19 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		egress: 'text',
 		egressService: 'anthropic',
 		description: 'Routes with a fast Claude model. Your transcripts are sent to Anthropic.',
+	}),
+	defineProvider({
+		id: CONDUCTOR_AGENT_BRAIN_PROVIDER_ID,
+		role: 'brain',
+		label: 'Conductor agent',
+		tier: 'local',
+		// Nothing to download and no key to add: it runs an agent the user already
+		// has. What it costs is latency, which is the trade this option exists for.
+		requires: { kind: 'none' },
+		egress: 'none',
+		egressService: null,
+		description:
+			'Routes by asking a real Maestro agent. Slower, and it can reason about your projects.',
 	}),
 
 	// -- Realtime ------------------------------------------------------------
