@@ -608,6 +608,65 @@ interface AgentSessionInfo {
 
 ---
 
+## 8. Provider Auth (`src/shared/providerAuth.ts`, `src/main/agents/auth/`, `src/main/stores/providerAuthStore.ts`)
+
+Login state is tracked per **credential**, never per agent. Fifteen agents on one Anthropic account
+resolve to one identity key, so they are probed once, stored once, and surfaced once. Before adding
+anything that asks "is this agent signed in", read this section - the answer already exists and is
+keyed by something other than the session id.
+
+Full internal model: [`docs/architecture/provider-auth/design.md`](../architecture/provider-auth/design.md).
+User-facing behavior: [`docs/provider-auth.md`](../provider-auth.md).
+
+### The shared resolver - `src/shared/providerAuth.ts`
+
+Pure and Node-builtin-free (same constraint as `shared/providerFailover.ts`), so main and the
+renderer both call it and land on the same key. Canonical helpers, none of which should be
+re-implemented:
+
+| Helper                                               | What it gives you                                                                                                                               |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolveCredentialIdentity(input)`                   | Session (tool type + effective env + SSH remote + home dir) -> `CredentialIdentity`.                                                            |
+| `mergeEffectiveEnv(agentLevel, session)`             | The env-merge precedence (session wins). Do NOT hand-roll `{ ...agentEnv, ...sessionEnv }` again - this existed twice before, once per process. |
+| `sshRemoteIdFromHost(host)` / `isRemoteHost(host)`   | Parse `` `ssh:${remoteId}` `` hosts. Never slice the string yourself.                                                                           |
+| `canonicalizeDirPath(raw, homeDir)`                  | Lexical config-dir canonicalization matching `resolveConfigDirKey()`.                                                                           |
+| `fingerprintSecret(value)`                           | `fp_xxxxxxxx`. The ONLY representation of a secret allowed out of the module.                                                                   |
+| `resolveLoginCommand(identity, opts?)`               | The command that repairs an identity, or `null`. `null` is what removes the sign-in button - do not gate on `kind` at the UI level.             |
+| `buildLoginRunSessionId()` / `isLoginRunSessionId()` | Synthetic process ids for login PTYs, so login output cannot reach an agent's transcript.                                                       |
+| `extractLoginEmail(snapshot)`                        | Pre-fill the login page from the last good snapshot.                                                                                            |
+
+`CredentialIdentity.key` is `` `${provider}::${kind}::${scope}::${host}` ``. `kind` decides the
+remedy: only `oauth` is repaired by signing in, and `api-key` / `gateway` / `cloud-provider` /
+`unknown` are never probed and never get a login button.
+
+### The probe layer - `src/main/agents/auth/`
+
+- `auth-probe.ts` - `probeCredential(identity, opts)`. One `execFileNoThrow` per provider status
+  command; no PTY. Two rules hold everywhere: **never report `logged-out` from a probe that could not
+  run** (missing binary, timeout, dead SSH host, unparseable output are all `unknown`), and **never
+  probe a non-`oauth` identity**. SSH-aware: `wrapSpawnWithSsh`, a wider `SSH_PROBE_TIMEOUT_MS`, and
+  a host-consistency gate that refuses to answer for the wrong machine.
+- `auth-startup.ts` - `runStartupAuthProbe(deps)` plus `collectAuthTargets(deps)` and
+  `resolveProviderBinaryPath(...)`. `collectAuthTargets` is the shared "which account is this agent
+  on" function; the login path calls it too, so both sides cannot disagree. Modes: `'startup'`
+  (freshness window, 7-day session window, SSH excluded) and `'manual'` (none of those).
+- `auth-login.ts` - `startAuthLogin` / `stopAuthLogin`. Spawns the login command into a PTY under a
+  synthetic run id, with the identity's env and the identity's host.
+
+### The snapshot store - `src/main/stores/providerAuthStore.ts`
+
+Singleton over the `provider-auth-snapshots` electron-store namespace, one record per identity key,
+the single source of truth. `getSnapshot` / `getAllSnapshots` / `setSnapshot` / `markAuthFailure` /
+`markLoggedOut` / `clearSnapshot` / `isSnapshotFresh` / `onSnapshotChange`. `PROBE_STALE_MS` (15 min)
+is the re-probe cadence, exported here so the startup pass, a manual refresh, and any future
+scheduler share one number. Snapshots never expire - a stale login state is still the best thing we
+know. Writes scrub `detail` for secret shapes and cap it at 300 characters.
+
+The renderer mirror is `src/renderer/stores/providerAuthStore.ts` (read cache, lazy hydration,
+memoized identity resolution) - see [STATE-PATTERNS.md](STATE-PATTERNS.md) for store conventions.
+
+---
+
 ## Adding a New Agent (Checklist)
 
 1. **Add ID** to `AGENT_IDS` in `src/shared/agentIds.ts`
@@ -620,6 +679,7 @@ interface AgentSessionInfo {
 8. **Create session storage** in `src/main/storage/<agent>-session-storage.ts`, register in `src/main/storage/index.ts`
 9. **Add beta flag** (optional) to `BETA_AGENTS` in `src/shared/agentMetadata.ts`
 10. **Add combined context flag** (if applicable) to `COMBINED_CONTEXT_AGENTS` in `src/shared/agentConstants.ts`
+11. **Add credential resolution** (if the agent has a login) in `src/shared/providerAuth.ts`, plus a probe matcher in `src/main/agents/auth/auth-probe.ts` and a login command in `resolveLoginCommand()`. An agent with no verified auth surface needs none of this - it resolves to `kind: 'unknown'` and renders as `unsupported`, which is correct.
 
 TypeScript will enforce completeness for `Record<AgentId, T>` types, guiding you to all required updates.
 
