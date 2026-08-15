@@ -779,8 +779,10 @@ export async function createConformanceWorld(): Promise<ConformanceWorld> {
 			transport.dispose();
 			peers.closeAll('the conformance world was torn down');
 			vi.useRealTimers();
-			// The pairing service persists through a write queue, so a `devices.json`
-			// can still land after the last assertion. Retries rather than a sleep.
+			// `noteConnected()` persists off a peer connecting and nobody awaits it,
+			// so a `devices.json` write can still be in flight here. Removing the
+			// directory underneath it renames into nothing and fails the run.
+			await transport.pairing.whenPersisted();
 			await fs.rm(userDataPath, {
 				recursive: true,
 				force: true,
