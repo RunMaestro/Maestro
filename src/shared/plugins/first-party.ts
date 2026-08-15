@@ -39,7 +39,8 @@ export type FirstPartyEncoreFlag =
 	| 'coworking'
 	| 'opencodeServer'
 	| 'concerto'
-	| 'groupsPlus';
+	| 'groupsPlus'
+	| 'aCappella';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -782,6 +783,50 @@ export const GROUPS_PLUS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 };
 
+/** A Cappella: the voice interface. The session lives headless in the main
+ * process (see `docs/architecture/acappella/system-overview.md`), so the
+ * disclosure below covers what the SESSION touches, not what a renderer HUD
+ * happens to render. Enabling the flag only makes the Voice Setup surface
+ * reachable: no device is opened, no model downloaded, no socket dialled until
+ * the user explicitly starts a session. */
+export const A_CAPPELLA_FIRST_PARTY_PLUGIN_ID = 'com.maestro.acappella';
+
+export const A_CAPPELLA_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] = [
+	{
+		capability: 'settings:read',
+		reason:
+			'Re-read the A Cappella Encore flag and the configured speech provider tier before starting a voice session.',
+	},
+	{
+		capability: 'sessions:read',
+		reason:
+			'Build the agent roster (names, agent types, working directories, tabs) the router matches a spoken request against.',
+	},
+	// NOTE: `agents:dispatch` is deliberately ABSENT, for the same reason it is
+	// absent from Pianola and Concerto: a spoken request resolves to an agent and
+	// tab at runtime, which a static manifest allowlist scope cannot name. Voice
+	// dispatch is HOST-OWNED - the route executor drives the existing tab bridge
+	// and IPC handlers, gated by the Encore flag and by the user having started a
+	// session out loud.
+] as const;
+
+export const A_CAPPELLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: A_CAPPELLA_FIRST_PARTY_PLUGIN_ID,
+	name: 'A Cappella',
+	description:
+		'Talk to Maestro. Speak a request, have it routed to the right agent and tab, and hear the reply read back.',
+	firstParty: true,
+	category: 'ui',
+	permissions: A_CAPPELLA_FIRST_PARTY_PLUGIN_PERMISSIONS,
+	settingsNamespace: 'aCappella',
+	encoreFlag: 'aCappella',
+	// No supervised background service yet: the voice session service is inert
+	// until `startSession()` is called and returns to idle on stop, so disabling
+	// the flag leaves nothing running. Wake-word listening (a later phase) is the
+	// first thing here that would need a supervised entry.
+	backgroundServices: [],
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -796,6 +841,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	A_CAPPELLA_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -816,4 +862,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	aCappella: A_CAPPELLA_FIRST_PARTY_PLUGIN,
 };

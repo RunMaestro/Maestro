@@ -1652,6 +1652,12 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// A Cappella - the voice interface (headless voice session in main, HUD in
+	// the renderer). Off by default, and enabling it only makes the Voice Setup
+	// surface reachable: no device, model, or socket is touched until a session
+	// is explicitly started. Optional so older fixtures and persisted settings
+	// remain valid.
+	aCappella?: boolean;
 }
 
 // Director's Notes settings for synopsis generation
