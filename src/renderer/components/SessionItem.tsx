@@ -11,11 +11,13 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { WorktreePill } from './ui/WorktreePill';
+import { AuthIndicator } from './SessionList/AuthIndicator';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionHasActiveOutage } from '../stores/retryStore';
+import { useSessionAuthSnapshot } from '../stores/providerAuthStore';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { abbreviateGroupName } from '../../shared/formatters';
 import type { Session, Group, Theme } from '../types';
@@ -131,6 +133,13 @@ export interface SessionItemProps {
 	worktreeChildCount?: number; // Number of worktree children (used for collapsed count badge)
 
 	/**
+	 * Opens the provider-auth recovery flow for the credential this agent
+	 * presents. Receives the identity key, not the session id: the thing that is
+	 * broken is one login, and every agent sharing it is fixed by one recovery.
+	 */
+	onAuthIndicatorClick?: (identityKey: string) => void;
+
+	/**
 	 * When true, the row can neither be dragged nor accept drops. Used for the
 	 * Bookmarks section, which is a filtered view: reordering/regrouping there
 	 * would be meaningless (and dropping fell through to "ungroup").
@@ -184,6 +193,7 @@ export const SessionItem = memo(function SessionItem({
 	wizardGeneratingDocs = false,
 	worktreeChildCount,
 	dragDisabled = false,
+	onAuthIndicatorClick,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -247,6 +257,10 @@ export const SessionItem = memo(function SessionItem({
 		hasActiveOutage
 	);
 	const isDisconnected = !isInBatch && hasNoClaudeProviderSession(session);
+
+	// Provider auth: keyed by the credential this agent presents, so one dead
+	// login marks every row that shares it (and clears them all together).
+	const authSnapshot = useSessionAuthSnapshot(session.id);
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
@@ -569,6 +583,15 @@ export const SessionItem = memo(function SessionItem({
 							/>
 						</GhostIconButton>
 					))}
+
+				{/* Provider auth indicator: this agent's account needs the user. Sits
+				    beside the status dot rather than recoloring it - the dot reports
+				    what the agent is doing, this reports what is blocking it. */}
+				<AuthIndicator
+					snapshot={authSnapshot}
+					theme={theme}
+					{...(onAuthIndicatorClick ? { onClick: onAuthIndicatorClick } : {})}
+				/>
 
 				{/* AI Status Indicator with Unread Badge */}
 				<div className="relative w-2 h-2 ml-auto">

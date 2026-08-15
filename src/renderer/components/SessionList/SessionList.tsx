@@ -519,6 +519,15 @@ function SessionListInner(props: SessionListProps) {
 		setDragOverTarget(null);
 	}, []);
 
+	// Auth indicator click - memoized to prevent SessionItem re-renders.
+	// TODO(Phase 04): open the provider-auth recovery modal for `identityKey`.
+	// Deliberately inert here: Phase 03 only surfaces the state, and a click that
+	// spawned a login flow at this point would be exactly the focus theft the
+	// phase forbids. The plumbing exists so Phase 04 supplies a handler only.
+	const handleAuthIndicatorClick = useCallback((_identityKey: string) => {
+		// no-op until Phase 04
+	}, []);
+
 	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders
 	const toggleBookmark = useCallback(
 		(sessionId: string) => {
@@ -841,6 +850,7 @@ function SessionListInner(props: SessionListProps) {
 					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
 					dragDisabled={dragDisabled}
+					onAuthIndicatorClick={handleAuthIndicatorClick}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -901,6 +911,7 @@ function SessionListInner(props: SessionListProps) {
 										wizardActive={wizardActiveSessions.has(child.id)}
 										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
 										dragDisabled={dragDisabled}
+										onAuthIndicatorClick={handleAuthIndicatorClick}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
