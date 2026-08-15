@@ -188,6 +188,36 @@ describe('VoiceActivityDetector - hysteresis', () => {
 	});
 });
 
+describe('VoiceActivityDetector - candidate frames', () => {
+	it('flags a voice-like frame long before it would open the floor', () => {
+		const vad = fixed({ enterFrames: 4 });
+		const results = feed(vad, tone(0.3), 3);
+
+		// Every frame looks like voice; none of them is enough evidence yet. This is
+		// the 80 ms head start the pipeline ducks TTS output on.
+		expect(results.map((r) => r.candidate)).toEqual([true, true, true]);
+		expect(events(results)).toEqual([]);
+	});
+
+	it('does not flag rumble or hiss, which is what makes the duck safe', () => {
+		const vad = fixed({ enterFrames: 4 });
+		expect(vad.process(rumble(0.3)).candidate).toBe(false);
+		expect(vad.process(hiss(0.3)).candidate).toBe(false);
+		expect(vad.process(silence()).candidate).toBe(false);
+	});
+
+	it('tracks energy alone once the floor is open', () => {
+		const vad = fixed({ enterRms: 0.05, exitRms: 0.01, enterFrames: 2 });
+		vad.processMeasurement(0.1, 0.05);
+		vad.processMeasurement(0.1, 0.05);
+
+		// A trailing fricative is high-ZCR and still carries the utterance, so the
+		// entry band does not apply on the way out.
+		expect(vad.process(hiss(0.3)).candidate).toBe(true);
+		expect(vad.process(silence()).candidate).toBe(false);
+	});
+});
+
 describe('VoiceActivityDetector - hangover', () => {
 	it('keeps frames active through the hangover and drops them after', () => {
 		const vad = fixed({ enterFrames: 2, hangoverFrames: 5, endpointSilenceMs: 700 });
