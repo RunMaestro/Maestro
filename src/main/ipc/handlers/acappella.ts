@@ -83,6 +83,11 @@ import {
 	type VoiceSessionService,
 	type VoiceSessionSnapshot,
 } from '../../acappella';
+import {
+	createAgentOutputTap,
+	type AgentOutputSource,
+	type AgentOutputTap,
+} from '../../acappella/speech';
 import { readVoiceReadiness } from './acappella-models';
 import {
 	buildProviderState,
@@ -187,6 +192,18 @@ export interface ACappellaHandlerDependencies {
 	 * refuses with a reason rather than binding a session to a guessed agent.
 	 */
 	getFocusedAgentSessionId?: () => string | null;
+	/**
+	 * The process manager, as an event source for the agent-output tap.
+	 *
+	 * This is what makes a spoken reply arrive while the agent is still writing:
+	 * the tap rides the SAME `data` / `query-complete` / `agent-error` events the
+	 * desktop transcript rides. Absent in tests and before the manager is
+	 * constructed, in which case the session falls back to waiting for a whole
+	 * reply through `submitAgentReply`.
+	 */
+	getProcessManager?: () => AgentOutputSource | null;
+	/** The agent type behind a session id, for the tap's stream-json parsing. */
+	getAgentType?: (agentSessionId: string) => string | undefined;
 }
 
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -237,6 +254,16 @@ let voiceHotkeys: VoiceHotkeyInstallation | null = null;
  * have fired", not "please start listening to me".
  */
 let wakeTestDetector: WakeDetector | null = null;
+
+/**
+ * The tap on dispatched agent output.
+ *
+ * Module state alongside the service and rebuilt with it, because it holds
+ * listeners on the process manager: a tap dropped without `dispose()` would keep
+ * filtering output for a session that no longer exists, and a second one built
+ * over it would speak every chunk twice.
+ */
+let agentOutputTap: AgentOutputTap | null = null;
 
 /** Push one command to the hidden audio host. A window that is not open is a no-op. */
 function sendAudioHostCommand(command: AudioHostCommand): void {
@@ -391,11 +418,36 @@ async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 	return { service, substitutions: resolution.substitutions };
 }
 
+/**
+ * Build the tap for a fresh service, or null when there is no process manager to
+ * listen to.
+ *
+ * The sink reads the service through the module getter rather than closing over
+ * the instance: the tap outlives no service, but a chunk can be in flight while
+ * one is being replaced, and delivering it into the old instance would speak
+ * into a session nobody is subscribed to.
+ */
+function buildAgentOutputTap(deps: ACappellaHandlerDependencies): AgentOutputTap | null {
+	agentOutputTap?.dispose();
+	agentOutputTap = null;
+
+	const source = deps.getProcessManager?.();
+	if (!source) return null;
+
+	agentOutputTap = createAgentOutputTap({
+		source,
+		getAgentType: deps.getAgentType,
+		onChunk: (chunk) => getVoiceSessionService()?.pushAgentOutput(chunk),
+	});
+	return agentOutputTap;
+}
+
 /** Construct the session service around a resolved pipeline and wire its fan-out. */
 async function buildService(
 	resolution: VoiceProviderResolution,
 	deps: ACappellaHandlerDependencies
 ): Promise<VoiceSessionService> {
+	const tap = buildAgentOutputTap(deps);
 	const service = await initVoiceSessionService({
 		providers: {
 			...resolution.providers,
@@ -422,6 +474,19 @@ async function buildService(
 		// Read through the module variable rather than captured: the bridge cannot
 		// exist yet (it takes the service), and the two are replaced together.
 		onSpeechChunk: (chunk) => audioBridge?.handleSpeechChunk(chunk),
+		// The live tap. With it, a reply is spoken as the agent writes it; without
+		// it (no process manager yet, and in tests) the session waits for a whole
+		// reply through `submitAgentReply`.
+		agentReplyStream: tap ?? undefined,
+		// The pipeline ducks on a candidate frame long before this fires. These are
+		// the other door: a client button, and the Phase 10 phone.
+		duckPlayback: (gain, ms) => audioBridge?.duckPlayback(gain, ms),
+		flushPlayback: () => audioBridge?.flushPlayback(),
+		// Read per call rather than captured, so switching it in Settings takes
+		// effect on the next completion instead of on the next app start. Through
+		// the one settings reader, which already knows where the key lives.
+		getBackgroundAnnouncementSetting: () =>
+			readVoiceProviderSettings(deps.settingsStore).speakBackgroundCompletions,
 	});
 	service.subscribe((event) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL, event));
 	service.subscribe(recordRoutingOutcome);
@@ -1064,6 +1129,8 @@ async function stopWakeTest(): Promise<void> {
 export function resetACappellaHandlerState(): void {
 	activeProviderKey = null;
 	activeSubstitutions = [];
+	agentOutputTap?.dispose();
+	agentOutputTap = null;
 	voiceHotkeys?.dispose();
 	voiceHotkeys = null;
 	void stopWakeTest();

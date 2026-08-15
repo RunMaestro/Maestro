@@ -330,6 +330,17 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// because a global hotkey handler cannot await one.
 		getFocusedAgentSessionId: () =>
 			(deps.sessionsStore.get('activeSessionId') as string | undefined) || null,
+		// The event source for the agent-output tap. It is the SAME emitter the
+		// desktop transcript listens to, which is what keeps what is spoken and what
+		// is on screen from drifting apart.
+		getProcessManager: () => deps.getProcessManager(),
+		getAgentType: (agentSessionId: string) => {
+			const sessions = (deps.sessionsStore.get('sessions', []) ?? []) as Array<{
+				id?: string;
+				agentType?: string;
+			}>;
+			return sessions.find((session) => session.id === agentSessionId)?.agentType;
+		},
 	});
 
 	// Register A Cappella model handlers (catalog, download, verify, disk). Also
