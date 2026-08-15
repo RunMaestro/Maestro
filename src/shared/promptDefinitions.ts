@@ -213,6 +213,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'acappella-translator',
+		filename: 'acappella-translator.md',
+		description:
+			"A Cappella conversational translator: rewrites an agent's written answer as spoken conversation",
+		category: 'system',
+	},
+	{
 		id: 'feedback',
 		filename: 'feedback.md',
 		description: 'Feedback prompt',
@@ -327,6 +334,7 @@ export const PROMPT_IDS = {
 	TAB_NAMING: 'tab-naming',
 	DIRECTOR_NOTES: 'director-notes',
 	ACAPPELLA_ROUTER: 'acappella-router',
+	ACAPPELLA_TRANSLATOR: 'acappella-translator',
 	FEEDBACK: 'feedback',
 	FEEDBACK_CONVERSATION: 'feedback-conversation',
 } as const;

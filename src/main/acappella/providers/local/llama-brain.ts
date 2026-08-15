@@ -35,7 +35,7 @@ import { modelFilePath } from '../../models/model-store';
 import {
 	buildConverseUserPrompt,
 	buildRouteUserPrompt,
-	CONVERSE_SYSTEM_PROMPT,
+	converseSystemPrompt,
 	limitSpokenReply,
 	parseRouteDecision,
 	routeSystemPrompt,
@@ -142,7 +142,7 @@ export class LlamaBrainProvider implements BrainProvider {
 		const brain = await this.ensureLoaded();
 		const raw = await this.prompt(
 			brain,
-			CONVERSE_SYSTEM_PROMPT,
+			converseSystemPrompt(),
 			buildConverseUserPrompt(agentText, context),
 			CONVERSE_MAX_TOKENS,
 			null
