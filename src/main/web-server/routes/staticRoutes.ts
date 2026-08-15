@@ -11,6 +11,7 @@
  * - /$TOKEN/sw.js - PWA service worker
  * - /$TOKEN - Web-desktop interface (the default UI)
  * - /$TOKEN/desktop - Legacy alias for the web-desktop interface
+ * - /$TOKEN/acappella - A Cappella reference client (the device half of the voice protocol)
  * - /$TOKEN/session/:sessionId - Deprecated deep link, serves the desktop interface
  * - /:token - Invalid token catch-all, redirect to GitHub
  */
@@ -165,6 +166,48 @@ export class StaticRoutes {
 	}
 
 	/**
+	 * Serve the A Cappella reference client.
+	 *
+	 * A second page in the same bundle, and deliberately NOT the desktop SPA: it
+	 * is the device half of the voice protocol, the independent endpoint the
+	 * WebRTC transport is tested against, and what a phone developer reads to see
+	 * the wire behaviour. It pairs with a code like any other device, so it gets
+	 * no config injection at all - handing it the token would let it skip the one
+	 * flow it exists to exercise.
+	 */
+	private serveACappellaClient(reply: FastifyReply): void {
+		const indexPath = this.webDesktopPath
+			? path.join(this.webDesktopPath, 'acappella-client', 'index.html')
+			: null;
+		if (!indexPath || !existsSync(indexPath)) {
+			reply.code(503).send({
+				error: 'Service Unavailable',
+				message: 'A Cappella reference client not built. Run "npm run build:web-desktop".',
+			});
+			return;
+		}
+
+		try {
+			// Read fresh so rebuilt asset hashes are reflected immediately, and point
+			// both relative forms at the one asset mount: the page sits a directory
+			// down from the bundle root, so Vite emits `../assets/`.
+			let html = readFileSync(indexPath, 'utf-8');
+			const token = this.securityToken;
+			html = html.replace(/\.\.\/assets\//g, `/${token}/desktop/assets/`);
+			html = html.replace(/\.\/assets\//g, `/${token}/desktop/assets/`);
+			html = html.replace(/="\/assets\//g, `="/${token}/desktop/assets/`);
+			reply.type('text/html').send(html);
+		} catch (err) {
+			void captureException(err);
+			logger.error('Error serving the A Cappella reference client', LOG_CONTEXT, err);
+			reply.code(500).send({
+				error: 'Internal Server Error',
+				message: 'Failed to serve the A Cappella reference client.',
+			});
+		}
+	}
+
+	/**
 	 * Register all static routes on the Fastify server
 	 */
 	registerRoutes(server: FastifyInstance): void {
@@ -223,6 +266,15 @@ export class StaticRoutes {
 		});
 		server.get(`/${token}/desktop/`, async (_request, reply) => {
 			this.serveDesktopIndex(reply);
+		});
+
+		// The A Cappella reference client. Registered before the `/:token`
+		// catch-all, which would otherwise swallow it and serve the desktop SPA.
+		server.get(`/${token}/acappella`, async (_request, reply) => {
+			this.serveACappellaClient(reply);
+		});
+		server.get(`/${token}/acappella/`, async (_request, reply) => {
+			this.serveACappellaClient(reply);
 		});
 
 		// Deprecated single-session deep link. The desktop app manages its own

@@ -74,6 +74,11 @@ export default defineConfig(({ mode }) => ({
 		rollupOptions: {
 			input: {
 				main: path.join(__dirname, 'src/web-desktop/index.html'),
+				// The A Cappella reference client: a second, self-contained page in the
+				// same bundle. It shares nothing with the renderer beyond the shared
+				// protocol modules, which is the point - it is the independent endpoint
+				// the desktop's WebRTC transport is tested against.
+				'acappella-client': path.join(__dirname, 'src/web-desktop/acappella-client/index.html'),
 			},
 			output: {
 				manualChunks: (id) => {
