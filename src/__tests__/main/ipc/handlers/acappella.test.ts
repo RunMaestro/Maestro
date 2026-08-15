@@ -349,18 +349,20 @@ describe('A Cappella IPC handlers - session lifecycle', () => {
 	});
 
 	it('reports a substitution when the configured provider is unknown', async () => {
-		settings.acappella = { providers: { stt: 'whisper-local' } };
+		settings.acappella = { providers: { stt: 'whisper-that-is-not-registered' } };
 
 		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
 
 		expect(result.substitutions).toHaveLength(1);
 		expect(result.substitutions[0]).toMatchObject({
 			role: 'stt',
-			requestedId: 'whisper-local',
-			resolvedId: 'mock-stt',
+			requestedId: 'whisper-that-is-not-registered',
+			// Not the mock: an unbuildable slot refuses by name rather than quietly
+			// becoming a tier that transcribes nothing and looks healthy.
+			resolvedId: 'unresolved-stt',
 			reason: 'unknown-provider',
 		});
-		expect(result.snapshot.providerIds.stt).toBe('mock-stt');
+		expect(result.snapshot.providerIds.stt).toBe('unresolved-stt');
 	});
 
 	it('binds an agent scope when one is given', async () => {
@@ -414,8 +416,8 @@ describe('A Cappella IPC handlers - event fan-out', () => {
 		await handlerFor('acappella:start-session')({});
 
 		const types = voiceEvents().map((event) => event.type);
-		expect(types).toEqual(['wake', 'listen-start', 'agent-roster']);
-		expect(voiceEvents().map((event) => event.seq)).toEqual([1, 2, 3]);
+		expect(types).toEqual(['wake', 'listen-start', 'provider-state', 'agent-roster']);
+		expect(voiceEvents().map((event) => event.seq)).toEqual([1, 2, 3, 4]);
 	});
 
 	it('reuses the service across starts, so the fan-out is registered once', async () => {
@@ -434,7 +436,7 @@ describe('A Cappella IPC handlers - event fan-out', () => {
 		await handlerFor('acappella:start-session')({});
 		const first = getVoiceSessionService();
 
-		settings.acappella = { providers: { stt: 'whisper-local' } };
+		settings.acappella = { providers: { stt: 'whisper-that-is-not-registered' } };
 		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
 
 		expect(getVoiceSessionService()).not.toBe(first);

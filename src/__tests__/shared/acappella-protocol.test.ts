@@ -54,6 +54,7 @@ const ALL_EVENT_TYPES: VoiceEventType[] = [
 	'session-error',
 	'audio-level',
 	'mic-state',
+	'provider-state',
 	'tab-state',
 	'agent-roster',
 ];

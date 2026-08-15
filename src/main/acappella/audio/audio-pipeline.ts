@@ -109,6 +109,15 @@ export interface AudioPipelineOptions {
 	onFrame?: (info: AudioPipelineFrameInfo) => void;
 	/** A barge-in was performed: TTS was flushed and cancelled, the floor is back. */
 	onBargeIn?: () => void;
+	/**
+	 * The detector decided the user stopped talking, at the moment it decided.
+	 *
+	 * This is the only place that instant is known: the recogniser learns about it
+	 * as a `flush()` and the session learns about it as a transcript, so a turn
+	 * timed from either would silently exclude the decode. It is the zero point of
+	 * every span in `telemetry/turn-metrics.ts`.
+	 */
+	onSpeechEnd?: () => void;
 }
 
 export interface AudioPipelineFrameInfo {
@@ -460,6 +469,10 @@ export class AudioPipeline {
 	}
 
 	private endpoint(stt: SttProvider): void {
+		// Before the flush, not after: the flush is what starts the decode being
+		// measured, so stamping afterwards would exclude a synchronous recogniser's
+		// entire first pass.
+		this.options.onSpeechEnd?.();
 		void stt.flush().catch((error: Error) => {
 			// Endpointing is a hint. A provider that cannot take it still has the
 			// audio, so this is reported and the run continues.
