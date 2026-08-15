@@ -268,7 +268,11 @@ $ claude auth status --json
 }
 ```
 
-Exit code 0. `--json` is the **default** (`--text` opts into human-readable), but pass `--json`
+Exit code 0 when logged in. **Exit code 1 when logged out**, with the same well-formed JSON on
+stdout (`{"loggedIn": false, "authMethod": "none", "apiProvider": "firstParty"}`) - re-verified
+2026-08-15 against an empty `CLAUDE_CONFIG_DIR`. The probe therefore ignores the exit code entirely
+and parses stdout either way; gating on exit 0 would throw away a perfectly good `loggedIn: false`.
+`--json` is the **default** (`--text` opts into human-readable), but pass `--json`
 explicitly so a future default flip cannot break the parser. The response also carries `orgId`,
 which the playbook's list omitted. Returns promptly and does not open a browser, so it is safe for a
 startup pass - unlike `maestro-p --status`, which is why the usage sampler needs its guards and the
@@ -286,7 +290,10 @@ $ codex login status
 Logged in using ChatGPT
 ```
 
-Exit code 0. Plain text, not JSON, so the probe parses a status line plus the exit code. Flags on
+Exit code 0. Logged out prints `Not logged in` and **exits 1** (re-verified 2026-08-15 against an
+empty `CODEX_HOME`). Plain text, not JSON, so the probe parses a status line plus the exit code. Note
+that `Not logged in` contains the logged-in phrase as a substring, so the negative match must be
+tested first. Flags on
 `codex login`: `--with-api-key` (reads the key from stdin, e.g.
 `printenv OPENAI_API_KEY | codex login --with-api-key`), `--with-access-token` (reads an access
 token from stdin), `-c key=value` config overrides, `--enable <FEATURE>`. Bare `codex login` starts
@@ -329,6 +336,34 @@ Note the mismatch with `COPILOT_ERROR_PATTERNS`, which tells users to run `gh au
 `droid` is not installed here and no auth surface is verified. It must resolve to
 `kind: 'unknown'` / `status: 'unsupported'`, never `logged-out`. Its error bank keys off
 `FACTORY_API_KEY`, which suggests API-key auth, but that is inference, not verification.
+
+## 4b. Probe commands chosen in Phase 02
+
+`src/main/agents/auth/auth-probe.ts` runs exactly one command per provider, re-verified on this
+machine on 2026-08-15. Nothing here opens a browser or an interactive picker.
+
+| Provider        | Command                     | Signal read                                                 | Exit code used?      |
+| --------------- | --------------------------- | ----------------------------------------------------------- | -------------------- |
+| `claude-code`   | `claude auth status --json` | `loggedIn` plus `apiProvider` from the JSON body            | No (0 and 1 both OK) |
+| `codex`         | `codex login status`        | `Not logged in` first, then a line-anchored `Logged in ...` | Yes, for the 0 case  |
+| `opencode`      | `opencode auth list`        | The `N credentials` footer, after ANSI stripping            | Yes, must be 0       |
+| `copilot-cli`   | none                        | -                                                           | -                    |
+| `factory-droid` | none                        | -                                                           | -                    |
+
+Two findings from re-running the `--help` checks the phase asked for:
+
+- **copilot-cli has no status verb.** `copilot --help` lists exactly `completion`, `help`, `init`,
+  `login`, `mcp`, `plugin`, `update`, `version`. `copilot login` runs an interactive device flow, and
+  there is no `copilot auth` group at all. The probe spawns **nothing** for copilot and returns
+  `unknown`.
+- **opencode's `auth list` is probeable but coarse.** `opencode auth --help` (the command is really
+  `opencode providers`, with `auth` as an alias) offers `list` / `login` / `logout`; only `list` is
+  non-interactive. It exits 0 whether or not credentials exist, so the footer count is the whole
+  signal: `0 credentials` reads as `logged-out`, anything higher as `authenticated`. Two caveats
+  recorded for later phases: the count spans **all** providers in one `auth.json`, so it answers "is
+  anything stored" rather than "is the provider this agent uses logged in"; and against a fresh data
+  directory the first run performs a one-time database migration that can take minutes, which lands
+  on the probe timeout and resolves to `unknown` (the safe side).
 
 ## 5. Discrepancies found against the Phase 01 spec
 
