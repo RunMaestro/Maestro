@@ -1,0 +1,15 @@
+{
+	// Type-check the TypeScript under `scripts/`.
+	//
+	// These are developer tools that import main-process modules, so they need the
+	// main config's options - but not its `rootDir`/`outDir`, which exist to emit
+	// the app. Checked only, and kept out of tsconfig.main.json so a harness can
+	// never end up in a build.
+	"extends": "./tsconfig.main.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"rootDir": "."
+	},
+	"include": ["scripts/**/*.ts"],
+	"exclude": ["node_modules", "dist", "release"]
+}
