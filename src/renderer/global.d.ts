@@ -440,6 +440,19 @@ interface MaestroAPI {
 		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteNewTab: (callback: (sessionId: string, responseChannel: string) => void) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
+		/** Land on one AI tab, waking or reopening it if that is what it takes. */
+		onRemoteFocusAiTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteFocusAiTabResponse: (
+			responseChannel: string,
+			result: {
+				ok: boolean;
+				tabId?: string;
+				action?: 'focused' | 'woke' | 'reopened';
+				reason?: string;
+			}
+		) => void;
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string) => void

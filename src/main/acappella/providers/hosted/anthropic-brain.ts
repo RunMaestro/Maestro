@@ -25,7 +25,7 @@ import {
 	CONVERSE_SYSTEM_PROMPT,
 	limitSpokenReply,
 	parseRouteDecision,
-	ROUTE_SYSTEM_PROMPT,
+	routeSystemPrompt,
 } from '../brain-prompt';
 import { getCredential } from '../credentials';
 import { hostedJson, requireCredential, type HostedFetch } from './http';
@@ -79,7 +79,7 @@ export class AnthropicBrainProvider implements BrainProvider {
 
 	async route(input: string, context: VoiceRouteContext): Promise<RouteDecision> {
 		const content = await this.complete({
-			system: ROUTE_SYSTEM_PROMPT,
+			system: routeSystemPrompt(),
 			user: buildRouteUserPrompt(input, context),
 			prefill: JSON_PREFILL,
 			timeoutMs: this.routeTimeoutMs,

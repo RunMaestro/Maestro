@@ -33,6 +33,27 @@ export interface RouteDecision {
 	prompt: string;
 	/** 0 to 1. A low-confidence decision may be confirmed out loud before dispatch. */
 	confidence: number;
+	/**
+	 * When set, this is NOT a dispatch: it is one spoken line the user has to
+	 * answer before anything is sent ("the backend agent or the API agent?").
+	 *
+	 * A field on the decision rather than a separate return type because every
+	 * layer between the Brain and the floor already carries a `RouteDecision`, and
+	 * a second parallel shape would need the same grammar, the same validation and
+	 * the same event. The invariant that makes it safe is one line of code:
+	 * {@link isClarification} is checked before dispatch, never after.
+	 */
+	clarify?: string;
+}
+
+/**
+ * True when the decision is a question rather than an instruction.
+ *
+ * The one guard between a low-confidence guess and a spoken instruction landing
+ * in the wrong repository. Anything that dispatches must check it first.
+ */
+export function isClarification(decision: RouteDecision): boolean {
+	return typeof decision.clarify === 'string' && decision.clarify.trim().length > 0;
 }
 
 /** True when the decision targets the conductor rather than a specific agent. */
@@ -72,6 +93,7 @@ export const ROUTE_DECISION_JSON_SCHEMA = {
 		tabName: { type: 'string' },
 		prompt: { type: 'string' },
 		confidence: { type: 'number', minimum: 0, maximum: 1 },
+		clarify: { type: 'string' },
 	},
 	required: ['target', 'tabAction', 'prompt', 'confidence'],
 	additionalProperties: false,

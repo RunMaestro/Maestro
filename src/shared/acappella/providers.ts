@@ -112,6 +112,30 @@ export interface VoiceRouteContext {
 	activeAgentSessionId?: string | null;
 	/** Most recent utterances this session, oldest first, for "back to" style references. */
 	recentUtterances?: string[];
+	/**
+	 * The turn the user is answering.
+	 *
+	 * Set on the turn AFTER the router asked a disambiguation out loud, so the
+	 * model sees the original request and the question alongside the answer. Its
+	 * absence is what makes "the API one" an ordinary utterance rather than a
+	 * fragment routed on its own, which is how a two-word reply ends up creating a
+	 * tab called "the API one".
+	 */
+	clarification?: {
+		/** What the router asked. */
+		question: string;
+		/** The utterance the question was about. */
+		utterance: string;
+	};
+	/**
+	 * Why the previous attempt at this same utterance was rejected.
+	 *
+	 * Set only on a constrained retry. Telling the model what was wrong is the
+	 * difference between a retry and the same wrong answer at the same
+	 * temperature: routing runs deterministic, so an unchanged prompt returns an
+	 * unchanged decision.
+	 */
+	retryNotes?: string[];
 }
 
 export interface VoiceConverseContext {

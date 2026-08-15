@@ -51,7 +51,7 @@ import type { RouteDecision } from '../../../../shared/acappella/route-decision'
 import { ROUTE_DECISION_JSON_SCHEMA } from '../../../../shared/acappella/route-decision';
 import { splitIntoSpokenSentences } from '../../../../shared/acappella/sentences';
 import { logger } from '../../../utils/logger';
-import { buildRouteUserPrompt, parseRouteDecision, ROUTE_SYSTEM_PROMPT } from '../brain-prompt';
+import { buildRouteUserPrompt, parseRouteDecision, routeSystemPrompt } from '../brain-prompt';
 import { getCredential } from '../credentials';
 import { requireCredential } from '../hosted/http';
 import { resampleLinear } from '../pcm';
@@ -415,7 +415,7 @@ export class RealtimeVoiceAdapter implements SttProvider, TtsProvider, BrainProv
 			session: {
 				modalities: ['text', 'audio'],
 				voice: this.voice,
-				instructions: ROUTE_SYSTEM_PROMPT,
+				instructions: routeSystemPrompt(),
 				input_audio_format: 'pcm16',
 				output_audio_format: 'pcm16',
 				input_audio_transcription: { model: 'whisper-1' },

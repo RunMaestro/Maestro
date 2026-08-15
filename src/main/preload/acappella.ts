@@ -23,6 +23,7 @@ import type { VoiceModelListing } from '../ipc/handlers/acappella-models';
 import type { DownloadProgress, DownloadResult } from '../acappella/models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../acappella/models/model-store';
 import type { MicPermissionInfo } from '../acappella/permissions/mic-permission';
+import type { RoutingLogEntry, RoutingQuality } from '../acappella/router/routing-log';
 import type { CredentialState, CredentialValidation } from '../acappella/providers/credentials';
 import type { VoiceCredentialService } from '../../shared/acappella/provider-catalog';
 import type { TurnBreakdown } from '../acappella/telemetry/turn-metrics';
@@ -156,6 +157,26 @@ export function createVoiceApi() {
 		 * What turns "voice feels slow" into a specific hop.
 		 */
 		lastTurn: (): Promise<TurnBreakdown | null> => ipcRenderer.invoke('acappella:last-turn'),
+
+		/**
+		 * Move the last dispatch to a different agent: the HUD's "wrong tab"
+		 * control, and what a spoken "no, the other one" does.
+		 *
+		 * @returns false when there is nothing to correct, so a stray click is a
+		 *          no-op rather than an error.
+		 */
+		correctRoute: (agentSessionId: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:correct-route', agentSessionId),
+
+		/**
+		 * Every routing decision this install has made, with what became of it.
+		 *
+		 * The point of the aggregate is that a decision the user immediately
+		 * corrected is a miss even though nothing errored, so routing quality is
+		 * measurable rather than anecdotal.
+		 */
+		routingLog: (): Promise<{ entries: RoutingLogEntry[]; quality: RoutingQuality }> =>
+			ipcRenderer.invoke('acappella:routing-log'),
 
 		/**
 		 * Voices the configured TTS provider offers. Empty for a provider with one

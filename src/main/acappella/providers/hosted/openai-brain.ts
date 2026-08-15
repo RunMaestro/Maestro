@@ -28,7 +28,7 @@ import {
 	CONVERSE_SYSTEM_PROMPT,
 	limitSpokenReply,
 	parseRouteDecision,
-	ROUTE_SYSTEM_PROMPT,
+	routeSystemPrompt,
 } from '../brain-prompt';
 import { getCredential } from '../credentials';
 import { hostedJson, requireCredential, type HostedFetch } from './http';
@@ -78,7 +78,7 @@ export class OpenAiBrainProvider implements BrainProvider {
 
 	async route(input: string, context: VoiceRouteContext): Promise<RouteDecision> {
 		const content = await this.complete({
-			system: ROUTE_SYSTEM_PROMPT,
+			system: routeSystemPrompt(),
 			user: buildRouteUserPrompt(input, context),
 			timeoutMs: this.routeTimeoutMs,
 			maxTokens: ROUTE_MAX_TOKENS,

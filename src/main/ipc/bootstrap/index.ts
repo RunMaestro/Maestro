@@ -314,6 +314,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerACappellaHandlers({
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		// Multi-window dispatch: a spoken instruction has to land in the window that
+		// owns the agent. Sending it to whichever window is "main" would activate an
+		// agent that window does not own, which is how a window ends up showing
+		// "No agents".
+		getWindowForSession: (agentSessionId: string) => {
+			const windowId = deps.windowRegistry.getWindowForSession(agentSessionId);
+			return windowId ? (deps.windowRegistry.get(windowId)?.browserWindow ?? null) : null;
+		},
 		safeSend: deps.safeSend,
 		audioHostDeps: deps.acappellaAudioHostDeps,
 		// What the `voiceCurrentAgent` hotkey binds to. The renderer is the only
