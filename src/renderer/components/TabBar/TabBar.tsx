@@ -141,6 +141,8 @@ function TabBarInner({
 	}, []);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
 	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
+	const showTerminalTabsInUnreadFilter = useSettingsStore((s) => s.showTerminalTabsInUnreadFilter);
+	const showBrowserTabsInUnreadFilter = useSettingsStore((s) => s.showBrowserTabsInUnreadFilter);
 	const useCmd0AsLastTab = useSettingsStore((s) => s.useCmd0AsLastTab);
 	const tabBarWheelScroll = useSettingsStore((s) => s.tabBarWheelScroll);
 
@@ -269,9 +271,10 @@ function TabBarInner({
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
 		if (!ownsActiveAgent) return [];
 		if (!showUnreadOnly) return unifiedTabs;
-		// In filter mode: AI tabs filtered by unread/busy/active/draft;
-		// file and terminal tabs always shown (they have no unread state,
-		// and hiding them causes navigation/display mismatch).
+		// In filter mode: AI tabs filtered by unread/busy/active/draft. File,
+		// terminal and browser tabs have no unread state, so each kind is hidden
+		// unless its opt-in setting is on - the currently active tab of that kind
+		// always stays visible so the user never loses sight of what's on screen.
 		return unifiedTabs.filter((ut) => {
 			if (ut.type === 'ai') {
 				return (
@@ -296,8 +299,11 @@ function TabBarInner({
 			if (ut.type === 'group') {
 				return unreadGroupIds ? unreadGroupIds.has(ut.id) : true;
 			}
-			// Terminal tabs are always visible
-			return true;
+			if (ut.type === 'browser') {
+				return showBrowserTabsInUnreadFilter || ut.id === activeBrowserTabId;
+			}
+			// Terminal tabs
+			return showTerminalTabsInUnreadFilter || ut.id === activeTerminalTabId;
 		});
 	}, [
 		unifiedTabs,
@@ -310,6 +316,9 @@ function TabBarInner({
 		showFilePreviewsInUnreadFilter,
 		ownsActiveAgent,
 		unreadGroupIds,
+		showTerminalTabsInUnreadFilter,
+		showBrowserTabsInUnreadFilter,
+		activeBrowserTabId,
 		stuckTabIds,
 		queuedTabIds,
 	]);

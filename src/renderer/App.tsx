@@ -206,9 +206,9 @@ import {
 	navigateToClosestTerminalTab,
 	hasActiveWizard,
 	findNextUnreadSession,
-	getTabDisplayName,
 	isSoleAiTabReplacement,
 } from './utils/tabHelpers';
+import { getQueueBusyContext } from './utils/executionQueue';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -1850,43 +1850,6 @@ function MaestroConsoleInner() {
 		recoveryError: sessionRecoveryError,
 	} = useSessionRecovery({ processInputRef });
 
-	// Force Send: dispatch a queued item immediately with forceParallel=true.
-	// Mirrors the user's manual flow (copy text → delete queued → Cmd+Shift+Enter)
-	// but as a single click. Only useful when another tab in this agent is busy
-	// AND this tab is idle - processInput(forceParallel:true) then sends now.
-	const handleForceSendQueuedItem = useCallback(
-		(itemId: string) => {
-			const sessionId = activeSessionIdRef.current;
-			const session = sessionsRef.current.find((s) => s.id === sessionId);
-			if (!session) return;
-			const item = session.executionQueue.find((i) => i.id === itemId);
-			if (!item) return;
-			const text = item.type === 'command' ? (item.command ?? '') : (item.text ?? '');
-			const images = item.images && item.images.length > 0 ? item.images : undefined;
-			// Image-only messages have empty text but should still dispatch.
-			// processInput's own emptiness check (line ~207) requires text OR images.
-			if (!text && !images) return;
-
-			// Remove the item from the queue first so processInput doesn't see a duplicate.
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
-			}));
-
-			// Pass the queued item's images directly through processInput options.
-			// Routing them via setStagedImages would race with processInput's stale
-			// closure of stagedImages (deps include it), causing images to drop on the
-			// floor in both the chat log entry and the agent spawn payload.
-			//
-			// Pin the send to the tab the item was queued FOR, not the live active tab.
-			// In the single view those are always the same (the inline queue is filtered
-			// to the active tab), but a tiled group shows several AI panes at once, so
-			// the item's own tabId is the only correct target.
-			processInput(text, { forceParallel: true, images, tabId: item.tabId });
-		},
-		[processInput]
-	);
-
 	// Run a plugin command macro: send its templated prompt to the active agent
 	// through the same input path as a typed message. Empty/whitespace prompts are
 	// ignored by processInput's own emptiness check.
@@ -1897,18 +1860,13 @@ function MaestroConsoleInner() {
 		[processInput]
 	);
 
-	// Build (tab→busy summary) lookup used by the Force Send button to decide
-	// visibility and to populate the confirmation modal's "other tabs working"
-	// list. Computed from the current session's tab states at call time.
+	// Build (tab→busy summary) lookup used by the inline Force Send button to
+	// decide visibility and to populate the confirmation modal's "other tabs
+	// working" list. Computed from the current agent's tab states at call time.
 	const getForceSendContext = useCallback((item: QueuedItem) => {
 		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return null;
-		const targetTab = session.aiTabs.find((t) => t.id === item.tabId);
-		const targetTabBusy = targetTab?.state === 'busy';
-		const otherBusyTabs = session.aiTabs
-			.filter((t) => t.id !== item.tabId && t.state === 'busy')
-			.map((t) => ({ id: t.id, displayName: getTabDisplayName(t) }));
-		return { targetTabBusy, otherBusyTabs };
+		return getQueueBusyContext(session, item);
 	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
@@ -2409,7 +2367,18 @@ function MaestroConsoleInner() {
 		handleReorderQueueItems,
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
-	} = useQueueHandlers();
+		handleForceSendQueueItem,
+	} = useQueueHandlers({ processQueuedItem });
+
+	// Force Send from the inline chat list: the item always belongs to the active
+	// agent, so this is the queue browser's handler with the session pinned.
+	const handleForceSendQueuedItem = useCallback(
+		(itemId: string) => {
+			const sessionId = activeSessionIdRef.current;
+			if (sessionId) handleForceSendQueueItem(sessionId, itemId);
+		},
+		[handleForceSendQueueItem]
+	);
 
 	// Symphony contribution handler - extracted to useSymphonyContribution hook
 	const { handleStartContribution } = useSymphonyContribution({
@@ -3453,6 +3422,7 @@ function MaestroConsoleInner() {
 						onReorderQueueItems={handleReorderQueueItems}
 						onTogglePauseQueueItem={handleTogglePauseQueueItem}
 						onEditQueueItem={handleEditQueueItem}
+						onForceSendQueueItem={handleForceSendQueueItem}
 						// AppGroupChatModals props
 						onCloseNewGroupChatModal={handleCloseNewGroupChatModal}
 						onCreateGroupChat={handleCreateGroupChat}

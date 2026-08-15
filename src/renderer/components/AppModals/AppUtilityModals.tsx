@@ -297,6 +297,7 @@ export interface AppUtilityModalsProps {
 		itemId: string,
 		patch: { text: string; images: string[] }
 	) => void;
+	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -519,6 +520,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onReorderQueueItems,
 	onTogglePauseQueueItem,
 	onEditQueueItem,
+	onForceSendQueueItem,
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab,
 	onQuickActionsNewFileTab,
@@ -865,6 +867,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onReorderItems={onReorderQueueItems}
 					onToggleItemPause={onTogglePauseQueueItem}
 					onEditItem={onEditQueueItem}
+					onForceSendItem={onForceSendQueueItem}
 				/>
 			)}
 

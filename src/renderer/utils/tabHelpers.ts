@@ -639,9 +639,9 @@ export function computeQueuedTabIds(queue: QueuedItem[]): Set<string> {
  * keyboard jump shortcuts (Cmd+1..9, Cmd+0) stay aligned with the rendered tab strip.
  *
  * AI tabs pass if they're unread, busy, the active AI tab (in AI mode), have a draft, or
- * are starred (when that setting is on). File tabs pass when the file-preview setting is
- * enabled OR when they're the currently active file tab (the active tab is never hidden).
- * Terminal and browser tabs always pass (no unread semantics to filter on).
+ * are starred (when that setting is on). File, browser and terminal tabs have no unread
+ * semantics, so each kind passes only when its opt-in setting is enabled OR when it's the
+ * currently active tab of that kind (the active tab is never hidden).
  *
  * @param session - The Maestro session supplying activeTabId / inputMode / aiTabs
  * @param order   - Unified tab order to filter (typically getRepairedUnifiedTabOrder(session))
@@ -654,10 +654,14 @@ export function filterUnifiedTabOrderForUnread(
 	const settings = useSettingsStore.getState();
 	const showStarred = settings.showStarredInUnreadFilter;
 	const showFilePreviews = settings.showFilePreviewsInUnreadFilter;
+	const showTerminalTabs = settings.showTerminalTabsInUnreadFilter;
+	const showBrowserTabs = settings.showBrowserTabsInUnreadFilter;
 	const inputMode = session.inputMode ?? 'ai';
 	const activeTabId = session.activeTabId ?? null;
 	const activeFileTabId = session.activeFileTabId ?? null;
 	const queuedTabIds = computeQueuedTabIds(session.executionQueue);
+	const activeBrowserTabId = session.activeBrowserTabId ?? null;
+	const activeTerminalTabId = session.activeTerminalTabId ?? null;
 
 	return order.filter((ref) => {
 		if (ref.type === 'ai') {
@@ -665,8 +669,8 @@ export function filterUnifiedTabOrderForUnread(
 			if (!tab) return false;
 			return aiTabPassesUnreadFilter(tab, inputMode, activeTabId, showStarred, queuedTabIds);
 		}
-		// Active file tab is always visible so the user never loses sight of what
-		// they're looking at, even when the file-preview filter is off.
+		// The active tab of each non-AI kind is always visible so the user never loses
+		// sight of what they're looking at, even when that kind's filter is off.
 		if (ref.type === 'file') return showFilePreviews || ref.id === activeFileTabId;
 		// A group is shown iff ANY of its member tabs passes the unread filter (the
 		// group chip stands in for its collapsed members, so it inherits their unread
@@ -675,7 +679,8 @@ export function filterUnifiedTabOrderForUnread(
 			const group = session.tabGroups?.find((g) => g.id === ref.id);
 			return group ? groupHasUnreadTabs(session, group) : false;
 		}
-		return true;
+		if (ref.type === 'browser') return showBrowserTabs || ref.id === activeBrowserTabId;
+		return showTerminalTabs || ref.id === activeTerminalTabId;
 	});
 }
 

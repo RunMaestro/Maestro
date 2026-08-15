@@ -286,6 +286,10 @@ export interface UseSettingsReturn {
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	showTerminalTabsInUnreadFilter: boolean;
+	setShowTerminalTabsInUnreadFilter: (value: boolean) => void;
+	showBrowserTabsInUnreadFilter: boolean;
+	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	useCmd0AsLastTab: boolean;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;

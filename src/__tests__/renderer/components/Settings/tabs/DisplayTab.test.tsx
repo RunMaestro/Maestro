@@ -51,6 +51,8 @@ const mockSetSshReduceEntryCapEnabled = vi.fn();
 const mockSetSshReduceEntryCapFraction = vi.fn();
 const mockSetShowStarredInUnreadFilter = vi.fn();
 const mockSetShowFilePreviewsInUnreadFilter = vi.fn();
+const mockSetShowTerminalTabsInUnreadFilter = vi.fn();
+const mockSetShowBrowserTabsInUnreadFilter = vi.fn();
 const mockSetFileEditWordWrap = vi.fn();
 const mockSetFileEditShowLineNumbers = vi.fn();
 const mockSetFilePreviewToolbarButtonVisibility = vi.fn();
@@ -117,6 +119,10 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter: false,
 		setShowFilePreviewsInUnreadFilter: mockSetShowFilePreviewsInUnreadFilter,
+		showTerminalTabsInUnreadFilter: false,
+		setShowTerminalTabsInUnreadFilter: mockSetShowTerminalTabsInUnreadFilter,
+		showBrowserTabsInUnreadFilter: false,
+		setShowBrowserTabsInUnreadFilter: mockSetShowBrowserTabsInUnreadFilter,
 		fileEditWordWrap: true,
 		setFileEditWordWrap: mockSetFileEditWordWrap,
 		fileEditShowLineNumbers: true,
@@ -1202,6 +1208,66 @@ describe('DisplayTab', () => {
 			});
 
 			const label = screen.getByText('Show file preview tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+
+			expect(toggle.getAttribute('aria-checked')).toBe('true');
+		});
+
+		it('should toggle terminal tabs in unread filter on when clicked (currently off)', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show terminal tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowTerminalTabsInUnreadFilter).toHaveBeenCalledWith(true);
+		});
+
+		it('should show aria-checked=true when terminal tabs in unread filter is enabled', async () => {
+			mockUseSettingsOverrides = { showTerminalTabsInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show terminal tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+
+			expect(toggle.getAttribute('aria-checked')).toBe('true');
+		});
+
+		it('should toggle browser tabs in unread filter on when clicked (currently off)', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show browser tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowBrowserTabsInUnreadFilter).toHaveBeenCalledWith(true);
+		});
+
+		it('should show aria-checked=true when browser tabs in unread filter is enabled', async () => {
+			mockUseSettingsOverrides = { showBrowserTabsInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show browser tabs when filtering by unread');
 			const section = label.closest('.flex.items-center.justify-between')!;
 			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
 

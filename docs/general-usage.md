@@ -345,6 +345,8 @@ When [Forced Parallel Execution](./features) is enabled and another tab in the s
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
+Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims with an explanation when the item cannot run yet: its own tab is mid-turn, or another tab in that agent is working and Forced Parallel Execution is off. When another tab is working, Send Now confirms first and lists which tabs are busy.
+
 ## Input Toggles
 
 The AI input box includes three toggle buttons that control session behavior:

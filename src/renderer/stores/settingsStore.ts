@@ -398,6 +398,8 @@ export interface SettingsStoreState
 	keyboardMasteryStats: KeyboardMasteryStats;
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
+	showTerminalTabsInUnreadFilter: boolean;
+	showBrowserTabsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
@@ -505,6 +507,8 @@ export interface SettingsStoreActions
 	setWebInterfaceCustomPort: (value: number) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	setShowTerminalTabsInUnreadFilter: (value: boolean) => void;
+	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
@@ -737,6 +741,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
+		showTerminalTabsInUnreadFilter: false,
+		showBrowserTabsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
@@ -1164,6 +1170,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setShowFilePreviewsInUnreadFilter: (value) => {
 			set({ showFilePreviewsInUnreadFilter: value });
 			window.maestro.settings.set('showFilePreviewsInUnreadFilter', value);
+		},
+
+		setShowTerminalTabsInUnreadFilter: (value) => {
+			set({ showTerminalTabsInUnreadFilter: value });
+			window.maestro.settings.set('showTerminalTabsInUnreadFilter', value);
+		},
+
+		setShowBrowserTabsInUnreadFilter: (value) => {
+			set({ showBrowserTabsInUnreadFilter: value });
+			window.maestro.settings.set('showBrowserTabsInUnreadFilter', value);
 		},
 
 		setUseCmd0AsLastTab: (value) => {
@@ -2190,6 +2206,14 @@ export async function loadAllSettings(): Promise<void> {
 			patch.showFilePreviewsInUnreadFilter = allSettings[
 				'showFilePreviewsInUnreadFilter'
 			] as boolean;
+
+		if (allSettings['showTerminalTabsInUnreadFilter'] !== undefined)
+			patch.showTerminalTabsInUnreadFilter = allSettings[
+				'showTerminalTabsInUnreadFilter'
+			] as boolean;
+
+		if (allSettings['showBrowserTabsInUnreadFilter'] !== undefined)
+			patch.showBrowserTabsInUnreadFilter = allSettings['showBrowserTabsInUnreadFilter'] as boolean;
 
 		if (allSettings['useCmd0AsLastTab'] !== undefined)
 			patch.useCmd0AsLastTab = allSettings['useCmd0AsLastTab'] as boolean;

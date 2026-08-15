@@ -3803,7 +3803,8 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('read-tab');
 		});
 
-		it('includes browser tabs in showUnreadOnly mode', () => {
+		it('includes browser tabs in showUnreadOnly mode when setting enabled', () => {
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: true });
 			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
 			const browserTab = createMockBrowserTab({ id: 'browser-1' });
 			const session = createMockSession({
@@ -3821,6 +3822,31 @@ describe('tabHelpers', () => {
 
 			expect(result!.type).toBe('browser');
 			expect(result!.id).toBe('browser-1');
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: false });
+		});
+
+		it('skips browser tabs in showUnreadOnly mode when setting disabled', () => {
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: false });
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const unreadTab = createMockTab({ id: 'unread-tab', hasUnread: true, inputValue: '' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [readTab, unreadTab],
+				browserTabs: [browserTab as any],
+				activeTabId: 'read-tab',
+				activeBrowserTabId: null,
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'read-tab' },
+					{ type: 'browser', id: 'browser-1' },
+					{ type: 'ai', id: 'unread-tab' },
+				],
+			});
+
+			const result = navigateToNextUnifiedTab(session, true);
+
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('unread-tab');
 		});
 
 		it('navigates to first tab when current tab not found in unified order', () => {
@@ -3915,7 +3941,9 @@ describe('tabHelpers', () => {
 			// Regression: prev/next used to treat activeTabId as reachable regardless of
 			// inputMode, so pressing next/prev on a terminal tab while an AI tab was the
 			// last-active one would jump through the hidden AI tab. TabBar hides that AI
-			// tab when inputMode !== 'ai', and navigation must match.
+			// tab when inputMode !== 'ai', and navigation must match. Terminal tabs are
+			// kept visible here so the scenario isolates the AI-tab skip.
+			useSettingsStore.setState({ showTerminalTabsInUnreadFilter: true });
 			const unreadAi = createMockTab({ id: 'ai-unread', hasUnread: true });
 			const readAi = createMockTab({ id: 'ai-read', hasUnread: false, inputValue: '' });
 			const session = createMockSession({
@@ -3947,6 +3975,36 @@ describe('tabHelpers', () => {
 			const backward = navigateToPrevUnifiedTab(session, true);
 			expect(backward!.type).toBe('terminal');
 			expect(backward!.id).toBe('term-1');
+			useSettingsStore.setState({ showTerminalTabsInUnreadFilter: false });
+		});
+
+		it('skips non-active terminal tabs in showUnreadOnly mode when setting disabled', () => {
+			useSettingsStore.setState({ showTerminalTabsInUnreadFilter: false });
+			const unreadAi = createMockTab({ id: 'ai-unread', hasUnread: true });
+			const readAi = createMockTab({ id: 'ai-read', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [unreadAi, readAi],
+				terminalTabs: [
+					{ id: 'term-1', name: 'Terminal 1' } as any,
+					{ id: 'term-2', name: 'Terminal 2' } as any,
+				],
+				activeTabId: 'ai-read',
+				activeTerminalTabId: 'term-2',
+				activeFileTabId: null,
+				inputMode: 'terminal',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-unread' },
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'ai-read' },
+					{ type: 'terminal', id: 'term-2' },
+				],
+			});
+
+			// Terminal 1 is hidden by the filter, so prev from the active Terminal 2 wraps
+			// past it (and past the hidden read AI tab) onto the unread AI tab.
+			const backward = navigateToPrevUnifiedTab(session, true);
+			expect(backward!.type).toBe('ai');
+			expect(backward!.id).toBe('ai-unread');
 		});
 	});
 
@@ -4113,7 +4171,8 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('unread-tab');
 		});
 
-		it('includes browser tabs in showUnreadOnly mode', () => {
+		it('includes browser tabs in showUnreadOnly mode when setting enabled', () => {
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: true });
 			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
 			const browserTab = createMockBrowserTab({ id: 'browser-1' });
 			const session = createMockSession({
@@ -4131,6 +4190,41 @@ describe('tabHelpers', () => {
 
 			expect(result!.type).toBe('browser');
 			expect(result!.id).toBe('browser-1');
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: false });
+		});
+
+		it('keeps the active browser and terminal tabs visible when their settings are disabled', () => {
+			useSettingsStore.setState({
+				showBrowserTabsInUnreadFilter: false,
+				showTerminalTabsInUnreadFilter: false,
+			});
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [readTab],
+				browserTabs: [
+					createMockBrowserTab({ id: 'browser-active' }) as any,
+					createMockBrowserTab({ id: 'browser-other' }) as any,
+				],
+				terminalTabs: [
+					{ id: 'term-active', name: 'Terminal 1' } as any,
+					{ id: 'term-other', name: 'Terminal 2' } as any,
+				],
+				activeTabId: 'read-tab',
+				activeBrowserTabId: 'browser-active',
+				activeTerminalTabId: 'term-active',
+				activeFileTabId: null,
+			});
+			const order = [
+				{ type: 'ai' as const, id: 'read-tab' },
+				{ type: 'browser' as const, id: 'browser-active' },
+				{ type: 'browser' as const, id: 'browser-other' },
+				{ type: 'terminal' as const, id: 'term-active' },
+				{ type: 'terminal' as const, id: 'term-other' },
+			];
+
+			const visible = filterUnifiedTabOrderForUnread(session, order).map((ref) => ref.id);
+
+			expect(visible).toEqual(['read-tab', 'browser-active', 'term-active']);
 		});
 
 		it('navigates to last tab when current tab not found in unified order', () => {

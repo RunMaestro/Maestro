@@ -9,7 +9,8 @@
  * taking index 0, and treat a queue with no runnable items as drained.
  */
 
-import type { QueuedItem } from '../types';
+import type { QueuedItem, Session, SessionState } from '../types';
+import { getTabDisplayName, markTabRunningQueuedItem, resolveQueuedItemTarget } from './tabHelpers';
 
 /** A queued item is runnable when it is not held/paused by the user. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
@@ -101,4 +102,114 @@ export function reorderQueueItem(
 		next[pos] = reordered[idx];
 	});
 	return next;
+}
+
+// ============================================================================
+// Force Send - dispatching one specific queued item out of turn
+// ============================================================================
+
+/** Minimal identity of a tab that is mid-turn, for Force Send copy. */
+export interface BusyTabSummary {
+	id: string;
+	displayName: string;
+}
+
+export interface QueueBusyContext {
+	/** The item's own target tab is already running a turn. */
+	targetTabBusy: boolean;
+	/** Other tabs in the same agent that are mid-turn right now. */
+	otherBusyTabs: BusyTabSummary[];
+}
+
+/**
+ * Busy-state snapshot for one queued item: whether its own tab is mid-turn, and
+ * which OTHER tabs of the same agent are. Both Force Send surfaces (the inline
+ * chat list and the Execution Queue browser) derive eligibility from this, so
+ * they cannot drift on what "safe to send right now" means.
+ */
+export function getQueueBusyContext(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId'>
+): QueueBusyContext {
+	const tabs = session.aiTabs ?? [];
+	const targetTab = tabs.find((t) => t.id === item.tabId);
+	return {
+		targetTabBusy: targetTab?.state === 'busy',
+		otherBusyTabs: tabs
+			.filter((t) => t.id !== item.tabId && t.state === 'busy')
+			.map((t) => ({ id: t.id, displayName: getTabDisplayName(t) })),
+	};
+}
+
+/** Why a queued item cannot be force sent right now. */
+export type ForceSendBlockedReason = 'no-target-tab' | 'target-tab-busy' | 'needs-forced-parallel';
+
+export interface ForceSendEligibility extends QueueBusyContext {
+	/** Sending now means running alongside another tab's in-flight turn. */
+	requiresParallel: boolean;
+	canForce: boolean;
+	blockedReason?: ForceSendBlockedReason;
+}
+
+/**
+ * Whether a queued item can be dispatched out of turn, and what that would mean.
+ *
+ * A tab runs at most one turn at a time, so an item whose own tab is busy can
+ * never be forced. Sending while a *different* tab of the same agent is working
+ * breaks the sequential-per-agent rule that keeps two turns off the same files,
+ * so that case stays gated behind the Forced Parallel Execution setting. Every
+ * other case (jumping the queue order, releasing a held item) is always allowed.
+ */
+export function getForceSendEligibility(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId'>,
+	opts: { forcedParallelEnabled: boolean }
+): ForceSendEligibility {
+	const busy = getQueueBusyContext(session, item);
+	const requiresParallel = busy.otherBusyTabs.length > 0;
+	const blockedReason: ForceSendBlockedReason | undefined = !resolveQueuedItemTarget(session, item)
+		? 'no-target-tab'
+		: busy.targetTabBusy
+			? 'target-tab-busy'
+			: requiresParallel && !opts.forcedParallelEnabled
+				? 'needs-forced-parallel'
+				: undefined;
+	return { ...busy, requiresParallel, canForce: !blockedReason, blockedReason };
+}
+
+/**
+ * State transition for dispatching ONE specific queued item now: drop it from the
+ * queue, mark its target tab busy (which appends the user-visible log entry), and
+ * put the agent in the busy/ai state. Returns the session untouched when the item
+ * is already gone or has no tab left to run on.
+ *
+ * The target is resolved orphan-aware, so an item queued on a since-closed tab
+ * still lands on that tab's background transcript rather than the active one.
+ */
+export function applyQueuedItemDispatch(session: Session, item: QueuedItem): Session {
+	if (!session.executionQueue?.some((i) => i.id === item.id)) return session;
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return session;
+
+	const aiTabs = session.aiTabs.map((tab) =>
+		tab.id === target.tabId ? markTabRunningQueuedItem(tab, item) : tab
+	);
+	const orphans =
+		target.location === 'orphan' && session.orphanedThinkingTabs
+			? session.orphanedThinkingTabs.map((tab) =>
+					tab.id === target.tabId ? markTabRunningQueuedItem(tab, item) : tab
+				)
+			: session.orphanedThinkingTabs;
+
+	return {
+		...session,
+		state: 'busy' as SessionState,
+		busySource: 'ai',
+		thinkingStartTime: Date.now(),
+		currentCycleTokens: 0,
+		currentCycleBytes: 0,
+		executionQueue: session.executionQueue.filter((i) => i.id !== item.id),
+		aiTabs,
+		...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
+	};
 }

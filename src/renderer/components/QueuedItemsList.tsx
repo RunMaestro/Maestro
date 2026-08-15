@@ -12,6 +12,7 @@ import {
 	ImageIcon,
 } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
+import type { BusyTabSummary } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
@@ -34,10 +35,9 @@ const INLINE_QUEUE_KEY = 'inline-queue';
 // QueuedItemsList - Displays queued execution items with expand/collapse
 // ============================================================================
 
-export interface BusyTabSummary {
-	id: string;
-	displayName: string;
-}
+// Re-exported for the surfaces that already import it from here; the type is
+// owned by the shared queue helpers so both Force Send surfaces agree on it.
+export type { BusyTabSummary };
 
 interface QueuedItemsListProps {
 	executionQueue: QueuedItem[];

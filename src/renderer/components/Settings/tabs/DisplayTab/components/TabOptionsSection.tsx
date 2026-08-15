@@ -11,6 +11,10 @@ interface TabOptionsSectionProps {
 	setShowStarredInUnreadFilter: (enabled: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (enabled: boolean) => void;
+	showTerminalTabsInUnreadFilter: boolean;
+	setShowTerminalTabsInUnreadFilter: (enabled: boolean) => void;
+	showBrowserTabsInUnreadFilter: boolean;
+	setShowBrowserTabsInUnreadFilter: (enabled: boolean) => void;
 	useCmd0AsLastTab: boolean;
 	setUseCmd0AsLastTab: (enabled: boolean) => void;
 	showBrowserTabDomain: boolean;
@@ -25,6 +29,10 @@ export function TabOptionsSection({
 	setShowStarredInUnreadFilter,
 	showFilePreviewsInUnreadFilter,
 	setShowFilePreviewsInUnreadFilter,
+	showTerminalTabsInUnreadFilter,
+	setShowTerminalTabsInUnreadFilter,
+	showBrowserTabsInUnreadFilter,
+	setShowBrowserTabsInUnreadFilter,
 	useCmd0AsLastTab,
 	setUseCmd0AsLastTab,
 	showBrowserTabDomain,
@@ -56,6 +64,24 @@ export function TabOptionsSection({
 					checked={showFilePreviewsInUnreadFilter}
 					onChange={setShowFilePreviewsInUnreadFilter}
 					ariaLabel="Show file preview tabs when filtering by unread"
+					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Show terminal tabs when filtering by unread"
+					description="When the unread filter is active, terminal tabs remain visible instead of being hidden."
+					checked={showTerminalTabsInUnreadFilter}
+					onChange={setShowTerminalTabsInUnreadFilter}
+					ariaLabel="Show terminal tabs when filtering by unread"
+					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Show browser tabs when filtering by unread"
+					description="When the unread filter is active, browser tabs remain visible instead of being hidden."
+					checked={showBrowserTabsInUnreadFilter}
+					onChange={setShowBrowserTabsInUnreadFilter}
+					ariaLabel="Show browser tabs when filtering by unread"
 					borderTop
 				/>
 				<ToggleSettingRow

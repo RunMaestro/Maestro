@@ -11,6 +11,7 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { ExecutionQueueBrowser } from '../../../renderer/components/ExecutionQueueBrowser';
 import type { Session, Theme, QueuedItem } from '../../../renderer/types';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock the LayerStackContext
 const mockRegisterLayer = vi.fn().mockReturnValue('layer-1');
@@ -1139,7 +1140,7 @@ describe('ExecutionQueueBrowser', () => {
 
 			expect(
 				screen.getByText(
-					'Drag and drop to reorder. Items are processed sequentially per agent to prevent file conflicts.'
+					'Drag and drop to reorder, or Send Now to run one out of turn. Items are otherwise processed sequentially per agent to prevent file conflicts.'
 				)
 			).toBeInTheDocument();
 		});
@@ -1990,6 +1991,85 @@ describe('ExecutionQueueBrowser', () => {
 			unmount();
 			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
 			spies.restore();
+		});
+	});
+
+	describe('force send', () => {
+		const createTab = (id: string, state: 'idle' | 'busy' = 'idle') =>
+			({ id, name: id, agentSessionId: null, logs: [], state }) as any;
+
+		const forceSendSession = (tabStates: Array<'idle' | 'busy'> = ['idle']) =>
+			createSession({
+				id: 'active-session',
+				executionQueue: [createQueuedItem({ id: 'item-1', tabId: 'tab-1' })],
+				aiTabs: tabStates.map((state, i) => createTab(`tab-${i + 1}`, state)),
+				activeTabId: 'tab-1',
+			});
+
+		const renderBrowser = (session: Session, onForceSendItem?: ReturnType<typeof vi.fn>) =>
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onForceSendItem={onForceSendItem}
+				/>
+			);
+
+		beforeEach(() => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+		});
+
+		it('does not render Send Now without a handler', () => {
+			renderBrowser(forceSendSession());
+			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
+		});
+
+		it('sends immediately when no other tab is working', () => {
+			const onForceSendItem = vi.fn();
+			renderBrowser(forceSendSession(), onForceSendItem);
+
+			fireEvent.click(screen.getByText('Send Now'));
+
+			expect(onForceSendItem).toHaveBeenCalledWith('active-session', 'item-1');
+			// A plain queue jump needs no confirmation step.
+			expect(screen.queryByText('Force Send Message?')).not.toBeInTheDocument();
+		});
+
+		it('disables Send Now while the target tab is working', () => {
+			const onForceSendItem = vi.fn();
+			renderBrowser(forceSendSession(['busy']), onForceSendItem);
+
+			const button = screen.getByText('Send Now').closest('button')!;
+			expect(button).toBeDisabled();
+			fireEvent.click(button);
+			expect(onForceSendItem).not.toHaveBeenCalled();
+		});
+
+		it('disables Send Now when another tab is working and forced parallel is off', () => {
+			const onForceSendItem = vi.fn();
+			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
+
+			expect(screen.getByText('Send Now').closest('button')).toBeDisabled();
+			expect(onForceSendItem).not.toHaveBeenCalled();
+		});
+
+		it('confirms before running in parallel with another working tab', () => {
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			const onForceSendItem = vi.fn();
+			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
+
+			fireEvent.click(screen.getByText('Send Now'));
+			// Confirmation first, dispatch only after the user agrees.
+			expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+			expect(onForceSendItem).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Force Send'));
+			expect(onForceSendItem).toHaveBeenCalledWith('active-session', 'item-1');
 		});
 	});
 });

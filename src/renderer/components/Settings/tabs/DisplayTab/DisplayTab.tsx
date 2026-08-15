@@ -145,6 +145,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setShowStarredInUnreadFilter={settings.setShowStarredInUnreadFilter}
 				showFilePreviewsInUnreadFilter={settings.showFilePreviewsInUnreadFilter}
 				setShowFilePreviewsInUnreadFilter={settings.setShowFilePreviewsInUnreadFilter}
+				showTerminalTabsInUnreadFilter={settings.showTerminalTabsInUnreadFilter}
+				setShowTerminalTabsInUnreadFilter={settings.setShowTerminalTabsInUnreadFilter}
+				showBrowserTabsInUnreadFilter={settings.showBrowserTabsInUnreadFilter}
+				setShowBrowserTabsInUnreadFilter={settings.setShowBrowserTabsInUnreadFilter}
 				useCmd0AsLastTab={settings.useCmd0AsLastTab}
 				setUseCmd0AsLastTab={settings.setUseCmd0AsLastTab}
 				showBrowserTabDomain={settings.showBrowserTabDomain}
