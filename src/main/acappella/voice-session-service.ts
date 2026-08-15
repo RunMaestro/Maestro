@@ -90,7 +90,7 @@ export type VoiceRouteExecutor = (
 ) => Promise<VoiceDispatchResult>;
 
 export interface VoiceSessionServiceOptions {
-	/** The active provider trio. Resolved by `providers/mock/provider-registry.ts`. */
+	/** The active provider trio. Resolved by `providers/provider-registry.ts`. */
 	providers: VoiceProviderTrio;
 	/** Current agents and their tabs. Defaults to an empty roster. */
 	getRoster?: () => RosterAgent[] | Promise<RosterAgent[]>;

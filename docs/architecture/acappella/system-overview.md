@@ -125,12 +125,18 @@ tell the tiers apart, which is the point.
 
 ### Provider resolution rules
 
-`provider-registry.ts` resolves the active trio from settings. Two rules are non-negotiable:
+`src/main/acappella/providers/provider-registry.ts` resolves the active trio from settings, and is
+the only module allowed to import a concrete provider. Two rules are non-negotiable:
 
 1. When nothing is configured, resolve the **mock** trio. The pipeline must always be runnable.
 2. **Never silently substitute a cloud provider for a missing local one.** If the user asked for
-   local Whisper and the model is not downloaded, that is a `session-error` with a clear reason,
-   not a quiet upload of their microphone to a vendor.
+   local Whisper and the model is not downloaded, the role falls back to the mock and the
+   resolution carries a `VoiceProviderSubstitution` naming what was asked for, what is running, and
+   why. That record is logged and handed to the caller to put in front of the user; it is never a
+   quiet upload of their microphone to a vendor.
+
+The fallback is always the mock for that role. There is no search over the catalog that could land
+on a different tier, which is what makes rule 2 structural rather than a promise.
 
 ## Client model
 
