@@ -13,6 +13,15 @@
  * substitution is returned to the caller and logged, so Voice Setup can say
  * "Whisper is not installed, you are on the mock" instead of shipping the
  * user's microphone to a cloud they did not pick.
+ *
+ * The STT slot is the one role with a per-build default. A packaged build gets
+ * the mock, which is text-in and opens no device; a development build gets
+ * `echo-stt`, which consumes the PCM the capture worklet produces and reports
+ * the speech it heard. That is not a substitution and is not reported as one -
+ * nobody asked for anything - but it IS the reason the audio path is exercised
+ * in `npm run dev` without a settings edit. Whether a microphone opens at all is
+ * decided by `SttProvider.acceptsAudio`, not by an id list: see
+ * `audio/audio-bridge.ts`.
  */
 
 import type {
@@ -26,6 +35,7 @@ import type {
 	VoiceProviderTrio,
 } from '../../../shared/acappella/providers';
 import { logger } from '../../utils/logger';
+import { ECHO_STT_PROVIDER_ID, EchoSttProvider } from './echo-stt';
 import { MockBrainProvider, MockSttProvider, MockTtsProvider } from './mock';
 import type { MockProviderOptions } from './mock';
 
@@ -83,6 +93,25 @@ export const MOCK_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
 	brain: 'mock-brain',
 };
 
+/**
+ * What a role resolves to when the user has picked nothing.
+ *
+ * Identical to {@link MOCK_PROVIDER_IDS} except for STT, where a development
+ * build prefers the echo provider. Availability decides: `echo-stt` reports
+ * itself unavailable in a packaged build, and an unavailable DEFAULT is silently
+ * the mock rather than a substitution, because nobody requested it.
+ */
+export const DEFAULT_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
+	stt: ECHO_STT_PROVIDER_ID,
+	tts: MOCK_PROVIDER_IDS.tts,
+	brain: MOCK_PROVIDER_IDS.brain,
+};
+
+/** Read per call, never cached: a test that sets `NODE_ENV` must be obeyed. */
+function isDevelopmentBuild(): boolean {
+	return process.env.NODE_ENV === 'development';
+}
+
 // ---------------------------------------------------------------------------
 // Catalog
 // ---------------------------------------------------------------------------
@@ -124,6 +153,18 @@ registerVoiceProvider({
 });
 
 registerVoiceProvider({
+	role: 'stt',
+	id: ECHO_STT_PROVIDER_ID,
+	label: 'Echo (development)',
+	tier: 'mock',
+	// Development only, and enforced here rather than by not registering it: a
+	// packaged build that finds `echo-stt` in its settings has to fall back to the
+	// mock and SAY so, which is exactly what the unavailable path already does.
+	isAvailable: isDevelopmentBuild,
+	create: () => new EchoSttProvider(),
+});
+
+registerVoiceProvider({
 	role: 'tts',
 	id: MOCK_PROVIDER_IDS.tts,
 	label: 'Mock (silent)',
@@ -144,7 +185,7 @@ registerVoiceProvider({
 // ---------------------------------------------------------------------------
 
 export interface ResolveVoiceProvidersOptions {
-	/** Provider ids from settings. Omitted roles take the mock. */
+	/** Provider ids from settings. Omitted roles take {@link DEFAULT_PROVIDER_IDS}. */
 	settings?: VoiceProviderSettings;
 	/** Timing overrides for the mock tier, so tests can run without timers. */
 	mock?: MockProviderOptions;
@@ -206,27 +247,33 @@ function resolveRole<R extends VoiceProviderRole>(
 	createMock: () => VoiceProviderByRole[R]
 ): { id: string; provider: VoiceProviderByRole[R] } {
 	const mockId = MOCK_PROVIDER_IDS[role];
+	// No selection is the documented default, not a substitution: A Cappella ships
+	// on the mock tier until the user picks something in Voice Setup, with the one
+	// per-build exception in DEFAULT_PROVIDER_IDS.
+	const selectedId = requestedId ?? DEFAULT_PROVIDER_IDS[role];
 
-	// No selection is the documented default, not a substitution: A Cappella
-	// ships on the mock tier until the user picks something in Voice Setup.
-	if (!requestedId || requestedId === mockId) {
+	if (selectedId === mockId) {
 		return { id: mockId, provider: createMock() };
 	}
 
 	const entries = catalog[role];
-	const registration = entries.get(requestedId);
+	const registration = entries.get(selectedId);
 
 	if (!registration) {
 		return {
 			id: mockId,
-			provider: substituteMock(role, requestedId, 'unknown-provider', substitutions, createMock),
+			provider: substituteMock(role, selectedId, 'unknown-provider', substitutions, createMock),
 		};
 	}
 
 	if (registration.isAvailable && !registration.isAvailable()) {
+		// A default the build cannot run is not news: the user asked for nothing, so
+		// telling them their nothing was substituted would be noise in front of the
+		// substitutions that matter.
+		if (!requestedId) return { id: mockId, provider: createMock() };
 		return {
 			id: mockId,
-			provider: substituteMock(role, requestedId, 'unavailable', substitutions, createMock),
+			provider: substituteMock(role, selectedId, 'unavailable', substitutions, createMock),
 		};
 	}
 

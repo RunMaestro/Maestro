@@ -66,6 +66,7 @@ class FakeStt implements SttProvider {
 	readonly label = 'Fake STT';
 	readonly tier = 'mock' as const;
 	readonly sampleRate = ACAPPELLA_AUDIO_SAMPLE_RATE;
+	readonly acceptsAudio = true;
 
 	readonly fed: Int16Array[] = [];
 	flushes = 0;

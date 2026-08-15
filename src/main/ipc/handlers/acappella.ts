@@ -34,15 +34,27 @@ import type { SafeSendFn } from '../../utils/safe-send';
 import type { InterruptSource, RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
 import { micSettingsUrl } from '../../../shared/acappella/mic-settings';
 import {
+	ACAPPELLA_AUDIO_COMMAND_CHANNEL,
+	ACAPPELLA_AUDIO_FRAME_CHANNEL,
+	ACAPPELLA_AUDIO_STATUS_CHANNEL,
+	type AudioFrame,
+	type AudioHostCommand,
+	type AudioHostStatus,
+} from '../../../shared/acappella/audio-host';
+import {
 	closeAcappellaAudioHostWindow,
 	createRendererVoiceBridge,
+	createVoiceAudioBridge,
 	createVoiceRouteExecutor,
 	disposeVoiceSessionService,
 	ensureAcappellaAudioHostWindow,
+	getAcappellaAudioHostWindow,
 	getVoiceSessionService,
 	initVoiceSessionService,
+	isAcappellaAudioHostContents,
 	readAgentRoster,
 	type AudioHostWindowDeps,
+	type VoiceAudioBridge,
 	type VoiceSessionService,
 	type VoiceSessionSnapshot,
 } from '../../acappella';
@@ -97,6 +109,38 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  */
 let activeProviderKey: string | null = null;
 let activeSubstitutions: VoiceProviderSubstitution[] = [];
+
+/**
+ * The audio bridge for the live service. Module state for the same reason the
+ * service is: the frame and status listeners are registered once, for the life of
+ * the app, while the thing behind them is rebuilt whenever the provider trio
+ * changes.
+ */
+let audioBridge: VoiceAudioBridge | null = null;
+
+/** Push one command to the hidden audio host. A window that is not open is a no-op. */
+function sendAudioHostCommand(command: AudioHostCommand): void {
+	const win = getAcappellaAudioHostWindow();
+	if (!win || win.webContents.isDestroyed()) return;
+	win.webContents.send(ACAPPELLA_AUDIO_COMMAND_CHANNEL, command);
+}
+
+/**
+ * Shape guard for an inbound frame.
+ *
+ * The sender check is the real security boundary; this is a crash guard. Frames
+ * arrive fifty times a second, so a malformed one must not become fifty identical
+ * unhandled exceptions a second inside an `ipcMain` listener.
+ */
+function isAudioFrame(value: unknown): value is AudioFrame {
+	const frame = value as AudioFrame | null;
+	return (
+		!!frame &&
+		typeof frame.seq === 'number' &&
+		typeof frame.rms === 'number' &&
+		frame.pcm instanceof ArrayBuffer
+	);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -156,14 +200,27 @@ async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 	}
 
 	const { providers, substitutions } = resolveVoiceProviders({ settings });
+	audioBridge?.dispose();
+	audioBridge = null;
+
 	const service = await initVoiceSessionService({
 		providers,
 		getRoster: readAgentRoster,
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow),
 		}),
+		// Read through the module variable rather than captured: the bridge cannot
+		// exist yet (it takes the service), and the two are replaced together.
+		onSpeechChunk: (chunk) => audioBridge?.handleSpeechChunk(chunk),
 	});
 	service.subscribe((event) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL, event));
+
+	// Audio is wired only when there is a host window to wire it to. Without one
+	// (tests, and any path that did not pass `audioHostDeps`) the session still
+	// runs: it is simply text-in, which is exactly the mock tier's contract.
+	if (deps.audioHostDeps) {
+		audioBridge = createVoiceAudioBridge({ session: service, sendCommand: sendAudioHostCommand });
+	}
 
 	activeProviderKey = key;
 	activeSubstitutions = substitutions;
@@ -327,6 +384,26 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		return wrappedGetState(event);
 	});
 
+	// The audio host's own control link. `on`, not `handle`: frames arrive fifty
+	// times a second and nothing about them needs a reply, so a promise round trip
+	// per 20 ms of audio would be pure overhead.
+	//
+	// Both listeners check the sender. The preload exposes `voiceAudioHost` to every
+	// window because it is one shared preload, so "only the audio host may speak
+	// here" has to be enforced at the receiving end - a browser tab that found the
+	// channel must not be able to inject PCM into a live voice session.
+	ipcMain.on(ACAPPELLA_AUDIO_FRAME_CHANNEL, (event, frame: unknown) => {
+		if (!isAcappellaAudioHostContents(event.sender)) return;
+		if (!isAudioFrame(frame)) return;
+		audioBridge?.handleFrame(frame);
+	});
+
+	ipcMain.on(ACAPPELLA_AUDIO_STATUS_CHANNEL, (event, status: unknown) => {
+		if (!isAcappellaAudioHostContents(event.sender)) return;
+		if (!status || typeof (status as AudioHostStatus).kind !== 'string') return;
+		audioBridge?.handleStatus(status as AudioHostStatus);
+	});
+
 	// Release the floor on the way out, and with it the microphone: the audio host
 	// window holds a real capture device, and a session left running would keep it
 	// open past the last app window. Fire-and-forget: `will-quit` is synchronous,
@@ -339,6 +416,18 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 }
 
 /**
+ * Stop capture and drop the audio wiring, leaving the session service alone.
+ *
+ * Called when the Encore Feature is switched off: the audio host window goes
+ * away with it, so a bridge still holding a running pipeline would be counting
+ * frames from a device nobody owns.
+ */
+export function disposeACappellaAudioBridge(): void {
+	audioBridge?.dispose();
+	audioBridge = null;
+}
+
+/**
  * Drop the cached provider selection. Test-only seam: the service singleton is
  * module state in `src/main/acappella/index.ts`, and this file's memo of what it
  * was built from has to be cleared alongside it.
@@ -346,4 +435,6 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 export function resetACappellaHandlerState(): void {
 	activeProviderKey = null;
 	activeSubstitutions = [];
+	audioBridge?.dispose();
+	audioBridge = null;
 }

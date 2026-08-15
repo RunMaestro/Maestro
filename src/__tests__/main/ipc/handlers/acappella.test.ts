@@ -21,10 +21,33 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { app, ipcMain, shell } from 'electron';
 
 vi.mock('electron', () => ({
-	ipcMain: { handle: vi.fn() },
+	ipcMain: { handle: vi.fn(), on: vi.fn() },
 	app: { on: vi.fn() },
 	shell: { openExternal: vi.fn().mockResolvedValue(undefined) },
 }));
+
+/**
+ * The audio host window is a real `BrowserWindow` in production. Here it is a
+ * webContents stand-in that records commands, plus a sender predicate a test can
+ * flip: "only the audio host may push PCM" is enforced at this boundary, so it
+ * has to be possible to fail it.
+ */
+const audioHost = vi.hoisted(() => ({
+	webContents: { send: vi.fn(), isDestroyed: () => false },
+	isHostContents: true,
+}));
+
+vi.mock('../../../../main/acappella/audio-host-window', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/acappella/audio-host-window')>();
+	return {
+		...actual,
+		ensureAcappellaAudioHostWindow: vi.fn(() => audioHost),
+		closeAcappellaAudioHostWindow: vi.fn(),
+		getAcappellaAudioHostWindow: vi.fn(() => audioHost),
+		isAcappellaAudioHostContents: vi.fn(() => audioHost.isHostContents),
+	};
+});
 vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -41,10 +64,21 @@ vi.mock('../../../../main/stores/getters', () => ({
 
 import { getSessionsStore } from '../../../../main/stores/getters';
 import {
+	disposeACappellaAudioBridge,
 	registerACappellaHandlers,
 	resetACappellaHandlerState,
 	type VoiceStartSessionResult,
 } from '../../../../main/ipc/handlers/acappella';
+import {
+	ACAPPELLA_AUDIO_FRAME_CHANNEL,
+	ACAPPELLA_AUDIO_FRAME_SAMPLES,
+	ACAPPELLA_AUDIO_SAMPLE_RATE,
+	ACAPPELLA_AUDIO_STATUS_CHANNEL,
+	type AudioFrame,
+	type AudioHostCommand,
+	type AudioHostStatus,
+} from '../../../../shared/acappella/audio-host';
+import { ECHO_STT_PROVIDER_ID } from '../../../../main/acappella/providers/echo-stt';
 import { disposeVoiceSessionService, getVoiceSessionService } from '../../../../main/acappella';
 import type { RosterAgent, VoiceEvent } from '../../../../shared/acappella/protocol';
 import type { VoiceSessionSnapshot } from '../../../../main/acappella';
@@ -94,12 +128,29 @@ function voiceEvents(): VoiceEvent[] {
 		.map((entry) => entry.args[0] as VoiceEvent);
 }
 
-function register(): void {
+function register(options: { withAudio?: boolean } = {}): void {
 	registerACappellaHandlers({
 		settingsStore,
 		getMainWindow: () => fakeWindow as never,
 		safeSend: safeSend as never,
+		// Absent by default, exactly as in a test process with no window: the
+		// session still runs, it is simply text-in.
+		audioHostDeps: options.withAudio ? ({} as never) : undefined,
 	});
+}
+
+/** The `ipcMain.on` listener for one of the audio host's two channels. */
+function listenerFor(channel: string): (event: unknown, payload: unknown) => void {
+	const registration = vi.mocked(ipcMain.on).mock.calls.find(([name]) => name === channel);
+	expect(registration, `no listener registered for ${channel}`).toBeDefined();
+	return registration?.[1] as unknown as (event: unknown, payload: unknown) => void;
+}
+
+/** Commands pushed to the audio host renderer, in order. */
+function audioCommands(): AudioHostCommand[] {
+	return vi
+		.mocked(audioHost.webContents.send)
+		.mock.calls.map(([, command]) => command as AudioHostCommand);
 }
 
 beforeEach(async () => {
@@ -413,6 +464,155 @@ describe('A Cappella IPC handlers - input', () => {
 	it('stop-word with no payload is still accepted', async () => {
 		await handlerFor('acappella:start-session')({});
 		await expect(handlerFor('acappella:stop-word')({})).resolves.toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Audio host transport
+// ---------------------------------------------------------------------------
+
+describe('A Cappella IPC handlers - audio host transport', () => {
+	let nodeEnv: string | undefined;
+
+	/** One 20 ms frame of 200 Hz tone: voiced, and inside the detector's ZCR band. */
+	function toneFrame(seq: number): AudioFrame {
+		const samples = new Int16Array(ACAPPELLA_AUDIO_FRAME_SAMPLES);
+		for (let i = 0; i < samples.length; i++) {
+			samples[i] = 0.4 * Math.sin((2 * Math.PI * 200 * i) / ACAPPELLA_AUDIO_SAMPLE_RATE) * 0x7fff;
+		}
+		return { seq, capturedAt: 1_000 + seq * 20, rms: 0.28, pcm: samples.buffer };
+	}
+
+	function pushStatus(status: AudioHostStatus): void {
+		listenerFor(ACAPPELLA_AUDIO_STATUS_CHANNEL)({ sender: audioHost.webContents }, status);
+	}
+
+	function pushFrames(count: number): void {
+		const listener = listenerFor(ACAPPELLA_AUDIO_FRAME_CHANNEL);
+		for (let seq = 1; seq <= count; seq++) {
+			listener({ sender: audioHost.webContents }, toneFrame(seq));
+		}
+	}
+
+	beforeEach(async () => {
+		// The echo provider is the development default and the only registered STT
+		// that consumes audio, so the whole capture path hangs off this flag.
+		nodeEnv = process.env.NODE_ENV;
+		process.env.NODE_ENV = 'development';
+		settings.acappella = { providers: { stt: ECHO_STT_PROVIDER_ID } };
+
+		vi.clearAllMocks();
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		audioHost.isHostContents = true;
+		register({ withAudio: true });
+	});
+
+	afterEach(() => {
+		process.env.NODE_ENV = nodeEnv;
+	});
+
+	it('registers the two host channels as sends, not invokes', () => {
+		const channels = vi.mocked(ipcMain.on).mock.calls.map(([channel]) => channel);
+		expect(channels).toEqual(
+			expect.arrayContaining([ACAPPELLA_AUDIO_FRAME_CHANNEL, ACAPPELLA_AUDIO_STATUS_CHANNEL])
+		);
+	});
+
+	it('opens the microphone once the host reports ready', async () => {
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+
+		expect(audioCommands().map((command) => command.kind)).toContain('start-capture');
+	});
+
+	it('turns captured frames into meter events on the one ordered stream', async () => {
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+		broadcasts = [];
+
+		pushFrames(9);
+
+		const levels = voiceEvents().filter((event) => event.type === 'audio-level');
+		expect(levels.length).toBeGreaterThan(0);
+		// Downsampled: nine 20 ms frames is well under nine updates.
+		expect(levels.length).toBeLessThan(9);
+	});
+
+	it('publishes the microphone state a capture start proves', async () => {
+		await handlerFor('acappella:start-session')({});
+		broadcasts = [];
+
+		pushStatus({
+			kind: 'capture-start',
+			device: { deviceId: 'default', label: 'Built-in Microphone' },
+			contextSampleRate: 48_000,
+		});
+
+		expect(voiceEvents().at(-1)).toMatchObject({
+			type: 'mic-state',
+			permission: 'granted',
+			deviceLabel: 'Built-in Microphone',
+		});
+	});
+
+	it('turns a capture failure into a session error rather than a quiet session', async () => {
+		await handlerFor('acappella:start-session')({});
+		broadcasts = [];
+
+		pushStatus({ kind: 'mic-error', code: 'permission-denied', message: 'Permission denied' });
+
+		expect(voiceEvents().map((event) => event.type)).toContain('session-error');
+		expect(voiceEvents().find((event) => event.type === 'session-error')).toMatchObject({
+			code: 'audio-capture-failed',
+			recoverable: true,
+		});
+	});
+
+	it('ignores audio from a sender that is not the audio host', async () => {
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+		broadcasts = [];
+
+		// A browser tab that found the channel must not be able to inject PCM into a
+		// live voice session.
+		audioHost.isHostContents = false;
+		pushFrames(9);
+
+		expect(voiceEvents().filter((event) => event.type === 'audio-level')).toEqual([]);
+	});
+
+	it('ignores a malformed frame instead of throwing fifty times a second', async () => {
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+		const listener = listenerFor(ACAPPELLA_AUDIO_FRAME_CHANNEL);
+
+		expect(() => listener({ sender: audioHost.webContents }, { seq: 1 })).not.toThrow();
+		expect(() => listener({ sender: audioHost.webContents }, null)).not.toThrow();
+	});
+
+	it('releases the microphone when the Encore Feature is switched off', async () => {
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+		vi.mocked(audioHost.webContents.send).mockClear();
+
+		disposeACappellaAudioBridge();
+
+		expect(audioCommands().map((command) => command.kind)).toContain('stop-capture');
+	});
+
+	it('wires no audio at all without a host window', async () => {
+		vi.clearAllMocks();
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		register();
+
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+
+		// A session with no audio host is text-in, which is exactly what the mock
+		// tier promises; it must not reach for a device that is not there.
+		expect(audioCommands()).toEqual([]);
 	});
 });
 

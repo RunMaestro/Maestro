@@ -20,6 +20,12 @@ export {
 	type AudioHostWindowDeps,
 } from './audio-host-window';
 export {
+	VoiceAudioBridge,
+	createVoiceAudioBridge,
+	type AudioBridgeSession,
+	type VoiceAudioBridgeOptions,
+} from './audio/audio-bridge';
+export {
 	buildAgentRoster,
 	createRendererVoiceBridge,
 	createVoiceRouteExecutor,

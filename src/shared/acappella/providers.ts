@@ -66,6 +66,17 @@ export interface SttCallbacks {
 export interface SttProvider extends VoiceProviderInfo {
 	/** Sample rate `feed()` expects, in Hz. */
 	readonly sampleRate: number;
+	/**
+	 * Whether this provider transcribes audio at all.
+	 *
+	 * False is the text-only tier: the mock, and a client that did its own
+	 * transcription. It is the flag the audio path reads before opening a
+	 * microphone, and it exists so the answer is a property of the provider rather
+	 * than a list of ids somewhere else. Opening a capture device for a provider
+	 * that cannot hear would cost the user an OS permission prompt in exchange for
+	 * a level meter over a transcript that is never coming.
+	 */
+	readonly acceptsAudio: boolean;
 	/** Acquire the device or session. Throws when the provider cannot start. */
 	start(callbacks: SttCallbacks): Promise<void>;
 	/** Push one buffer of 16-bit mono PCM at `sampleRate`. */
@@ -131,6 +142,12 @@ export interface TtsChunk {
 	format: TtsAudioFormat;
 	/** Null in the mock tier, which speaks nothing. */
 	audio: Uint8Array | null;
+	/**
+	 * Sample rate of `audio`, in Hz. Required for `pcm16` and meaningless for the
+	 * container formats, which carry their own. Raw samples with no rate attached
+	 * are unplayable, and guessing one is how a voice ends up an octave low.
+	 */
+	sampleRate?: number;
 }
 
 export interface TtsSpeakOptions {

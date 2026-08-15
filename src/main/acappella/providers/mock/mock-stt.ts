@@ -9,6 +9,7 @@
  */
 
 import type { SttCallbacks, SttProvider } from '../../../../shared/acappella/providers';
+import { estimateSpokenDurationMs } from '../../../../shared/acappella/sentences';
 
 /** Gap between the two synthetic partials and the final. 0 emits synchronously. */
 const DEFAULT_PARTIAL_DELAY_MS = 90;
@@ -19,9 +20,6 @@ const SECOND_PARTIAL_STABILITY = 0.7;
 
 /** Typed text is not a guess, so the mock reports no transcription doubt. */
 const MOCK_FINAL_CONFIDENCE = 1;
-
-/** Speaking pace used to estimate `durationMs` for an utterance nobody spoke. */
-const WORDS_PER_MINUTE = 150;
 
 export interface MockSttOptions {
 	/**
@@ -37,6 +35,12 @@ export class MockSttProvider implements SttProvider {
 	readonly tier = 'mock' as const;
 	/** What a real recognizer would want. Nothing here consumes audio. */
 	readonly sampleRate = 16_000;
+	/**
+	 * Text in, transcript out. Declaring this keeps the audio path from opening a
+	 * microphone for a provider that would drop every frame: the mock tier's whole
+	 * promise is no model, no network, and no device.
+	 */
+	readonly acceptsAudio = false;
 
 	private callbacks: SttCallbacks | null = null;
 	private readonly partialDelayMs: number;
@@ -130,10 +134,4 @@ function partialPrefixes(utterance: string): [string, string] {
 	const firstCount = Math.max(1, Math.ceil(words.length / 3));
 	const secondCount = Math.max(firstCount, Math.ceil((words.length * 2) / 3));
 	return [words.slice(0, firstCount).join(' '), words.slice(0, secondCount).join(' ')];
-}
-
-/** How long the utterance would have taken to say, for the transcript timeline. */
-function estimateSpokenDurationMs(utterance: string): number {
-	const words = utterance.split(/\s+/).length;
-	return Math.round((words / WORDS_PER_MINUTE) * 60_000);
 }

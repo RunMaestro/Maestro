@@ -161,6 +161,11 @@ tell the tiers apart, which is the point.
 the only module allowed to import a concrete provider. Two rules are non-negotiable:
 
 1. When nothing is configured, resolve the **mock** trio. The pipeline must always be runnable.
+   The one per-build exception is STT in a development build, which defaults to `echo-stt`: it
+   consumes real PCM and reports the speech segments it heard, so `npm run dev` exercises the whole
+   audio path without a settings edit. A default is not a substitution and is not reported as one.
+   Whether a microphone is opened at all follows from `SttProvider.acceptsAudio` rather than from a
+   list of provider ids, so a text-in provider never costs the user a permission prompt.
 2. **Never silently substitute a cloud provider for a missing local one.** If the user asked for
    local Whisper and the model is not downloaded, the role falls back to the mock and the
    resolution carries a `VoiceProviderSubstitution` naming what was asked for, what is running, and
