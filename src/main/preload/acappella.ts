@@ -58,6 +58,19 @@ export function createVoiceApi() {
 		stopWord: (payload?: { phrase?: string; source?: 'voice' | 'client-button' }): Promise<void> =>
 			ipcRenderer.invoke('acappella:stop-word', payload),
 
+		/**
+		 * Hand the service an agent's answer, which it reshapes for the ear and
+		 * speaks. Phase 05 feeds real agent output to the same seam in-process;
+		 * this channel is what lets a client drive a turn past `dispatching`.
+		 *
+		 * @returns false when the session was not waiting on a reply.
+		 */
+		submitAgentReply: (params: {
+			agentSessionId: string;
+			tabId: string;
+			text: string;
+		}): Promise<boolean> => ipcRenderer.invoke('acappella:submit-agent-reply', params),
+
 		/** Current agents and their AI tabs, as the Brain sees them. */
 		getRoster: (): Promise<RosterAgent[]> => ipcRenderer.invoke('acappella:get-roster'),
 

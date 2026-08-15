@@ -27,6 +27,30 @@ export interface VoiceProviderInfo {
 	readonly tier: VoiceProviderTier;
 }
 
+/** The three seams a trio is resolved for. */
+export type VoiceProviderRole = 'stt' | 'tts' | 'brain';
+
+/**
+ * Why a role is not running what the settings asked for. `not-configured` is
+ * the ordinary default path and is deliberately absent: shipping on the mock
+ * tier until the user picks something is documented behaviour, not a downgrade.
+ */
+export type VoiceProviderSubstitutionReason = 'unknown-provider' | 'unavailable';
+
+/**
+ * A role that fell back to the mock tier. Lives in `shared/` rather than beside
+ * the registry because it travels to every client: `acappella:start-session`
+ * returns these so the HUD can say "you are on the mock", which is the whole
+ * point of the registry's never-silent rule.
+ */
+export interface VoiceProviderSubstitution {
+	role: VoiceProviderRole;
+	requestedId: string;
+	resolvedId: string;
+	reason: VoiceProviderSubstitutionReason;
+	message: string;
+}
+
 // ---------------------------------------------------------------------------
 // Speech to text
 // ---------------------------------------------------------------------------
