@@ -21,7 +21,7 @@
  * chunk.
  */
 
-import type { VoiceSessionErrorCode } from './protocol';
+import type { MicIssue, VoiceSessionErrorCode } from './protocol';
 
 // ---------------------------------------------------------------------------
 // Channels
@@ -153,6 +153,28 @@ export function audioHostErrorToSessionError(status: {
 		message: status.message,
 		recoverable: isRecoverableAudioHostError(status.code),
 	};
+}
+
+/**
+ * Translate a capture failure into the protocol's `mic-state` issue.
+ *
+ * Both host-error translations live here, next to each other, so the two facts a
+ * failure produces - the session error and the microphone's state - can never
+ * disagree about what happened. The two environment failures collapse into
+ * `unavailable` because they share the only property a client acts on: there is
+ * nothing the user can do about them, so no settings button is offered.
+ */
+export function audioHostErrorToMicIssue(code: AudioHostErrorCode): MicIssue {
+	switch (code) {
+		case 'permission-denied':
+			return 'permission-denied';
+		case 'no-device':
+			return 'no-device';
+		case 'device-lost':
+			return 'device-lost';
+		default:
+			return 'unavailable';
+	}
 }
 
 // ---------------------------------------------------------------------------

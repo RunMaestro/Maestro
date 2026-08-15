@@ -620,6 +620,7 @@ const mockMaestro = {
 		submitAgentReply: vi.fn().mockResolvedValue(true),
 		getRoster: vi.fn().mockResolvedValue([]),
 		getState: vi.fn().mockResolvedValue(null),
+		openMicSettings: vi.fn().mockResolvedValue(true),
 		onEvent: vi.fn().mockReturnValue(() => {}),
 	},
 	dialog: {

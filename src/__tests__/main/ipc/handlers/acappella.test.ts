@@ -18,11 +18,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, shell } from 'electron';
 
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn() },
 	app: { on: vi.fn() },
+	shell: { openExternal: vi.fn().mockResolvedValue(undefined) },
 }));
 vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../../main/utils/logger', () => ({
@@ -147,6 +148,7 @@ describe('A Cappella IPC handlers - registration', () => {
 				'acappella:stop-word',
 				'acappella:get-roster',
 				'acappella:get-state',
+				'acappella:open-mic-settings',
 			])
 		);
 	});
@@ -209,6 +211,46 @@ describe('A Cappella IPC handlers - Encore gate', () => {
 	it('treats a missing encoreFeatures key as off', async () => {
 		settings = {};
 		await expect(handlerFor('acappella:get-state')({})).rejects.toThrow('ACappellaDisabled');
+	});
+
+	it('still allows open-mic-settings, the one recovery for a denied microphone', async () => {
+		// The value depends on the host platform; what matters is that the gate does
+		// not reject it, since a denied microphone is exactly the situation in which
+		// the feature may already have been switched back off.
+		await expect(handlerFor('acappella:open-mic-settings')({})).resolves.toEqual(
+			expect.any(Boolean)
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Microphone settings
+// ---------------------------------------------------------------------------
+
+describe('A Cappella IPC handlers - open-mic-settings', () => {
+	const realPlatform = process.platform;
+
+	function setPlatform(platform: string): void {
+		Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+	}
+
+	afterEach(() => {
+		setPlatform(realPlatform);
+	});
+
+	it.each([
+		['darwin', 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'],
+		['win32', 'ms-settings:privacy-microphone'],
+	])('opens the %s privacy pane', async (platform, url) => {
+		setPlatform(platform);
+		await expect(handlerFor('acappella:open-mic-settings')({})).resolves.toBe(true);
+		expect(shell.openExternal).toHaveBeenCalledWith(url);
+	});
+
+	it('reports false and opens nothing where no deep link exists', async () => {
+		setPlatform('linux');
+		await expect(handlerFor('acappella:open-mic-settings')({})).resolves.toBe(false);
+		expect(shell.openExternal).not.toHaveBeenCalled();
 	});
 });
 

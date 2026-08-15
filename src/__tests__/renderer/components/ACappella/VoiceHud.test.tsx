@@ -226,6 +226,130 @@ describe('VoiceHud rendering', () => {
 	});
 });
 
+describe('VoiceHud audio', () => {
+	function micEvent(
+		overrides: Partial<Omit<Extract<VoiceEvent, { type: 'mic-state' }>, 'type'>> = {}
+	): VoiceEvent {
+		return event('mic-state', {
+			permission: 'granted',
+			capturing: true,
+			deviceId: 'default',
+			deviceLabel: 'MacBook Pro Microphone',
+			issue: null,
+			deviceChanged: false,
+			...overrides,
+		} as never);
+	}
+
+	function level(): HTMLElement {
+		return screen.getByTestId('voice-indicator-listening');
+	}
+
+	it('drives the listening indicator from real level values', () => {
+		renderHud();
+		startSession();
+		const quiet = level().getAttribute('data-level');
+
+		emit(event('audio-level', { level: 0.25, speech: true }));
+		const loud = level().getAttribute('data-level');
+
+		expect(Number(quiet)).toBe(0);
+		expect(Number(loud)).toBe(1);
+		expect(screen.getByTestId('voice-hud-level')).toBeTruthy();
+	});
+
+	it('falls back to rest when the floor closes rather than freezing the last level', () => {
+		renderHud();
+		startSession();
+		emit(event('audio-level', { level: 0.25, speech: true }));
+		expect(Number(level().getAttribute('data-level'))).toBe(1);
+
+		emit(
+			event('listen-stop', { reason: 'endpoint' }),
+			event('listen-start', { scope: { kind: 'conductor' }, sttProviderId: 'mock-stt' })
+		);
+		expect(Number(level().getAttribute('data-level'))).toBe(0);
+	});
+
+	it('names the microphone in use on the indicator', () => {
+		renderHud();
+		startSession();
+		emit(micEvent());
+		expect(level().getAttribute('title')).toBe('MacBook Pro Microphone');
+	});
+
+	it('explains a denied microphone and offers the system settings', async () => {
+		renderHud();
+		startSession();
+		emit(micEvent({ permission: 'denied', capturing: false, issue: 'permission-denied' }));
+
+		expect(screen.getByTestId('voice-hud-mic').textContent).toContain(
+			'does not have microphone access'
+		);
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-mic-settings'));
+		});
+		expect(window.maestro.voice.openMicSettings).toHaveBeenCalledTimes(1);
+	});
+
+	it('offers no settings button for a problem the settings cannot fix', () => {
+		renderHud();
+		startSession();
+		emit(micEvent({ capturing: false, issue: 'no-device' }));
+
+		expect(screen.getByTestId('voice-hud-mic').textContent).toContain('No microphone was found');
+		expect(screen.queryByTestId('voice-hud-mic-settings')).toBeNull();
+	});
+
+	it('says it once: the calm mic notice replaces the red capture error', () => {
+		renderHud();
+		startSession();
+		emit(
+			event('session-error', {
+				code: 'audio-capture-failed',
+				message: 'Microphone permission was denied',
+				recoverable: true,
+			}),
+			micEvent({ permission: 'denied', capturing: false, issue: 'permission-denied' })
+		);
+
+		expect(screen.getByTestId('voice-hud-mic')).toBeTruthy();
+		expect(screen.queryByTestId('voice-hud-error')).toBeNull();
+	});
+
+	it('still shows unrelated errors next to a mic problem', () => {
+		renderHud();
+		startSession();
+		emit(
+			micEvent({ capturing: false, issue: 'device-lost' }),
+			event('session-error', {
+				code: 'no-agent-matched',
+				message: "No agent with id 'agent-9' is running",
+				recoverable: true,
+			})
+		);
+
+		expect(screen.getByTestId('voice-hud-mic')).toBeTruthy();
+		expect(screen.getByTestId('voice-hud-error')).toBeTruthy();
+	});
+
+	it('stays on screen for a denied microphone after the session parks', () => {
+		renderHud();
+		startSession();
+		emit(
+			micEvent({ permission: 'denied', capturing: false, issue: 'permission-denied' }),
+			event('listen-stop', { reason: 'stopped' })
+		);
+
+		// The session is over, but the reason it produced nothing is still worth
+		// reading: a HUD that vanishes here leaves the user with silence and no
+		// explanation.
+		expect(screen.getByTestId('voice-hud')).toBeTruthy();
+		expect(screen.getByTestId('voice-hud-mic')).toBeTruthy();
+	});
+});
+
 describe('VoiceHud dismissal', () => {
 	it('ends the session and hides when the ESC pill is clicked', async () => {
 		renderHud();

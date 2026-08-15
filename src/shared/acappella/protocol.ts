@@ -210,6 +210,72 @@ export interface SessionErrorEvent extends VoiceEventBase {
 	providerId?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Audio
+// ---------------------------------------------------------------------------
+
+/**
+ * A downsampled input level, so a client can draw a live meter without ever
+ * receiving PCM.
+ *
+ * Roughly 20 a second rather than one per 20 ms frame. That is the rate a meter
+ * is actually read at, and the difference matters on the wire: 50 messages a
+ * second of a number nobody can perceive changing is a busy IPC channel and,
+ * over the Phase 10 WebSocket, a busy radio.
+ */
+export interface AudioLevelEvent extends VoiceEventBase {
+	type: 'audio-level';
+	/** Root mean square over the window, 0 to 1. Linear, not perceptual: the meter picks the curve. */
+	level: number;
+	/**
+	 * Whether the detector held the floor open across the window. A meter can
+	 * therefore show the difference between a room that is loud and a person who
+	 * is talking, which is the one thing a bare level cannot say.
+	 */
+	speech: boolean;
+}
+
+/** Whether the OS lets Maestro open the microphone. */
+export type MicPermission = 'unknown' | 'granted' | 'denied';
+
+/**
+ * Why the microphone is unusable, or null when it is fine.
+ *
+ * Classified rather than collapsed into one "audio broke" case because the
+ * recovery differs per code and the recovery is the user's: grant permission,
+ * plug a device back in, restart the app. `unavailable` is the one with no user
+ * recovery, so it is the one the HUD must not offer a settings button for.
+ */
+export type MicIssue = 'permission-denied' | 'no-device' | 'device-lost' | 'unavailable';
+
+/** The microphone as the session currently sees it. */
+export interface MicState {
+	permission: MicPermission;
+	/** True while a capture run is live. */
+	capturing: boolean;
+	deviceId: string | null;
+	/** As the OS names it. Null before permission is granted: Chromium redacts labels until then. */
+	deviceLabel: string | null;
+	issue: MicIssue | null;
+	/**
+	 * This update was caused by the device SET changing (something plugged in or
+	 * pulled out), not by our own capture starting or stopping.
+	 */
+	deviceChanged: boolean;
+}
+
+/**
+ * The microphone changed state.
+ *
+ * Emitted on every transition, including the benign ones, because the failure
+ * this exists to prevent is a client showing a listening indicator over a
+ * microphone that will never produce a transcript. A denied permission is a
+ * fact the user has to be told, not a session that is merely quiet.
+ */
+export interface MicStateEvent extends VoiceEventBase, MicState {
+	type: 'mic-state';
+}
+
 /** The bound agent's tab set or active tab changed. */
 export interface TabStateEvent extends VoiceEventBase {
 	type: 'tab-state';
@@ -240,6 +306,8 @@ export type VoiceEvent =
 	| BargeInEvent
 	| StopWordEvent
 	| SessionErrorEvent
+	| AudioLevelEvent
+	| MicStateEvent
 	| TabStateEvent
 	| AgentRosterEvent;
 
@@ -278,6 +346,8 @@ export const VOICE_EVENT_DIRECTIONS: Record<VoiceEventType, VoiceEventDirection>
 	'barge-in': 'both',
 	'stop-word': 'both',
 	'session-error': 'service-to-client',
+	'audio-level': 'service-to-client',
+	'mic-state': 'service-to-client',
 	'tab-state': 'service-to-client',
 	'agent-roster': 'service-to-client',
 };
