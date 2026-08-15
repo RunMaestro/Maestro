@@ -46,9 +46,14 @@ export function pcm16ToFloat32(data: ArrayBuffer): Float32Array {
 	return out;
 }
 
+/** Long enough that a volume change is a fade rather than a click. */
+const VOLUME_RAMP_MS = 40;
+
 export class TtsPlayback {
 	private readonly options: TtsPlaybackOptions;
 	private readonly gain: GainNode;
+	/** The user's output volume. Ducking multiplies this; a flush restores it. */
+	private volume = 1;
 	private readonly sources = new Set<AudioBufferSourceNode>();
 	/** Context time the next chunk starts at, so consecutive chunks are gapless. */
 	private nextStartTime = 0;
@@ -124,9 +129,10 @@ export class TtsPlayback {
 	/**
 	 * Stop now and discard the queue.
 	 *
-	 * Gain is restored here too. Ducking only has meaning while something is
-	 * playing, so leaving a barge-in's duck in place would make the next utterance
-	 * come out inaudible with nothing on screen to explain it.
+	 * Gain is restored to the USER'S volume here, not to 1. Ducking only has
+	 * meaning while something is playing, so leaving a barge-in's duck in place
+	 * would make the next utterance come out inaudible with nothing on screen to
+	 * explain it - and restoring to full would just as silently undo a mute.
 	 */
 	flush(): void {
 		this.generation += 1;
@@ -143,13 +149,31 @@ export class TtsPlayback {
 		this.nextStartTime = 0;
 		this.currentUtteranceId = null;
 		this.endedUtterances.clear();
-		this.setGain(1, 0);
+		this.setGain(this.volume, 0);
 		this.emitState();
 	}
 
-	/** Ramp output gain to `gain` (0 to 1) over `ms`. */
+	/**
+	 * Ramp output gain to `gain` (0 to 1) over `ms`, RELATIVE to the user's volume.
+	 *
+	 * Relative rather than absolute because ducking to 0.2 means "a fifth as loud
+	 * as whatever we were", and a duck that jumped to an absolute 0.2 would make
+	 * a barge-in LOUDER for anyone running the assistant quietly.
+	 */
 	duck(gain: number, ms: number): void {
-		this.setGain(Math.min(1, Math.max(0, gain)), Math.max(0, ms));
+		this.setGain(this.volume * Math.min(1, Math.max(0, gain)), Math.max(0, ms));
+	}
+
+	/**
+	 * Set the base output volume (0 to 1).
+	 *
+	 * Applied with a short ramp rather than instantly: a step change in gain on a
+	 * playing buffer is an audible click, and the one thing a volume control must
+	 * not do is make a noise of its own.
+	 */
+	setVolume(volume: number): void {
+		this.volume = Math.min(1, Math.max(0, Number.isFinite(volume) ? volume : 1));
+		this.setGain(this.volume, VOLUME_RAMP_MS);
 	}
 
 	dispose(): void {

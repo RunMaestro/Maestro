@@ -89,6 +89,7 @@ import {
 	type AgentOutputTap,
 } from '../../acappella/speech';
 import { readVoiceReadiness } from './acappella-models';
+import { DEFAULT_TTS_VOLUME } from '../../../shared/acappella/voice-controls';
 import {
 	buildProviderState,
 	pipelineKey,
@@ -378,6 +379,12 @@ function parseCredentialPayload(raw: unknown): { service: VoiceCredentialService
 function ensureAudioBridge(service: VoiceSessionService, deps: ACappellaHandlerDependencies): void {
 	if (audioBridge || !deps.audioHostDeps) return;
 	audioBridge = createVoiceAudioBridge({ session: service, sendCommand: sendAudioHostCommand });
+	// The user's volume applies from the FIRST sentence, not from the first time
+	// they touch the slider. A fresh bridge that defaulted to full output would
+	// undo a quiet setting (or a mute) every time the Encore Feature was toggled.
+	audioBridge.setPlaybackVolume(
+		readVoiceProviderSettings(deps.settingsStore).volume ?? DEFAULT_TTS_VOLUME
+	);
 }
 
 /**
@@ -487,6 +494,13 @@ async function buildService(
 		// the one settings reader, which already knows where the key lives.
 		getBackgroundAnnouncementSetting: () =>
 			readVoiceProviderSettings(deps.settingsStore).speakBackgroundCompletions,
+		// Same reasoning, one turn finer: read per SENTENCE, so a speed slider
+		// dragged mid-reply is heard on the next sentence rather than the next
+		// session. This is the seam that makes "applies live" true.
+		getSpeechOptions: () => {
+			const current = readVoiceProviderSettings(deps.settingsStore);
+			return { voiceId: current.voiceId, rate: current.rate };
+		},
 	});
 	service.subscribe((event) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL, event));
 	service.subscribe(recordRoutingOutcome);
@@ -798,6 +812,31 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		}
 	);
 
+	/**
+	 * Apply an output volume to whatever is playing RIGHT NOW.
+	 *
+	 * Deliberately does NOT persist: the caller has already written the setting
+	 * (or is muting, which is session-scoped and must not survive a restart), and
+	 * a channel that both saved and applied would make a mute permanent the first
+	 * time somebody used it.
+	 *
+	 * Resolves false when there is no audio host to apply it to, which the HUD
+	 * treats as "nothing is playing" rather than as a failure.
+	 */
+	const wrappedSetVolume = withIpcErrorLogging(
+		handlerOpts('setVolume'),
+		async (volume: unknown): Promise<boolean> => {
+			if (typeof volume !== 'number' || !Number.isFinite(volume)) {
+				throw new Error('InvalidVolume');
+			}
+			if (!audioBridge) return false;
+			// Zero is legal here and only here: mute is a real state the HUD owns,
+			// while the SLIDER floors above zero so it cannot become a silent mute.
+			audioBridge.setPlaybackVolume(Math.min(1, Math.max(0, volume)));
+			return true;
+		}
+	);
+
 	const wrappedLastTurn = withIpcErrorLogging(
 		handlerOpts('lastTurn'),
 		async (): Promise<TurnBreakdown | null> => lastTurn()
@@ -968,6 +1007,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	ipcMain.handle('acappella:preview-voice', async (event, text: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
 		return wrappedPreviewVoice(event, text);
+	});
+
+	ipcMain.handle('acappella:set-volume', async (event, volume: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		return wrappedSetVolume(event, volume);
 	});
 
 	ipcMain.handle('acappella:last-turn', async (event): Promise<TurnBreakdown | null> => {

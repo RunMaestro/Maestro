@@ -23,11 +23,7 @@
  * which is the same state machine this ends up driving.
  */
 
-import {
-	DEFAULT_HOLD_THRESHOLD_MS,
-	MAX_HOLD_THRESHOLD_MS,
-	MIN_HOLD_THRESHOLD_MS,
-} from '../../../shared/acappella/voice-controls';
+import { resolveHoldThresholdMs } from '../../../shared/acappella/voice-controls';
 import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = 'ACappella';
@@ -43,6 +39,12 @@ export {
 	DEFAULT_HOLD_THRESHOLD_MS,
 	MAX_HOLD_THRESHOLD_MS,
 	MIN_HOLD_THRESHOLD_MS,
+	/**
+	 * Re-exported so this module stays the one import site for press-hold, even
+	 * though the clamp itself moved to `shared/` when the HUD's talk button
+	 * needed to classify a press against exactly the same number.
+	 */
+	resolveHoldThresholdMs,
 } from '../../../shared/acappella/voice-controls';
 
 /** How often the probe is asked whether the combo is still down. */
@@ -53,12 +55,6 @@ export const DEFAULT_KEY_POLL_MS = 25;
  * idle timeout is the real backstop; this stops the poll timer leaking.
  */
 export const MAX_HOLD_MS = 60_000;
-
-/** Pull a threshold from settings into the usable band. Clamped, never rejected. */
-export function resolveHoldThresholdMs(value: unknown): number {
-	if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_HOLD_THRESHOLD_MS;
-	return Math.min(MAX_HOLD_THRESHOLD_MS, Math.max(MIN_HOLD_THRESHOLD_MS, Math.round(value)));
-}
 
 /**
  * Reports whether the combo behind an accelerator is still physically down.

@@ -24,6 +24,7 @@ import {
 	DEFAULT_WAKE_PHRASE,
 	DEFAULT_WAKE_SENSITIVITY,
 } from '../../../../shared/acappella/voice-controls';
+import { useVoiceUiStore } from '../../../stores/voiceUiStore';
 
 /** The idle timeout in the unit the panel shows. Stored in ms, shown in seconds. */
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_TIMEOUT_MS / 1000;
@@ -195,6 +196,10 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 			const next = { ...settings, agentPhrases };
 			setSettings(next);
 			await persist(next);
+			// The Left Bar draws a badge per agent from a mirror of this list. There
+			// is no settings-change broadcast, so the one writer tells it directly -
+			// otherwise a phrase just assigned shows no badge until the next restart.
+			await useVoiceUiStore.getState().refreshWakePhrases();
 		},
 		[persist, settings]
 	);

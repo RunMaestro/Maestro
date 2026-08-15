@@ -34,6 +34,7 @@
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
+import { clampTtsVolume } from '../../../shared/acappella/voice-controls';
 import {
 	summariseVoiceEgress,
 	OPENAI_REALTIME_PROVIDER_ID,
@@ -101,6 +102,8 @@ export interface VoiceProviderSettings {
 	voiceId?: string;
 	/** Speech rate. 1 is the provider's natural pace. */
 	rate?: number;
+	/** Output volume for the assistant's voice, 0 to 1. */
+	volume?: number;
 	/**
 	 * Whether an agent finishing in the background is spoken about.
 	 *
@@ -496,6 +499,10 @@ export function readVoiceProviderSettings(store: {
 		realtime: asProviderId(providers.realtime),
 		voiceId: asProviderId(voice.voiceId),
 		rate: typeof voice.rate === 'number' && voice.rate > 0 ? voice.rate : undefined,
+		// Clamped rather than passed through: this number becomes a gain on a live
+		// output node, and a stored NaN or a 40 from a hand-edited settings file
+		// would be a burst of distortion in the user's headphones.
+		volume: clampTtsVolume(voice.volume),
 	};
 }
 

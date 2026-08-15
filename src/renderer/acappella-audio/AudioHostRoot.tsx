@@ -107,6 +107,12 @@ export function createAudioHostController(
 			case 'duck':
 				playback?.duck(command.gain, command.ms);
 				break;
+			case 'set-volume':
+				// Built on demand, unlike `flush` and `duck`: the volume has to be in
+				// place BEFORE the first chunk arrives, or the opening sentence of a
+				// session comes out at the previous level.
+				ensurePlayback().setVolume(command.volume);
+				break;
 		}
 	};
 

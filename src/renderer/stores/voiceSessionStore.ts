@@ -37,12 +37,31 @@ import type { VoiceSessionState } from '../../shared/acappella/session-state';
 /** Who said a line in the HUD transcript. `system` is the session narrating itself. */
 export type VoiceFeedKind = 'you' | 'assistant' | 'system';
 
+/**
+ * Where a turn was dispatched, carried on the feed line that narrates it.
+ *
+ * On the entry rather than looked up later because the transcript renders a
+ * CLICKABLE chip from it ("Backend / Auth Refactor (new tab)"), and the agent or
+ * tab it names may have been closed by the time anyone reads the line. Keeping
+ * the address with the line is what lets the chip stay honest: it can say where
+ * the turn went even when that place is gone.
+ */
+export interface VoiceFeedRoute {
+	agentSessionId: string;
+	agentName: string;
+	tabId: string;
+	tabName?: string;
+	action: DispatchEvent['action'];
+}
+
 export interface VoiceFeedEntry {
 	/** `${sessionId}:${seq}` - stable, and unique even across a session restart. */
 	id: string;
 	kind: VoiceFeedKind;
 	text: string;
 	ts: number;
+	/** Set only on the line narrating a dispatch. */
+	route?: VoiceFeedRoute;
 }
 
 /** One speech run, so the HUD can show "2 of 4" and where it was cut off. */
@@ -197,7 +216,7 @@ function freshSessionFields(sessionId: string): Partial<VoiceSessionStoreState> 
 
 function appendFeed(
 	feed: VoiceFeedEntry[],
-	entry: { id: string; kind: VoiceFeedKind; text: string; ts: number }
+	entry: { id: string; kind: VoiceFeedKind; text: string; ts: number; route?: VoiceFeedRoute }
 ): VoiceFeedEntry[] {
 	if (!entry.text.trim()) return feed;
 	const next = [...feed, entry];
@@ -365,6 +384,16 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					kind: 'system',
 					text: line,
 					ts: event.ts,
+					route:
+						event.type === 'dispatch'
+							? {
+									agentSessionId: event.agentSessionId,
+									agentName: event.agentName,
+									tabId: event.tabId,
+									tabName: event.tabName,
+									action: event.action,
+								}
+							: undefined,
 				});
 			}
 
