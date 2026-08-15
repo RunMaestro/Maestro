@@ -187,6 +187,11 @@ re-read state rather than guess.
 
 Transport choice for the phone leg is argued in [[adr-001-webrtc-transport]].
 
+The desktop transport is `src/main/ipc/handlers/acappella.ts` plus the `window.maestro.voice.*`
+preload namespace. Its channel table and the four properties that binding has to hold (lazy
+construction, broadcast fan-out, the `ACappellaDisabled` gate, and a null snapshot before the
+first start) are in [[voice-session-protocol]].
+
 ## Session lifecycle and the state machine
 
 States: `idle | arming | listening | transcribing | routing | dispatching | speaking | interrupted | error`.
