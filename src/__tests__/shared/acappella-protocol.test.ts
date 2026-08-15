@@ -90,6 +90,28 @@ describe('assertVoiceStateTransition', () => {
 		expect(() => assertVoiceStateTransition('idle', 'arming')).not.toThrow();
 	});
 
+	it('should accept every edge the table names and reject every pair it does not', () => {
+		const rejected: string[] = [];
+		for (const from of VOICE_SESSION_STATES) {
+			for (const to of VOICE_SESSION_STATES) {
+				if (VOICE_STATE_TRANSITIONS[from].includes(to)) {
+					expect(() => assertVoiceStateTransition(from, to)).not.toThrow();
+					continue;
+				}
+				expect(() => assertVoiceStateTransition(from, to)).toThrow(
+					InvalidVoiceStateTransitionError
+				);
+				rejected.push(`${from} -> ${to}`);
+			}
+		}
+
+		// A state is never a legal target of itself: re-entering `speaking` would
+		// silently orphan the utterance already on the floor.
+		for (const state of VOICE_SESSION_STATES) {
+			expect(rejected).toContain(`${state} -> ${state}`);
+		}
+	});
+
 	it('should throw a typed error naming both states', () => {
 		let caught: unknown;
 		try {
