@@ -51,7 +51,8 @@ must not interpolate: it re-reads `acappella:get-state` and `acappella:get-roste
 `client -> service` events are commands. `service -> client` events are announcements, fanned out
 to every subscriber so two clients watching the same session see identical state.
 
-Three events travel **both** ways. When a client sends one, the service validates it against the
+Four events travel **both** ways (`wake`, `final-transcript`, `barge-in`, `stop-word`). When a
+client sends one, the service validates it against the
 state machine and, if it is legal, echoes it outward with a fresh `seq` so every other client sees
 it. The echoed copy is the authoritative one; a client must render its own optimistic state only
 until the echo lands.
