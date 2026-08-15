@@ -149,6 +149,60 @@ under the `acappella` settings key, with `on | off | auto`. `auto` is the defaul
 for the Conductor scope, off inside a focused agent session, so a silent announcement inside a
 focused session is correct behaviour rather than a bug.
 
+## The visual checks
+
+The six checks above are about what you hear. These are about what you see, and they are equally
+outside what an automated test can sign off: jsdom has no layout engine, so every assertion about
+clipping, readability, and contrast in the test suite is an assertion about VALUES rather than about
+pixels. The exception is colour contrast, which `VoiceAccessibility.test.tsx` verifies against every
+shipped theme with `contrastRatio()`, so this pass is looking for layout and legibility rather than
+re-checking the numbers.
+
+Run these in at least **three themes, one of which must be a light theme**. Light themes are where a
+widget built against a dark default falls apart, and A Cappella's HUD is drawn almost entirely from
+theme colours.
+
+### 7. The HUD is readable and nothing clips
+
+**Do:** open a session, drag the HUD to each corner, and let a turn run through listening, thinking,
+and speaking in each theme.
+
+**Look for:** the five indicator states distinguishable at a glance and by SHAPE, not only by hue
+(outlined ring, filled disc, dashed spinner ring, error ring). The bound scope in the agent's own
+colour, legible against the panel. Nothing spilling out of the widget.
+
+**Also check the header:** open the voice pill's dropdown. It must appear BELOW the pill and be
+fully visible. If it is cut off at the header's bottom edge, something has stopped portaling it out
+of `.header-container` - see `useAnchoredMenuPosition`.
+
+### 8. Minimize keeps the audio, close stops it
+
+**Do:** while a reply is being spoken, press the `-` button. Then restore, and press the ESC pill.
+
+**Look for:** minimize collapsing the HUD to a small indicator with the reply STILL AUDIBLE and a
+visible way back. Close stopping the speech and ending the session.
+
+A control that hides itself must not silently leave a hot microphone, and a close button that only
+hides leaves audio coming from nowhere. This is the one pair in the feature where getting it
+backwards is a safety problem rather than a papercut.
+
+### 9. The transcript survives a restart and does not interrupt
+
+**Do:** turn the transcript on from the HUD, quit and reopen Maestro, then turn it off mid-reply.
+
+**Look for:** the transcript still open after the restart, and turning it off leaving the
+conversation running - the speech does not stop, the floor is not released, and the next sentence
+still arrives.
+
+### 10. Reduced motion actually stops the motion
+
+**Do:** turn on the OS "reduce motion" setting while a session is live (macOS: System Settings ->
+Accessibility -> Display -> Reduce motion).
+
+**Look for:** the animations stopping WITHOUT a restart, and each state still distinguishable
+without them. This widget is designed to be left on screen all day, which is exactly why a
+permanently animating one is a real problem rather than a preference.
+
 ## Recording the result
 
 Numbers from the same session go in the **Measured results** table in [[latency-baseline]]: press

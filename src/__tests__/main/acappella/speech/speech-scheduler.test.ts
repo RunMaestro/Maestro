@@ -319,3 +319,59 @@ describe('SpeechScheduler', () => {
 		expect(errors.map((error) => error.message)).toEqual(['synthesis failed']);
 	});
 });
+
+describe('live voice and rate', () => {
+	/** A provider that records the options each sentence was synthesized with. */
+	function recordingTts(): TtsProvider & { options: Array<{ voiceId?: string; rate?: number }> } {
+		const options: Array<{ voiceId?: string; rate?: number }> = [];
+		return {
+			id: 'recording-tts',
+			label: 'Recording',
+			tier: 'mock',
+			options,
+			cancel: vi.fn(),
+			speak: async function* (text: string, speakOptions): AsyncIterable<TtsChunk> {
+				options.push({ voiceId: speakOptions.voiceId, rate: speakOptions.rate });
+				yield {
+					utteranceId: speakOptions.utteranceId,
+					index: options.length - 1,
+					text,
+					format: 'none',
+					audio: null,
+				};
+			},
+		};
+	}
+
+	it('reads the voice and rate fresh for every sentence', async () => {
+		// This is what makes the Settings sliders apply to the NEXT SENTENCE
+		// rather than the next session. Reading them once at construction would
+		// pin a whole conversation to whatever was configured when it started.
+		const tts = recordingTts();
+		let current = { voiceId: 'alloy', rate: 1 };
+		const h = harness({ tts: tts as never, speechOptions: () => current });
+
+		h.scheduler.begin('u1');
+		h.scheduler.push('One sentence. ');
+		await settle();
+		current = { voiceId: 'nova', rate: 1.25 };
+		h.scheduler.push('Two sentence. ');
+		h.scheduler.close();
+		await h.scheduler.drained();
+
+		expect(tts.options[0]).toEqual({ voiceId: 'alloy', rate: 1 });
+		expect(tts.options[1]).toEqual({ voiceId: 'nova', rate: 1.25 });
+	});
+
+	it('passes nothing when no getter was supplied, leaving the provider its default', async () => {
+		const tts = recordingTts();
+		const h = harness({ tts: tts as never });
+
+		h.scheduler.begin('u1');
+		h.scheduler.push('One sentence. ');
+		h.scheduler.close();
+		await h.scheduler.drained();
+
+		expect(tts.options[0]).toEqual({ voiceId: undefined, rate: undefined });
+	});
+});

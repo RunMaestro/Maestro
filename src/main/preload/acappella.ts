@@ -186,13 +186,18 @@ export function createVoiceApi() {
 			ipcRenderer.invoke('acappella:list-voices'),
 
 		/**
-		 * Speak one line through the configured voice.
+		 * Speak one line through a voice.
+		 *
+		 * `voiceId` overrides the selection for this preview only, which is what
+		 * makes a per-voice Preview button possible: you hear a voice before
+		 * choosing it, rather than selecting each one in turn and undoing the ones
+		 * you did not want. Omit it to preview whatever is configured.
 		 *
 		 * @returns false when nothing could be spoken: no audio host, a silent
 		 *          provider, or a live session that the preview must not talk over.
 		 */
-		previewVoice: (text: string): Promise<boolean> =>
-			ipcRenderer.invoke('acappella:preview-voice', text),
+		previewVoice: (text: string, voiceId?: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:preview-voice', text, voiceId),
 
 		/**
 		 * Apply an output volume (0 to 1) to the assistant's voice, immediately.

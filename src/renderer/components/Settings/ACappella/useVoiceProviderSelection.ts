@@ -29,6 +29,16 @@ import {
 	getVoiceProvider,
 } from '../../../../shared/acappella/provider-catalog';
 import type { VoicePipelineShape, VoiceProviderRole } from '../../../../shared/acappella/providers';
+import {
+	DEFAULT_BACKGROUND_ANNOUNCEMENT_SETTING,
+	type BackgroundAnnouncementSetting,
+} from '../../../../shared/acappella/announcements';
+import {
+	DEFAULT_TTS_RATE,
+	DEFAULT_TTS_VOLUME,
+	clampTtsRate,
+	clampTtsVolume,
+} from '../../../../shared/acappella/voice-controls';
 
 /** Where a slot runs. `hosted` is a stated choice, never a fallback. */
 export type VoiceSlotMode = 'local' | 'cloud';
@@ -102,6 +112,15 @@ export interface VoiceProviderSelection {
 	/** Speech rate. 1 is the provider's natural pace. */
 	rate: number;
 	setRate: (rate: number) => Promise<void>;
+	/** Output volume for the assistant's voice, 0 to 1. */
+	volume: number;
+	setVolume: (volume: number) => Promise<void>;
+	/**
+	 * Whether an agent finishing outside the current turn is spoken about.
+	 * `auto` is on for the Conductor scope and off inside a focused agent.
+	 */
+	backgroundAnnouncements: BackgroundAnnouncementSetting;
+	setBackgroundAnnouncements: (setting: BackgroundAnnouncementSetting) => Promise<void>;
 	/** Local or cloud per slot, derived from the selected provider's tier. */
 	modes: Record<VoiceProviderRole, VoiceSlotMode>;
 	setMode: (slot: VoiceProviderRole, mode: VoiceSlotMode) => Promise<void>;
@@ -114,12 +133,11 @@ export interface VoiceProviderSelection {
 	notice: string | null;
 }
 
-const DEFAULT_RATE = 1;
-
 interface StoredBlob {
 	providers?: Record<string, unknown>;
 	pipeline?: unknown;
-	voice?: { voiceId?: unknown; rate?: unknown };
+	voice?: { voiceId?: unknown; rate?: unknown; volume?: unknown };
+	speech?: { speakBackgroundCompletions?: unknown };
 	[key: string]: unknown;
 }
 
@@ -132,7 +150,10 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		useState<Record<VoiceProviderRole, string>>(DEFAULT_SLOT_PROVIDER_IDS);
 	const [pipeline, setPipelineState] = useState<VoicePipelineShape>('cascade');
 	const [voiceId, setVoiceIdState] = useState<string | null>(null);
-	const [rate, setRateState] = useState(DEFAULT_RATE);
+	const [rate, setRateState] = useState(DEFAULT_TTS_RATE);
+	const [volume, setVolumeState] = useState(DEFAULT_TTS_VOLUME);
+	const [backgroundAnnouncements, setBackgroundAnnouncementsState] =
+		useState<BackgroundAnnouncementSetting>(DEFAULT_BACKGROUND_ANNOUNCEMENT_SETTING);
 	const [loaded, setLoaded] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
 
@@ -152,7 +173,11 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 			});
 			setPipelineState(stored?.pipeline === 'realtime' ? 'realtime' : 'cascade');
 			setVoiceIdState(asId(stored?.voice?.voiceId) ?? null);
-			setRateState(typeof stored?.voice?.rate === 'number' ? stored.voice.rate : DEFAULT_RATE);
+			setRateState(clampTtsRate(stored?.voice?.rate));
+			setVolumeState(clampTtsVolume(stored?.voice?.volume));
+			setBackgroundAnnouncementsState(
+				asAnnouncementSetting(stored?.speech?.speakBackgroundCompletions)
+			);
 			setLoaded(true);
 		})();
 		return () => {
@@ -224,6 +249,34 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		[persist]
 	);
 
+	/**
+	 * Volume is saved AND applied. `applyProviders` (inside `persist`) rebuilds
+	 * engines when the selection changed and does nothing here, so the live
+	 * output would keep its old gain until the next session without this second
+	 * call - which is exactly the "restart to hear your own setting" behaviour
+	 * these controls are meant to avoid.
+	 */
+	const setVolume = useCallback(
+		async (next: number) => {
+			setVolumeState(next);
+			await persist((blob) => {
+				blob.voice = { ...(blob.voice ?? {}), volume: next };
+			});
+			await window.maestro.voice.setVolume(next).catch(() => undefined);
+		},
+		[persist]
+	);
+
+	const setBackgroundAnnouncements = useCallback(
+		async (next: BackgroundAnnouncementSetting) => {
+			setBackgroundAnnouncementsState(next);
+			await persist((blob) => {
+				blob.speech = { ...(blob.speech ?? {}), speakBackgroundCompletions: next };
+			});
+		},
+		[persist]
+	);
+
 	const setMode = useCallback(
 		async (slot: VoiceProviderRole, mode: VoiceSlotMode) => {
 			await setProvider(
@@ -243,6 +296,10 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		setVoiceId,
 		rate,
 		setRate,
+		volume,
+		setVolume,
+		backgroundAnnouncements,
+		setBackgroundAnnouncements,
 		modes: {
 			stt: modeForProviderId(providerIds.stt),
 			tts: modeForProviderId(providerIds.tts),
@@ -256,4 +313,11 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 
 function asId(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** Anything not one of the three legal values reads as the default. */
+function asAnnouncementSetting(value: unknown): BackgroundAnnouncementSetting {
+	return value === 'on' || value === 'off' || value === 'auto'
+		? value
+		: DEFAULT_BACKGROUND_ANNOUNCEMENT_SETTING;
 }

@@ -626,6 +626,7 @@ const mockMaestro = {
 		lastTurn: vi.fn().mockResolvedValue(null),
 		listVoices: vi.fn().mockResolvedValue([]),
 		previewVoice: vi.fn().mockResolvedValue(true),
+		setVolume: vi.fn().mockResolvedValue(true),
 		credentials: {
 			list: vi.fn().mockResolvedValue([]),
 			set: vi.fn().mockResolvedValue({ ok: true }),

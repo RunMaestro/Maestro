@@ -24,9 +24,7 @@ import type { RosterAgent } from '../../../../shared/acappella/protocol';
 import {
 	FALLBACK_STOP_PHRASE,
 	MAX_HOLD_THRESHOLD_MS,
-	MAX_IDLE_TIMEOUT_MS,
 	MIN_HOLD_THRESHOLD_MS,
-	MIN_IDLE_TIMEOUT_MS,
 } from '../../../../shared/acappella/voice-controls';
 import {
 	VOICE_AGENT_HOTKEY_ID,
@@ -372,8 +370,9 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 							<Radio size={13} /> Timing
 						</div>
 						<p className="text-xs opacity-70 mt-0.5 mb-2">
-							How long a press has to be before it counts as holding the key, and how long an
-							untouched microphone stays open.
+							How long a press has to be before it counts as holding the key rather than tapping it.
+							The same number classifies a press on the HUD&apos;s talk button. How long an
+							untouched microphone stays open is in Voice and Speed.
 						</p>
 					</div>
 
@@ -395,26 +394,6 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 							className="flex-1"
 						/>
 						<span className="text-xs tabular-nums opacity-70">{controls.holdThresholdMs} ms</span>
-					</div>
-
-					<div className="flex items-center gap-3">
-						<label className="text-xs opacity-70 w-28" htmlFor="acappella-idle-timeout">
-							Idle timeout
-						</label>
-						<input
-							id="acappella-idle-timeout"
-							type="range"
-							min={MIN_IDLE_TIMEOUT_MS / 1000}
-							max={MAX_IDLE_TIMEOUT_MS / 1000}
-							step={5}
-							disabled={!enabled}
-							value={controls.idleTimeoutSeconds}
-							onChange={(event) =>
-								void controls.update({ idleTimeoutSeconds: Number(event.target.value) })
-							}
-							className="flex-1"
-						/>
-						<span className="text-xs tabular-nums opacity-70">{controls.idleTimeoutSeconds}s</span>
 					</div>
 				</SectionCard>
 			</div>
