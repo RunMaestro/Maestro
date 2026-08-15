@@ -33,12 +33,15 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { InterruptSource, RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
 import {
+	closeAcappellaAudioHostWindow,
 	createRendererVoiceBridge,
 	createVoiceRouteExecutor,
 	disposeVoiceSessionService,
+	ensureAcappellaAudioHostWindow,
 	getVoiceSessionService,
 	initVoiceSessionService,
 	readAgentRoster,
+	type AudioHostWindowDeps,
 	type VoiceSessionService,
 	type VoiceSessionSnapshot,
 } from '../../acappella';
@@ -73,6 +76,12 @@ export interface ACappellaHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	/** Broadcasts to every window and to the web-desktop bridge. */
 	safeSend: SafeSendFn;
+	/**
+	 * What the hidden audio host window needs to load the renderer bundle. Absent
+	 * only in tests, which never want a real `BrowserWindow`; when it is absent
+	 * the session runs without audio I/O rather than failing to start.
+	 */
+	audioHostDeps?: AudioHostWindowDeps;
 }
 
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -174,6 +183,9 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		handlerOpts('startSession'),
 		async (rawScope: unknown): Promise<VoiceStartSessionResult> => {
 			const scope = parseScope(rawScope);
+			// First start is what pays for the audio host: enabling the Encore
+			// Feature opens no device and builds no second renderer.
+			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 			const { service, substitutions } = await ensureService(deps);
 			const snapshot = await service.startSession({ scope, source: 'client-button' });
 			return { snapshot, substitutions };
@@ -295,12 +307,13 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		return wrappedGetState(event);
 	});
 
-	// Release the floor on the way out. The service holds no OS device in Phase
-	// 01, but a real microphone (Phase 05) does, and a session left running would
-	// keep it open past the last window. Fire-and-forget: `will-quit` is
-	// synchronous, and this is the last thing the session will ever do.
+	// Release the floor on the way out, and with it the microphone: the audio host
+	// window holds a real capture device, and a session left running would keep it
+	// open past the last app window. Fire-and-forget: `will-quit` is synchronous,
+	// and this is the last thing the session will ever do.
 	app.on('will-quit', () => {
 		void disposeVoiceSessionService();
+		closeAcappellaAudioHostWindow();
 		resetACappellaHandlerState();
 	});
 }

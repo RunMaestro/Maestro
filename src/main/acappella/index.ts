@@ -13,6 +13,13 @@ import type { VoiceSessionServiceOptions } from './voice-session-service';
 
 export { VoiceSessionService, VoiceDispatchError } from './voice-session-service';
 export {
+	closeAcappellaAudioHostWindow,
+	ensureAcappellaAudioHostWindow,
+	getAcappellaAudioHostWindow,
+	isAcappellaAudioHostContents,
+	type AudioHostWindowDeps,
+} from './audio-host-window';
+export {
 	buildAgentRoster,
 	createRendererVoiceBridge,
 	createVoiceRouteExecutor,
