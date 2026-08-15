@@ -21,14 +21,16 @@
 
 import type { BrowserWindow } from 'electron';
 
-import type { RosterAgent, RosterTab, VoiceScope } from '../../../shared/acappella/protocol';
+import type { RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
-import { routeTargetSessionId } from '../../../shared/acappella/route-decision';
+import { isClarification, routeTargetSessionId } from '../../../shared/acappella/route-decision';
 import type { StoredSession } from '../../stores/types';
 import { getSessionsStore } from '../../stores/getters';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { logger } from '../../utils/logger';
 import { requestFromRenderer } from '../../web-server/callbacks/remoteRequest';
+import { buildRoutingRoster } from '../router/routing-context';
+import { resolveRecall } from '../router/tab-recall';
 import { VoiceDispatchError } from '../voice-session-service';
 import type { VoiceDispatchResult, VoiceRouteExecutor } from '../voice-session-service';
 
@@ -46,50 +48,19 @@ const COMMAND_RECEIPT_TIMEOUT_MS = 3000;
 
 /**
  * Compact the persisted sessions into the roster the Brain routes against and
- * the phone's project wheel will later render. Only AI tabs are listed: a voice
- * session can address nothing else.
+ * the phone's project wheel will later render.
+ *
+ * One builder, shared with the router: the Brain and the executor disagreeing
+ * about which tabs exist is how a decision becomes undispatchable between being
+ * made and being performed.
  */
 export function buildAgentRoster(sessions: StoredSession[]): RosterAgent[] {
-	return sessions
-		.filter((session) => session && typeof session.id === 'string')
-		.map((session) => ({
-			sessionId: session.id,
-			name: session.name ?? '',
-			agentType: session.toolType ?? '',
-			cwd: session.cwd ?? '',
-			tabs: buildRosterTabs(session),
-		}));
+	return buildRoutingRoster(sessions);
 }
 
 /** The roster as of right now, straight from the store. */
 export function readAgentRoster(): RosterAgent[] {
 	return buildAgentRoster(readStoredSessions());
-}
-
-function buildRosterTabs(session: StoredSession): RosterTab[] {
-	const tabs: Array<Record<string, unknown>> = Array.isArray(session.aiTabs) ? session.aiTabs : [];
-	return tabs
-		.filter((tab) => tab && typeof tab.id === 'string' && tab.hidden !== true)
-		.map((tab) => ({
-			id: tab.id as string,
-			name: typeof tab.name === 'string' && tab.name.length > 0 ? tab.name : null,
-			lastActiveAt: tabLastActiveAt(tab),
-		}));
-}
-
-/**
- * Best available "when did this tab last do anything". `AITab` has no such
- * field, so the last log entry's timestamp stands in, with creation time as the
- * floor for a tab nobody has spoken to yet. It only ever breaks recall ties, so
- * an approximation is fine; a wrong `null` would not be.
- */
-function tabLastActiveAt(tab: Record<string, unknown>): number | null {
-	const logs: Array<Record<string, unknown>> = Array.isArray(tab.logs) ? tab.logs : [];
-	const lastLog = logs.length > 0 ? logs[logs.length - 1] : null;
-	const stamps = [tab.createdAt, lastLog?.timestamp].filter(
-		(value): value is number => typeof value === 'number' && Number.isFinite(value)
-	);
-	return stamps.length > 0 ? Math.max(...stamps) : null;
 }
 
 function readStoredSessions(): StoredSession[] {
@@ -117,6 +88,23 @@ export interface CommandReceipt {
 }
 
 /**
+ * What the renderer did to land on a tab.
+ *
+ * `focused` is the ordinary case; the other two are the states main cannot
+ * resolve on its own, because waking a snoozed tab and reopening a closed one
+ * both need renderer-owned state. Reporting which one happened is what lets the
+ * `dispatch` event say something true: "back in the auth conversation" is a lie
+ * if the tab was still snoozed underneath.
+ */
+export interface FocusTabResult {
+	ok: boolean;
+	/** The tab actually landed on. It can differ when a wake found a duplicate. */
+	tabId?: string;
+	action?: 'focused' | 'woke' | 'reopened';
+	reason?: string;
+}
+
+/**
  * Every renderer operation dispatch needs, and nothing else. Each method maps
  * onto one existing `remote:*` channel; adding a method here means adding a
  * channel, not inventing a second way to do something the renderer already does.
@@ -124,6 +112,16 @@ export interface CommandReceipt {
 export interface VoiceRendererBridge {
 	/** `remote:selectSession` - focus an agent, and a tab within it when given. */
 	selectSession(agentSessionId: string, tabId?: string): void;
+	/**
+	 * `remote:focusAiTab` - land on one AI tab and say what that took.
+	 *
+	 * Distinct from `selectSession` because it is a REQUEST: it waits for the
+	 * renderer, which is the only side that can wake a snoozed tab, reopen a
+	 * closed one, or honour the tiling invariant. Announcing a recall before the
+	 * renderer confirmed it is how a client ends up narrating a tab the user
+	 * cannot see.
+	 */
+	focusTab(agentSessionId: string, tabId: string): Promise<FocusTabResult>;
 	/** `remote:renameTab` - name an existing AI tab. */
 	renameTab(agentSessionId: string, tabId: string, name: string): void;
 	/** `remote:newTab` - open an empty AI tab. Resolves to its id, or null. */
@@ -134,29 +132,56 @@ export interface VoiceRendererBridge {
 	executeCommand(agentSessionId: string, tabId: string, prompt: string): Promise<CommandReceipt>;
 }
 
-/** The real bridge: one Electron window, the existing `remote:*` channels. */
+/**
+ * The real bridge: the window that OWNS the agent, and the existing `remote:*`
+ * channels.
+ *
+ * `getWindowForSession` is what makes dispatch multi-window aware. Agent
+ * ownership is per window while `activeSessionId` is global, so sending a voice
+ * dispatch to whichever window happens to be "main" would activate an agent that
+ * window does not own - the documented way to make a window render "No agents".
+ * The owning window is also raised, because a spoken instruction that landed
+ * behind another window has, from the user's side, done nothing.
+ */
 export function createRendererVoiceBridge(
-	getWindow: () => BrowserWindow | null
+	getWindow: () => BrowserWindow | null,
+	getWindowForSession?: (agentSessionId: string) => BrowserWindow | null
 ): VoiceRendererBridge {
-	const requireWindow = (operation: string): BrowserWindow => {
-		const win = getWindow();
+	const requireWindow = (operation: string, agentSessionId?: string): BrowserWindow => {
+		const owner = agentSessionId ? getWindowForSession?.(agentSessionId) : null;
+		const win = isWebContentsAvailable(owner) ? owner : getWindow();
 		if (!isWebContentsAvailable(win)) {
 			throw new VoiceDispatchError(`No renderer is available to ${operation}`);
 		}
 		return win;
 	};
 
+	/** Raise the window a dispatch is about to land in. Never steals from another app. */
+	const revealWindow = (win: BrowserWindow): void => {
+		if (win.isMinimized()) win.restore();
+		win.show();
+	};
+
 	return {
 		selectSession(agentSessionId, tabId) {
-			requireWindow('focus an agent').webContents.send(
-				'remote:selectSession',
-				agentSessionId,
-				tabId
-			);
+			const win = requireWindow('focus an agent', agentSessionId);
+			revealWindow(win);
+			win.webContents.send('remote:selectSession', agentSessionId, tabId);
+		},
+
+		async focusTab(agentSessionId, tabId) {
+			const win = requireWindow('focus a tab', agentSessionId);
+			revealWindow(win);
+			return requestFromRenderer<FocusTabResult>(win, 'remote:focusAiTab', {
+				fallback: { ok: false, reason: 'renderer-timeout' },
+				timeoutMs: NEW_TAB_TIMEOUT_MS,
+				parse: parseFocusTabResult,
+				args: [agentSessionId, tabId],
+			});
 		},
 
 		renameTab(agentSessionId, tabId, name) {
-			requireWindow('rename a tab').webContents.send(
+			requireWindow('rename a tab', agentSessionId).webContents.send(
 				'remote:renameTab',
 				agentSessionId,
 				tabId,
@@ -166,7 +191,7 @@ export function createRendererVoiceBridge(
 
 		async newTab(agentSessionId) {
 			const result = await requestFromRenderer<{ tabId?: unknown } | null>(
-				requireWindow('open a tab'),
+				requireWindow('open a tab', agentSessionId),
 				'remote:newTab',
 				{
 					fallback: null,
@@ -185,7 +210,7 @@ export function createRendererVoiceBridge(
 			// position and gets the focus behaviour voice wants: a tab the user
 			// asked for out loud should be the tab they are looking at.
 			return requestFromRenderer<NewTabWithPromptResult>(
-				requireWindow('open a tab'),
+				requireWindow('open a tab', agentSessionId),
 				'remote:newAITabWithPrompt',
 				{
 					fallback: { success: false },
@@ -198,7 +223,7 @@ export function createRendererVoiceBridge(
 
 		async executeCommand(agentSessionId, tabId, prompt) {
 			return requestFromRenderer<CommandReceipt>(
-				requireWindow('send a prompt'),
+				requireWindow('send a prompt', agentSessionId),
 				'remote:executeCommand',
 				{
 					fallback: { accepted: false, reason: 'renderer-timeout' },
@@ -227,6 +252,20 @@ function parseNewTabWithPromptResult(raw: unknown): NewTabWithPromptResult {
 	return { success: raw === true };
 }
 
+function parseFocusTabResult(raw: unknown): FocusTabResult {
+	if (typeof raw !== 'object' || raw === null) return { ok: false, reason: 'malformed-result' };
+	const result = raw as { ok?: unknown; tabId?: unknown; action?: unknown; reason?: unknown };
+	return {
+		ok: result.ok === true,
+		tabId: typeof result.tabId === 'string' ? result.tabId : undefined,
+		action:
+			result.action === 'woke' || result.action === 'reopened' || result.action === 'focused'
+				? result.action
+				: undefined,
+		reason: typeof result.reason === 'string' ? result.reason : undefined,
+	};
+}
+
 function parseCommandReceipt(raw: unknown): CommandReceipt {
 	if (typeof raw === 'object' && raw !== null && 'accepted' in raw) {
 		const receipt = raw as { accepted?: unknown; reason?: unknown };
@@ -248,12 +287,66 @@ export interface VoiceRouteExecutorOptions {
 	getSessions?: () => StoredSession[];
 	/** The agent the desktop is on, used when the Brain targets the conductor. */
 	getActiveSessionId?: () => string | null;
+	/** How long an identical decision replays instead of executing again. */
+	replayWindowMs?: number;
 }
 
 interface ResolvedExecutorDeps {
 	bridge: VoiceRendererBridge;
 	getSessions: () => StoredSession[];
 	getActiveSessionId: () => string | null;
+	recentDispatches?: DispatchReplayCache;
+}
+
+/**
+ * Remembers what each decision already did, briefly.
+ *
+ * A dispatch is retried whenever a renderer round trip times out and the caller
+ * tries again, and the failure mode that costs the user something is a decision
+ * that opened a tab, lost the receipt, and opened a second one. Replaying the
+ * first result is idempotence: the same decision performed twice is the same
+ * dispatch, not two.
+ *
+ * The window is short on purpose. Beyond it, saying the same thing again is a
+ * person repeating themselves, and they mean it.
+ */
+export interface DispatchReplayCache {
+	get(key: string): VoiceDispatchResult | undefined;
+	set(key: string, value: VoiceDispatchResult): void;
+}
+
+/** Thirty seconds: long enough for a retry, short enough not to swallow intent. */
+export const DEFAULT_REPLAY_WINDOW_MS = 30_000;
+
+export function createDispatchReplayCache(
+	ttlMs: number = DEFAULT_REPLAY_WINDOW_MS,
+	now: () => number = Date.now
+): DispatchReplayCache {
+	const entries = new Map<string, { at: number; result: VoiceDispatchResult }>();
+
+	return {
+		get(key) {
+			// A window of zero disables replay outright rather than depending on two
+			// dispatches landing in different milliseconds.
+			if (ttlMs <= 0) return undefined;
+			const entry = entries.get(key);
+			if (!entry) return undefined;
+			if (now() - entry.at > ttlMs) {
+				entries.delete(key);
+				return undefined;
+			}
+			return entry.result;
+		},
+		set(key, result) {
+			const at = now();
+			entries.set(key, { at, result });
+			// Swept on write rather than on a timer: the map only grows when someone
+			// is talking, so the moment it grows is the moment to prune it.
+			for (const [candidate, entry] of entries) {
+				if (at - entry.at > ttlMs) entries.delete(candidate);
+			}
+		},
+	};
 }
 
 /** Bind an executor for `VoiceSessionServiceOptions.executeRoute`. */
@@ -262,6 +355,7 @@ export function createVoiceRouteExecutor(options: VoiceRouteExecutorOptions): Vo
 		bridge: options.bridge,
 		getSessions: options.getSessions ?? readStoredSessions,
 		getActiveSessionId: options.getActiveSessionId ?? readActiveSessionId,
+		recentDispatches: createDispatchReplayCache(options.replayWindowMs),
 	};
 	return (decision, context) => executeRouteDecision(decision, context, deps);
 }
@@ -281,6 +375,13 @@ export async function executeRouteDecision(
 	context: { roster: RosterAgent[]; scope: VoiceScope },
 	deps: ResolvedExecutorDeps
 ): Promise<VoiceDispatchResult> {
+	// A clarification is a question, not an instruction. Reaching the executor
+	// with one means a caller skipped the guard, and dispatching it would send
+	// the user their own half-finished request.
+	if (isClarification(decision)) {
+		throw new VoiceDispatchError('That decision is a question, not a dispatch');
+	}
+
 	// Re-read rather than trusting the roster the Brain saw: routing is async and
 	// the user can close a tab while a decision is in flight.
 	const sessions = deps.getSessions();
@@ -288,18 +389,42 @@ export async function executeRouteDecision(
 	const agent = resolveAgent(decision, context, roster, deps.getActiveSessionId());
 	const prompt = decision.prompt.trim();
 
+	// Idempotency is checked AFTER the roster read so a retry that is no longer
+	// performable still fails rather than replaying a stale success, and before
+	// anything is created so a retried decision cannot open a second tab.
+	const key = dispatchKey(decision, agent.sessionId);
+	const replayed = deps.recentDispatches?.get(key);
+	if (replayed) {
+		logger.info(`Replaying the dispatch for an identical decision on '${agent.name}'`, LOG_CONTEXT);
+		return replayed;
+	}
+
+	const result = await performDispatch(decision, agent, roster, sessions, prompt, deps);
+	deps.recentDispatches?.set(key, result);
+	return result;
+}
+
+async function performDispatch(
+	decision: RouteDecision,
+	agent: RosterAgent,
+	roster: RosterAgent[],
+	sessions: StoredSession[],
+	prompt: string,
+	deps: ResolvedExecutorDeps
+): Promise<VoiceDispatchResult> {
 	if (decision.tabAction === 'new') {
 		return openNewTab(agent, prompt, decision.tabName, deps.bridge);
+	}
+
+	if (decision.tabAction === 'recall') {
+		return recallTab(decision, agent, roster, prompt, deps);
 	}
 
 	// `activeTabId` is deliberately not on `RosterAgent` - the Brain routes by
 	// name, not by which tab happens to be on screen - so it is read here.
 	const stored = sessions.find((session) => session.id === agent.sessionId);
 	const activeTabId = typeof stored?.activeTabId === 'string' ? stored.activeTabId : null;
-	const tabId =
-		decision.tabAction === 'recall'
-			? resolveRecalledTab(agent, decision.tabId)
-			: resolveCurrentTab(agent, activeTabId);
+	const tabId = resolveCurrentTab(agent, activeTabId);
 
 	if (!tabId) {
 		// The agent has no AI tab to talk into. Creating one is the only honest way
@@ -317,9 +442,83 @@ export async function executeRouteDecision(
 		agentName: agent.name,
 		tabId,
 		tabName: agent.tabs.find((tab) => tab.id === tabId)?.name ?? undefined,
-		action: decision.tabAction === 'recall' ? 'recalled' : 'focused',
+		action: 'focused',
 		promptSent,
 	};
+}
+
+/**
+ * Return to an existing conversation, waking or reopening it if that is what it
+ * takes.
+ *
+ * The focus is a REQUEST rather than a fire-and-forget send, because the three
+ * states a recalled tab can be in are only distinguishable in the renderer, and
+ * announcing a recall the renderer did not perform would tell the user they are
+ * somewhere they are not.
+ */
+async function recallTab(
+	decision: RouteDecision,
+	agent: RosterAgent,
+	roster: RosterAgent[],
+	prompt: string,
+	deps: ResolvedExecutorDeps
+): Promise<VoiceDispatchResult> {
+	const resolution = resolveRecall(decision, roster, { confirmed: true });
+	if (resolution.kind === 'missing') {
+		// Recall is a promise to return somewhere specific. A gone tab is a failure,
+		// never a silently different tab.
+		throw new VoiceDispatchError(
+			decision.tabId
+				? `That tab is no longer open on '${agent.name}'`
+				: `Cannot recall a tab on '${agent.name}' without a tab id`
+		);
+	}
+	if (resolution.kind === 'offer') {
+		// The router turns an offer into a spoken question before it ever reaches
+		// here; arriving with one means the confirmation was skipped.
+		throw new VoiceDispatchError(`That conversation is closed and was not confirmed for reopening`);
+	}
+
+	const focus = await deps.bridge.focusTab(resolution.agentSessionId, resolution.tab.id);
+	if (!focus.ok) {
+		throw new VoiceDispatchError(
+			`Could not return to that conversation on '${agent.name}' (${focus.reason ?? 'no reason given'})`
+		);
+	}
+
+	// The renderer may have landed on a different tab: waking a snooze whose
+	// conversation is already open focuses the copy that exists rather than
+	// restoring a duplicate.
+	const tabId = focus.tabId ?? resolution.tab.id;
+	const promptSent = await sendPrompt(deps.bridge, resolution.agentSessionId, tabId, prompt);
+
+	return {
+		agentSessionId: resolution.agentSessionId,
+		agentName: agent.name,
+		tabId,
+		tabName: resolution.tab.name ?? undefined,
+		action: 'recalled',
+		promptSent,
+	};
+}
+
+/**
+ * Identity of a dispatch, for the replay guard.
+ *
+ * The prompt is part of the key because two identical requests to the same tab
+ * ARE the same dispatch as far as the user is concerned - they said it twice
+ * because the first one appeared to do nothing - while the same tab with a
+ * different prompt is a new turn. The agent id rather than the decision's target
+ * so a conductor-targeted retry resolved to the same agent still matches.
+ */
+function dispatchKey(decision: RouteDecision, agentSessionId: string): string {
+	return [
+		agentSessionId,
+		decision.tabAction,
+		decision.tabId ?? '',
+		decision.tabName ?? '',
+		decision.prompt.trim(),
+	].join(' ');
 }
 
 /**
@@ -358,24 +557,18 @@ function resolveAgent(
 	return fallback;
 }
 
-/** Recall is a promise to return somewhere specific. A gone tab is a failure. */
-function resolveRecalledTab(agent: RosterAgent, tabId: string | undefined): string {
-	if (!tabId) {
-		throw new VoiceDispatchError(`Cannot recall a tab on '${agent.name}' without a tab id`);
-	}
-	if (!agent.tabs.some((tab) => tab.id === tabId)) {
-		throw new VoiceDispatchError(`That tab is no longer open on '${agent.name}'`);
-	}
-	return tabId;
-}
-
-/** The agent's active tab, or its most recently used one. */
+/**
+ * The agent's active tab, or its most recently used one.
+ *
+ * Only OPEN tabs are eligible. The roster deliberately lists snoozed and closed
+ * ones so recall can name them, and "carry on where we were" landing on a tab
+ * the user put away last week would be the worst possible reading of "current".
+ */
 function resolveCurrentTab(agent: RosterAgent, activeTabId: string | null): string | null {
-	if (agent.tabs.length === 0) return null;
-	if (activeTabId && agent.tabs.some((tab) => tab.id === activeTabId)) return activeTabId;
-	const mostRecent = [...agent.tabs].sort(
-		(a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)
-	)[0];
+	const open = agent.tabs.filter((tab) => (tab.state ?? 'open') === 'open');
+	if (open.length === 0) return null;
+	if (activeTabId && open.some((tab) => tab.id === activeTabId)) return activeTabId;
+	const mostRecent = [...open].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0))[0];
 	return mostRecent.id;
 }
 

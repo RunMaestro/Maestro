@@ -15,12 +15,14 @@
  * anything unrecognised collapses to the conductor rather than to a guess.
  */
 
-import type { RosterAgent } from '../../../shared/acappella/protocol';
+import type { RosterAgent, RosterTab } from '../../../shared/acappella/protocol';
 import type { VoiceConverseContext, VoiceRouteContext } from '../../../shared/acappella/providers';
 import type { RouteDecision, RouteTabAction } from '../../../shared/acappella/route-decision';
 import { ROUTE_TAB_ACTIONS } from '../../../shared/acappella/route-decision';
 import { splitIntoSpokenSentences } from '../../../shared/acappella/sentences';
+import { PROMPT_IDS } from '../../../shared/promptDefinitions';
 import { stripMarkdown } from '../../../shared/markdown';
+import { getPrompt } from '../../prompt-manager';
 
 /** Spoken replies stay short unless the caller asks for more. */
 const DEFAULT_SPOKEN_SENTENCES = 2;
@@ -28,6 +30,27 @@ const DEFAULT_SPOKEN_SENTENCES = 2;
 /** Cap on the roster handed to a model. A hundred agents is a prompt, not context. */
 const MAX_ROSTER_AGENTS = 40;
 const MAX_TABS_PER_AGENT = 12;
+
+/**
+ * The routing instructions, as the user may have edited them.
+ *
+ * `src/prompts/acappella-router.md` is a registered core prompt, so it shows up
+ * in Settings > Maestro Prompts and someone whose agents are all called "api"
+ * can teach the Conductor how to tell them apart. The built-in constant below is
+ * the fallback for the two cases where the prompt store cannot answer: before
+ * `initializePrompts()` has run, and in a unit test that never boots one. A
+ * routing turn that threw because a settings subsystem was not up yet would be a
+ * worse failure than routing on the default text.
+ */
+export function routeSystemPrompt(): string {
+	try {
+		const edited = getPrompt(PROMPT_IDS.ACAPPELLA_ROUTER).trim();
+		if (edited) return edited;
+	} catch {
+		/* prompts not initialised, or the id was removed: use the built-in text */
+	}
+	return ROUTE_SYSTEM_PROMPT;
+}
 
 export const ROUTE_SYSTEM_PROMPT = [
 	'You route spoken instructions inside Maestro, a desktop app that runs several AI coding agents at once.',
@@ -53,21 +76,34 @@ export const CONVERSE_SYSTEM_PROMPT = [
 	'- Answer with the spoken text only. No preamble, no quotes around it.',
 ].join('\n');
 
-/** The user-side message for a routing call. */
-export function buildRouteUserPrompt(input: string, context: VoiceRouteContext): string {
-	const lines: string[] = [];
+/**
+ * The roster block, as every Brain and the routing-context assembler render it.
+ *
+ * One renderer, deliberately: the assembler measures its size cap against this
+ * exact text, so a second copy that formatted a tab differently would cap the
+ * wrong string and the prompt would quietly overrun.
+ */
+export function serializeRoster(agents: readonly RosterAgent[]): string[] {
+	const lines: string[] = ['Running agents:'];
+	if (agents.length === 0) lines.push('  (none)');
 
-	lines.push('Running agents:');
-	const agents = context.roster.slice(0, MAX_ROSTER_AGENTS);
-	if (agents.length === 0) {
-		lines.push('  (none)');
-	}
-	for (const agent of agents) {
-		lines.push(`- ${agent.name} [${agent.sessionId}] (${agent.agentType}) in ${agent.cwd}`);
+	for (const agent of agents.slice(0, MAX_ROSTER_AGENTS)) {
+		const status = agent.status ? ` ${agent.status}` : '';
+		lines.push(
+			`- ${agent.name} [${agent.sessionId}] (${agent.agentType}${status}) in ${agent.cwd}`
+		);
+		if (agent.recentWork) lines.push(`    recently: ${agent.recentWork}`);
 		for (const tab of agent.tabs.slice(0, MAX_TABS_PER_AGENT)) {
-			lines.push(`    tab ${tab.id}: ${tab.name ?? 'untitled'}`);
+			lines.push(`    tab ${tab.id}: ${describeTab(tab)}`);
 		}
 	}
+
+	return lines;
+}
+
+/** The user-side message for a routing call. */
+export function buildRouteUserPrompt(input: string, context: VoiceRouteContext): string {
+	const lines: string[] = serializeRoster(context.roster);
 
 	if (context.scope.kind === 'agent') {
 		lines.push('', `The user is currently bound to agent ${context.scope.sessionId}.`);
@@ -81,8 +117,42 @@ export function buildRouteUserPrompt(input: string, context: VoiceRouteContext):
 		for (const utterance of recent.slice(-5)) lines.push(`- ${utterance}`);
 	}
 
+	if (context.clarification) {
+		// The answer alone is a fragment ("the API one"). Routed on its own it
+		// becomes a prompt, and the request it was answering is lost.
+		lines.push(
+			'',
+			`The user asked: ${context.clarification.utterance}`,
+			`You asked back: ${context.clarification.question}`,
+			'Their answer follows. Route the ORIGINAL request, using the answer only to pick the target.'
+		);
+	}
+
+	if (context.retryNotes && context.retryNotes.length > 0) {
+		lines.push('', 'Your previous answer was rejected:');
+		for (const note of context.retryNotes) lines.push(`- ${note}`);
+		lines.push('Answer again, fixing exactly those problems.');
+	}
+
 	lines.push('', `Utterance: ${input}`);
 	return lines.join('\n');
+}
+
+/**
+ * One tab, as a line in the roster.
+ *
+ * The topic is what makes recall possible at all: a tab called "Tab 3" tells a
+ * model nothing, and "auth middleware rewrite" is the phrase the user will say
+ * six hours later. The state is what stops a recall from being a lie - a snoozed
+ * or closed tab is a legitimate target, but only if whoever picks it knows it has
+ * to be woken first.
+ */
+function describeTab(tab: RosterTab): string {
+	const label = tab.name ?? 'untitled';
+	const parts = [label];
+	if (tab.topic && tab.topic !== label) parts.push(`- ${tab.topic}`);
+	if (tab.state && tab.state !== 'open') parts.push(`(${tab.state})`);
+	return parts.join(' ');
 }
 
 export function buildConverseUserPrompt(agentText: string, context: VoiceConverseContext): string {
@@ -137,6 +207,11 @@ export function parseRouteDecision(
 		tabName,
 		prompt,
 		confidence: clampConfidence(parsed?.confidence),
+		// A model that asked a question instead of guessing did the right thing, so
+		// the question survives parsing. Everything else on the decision is still
+		// filled in: if the user answers, the answer routes; if the turn is
+		// abandoned, nothing was dispatched.
+		clarify: asSpokenLine(parsed?.clarify),
 	};
 }
 
@@ -204,6 +279,12 @@ function asTabAction(value: unknown): RouteTabAction {
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** A clarification is spoken, so it is one line: newlines would be read aloud. */
+function asSpokenLine(value: unknown): string | undefined {
+	const text = asNonEmptyString(value);
+	return text ? text.replace(/\s+/g, ' ') : undefined;
 }
 
 function clampConfidence(value: unknown): number {

@@ -36,11 +36,32 @@ export interface VoiceEventBase {
 // Roster
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a tab is, from the roster's point of view.
+ *
+ * Snoozed and closed tabs are listed rather than hidden because recall has to be
+ * able to reach them: "back to the auth thing" is most often said about a
+ * conversation the user put away, and a roster that only knows about open tabs
+ * answers that by opening a duplicate. The state travels with the tab so the
+ * dispatch can wake or reopen it deliberately instead of discovering afterwards
+ * that the tab it focused was not on screen.
+ */
+export type RosterTabState = 'open' | 'snoozed' | 'closed';
+
 /** One AI tab, compact enough to push on every change and to feed a model. */
 export interface RosterTab {
 	id: string;
 	name: string | null;
 	lastActiveAt: number | null;
+	/** Absent means `open`, which is what every pre-Phase-07 producer emitted. */
+	state?: RosterTabState;
+	/**
+	 * One line of what this tab is about, derived from data the app already has
+	 * (the tab name the naming pipeline produced, the opening message, the
+	 * session synopsis). Never a fresh model call: a routing turn that had to
+	 * summarise twelve tabs first would be slower than reading the screen.
+	 */
+	topic?: string | null;
 }
 
 /** One agent as the Brain sees it, and later as the phone's project wheel shows it. */
@@ -50,6 +71,15 @@ export interface RosterAgent {
 	agentType: string;
 	cwd: string;
 	tabs: RosterTab[];
+	/** As the Left Bar colours it: `idle`, `busy`, `error`. Absent when unknown. */
+	status?: string;
+	/**
+	 * The last thing this agent finished, taken from the synopsis the history
+	 * manager already wrote. It is what makes "tell the one doing the migration"
+	 * routable without naming an agent, and it costs a file read rather than a
+	 * model call.
+	 */
+	recentWork?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +159,30 @@ export interface DispatchEvent extends VoiceEventBase {
 	tabName?: string;
 	action: DispatchAction;
 	promptSent: boolean;
+}
+
+/**
+ * The last dispatch went to the wrong place and was moved.
+ *
+ * Its own event rather than a second `dispatch`, because the two mean opposite
+ * things to anyone measuring routing quality: a dispatch is the router's answer
+ * and a correction is the user overruling it. Collapsing them would make a
+ * misroute that the user had to fix by hand indistinguishable from a hit, which
+ * is precisely the number the routing log exists to produce.
+ */
+export interface RouteCorrectionEvent extends VoiceEventBase {
+	type: 'route-correction';
+	/** Where the prompt originally landed. */
+	fromAgentSessionId: string;
+	fromTabId: string;
+	/** Where it went instead, as the executor actually performed it. */
+	agentSessionId: string;
+	agentName: string;
+	tabId: string;
+	tabName?: string;
+	action: DispatchAction;
+	promptSent: boolean;
+	source: InterruptSource;
 }
 
 /** The agent produced text worth speaking. */
@@ -362,6 +416,7 @@ export type VoiceEvent =
 	| FinalTranscriptEvent
 	| RouteDecisionEvent
 	| DispatchEvent
+	| RouteCorrectionEvent
 	| AgentReplyEvent
 	| SpeakStartEvent
 	| SpeakSentenceEvent
@@ -403,6 +458,10 @@ export const VOICE_EVENT_DIRECTIONS: Record<VoiceEventType, VoiceEventDirection>
 	'final-transcript': 'both',
 	'route-decision': 'service-to-client',
 	dispatch: 'service-to-client',
+	// A client asks for a correction over its own channel and reads the outcome
+	// here, the same way it starts a session: the four `both` events are the ones
+	// a client can originate as raw voice input, and a correction is a command.
+	'route-correction': 'service-to-client',
 	'agent-reply': 'service-to-client',
 	'speak-start': 'service-to-client',
 	'speak-sentence': 'service-to-client',

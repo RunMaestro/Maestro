@@ -45,6 +45,7 @@ const ALL_EVENT_TYPES: VoiceEventType[] = [
 	'final-transcript',
 	'route-decision',
 	'dispatch',
+	'route-correction',
 	'agent-reply',
 	'speak-start',
 	'speak-sentence',

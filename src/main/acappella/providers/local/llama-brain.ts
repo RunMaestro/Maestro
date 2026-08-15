@@ -38,7 +38,7 @@ import {
 	CONVERSE_SYSTEM_PROMPT,
 	limitSpokenReply,
 	parseRouteDecision,
-	ROUTE_SYSTEM_PROMPT,
+	routeSystemPrompt,
 } from '../brain-prompt';
 import { loadLocalRuntime } from './runtime';
 
@@ -130,7 +130,7 @@ export class LlamaBrainProvider implements BrainProvider {
 		const brain = await this.ensureLoaded();
 		const raw = await this.prompt(
 			brain,
-			ROUTE_SYSTEM_PROMPT,
+			routeSystemPrompt(),
 			buildRouteUserPrompt(input, context),
 			ROUTE_MAX_TOKENS,
 			brain.routeGrammar

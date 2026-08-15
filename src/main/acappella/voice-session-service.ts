@@ -28,7 +28,8 @@ import type {
 	WakeSource,
 } from '../../shared/acappella/protocol';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
-import { routeTargetSessionId } from '../../shared/acappella/route-decision';
+import { isClarification, routeTargetSessionId } from '../../shared/acappella/route-decision';
+import { isCorrectionUtterance, planCorrection } from './router/conductor-router';
 import type {
 	SttCallbacks,
 	SttProvider,
@@ -48,7 +49,10 @@ import {
 } from '../../shared/acappella/audio-host';
 import { readinessErrorMessage, type VoiceReadiness } from '../../shared/acappella/readiness';
 import type { VoiceSessionState } from '../../shared/acappella/session-state';
-import { assertVoiceStateTransition } from '../../shared/acappella/session-state';
+import {
+	assertVoiceStateTransition,
+	canTransitionVoiceState,
+} from '../../shared/acappella/session-state';
 import { countSpokenSentences } from '../../shared/acappella/sentences';
 import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
@@ -171,6 +175,14 @@ export interface VoiceSessionSnapshot {
 	seq: number;
 	startedAt: number | null;
 	providerIds: { stt: string; tts: string; brain: string };
+	/**
+	 * The last routing decision, so a client that joined mid-session can show
+	 * where the last thing went and how sure the router was. Null until the first
+	 * utterance of the session has been routed.
+	 */
+	lastDecision: RouteDecision | null;
+	/** Where that decision actually landed, once it was performed. */
+	lastDispatch: VoiceDispatchResult | null;
 }
 
 /** The body of an event before the service stamps `sessionId`, `seq`, and `ts`. */
@@ -207,6 +219,20 @@ export class VoiceSessionService {
 	private startedAt: number | null = null;
 
 	private recentUtterances: string[] = [];
+
+	/**
+	 * The question the router asked out loud, waiting for an answer.
+	 *
+	 * Consumed by the next utterance and cleared, so an abandoned question does
+	 * not silently reinterpret an unrelated sentence three turns later.
+	 */
+	private pendingClarification: { question: string; utterance: string } | null = null;
+
+	/** The last decision, for the HUD's "why did it go there" line. */
+	private lastDecision: RouteDecision | null = null;
+
+	/** The last dispatch, so a correction has something to move. */
+	private lastDispatch: { decision: RouteDecision; result: VoiceDispatchResult } | null = null;
 
 	/**
 	 * Bumped on every utterance and on every teardown. A provider callback whose
@@ -276,6 +302,8 @@ export class VoiceSessionService {
 				tts: this.providers.tts.id,
 				brain: this.providers.brain.id,
 			},
+			lastDecision: this.lastDecision,
+			lastDispatch: this.lastDispatch?.result ?? null,
 		};
 	}
 
@@ -302,6 +330,9 @@ export class VoiceSessionService {
 		this.startedAt = Date.now();
 		this.recentUtterances = [];
 		this.activeUtteranceId = null;
+		this.pendingClarification = null;
+		this.lastDecision = null;
+		this.lastDispatch = null;
 		this.turn += 1;
 
 		this.transition('arming');
@@ -371,6 +402,10 @@ export class VoiceSessionService {
 		this.scope = null;
 		this.startedAt = null;
 		this.recentUtterances = [];
+		// A question nobody answered, and a dispatch nobody can correct any more:
+		// both belong to the session that just ended.
+		this.pendingClarification = null;
+		this.lastDispatch = null;
 	}
 
 	/**
@@ -650,8 +685,17 @@ export class VoiceSessionService {
 			const roster = await this.publishRoster();
 			if (!this.isCurrentTurn(turn)) return;
 
+			// A correction is not a request, so it never reaches the Brain: "no, the
+			// other one" routed as an utterance becomes a prompt, and the agent it
+			// lands in has no idea what it refers to.
+			if (this.lastDispatch && isCorrectionUtterance(utterance)) {
+				await this.runCorrection(roster, turn);
+				return;
+			}
+
 			const startedAt = Date.now();
-			const decision = await this.providers.brain.route(utterance, this.routeContext(roster));
+			const context = this.routeContext(roster);
+			const decision = await this.providers.brain.route(utterance, context);
 			if (!this.isCurrentTurn(turn)) return;
 
 			const targetId = routeTargetSessionId(decision.target);
@@ -661,13 +705,22 @@ export class VoiceSessionService {
 			}
 
 			this.timer?.mark('routeDecision');
+			this.lastDecision = decision;
 			this.emit('route-decision', {
 				decision,
 				brainProviderId: this.providers.brain.id,
 				latencyMs: Date.now() - startedAt,
 			});
-			this.transition('dispatching');
 
+			if (isClarification(decision)) {
+				// The router is not sure enough to act. Ask, remember what the question
+				// was about, and hand the floor straight back: the answer arrives as the
+				// next utterance and routes the ORIGINAL request.
+				await this.askForClarification(decision, context, utterance, turn);
+				return;
+			}
+
+			this.transition('dispatching');
 			await this.dispatch(decision, roster, turn);
 		} catch (error) {
 			// A provider that predicted its own failure is announced, not reported: it
@@ -710,7 +763,163 @@ export class VoiceSessionService {
 		}
 
 		if (!this.isCurrentTurn(turn)) return;
+		// Remembered so "no, the other one" has something to move, and so the HUD
+		// can show where the last thing went.
+		this.lastDispatch = { decision, result };
 		this.emit('dispatch', result);
+	}
+
+	/**
+	 * Ask the disambiguation out loud and take the floor back.
+	 *
+	 * The pending clarification is remembered rather than the question being
+	 * re-derived next turn, because the ANSWER is a fragment: "the API one" routed
+	 * on its own creates a tab called "the API one". The original utterance rides
+	 * along so the next turn routes the request the user actually made.
+	 */
+	private async askForClarification(
+		decision: RouteDecision,
+		context: VoiceRouteContext,
+		utterance: string,
+		turn: number
+	): Promise<void> {
+		const question = decision.clarify?.trim();
+		if (!question) return;
+
+		this.pendingClarification = {
+			question,
+			// A clarification of a clarification is still about the ORIGINAL request.
+			utterance: context.clarification?.utterance ?? utterance,
+		};
+
+		this.transition('speaking');
+		try {
+			await this.speak(question, countSpokenSentences(question) || 1, turn);
+		} catch (error) {
+			if (isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
+			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.askForClarification');
+		}
+	}
+
+	/**
+	 * Move the last dispatch somewhere else, on the user's say-so.
+	 *
+	 * Its own event rather than a second `dispatch`: the two mean opposite things
+	 * to the routing log, and a correction counted as a hit would make a router
+	 * that is wrong half the time look perfect.
+	 */
+	private async runCorrection(roster: RosterAgent[], turn: number): Promise<void> {
+		const previous = this.lastDispatch;
+		if (!previous) return;
+
+		const plan = planCorrection(roster, previous.result.agentSessionId);
+		if (plan.kind === 'ask') {
+			await this.askForClarification(
+				{ ...previous.decision, clarify: plan.question },
+				this.routeContext(roster),
+				previous.decision.prompt,
+				turn
+			);
+			return;
+		}
+
+		this.transition('dispatching');
+		await this.correctTo(plan.agentSessionId, roster, turn, 'voice');
+	}
+
+	/**
+	 * Re-dispatch the last prompt to a different agent.
+	 *
+	 * The prompt is the one that was actually sent, not the raw utterance: the
+	 * user is moving a request they already made, and re-deriving it would send
+	 * the wrong agent a differently worded question.
+	 *
+	 * @returns false when there is nothing to correct.
+	 */
+	async correctLastDispatch(
+		agentSessionId: string,
+		source: InterruptSource = 'client-button'
+	): Promise<boolean> {
+		if (!this.lastDispatch) return false;
+		if (this.state !== 'listening' && this.state !== 'dispatching' && this.state !== 'speaking') {
+			return false;
+		}
+		if (this.state === 'speaking') this.interrupt(source);
+
+		const roster = await this.publishRoster();
+		const turn = ++this.turn;
+		this.walkToDispatching();
+
+		return this.correctTo(agentSessionId, roster, turn, source);
+	}
+
+	/**
+	 * Take the session from wherever it is to `dispatching`, one legal edge at a
+	 * time.
+	 *
+	 * A correction arrives from a button rather than from a turn, so it can start
+	 * in `listening` with the whole transcribe-and-route path still in front of
+	 * it. The machine has no shortcut edge and should not grow one for a case that
+	 * is three legal transitions away.
+	 */
+	private walkToDispatching(): void {
+		const path: VoiceSessionState[] = ['transcribing', 'routing', 'dispatching'];
+		for (const next of path) {
+			if (this.state === 'dispatching') return;
+			if (canTransitionVoiceState(this.state, next)) this.transition(next);
+		}
+	}
+
+	private async correctTo(
+		agentSessionId: string,
+		roster: RosterAgent[],
+		turn: number,
+		source: InterruptSource
+	): Promise<boolean> {
+		const previous = this.lastDispatch;
+		if (!previous) return false;
+
+		const decision: RouteDecision = {
+			target: { sessionId: agentSessionId },
+			// The corrected target's own current tab: the tab id from the wrong agent
+			// means nothing on the right one.
+			tabAction: 'current',
+			prompt: previous.decision.prompt,
+			confidence: 1,
+		};
+
+		if (!this.executeRoute) {
+			this.fail('dispatch-failed', 'No route executor is configured for this session');
+			return false;
+		}
+
+		let result: VoiceDispatchResult;
+		try {
+			result = await this.executeRoute(decision, {
+				roster,
+				scope: this.scope ?? { kind: 'conductor' },
+			});
+		} catch (error) {
+			if (!(error instanceof VoiceDispatchError)) throw error;
+			this.fail('dispatch-failed', error.message);
+			return false;
+		}
+
+		if (!this.isCurrentTurn(turn)) return false;
+
+		this.emit('route-correction', {
+			fromAgentSessionId: previous.result.agentSessionId,
+			fromTabId: previous.result.tabId,
+			agentSessionId: result.agentSessionId,
+			agentName: result.agentName,
+			tabId: result.tabId,
+			tabName: result.tabName,
+			action: result.action,
+			promptSent: result.promptSent,
+			source,
+		});
+		this.lastDispatch = { decision, result };
+		return true;
 	}
 
 	/** Stream one reply through TTS, one event per sentence. */
@@ -763,11 +972,17 @@ export class VoiceSessionService {
 
 	private routeContext(roster: RosterAgent[]): VoiceRouteContext {
 		const scope = this.scope ?? { kind: 'conductor' };
+		// Consumed here, not on the next turn: a question that was asked and then
+		// abandoned must not reinterpret an unrelated sentence later on.
+		const clarification = this.pendingClarification ?? undefined;
+		this.pendingClarification = null;
+
 		return {
 			roster,
 			scope,
 			activeAgentSessionId: scope.kind === 'agent' ? scope.sessionId : null,
 			recentUtterances: [...this.recentUtterances],
+			clarification,
 		};
 	}
 

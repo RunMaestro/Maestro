@@ -869,6 +869,7 @@ const DRIVEN_EDGES = [
 	'transcribing -> routing',
 	'transcribing -> listening',
 	'routing -> dispatching',
+	'routing -> speaking',
 	'routing -> idle',
 	'routing -> error',
 	'dispatching -> speaking',
@@ -1147,6 +1148,30 @@ describe('VoiceSessionService state machine', () => {
 		}
 	});
 
+	it('routing -> speaking when the router asks instead of guessing', async () => {
+		await start(h);
+		h.brain.decision = {
+			target: 'conductor',
+			tabAction: 'current',
+			prompt: 'run it',
+			confidence: 0.3,
+			clarify: 'the backend agent or the API agent?',
+		};
+
+		h.service.submitUtterance('run it');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		// Nothing was dispatched: the question IS the turn, and the answer arrives
+		// as the next utterance.
+		expect(h.executor).not.toHaveBeenCalled();
+		expect(takeEdges()).toEqual([
+			'listening -> transcribing',
+			'transcribing -> routing',
+			'routing -> speaking',
+			'speaking -> listening',
+		]);
+	});
+
 	it('has a driving test or a documented reason for every edge in the table', () => {
 		const declared = Object.entries(VOICE_STATE_TRANSITIONS).flatMap(([from, targets]) =>
 			targets.map((to) => `${from} -> ${to}`)
@@ -1162,5 +1187,232 @@ describe('illegal transitions throw', () => {
 		expect(() => {
 			throw new InvalidVoiceStateTransitionError('listening', 'speaking');
 		}).toThrow(/listening -> speaking/);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Disambiguation and correction
+//
+// The two paths that exist so a low-confidence guess never becomes a spoken
+// instruction in the wrong repository: asking before dispatching, and moving a
+// dispatch the user says went to the wrong place.
+// ---------------------------------------------------------------------------
+
+describe('spoken disambiguation', () => {
+	let h: Harness;
+
+	beforeEach(() => {
+		h = makeHarness();
+	});
+
+	afterEach(async () => {
+		await h.service.stopSession('user');
+	});
+
+	function askAbout(question: string): void {
+		h.brain.decision = {
+			target: 'conductor',
+			tabAction: 'current',
+			prompt: 'run it',
+			confidence: 0.3,
+			clarify: question,
+		};
+	}
+
+	it('speaks the question and hands the floor straight back', async () => {
+		await start(h);
+		askAbout('the backend agent or the API agent?');
+
+		h.service.submitUtterance('run it');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		expect(h.types()).toContain('route-decision');
+		expect(h.events.filter((e) => e.type === 'speak-sentence')).toEqual([
+			expect.objectContaining({ text: 'the backend agent or the API agent?' }),
+		]);
+		expect(h.types()).not.toContain('dispatch');
+	});
+
+	it('routes the ORIGINAL request on the answer, not the fragment', async () => {
+		await start(h);
+		askAbout('the backend agent or the API agent?');
+		h.service.submitUtterance('deploy the gateway');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		const contexts: VoiceRouteContext[] = [];
+		h.brain.decision = {
+			target: 'conductor',
+			tabAction: 'current',
+			prompt: 'deploy the gateway',
+			confidence: 0.9,
+		};
+		const originalRoute = h.brain.route.bind(h.brain);
+		h.brain.route = async (input, context) => {
+			contexts.push(context);
+			return originalRoute(input, context);
+		};
+
+		h.service.submitUtterance('the backend one');
+		await vi.waitFor(() => expect(h.executor).toHaveBeenCalled());
+
+		// "the backend one" routed on its own becomes a prompt, and the request it
+		// was answering is lost.
+		expect(contexts[0].clarification).toEqual({
+			question: 'the backend agent or the API agent?',
+			utterance: 'deploy the gateway',
+		});
+	});
+
+	it('forgets an abandoned question rather than reinterpreting a later sentence', async () => {
+		await start(h);
+		askAbout('the backend agent or the API agent?');
+		h.service.submitUtterance('deploy the gateway');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		const contexts: VoiceRouteContext[] = [];
+		h.brain.decision = {
+			target: 'conductor',
+			tabAction: 'current',
+			prompt: 'x',
+			confidence: 0.9,
+		};
+		h.brain.route = async (_input, context) => {
+			contexts.push(context);
+			return h.brain.decision;
+		};
+
+		h.service.submitUtterance('the backend one');
+		await vi.waitFor(() => expect(contexts).toHaveLength(1));
+		h.service.submitUtterance('something else entirely');
+		await vi.waitFor(() => expect(contexts).toHaveLength(2));
+
+		expect(contexts[1].clarification).toBeUndefined();
+	});
+});
+
+describe('wrong-tab correction', () => {
+	/** Two agents, so "the other one" has an unambiguous answer. */
+	function twoAgentRoster(): RosterAgent[] {
+		return [
+			...makeRoster(),
+			{
+				sessionId: 'agent-api',
+				name: 'API',
+				agentType: 'codex',
+				cwd: '/repo/gateway',
+				tabs: [{ id: 'tab-gw', name: 'Gateway', lastActiveAt: 2 }],
+			},
+		];
+	}
+
+	function makeCorrectionHarness() {
+		const stt = new FakeStt();
+		const tts = new FakeTts();
+		const brain = new FakeBrain();
+		brain.decision = {
+			target: { sessionId: 'agent-backend' },
+			tabAction: 'current',
+			prompt: 'deploy the gateway',
+			confidence: 0.9,
+		};
+
+		const executed: RouteDecision[] = [];
+		const executor = vi.fn(async (decision: RouteDecision) => {
+			executed.push(decision);
+			const target =
+				typeof decision.target === 'string' ? 'agent-backend' : decision.target.sessionId;
+			return {
+				agentSessionId: target,
+				agentName: target === 'agent-api' ? 'API' : 'Backend',
+				tabId: target === 'agent-api' ? 'tab-gw' : 'tab-1',
+				action: 'focused' as const,
+				promptSent: true,
+			};
+		});
+
+		const service = new VoiceSessionService({
+			providers: { stt, tts, brain },
+			getRoster: () => twoAgentRoster(),
+			executeRoute: executor as unknown as VoiceRouteExecutor,
+		});
+		const events: VoiceEvent[] = [];
+		service.subscribe((event) => events.push(event));
+
+		return { service, stt, tts, brain, events, executor, executed };
+	}
+
+	it('moves the last prompt on a spoken "no, the other one"', async () => {
+		const h = makeCorrectionHarness();
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		h.service.submitUtterance('deploy the gateway');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		h.service.submitUtterance('no, the other one');
+		await vi.waitFor(() => expect(h.executed).toHaveLength(2));
+
+		// The prompt that was actually sent, not the correction phrase.
+		expect(h.executed[1]).toMatchObject({
+			target: { sessionId: 'agent-api' },
+			prompt: 'deploy the gateway',
+		});
+		const correction = h.events.find((event) => event.type === 'route-correction');
+		expect(correction).toMatchObject({
+			fromAgentSessionId: 'agent-backend',
+			agentSessionId: 'agent-api',
+			source: 'voice',
+		});
+		await h.service.stopSession('user');
+	});
+
+	it('never sends a correction phrase to an agent as a prompt', async () => {
+		const h = makeCorrectionHarness();
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		h.service.submitUtterance('deploy the gateway');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		h.service.submitUtterance('wrong agent');
+		await vi.waitFor(() => expect(h.executed).toHaveLength(2));
+
+		expect(h.executed.map((decision) => decision.prompt)).toEqual([
+			'deploy the gateway',
+			'deploy the gateway',
+		]);
+		await h.service.stopSession('user');
+	});
+
+	it('does nothing when there is no dispatch to correct', async () => {
+		const h = makeCorrectionHarness();
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+
+		await expect(h.service.correctLastDispatch('agent-api')).resolves.toBe(false);
+		await h.service.stopSession('user');
+	});
+
+	it('takes a correction from a HUD control as well as from the voice', async () => {
+		const h = makeCorrectionHarness();
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		h.service.submitUtterance('deploy the gateway');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		await expect(h.service.correctLastDispatch('agent-api')).resolves.toBe(true);
+
+		expect(h.events.find((event) => event.type === 'route-correction')).toMatchObject({
+			source: 'client-button',
+			agentName: 'API',
+		});
+		await h.service.stopSession('user');
+	});
+
+	it('surfaces the last decision and dispatch in the snapshot', async () => {
+		const h = makeCorrectionHarness();
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		h.service.submitUtterance('deploy the gateway');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		const snapshot = h.service.getSnapshot();
+
+		expect(snapshot.lastDecision).toMatchObject({ confidence: 0.9 });
+		expect(snapshot.lastDispatch).toMatchObject({ agentName: 'Backend', tabId: 'tab-1' });
+		await h.service.stopSession('user');
 	});
 });

@@ -39,6 +39,13 @@ export type VoiceProviderFailureKind =
 	| 'timeout'
 	| 'server'
 	| 'request'
+	/**
+	 * The provider is alive but cannot take this turn right now. Only the
+	 * Conductor-as-agent Brain produces it: a real Maestro agent can be mid-turn
+	 * when the user speaks, and the honest answer is "ask me again in a moment"
+	 * rather than blocking the floor until it finishes.
+	 */
+	| 'busy'
 	| 'unavailable';
 
 /** Which protocol error code each kind travels as. */
@@ -49,6 +56,7 @@ const SESSION_CODES: Record<VoiceProviderFailureKind, VoiceSessionErrorCode> = {
 	timeout: 'provider-network-error',
 	server: 'provider-network-error',
 	request: 'provider-unavailable',
+	busy: 'provider-unavailable',
 	unavailable: 'provider-unavailable',
 };
 
@@ -66,6 +74,8 @@ const RECOVERABLE: Record<VoiceProviderFailureKind, boolean> = {
 	timeout: true,
 	server: true,
 	request: false,
+	// Recoverable in the most literal sense: wait, then say it again.
+	busy: true,
 	unavailable: false,
 };
 

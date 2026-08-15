@@ -34,10 +34,13 @@ export {
 } from './dispatch/route-executor';
 export type {
 	CommandReceipt,
+	DispatchReplayCache,
+	FocusTabResult,
 	NewTabWithPromptResult,
 	VoiceRendererBridge,
 	VoiceRouteExecutorOptions,
 } from './dispatch/route-executor';
+export * from './router';
 export type {
 	VoiceDispatchResult,
 	VoiceEventListener,

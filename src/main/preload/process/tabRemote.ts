@@ -35,6 +35,38 @@ export function createTabRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to a request to land on one specific AI tab.
+		 *
+		 * Separate from `onRemoteSelectTab` because this one ANSWERS: the caller
+		 * (A Cappella's dispatch executor) has to know whether the tab was simply
+		 * focused, woken out of a snooze, or reopened from the closed-tab history,
+		 * and only the renderer can tell it apart.
+		 */
+		onRemoteFocusAiTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, responseChannel: string) =>
+				callback(sessionId, tabId, responseChannel);
+			ipcRenderer.on('remote:focusAiTab', handler);
+			return () => ipcRenderer.removeListener('remote:focusAiTab', handler);
+		},
+
+		/**
+		 * Send response for a remote AI tab focus
+		 */
+		sendRemoteFocusAiTabResponse: (
+			responseChannel: string,
+			result: {
+				ok: boolean;
+				tabId?: string;
+				action?: 'focused' | 'woke' | 'reopened';
+				reason?: string;
+			}
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote close tab from web interface
 		 */
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void): (() => void) => {
