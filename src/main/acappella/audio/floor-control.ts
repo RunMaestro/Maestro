@@ -414,7 +414,17 @@ export class FloorController {
 		if (this.open === open) return;
 		this.open = open;
 		if (!open) this.clearIdleTimer();
-		this.options.onFloorChange?.(open, reason);
+		try {
+			this.options.onFloorChange?.(open, reason);
+		} catch (error) {
+			// The capture gate is this seam and it sends IPC, so a window destroyed
+			// between the press and the notify throws right here. A subscriber's
+			// failure is not the state machine's failure: letting it escape would
+			// abandon the rest of the action - most importantly the `stopSession`
+			// that follows a close - and leave a session running with a floor that
+			// already reports itself shut.
+			this.report(error as Error, 'acappella.floorControl.onFloorChange');
+		}
 	}
 
 	/**
