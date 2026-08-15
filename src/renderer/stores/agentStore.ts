@@ -133,11 +133,6 @@ export interface AgentStoreActions {
 	 */
 	restartAgentAfterError: (sessionId: string) => Promise<void>;
 
-	/**
-	 * Clear error and switch to terminal mode for re-authentication.
-	 */
-	authenticateAfterError: (sessionId: string) => void;
-
 	// === Queue Processing ===
 
 	/**
@@ -354,17 +349,6 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		} catch {
 			// Process may not exist
 		}
-	},
-
-	authenticateAfterError: (sessionId) => {
-		const session = getSession(sessionId);
-		if (!session) return;
-
-		get().clearAgentError(sessionId);
-
-		// Switch to terminal mode for re-auth (clear activeFileTabId to prevent orphaned file preview)
-		useSessionStore.getState().setActiveSessionId(sessionId);
-		updateSession(sessionId, (s) => ({ ...s, inputMode: 'terminal', activeFileTabId: null }));
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {

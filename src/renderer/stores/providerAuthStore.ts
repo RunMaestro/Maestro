@@ -589,6 +589,21 @@ export const selectAuthSnapshotForSession =
 		return state.snapshots[identity.key] ?? null;
 	};
 
+/**
+ * The credential a session presents, or null when it has none Maestro can
+ * resolve (no home dir yet, or SSH is on with no remote chosen).
+ *
+ * The subscribing counterpart to {@link getIdentityForSession}. Reference-stable
+ * through the fingerprint cache in `resolveSessionIdentity`, so a subscriber
+ * re-renders only when the agent's env, host, or provider actually changes.
+ */
+export const selectIdentityForSession =
+	(sessionId: string) =>
+	(state: ProviderAuthState): CredentialIdentity | null => {
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		return resolveSessionIdentity(session, state);
+	};
+
 /** Cached result of {@link selectLoggedOutIdentities}, for reference stability. */
 let loggedOutMemo: { signature: string; value: BlockedIdentity[] } | null = null;
 
@@ -774,6 +789,18 @@ export function getProviderAuthActions(): Pick<
 export function useSessionAuthSnapshot(sessionId: string): ProviderAuthSnapshot | null {
 	useHydrateProviderAuth();
 	return useProviderAuthStore(selectAuthSnapshotForSession(sessionId));
+}
+
+/**
+ * The credential one agent presents, hydrating the store on first use.
+ *
+ * Distinct from {@link useSessionAuthSnapshot}: an agent that has never been
+ * probed has no snapshot but still has an identity, and the identity is what
+ * decides which remedy to offer for an `auth_expired` error.
+ */
+export function useSessionIdentity(sessionId: string): CredentialIdentity | null {
+	useHydrateProviderAuth();
+	return useProviderAuthStore(selectIdentityForSession(sessionId));
 }
 
 /** Every logged-out identity and the agents each one blocks. Hydrates on first use. */

@@ -19,7 +19,9 @@
  */
 
 import { useMemo, useCallback } from 'react';
-import { KeyRound, MessageSquarePlus, RefreshCw, RotateCcw, Wifi, Terminal } from 'lucide-react';
+import { KeyRound, LogIn, MessageSquarePlus, RefreshCw, RotateCcw, Wifi } from 'lucide-react';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import type { CredentialIdentity } from '../../../shared/providerAuth';
 import type { AgentError, ToolType } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 
@@ -38,8 +40,25 @@ export interface UseAgentErrorRecoveryOptions {
 	onClearError?: () => void;
 	/** Callback to restart the agent */
 	onRestartAgent?: () => void;
-	/** Callback to open authentication flow */
+	/**
+	 * Callback to open the in-app login flow (the Auth Recovery Modal). Only ever
+	 * called for an `oauth` credential, since that is the only kind a login
+	 * repairs.
+	 */
 	onAuthenticate?: () => void;
+	/**
+	 * Callback to open the agent's credential configuration, for every credential
+	 * kind a login cannot repair (a rejected key, a gateway token, cloud creds).
+	 */
+	onConfigureCredentials?: () => void;
+	/**
+	 * The credential the failing agent presents, when Maestro could resolve one.
+	 * Decides WHICH auth remedy is offered and names it after the account rather
+	 * than after the agent.
+	 */
+	identity?: CredentialIdentity | null;
+	/** Account name from the last probe, when it surfaced one. */
+	accountLabel?: string;
 }
 
 export interface UseAgentErrorRecoveryResult {
@@ -52,31 +71,86 @@ export interface UseAgentErrorRecoveryResult {
 }
 
 /**
+ * One line explaining why a login button is absent, naming the env var actually
+ * in play so the user knows what to go change.
+ *
+ * The long-form counterpart is `describeCredentialRemedy()` in
+ * `components/AuthRecoveryModal.tsx`, which has a paragraph to work with. This
+ * one has a button subtitle, so it says the same thing in a sentence rather
+ * than sharing a string that fits neither surface.
+ */
+export function describeCredentialFix(
+	identity: CredentialIdentity | null | undefined,
+	providerName: string
+): string {
+	if (!identity) return `Check the credentials ${providerName} presents`;
+	const envVar = identity.envVarName;
+	switch (identity.kind) {
+		case 'api-key':
+			return `${envVar ?? 'The API key'} was rejected - signing in cannot fix it`;
+		case 'gateway':
+			return `${envVar ?? 'A base-URL override'} points at ${identity.label}, so the credential is theirs`;
+		case 'cloud-provider':
+			return `${identity.label} credentials come from the cloud SDK chain, not from a login`;
+		default:
+			return `${providerName} has no login flow Maestro can drive`;
+	}
+}
+
+/**
+ * The primary action for an `auth_expired` error.
+ *
+ * Which one it is comes from the CREDENTIAL, never from the agent id: fifteen
+ * agents can share one Anthropic login, and the same agent id can be running on
+ * an API key, a gateway token, or Bedrock. Only an `oauth` credential is
+ * repaired by signing in, so only `oauth` gets a login button - offering one for
+ * a revoked key sends the user to a command that cannot possibly help.
+ */
+function buildAuthAction(options: UseAgentErrorRecoveryOptions): RecoveryAction | null {
+	const { identity, accountLabel, onAuthenticate, onConfigureCredentials } = options;
+	// The identity names the provider when there is one; the failing agent's own
+	// id is the fallback for the window before the identity resolves.
+	const providerName = getAgentDisplayName(identity?.provider ?? options.agentId);
+
+	if (identity?.kind === 'oauth') {
+		if (!onAuthenticate) return null;
+		const account = accountLabel || identity.label;
+		return {
+			id: 'authenticate',
+			label: account ? `Sign in to ${providerName} (${account})` : `Sign in to ${providerName}`,
+			description: 'Sign in here - every agent on this account is unblocked at once',
+			primary: true,
+			icon: <LogIn className="w-4 h-4" />,
+			onClick: onAuthenticate,
+		};
+	}
+
+	if (!onConfigureCredentials) return null;
+	return {
+		id: 'configure-credentials',
+		label: 'Fix Credentials',
+		description: describeCredentialFix(identity, providerName),
+		primary: true,
+		icon: <KeyRound className="w-4 h-4" />,
+		onClick: onConfigureCredentials,
+	};
+}
+
+/**
  * Get recovery actions for a specific error type and agent
  */
 function getRecoveryActionsForError(
 	error: AgentError,
-	agentId: ToolType,
 	options: UseAgentErrorRecoveryOptions
 ): RecoveryAction[] {
 	const actions: RecoveryAction[] = [];
 
 	switch (error.type) {
-		case 'auth_expired':
-			// Authentication error - offer to re-authenticate or start new session
-			if (options.onAuthenticate) {
-				const isClaude = agentId === 'claude-code';
-				actions.push({
-					id: 'authenticate',
-					label: isClaude ? 'Use Terminal' : 'Re-authenticate',
-					description: isClaude
-						? 'Run "claude login" in terminal'
-						: 'Log in again to restore access',
-					primary: true,
-					icon: isClaude ? <Terminal className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />,
-					onClick: options.onAuthenticate,
-				});
-			}
+		case 'auth_expired': {
+			// Authentication error - repair the credential in app, or explain why a
+			// login cannot repair this one. Never "go type a command in a terminal".
+			const authAction = buildAuthAction(options);
+			if (authAction) actions.push(authAction);
 			if (options.onNewSession) {
 				actions.push({
 					id: 'new-session',
@@ -87,6 +161,7 @@ function getRecoveryActionsForError(
 				});
 			}
 			break;
+		}
 
 		case 'token_exhaustion':
 			// Context exhausted - offer new session or retry with truncation
@@ -190,16 +265,20 @@ function getRecoveryActionsForError(
 export function useAgentErrorRecovery(
 	options: UseAgentErrorRecoveryOptions
 ): UseAgentErrorRecoveryResult {
-	const { error, agentId, onClearError } = options;
+	const { error, onClearError } = options;
 
 	// Generate recovery actions for the current error
 	const recoveryActions = useMemo(() => {
 		if (!error) return [];
-		return getRecoveryActionsForError(error, agentId, options);
+		return getRecoveryActionsForError(error, options);
 	}, [
 		error,
-		agentId,
+		// The credential decides which auth remedy is offered and what it is called,
+		// so both halves of it belong in the dependency list.
+		options.identity,
+		options.accountLabel,
 		options.onAuthenticate,
+		options.onConfigureCredentials,
 		options.onNewSession,
 		options.onRestartAgent,
 		options.onRetry,

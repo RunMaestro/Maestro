@@ -799,27 +799,37 @@ describe('useModalHandlers', () => {
 			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 
-		it('handleAuthenticateAfterError calls agent store, clears modal, and focuses input', () => {
-			const mockAuth = vi.fn();
-			vi.spyOn(useAgentStore, 'getState').mockReturnValue({
-				...useAgentStore.getState(),
-				authenticateAfterError: mockAuth,
-			});
+		it('handleOpenAuthRecovery opens the recovery modal over the error modal', () => {
 			getModalActions().setAgentErrorModalSessionId('session-1');
 
 			const inputRef = createInputRef();
 			const { result } = renderHook(() => useModalHandlers(inputRef, createTerminalOutputRef()));
 			act(() => {
-				result.current.handleAuthenticateAfterError('session-1');
+				result.current.handleOpenAuthRecovery('claude-code::oauth::.claude::local');
 			});
 
-			expect(mockAuth).toHaveBeenCalledWith('session-1');
-			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
+			expect(useModalStore.getState().isOpen('authRecovery')).toBe(true);
+			expect(useModalStore.getState().getData('authRecovery')?.identityKey).toBe(
+				'claude-code::oauth::.claude::local'
+			);
+			// The error modal stays underneath: the login has not succeeded yet, and
+			// closing it here would leave nothing behind a failed login.
+			expect(useModalStore.getState().isOpen('agentError')).toBe(true);
+		});
 
+		it('handleConfigureCredentials opens the agent editor and closes the error modal', () => {
+			const session = createMockSession({ id: 'session-1' });
+			getModalActions().setAgentErrorModalSessionId('session-1');
+
+			const inputRef = createInputRef();
+			const { result } = renderHook(() => useModalHandlers(inputRef, createTerminalOutputRef()));
 			act(() => {
-				vi.advanceTimersByTime(10);
+				result.current.handleConfigureCredentials(session);
 			});
-			expect(inputRef.current!.focus).toHaveBeenCalled();
+
+			expect(useModalStore.getState().isOpen('editAgent')).toBe(true);
+			expect(useModalStore.getState().getData('editAgent')?.session.id).toBe('session-1');
+			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
 		});
 	});
 
