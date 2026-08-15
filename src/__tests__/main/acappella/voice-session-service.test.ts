@@ -74,6 +74,7 @@ class FakeStt implements SttProvider {
 	readonly label = 'Fake STT';
 	readonly tier = 'mock' as const;
 	readonly sampleRate = 16_000;
+	readonly acceptsAudio = false;
 
 	callbacks: SttCallbacks | null = null;
 	started = false;
@@ -187,7 +188,9 @@ interface Harness {
 	executor: ReturnType<typeof vi.fn>;
 }
 
-function makeHarness(overrides: { executeRoute?: VoiceRouteExecutor } = {}): Harness {
+function makeHarness(
+	overrides: { executeRoute?: VoiceRouteExecutor; onSpeechChunk?: (chunk: TtsChunk) => void } = {}
+): Harness {
 	const stt = new FakeStt();
 	const tts = new FakeTts();
 	const brain = new FakeBrain();
@@ -206,6 +209,7 @@ function makeHarness(overrides: { executeRoute?: VoiceRouteExecutor } = {}): Har
 		providers,
 		getRoster: () => makeRoster(),
 		executeRoute: overrides.executeRoute ?? (executor as unknown as VoiceRouteExecutor),
+		onSpeechChunk: overrides.onSpeechChunk,
 	});
 
 	const events: VoiceEvent[] = [];
@@ -663,6 +667,95 @@ describe('VoiceSessionService audio telemetry', () => {
 		// A frame in flight when the session ended has no envelope to travel in.
 		h.service.publishAudioLevel(0.5, true);
 		expect(h.events).toHaveLength(0);
+	});
+});
+
+describe('VoiceSessionService audio seams', () => {
+	it('exposes the recogniser only while a session exists', async () => {
+		const h = makeHarness();
+
+		// Audio that arrives with no session behind it has nowhere to go, and the
+		// pipeline reads this null to decide to drop it rather than buffer it.
+		expect(h.service.getActiveStt()).toBeNull();
+
+		await start(h);
+		expect(h.service.getActiveStt()).toBe(h.stt);
+
+		await h.service.stopSession('user');
+		expect(h.service.getActiveStt()).toBeNull();
+	});
+
+	it('parks the session on a capture failure the user can fix, and says it is fixable', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.reportAudioCaptureFailure('permission-denied', 'Microphone permission denied');
+
+		expect(h.events.at(-1)).toMatchObject({
+			type: 'session-error',
+			code: 'audio-capture-failed',
+			recoverable: true,
+		});
+		// A listening indicator over a microphone that will never produce a
+		// transcript is the worst outcome this feature has.
+		expect(h.service.getState()).toBe('error');
+	});
+
+	it('reports an environment failure as unrecoverable, so no client offers a fix', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.reportAudioCaptureFailure('audio-init-failed', 'AudioContext unavailable');
+
+		expect(h.events.at(-1)).toMatchObject({
+			type: 'session-error',
+			code: 'audio-capture-failed',
+			recoverable: false,
+		});
+	});
+
+	it('hands every spoken chunk to the audio sink, after its sentence event', async () => {
+		const seen: Array<{ index: number; eventsSoFar: number }> = [];
+		const h = makeHarness({
+			onSpeechChunk: (chunk) => seen.push({ index: chunk.index, eventsSoFar: h.events.length }),
+		});
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		h.events.length = 0;
+
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: 'Raw terminal output.',
+		});
+
+		// One per sentence, and each after the `speak-sentence` that announced it:
+		// the text should be on screen by the time it is audible.
+		expect(seen.map((s) => s.index)).toEqual([0, 1]);
+		const sentenceEvents = h.events
+			.map((event, index) => ({ event, index }))
+			.filter(({ event }) => event.type === 'speak-sentence');
+		expect(seen[0].eventsSoFar).toBe(sentenceEvents[0].index + 1);
+	});
+
+	it('drops chunks from a run that was cancelled mid-sentence', async () => {
+		const chunks: TtsChunk[] = [];
+		const h = makeHarness({ onSpeechChunk: (chunk) => chunks.push(chunk) });
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		h.tts.onChunk = () => h.service.interrupt('voice');
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: 'Raw terminal output.',
+		});
+
+		// The interrupt lands after the first chunk was handed over; the second must
+		// never reach an output device the user has already talked over.
+		expect(chunks).toHaveLength(1);
 	});
 });
 
