@@ -12,7 +12,9 @@ import {
 	fingerprintSecret,
 	mergeEffectiveEnv,
 	resolveCredentialIdentity,
+	resolveLoginCommand,
 	type CredentialIdentityInput,
+	type CredentialKind,
 } from '../../shared/providerAuth';
 
 const HOME = '/Users/tester';
@@ -276,6 +278,85 @@ describe('resolveCredentialIdentity - other providers', () => {
 		expect(droid.label).toBe('Factory Droid');
 		expect(stranger.kind).toBe('unknown');
 		expect(stranger.label).toBe('some-future-agent');
+	});
+});
+
+describe('resolveLoginCommand', () => {
+	function oauthIdentity(toolType: string) {
+		return resolveCredentialIdentity({ toolType, env: {}, homeDir: HOME });
+	}
+
+	it('builds the claude login command and only adds the flags it was asked for', () => {
+		const plain = resolveLoginCommand(oauthIdentity('claude-code'));
+		const everything = resolveLoginCommand(oauthIdentity('claude-code'), {
+			preferConsole: true,
+			sso: true,
+			email: 'user@example.com',
+		});
+
+		expect(plain).toEqual({ command: 'claude', args: ['auth', 'login'] });
+		expect(everything?.args).toEqual([
+			'auth',
+			'login',
+			'--console',
+			'--sso',
+			'--email',
+			'user@example.com',
+		]);
+	});
+
+	it('ignores a blank email rather than passing an empty --email value', () => {
+		expect(resolveLoginCommand(oauthIdentity('claude-code'), { email: '   ' })?.args).toEqual([
+			'auth',
+			'login',
+		]);
+		expect(resolveLoginCommand(oauthIdentity('claude-code'), { email: ' a@b.co ' })?.args).toEqual([
+			'auth',
+			'login',
+			'--email',
+			'a@b.co',
+		]);
+	});
+
+	it('covers the other logged-in providers, with a note where the flow surprises the user', () => {
+		const codex = resolveLoginCommand(oauthIdentity('codex'));
+		const copilot = resolveLoginCommand(oauthIdentity('copilot-cli'));
+		const opencode = resolveLoginCommand(oauthIdentity('opencode'));
+
+		expect(codex).toEqual({ command: 'codex', args: ['login'] });
+		expect(copilot?.args).toEqual(['login']);
+		expect(copilot?.note).toMatch(/device[- ]code/i);
+		expect(opencode?.args).toEqual(['auth', 'login']);
+		expect(opencode?.note).toMatch(/provider/i);
+	});
+
+	it('ignores the claude-only options for the other providers', () => {
+		const codex = resolveLoginCommand(oauthIdentity('codex'), {
+			preferConsole: true,
+			sso: true,
+			email: 'user@example.com',
+		});
+
+		expect(codex?.args).toEqual(['login']);
+	});
+
+	it('returns null for providers with no verified login surface', () => {
+		expect(resolveLoginCommand(oauthIdentity('factory-droid'))).toBeNull();
+		expect(resolveLoginCommand(oauthIdentity('some-future-agent'))).toBeNull();
+		// A provider that DOES have a login command still gets null once its
+		// identity says the credential is not an interactive login.
+		expect(resolveLoginCommand({ ...oauthIdentity('claude-code'), kind: 'api-key' })).toBeNull();
+	});
+
+	it('returns null for every non-oauth kind', () => {
+		const kinds: CredentialKind[] = ['api-key', 'gateway', 'cloud-provider', 'unknown'];
+		const base = oauthIdentity('claude-code');
+
+		for (const kind of kinds) {
+			expect(resolveLoginCommand({ ...base, kind })).toBeNull();
+		}
+		// Guards the loop above: the one kind left out must NOT return null.
+		expect(resolveLoginCommand(base)).not.toBeNull();
 	});
 });
 

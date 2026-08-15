@@ -602,6 +602,89 @@ function resolveOpenCode(
 	return oauthIdentity('opencode', host, configDir);
 }
 
+// ============================================================================
+// Login commands
+// ============================================================================
+
+/** The command a login flow runs for one identity. See {@link resolveLoginCommand}. */
+export interface LoginCommand {
+	/**
+	 * The provider binary, by NAME. Callers that already resolved an absolute path
+	 * (`createBinaryPathResolver()` in `main/agents/auth/auth-startup.ts`) should
+	 * substitute it and keep {@link args} verbatim.
+	 */
+	command: string;
+	/** Argument vector, already carrying any flags the options asked for. */
+	args: string[];
+	/**
+	 * What the user should expect from this flow when it is not a plain browser
+	 * redirect. Rendered next to the terminal, so it must stay one short sentence.
+	 */
+	note?: string;
+}
+
+/** Options for {@link resolveLoginCommand}. */
+export interface LoginCommandOptions {
+	/** claude-code: bill against Anthropic Console instead of a Claude subscription. */
+	preferConsole?: boolean;
+	/** claude-code: force the SSO flow. */
+	sso?: boolean;
+	/**
+	 * Email to pre-populate on the login page, from the last successful snapshot.
+	 * For a user with several accounts this is the difference between landing on
+	 * the right one and re-authenticating the account that already worked.
+	 */
+	email?: string;
+}
+
+/**
+ * The command that repairs one credential identity, or `null` when no command
+ * can.
+ *
+ * `null` for every non-`oauth` kind, by the same rule the probe follows: an API
+ * key, a gateway token, and a Bedrock role are not fixed by logging in, and
+ * offering that button is worse than offering nothing. `null` also for
+ * factory-droid and anything unrecognized, which have no verified login surface.
+ *
+ * The binary names repeat the `binaryName` fields in
+ * `main/agents/definitions.ts` rather than importing them, because this module
+ * is renderer-safe (see the purity note at the top) and that one is not.
+ * Subcommands and flags verified against the installed CLIs on 2026-08-15.
+ */
+export function resolveLoginCommand(
+	identity: CredentialIdentity,
+	opts: LoginCommandOptions = {}
+): LoginCommand | null {
+	if (identity.kind !== 'oauth') return null;
+
+	switch (identity.provider) {
+		case 'claude-code': {
+			const args = ['auth', 'login'];
+			if (opts.preferConsole) args.push('--console');
+			if (opts.sso) args.push('--sso');
+			const email = (opts.email ?? '').trim();
+			if (email !== '') args.push('--email', email);
+			return { command: 'claude', args };
+		}
+		case 'codex':
+			return { command: 'codex', args: ['login'] };
+		case 'copilot-cli':
+			return {
+				command: 'copilot',
+				args: ['login'],
+				note: 'This is a device-code flow: the CLI prints a code to enter in the browser, so nothing opens on its own.',
+			};
+		case 'opencode':
+			return {
+				command: 'opencode',
+				args: ['auth', 'login'],
+				note: 'OpenCode asks which provider to log in to first, so arrow to it and press Enter before the browser opens.',
+			};
+		default:
+			return null;
+	}
+}
+
 /**
  * Map a session onto the credential it will present.
  *
