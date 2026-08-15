@@ -54,8 +54,15 @@ const DEFAULT_UTTERANCE_HISTORY = 8;
 /** A single event delivered to one subscriber. Subscribers never mutate it. */
 export type VoiceEventListener = (event: VoiceEvent) => void;
 
-/** Why a session ended. Maps onto `ListenStopEvent.reason` on the way out. */
-export type VoiceStopReason = 'user' | 'stop-word' | 'replaced' | 'shutdown' | 'error';
+/**
+ * Why a session ended. Maps onto `ListenStopEvent.reason` on the way out.
+ *
+ * `timeout` is the idle backstop in `audio/floor-control.ts`: a forgotten open
+ * microphone going cold on its own. It is deliberately not the same reason as
+ * `user`, because "you stopped me" and "you walked away" are different facts and
+ * only one of them is worth telling the user about.
+ */
+export type VoiceStopReason = 'user' | 'stop-word' | 'timeout' | 'replaced' | 'shutdown' | 'error';
 
 /** What the dispatch executor actually did, echoed as a `dispatch` event. */
 export interface VoiceDispatchResult {
