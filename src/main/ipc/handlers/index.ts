@@ -66,6 +66,10 @@ import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerACappellaHandlers, ACappellaHandlerDependencies } from './acappella';
+import {
+	registerACappellaModelsHandlers,
+	ACappellaModelsHandlerDependencies,
+} from './acappella-models';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerCoworkingHandlers } from './coworking';
@@ -147,6 +151,8 @@ export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
 export { registerACappellaHandlers };
 export type { ACappellaHandlerDependencies };
+export { registerACappellaModelsHandlers };
+export type { ACappellaModelsHandlerDependencies };
 export { registerPluginsHandlers };
 export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };

@@ -14,14 +14,95 @@
 
 import { ipcRenderer } from 'electron';
 import type { RosterAgent, VoiceEvent, VoiceScope } from '../../shared/acappella/protocol';
+import type { VoiceReadiness } from '../../shared/acappella/readiness';
 import type { VoiceSessionSnapshot } from '../acappella';
 import type { VoiceStartSessionResult } from '../ipc/handlers/acappella';
+import type { VoiceModelListing } from '../ipc/handlers/acappella-models';
+import type { DownloadProgress, DownloadResult } from '../acappella/models/model-downloader';
+import type { ModelFootprint, VerifyResult } from '../acappella/models/model-store';
+
+/**
+ * `window.maestro.voice.models.*` - the model manager.
+ *
+ * Nothing in here touches the network except {@link download} and
+ * {@link resume}. `list()` is a disk read against a frozen local catalog, which
+ * is what lets Voice Setup show a full bill of materials (name, size, license,
+ * install path) before the user has agreed to fetch a single byte.
+ *
+ * `remove`, `removeAll`, and `footprint` deliberately keep working when the
+ * Encore Feature is off, because that is exactly when someone wants their disk
+ * back.
+ */
+function createVoiceModelsApi() {
+	return {
+		/** Every catalog model joined to its on-disk status and install paths. */
+		list: (): Promise<VoiceModelListing[]> => ipcRenderer.invoke('models:list'),
+
+		/**
+		 * Start or resume a download. The ONLY call in this namespace that opens a
+		 * connection. Resolves when the model is installed, paused, cancelled, or
+		 * has failed; watch {@link onProgress} for the intervening detail.
+		 */
+		download: (modelId: string): Promise<DownloadResult> =>
+			ipcRenderer.invoke('models:download', modelId),
+
+		/** Abort the transfer, keep the partial file. */
+		pause: (modelId: string): Promise<boolean> => ipcRenderer.invoke('models:pause', modelId),
+
+		/** Continue from the partial file rather than starting over. */
+		resume: (modelId: string): Promise<DownloadResult> =>
+			ipcRenderer.invoke('models:resume', modelId),
+
+		/** Abort and delete everything the download wrote. */
+		cancel: (modelId: string): Promise<boolean> => ipcRenderer.invoke('models:cancel', modelId),
+
+		/**
+		 * Re-hash an installed model. A mismatch is REPORTED, never repaired: the
+		 * result carries both hashes so the UI can offer Re-verify or Re-download
+		 * rather than silently spending a gigabyte.
+		 */
+		verify: (modelId: string): Promise<VerifyResult> =>
+			ipcRenderer.invoke('models:verify', modelId),
+
+		/** Delete one model. Resolves to the bytes reclaimed. */
+		remove: (modelId: string): Promise<number> => ipcRenderer.invoke('models:remove', modelId),
+
+		/** Delete every A Cappella model. Resolves to the bytes reclaimed. */
+		removeAll: (): Promise<number> => ipcRenderer.invoke('models:remove-all'),
+
+		/** Disk used by A Cappella models, including directories no longer in the catalog. */
+		footprint: (): Promise<ModelFootprint> => ipcRenderer.invoke('models:footprint'),
+
+		/**
+		 * The capability gate's verdict. One source of truth for the HUD, the
+		 * hotkeys, and Settings, so a disabled microphone button and the Voice Setup
+		 * panel can never disagree about why.
+		 */
+		readiness: (): Promise<VoiceReadiness> => ipcRenderer.invoke('models:readiness'),
+
+		/**
+		 * Download progress, throttled at the source. Broadcast, so every window
+		 * sees the same transfer.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onProgress: (handler: (progress: DownloadProgress) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, progress: DownloadProgress) =>
+				handler(progress);
+			ipcRenderer.on('models:progress', wrappedHandler);
+			return () => ipcRenderer.removeListener('models:progress', wrappedHandler);
+		},
+	};
+}
 
 /**
  * Creates the A Cappella voice API object for contextBridge exposure.
  */
 export function createVoiceApi() {
 	return {
+		/** The model manager: catalog, downloads, verification, and disk. */
+		models: createVoiceModelsApi(),
+
 		/**
 		 * Open a voice session. Omit the scope for conductor scope. Any live
 		 * session is replaced rather than stacked.
