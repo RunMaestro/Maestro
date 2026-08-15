@@ -38,6 +38,7 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import {
 	mergeEffectiveEnv,
 	resolveCredentialIdentity,
@@ -49,6 +50,7 @@ import {
 import type { Session } from '../types';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import { logger } from '../utils/logger';
+import { notifyToast, useNotificationStore } from './notificationStore';
 import { selectSessionById, useSessionStore } from './sessionStore';
 
 const LOG_CONTEXT = '[ProviderAuth]';
@@ -102,6 +104,15 @@ interface ProviderAuthState {
 	homeDir: string;
 	/** True once the first `getAll()` has resolved (success or empty). */
 	loaded: boolean;
+	/**
+	 * Identity keys already announced by a toast in THIS app run.
+	 *
+	 * Lives in the store rather than a component so an unmounted Left Bar, a
+	 * remount, or a second consumer cannot re-announce a login the user has
+	 * already been told about. An identity that recovers is dropped from the map,
+	 * so a genuinely new logout later in the same run still announces.
+	 */
+	announcedIdentityKeys: Record<string, true>;
 
 	/** Replace the whole map. Used by hydration and by tests. */
 	setSnapshots: (next: Record<string, ProviderAuthSnapshot>) => void;
@@ -130,6 +141,7 @@ const initialState = {
 	agentEnvVars: {} as Record<string, Record<string, string>>,
 	homeDir: '',
 	loaded: false,
+	announcedIdentityKeys: {} as Record<string, true>,
 };
 
 // ============================================================================
@@ -151,6 +163,7 @@ function bridge(): typeof window.maestro.providerAuth | null {
 
 let changeUnsubscribe: (() => void) | null = null;
 let sessionUnsubscribe: (() => void) | null = null;
+let snapshotUnsubscribe: (() => void) | null = null;
 let hydratePromise: Promise<void> | null = null;
 /** In-flight or completed agent-env fetches, one per provider. */
 const agentEnvFetches = new Map<string, Promise<void>>();
@@ -242,7 +255,23 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 			// that announces one.
 			if (!sessionUnsubscribe) {
 				sessionUnsubscribe = useSessionStore.subscribe((state, prev) => {
-					if (state.sessions !== prev.sessions) ensureAgentEnvForSessions(state.sessions);
+					if (state.sessions === prev.sessions) return;
+					ensureAgentEnvForSessions(state.sessions);
+					// Only on a change to WHICH agents exist. `sessions` is replaced on
+					// every log append, and an announcement pass walks every session, so
+					// following the reference itself would run it on every stdout chunk.
+					// A count change is what covers the boot race (snapshots hydrate
+					// before the agent list loads, so the first pass sees nothing to
+					// announce) and a new agent on an already-broken login.
+					if (state.sessions.length !== prev.sessions.length) scheduleAnnouncement();
+				});
+			}
+			// Announce on every later write too, not just this first read: the
+			// startup probe pass in main can finish after the window mounted, so the
+			// map here is often empty at hydration and fills in over the next second.
+			if (!snapshotUnsubscribe) {
+				snapshotUnsubscribe = useProviderAuthStore.subscribe((state, prev) => {
+					if (state.snapshots !== prev.snapshots) scheduleAnnouncement();
 				});
 			}
 
@@ -261,6 +290,7 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 				});
 				set({ loaded: true });
 			}
+			scheduleAnnouncement();
 		})();
 
 		return hydratePromise;
@@ -345,7 +375,10 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 		changeUnsubscribe = null;
 		sessionUnsubscribe?.();
 		sessionUnsubscribe = null;
+		snapshotUnsubscribe?.();
+		snapshotUnsubscribe = null;
 		hydratePromise = null;
+		announceChain = Promise.resolve();
 		agentEnvFetches.clear();
 		identityCache.clear();
 		loggedOutMemo = null;
@@ -563,6 +596,111 @@ export function selectLoggedOutIdentities() {
 		loggedOutMemo = { signature, value };
 		return value;
 	};
+}
+
+// ============================================================================
+// Startup announcement (one toast per newly-discovered logged-out identity)
+// ============================================================================
+
+/** Agents named in the toast body before it switches to "and N more". */
+const MAX_NAMED_AGENTS = 4;
+
+/**
+ * Whether a toast has a reader right now.
+ *
+ * Two existing gates, no new concept:
+ *   - `window.maestro` absent means there is no desktop bridge (a headless CLI
+ *     run, a test that stubbed nothing), so nothing is on screen to read it.
+ *   - `defaultDuration === -1` is the app's toast kill switch. `notifyToast`
+ *     honors it for the visible queue but still fires audio and the OS
+ *     notification, and an unattended 3am Cue run must not get either from a
+ *     login the user cannot come and fix.
+ */
+function canAnnounce(): boolean {
+	if (typeof window === 'undefined' || !window.maestro) return false;
+	return useNotificationStore.getState().config.defaultDuration !== -1;
+}
+
+/** "Alpha", "Alpha and Beta", "Alpha, Beta, Gamma, Delta and 8 more". */
+function describeBlockedAgents(sessionIds: string[]): string {
+	const sessions = useSessionStore.getState().sessions;
+	const names = sessionIds
+		.map((id) => sessions.find((s) => s.id === id)?.name)
+		.filter((name): name is string => Boolean(name));
+	if (names.length === 0) return 'Agents using this account are blocked until you sign in again.';
+	if (names.length === 1) return `${names[0]} is blocked until you sign in again.`;
+
+	const shown = names.slice(0, MAX_NAMED_AGENTS);
+	const rest = names.length - shown.length;
+	const list =
+		rest > 0
+			? `${shown.join(', ')} and ${rest} more`
+			: `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
+	return `${names.length} agents are blocked until you sign in again: ${list}.`;
+}
+
+/**
+ * Serializes announcement passes. Two writes landing back to back would
+ * otherwise both read the announced map before either wrote to it, and the user
+ * would get the same toast twice.
+ */
+let announceChain: Promise<void> = Promise.resolve();
+
+/** Queue an announcement pass. Fire-and-forget; failures are swallowed. */
+function scheduleAnnouncement(): void {
+	announceChain = announceChain.then(() => announceLoggedOutIdentities()).catch(() => {});
+}
+
+/**
+ * Fire one toast per logged-out identity the user has not been told about yet.
+ *
+ * Per IDENTITY, never per agent: fifteen agents on one dead Anthropic login are
+ * one problem and get one toast, whose body names the agents it costs. The toast
+ * is sticky and click-to-act - this phase surfaces the state and waits, it never
+ * opens a terminal or steals focus on its own.
+ *
+ * Idempotent. Safe to call on every snapshot write; only a key that is newly
+ * logged out produces anything.
+ */
+export async function announceLoggedOutIdentities(): Promise<void> {
+	if (!canAnnounce()) return;
+	await useProviderAuthStore.getState().hydrate();
+	// Identity keys computed without the agent-level env are the WRONG keys, so
+	// wait for the in-flight fetches rather than announcing under a key that
+	// matches nothing main stored.
+	await Promise.all(Array.from(agentEnvFetches.values())).catch(() => {});
+
+	const state = useProviderAuthStore.getState();
+	const blocked = selectLoggedOutIdentities()(state);
+	const announced = state.announcedIdentityKeys;
+
+	// Rebuild rather than add: an identity that came back is forgotten here, so a
+	// later logout of the same account is a new event and announces again.
+	const next: Record<string, true> = {};
+	for (const entry of blocked) next[entry.identity.key] = true;
+	const fresh = blocked.filter((entry) => !announced[entry.identity.key]);
+
+	const changed = fresh.length > 0 || Object.keys(next).length !== Object.keys(announced).length;
+	// Write the map BEFORE the toasts, so a pass queued by anything a toast
+	// touches cannot see these keys as still un-announced.
+	if (changed) useProviderAuthStore.setState({ announcedIdentityKeys: next });
+
+	for (const entry of fresh) {
+		const { identity } = entry;
+		notifyToast({
+			// Orange, not red: nothing crashed and nothing was lost. An account
+			// needs the user, which is more than a heads-up and less than a failure.
+			color: 'orange',
+			// A login the user never sees is a login they discover by burning a
+			// prompt, so this one waits for a click rather than timing out.
+			dismissible: true,
+			title: `${getAgentDisplayName(identity.provider)} (${identity.label}) is signed out`,
+			message: describeBlockedAgents(entry.sessionIds),
+			// Data-driven, not a callback: the recovery flow is opened by kind, so
+			// this survives the bridge and Phase 04 supplies the listener.
+			clickAction: { kind: 'provider-auth-recovery', identityKey: identity.key },
+		});
+	}
 }
 
 // ============================================================================
