@@ -593,6 +593,79 @@ describe('VoiceSessionService classified failures', () => {
 	});
 });
 
+describe('VoiceSessionService audio telemetry', () => {
+	it('publishes a meter update on the one ordered stream', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.publishAudioLevel(0.4, true);
+		const event = h.events.at(-1);
+
+		expect(event?.type).toBe('audio-level');
+		expect(event).toMatchObject({ level: 0.4, speech: true, sessionId: expect.any(String) });
+	});
+
+	it('clamps a level rather than putting an impossible number on the wire', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.publishAudioLevel(4, false);
+		h.service.publishAudioLevel(Number.NaN, false);
+
+		const levels = h.events
+			.filter((e) => e.type === 'audio-level')
+			.map((e) => (e as Extract<VoiceEvent, { type: 'audio-level' }>).level);
+		expect(levels).toEqual([1, 0]);
+	});
+
+	it('numbers audio events in the same seq space as the rest', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.publishAudioLevel(0.1, false);
+		h.service.publishMicState({
+			permission: 'granted',
+			capturing: true,
+			deviceId: 'default',
+			deviceLabel: 'Built-in Microphone',
+			issue: null,
+			deviceChanged: false,
+		});
+
+		const seqs = h.events.map((e) => e.seq);
+		expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+		expect(new Set(seqs).size).toBe(seqs.length);
+	});
+
+	it('publishes the microphone state, including the benign transitions', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.publishMicState({
+			permission: 'denied',
+			capturing: false,
+			deviceId: null,
+			deviceLabel: null,
+			issue: 'permission-denied',
+			deviceChanged: false,
+		});
+
+		expect(h.events.at(-1)).toMatchObject({
+			type: 'mic-state',
+			permission: 'denied',
+			issue: 'permission-denied',
+		});
+	});
+
+	it('drops telemetry that belongs to no session', () => {
+		const h = makeHarness();
+
+		// A frame in flight when the session ended has no envelope to travel in.
+		h.service.publishAudioLevel(0.5, true);
+		expect(h.events).toHaveLength(0);
+	});
+});
+
 describe('VoiceSessionService subscribers', () => {
 	it('keeps delivering when one subscriber throws', async () => {
 		const h = makeHarness();

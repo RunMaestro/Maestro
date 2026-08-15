@@ -75,6 +75,8 @@ until the echo lands.
 | `barge-in`           | both              | The user speaks or clicks over active speech                                       |
 | `stop-word`          | both              | The stop word or Stop button ends the session                                      |
 | `session-error`      | service -> client | A classified, known failure mode                                                   |
+| `audio-level`        | service -> client | A downsampled input level, ~20 a second, so a client can draw a meter              |
+| `mic-state`          | service -> client | The microphone's permission, device, or availability changes                       |
 | `tab-state`          | service -> client | The bound agent's tab set or active tab changes                                    |
 | `agent-roster`       | service -> client | Roster snapshot, on subscribe and on change                                        |
 
@@ -254,7 +256,7 @@ down.
 ```ts
 {
 	type: 'session-error';
-	code: 'provider-unavailable' | 'no-agent-matched' | 'dispatch-failed';
+	code: 'provider-unavailable' | 'no-agent-matched' | 'dispatch-failed' | 'audio-capture-failed';
 	message: string;
 	recoverable: boolean;
 	providerId?: string;
@@ -264,6 +266,43 @@ down.
 The union is closed on purpose. Only classified, known failure modes become events; anything else
 bubbles to Sentry per the repo error policy. A new code means a new, deliberately handled failure
 mode, not a catch-all.
+
+### `audio-level` (service -> client)
+
+```ts
+{
+	type: 'audio-level';
+	level: number;
+	speech: boolean;
+}
+```
+
+The input level, downsampled to roughly 20 a second by `main/acappella/audio/level-meter.ts`, so a
+client can draw a live meter without ever receiving PCM. `level` is a linear RMS from 0 to 1 and the
+client picks its own curve; `speech` says whether the detector held the floor open across the
+window, which is how a meter shows the difference between a loud room and a person talking.
+
+Silence is published once and then withheld until something moves. An open microphone in a quiet
+room is the normal state of a session, and 20 identical zeros a second is traffic nobody can use.
+
+### `mic-state` (service -> client)
+
+```ts
+{
+	type: 'mic-state';
+	permission: 'unknown' | 'granted' | 'denied';
+	capturing: boolean;
+	deviceId: string | null;
+	deviceLabel: string | null;
+	issue: 'permission-denied' | 'no-device' | 'device-lost' | 'unavailable' | null;
+	deviceChanged: boolean;
+}
+```
+
+Every transition is published, including the benign ones. The failure this exists to prevent is a
+client showing a listening indicator over a microphone that will never produce a transcript: a
+denied permission and a quiet room are indistinguishable from the rest of the stream. `deviceLabel`
+is null until permission is granted, because Chromium redacts device labels before that.
 
 ### `tab-state` (service -> client)
 

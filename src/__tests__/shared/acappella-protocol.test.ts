@@ -29,6 +29,13 @@ import {
 	isConductorTarget,
 	routeTargetSessionId,
 } from '../../shared/acappella/route-decision';
+import {
+	audioHostErrorToMicIssue,
+	audioHostErrorToSessionError,
+	isRecoverableAudioHostError,
+	type AudioHostErrorCode,
+} from '../../shared/acappella/audio-host';
+import { micSettingsLabel, micSettingsUrl } from '../../shared/acappella/mic-settings';
 
 const ALL_EVENT_TYPES: VoiceEventType[] = [
 	'wake',
@@ -45,6 +52,8 @@ const ALL_EVENT_TYPES: VoiceEventType[] = [
 	'barge-in',
 	'stop-word',
 	'session-error',
+	'audio-level',
+	'mic-state',
 	'tab-state',
 	'agent-roster',
 ];
@@ -149,6 +158,59 @@ describe('VOICE_EVENT_DIRECTIONS', () => {
 	it('should classify events through isClientVoiceEvent', () => {
 		expect(isClientVoiceEvent(makeEvent('barge-in'))).toBe(true);
 		expect(isClientVoiceEvent(makeEvent('speak-sentence'))).toBe(false);
+	});
+});
+
+describe('audio host error translation', () => {
+	const ALL_CODES: AudioHostErrorCode[] = [
+		'permission-denied',
+		'no-device',
+		'device-lost',
+		'unsupported',
+		'audio-init-failed',
+	];
+
+	it('gives every capture failure the same session error code', () => {
+		for (const code of ALL_CODES) {
+			const error = audioHostErrorToSessionError({ kind: 'mic-error', code, message: 'x' });
+			expect(error.code).toBe('audio-capture-failed');
+			expect(error.recoverable).toBe(isRecoverableAudioHostError(code));
+		}
+	});
+
+	it('keeps the three user-fixable failures apart and collapses the rest', () => {
+		expect(audioHostErrorToMicIssue('permission-denied')).toBe('permission-denied');
+		expect(audioHostErrorToMicIssue('no-device')).toBe('no-device');
+		expect(audioHostErrorToMicIssue('device-lost')).toBe('device-lost');
+		expect(audioHostErrorToMicIssue('unsupported')).toBe('unavailable');
+		expect(audioHostErrorToMicIssue('audio-init-failed')).toBe('unavailable');
+	});
+
+	it('agrees with the session error about which failures the user can act on', () => {
+		for (const code of ALL_CODES) {
+			expect(audioHostErrorToMicIssue(code) === 'unavailable').toBe(
+				!isRecoverableAudioHostError(code)
+			);
+		}
+	});
+});
+
+describe('micSettingsUrl', () => {
+	it('knows where the microphone permission lives on macOS and Windows', () => {
+		expect(micSettingsUrl('darwin')).toContain('Privacy_Microphone');
+		expect(micSettingsUrl('win32')).toBe('ms-settings:privacy-microphone');
+	});
+
+	it('returns null where there is no reliable deep link', () => {
+		// A button that opens the wrong window is worse than a sentence saying
+		// where to look, so Linux gets no URL rather than a guess.
+		expect(micSettingsUrl('linux')).toBeNull();
+		expect(micSettingsUrl('')).toBeNull();
+	});
+
+	it('names the place the user is being sent', () => {
+		expect(micSettingsLabel('win32')).toBe('Open Microphone Settings');
+		expect(micSettingsLabel('darwin')).toBe('Open Privacy Settings');
 	});
 });
 

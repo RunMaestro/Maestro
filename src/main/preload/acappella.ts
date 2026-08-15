@@ -75,6 +75,15 @@ export function createVoiceApi() {
 		getRoster: (): Promise<RosterAgent[]> => ipcRenderer.invoke('acappella:get-roster'),
 
 		/**
+		 * Open the OS microphone permission settings, the one recovery for a denied
+		 * microphone that the app itself cannot perform.
+		 *
+		 * @returns false on a platform with no such link (Linux), so a caller can
+		 *          offer words instead of a button that would do nothing.
+		 */
+		openMicSettings: (): Promise<boolean> => ipcRenderer.invoke('acappella:open-mic-settings'),
+
+		/**
 		 * Catch-up snapshot. Null when no session service exists yet (nothing is
 		 * constructed until the first `start`), which a client reads as idle.
 		 */

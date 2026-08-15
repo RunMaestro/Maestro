@@ -9,6 +9,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { VoiceEvent } from '../../../shared/acappella/protocol';
 import {
+	selectVoiceAudioLevel,
+	selectVoiceMicIssue,
 	selectVoiceScopeLabel,
 	useVoiceSessionStore,
 	VOICE_FEED_LIMIT,
@@ -210,6 +212,88 @@ describe('voiceSessionStore projection', () => {
 			})
 		);
 		expect(selectVoiceScopeLabel(useVoiceSessionStore.getState())).toBe('Backend');
+	});
+});
+
+describe('voiceSessionStore audio projection', () => {
+	function micState(
+		overrides: Partial<Omit<Extract<VoiceEvent, { type: 'mic-state' }>, 'type'>> = {}
+	): VoiceEvent {
+		return event('mic-state', {
+			permission: 'granted',
+			capturing: true,
+			deviceId: 'default',
+			deviceLabel: 'MacBook Pro Microphone',
+			issue: null,
+			deviceChanged: false,
+			...overrides,
+		} as never);
+	}
+
+	it('tracks the meter level and whether the window was speech', () => {
+		apply(wake(), listenStart(), event('audio-level', { level: 0.42, speech: true }));
+
+		const state = useVoiceSessionStore.getState();
+		expect(state.audioLevel).toBeCloseTo(0.42);
+		expect(state.speechDetected).toBe(true);
+		expect(selectVoiceAudioLevel(state)).toBeCloseTo(0.42);
+	});
+
+	it('does not let a level move the session state or reach the transcript', () => {
+		apply(wake(), listenStart(), event('audio-level', { level: 0.4, speech: true }));
+
+		const state = useVoiceSessionStore.getState();
+		expect(state.state).toBe('listening');
+		// 20 lines a second of "the meter moved" would bury the conversation.
+		expect(state.feed).toHaveLength(0);
+	});
+
+	it('drops the meter to rest when the floor closes', () => {
+		apply(
+			wake(),
+			listenStart(),
+			event('audio-level', { level: 0.4, speech: true }),
+			event('listen-stop', { reason: 'endpoint' })
+		);
+
+		expect(useVoiceSessionStore.getState().audioLevel).toBe(0);
+		expect(useVoiceSessionStore.getState().speechDetected).toBe(false);
+	});
+
+	it('drops the meter to rest when the microphone stops capturing', () => {
+		apply(wake(), listenStart(), event('audio-level', { level: 0.4, speech: true }));
+		apply(micState({ capturing: false }));
+
+		// A bar left standing over a closed device is the same lie as a listening
+		// indicator over a denied one.
+		expect(useVoiceSessionStore.getState().audioLevel).toBe(0);
+	});
+
+	it('projects the microphone state, issue and all', () => {
+		apply(wake(), micState({ permission: 'denied', capturing: false, issue: 'permission-denied' }));
+
+		const state = useVoiceSessionStore.getState();
+		expect(state.mic?.permission).toBe('denied');
+		expect(selectVoiceMicIssue(state)).toBe('permission-denied');
+	});
+
+	it('reports no issue before anything has been attempted', () => {
+		expect(selectVoiceMicIssue(useVoiceSessionStore.getState())).toBeNull();
+	});
+
+	it('keeps the microphone state across a session restart', () => {
+		apply(wake(), micState({ permission: 'denied', capturing: false, issue: 'permission-denied' }));
+
+		// A permission the user denied is still denied on the next attempt, and
+		// forgetting it would leave the new session unable to explain its silence.
+		apply(
+			event('wake', { source: 'hotkey', scope: { kind: 'conductor' } }, { sessionId: 'voice-2' })
+		);
+
+		const state = useVoiceSessionStore.getState();
+		expect(state.sessionId).toBe('voice-2');
+		expect(state.mic?.issue).toBe('permission-denied');
+		expect(state.audioLevel).toBe(0);
 	});
 });
 
