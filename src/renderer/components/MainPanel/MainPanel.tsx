@@ -57,7 +57,7 @@ import { PianolaDashboardTab } from '../PianolaDashboard/PianolaTabControls';
 import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
 import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
-import type { PaneTabActions } from './TiledLayout';
+import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
 
@@ -894,6 +894,38 @@ export const MainPanel = React.memo(
 			]
 		);
 
+		// The UNBOUND (tab-id-keyed) file handlers, bundled for tiled file panes. The
+		// single view binds these to the active file tab via useFilePreviewHandlers; a
+		// pane runs the same hook against its own tab id, so it needs them unbound.
+		const paneFileActions = useMemo<PaneFileActions>(
+			() => ({
+				onFileTabClose,
+				onFileTabEditModeChange,
+				onFileTabEditContentChange,
+				onFileTabScrollPositionChange: props.onFileTabScrollPositionChange,
+				onFileTabSearchQueryChange: props.onFileTabSearchQueryChange,
+				onReloadFileTab: props.onReloadFileTab,
+				onFileTabNavigateToIndex: props.onNavigateToIndex,
+				fileTree: props.fileTree,
+				onFileClick: props.onFileClick,
+				onOpenFuzzySearch: props.onOpenFuzzySearch,
+				onShortcutUsed: props.onShortcutUsed,
+			}),
+			[
+				onFileTabClose,
+				onFileTabEditModeChange,
+				onFileTabEditContentChange,
+				props.onFileTabScrollPositionChange,
+				props.onFileTabSearchQueryChange,
+				props.onReloadFileTab,
+				props.onNavigateToIndex,
+				props.fileTree,
+				props.onFileClick,
+				props.onOpenFuzzySearch,
+				props.onShortcutUsed,
+			]
+		);
+
 		// Group ids that survive the unread filter (any collapsed member is unread), so
 		// the TabBar can gate group chips the same way it gates AI tabs. Only computed
 		// while the filter is active (undefined otherwise -> all groups shown).
@@ -1417,6 +1449,7 @@ export const MainPanel = React.memo(
 									onCancelMerge={onCancelMerge}
 									onExitWizard={onExitWizard}
 									paneTabActions={paneTabActions}
+									paneFileActions={paneFileActions}
 									onDeleteLog={props.onDeleteLog}
 									onScrollPositionChange={props.onScrollPositionChange}
 									onAtBottomChange={props.onAtBottomChange}

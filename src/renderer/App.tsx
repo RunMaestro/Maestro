@@ -1877,7 +1877,12 @@ function MaestroConsoleInner() {
 			// Routing them via setStagedImages would race with processInput's stale
 			// closure of stagedImages (deps include it), causing images to drop on the
 			// floor in both the chat log entry and the agent spawn payload.
-			processInput(text, { forceParallel: true, images });
+			//
+			// Pin the send to the tab the item was queued FOR, not the live active tab.
+			// In the single view those are always the same (the inline queue is filtered
+			// to the active tab), but a tiled group shows several AI panes at once, so
+			// the item's own tabId is the only correct target.
+			processInput(text, { forceParallel: true, images, tabId: item.tabId });
 		},
 		[processInput]
 	);

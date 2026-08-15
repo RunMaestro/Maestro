@@ -473,147 +473,84 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			.updateSession(currentSession.id, { filePreviewHistory: [], filePreviewHistoryIndex: -1 });
 	}, []);
 
-	const handleFileTabNavigateBack = useCallback(async () => {
+	/**
+	 * Move one file tab to a position in its own visit history, loading that entry's
+	 * file. Back / forward / breadcrumb-click were three byte-identical copies of this
+	 * body differing only in how they picked the index, so they now all land here.
+	 *
+	 * `tabId` addresses the tab explicitly. It defaults to the active file tab (the
+	 * single view), but a TILED file pane must pass its own id: focusing a file pane
+	 * does not set `activeFileTabId`, so the default would navigate a different file.
+	 */
+	const handleFileTabNavigateToIndex = useCallback(async (index: number, tabId?: string) => {
 		const { setSessions } = useSessionStore.getState();
 		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession?.activeFileTabId) return;
+		const targetTabId = tabId ?? currentSession?.activeFileTabId;
+		if (!currentSession || !targetTabId) return;
 
-		const currentTab = currentSession.filePreviewTabs.find(
-			(tab) => tab.id === currentSession.activeFileTabId
-		);
+		const currentTab = currentSession.filePreviewTabs.find((tab) => tab.id === targetTabId);
 		if (!currentTab) return;
 
 		const history = currentTab.navigationHistory ?? [];
-		const currentIndex = currentTab.navigationIndex ?? history.length - 1;
+		if (index < 0 || index >= history.length) return;
+		const historyEntry = history[index];
 
-		if (currentIndex > 0) {
-			const newIndex = currentIndex - 1;
-			const historyEntry = history[newIndex];
+		try {
+			const content = await window.maestro.fs.readFile(historyEntry.path, currentTab.sshRemoteId);
+			if (content === null) return;
 
-			try {
-				const sshRemoteId = currentTab.sshRemoteId;
-				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (content === null) return;
-
-				setSessions((prev: Session[]) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: newIndex,
-										}
-									: tab
-							),
-						};
-					})
-				);
-			} catch (error) {
-				logger.error('Failed to navigate back:', undefined, error);
-			}
+			setSessions((prev: Session[]) =>
+				prev.map((s) => {
+					if (s.id !== currentSession.id) return s;
+					return {
+						...s,
+						filePreviewTabs: s.filePreviewTabs.map((tab) =>
+							tab.id === currentTab.id
+								? {
+										...tab,
+										path: historyEntry.path,
+										name: historyEntry.name,
+										content,
+										scrollTop: historyEntry.scrollTop ?? 0,
+										navigationIndex: index,
+									}
+								: tab
+						),
+					};
+				})
+			);
+		} catch (error) {
+			logger.error('Failed to navigate file tab history:', undefined, error);
 		}
 	}, []);
 
-	const handleFileTabNavigateForward = useCallback(async () => {
-		const { setSessions } = useSessionStore.getState();
+	/** Current position in a file tab's history, or -1 when it has none. */
+	const currentNavIndex = (tabId?: string): number => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession?.activeFileTabId) return;
+		const targetTabId = tabId ?? currentSession?.activeFileTabId;
+		const tab = currentSession?.filePreviewTabs.find((t) => t.id === targetTabId);
+		if (!tab) return -1;
+		const history = tab.navigationHistory ?? [];
+		return tab.navigationIndex ?? history.length - 1;
+	};
 
-		const currentTab = currentSession.filePreviewTabs.find(
-			(tab) => tab.id === currentSession.activeFileTabId
-		);
-		if (!currentTab) return;
+	const handleFileTabNavigateBack = useCallback(
+		async (tabId?: string) => {
+			const index = currentNavIndex(tabId);
+			if (index > 0) await handleFileTabNavigateToIndex(index - 1, tabId);
+		},
+		[handleFileTabNavigateToIndex]
+	);
 
-		const history = currentTab.navigationHistory ?? [];
-		const currentIndex = currentTab.navigationIndex ?? history.length - 1;
-
-		if (currentIndex < history.length - 1) {
-			const newIndex = currentIndex + 1;
-			const historyEntry = history[newIndex];
-
-			try {
-				const sshRemoteId = currentTab.sshRemoteId;
-				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (content === null) return;
-
-				setSessions((prev: Session[]) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: newIndex,
-										}
-									: tab
-							),
-						};
-					})
-				);
-			} catch (error) {
-				logger.error('Failed to navigate forward:', undefined, error);
-			}
-		}
-	}, []);
-
-	const handleFileTabNavigateToIndex = useCallback(async (index: number) => {
-		const { setSessions } = useSessionStore.getState();
-		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession?.activeFileTabId) return;
-
-		const currentTab = currentSession.filePreviewTabs.find(
-			(tab) => tab.id === currentSession.activeFileTabId
-		);
-		if (!currentTab) return;
-
-		const history = currentTab.navigationHistory ?? [];
-
-		if (index >= 0 && index < history.length) {
-			const historyEntry = history[index];
-
-			try {
-				const sshRemoteId = currentTab.sshRemoteId;
-				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (content === null) return;
-
-				setSessions((prev: Session[]) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: index,
-										}
-									: tab
-							),
-						};
-					})
-				);
-			} catch (error) {
-				logger.error('Failed to navigate to index:', undefined, error);
-			}
-		}
-	}, []);
+	const handleFileTabNavigateForward = useCallback(
+		async (tabId?: string) => {
+			// The upper bound is re-checked inside navigateToIndex, so a stale index
+			// past the end is a no-op rather than a crash.
+			const index = currentNavIndex(tabId);
+			if (index >= 0) await handleFileTabNavigateToIndex(index + 1, tabId);
+		},
+		[handleFileTabNavigateToIndex]
+	);
 
 	return {
 		handleOpenFileTab,

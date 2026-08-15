@@ -269,7 +269,9 @@ export interface MainPanelProps {
 	backHistory?: { name: string; path: string; scrollTop?: number }[];
 	forwardHistory?: { name: string; path: string; scrollTop?: number }[];
 	currentHistoryIndex?: number;
-	onNavigateToIndex?: (index: number) => void;
+	// `tabId` addresses a specific file tab; omitted it means the active one. Tiled
+	// file panes pass their own id (focusing a file pane does not set activeFileTabId).
+	onNavigateToIndex?: (index: number, tabId?: string) => void;
 	onClearFilePreviewHistory?: () => void;
 
 	// Agent error handling

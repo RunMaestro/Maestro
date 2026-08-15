@@ -12,7 +12,12 @@ import { InputArea } from '../InputArea';
 import type { FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
-import { TiledLayout, type PaneTabActions } from './TiledLayout';
+import {
+	TiledLayout,
+	type PaneChatActions,
+	type PaneFileActions,
+	type PaneTabActions,
+} from './TiledLayout';
 import { PaneDropZones } from './PaneDropZones';
 import { PaneDragOverlay } from './PaneDragOverlay';
 import {
@@ -223,6 +228,7 @@ export interface MainPanelContentProps {
 	// MainPanel where the same handlers already feed the TabBar). Forwarded to
 	// TiledLayout so a hidden tiled tab still exposes its full menu.
 	paneTabActions?: PaneTabActions;
+	paneFileActions?: PaneFileActions;
 
 	// Props forwarded to child components (from MainPanelProps)
 	onDeleteLog?: (logId: string) => number | null;
@@ -259,7 +265,7 @@ export interface MainPanelContentProps {
 	backHistory?: { name: string; path: string; scrollTop?: number }[];
 	forwardHistory?: { name: string; path: string; scrollTop?: number }[];
 	currentHistoryIndex?: number;
-	onNavigateToIndex?: (index: number) => void;
+	onNavigateToIndex?: (index: number, tabId?: string) => void;
 	onOpenFuzzySearch?: () => void;
 	onShortcutUsed?: (shortcutId: string) => void;
 	ghCliAvailable?: boolean;
@@ -402,6 +408,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onCancelMerge,
 		onExitWizard,
 		paneTabActions,
+		paneFileActions,
 		onDeleteLog,
 		onScrollPositionChange,
 		onAtBottomChange,
@@ -681,6 +688,78 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		activeSession.inputMode !== 'terminal' &&
 		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId));
 
+	// The same chat handlers the single-view TerminalOutput below gets, bundled for
+	// the tiled AI panes so a tiled AI tab is a FULL chat, not a read-only mirror:
+	// Force Send / remove / pause / edit / reorder on queued items, delete message,
+	// replay, fork, session recovery, error details, file links, and the lightbox.
+	// See PaneChatActions for why every one of these is safe to fire from any pane.
+	const paneChatActions = React.useMemo<PaneChatActions>(
+		() => ({
+			onDeleteLog,
+			onRemoveQueuedItem,
+			onTogglePauseQueuedItem,
+			onEditQueuedItem,
+			onReorderQueuedItem,
+			onForceSendQueuedItem,
+			forcedParallelEnabled,
+			getForceSendContext,
+			onInterrupt: handleInterrupt,
+			setLightboxImage,
+			setMarkdownEditMode: useSettingsStore.getState().setChatRawTextMode,
+			onReplayMessage,
+			onForkConversation,
+			onSessionRecover,
+			isRecoveringSession,
+			sessionRecoveryError,
+			fileTree,
+			cwd: activeSession.cwd?.startsWith(activeSession.fullPath)
+				? activeSession.cwd.slice(activeSession.fullPath.length + 1)
+				: '',
+			onFileClick,
+			onFileSaved: refreshFileTree ? () => refreshFileTree(activeSession.id) : undefined,
+			onShowErrorDetails: onShowAgentErrorModal,
+			userMessageAlignment,
+			ghCliAvailable,
+			onPublishMessageGist,
+			onOpenInTab: onOpenSavedFileInTab,
+			// Escape inside a pane returns the caret to the shared composer, and
+			// "Jump to Bottom" scrolls logsEndRef's parent - both need the app's real
+			// refs. Only the FOCUSED pane claims logsEndRef (see TiledAiPane).
+			inputRef,
+			logsEndRef,
+		}),
+		[
+			onDeleteLog,
+			onRemoveQueuedItem,
+			onTogglePauseQueuedItem,
+			onEditQueuedItem,
+			onReorderQueuedItem,
+			onForceSendQueuedItem,
+			forcedParallelEnabled,
+			getForceSendContext,
+			handleInterrupt,
+			setLightboxImage,
+			onReplayMessage,
+			onForkConversation,
+			onSessionRecover,
+			isRecoveringSession,
+			sessionRecoveryError,
+			fileTree,
+			activeSession.cwd,
+			activeSession.fullPath,
+			activeSession.id,
+			onFileClick,
+			refreshFileTree,
+			onShowAgentErrorModal,
+			userMessageAlignment,
+			ghCliAvailable,
+			onPublishMessageGist,
+			onOpenSavedFileInTab,
+			inputRef,
+			logsEndRef,
+		]
+	);
+
 	return (
 		/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */
 		/* Content wrapper: always-rendered relative container so terminal overlay covers
@@ -713,6 +792,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					zoomedPaneId={zoomedPaneId}
 					onPaneRectsChange={setPaneRects}
 					paneTabActions={paneTabActions}
+					paneChatActions={paneChatActions}
+					paneFileActions={paneFileActions}
 				/>
 			) : /* Browser tabs render through the persistent keep-alive overlay block below (not
 			    inline) so their <webview> never remounts when switching tabs. Skip rendering

@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 
@@ -24,7 +25,13 @@ function setup(overrides: Record<string, unknown> = {}) {
 		onTogglePauseQueuedItem: vi.fn(),
 		...overrides,
 	};
-	const utils = render(<QueuedItemsList {...(props as any)} />);
+	// The confirmation modals register with the layer stack, so the provider has to
+	// be in the tree for any test that opens one.
+	const utils = render(
+		<LayerStackProvider>
+			<QueuedItemsList {...(props as any)} />
+		</LayerStackProvider>
+	);
 	return { ...props, ...utils };
 }
 
@@ -46,6 +53,40 @@ describe('QueuedItemsList pause/hold', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();
 		expect(screen.queryByText('HELD')).toBeNull();
+	});
+});
+
+describe('QueuedItemsList force-send shortcut gate', () => {
+	// Shape the Force Send button/shortcut needs: this tab idle, another tab busy.
+	const forceSendProps = {
+		forcedParallelEnabled: true,
+		onForceSendQueuedItem: vi.fn(),
+		getForceSendContext: () => ({
+			targetTabBusy: false,
+			otherBusyTabs: [{ id: 'tab-2', displayName: 'Tab 2' }],
+		}),
+		activeTabId: 'tab-1',
+	};
+
+	function fireShortcut() {
+		act(() => {
+			window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
+		});
+	}
+
+	it('opens the confirmation when the list answers the shortcut (single-view default)', () => {
+		setup(forceSendProps);
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
+		fireShortcut();
+		expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+	});
+
+	it('ignores the shortcut when disabled, so only one tiled pane can respond', () => {
+		setup({ ...forceSendProps, shortcutEnabled: false });
+		fireShortcut();
+		// The per-item button is still there; the confirmation modal is not.
+		expect(screen.getByTitle(/Force send this message now/i)).toBeInTheDocument();
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
 	});
 });
 

@@ -508,4 +508,84 @@ describe('useFilePreviewTabHandlers', () => {
 			navigationIndex: 1,
 		});
 	});
+
+	// A tiled file pane is not the active file tab (focusing a pane does not set
+	// activeFileTabId), so back / forward / breadcrumb-jump all take an explicit tab
+	// id. Without it a pane would navigate whichever other file tab was active.
+	describe('navigation addressed by tab id', () => {
+		const withTwoFileTabs = () => {
+			const history = [
+				{ path: '/repo/a.ts', name: 'a' },
+				{ path: '/repo/b.ts', name: 'b' },
+				{ path: '/repo/c.ts', name: 'c' },
+			];
+			setupSession({
+				filePreviewTabs: [
+					createMockFileTab({ id: 'active-tab', navigationHistory: history, navigationIndex: 0 }),
+					createMockFileTab({ id: 'pane-tab', navigationHistory: history, navigationIndex: 1 }),
+				],
+				activeFileTabId: 'active-tab',
+			});
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValue('loaded');
+		};
+
+		it('navigates back on the addressed tab, leaving the active one alone', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateBack('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[1]).toMatchObject({
+				path: '/repo/a.ts',
+				navigationIndex: 0,
+			});
+			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
+		});
+
+		it('navigates forward on the addressed tab', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[1]).toMatchObject({
+				path: '/repo/c.ts',
+				navigationIndex: 2,
+			});
+		});
+
+		it('still defaults to the active file tab when no id is given', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				await result.current.handleFileTabNavigateForward();
+			});
+
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				navigationIndex: 1,
+			});
+			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(1);
+		});
+
+		it('does nothing at either end of the history', async () => {
+			withTwoFileTabs();
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			await act(async () => {
+				// active-tab sits at index 0 (no back), pane-tab walked to the end below.
+				await result.current.handleFileTabNavigateBack('active-tab');
+				await result.current.handleFileTabNavigateToIndex(2, 'pane-tab');
+				await result.current.handleFileTabNavigateForward('pane-tab');
+			});
+
+			expect(getSession().filePreviewTabs[0].navigationIndex).toBe(0);
+			expect(getSession().filePreviewTabs[1].navigationIndex).toBe(2);
+		});
+	});
 });

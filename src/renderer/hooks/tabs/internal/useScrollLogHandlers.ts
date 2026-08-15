@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
-import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
+import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
+import { useTabStore } from '../../../stores/tabStore';
 import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
@@ -104,13 +105,17 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		return nextUserCommandIndex;
 	}, []);
 
+	// Both scroll handlers resolve the ACTIVE AI tab and then defer to the
+	// tab-id-keyed store actions. A tiled AI pane can't use these - a wheel scroll
+	// never focuses a pane, so a background pane would write its offset onto the
+	// focused tab - so it calls the same store actions with its own tab id instead.
 	const handleScrollPositionChange = useCallback((scrollTop: number) => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		if (session.inputMode === 'ai') {
 			const currentActiveTab = getActiveTab(session);
 			if (!currentActiveTab) return;
-			updateAiTab(session.id, currentActiveTab.id, (tab) => ({ ...tab, scrollTop }));
+			useTabStore.getState().setAiTabScrollTop(currentActiveTab.id, scrollTop);
 		} else {
 			useSessionStore.getState().updateSession(session.id, { terminalScrollTop: scrollTop });
 		}
@@ -119,15 +124,10 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 	const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
-		if (session.inputMode === 'ai') {
-			const currentActiveTab = getActiveTab(session);
-			if (!currentActiveTab) return;
-			updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-				...tab,
-				isAtBottom,
-				hasUnread: isAtBottom ? false : tab.hasUnread,
-			}));
-		}
+		if (session.inputMode !== 'ai') return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+		useTabStore.getState().setAiTabAtBottom(currentActiveTab.id, isAtBottom);
 	}, []);
 
 	return {

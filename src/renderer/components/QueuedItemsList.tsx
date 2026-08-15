@@ -60,6 +60,11 @@ interface QueuedItemsListProps {
 		targetTabBusy: boolean;
 		otherBusyTabs: BusyTabSummary[];
 	} | null;
+	// Whether this list answers the global Force Send keyboard shortcut. Defaults
+	// to true (the single-view chat is the only list on screen). A tiled group
+	// renders one list per AI pane, so only the focused pane's list opts in -
+	// otherwise every pane holding a queue would pop its own confirmation.
+	shortcutEnabled?: boolean;
 	// Opens the shared full-screen image carousel for a queued item's attachments.
 	// Reuses the same lightbox as history/staged images; pass 'history' source so
 	// the images are read-only (navigable, no delete).
@@ -88,6 +93,7 @@ export const QueuedItemsList = memo(
 		forcedParallelEnabled = false,
 		onForceSendQueuedItem,
 		getForceSendContext,
+		shortcutEnabled = true,
 		onOpenLightbox,
 	}: QueuedItemsListProps) => {
 		// Filter to only show items for the active tab if activeTabId is provided
@@ -171,6 +177,7 @@ export const QueuedItemsList = memo(
 		// keyboard equivalent of clicking the button.
 		useEventListener('maestro:triggerForceSendQueued', () => {
 			if (
+				!shortcutEnabled ||
 				!forcedParallelEnabled ||
 				!onForceSendQueuedItem ||
 				!getForceSendContext ||

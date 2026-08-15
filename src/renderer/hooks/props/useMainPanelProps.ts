@@ -231,7 +231,7 @@ export interface UseMainPanelPropsDeps {
 	handleMainPanelFileClick: (relativePath: string) => void;
 	handleNavigateBack: () => void;
 	handleNavigateForward: () => void;
-	handleNavigateToIndex: (index: number) => void;
+	handleNavigateToIndex: (index: number, tabId?: string) => void;
 	handleClearFilePreviewHistory: () => void;
 	handleClearAgentErrorForMainPanel: () => void;
 	handleShowAgentErrorModal: (error?: AgentError) => void;

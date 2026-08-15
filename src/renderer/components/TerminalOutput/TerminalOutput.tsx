@@ -73,6 +73,7 @@ export const TerminalOutput = memo(
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			forceSendShortcutEnabled = true,
 			onInterrupt: _onInterrupt,
 			onScrollPositionChange,
 			onAtBottomChange,
@@ -613,6 +614,7 @@ export const TerminalOutput = memo(
 								onForceSendQueuedItem={onForceSendQueuedItem}
 								forcedParallelEnabled={forcedParallelEnabled}
 								getForceSendContext={getForceSendContext}
+								shortcutEnabled={forceSendShortcutEnabled}
 								activeTabId={activeTabId || undefined}
 								onOpenLightbox={setLightboxImage}
 							/>

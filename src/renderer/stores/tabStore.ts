@@ -276,6 +276,21 @@ export interface TabStoreActions {
 	 */
 	setTabEffort: (tabId: string, effort: string | undefined) => void;
 
+	// === AI tab transcript scroll position ===
+
+	/**
+	 * Remember how far an AI tab's transcript is scrolled, so reopening it lands
+	 * where the user left off.
+	 */
+	setAiTabScrollTop: (tabId: string, scrollTop: number) => void;
+
+	/**
+	 * Record whether an AI tab's transcript is pinned to the bottom. Reaching the
+	 * bottom also clears the tab's unread flag - the user has now seen the tail,
+	 * which is the whole thing the badge was pointing at.
+	 */
+	setAiTabAtBottom: (tabId: string, isAtBottom: boolean) => void;
+
 	// === Tab reordering ===
 
 	/**
@@ -665,6 +680,16 @@ export const useTabStore = create<TabStore>()((set) => ({
 
 	setTabEffort: (tabId, effort) => {
 		updateAiTab(tabId, { customEffort: effort || undefined });
+	},
+
+	setAiTabScrollTop: (tabId, scrollTop) => {
+		updateAiTab(tabId, { scrollTop });
+	},
+
+	setAiTabAtBottom: (tabId, isAtBottom) => {
+		// Only clear unread on the way to the bottom; scrolling away must not
+		// re-mark a tab the user already read.
+		updateAiTab(tabId, isAtBottom ? { isAtBottom, hasUnread: false } : { isAtBottom });
 	},
 
 	// Tab reordering
