@@ -18,6 +18,7 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** t
 
 | Feature                              | Shortcut                       | Description                                                                                                                           |
 | ------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| [A Cappella](./voice-mode)           | `Cmd+Alt+V` / `Ctrl+Alt+V`     | Voice interface (Beta): speak a request, have it routed to an agent, and hear the reply read back                                     |
 | [Director's Notes](./director-notes) | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-powered synopses                                                                       |
 | [Usage Dashboard](./usage-dashboard) | `Opt+Cmd+U` / `Alt+Ctrl+U`     | Comprehensive analytics for tracking AI usage patterns                                                                                |
 | [Maestro Symphony](./symphony)       | `Cmd+Shift+Y` / `Ctrl+Shift+Y` | Contribute to open source by donating AI tokens                                                                                       |

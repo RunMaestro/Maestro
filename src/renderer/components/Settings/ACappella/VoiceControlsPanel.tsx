@@ -29,6 +29,7 @@ import {
 import {
 	VOICE_AGENT_HOTKEY_ID,
 	VOICE_CONDUCTOR_HOTKEY_ID,
+	defaultGlobalHotkeyKeys,
 	describeGlobalHotkeyStatus,
 	getGlobalHotkeyDefinition,
 	type GlobalHotkeyStatus,
@@ -328,8 +329,16 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 
 					{HOTKEY_IDS.map((id) => {
 						const definition = getGlobalHotkeyDefinition(id);
-						const keys = shortcuts[id]?.keys ?? [];
 						const status = statuses.find((entry) => entry.id === id);
+						// The stored map has no entry on a profile that predates these
+						// hotkeys, while main registers the shipped default regardless
+						// (`keysById[id] ?? defaultGlobalHotkeyKeys(id)`). Reading only the
+						// map made the row say "Click to set" for a combo that was live and
+						// working. The registry's own keys are the truth; the definition
+						// default is the last resort. An explicitly CLEARED binding is an
+						// entry with an empty array, which is not nullish, so it still
+						// reads "(none)".
+						const keys = shortcuts[id]?.keys ?? status?.keys ?? defaultGlobalHotkeyKeys(id);
 						const combo = keys.length ? formatShortcutKeys(keys) : '(none)';
 						return (
 							<div key={id} className="flex items-start justify-between gap-3">
