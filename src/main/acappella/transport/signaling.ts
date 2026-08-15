@@ -38,14 +38,31 @@ import {
 	MIN_SUPPORTED_DEVICE_PROTOCOL_VERSION,
 	negotiateProtocolVersion,
 } from '../../../shared/acappella/device-protocol';
+import {
+	ACAPPELLA_SIGNAL_MESSAGE,
+	type SignalingClientMessage,
+	type SignalingErrorCode,
+	type SignalingServerMessage,
+} from '../../../shared/acappella/signaling-protocol';
 import { logger } from '../../utils/logger';
 import type { PairingService } from '../pairing/pairing-service';
 import { buildIceServers, type IceTransportSettings } from './ice-config';
 
 const LOG_CONTEXT = 'ACappella';
 
-/** The WebSocket message type this service owns. One envelope, many payloads. */
-export const ACAPPELLA_SIGNAL_MESSAGE = 'acappella_signal';
+/**
+ * The wire shapes moved to `shared/acappella/signaling-protocol.ts` when a
+ * second client appeared that has to speak them. Re-exported here because this
+ * is the module every desktop-side caller already imports them from, and
+ * because the shapes and the parser that enforces them should still read as one
+ * thing.
+ */
+export {
+	ACAPPELLA_SIGNAL_MESSAGE,
+	type SignalingClientMessage,
+	type SignalingServerMessage,
+	type SignalingErrorCode,
+};
 
 /**
  * How many offers one device may send per {@link OFFER_RATE_WINDOW_MS}.
@@ -65,51 +82,6 @@ export const OFFER_RATE_WINDOW_MS = 60_000;
  * about a client with a stale credential retrying in a tight loop.
  */
 export const AUTH_ATTEMPT_LIMIT = 5;
-
-// ---------------------------------------------------------------------------
-// Wire messages
-// ---------------------------------------------------------------------------
-
-export type SignalingClientMessage =
-	| { op: 'pair-claim'; code: string; name: string; platform: string; appVersion?: string }
-	| { op: 'pair-poll'; requestId: string }
-	| { op: 'auth'; deviceId: string; token: string; protocolVersion: number }
-	| { op: 'offer'; sdp: SessionDescriptionPayload }
-	| { op: 'ice-candidate'; candidate: IceCandidatePayload }
-	| { op: 'bye' };
-
-export type SignalingServerMessage =
-	| { op: 'pair-pending'; requestId: string; expiresAt: number }
-	| { op: 'pair-approved'; deviceId: string; token: string }
-	| { op: 'pair-denied' }
-	| { op: 'pair-rejected'; reason: string; message: string }
-	| {
-			op: 'authenticated';
-			deviceId: string;
-			protocolVersion: number;
-			iceServers: ReturnType<typeof buildIceServers>;
-			iceTransportPolicy: 'all' | 'relay';
-			audio: RemoteAudioConfig;
-	  }
-	| { op: 'auth-failed'; reason: string; message: string }
-	| { op: 'answer'; sdp: SessionDescriptionPayload }
-	| { op: 'ice-candidate'; candidate: IceCandidatePayload }
-	| { op: 'closed'; reason: string }
-	| { op: 'error'; code: SignalingErrorCode; message: string };
-
-/**
- * Why a signaling message was refused.
- *
- * Classified, and deliberately coarse on the authentication side: `auth-failed`
- * covers unknown device, wrong token, and revoked device alike, because telling
- * a caller which one it was is an enumeration oracle.
- */
-export type SignalingErrorCode =
-	| 'not-authenticated'
-	| 'rate-limited'
-	| 'protocol-version'
-	| 'malformed'
-	| 'peer-failed';
 
 // ---------------------------------------------------------------------------
 // Seams

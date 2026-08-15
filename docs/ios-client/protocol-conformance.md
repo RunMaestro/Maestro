@@ -29,16 +29,25 @@ truth, in the order a message meets it:
 | Layer                      | File                                                              |
 | -------------------------- | ----------------------------------------------------------------- |
 | WebSocket envelope         | `src/main/web-server/handlers/messageHandlers/acappellaSignal.ts` |
-| Signaling messages         | `src/main/acappella/transport/signaling.ts`                       |
+| Signaling messages         | `src/shared/acappella/signaling-protocol.ts`                      |
+| Signaling behaviour        | `src/main/acappella/transport/signaling.ts`                       |
 | Data-channel messages      | `src/shared/acappella/device-protocol.ts`                         |
 | Session events             | `src/shared/acappella/protocol.ts`                                |
 | Peer and channel behaviour | `src/renderer/acappella-audio/peer-connection.ts`                 |
+| SDP tuning and link stats  | `src/shared/acappella/peer-tuning.ts`                             |
 | Floor rules                | `src/main/acappella/transport/remote-session.ts`                  |
 
 **If this document and those files disagree, the files win and this document is a bug.** The
 conformance suite at `src/__tests__/acappella/conformance/` exists to make that disagreement fail in
 CI rather than at App Store review, and every checklist item at the end of this file carries an ID
 the suite can name.
+
+**There is also a working client.** `src/web-desktop/acappella-client/` is a browser implementation
+of this entire document: it pairs, authenticates, offers, opens both data channels, holds the floor,
+and speaks every message defined below, in about 1,700 lines of framework-free TypeScript. Where this
+document says what a client must do, that client is the runnable version, and where a comment there
+cites a `C-nn` it is implementing the checklist item of that name. Read it alongside this file; the
+desktop is served it at `/$TOKEN/acappella`.
 
 ## The two layers
 
@@ -526,6 +535,8 @@ each item is written so that "passes" is observable from outside the client.
 
 ## What to read next
 
+- `src/web-desktop/acappella-client/README.md` for the browser reference client: this document, but
+  running, and the endpoint the desktop is regression-tested against.
 - [[connection-and-pairing]] for the discovery, pairing, Keychain, and reconnection behaviour these
   messages sit inside.
 - [[audio-session]] for how `RemoteAudioConfig` and the two capture gates map onto

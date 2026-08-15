@@ -1,0 +1,318 @@
+/*
+ * Deliberately plain. No framework, no theme system, no build-time CSS: this
+ * page is reference material, and a Swift developer reading it should not have
+ * to work out which of six abstractions painted a button.
+ */
+
+:root {
+	color-scheme: dark;
+	--bg: #101215;
+	--panel: #181b20;
+	--border: #2a2f37;
+	--text: #e6e8eb;
+	--muted: #8b939f;
+	--accent: #6ea8fe;
+	--warn: #f0b429;
+	--live: #4ade80;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font:
+		14px/1.5 ui-sans-serif,
+		system-ui,
+		-apple-system,
+		sans-serif;
+}
+
+.app {
+	max-width: 880px;
+	margin: 0 auto;
+	padding: 24px 16px 64px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+h1 {
+	font-size: 20px;
+	margin: 0 0 4px;
+}
+
+h2 {
+	font-size: 13px;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--muted);
+	margin: 0 0 8px;
+}
+
+.sub {
+	margin: 0;
+	color: var(--muted);
+}
+
+.panel {
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 14px;
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	flex: 1 1 160px;
+	min-width: 0;
+}
+
+.field > span {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.field.short {
+	flex: 0 0 110px;
+}
+
+.field.check {
+	flex: 0 0 auto;
+	flex-direction: row;
+	align-items: center;
+	gap: 6px;
+	align-self: end;
+	padding-bottom: 6px;
+}
+
+.field.wide {
+	margin-bottom: 10px;
+}
+
+input,
+textarea {
+	background: #0d0f12;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--text);
+	padding: 6px 8px;
+	font: inherit;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+}
+
+.row-fields {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.buttons {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+	flex-wrap: wrap;
+}
+
+button {
+	background: #22262d;
+	border: 1px solid var(--border);
+	color: var(--text);
+	border-radius: 6px;
+	padding: 6px 12px;
+	font: inherit;
+	cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+	border-color: var(--accent);
+}
+
+button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+button.primary {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.status-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.pill {
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	padding: 2px 10px;
+	font-size: 12px;
+}
+
+.pill[data-phase='connected'] {
+	border-color: var(--live);
+	color: var(--live);
+}
+
+.pill[data-phase='terminal'] {
+	border-color: var(--warn);
+	color: var(--warn);
+}
+
+.pill.mic[data-on='true'] {
+	border-color: var(--live);
+	color: var(--live);
+}
+
+.message {
+	margin: 8px 0 0;
+}
+
+.muted {
+	color: var(--muted);
+	margin: 2px 0 0;
+	font-size: 12px;
+}
+
+.warn {
+	color: var(--warn);
+	margin: 8px 0 0;
+	font-size: 12px;
+}
+
+.meter {
+	margin-top: 10px;
+	height: 6px;
+	border-radius: 3px;
+	background: #0d0f12;
+	overflow: hidden;
+}
+
+.meter-fill {
+	height: 100%;
+	width: 0;
+	background: var(--live);
+	transition: width 60ms linear;
+}
+
+/* -- Project wheel ------------------------------------------------------- */
+
+.wheel {
+	display: flex;
+	gap: 10px;
+	overflow-x: auto;
+	padding-bottom: 6px;
+	scroll-snap-type: x mandatory;
+}
+
+.wheel-item {
+	flex: 0 0 160px;
+	scroll-snap-align: start;
+	text-align: left;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 10px;
+}
+
+.wheel-item.is-selected {
+	border-color: var(--accent);
+}
+
+.wheel-name {
+	font-weight: 600;
+}
+
+.wheel-detail {
+	color: var(--muted);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* -- Talk ---------------------------------------------------------------- */
+
+.talk-panel {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+
+.talk {
+	width: 160px;
+	height: 160px;
+	border-radius: 50%;
+	font-size: 15px;
+	touch-action: none;
+	user-select: none;
+}
+
+.talk[data-self='true'] {
+	border-color: var(--live);
+	color: var(--live);
+	box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.12);
+}
+
+.talk.is-latched::after {
+	content: ' (latched)';
+	color: var(--muted);
+}
+
+/* -- Transcript and log --------------------------------------------------- */
+
+.transcript,
+.log {
+	max-height: 320px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.row {
+	border-left: 2px solid var(--border);
+	padding-left: 8px;
+}
+
+.row-user {
+	border-color: var(--accent);
+}
+
+.row-assistant {
+	border-color: var(--live);
+}
+
+.row-system {
+	border-color: var(--border);
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.row-caption {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.log {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 11px;
+	gap: 2px;
+}
+
+.log-warn {
+	color: var(--warn);
+}
+
+.log-error {
+	color: #f87171;
+}
