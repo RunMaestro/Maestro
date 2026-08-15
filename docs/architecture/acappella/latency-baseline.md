@@ -11,6 +11,7 @@ related:
   - '[[system-overview]]'
   - '[[model-manager]]'
   - '[[voice-session-protocol]]'
+  - '[[conversation-acceptance]]'
 ---
 
 # A Cappella Latency Baseline
@@ -94,6 +95,11 @@ short instruction ("ask backend what changed"), then press **Read last turn** on
 and paste the copied JSON into the row. Repeat three times per configuration and record the median,
 because the first turn of a local configuration includes the model load and is not representative
 of a conversation.
+
+The by-hand pass that produces these numbers, including what to say and what to listen for on each
+check, is [[conversation-acceptance]]. Read its precondition section first: the Phase 08 speech
+layer is not yet wired into `voice-session-service.ts`, so a run today measures the buffered path
+rather than the streamed one.
 
 ## What each hop tells you
 
