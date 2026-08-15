@@ -11,10 +11,19 @@
  * capability-gate.ts`) because deciding readiness means touching disk.
  */
 
+import type { MicPermission } from './protocol';
 import type { VoiceProviderRole } from './providers';
 
-/** The four slots that have to be satisfied. The wake word is not a provider role. */
-export type VoiceSlot = VoiceProviderRole | 'wake-word';
+/**
+ * Every slot that has to be satisfied.
+ *
+ * The wake word is not a provider role, and the microphone is not a provider at
+ * all: it is the OS permission, which is independent of every model on disk. It
+ * is a slot here so that "microphone access denied" travels through the same
+ * structure as everything else and reaches the user as its own sentence, rather
+ * than being folded into a generic "voice unavailable".
+ */
+export type VoiceSlot = VoiceProviderRole | 'wake-word' | 'microphone';
 
 /**
  * Why a slot is not satisfied. Closed on purpose: a reason with no matching
@@ -25,7 +34,10 @@ export type VoiceSlotUnsatisfiedReason =
 	| 'model-not-installed'
 	| 'model-corrupt'
 	| 'api-key-missing'
-	| 'provider-unreachable';
+	| 'provider-unreachable'
+	| 'runtime-unavailable'
+	| 'mic-permission-denied'
+	| 'mic-permission-restricted';
 
 export interface VoiceSlotReadiness {
 	slot: VoiceSlot;
@@ -40,6 +52,13 @@ export interface VoiceSlotReadiness {
 	suggestedAction?: string;
 	/** The catalog model this slot needs, when it needs one. */
 	requiredModelId?: string;
+	/**
+	 * The microphone permission as the OS reports it. Present only on the
+	 * microphone slot, and present even when satisfied: "granted" is worth
+	 * rendering, and `not-determined` is the state Voice Setup should describe as
+	 * "you will be asked when you start" rather than as a problem.
+	 */
+	micPermission?: MicPermission;
 }
 
 export interface VoiceReadiness {

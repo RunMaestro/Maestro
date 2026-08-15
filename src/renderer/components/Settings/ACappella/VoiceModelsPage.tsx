@@ -24,6 +24,7 @@ import { StatCardGrid, type StatCardDatum } from '../../widgets';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { VoiceModelRow } from './VoiceModelRow';
+import { VoiceSelfTestCard } from './VoiceSelfTestCard';
 import { useVoiceModels } from './useVoiceModels';
 
 export interface VoiceModelsPageProps {
@@ -134,6 +135,11 @@ export function VoiceModelsPage({ theme, enabled }: VoiceModelsPageProps) {
 					)}
 				</SectionCard>
 			</div>
+
+			{/* Below the disk card and above the per-model rows: the question "is any
+			    of this actually working" comes after "what is installed" and before
+			    the detail of each one. */}
+			<VoiceSelfTestCard theme={theme} />
 
 			{installed.map((listing) => (
 				<div key={listing.entry.id}>

@@ -35,10 +35,11 @@
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:renderer": "vite build",
-		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
-		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
-		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win",
-		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
+		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux && npm run verify:native-packaging",
+		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac && npm run verify:native-packaging",
+		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win && npm run verify:native-packaging",
+		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux && npm run verify:native-packaging",
+		"verify:native-packaging": "node scripts/verify-native-packaging.mjs",
 		"start": "electron .",
 		"clean": "rm -rf dist release node_modules/.vite",
 		"preinstall": "node scripts/check-python.mjs",
@@ -95,7 +96,11 @@
 			"node_modules/@napi-rs/keyring/**/*",
 			"node_modules/@napi-rs/keyring-*/*",
 			"node_modules/bindings/**/*",
-			"node_modules/file-uri-to-path/**/*"
+			"node_modules/file-uri-to-path/**/*",
+			"node_modules/node-llama-cpp/**/*",
+			"node_modules/@node-llama-cpp/**/*",
+			"node_modules/smart-whisper/build/**/*",
+			"node_modules/onnxruntime-node/bin/**/*"
 		],
 		"mac": {
 			"category": "public.app-category.developer-tools",
@@ -104,6 +109,9 @@
 			"notarize": false,
 			"entitlements": "build/entitlements.mac.plist",
 			"entitlementsInherit": "build/entitlements.mac.plist",
+			"extendInfo": {
+				"NSMicrophoneUsageDescription": "Maestro uses the microphone for A Cappella, its voice control feature, so you can speak to your agents. Your audio is processed on this machine when you select local speech providers, and is sent to a hosted provider only if you choose one."
+			},
 			"target": [
 				"dmg",
 				"zip"

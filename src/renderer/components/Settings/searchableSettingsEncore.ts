@@ -368,6 +368,35 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-a-cappella-self-test',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Voice self-test',
+		description:
+			'Load each speech runtime and run a trivial operation against it, reporting per-runtime pass/fail with timings plus the microphone permission. Loads no model and opens no microphone',
+		keywords: [
+			'self test',
+			'selftest',
+			'diagnostic',
+			'voice not working',
+			'microphone permission',
+			'native runtime',
+			'onnx',
+			'llama',
+			'whisper',
+			'troubleshoot',
+		],
+	},
+	{
+		id: 'encore-a-cappella-run-self-test',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Run voice self-test',
+		description:
+			'Run the A Cappella runtime self-test now and show the per-runtime result, with a Copy button for pasting into a bug report',
+		keywords: ['run self test', 'diagnose voice', 'voice broken', 'test microphone', 'debug voice'],
+	},
+	{
 		id: 'encore-a-cappella-reclaim-disk',
 		tab: 'encore',
 		tabLabel: 'Plugins',

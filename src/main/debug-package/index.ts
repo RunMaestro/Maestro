@@ -28,6 +28,7 @@ import {
 	collectWindowsDiagnostics,
 	WindowsDiagnosticsInfo,
 } from './collectors/windows-diagnostics';
+import { collectVoiceRuntime } from './collectors/voice-runtime';
 import { createZipPackage, PackageContents } from './packager';
 import { logger } from '../utils/logger';
 import { AgentDetector } from '../agents';
@@ -134,6 +135,20 @@ export async function generateDebugPackage(
 		const errMsg = error instanceof Error ? error.message : String(error);
 		errors.push(`windows-diagnostics: ${errMsg}`);
 		logger.error('Failed to collect Windows diagnostics', 'DebugPackage', error);
+	}
+
+	// Collect A Cappella voice runtime state and run the voice self-test (always
+	// included). Cheap when the feature is off: nothing native is a dependency
+	// until a runtime is declared, and no model or audio device is touched either
+	// way.
+	try {
+		const voiceRuntime = await collectVoiceRuntime(deps.settingsStore);
+		contents['voice-runtime.json'] = voiceRuntime;
+		filesIncluded.push('voice-runtime.json');
+	} catch (error) {
+		const errMsg = error instanceof Error ? error.message : String(error);
+		errors.push(`voice-runtime: ${errMsg}`);
+		logger.error('Failed to collect voice runtime info', 'DebugPackage', error);
 	}
 
 	// Collect groups (always included)
@@ -314,6 +329,12 @@ export function previewDebugPackage(): {
 			{ id: 'storage', name: 'Storage Info', included: true, sizeEstimate: '< 2 KB' },
 			{ id: 'groupChats', name: 'Group Chat Metadata', included: true, sizeEstimate: '< 5 KB' },
 			{ id: 'batchState', name: 'Auto Run State', included: true, sizeEstimate: '< 5 KB' },
+			{
+				id: 'voiceRuntime',
+				name: 'Voice Runtime and Self-Test',
+				included: true,
+				sizeEstimate: '< 2 KB',
+			},
 		],
 	};
 }

@@ -20,6 +20,7 @@ import type { VoiceStartSessionResult } from '../ipc/handlers/acappella';
 import type { VoiceModelListing } from '../ipc/handlers/acappella-models';
 import type { DownloadProgress, DownloadResult } from '../acappella/models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../acappella/models/model-store';
+import type { MicPermissionInfo } from '../acappella/permissions/mic-permission';
 
 /**
  * `window.maestro.voice.models.*` - the model manager.
@@ -163,6 +164,20 @@ export function createVoiceApi() {
 		 *          offer words instead of a button that would do nothing.
 		 */
 		openMicSettings: (): Promise<boolean> => ipcRenderer.invoke('acappella:open-mic-settings'),
+
+		/**
+		 * The microphone permission as the OS reports it, plus whether asking would
+		 * actually show a prompt and where the privacy pane is.
+		 *
+		 * A pure query: calling this NEVER prompts. The prompt happens once, at the
+		 * first session start, because asking for the microphone before the user has
+		 * asked for voice is a trust problem rather than a convenience.
+		 *
+		 * Kept separate from `models.readiness()` on purpose. A denied microphone
+		 * and a missing model are different failures with different recoveries, and
+		 * a UI that can only say "voice unavailable" has already lost the user.
+		 */
+		micPermission: (): Promise<MicPermissionInfo> => ipcRenderer.invoke('acappella:mic-permission'),
 
 		/**
 		 * Catch-up snapshot. Null when no session service exists yet (nothing is
