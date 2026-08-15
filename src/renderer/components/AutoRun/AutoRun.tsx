@@ -4,6 +4,7 @@ import {
 	useEffect,
 	useCallback,
 	memo,
+	useMemo,
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
@@ -45,6 +46,7 @@ import { AutoRunLightbox } from './AutoRunLightbox';
 import { AutoRunSearchBar } from './AutoRunSearchBar';
 import { AutoRunToolbar } from './AutoRunToolbar';
 import { AutoRunErrorBanner } from './AutoRunErrorBanner';
+import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
@@ -53,6 +55,7 @@ import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
 import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
+import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
@@ -193,6 +196,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onExternalSavedContentChange,
 	});
 
+	// Unchecked tasks that read as human-only steps. Auto Run would dispatch
+	// these to an agent that cannot finish them, so the run stalls. Warn while
+	// the author still has the document open, before they hit Run.
+	const humanOnlyTasks = useMemo(() => findHumanOnlyTasks(localContent), [localContent]);
+
 	// Track mode before auto-run to restore when it ends
 	const modeBeforeAutoRunRef = useRef<'edit' | 'preview' | null>(null);
 	const [helpModalOpen, setHelpModalOpen] = useState(false);
@@ -200,6 +208,30 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const previewRef = useRef<HTMLDivElement>(null);
 	const documentSelectorRef = useRef<AutoRunDocumentSelectorHandle>(null);
+
+	// Move the editor caret to a 0-indexed document line, switching to edit
+	// mode first when the user is reading the rendered preview.
+	const handleJumpToLine = useCallback(
+		(line: number) => {
+			setMode('edit');
+			const offset = localContent
+				.split('\n')
+				.slice(0, line)
+				.reduce((sum, text) => sum + text.length + 1, 0);
+			// Defer so the textarea exists when we came from preview mode.
+			requestAnimationFrame(() => {
+				const textarea = textareaRef.current;
+				if (!textarea) return;
+				textarea.focus();
+				textarea.setSelectionRange(offset, offset);
+				// setSelectionRange does not scroll, so place the line a third of
+				// the way down rather than leaving the caret offscreen.
+				const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
+				textarea.scrollTop = Math.max(0, line * lineHeight - textarea.clientHeight / 3);
+			});
+		},
+		[localContent, setMode]
+	);
 
 	// Bionify reading mode (global setting; disabled while search highlights are active)
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
@@ -634,6 +666,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					isRecoverable={batchError.recoverable || false}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+				/>
+			)}
+
+			{/* Human-step warning - unchecked tasks no agent can complete */}
+			{folderPath && selectedFile && (
+				<AutoRunHumanStepBanner
+					theme={theme}
+					tasks={humanOnlyTasks}
+					onSelectLine={isLocked ? undefined : handleJumpToLine}
 				/>
 			)}
 

@@ -553,9 +553,22 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 		onRemoteOpenBrowserTab: (
-			callback: (sessionId: string, url: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				url: string,
+				responseChannel: string,
+				options: { background?: boolean }
+			) => void
 		) => () => void;
-		sendRemoteOpenBrowserTabResponse: (responseChannel: string, success: boolean) => void;
+		sendRemoteOpenBrowserTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		) => void;
+		onRemoteCloseBrowserTab: (
+			callback: (tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCloseBrowserTabResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,

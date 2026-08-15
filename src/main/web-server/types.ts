@@ -444,7 +444,32 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
-export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
+/**
+ * Opens a URL as a browser tab in the desktop app.
+ *
+ * `background: true` creates the tab without stealing the user's place: the
+ * active agent is left alone and the new tab does not become the visible one.
+ * Agents doing research should always use it - a foreground tab yanks the
+ * window out from under whatever the user is doing.
+ *
+ * Returns the created tab's id so the caller can close it again when done
+ * (see `CloseBrowserTabCallback`).
+ */
+export interface OpenBrowserTabOptions {
+	background?: boolean;
+}
+export type OpenBrowserTabResult = { success: boolean; tabId?: string };
+export type OpenBrowserTabCallback = (
+	sessionId: string,
+	url: string,
+	options?: OpenBrowserTabOptions
+) => Promise<OpenBrowserTabResult>;
+
+/**
+ * Closes a browser tab by id. The owning agent is resolved in the renderer, so
+ * callers only need the tab id returned by `OpenBrowserTabCallback`.
+ */
+export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
 	shell?: string;

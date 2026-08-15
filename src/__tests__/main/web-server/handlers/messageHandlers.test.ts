@@ -122,7 +122,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		toggleBookmark: vi.fn().mockResolvedValue(true),
 		openFileTab: vi.fn().mockResolvedValue(true),
 		refreshFileTree: vi.fn().mockResolvedValue(true),
-		openBrowserTab: vi.fn().mockResolvedValue(true),
+		openBrowserTab: vi.fn().mockResolvedValue({ success: true, tabId: 'browser-tab-1' }),
+		closeBrowserTab: vi.fn().mockResolvedValue(true),
 		openTerminalTab: vi.fn().mockResolvedValue(true),
 		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
 		enqueueCommand: vi.fn().mockResolvedValue({
@@ -1013,7 +1014,9 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/');
+				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/', {
+					background: false,
+				});
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -1021,6 +1024,42 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
 			expect(response.url).toBe('https://example.com/');
+		});
+
+		it('should forward the background flag and return the created tab id', async () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'https://example.com/',
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/', {
+					background: true,
+				});
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(true);
+			expect(response.background).toBe(true);
+			// The tab id is the handle the caller needs to close it again.
+			expect(response.tabId).toBe('browser-tab-1');
+		});
+
+		it('should default background to false when the flag is absent or not true', async () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'https://example.com/',
+				background: 'yes',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/', {
+					background: false,
+				});
+			});
 		});
 
 		it('should reject missing sessionId or url', () => {
@@ -1071,7 +1110,8 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				expect(callbacks.openBrowserTab).toHaveBeenCalledWith(
 					'session-1',
-					'http://localhost:3000/'
+					'http://localhost:3000/',
+					{ background: false }
 				);
 			});
 		});
@@ -1102,6 +1142,56 @@ describe('WebSocketMessageHandler', () => {
 				const calls = (client.socket.send as any).mock.calls;
 				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
 				expect(lastResponse.type).toBe('open_browser_tab_result');
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Close Browser Tab (Web → Desktop)', () => {
+		it('should forward close browser tab with the tab id', async () => {
+			handler.handleMessage(client, { type: 'close_browser_tab', tabId: 'browser-tab-1' });
+
+			await vi.waitFor(() => {
+				expect(callbacks.closeBrowserTab).toHaveBeenCalledWith('browser-tab-1');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('close_browser_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.tabId).toBe('browser-tab-1');
+		});
+
+		it('should reject a missing tab id', () => {
+			handler.handleMessage(client, { type: 'close_browser_tab' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('close_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing tabId');
+			expect(callbacks.closeBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should report not-found rather than a false success when no such tab exists', async () => {
+			(callbacks.closeBrowserTab as any).mockResolvedValue(false);
+			handler.handleMessage(client, { type: 'close_browser_tab', tabId: 'ghost-tab' });
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('ghost-tab');
+			});
+		});
+
+		it('should handle callback failure', async () => {
+			(callbacks.closeBrowserTab as any).mockRejectedValue(new Error('boom'));
+			handler.handleMessage(client, { type: 'close_browser_tab', tabId: 'browser-tab-1' });
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('close_browser_tab_result');
 				expect(lastResponse.success).toBe(false);
 				expect(lastResponse.error).toContain('boom');
 			});

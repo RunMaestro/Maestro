@@ -1071,8 +1071,10 @@ maestro-cli open-file <file-path> [-a <id>] [--no-switch]
 
 Open a URL as a browser tab in the Maestro desktop app. Only `http(s)` URLs are accepted; scheme-less inputs like `localhost:3000` or `example.com:8080` are auto-prefixed with `https://`.
 
+By default this **switches the UI** to the target agent and makes the new tab visible. Pass `--background` to create the tab without moving the user: the active agent is left alone and whatever tab they were looking at stays on screen. Either way the command prints the new tab's ID, which is the handle for `close-browser`.
+
 ```bash
-# Open in the active agent
+# Open in the active agent (switches the UI to it)
 maestro-cli open-browser https://docs.runmaestro.ai
 
 # Scheme-less - gets https:// prepended
@@ -1080,11 +1082,32 @@ maestro-cli open-browser localhost:3000
 
 # Target a specific agent
 maestro-cli open-browser https://github.com/RunMaestro/Maestro -a <agent-id>
+
+# Background tab - does not switch agents or change the visible tab
+maestro-cli open-browser https://example.com/docs --background -a <agent-id>
 ```
 
-| Flag               | Description                                       |
-| ------------------ | ------------------------------------------------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to the active agent) |
+| Flag               | Description                                                      |
+| ------------------ | ---------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent by ID (defaults to the active agent)                |
+| `--background`     | Create the tab without focusing it or switching the active agent |
+
+<Note>
+	Agents doing research should always pass `--background` and then `close-browser` when finished. A
+	foreground tab pulls the window away from whatever the user is doing, potentially mid-keystroke.
+</Note>
+
+#### Close a Browser Tab
+
+Close a browser tab by the ID that `open-browser` returned. The owning agent is resolved from the tab ID, so no `--agent` is needed. Exits non-zero if no such tab exists, so cleanup scripts can tell a real close from a no-op.
+
+```bash
+maestro-cli close-browser <tab-id>
+```
+
+| Flag     | Description                    |
+| -------- | ------------------------------ |
+| `--json` | Output as JSON (for scripting) |
 
 #### Open a Terminal Tab
 

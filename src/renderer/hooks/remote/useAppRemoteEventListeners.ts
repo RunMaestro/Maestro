@@ -152,14 +152,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Acks success to responseChannel so the CLI only reports success after
 	// the tab is actually created.
 	useEventListener('maestro:openBrowserTab', (e: Event) => {
-		const { sessionId, url, responseChannel } = (e as CustomEvent).detail as {
+		const { sessionId, url, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
 			url: string;
 			responseChannel?: string;
+			background?: boolean;
 		};
-		const ack = (success: boolean) => {
+		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
-				window.maestro.process.sendRemoteOpenBrowserTabResponse(responseChannel, success);
+				window.maestro.process.sendRemoteOpenBrowserTabResponse(responseChannel, success, tabId);
 			}
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -168,7 +169,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			ack(false);
 			return;
 		}
-		setActiveSessionId(sessionId);
+		// A background tab must not move the user: leave the active agent alone
+		// and leave whatever tab they were on visible. Agents doing research
+		// open tabs this way so the window doesn't jump mid-keystroke.
+		if (!background) {
+			setActiveSessionId(sessionId);
+		}
 		const newBrowserTab: BrowserTab = {
 			id: generateId(),
 			url,
@@ -183,17 +189,60 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
-				return {
+				const withTab = {
 					...s,
 					browserTabs: [...(s.browserTabs || []), newBrowserTab],
-					activeFileTabId: null,
-					activeBrowserTabId: newBrowserTab.id,
-					activeTerminalTabId: null,
-					inputMode: 'ai' as const,
 					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 						type: 'browser',
 						id: newBrowserTab.id,
 					}),
+				};
+				if (background) return withTab;
+				return {
+					...withTab,
+					activeFileTabId: null,
+					activeBrowserTabId: newBrowserTab.id,
+					activeTerminalTabId: null,
+					inputMode: 'ai' as const,
+				};
+			})
+		);
+		ack(true, newBrowserTab.id);
+	});
+
+	// Handle remote close browser tab events from CLI/web interface. Resolves
+	// the owning agent from the tab id so callers only need what open-browser
+	// handed back. Acks false when no such tab exists, so an agent cleaning up
+	// after itself can tell a no-op from a real close.
+	useEventListener('maestro:closeBrowserTab', (e: Event) => {
+		const { tabId, responseChannel } = (e as CustomEvent).detail as {
+			tabId: string;
+			responseChannel?: string;
+		};
+		const ack = (success: boolean) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteCloseBrowserTabResponse(responseChannel, success);
+			}
+		};
+		const owner = sessionsRef.current.find((s) =>
+			(s.browserTabs || []).some((t) => t.id === tabId)
+		);
+		if (!owner) {
+			ack(false);
+			return;
+		}
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== owner.id) return s;
+				return {
+					...s,
+					browserTabs: (s.browserTabs || []).filter((t) => t.id !== tabId),
+					// Only clear the active pointer when the closed tab was the
+					// visible one; a background tab closing must not change the view.
+					activeBrowserTabId: s.activeBrowserTabId === tabId ? null : s.activeBrowserTabId,
+					unifiedTabOrder: (s.unifiedTabOrder || []).filter(
+						(ref) => !(ref.type === 'browser' && ref.id === tabId)
+					),
 				};
 			})
 		);

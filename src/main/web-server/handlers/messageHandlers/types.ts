@@ -113,7 +113,12 @@ export interface MessageHandlerCallbacks {
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (sessionId: string, filePath: string, switchToAgent: boolean) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
-	openBrowserTab: (sessionId: string, url: string) => Promise<boolean>;
+	openBrowserTab: (
+		sessionId: string,
+		url: string,
+		options?: { background?: boolean }
+	) => Promise<{ success: boolean; tabId?: string }>;
+	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
 		config: { cwd?: string; shell?: string; name?: string | null }

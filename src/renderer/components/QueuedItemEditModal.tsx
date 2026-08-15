@@ -118,10 +118,17 @@ export function QueuedItemEditModal({ item, theme, onClose, onSave }: QueuedItem
 		);
 	};
 
-	// Parity with the composer: Cmd+Y opens the carousel on the first image. Once
-	// inside, LightboxModal owns the in-carousel keys (Cmd+E annotate, Cmd+C copy,
-	// Delete/Backspace remove, arrows navigate). No-ops when nothing is attached.
+	// Cmd/Ctrl+Enter saves from anywhere in the body, including the textarea where
+	// plain Enter has to stay a newline. Parity with the composer: Cmd+Y opens the
+	// carousel on the first image; once inside, LightboxModal owns the in-carousel
+	// keys (Cmd+E annotate, Cmd+C copy, Delete/Backspace remove, arrows navigate).
 	const handleKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			e.stopPropagation();
+			handleSave();
+			return;
+		}
 		if (images.length === 0) return;
 		if (isShortcut(e.nativeEvent, 'openImageCarousel')) {
 			e.preventDefault();

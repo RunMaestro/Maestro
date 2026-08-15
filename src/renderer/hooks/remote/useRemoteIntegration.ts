@@ -1114,10 +1114,33 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// CLI once the browser tab actually exists.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenBrowserTab(
-			(sessionId: string, url: string, responseChannel: string) => {
+			(
+				sessionId: string,
+				url: string,
+				responseChannel: string,
+				options: { background?: boolean }
+			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:openBrowserTab', {
-						detail: { sessionId, url, responseChannel },
+						detail: { sessionId, url, responseChannel, background: options?.background === true },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote close browser tab from CLI/web interface. The owning agent
+	// is resolved by tab id in the App-level listener, so the caller only needs
+	// the id handed back by open-browser.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteCloseBrowserTab(
+			(tabId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:closeBrowserTab', {
+						detail: { tabId, responseChannel },
 					})
 				);
 			}

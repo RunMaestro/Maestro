@@ -61,6 +61,26 @@ Each Auto Run document MUST follow this exact format:
 - [ ] Continue with more tasks...
 ```
 
+## CRITICAL: Human Steps Must NEVER Be Checkboxes
+
+Every `- [ ]` task is dispatched to an AI agent, so a checkbox that needs a **person** cannot be completed: the run either **stalls forever** waiting on someone who was never asked, or the agent ticks a box for work it never did.
+
+Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network access finish this alone?_ If no, it is not a checkbox.
+
+**Never checkbox these:** manual action ("manually test", "by hand"), visual judgment ("visually verify", "confirm it looks right"), waiting on a person ("ask the user", "confirm with the team"), approval gates ("get sign-off", "human review"), credentials or accounts a person must obtain ("sign up for an API key"), or physical/out-of-band work.
+
+**Use one of these two instead:**
+
+1. **The run must pause for a person** - emit a HITL gate marker on its own line above the dependent tasks. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume - a deliberate, visible pause instead of a silent stall:
+
+   ```markdown
+   <!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env before the billing tasks run" artifact=".env" -->
+   ```
+
+2. **The work simply isn't the engine's job** - list it as plain `-` bullets under a trailing `## Manual Follow-Up (not executed by Auto Run)` section the engine never reads.
+
+Note the difference from a legitimate verification task: "Run `npm run lint` and `npm test`, fix any failures" is a checkbox. "Visually confirm the layout looks polished" is not.
+
 ## Task Writing Guidelines
 
 ### Token Efficiency is Critical

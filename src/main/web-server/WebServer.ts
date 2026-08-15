@@ -69,6 +69,7 @@ import type {
 	OpenFileTabCallback,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
+	CloseBrowserTabCallback,
 	OpenTerminalTabCallback,
 	NewAITabWithPromptCallback,
 	EnqueueCommandCallback,
@@ -455,6 +456,10 @@ export class WebServer {
 
 	setOpenBrowserTabCallback(callback: OpenBrowserTabCallback): void {
 		this.callbackRegistry.setOpenBrowserTabCallback(callback);
+	}
+
+	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
+		this.callbackRegistry.setCloseBrowserTabCallback(callback);
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
@@ -951,8 +956,9 @@ export class WebServer {
 				this.callbackRegistry.openFileTab(sessionId, filePath, switchToAgent),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
-			openBrowserTab: async (sessionId: string, url: string) =>
-				this.callbackRegistry.openBrowserTab(sessionId, url),
+			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
+				this.callbackRegistry.openBrowserTab(sessionId, url, options),
+			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
 			openTerminalTab: async (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null }

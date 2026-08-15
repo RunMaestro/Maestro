@@ -24,6 +24,9 @@ import type {
 	OpenFileTabCallback,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
+	OpenBrowserTabOptions,
+	OpenBrowserTabResult,
+	CloseBrowserTabCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	NewAITabWithPromptCallback,
@@ -152,6 +155,7 @@ export interface WebServerCallbacks {
 	openFileTab: OpenFileTabCallback | null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
+	closeBrowserTab: CloseBrowserTabCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	enqueueCommand: EnqueueCommandCallback | null;
@@ -244,6 +248,7 @@ export class CallbackRegistry {
 		openFileTab: null,
 		refreshFileTree: null,
 		openBrowserTab: null,
+		closeBrowserTab: null,
 		openTerminalTab: null,
 		newAITabWithPrompt: null,
 		enqueueCommand: null,
@@ -420,9 +425,18 @@ export class CallbackRegistry {
 		return this.callbacks.refreshFileTree(sessionId);
 	}
 
-	async openBrowserTab(sessionId: string, url: string): Promise<boolean> {
-		if (!this.callbacks.openBrowserTab) return false;
-		return this.callbacks.openBrowserTab(sessionId, url);
+	async openBrowserTab(
+		sessionId: string,
+		url: string,
+		options?: OpenBrowserTabOptions
+	): Promise<OpenBrowserTabResult> {
+		if (!this.callbacks.openBrowserTab) return { success: false };
+		return this.callbacks.openBrowserTab(sessionId, url, options);
+	}
+
+	async closeBrowserTab(tabId: string): Promise<boolean> {
+		if (!this.callbacks.closeBrowserTab) return false;
+		return this.callbacks.closeBrowserTab(tabId);
 	}
 
 	async openTerminalTab(sessionId: string, config: OpenTerminalTabConfig): Promise<boolean> {
@@ -999,6 +1013,10 @@ export class CallbackRegistry {
 
 	setOpenBrowserTabCallback(callback: OpenBrowserTabCallback): void {
 		this.callbacks.openBrowserTab = callback;
+	}
+
+	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
+		this.callbacks.closeBrowserTab = callback;
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {

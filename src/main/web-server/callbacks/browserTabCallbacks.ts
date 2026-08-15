@@ -11,17 +11,68 @@ export function registerBrowserTabCallbacks(
 ): void {
 	const { getMainWindow } = deps;
 
-	server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
+	server.setOpenBrowserTabCallback(
+		async (sessionId: string, url: string, options?: { background?: boolean }) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for openBrowserTab', 'WebServer');
+				return { success: false };
+			}
+
+			// Request-response: wait for the renderer to confirm the tab was
+			// actually created before telling the CLI the call succeeded.
+			return new Promise<{ success: boolean; tabId?: string }>((resolve) => {
+				const responseChannel = `remote:openBrowserTab:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					// Renderer acks with `{ success, tabId? }`; older renderers that
+					// still send a bare boolean stay supported.
+					if (typeof result === 'object' && result !== null) {
+						const r = result as { success?: unknown; tabId?: unknown };
+						resolve({
+							success: r.success === true,
+							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
+						});
+						return;
+					}
+					resolve({ success: result === true });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for openBrowserTab', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false });
+					return;
+				}
+				mainWindow.webContents.send('remote:openBrowserTab', sessionId, url, responseChannel, {
+					background: options?.background === true,
+				});
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`openBrowserTab callback timed out for session ${sessionId}`, 'WebServer');
+					resolve({ success: false });
+				}, 5000);
+			});
+		}
+	);
+
+	server.setCloseBrowserTabCallback(async (tabId: string) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
-			logger.warn('mainWindow is null for openBrowserTab', 'WebServer');
+			logger.warn('mainWindow is null for closeBrowserTab', 'WebServer');
 			return false;
 		}
 
-		// Request-response: wait for the renderer to confirm the tab was
-		// actually created before telling the CLI the call succeeded.
 		return new Promise<boolean>((resolve) => {
-			const responseChannel = `remote:openBrowserTab:response:${randomUUID()}`;
+			const responseChannel = `remote:closeBrowserTab:response:${randomUUID()}`;
 			let resolved = false;
 
 			const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
@@ -33,18 +84,18 @@ export function registerBrowserTabCallbacks(
 
 			ipcMain.once(responseChannel, handleResponse);
 			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for openBrowserTab', 'WebServer');
+				logger.warn('webContents is not available for closeBrowserTab', 'WebServer');
 				ipcMain.removeListener(responseChannel, handleResponse);
 				resolve(false);
 				return;
 			}
-			mainWindow.webContents.send('remote:openBrowserTab', sessionId, url, responseChannel);
+			mainWindow.webContents.send('remote:closeBrowserTab', tabId, responseChannel);
 
 			const timeoutId = setTimeout(() => {
 				if (resolved) return;
 				resolved = true;
 				ipcMain.removeListener(responseChannel, handleResponse);
-				logger.warn(`openBrowserTab callback timed out for session ${sessionId}`, 'WebServer');
+				logger.warn(`closeBrowserTab callback timed out for tab ${tabId}`, 'WebServer');
 				resolve(false);
 			}, 5000);
 		});

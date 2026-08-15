@@ -186,6 +186,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteOpenBrowserTabResponse: vi.fn(),
+		onRemoteCloseBrowserTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCloseBrowserTabResponse: vi.fn(),
 		onRemoteOpenTerminalTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),

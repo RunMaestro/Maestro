@@ -15,7 +15,7 @@ import { queueList, queueRemove } from './commands/queue';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
-import { openBrowser } from './commands/open-browser';
+import { openBrowser, closeBrowser } from './commands/open-browser';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
@@ -465,8 +465,19 @@ program
 	.command('open-browser <url>')
 	.description('Open a URL as a browser tab in the Maestro desktop app')
 	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--background',
+		'Create the tab without focusing it or switching agents (use for agent research, then close-browser when done)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openBrowser);
+
+// Close browser command - close a browser tab opened via open-browser
+program
+	.command('close-browser <tab-id>')
+	.description('Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(closeBrowser);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program

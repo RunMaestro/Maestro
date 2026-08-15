@@ -9,13 +9,24 @@ export function createBrowserTabRemoteApi() {
 		 * doesn't wait for the 5s response timeout, then rethrow for Sentry.
 		 */
 		onRemoteOpenBrowserTab: (
-			callback: (sessionId: string, url: string, responseChannel: string) => void
+			callback: (
+				sessionId: string,
+				url: string,
+				responseChannel: string,
+				options: { background?: boolean }
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, url: string, responseChannel: string) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				url: string,
+				responseChannel: string,
+				options?: { background?: boolean }
+			) => {
 				try {
-					callback(sessionId, url, responseChannel);
+					callback(sessionId, url, responseChannel, options ?? {});
 				} catch (error) {
-					ipcRenderer.send(responseChannel, false);
+					ipcRenderer.send(responseChannel, { success: false });
 					throw error;
 				}
 			};
@@ -24,9 +35,40 @@ export function createBrowserTabRemoteApi() {
 		},
 
 		/**
-		 * Send response for remote open browser tab
+		 * Send response for remote open browser tab. The tab id lets the caller
+		 * close the tab again later (see `sendRemoteCloseBrowserTabResponse`).
 		 */
-		sendRemoteOpenBrowserTabResponse: (responseChannel: string, success: boolean): void => {
+		sendRemoteOpenBrowserTabResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		): void => {
+			ipcRenderer.send(responseChannel, { success, tabId });
+		},
+
+		/**
+		 * Subscribe to remote close browser tab from CLI/web interface.
+		 * Renderer must ack via sendRemoteCloseBrowserTabResponse.
+		 */
+		onRemoteCloseBrowserTab: (
+			callback: (tabId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, tabId: string, responseChannel: string) => {
+				try {
+					callback(tabId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, false);
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:closeBrowserTab', handler);
+			return () => ipcRenderer.removeListener('remote:closeBrowserTab', handler);
+		},
+
+		/**
+		 * Send response for remote close browser tab
+		 */
+		sendRemoteCloseBrowserTabResponse: (responseChannel: string, success: boolean): void => {
 			ipcRenderer.send(responseChannel, success);
 		},
 

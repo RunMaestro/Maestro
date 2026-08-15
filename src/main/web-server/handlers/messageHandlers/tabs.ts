@@ -427,12 +427,18 @@ export function handleOpenBrowserTab(
 		return;
 	}
 
+	// Background tabs are created without moving the user: the active agent
+	// is left alone and the new tab does not become the visible one.
+	const background = message.background === true;
+
 	ctx.callbacks
-		.openBrowserTab(sessionId, parsed.toString())
-		.then((success) => {
+		.openBrowserTab(sessionId, parsed.toString(), { background })
+		.then((result) => {
 			ctx.send(client, {
 				type: 'open_browser_tab_result',
-				success,
+				success: result.success,
+				tabId: result.tabId,
+				background,
 				sessionId,
 				url: parsed.toString(),
 				requestId: message.requestId,
@@ -440,6 +446,55 @@ export function handleOpenBrowserTab(
 		})
 		.catch((error) => {
 			sendErrorResult(`Failed to open browser tab: ${error.message}`);
+		});
+}
+
+/**
+ * Handle close_browser_tab message - close a browser tab by id. The owning
+ * agent is resolved in the renderer, so callers only need the tab id handed
+ * back by open_browser_tab.
+ */
+export function handleCloseBrowserTab(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const tabId = typeof message.tabId === 'string' ? message.tabId : '';
+	logger.info(`[Web] Received close_browser_tab message: tab=${tabId}`, LOG_CONTEXT);
+
+	const sendErrorResult = (error: string) => {
+		ctx.send(client, {
+			type: 'close_browser_tab_result',
+			success: false,
+			error,
+			tabId,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!tabId) {
+		sendErrorResult('Missing tabId');
+		return;
+	}
+
+	if (!ctx.callbacks.closeBrowserTab) {
+		sendErrorResult('Browser tab closing not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.closeBrowserTab(tabId)
+		.then((success) => {
+			ctx.send(client, {
+				type: 'close_browser_tab_result',
+				success,
+				error: success ? undefined : `Browser tab not found: ${tabId}`,
+				tabId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			sendErrorResult(`Failed to close browser tab: ${error.message}`);
 		});
 }
 

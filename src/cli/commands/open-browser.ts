@@ -1,10 +1,20 @@
-// Open browser command - open a URL as a browser tab in the Maestro desktop app
+// Open/close browser commands - manage browser tabs in the Maestro desktop app.
+//
+// `--background` creates the tab without moving the user: the active agent is
+// left alone and the new tab does not become the visible one. Agents doing
+// research should always use it, then `close-browser <tab-id>` when done, so
+// the window never jumps out from under whoever is working.
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 
 interface OpenBrowserOptions {
 	agent?: string;
+	background?: boolean;
+	json?: boolean;
+}
+
+interface CloseBrowserOptions {
 	json?: boolean;
 }
 
@@ -54,20 +64,78 @@ export async function openBrowser(url: string, options: OpenBrowserOptions): Pro
 		process.exit(1);
 	}
 
+	const background = options.background === true;
+
 	try {
 		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{ type: string; success: boolean; error?: string }>(
-				{ type: 'open_browser_tab', sessionId, url: parsed.toString() },
+			return client.sendCommand<{
+				type: string;
+				success: boolean;
+				error?: string;
+				tabId?: string;
+			}>(
+				{ type: 'open_browser_tab', sessionId, url: parsed.toString(), background },
 				'open_browser_tab_result'
 			);
 		});
 
 		if (result.success) {
-			if (options.json)
-				console.log(JSON.stringify({ success: true, sessionId, url: parsed.toString() }));
-			else console.log(`Opened ${parsed.toString()} in Maestro`);
+			if (options.json) {
+				console.log(
+					JSON.stringify({
+						success: true,
+						sessionId,
+						url: parsed.toString(),
+						tabId: result.tabId ?? null,
+						background,
+					})
+				);
+			} else {
+				console.log(
+					`Opened ${parsed.toString()} in Maestro${background ? ' (background tab)' : ''}`
+				);
+				// Surface the id in plain output too - it's the handle for
+				// `close-browser`, and agents shouldn't need --json just to clean up.
+				if (result.tabId) console.log(`  Tab: ${result.tabId}`);
+			}
 		} else {
 			const error = result.error || 'Failed to open browser tab';
+			if (options.json) console.log(JSON.stringify({ success: false, error }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
+		else console.error(`Error: ${msg}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * Close a browser tab by the id `open-browser` returned. The owning agent is
+ * resolved in the desktop app, so no --agent is needed.
+ */
+export async function closeBrowser(tabId: string, options: CloseBrowserOptions): Promise<void> {
+	const trimmed = tabId.trim();
+	if (!trimmed) {
+		console.error('Error: Tab ID cannot be empty');
+		process.exit(1);
+	}
+
+	try {
+		const result = await withMaestroClient(async (client) => {
+			return client.sendCommand<{ type: string; success: boolean; error?: string }>(
+				{ type: 'close_browser_tab', tabId: trimmed },
+				'close_browser_tab_result'
+			);
+		});
+
+		if (result.success) {
+			if (options.json) console.log(JSON.stringify({ success: true, tabId: trimmed }));
+			else console.log(`Closed browser tab ${trimmed}`);
+		} else {
+			const error = result.error || 'Failed to close browser tab';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
 			process.exit(1);
