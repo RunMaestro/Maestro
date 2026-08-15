@@ -79,6 +79,7 @@
 				"icon": "flask",
 				"pages": [
 					"encore-features",
+					"voice-mode",
 					"director-notes",
 					"usage-dashboard",
 					"symphony",

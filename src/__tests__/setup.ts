@@ -614,6 +614,31 @@ const mockMaestro = {
 		listVoices: vi.fn().mockResolvedValue([]),
 		previewVoice: vi.fn().mockResolvedValue(true),
 		setVolume: vi.fn().mockResolvedValue(true),
+		// Bound by default, because that is what a fresh install really does: main
+		// falls back to `defaultGlobalHotkeyKeys(id)` whenever the stored shortcuts
+		// map has no entry. A mock that reported nothing registered would let the
+		// settings row drift back to claiming an unbound hotkey.
+		hotkeyStatus: vi.fn().mockResolvedValue({
+			statuses: [
+				{
+					id: 'voiceConductor',
+					keys: ['Meta', 'Alt', 'v'],
+					accelerator: 'Command+Alt+V',
+					registered: true,
+				},
+				{
+					id: 'voiceCurrentAgent',
+					keys: ['Meta', 'Alt', 'a'],
+					accelerator: 'Command+Alt+A',
+					registered: true,
+				},
+			],
+			capability: 'tap-only',
+			note: 'Tap to toggle the microphone.',
+		}),
+		wakeTest: vi.fn().mockResolvedValue(true),
+		wakeTestStop: vi.fn().mockResolvedValue(undefined),
+		onWakeTest: vi.fn().mockReturnValue(() => {}),
 		credentials: {
 			list: vi.fn().mockResolvedValue([]),
 			set: vi.fn().mockResolvedValue({ ok: true }),
