@@ -252,7 +252,10 @@ the coordinator's switch. There is no error, so this fails as silence.
 - `floor-state.holder` is a device id, the literal `'local'` for the desktop's own microphone, or
   `null` when nobody holds the floor. `isSelf` saves the client an id comparison; trust it.
 - `takenOverBy` is a **display name**, already resolved, and is set only on the message sent to the
-  device that just lost the floor. Show it as written.
+  device that just lost the floor. Show it as written. It is also **momentary**: it rides its own
+  frame, and the ordinary `floor-state` broadcast that follows a takeover carries no name at all. So
+  react to the frame (a banner, a haptic) rather than rendering the field out of stored state, or the
+  notice will erase itself a few milliseconds after it appears.
 - `revoked` is the last frame before teardown, sent for revocation and for any deliberate close. Its
   `message` is the reason and is written for a human.
 
@@ -460,6 +463,21 @@ nothing.
 Each item is independently testable and is named by the suite at
 `src/__tests__/acappella/conformance/`. An implementation is conformant when every item passes, and
 each item is written so that "passes" is observable from outside the client.
+
+The suite runs in `npm run test`, on a harness (`harness.ts`) that assembles the real desktop stack -
+`ACappellaTransport` over a real `PeerRegistry` - and drives it with the real browser reference
+client, so a frame really is encoded, crosses a loopback data channel, and comes back out of
+`decodeDeviceMessage()` on the far side. Four files, split by what fails:
+
+| File                                  | Items                                  | What it proves                                                                                              |
+| ------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `signaling.conformance.test.ts`       | C-01 to C-15                           | Pairing, auth, the ordering rules, both rate limits, and what `authenticated` carries.                      |
+| `data-channel.conformance.test.ts`    | C-16 to C-30, C-37 to C-40             | Channel labels and inits, `v`, routing, malformed frames, the event catalogue, and the microphone gate.     |
+| `failure-paths.conformance.test.ts`   | C-12 to C-15, C-33 to C-49             | Version mismatch, mid-session revocation, a network drop and reconnect, floor takeover, and the stop word.  |
+| `../../web-desktop/acappella-client/` | C-24 to C-28, C-31 to C-36, C-44, C-47 | The client-side half, in `src/__tests__/web-desktop/acappella-client/` where the DOM and the gestures live. |
+
+A rule the desktop enforces is asserted from a raw signaling socket rather than from the reference
+client, because a limit a conforming client never reaches is a limit nobody has tested.
 
 ### Signaling
 

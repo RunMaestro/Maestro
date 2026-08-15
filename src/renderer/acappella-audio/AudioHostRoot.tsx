@@ -20,7 +20,7 @@ import type { WebRtcHostCommand, WebRtcHostEvent } from '../../shared/acappella/
 import { logger } from '../utils/logger';
 import { createAudioHostBridge, type AudioHostBridge } from './bridge';
 import { MicCapture } from './capture';
-import { PeerRegistry, type PeerAudioBinding } from './peer-connection';
+import { PeerRegistry, applyWebRtcCommand, type PeerAudioBinding } from './peer-connection';
 import { TtsPlayback } from './playback';
 import { pcmWorkletUrl } from './worklet-url';
 
@@ -178,40 +178,11 @@ export function createAudioHostController(
 		bridge.sendWebRtcEvent(event);
 	}
 
+	// The switch itself lives next to the registry it drives, so the conformance
+	// harness can apply the identical commands with no DOM around it.
 	const handleWebRtcCommand = (command: WebRtcHostCommand): void => {
 		if (disposed) return;
-		switch (command.kind) {
-			case 'accept-offer':
-				void peers.acceptOffer({
-					deviceId: command.deviceId,
-					offer: command.offer,
-					iceServers: command.iceServers,
-					audio: command.audio,
-				});
-				break;
-			case 'add-ice-candidate':
-				peers.addIceCandidate(command.deviceId, command.candidate);
-				break;
-			case 'close-peer':
-				peers.close(command.deviceId, command.reason);
-				break;
-			case 'send':
-				peers.send(command.deviceId, command.message);
-				break;
-			case 'broadcast':
-				peers.broadcast(command.message);
-				break;
-			case 'set-floor-holder':
-				peers.setFloorHolder(command.deviceId);
-				break;
-			case 'probe-ice':
-				void peers
-					.probeIce(command.iceServers, command.timeoutMs)
-					.then((result) =>
-						sendPeerEvent({ kind: 'ice-probe-result', probeId: command.probeId, result })
-					);
-				break;
-		}
+		applyWebRtcCommand(peers, command, sendPeerEvent);
 	};
 
 	const unsubscribe = bridge.onCommand(handleCommand);
