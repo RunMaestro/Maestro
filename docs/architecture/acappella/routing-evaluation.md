@@ -56,6 +56,30 @@ Fifteen utterances against a fixed roster of four agents and twelve tabs. The se
 weighted toward the cases that are ambiguous rather than the ones that are obvious: a script of
 fifteen "tell the backend agent to run the tests" would score 100% and prove nothing.
 
+It runs headless. `scripts/acappella-routing-eval.ts` encodes the roster and the script below and
+drives the real `createConductorRouter` against a real Brain:
+
+```bash
+npm run acappella:eval                          # the Conductor-agent Brain
+npm run acappella:eval -- --brain anthropic     # ANTHROPIC_API_KEY
+npm run acappella:eval -- --brain openai        # OPENAI_API_KEY
+npm run acappella:eval -- --brain local --model-path /path/to/qwen3-1.7b.gguf
+```
+
+This was originally written down as a microphone session with four live agents, which is the wrong
+instrument for the thing being measured. Routing takes a TRANSCRIPT and a ROSTER, both of which are
+data; speaking the script aloud adds speech recognition and four real agents as uncontrolled
+variables and makes the result unrepeatable. Everything below the Brain in the harness is shipping
+code - the prompt from `src/prompts/acappella-router.md` (read through `initializePrompts()`, so a
+local edit is what gets measured), `parseRouteDecision`, the grammar validator, the recall ranker,
+the confidence and recall policies, and the routing log itself - so the only thing being varied is
+the model. The harness plays the user who corrects a misroute: a decision that misses its
+expectation is marked `corrected` in the log, exactly as the HUD's correction control does, so
+`routingQuality()` produces the reported number rather than a second tally beside it.
+
+An unusable Brain fails once, before the script starts, rather than fifteen times inside the results
+table. That is how the local tier reports itself in a checkout without the native runtime.
+
 ### The fixture roster
 
 | Agent      | Type        | Project path         | Tabs                                                               |
@@ -86,17 +110,15 @@ fifteen "tell the backend agent to run the tests" would score 100% and prove not
 | 15  | "no, the other one"                              | -               | correction         | correction path          |
 
 Utterance 14 is the interesting one: with an "Auth Refactor" tab on Backend and an "Old Auth Spike"
-tab on API, the correct behaviour is a spoken "Backend or API?" rather than a coin flip. Utterance 15
-is not routed at all - it is recognised as a correction of whatever 14 resolved to.
+tab on API, the correct behaviour is a spoken "Backend or API?" rather than a coin flip. Which agent
+the router leaned toward while asking is deliberately NOT scored - when it is right to be unsure,
+penalising the lean would penalise the behaviour the threshold exists to produce. The harness then
+routes the answer ("the backend one") with `clarification` set, which is the round trip that stops a
+two-word reply from becoming a tab called "the backend one". Utterance 15 is not routed at all: it is
+recognised from the utterance alone and turned into a correction plan.
 
-### Running it
-
-1. Open four agents matching the fixture roster and create the twelve tabs. Snooze
-   `Rate Limit Spike`; close `Old Auth Spike`.
-2. Configure the Brain under test in Settings > Plugins > A Cappella > Voice Providers.
-3. Start a voice session and read the fifteen lines out loud, pausing for each dispatch.
-4. Read the numbers back with `window.maestro.voice.routingLog()`.
-5. Repeat for the other Brain, comparing the `targetSessionId` / `tabAction` pairs turn for turn.
+Fourteen of the fifteen are routed and scored. Utterance 15 is a recognition check, and the
+disambiguation answer is reported beside the script rather than inside it.
 
 Record each run as a new row below, with the date and the Brain, so a prompt change or a model swap
 can be compared against what came before rather than argued about.
@@ -105,33 +127,77 @@ can be compared against what came before rather than argued about.
 
 ### Deterministic layer
 
-Green as of 2026-08-15. 102 assertions across `grammar.test.ts`, `conductor-router.test.ts`,
-`tab-recall.test.ts`, `routing-context.test.ts`, `routing-log.test.ts` and `conductor-agent.test.ts`,
-plus the executor and session-service suites. This layer proves the router's rules, not the model's
-judgement: every case
-in it is driven by a scripted Brain, so a 100% pass says the decision handling is correct and says
-nothing about whether a real model would have produced those decisions.
+Green as of 2026-08-15, inside a whole-repo run of 37,762 tests. 102 assertions across
+`grammar.test.ts`, `conductor-router.test.ts`, `tab-recall.test.ts`, `routing-context.test.ts`,
+`routing-log.test.ts` and `conductor-agent.test.ts`, plus the executor and session-service suites.
+This layer proves the router's rules, not the model's judgement: every case in it is driven by a
+scripted Brain, so a 100% pass says the decision handling is correct and says nothing about whether a
+real model would have produced those decisions.
 
 ### Model in the loop
 
-| Date | Brain | Hits | Corrections | Clarifications | Hit rate | Mean latency |
-| ---- | ----- | ---- | ----------- | -------------- | -------- | ------------ |
-| -    | -     | -    | -           | -              | -        | -            |
+| Date       | Brain             | Hits  | Corrections | Clarifications | Hit rate | Mean latency |
+| ---------- | ----------------- | ----- | ----------- | -------------- | -------- | ------------ |
+| 2026-08-15 | `conductor-agent` | 10/14 | 3           | 2              | 77%      | 5485 ms      |
+| 2026-08-15 | `conductor-agent` | 11/14 | 2           | 2              | 85%      | 6703 ms      |
+| 2026-08-15 | `conductor-agent` | 10/14 | 3           | 2              | 77%      | 5854 ms      |
 
-**Not yet run.** It needs a machine with the Qwen3 1.7B model downloaded, a hosted API key, four real
-agents, and a microphone - none of which exist in a CI or worktree environment, and the numbers would
-be fabricated rather than measured if this table were filled in from anywhere else. The script above
-is the whole procedure; a run takes about fifteen minutes.
+Three runs of the Conductor-agent Brain (Claude Code, `--output-format json`, read-only). "Hits" is
+`dispatched` from the routing log; the script matched 11, 12 and 11 of its fourteen expectations, and
+the two counts differ because a correct clarification is a hit for the script and neither for the hit
+rate.
 
-Two things to confirm during that run, both of which are the point of doing it at all:
+Two misses are reproducible across all three runs, and they are the reason for running this at all:
+
+- **"add a rate limiter to the public endpoints"** (expected `new`) recalls the snoozed
+  `Rate Limit Spike` tab every time, at 0.60. The agent is right; the tab is not. A NEW request that
+  shares words with an abandoned conversation is currently pulled into it, because nothing in the
+  prompt says that a tab's topic being ABOUT a subject is weaker evidence than the utterance being a
+  fresh instruction. This is the most useful finding here and it is a prompt fix, not a code fix.
+- **"the gateway one"** (expected a confident `current` on API) lands on API but asks, at 0.40. The
+  target is right every time and only the confidence is under the threshold. Defensible behaviour for
+  a three-word fragment, and arguably the script's expectation is the thing that is wrong; recorded
+  rather than tuned away, because a threshold moved to make a table look better is a threshold that
+  is no longer measuring anything.
+
+One miss is a threshold flake: "ask the frontend agent about the checkout flow" scored 0.50 on the
+third run and 0.90 on the other two, so it asked once for an utterance that names its agent out loud.
+
+**Latency is the headline.** 5.5 to 6.7 seconds mean, with individual turns to 20 s. That is an order
+of magnitude outside the routing budget in [[latency-baseline]], and it is the expected cost of this
+tier: a full agent run is being paid for a classification. The Conductor-agent Brain is for people who
+want routing that reasons about their projects and will accept the wait for it. Voice-paced routing is
+the local and hosted tiers, and their numbers belong in the table above before any claim about
+A Cappella's felt latency is made.
+
+**Not yet measured: the local and hosted tiers, and shape parity between them.** Both fail closed
+here and say so:
+
+```
+Routing evaluation failed: Qwen3 1.7B (local) is not usable here:
+  llama.cpp (Conductor Brain) is not part of this build yet.
+Routing evaluation failed: Anthropic (hosted) is not usable here:
+  No Anthropic API key is configured.
+```
+
+`node-llama-cpp` is loaded dynamically and is not installed in this checkout, and no hosted key is
+configured. Filling those rows in needs the native runtime plus the Qwen3 1.7B GGUF for the first and
+one API key for the second; the harness needs nothing else, and each run is about ninety seconds.
+What to look for when they are run:
 
 1. **Shape parity.** The local grammar-constrained Brain and a hosted Brain must produce the same
    decision SHAPE for the same input - the same `target`, `tabAction`, and `tabId` - even where their
    confidences differ. Divergence here means the prompt reads differently to the two models, and that
-   is a prompt bug rather than a model difference.
+   is a prompt bug rather than a model difference. Run both with `--json` and diff the `results`
+   arrays.
 2. **Latency per Brain.** Routing sits between a finished sentence and anything visible happening, so
    it is felt directly. The routing log records `latencyMs` per turn; `routingQuality().meanLatencyMs`
    aggregates it. Compare against the per-hop budget in [[latency-baseline]].
+
+A caveat that belongs on every row: the Conductor-agent Brain is not deterministic, so a single run is
+a sample rather than a score. Three runs moved between 77% and 85% on fourteen utterances with no code
+change between them. Read a one-row difference as noise; read a reproducible per-utterance miss, like
+the rate-limiter one above, as a finding.
 
 ## Tuning
 
