@@ -74,6 +74,17 @@ export interface SpeechSchedulerOptions extends SpeechSchedulerEvents {
 	queueLimit?: number;
 	/** Said instead of an abrupt cut when the cap is reached. */
 	wrapUpText?: string;
+	/**
+	 * The voice and rate to synthesize with, read fresh for EVERY sentence.
+	 *
+	 * A getter rather than a value because that is what makes the settings apply
+	 * live: a user who drags the speed slider mid-reply hears the change on the
+	 * next sentence instead of on the next session. Reading it once at
+	 * construction would pin the whole session to whatever was configured when it
+	 * started, which is the "restart to hear your own setting" behaviour this
+	 * exists to avoid.
+	 */
+	speechOptions?: () => { voiceId?: string; rate?: number };
 }
 
 /**
@@ -356,10 +367,19 @@ export class SpeechScheduler {
 		}
 	}
 
+	/** The voice and rate for the sentence about to be synthesized. Read live. */
+	private speakOptions(utteranceId: string): {
+		utteranceId: string;
+		voiceId?: string;
+		rate?: number;
+	} {
+		return { utteranceId, ...(this.options.speechOptions?.() ?? {}) };
+	}
+
 	/** Collect one sentence's audio. Rejections are handled by the delivery loop. */
 	private async synthesize(utteranceId: string, sentence: string): Promise<TtsChunk[]> {
 		const chunks: TtsChunk[] = [];
-		for await (const chunk of this.options.tts.speak(sentence, { utteranceId })) {
+		for await (const chunk of this.options.tts.speak(sentence, this.speakOptions(utteranceId))) {
 			chunks.push(chunk);
 		}
 		return chunks;
@@ -380,7 +400,10 @@ export class SpeechScheduler {
 		this.capped = true;
 		this.options.onSentence({ utteranceId, index: this.delivered, text: this.wrapUpText });
 		try {
-			for await (const chunk of this.options.tts.speak(this.wrapUpText, { utteranceId })) {
+			for await (const chunk of this.options.tts.speak(
+				this.wrapUpText,
+				this.speakOptions(utteranceId)
+			)) {
 				if (this.ended) return;
 				this.options.onChunk?.(chunk);
 			}

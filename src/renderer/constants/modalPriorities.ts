@@ -313,6 +313,11 @@ export const MODAL_PRIORITIES = {
 	 * the menu first. */
 	GIT_PILL_MENU: 220,
 
+	/** Header voice pill dropdown. Above the HUD, so Escape closes the menu the
+	 * user just opened rather than ending the conversation underneath it - the
+	 * one Escape in this feature that must NOT reach for the microphone. */
+	VOICE_PILL_MENU: 232,
+
 	/** Branch switcher (fuzzy branch picker from the header git pill) - above the
 	 * git viewers so it layers on top when opened while one is showing. 205, not
 	 * 210: THOUGHT_STREAM already owns 210, and the uniqueness guard in

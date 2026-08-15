@@ -208,4 +208,13 @@ export type AudioHostCommand =
 	/** Barge-in: stop immediately and discard everything queued. */
 	| { kind: 'flush' }
 	/** Ramp output gain to `gain` (0 to 1) over `ms`. */
-	| { kind: 'duck'; gain: number; ms: number };
+	| { kind: 'duck'; gain: number; ms: number }
+	/**
+	 * Set the BASE output volume (0 to 1), which ducking is applied on top of.
+	 *
+	 * Separate from `duck` because the two have different lifetimes: a duck is a
+	 * momentary drop that a flush restores, while the volume is the user's
+	 * setting and has to survive every barge-in. Folding them into one command is
+	 * how a mute silently comes back on after the first interruption.
+	 */
+	| { kind: 'set-volume'; volume: number };
