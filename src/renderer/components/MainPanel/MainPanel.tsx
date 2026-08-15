@@ -1142,6 +1142,7 @@ export const MainPanel = React.memo(
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}
 									queuedTabIds={queuedTabIds}
+									unreadGroupIds={unreadGroupIds}
 									onToggleUnreadFilter={onToggleUnreadFilter}
 									onOpenTabSearch={onOpenTabSearch}
 									onOpenOutputSearch={onOpenOutputSearch}
