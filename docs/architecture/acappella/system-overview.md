@@ -264,5 +264,6 @@ holding a floor nothing will ever hand back, which reads to the user as a frozen
 ## Related
 
 - [[voice-session-protocol]] - every event, payload, and direction.
+- [[model-manager]] - the local model catalog, downloads, verification, and the capability gate.
 - [[adr-001-webrtc-transport]] - why WebRTC beats WebSocket plus Opus for the phone leg.
 - [[adr-002-main-process-session]] - why the session is headless in main.

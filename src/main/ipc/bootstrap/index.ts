@@ -56,6 +56,7 @@ import {
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerACappellaHandlers,
+	registerACappellaModelsHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
 	registerCoworkingHandlers,
@@ -316,6 +317,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		safeSend: deps.safeSend,
 		audioHostDeps: deps.acappellaAudioHostDeps,
+	});
+
+	// Register A Cappella model handlers (catalog, download, verify, disk). Also
+	// free: the catalog is a frozen constant and the downloader is built lazily, so
+	// nothing here reaches the network until the user presses Download.
+	registerACappellaModelsHandlers({
+		settingsStore: deps.settingsStore,
+		safeSend: deps.safeSend,
 	});
 
 	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).

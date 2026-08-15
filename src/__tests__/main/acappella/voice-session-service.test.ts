@@ -56,6 +56,7 @@ import type {
 	VoiceProviderTrio,
 	VoiceRouteContext,
 } from '../../../shared/acappella/providers';
+import type { VoiceReadiness, VoiceSlotReadiness } from '../../../shared/acappella/readiness';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import { splitIntoSpokenSentences } from '../../../shared/acappella/sentences';
 import {
@@ -189,7 +190,11 @@ interface Harness {
 }
 
 function makeHarness(
-	overrides: { executeRoute?: VoiceRouteExecutor; onSpeechChunk?: (chunk: TtsChunk) => void } = {}
+	overrides: {
+		executeRoute?: VoiceRouteExecutor;
+		onSpeechChunk?: (chunk: TtsChunk) => void;
+		checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
+	} = {}
 ): Harness {
 	const stt = new FakeStt();
 	const tts = new FakeTts();
@@ -210,6 +215,7 @@ function makeHarness(
 		getRoster: () => makeRoster(),
 		executeRoute: overrides.executeRoute ?? (executor as unknown as VoiceRouteExecutor),
 		onSpeechChunk: overrides.onSpeechChunk,
+		checkReadiness: overrides.checkReadiness,
 	});
 
 	const events: VoiceEvent[] = [];
@@ -515,6 +521,56 @@ describe('VoiceSessionService classified failures', () => {
 		const error = h.events[1];
 		expect(error.type === 'session-error' && error.code).toBe('provider-unavailable');
 		expect(error.type === 'session-error' && error.providerId).toBe('fake-stt');
+	});
+
+	it('refuses to start when the capability gate blocks a slot, and never substitutes', async () => {
+		const blocked: VoiceSlotReadiness = {
+			slot: 'stt',
+			providerId: 'whisper-local',
+			satisfied: false,
+			reason: 'model-not-installed',
+			detail: 'Speech-to-Text: Whisper Base (English) is not installed.',
+			suggestedAction: 'Download it in Settings > Plugins > A Cappella > Voice Setup.',
+		};
+		const h = makeHarness({
+			checkReadiness: () => ({
+				canStartSession: false,
+				canRunHandsFree: false,
+				slots: [blocked],
+				blocking: [blocked],
+			}),
+		});
+
+		const snapshot = await h.service.startSession({ scope: { kind: 'conductor' } });
+
+		expect(snapshot.state).toBe('error');
+		const error = h.events.find((event) => event.type === 'session-error');
+		expect(error?.type === 'session-error' && error.code).toBe('provider-unavailable');
+		// The missing piece AND the recovery are both named: a disabled voice mode
+		// with no stated reason is indistinguishable from a bug.
+		expect(error?.type === 'session-error' && error.message).toContain('is not installed');
+		expect(error?.type === 'session-error' && error.message).toContain('Download it in Settings');
+		// The gate ran BEFORE the device. Nothing was opened for a session that was
+		// never going to work.
+		expect(h.stt.started).toBe(false);
+		// And the blocked provider is reported as-is, never swapped for a working one.
+		expect(error?.type === 'session-error' && error.providerId).toBe('whisper-local');
+	});
+
+	it('starts normally when the gate is satisfied', async () => {
+		const h = makeHarness({
+			checkReadiness: () => ({
+				canStartSession: true,
+				canRunHandsFree: true,
+				slots: [],
+				blocking: [],
+			}),
+		});
+
+		const snapshot = await h.service.startSession({ scope: { kind: 'conductor' } });
+
+		expect(snapshot.state).toBe('listening');
+		expect(h.stt.started).toBe(true);
 	});
 
 	it('reports a decision that targets an agent which is not running', async () => {

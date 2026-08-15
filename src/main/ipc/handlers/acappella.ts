@@ -58,6 +58,7 @@ import {
 	type VoiceSessionService,
 	type VoiceSessionSnapshot,
 } from '../../acappella';
+import { readVoiceReadiness } from './acappella-models';
 import {
 	readVoiceProviderSettings,
 	resolveVoiceProviders,
@@ -228,6 +229,10 @@ async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 	const service = await initVoiceSessionService({
 		providers,
 		getRoster: readAgentRoster,
+		// The capability gate. The service refuses to start when a required slot is
+		// unsatisfied and names the missing piece; it never asks for, and cannot be
+		// handed, a replacement provider.
+		checkReadiness: () => readVoiceReadiness(deps.settingsStore),
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow),
 		}),

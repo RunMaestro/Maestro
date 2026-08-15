@@ -39,6 +39,7 @@ import {
 	audioHostErrorToSessionError,
 	type AudioHostErrorCode,
 } from '../../shared/acappella/audio-host';
+import { readinessErrorMessage, type VoiceReadiness } from '../../shared/acappella/readiness';
 import type { VoiceSessionState } from '../../shared/acappella/session-state';
 import { assertVoiceStateTransition } from '../../shared/acappella/session-state';
 import { countSpokenSentences } from '../../shared/acappella/sentences';
@@ -125,6 +126,18 @@ export interface VoiceSessionServiceOptions {
 	 * to do with `format: 'none'` is the sink's call, not this file's.
 	 */
 	onSpeechChunk?: (chunk: TtsChunk) => void;
+	/**
+	 * The capability gate, consulted before the microphone is touched.
+	 *
+	 * A verdict rather than a provider, deliberately: the service refuses to start
+	 * when a required slot is unsatisfied and says which one. It does NOT ask
+	 * anything to pick a replacement. Routing audio to a cloud API the user did not
+	 * choose is both an unasked-for charge and a privacy break, so the "recovery"
+	 * for a missing local model is a stated error, not a substitution.
+	 *
+	 * Absent means "no gate", which is the mock tier: nothing to be missing.
+	 */
+	checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
 }
 
 /** Everything a client needs to catch up after `get-state`. */
@@ -155,6 +168,7 @@ export class VoiceSessionService {
 	private readonly maxSpokenSentences: number;
 	private readonly utteranceHistoryLimit: number;
 	private readonly onSpeechChunk?: (chunk: TtsChunk) => void;
+	private readonly checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
 
 	private readonly listeners = new Set<VoiceEventListener>();
 
@@ -182,6 +196,7 @@ export class VoiceSessionService {
 		this.maxSpokenSentences = options.maxSpokenSentences ?? DEFAULT_MAX_SPOKEN_SENTENCES;
 		this.utteranceHistoryLimit = options.utteranceHistoryLimit ?? DEFAULT_UTTERANCE_HISTORY;
 		this.onSpeechChunk = options.onSpeechChunk;
+		this.checkReadiness = options.checkReadiness;
 	}
 
 	// -- Subscription --------------------------------------------------------
@@ -252,6 +267,20 @@ export class VoiceSessionService {
 
 		this.transition('arming');
 		this.emit('wake', { source: params.source ?? 'client-button', scope: params.scope });
+
+		// Before the device, not after: a session that opened the microphone and
+		// then discovered it has nowhere to send the audio has already cost the user
+		// a recording light and an OS permission prompt for nothing.
+		const readiness = await this.checkReadiness?.();
+		if (readiness && !readiness.canStartSession) {
+			const blocked = readiness.blocking[0];
+			this.fail(
+				'provider-unavailable',
+				readinessErrorMessage(readiness) || 'Voice mode is not ready.',
+				blocked?.providerId
+			);
+			return this.getSnapshot();
+		}
 
 		try {
 			await this.providers.stt.start(this.sttCallbacks());
