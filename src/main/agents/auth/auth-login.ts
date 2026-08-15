@@ -40,8 +40,9 @@ import type { ProcessManager } from '../../process-manager/ProcessManager';
 import type { AgentConfigsData, MaestroSettings, SessionsData } from '../../stores/types';
 import { getSnapshot } from '../../stores/providerAuthStore';
 import { logger } from '../../utils/logger';
-import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { createSshRemoteStoreAdapter, getSshRemoteConfig } from '../../utils/ssh-remote-resolver';
 import { wrapSpawnWithSsh } from '../../utils/ssh-spawn-wrapper';
+import type { SshRemoteConfig } from '../../../shared/types';
 import { getAgentDefinition } from '../definitions';
 import type { AgentDetector } from '../detector';
 import { collectAuthTargets, resolveProviderBinaryPath } from './auth-startup';
@@ -92,6 +93,12 @@ export interface StartAuthLoginResult {
 	note?: string;
 	/** True when the login is running on an SSH remote rather than this machine. */
 	remote?: boolean;
+	/**
+	 * Human name of that remote, for the modal's "you are signing in on X" copy.
+	 * The renderer only has the remote's id (from `identity.host`), and an id is
+	 * not what the user called the machine.
+	 */
+	remoteLabel?: string;
 	pid?: number;
 	/** User-facing reason the login could not start. */
 	error?: string;
@@ -100,6 +107,16 @@ export interface StartAuthLoginResult {
 /** Fail with a reason the modal can render verbatim. */
 function failure(runSessionId: string, error: string): StartAuthLoginResult {
 	return { started: false, runSessionId, error };
+}
+
+/**
+ * Name one SSH remote the way a user would recognize it: their own label, with
+ * the address that actually gets dialed in parentheses so two remotes named
+ * "dev" are still told apart.
+ */
+export function describeSshRemote(config: SshRemoteConfig): string {
+	const address = config.username ? `${config.username}@${config.host}` : config.host;
+	return config.name && config.name !== address ? `${config.name} (${address})` : address;
 }
 
 /**
@@ -189,12 +206,22 @@ export async function startAuthLogin(
 	let args = login.args;
 	let cwd = target.cwd;
 	let customEnvVars: Record<string, string> | undefined = target.env;
+	let remoteLabel: string | undefined;
 
 	if (target.sshRemoteConfig) {
 		// Rule 2. The user put this agent on another machine; running the login
 		// here would write a token into THIS machine's config directory and report
 		// success for an account that is still broken.
 		try {
+			const sshStore = createSshRemoteStoreAdapter(deps.settingsStore);
+			// Same resolution `wrapSpawnWithSsh` runs, read here only for the name to
+			// put on screen. A remote that does not resolve leaves the label unset and
+			// the wrap below fails the whole spawn, so the modal never names a machine
+			// nothing was run on.
+			const resolved = getSshRemoteConfig(sshStore, {
+				sessionSshConfig: target.sshRemoteConfig,
+			});
+			if (resolved.config) remoteLabel = describeSshRemote(resolved.config);
 			const wrapped = await wrapSpawnWithSsh(
 				{
 					command,
@@ -204,7 +231,7 @@ export async function startAuthLogin(
 					agentBinaryName: getAgentDefinition(identity.provider)?.binaryName,
 				},
 				target.sshRemoteConfig,
-				createSshRemoteStoreAdapter(deps.settingsStore)
+				sshStore
 			);
 			if (!wrapped.sshRemoteUsed) {
 				return failure(
@@ -284,6 +311,7 @@ export async function startAuthLogin(
 		commandLine: [login.command, ...login.args].join(' '),
 		...(login.note ? { note: login.note } : {}),
 		...(isRemote ? { remote: true } : {}),
+		...(remoteLabel ? { remoteLabel } : {}),
 		pid: spawn.pid,
 	};
 }

@@ -384,6 +384,46 @@ describe('startAuthLogin', () => {
 		expect(spawn.mock.calls[0][0].command).toBe('ssh');
 	});
 
+	it('names the remote so the modal can say which machine it is signing in on', async () => {
+		wrapSpawnWithSshMock.mockResolvedValue({
+			command: 'ssh',
+			args: ['host', 'codex login'],
+			cwd: HOME,
+			sshRemoteUsed: { id: 'remote-1' },
+		});
+		const { deps } = makeHarness(
+			[
+				makeSession({
+					toolType: 'codex',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				}),
+			],
+			{
+				sshRemotes: [
+					{
+						id: 'remote-1',
+						name: 'dev-box',
+						host: '10.0.0.5',
+						port: 22,
+						username: 'me',
+						privateKeyPath: '',
+						enabled: true,
+					},
+				],
+			}
+		);
+
+		const key = `codex::oauth::${HOME}/.codex::ssh:remote-1`;
+		const result = await startAuthLogin(deps, {
+			identityKey: key,
+			runSessionId: runIdFor(key),
+		});
+
+		// The renderer only has `remote-1`, which is not what the user called the
+		// machine, and the browser step happens somewhere else than the login.
+		expect(result.remoteLabel).toBe('dev-box (me@10.0.0.5)');
+	});
+
 	it('refuses to sign in locally when the SSH remote cannot be resolved', async () => {
 		wrapSpawnWithSshMock.mockResolvedValue({
 			command: 'codex',

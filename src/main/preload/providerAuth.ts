@@ -101,6 +101,8 @@ export interface ProviderAuthStartLoginResult {
 	note?: string;
 	/** True when the login is running on an SSH remote rather than this machine. */
 	remote?: boolean;
+	/** Human name of that remote (`dev-box (me@10.0.0.5)`), for the modal's copy. */
+	remoteLabel?: string;
 	pid?: number;
 	error?: string;
 }

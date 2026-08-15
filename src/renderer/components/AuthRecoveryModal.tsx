@@ -21,7 +21,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyRound, RefreshCw, ShieldAlert, Terminal as TerminalIcon } from 'lucide-react';
+import {
+	ExternalLink,
+	KeyRound,
+	RefreshCw,
+	ShieldAlert,
+	Terminal as TerminalIcon,
+} from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { XTerminal } from './XTerminal';
@@ -29,14 +35,37 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
 import { verifyAuthRecovery } from '../services/authRecovery';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
-import { buildLoginRunSessionId, resolveLoginCommand } from '../../shared/providerAuth';
+import {
+	buildLoginRunSessionId,
+	resolveLoginCommand,
+	sshRemoteIdFromHost,
+} from '../../shared/providerAuth';
 import type { CredentialIdentity, CredentialKind } from '../../shared/providerAuth';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 import { generateId } from '../utils/ids';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { logger } from '../utils/logger';
+import { openUrl } from '../utils/openUrl';
 import type { Session, Theme } from '../types';
 
 const LOG_CONTEXT = '[AuthRecovery]';
+
+/**
+ * How much of the login's output to keep while looking for a sign-in URL.
+ *
+ * Only enough to survive a URL split across PTY chunks. The terminal itself
+ * holds the scrollback; this buffer exists to match a regex against, and an
+ * unbounded one would grow for as long as the modal is open.
+ */
+const URL_SCAN_BUFFER_CHARS = 8000;
+
+/**
+ * How long a remote login may print nothing URL-shaped before the modal offers
+ * the manual escape hatch. Long enough that a slow SSH handshake plus a CLI
+ * banner does not trip it, short enough that a user is not left watching a
+ * terminal that will never produce a link.
+ */
+const REMOTE_URL_WAIT_MS = 25_000;
 
 // ============================================================================
 // Helpers (exported for tests)
@@ -95,6 +124,34 @@ export function describeCredentialRemedy(identity: CredentialIdentity): {
 	}
 }
 
+/** http(s) URLs, minus the characters that bracket one rather than belong to it. */
+const LOGIN_URL_REGEX = /https?:\/\/[^\s<>"'`]+/g;
+
+/** Punctuation a CLI puts AFTER a URL, never inside one. */
+const TRAILING_PUNCT = /[.,;:!?)\]}'"`]+$/;
+
+/**
+ * The sign-in URL a login command printed, or null if it has not printed one.
+ *
+ * The far side of an SSH login cannot open a browser, so the URL in its output
+ * is the only way through the flow: it has to become something the user can
+ * click HERE. The text arrives as raw PTY output, so the escape sequences the
+ * CLI used to color the link are stripped first - a URL wrapped in them matches
+ * nothing otherwise.
+ *
+ * The LAST match wins. A flow that prints a docs link before its sign-in link
+ * would otherwise hand the user the wrong one, and a URL still arriving in
+ * chunks is replaced by its longer self on the next chunk.
+ */
+export function extractLoginUrl(text: string): string | null {
+	const plain = stripAnsiCodes(text);
+	LOGIN_URL_REGEX.lastIndex = 0;
+	const matches = plain.match(LOGIN_URL_REGEX);
+	if (!matches || matches.length === 0) return null;
+	const url = matches[matches.length - 1].replace(TRAILING_PUNCT, '');
+	return url.length > 0 ? url : null;
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -129,6 +186,12 @@ export function AuthRecoveryModal({
 	const [spawnedCommandLine, setSpawnedCommandLine] = useState<string | null>(null);
 	/** Why the login could not start, from main. Null while it is running fine. */
 	const [spawnError, setSpawnError] = useState<string | null>(null);
+	/** Sign-in URL scraped from the login's output, once it prints one. */
+	const [loginUrl, setLoginUrl] = useState<string | null>(null);
+	/** The remote's own name, from main. The renderer only has its id. */
+	const [remoteLabel, setRemoteLabel] = useState<string | null>(null);
+	/** True once a remote login has gone quiet long enough to offer the manual path. */
+	const [urlWaitExpired, setUrlWaitExpired] = useState(false);
 	/**
 	 * Latest `handleVerify`, for the PTY-exit listener below. A ref rather than a
 	 * dependency: putting the callback in the login effect's deps would kill and
@@ -152,6 +215,13 @@ export function AuthRecoveryModal({
 		[identity.key, runId]
 	);
 
+	// Which machine owns this credential. Read from the identity rather than from
+	// the spawn result, so the copy is right from the first frame instead of
+	// changing under the user once main answers.
+	const remoteId = useMemo(() => sshRemoteIdFromHost(identity.host), [identity.host]);
+	const isRemote = remoteId !== null;
+	const hostLabel = remoteLabel ?? remoteId;
+
 	/**
 	 * Own the login PTY for the life of this run id.
 	 *
@@ -172,6 +242,11 @@ export function AuthRecoveryModal({
 		let cancelled = false;
 		setSpawnError(null);
 		setSpawnedCommandLine(null);
+		// A re-run is a new flow: the previous run's URL is dead (its state
+		// parameter went with the killed PTY), so offering it would send the user
+		// through a sign-in that lands nowhere.
+		setLoginUrl(null);
+		setUrlWaitExpired(false);
 
 		// A CLI that exits on its own is the earliest reliable "done", so check
 		// right then instead of waiting for the button. Subscribed inside this
@@ -198,6 +273,7 @@ export function AuthRecoveryModal({
 					return;
 				}
 				if (result.commandLine) setSpawnedCommandLine(result.commandLine);
+				if (result.remoteLabel) setRemoteLabel(result.remoteLabel);
 			})
 			.catch((error: unknown) => {
 				if (cancelled) return;
@@ -214,6 +290,45 @@ export function AuthRecoveryModal({
 			void api.stopLogin(runSessionId);
 		};
 	}, [identity.key, runSessionId, canLogin]);
+
+	/**
+	 * Watch the login's own output for the sign-in URL.
+	 *
+	 * A remote login prints a URL the FAR machine cannot open, so reading it off
+	 * the stream is what turns a hung terminal into a link the user can click on
+	 * the machine that has the browser. The same tap runs for a local login: when
+	 * `$BROWSER` fails to launch, the printed URL is the whole flow, and it is
+	 * cheaper to always offer it than to detect that failure.
+	 *
+	 * Reads the same `process.onData` channel XTerminal renders from, so this
+	 * cannot consume output the terminal would otherwise show.
+	 */
+	useEffect(() => {
+		if (!canLogin) return;
+		const subscribe = window.maestro?.process?.onData;
+		if (!subscribe) return;
+
+		// A URL can straddle two PTY chunks, so match against a rolling tail rather
+		// than one chunk at a time. Bounded: the terminal owns the real scrollback.
+		let buffer = '';
+		return subscribe((sid: string, data: string) => {
+			if (sid !== runSessionId) return;
+			buffer = (buffer + data).slice(-URL_SCAN_BUFFER_CHARS);
+			const url = extractLoginUrl(buffer);
+			if (url) setLoginUrl(url);
+		});
+	}, [runSessionId, canLogin]);
+
+	/**
+	 * A remote login that has printed no URL is the case the user cannot solve by
+	 * staring at it: the remote may have no browser at all, and the CLI can sit
+	 * there forever. Wait a while, then say so and hand over the command.
+	 */
+	useEffect(() => {
+		if (!canLogin || !isRemote || loginUrl) return;
+		const timer = setTimeout(() => setUrlWaitExpired(true), REMOTE_URL_WAIT_MS);
+		return () => clearTimeout(timer);
+	}, [canLogin, isRemote, loginUrl, runSessionId]);
 
 	// One handler for both exits, so the ESC pill cannot drift from the Escape
 	// key. `<Modal>` registers the layer with this same function.
@@ -268,6 +383,14 @@ export function AuthRecoveryModal({
 			() => {}
 		);
 	}, [commandLine]);
+
+	const handleCopyUrl = useCallback(() => {
+		if (!loginUrl) return;
+		void navigator.clipboard?.writeText(loginUrl).then(
+			() => flashCopiedToClipboard(loginUrl),
+			() => {}
+		);
+	}, [loginUrl]);
 
 	const providerName = getAgentDisplayName(identity.provider);
 	const blockedCount = blockedSessions.length;
@@ -356,6 +479,20 @@ export function AuthRecoveryModal({
 		>
 			{loginCommand ? (
 				<>
+					{/* Which machine, said plainly. A user who thinks this is signing in
+					    locally will look for the credential in the wrong place, and will
+					    not understand why no browser opened by itself. */}
+					{isRemote && (
+						<p
+							className="text-xs"
+							style={{ color: theme.colors.textDim }}
+							data-testid="auth-recovery-remote-note"
+						>
+							This account lives on {hostLabel}, so Maestro runs the login there over SSH. The
+							browser step happens on this machine; the new credential is written on {hostLabel},
+							not here.
+						</p>
+					)}
 					{loginCommand.note && (
 						<p className="text-xs" style={{ color: theme.colors.textDim }}>
 							{loginCommand.note}
@@ -393,6 +530,91 @@ export function AuthRecoveryModal({
 							/>
 						</div>
 					</div>
+					{/* The link the flow is waiting on, out of the terminal and into
+					    something clickable. Opened through `openUrl` so it honors the
+					    user's system-vs-Maestro browser setting like every other link. */}
+					{loginUrl && (
+						<div
+							className="rounded border p-3 text-xs flex items-center gap-2"
+							style={{ borderColor: theme.colors.accent, backgroundColor: theme.colors.bgMain }}
+							data-testid="auth-recovery-login-url"
+						>
+							<ExternalLink
+								className="w-3.5 h-3.5 shrink-0"
+								style={{ color: theme.colors.accent }}
+							/>
+							<div className="min-w-0">
+								<p style={{ color: theme.colors.textMain }}>
+									{isRemote
+										? `${hostLabel} cannot open a browser. Open its sign-in page here:`
+										: 'Sign-in page, if your browser did not open on its own:'}
+								</p>
+								<code className="block truncate" style={{ color: theme.colors.textDim }}>
+									{loginUrl}
+								</code>
+							</div>
+							<button
+								type="button"
+								onClick={(e) => openUrl(loginUrl, { ctrlKey: e.metaKey || e.ctrlKey })}
+								className="ml-auto shrink-0 underline hover:opacity-80 transition-opacity"
+								style={{ color: theme.colors.accent }}
+								data-testid="auth-recovery-open-url"
+							>
+								Open
+							</button>
+							<button
+								type="button"
+								onClick={handleCopyUrl}
+								className="shrink-0 underline hover:opacity-80 transition-opacity"
+								style={{ color: theme.colors.accent }}
+								data-testid="auth-recovery-copy-url"
+							>
+								Copy
+							</button>
+						</div>
+					)}
+					{/* A remote with no browser and no printed URL leaves the CLI waiting
+					    on something that will never happen. Say that, and hand over the
+					    command so the user can finish the flow on the remote itself. */}
+					{isRemote && urlWaitExpired && !loginUrl && !spawnError && (
+						<div
+							className="rounded border p-3 text-xs"
+							style={{
+								borderColor: theme.colors.warning,
+								backgroundColor: theme.colors.warning + '10',
+							}}
+							data-testid="auth-recovery-remote-no-url"
+						>
+							<p style={{ color: theme.colors.warning }}>
+								No sign-in link has come back from {hostLabel} yet.
+							</p>
+							<p className="mt-1" style={{ color: theme.colors.textDim }}>
+								If that machine has no browser and the CLI is waiting on one, sign in on {hostLabel}
+								itself: open a shell there and run the command below, then come back and press "I
+								finished logging in".
+							</p>
+							{commandLine && (
+								<div className="flex items-center gap-2 mt-2">
+									<TerminalIcon
+										className="w-3.5 h-3.5 shrink-0"
+										style={{ color: theme.colors.textDim }}
+									/>
+									<code className="truncate" style={{ color: theme.colors.textMain }}>
+										{commandLine}
+									</code>
+									<button
+										type="button"
+										onClick={handleCopyCommand}
+										className="ml-auto underline hover:opacity-80 transition-opacity"
+										style={{ color: theme.colors.accent }}
+										data-testid="auth-recovery-remote-copy-command"
+									>
+										Copy
+									</button>
+								</div>
+							)}
+						</div>
+					)}
 				</>
 			) : (
 				remedy && (
@@ -445,7 +667,8 @@ export function AuthRecoveryModal({
 							</div>
 							{identity.configDir && (
 								<p className="mt-2" style={{ color: theme.colors.textDim }}>
-									Maestro runs it against {identity.configDir}. In your own terminal, point{' '}
+									Maestro runs it against {identity.configDir}
+									{isRemote ? ` on ${hostLabel}` : ''}. In your own terminal, point{' '}
 									{identity.envVarName ?? 'the CLI'} at that directory first or you will sign in to
 									the default account.
 								</p>

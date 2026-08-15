@@ -20,7 +20,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { AuthRecoveryModal } from '../../../renderer/components/AuthRecoveryModal';
+import { AuthRecoveryModal, extractLoginUrl } from '../../../renderer/components/AuthRecoveryModal';
+import { openUrl } from '../../../renderer/utils/openUrl';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
@@ -41,6 +42,11 @@ vi.mock('../../../renderer/components/XTerminal', () => ({
 		<div data-testid="xterm" data-session-id={props.sessionId} />
 	),
 }));
+
+// The sign-in link has to leave through the app's one URL path (system browser
+// or Maestro tab, per the user's setting), never a direct `shell.openExternal`.
+vi.mock('../../../renderer/utils/openUrl', () => ({ openUrl: vi.fn() }));
+const openUrlMock = vi.mocked(openUrl);
 
 const HOME = '/Users/x';
 const GMAIL_DIR = `${HOME}/.claude-gmail`;
@@ -67,6 +73,18 @@ function oauthIdentity(key: string, label: string, configDir: string): Credentia
 
 const gmailIdentity = oauthIdentity(GMAIL_KEY, '.claude-gmail', GMAIL_DIR);
 const smashIdentity = oauthIdentity(SMASH_KEY, '.claude-smash', SMASH_DIR);
+
+/** The same account, but living on a machine that has no browser of its own. */
+const remoteIdentity: CredentialIdentity = {
+	key: `claude-code::oauth::/home/me/.claude::ssh:remote-1`,
+	provider: 'claude-code',
+	kind: 'oauth',
+	scope: '/home/me/.claude',
+	host: 'ssh:remote-1',
+	envVarName: 'CLAUDE_CONFIG_DIR',
+	configDir: '/home/me/.claude',
+	label: '.claude',
+};
 
 const apiKeyIdentity: CredentialIdentity = {
 	key: 'claude-code::api-key::sha256-1a2b::local',
@@ -129,6 +147,8 @@ interface Bridge {
 	clearError: ReturnType<typeof vi.fn>;
 	/** Fire a PTY exit for a process id, as main's `onExit` channel would. */
 	emitExit: (sessionId: string) => void;
+	/** Push PTY output for a process id, as main's `onData` channel would. */
+	emitData: (sessionId: string, data: string) => void;
 }
 
 let baseMaestro: unknown;
@@ -143,11 +163,18 @@ let baseMaestro: unknown;
 function installBridge(
 	options: {
 		probeResult?: ProviderAuthSnapshot['status'] | null;
-		startResult?: { started: boolean; commandLine?: string; error?: string };
+		startResult?: {
+			started?: boolean;
+			commandLine?: string;
+			error?: string;
+			remote?: boolean;
+			remoteLabel?: string;
+		};
 	} = {}
 ): Bridge {
 	const { probeResult = 'authenticated', startResult } = options;
 	const exitListeners = new Set<(sessionId: string) => void>();
+	const dataListeners = new Set<(sessionId: string, data: string) => void>();
 
 	const startLogin = vi.fn(async (request: { runSessionId: string }) => ({
 		runSessionId: request.runSessionId,
@@ -186,6 +213,10 @@ function installBridge(
 				exitListeners.add(listener);
 				return () => exitListeners.delete(listener);
 			},
+			onData: (listener: (sessionId: string, data: string) => void) => {
+				dataListeners.add(listener);
+				return () => dataListeners.delete(listener);
+			},
 		},
 		agents: { getCustomEnvVars: vi.fn().mockResolvedValue({}) },
 		fs: { homeDir: vi.fn().mockResolvedValue(HOME) },
@@ -199,6 +230,9 @@ function installBridge(
 		clearError,
 		emitExit: (sessionId: string) => {
 			for (const listener of Array.from(exitListeners)) listener(sessionId);
+		},
+		emitData: (sessionId: string, data: string) => {
+			for (const listener of Array.from(dataListeners)) listener(sessionId, data);
 		},
 	};
 }
@@ -324,6 +358,165 @@ describe('AuthRecoveryModal', () => {
 			// The account's own directory, so a user who copies the line into their
 			// own terminal cannot sign in to the default account by accident.
 			expect(reveal.textContent).toContain(GMAIL_DIR);
+		});
+	});
+
+	describe('logging into an SSH remote', () => {
+		/** Start a remote login and hand back its process id. */
+		async function renderRemote(startResult?: { remoteLabel?: string }) {
+			const bridge = installBridge({
+				startResult: { remote: true, remoteLabel: 'dev-box (me@10.0.0.5)', ...(startResult ?? {}) },
+			});
+			await renderModal({ identity: remoteIdentity });
+			return { bridge, runSessionId: bridge.startLogin.mock.calls[0][0].runSessionId as string };
+		}
+
+		it('says which machine is being signed into, and where the browser step happens', async () => {
+			await renderRemote();
+
+			const note = screen.getByTestId('auth-recovery-remote-note').textContent ?? '';
+			// The remote's own name, not the `remote-1` id buried in the identity key.
+			expect(note).toContain('dev-box (me@10.0.0.5)');
+			expect(note).toContain('browser step happens on this machine');
+		});
+
+		it('falls back to the remote id until main names the machine', async () => {
+			// A spawn result that carried no label (an older main, a remote deleted
+			// from Settings) must still not pretend the login is local.
+			installBridge({ startResult: { remote: true } });
+			await renderModal({ identity: remoteIdentity });
+
+			expect(screen.getByTestId('auth-recovery-remote-note').textContent).toContain('remote-1');
+		});
+
+		it('says nothing about a remote for a local account', async () => {
+			installBridge();
+			await renderModal();
+
+			expect(screen.queryByTestId('auth-recovery-remote-note')).not.toBeInTheDocument();
+		});
+
+		it('turns the printed sign-in URL into a click that opens it here', async () => {
+			const { bridge, runSessionId } = await renderRemote();
+
+			await act(async () => {
+				bridge.emitData(
+					runSessionId,
+					'\x1b[32mBrowser did not open.\x1b[0m Visit https://claude.ai/oauth/authorize?code=abc123 to continue.\r\n'
+				);
+			});
+
+			const panel = screen.getByTestId('auth-recovery-login-url');
+			expect(panel.textContent).toContain('https://claude.ai/oauth/authorize?code=abc123');
+			// The trailing period of the sentence is not part of the URL.
+			expect(panel.textContent).not.toContain('abc123.');
+
+			fireEvent.click(screen.getByTestId('auth-recovery-open-url'));
+			// Through the app's URL path, so the user's system-vs-Maestro browser
+			// setting still decides where it lands.
+			expect(openUrlMock).toHaveBeenCalledWith(
+				'https://claude.ai/oauth/authorize?code=abc123',
+				expect.objectContaining({ ctrlKey: false })
+			);
+		});
+
+		it('ignores output from a process that is not this login', async () => {
+			const { bridge } = await renderRemote();
+
+			await act(async () => {
+				bridge.emitData('some-agent-session', 'Visit https://evil.example/nope now\r\n');
+			});
+
+			expect(screen.queryByTestId('auth-recovery-login-url')).not.toBeInTheDocument();
+		});
+
+		it('finds a URL that arrived split across two PTY chunks', async () => {
+			const { bridge, runSessionId } = await renderRemote();
+
+			await act(async () => {
+				bridge.emitData(runSessionId, 'Open https://claude.ai/oauth/auth');
+				bridge.emitData(runSessionId, 'orize?code=split-in-half\r\n');
+			});
+
+			expect(screen.getByTestId('auth-recovery-login-url').textContent).toContain(
+				'https://claude.ai/oauth/authorize?code=split-in-half'
+			);
+		});
+
+		it('drops the stale URL when the login is re-run', async () => {
+			const { bridge, runSessionId } = await renderRemote();
+			await act(async () => {
+				bridge.emitData(runSessionId, 'Visit https://claude.ai/oauth/authorize?code=first\r\n');
+			});
+			expect(screen.getByTestId('auth-recovery-login-url')).toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('auth-recovery-rerun'));
+			});
+
+			// That URL's flow died with the killed PTY, so offering it would send the
+			// user through a sign-in that lands nowhere.
+			expect(screen.queryByTestId('auth-recovery-login-url')).not.toBeInTheDocument();
+		});
+
+		it('offers the command to run on the remote when no URL ever appears', async () => {
+			vi.useFakeTimers();
+			try {
+				const { bridge, runSessionId } = await renderRemote();
+				expect(screen.queryByTestId('auth-recovery-remote-no-url')).not.toBeInTheDocument();
+
+				await act(async () => {
+					vi.advanceTimersByTime(30_000);
+				});
+
+				// A remote with no browser leaves the CLI waiting on something that will
+				// never happen; the user needs a way out, not a hung terminal.
+				const panel = screen.getByTestId('auth-recovery-remote-no-url');
+				expect(panel.textContent).toContain('dev-box (me@10.0.0.5)');
+				expect(panel.textContent).toContain('claude auth login --email me@example.com');
+				expect(screen.getByTestId('auth-recovery-remote-copy-command')).toBeInTheDocument();
+
+				// ...and it withdraws the moment the URL does show up.
+				await act(async () => {
+					bridge.emitData(runSessionId, 'Visit https://claude.ai/oauth/authorize?code=late\r\n');
+				});
+				expect(screen.queryByTestId('auth-recovery-remote-no-url')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('leaves a local login alone when it prints no URL', async () => {
+			vi.useFakeTimers();
+			try {
+				installBridge();
+				await renderModal();
+
+				await act(async () => {
+					vi.advanceTimersByTime(30_000);
+				});
+
+				// A local login opens its own browser; nagging about a missing link
+				// would be noise.
+				expect(screen.queryByTestId('auth-recovery-remote-no-url')).not.toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	});
+
+	describe('extractLoginUrl', () => {
+		it('returns the last URL, unwrapped from color codes and punctuation', () => {
+			expect(
+				extractLoginUrl(
+					'docs at https://docs.example/help\r\nGo to \x1b[4mhttps://auth.example/x?y=1\x1b[0m.'
+				)
+			).toBe('https://auth.example/x?y=1');
+		});
+
+		it('answers null rather than guessing when there is no URL', () => {
+			expect(extractLoginUrl('Waiting for the browser...')).toBeNull();
+			expect(extractLoginUrl('')).toBeNull();
 		});
 	});
 

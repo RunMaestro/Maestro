@@ -3643,6 +3643,7 @@ interface MaestroAPI {
 			commandLine?: string;
 			note?: string;
 			remote?: boolean;
+			remoteLabel?: string;
 			pid?: number;
 			error?: string;
 		}>;
