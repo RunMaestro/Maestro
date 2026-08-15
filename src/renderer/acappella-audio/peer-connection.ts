@@ -48,6 +48,8 @@ import type {
 	PeerQualityStats,
 	RemoteAudioConfig,
 	SessionDescriptionPayload,
+	WebRtcHostCommand,
+	WebRtcHostEvent,
 } from '../../shared/acappella/webrtc-host';
 import { logger } from '../utils/logger';
 
@@ -437,6 +439,58 @@ export class PeerRegistry {
 
 		result.best = result.relay ? 'relay' : result.stun ? 'stun' : result.host ? 'lan' : 'unknown';
 		return result;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The command surface
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply one {@link WebRtcHostCommand} to a registry, emitting whatever it
+ * produces.
+ *
+ * The audio host window is one caller; the protocol conformance harness at
+ * `src/__tests__/acappella/conformance/` is the other, and it exists to drive
+ * the real desktop stack against an independent client. Keeping the switch here
+ * rather than inside `AudioHostRoot.tsx` is what makes that possible without a
+ * DOM, and it means a new command kind is covered by conformance the moment it
+ * is handled rather than the next time somebody remembers to mirror it.
+ */
+export function applyWebRtcCommand(
+	peers: PeerRegistry,
+	command: WebRtcHostCommand,
+	emit: (event: WebRtcHostEvent) => void
+): void {
+	switch (command.kind) {
+		case 'accept-offer':
+			void peers.acceptOffer({
+				deviceId: command.deviceId,
+				offer: command.offer,
+				iceServers: command.iceServers,
+				audio: command.audio,
+			});
+			return;
+		case 'add-ice-candidate':
+			peers.addIceCandidate(command.deviceId, command.candidate);
+			return;
+		case 'close-peer':
+			peers.close(command.deviceId, command.reason);
+			return;
+		case 'send':
+			peers.send(command.deviceId, command.message);
+			return;
+		case 'broadcast':
+			peers.broadcast(command.message);
+			return;
+		case 'set-floor-holder':
+			peers.setFloorHolder(command.deviceId);
+			return;
+		case 'probe-ice':
+			void peers
+				.probeIce(command.iceServers, command.timeoutMs)
+				.then((result) => emit({ kind: 'ice-probe-result', probeId: command.probeId, result }));
+			return;
 	}
 }
 
