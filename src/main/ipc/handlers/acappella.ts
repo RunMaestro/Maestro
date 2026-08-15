@@ -27,11 +27,12 @@
  * mid-session can still release the floor.
  */
 
-import { app, ipcMain, type BrowserWindow } from 'electron';
+import { app, ipcMain, shell, type BrowserWindow } from 'electron';
 
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { InterruptSource, RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
+import { micSettingsUrl } from '../../../shared/acappella/mic-settings';
 import {
 	closeAcappellaAudioHostWindow,
 	createRendererVoiceBridge,
@@ -247,6 +248,20 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		}
 	);
 
+	const wrappedOpenMicSettings = withIpcErrorLogging(
+		handlerOpts('openMicSettings'),
+		// Its own channel rather than `shell:openExternal`, which allows only
+		// http/https/mailto. Widening that allowlist so one button can open one
+		// hard-coded URL would trade a real security property for nothing; here the
+		// URL is a constant the caller cannot influence.
+		async (): Promise<boolean> => {
+			const url = micSettingsUrl(process.platform);
+			if (!url) return false;
+			await shell.openExternal(url);
+			return true;
+		}
+	);
+
 	const wrappedGetRoster = withIpcErrorLogging(
 		handlerOpts('getRoster'),
 		async (): Promise<RosterAgent[]> => readAgentRoster()
@@ -296,6 +311,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 			return wrappedSubmitAgentReply(event, payload);
 		}
 	);
+
+	// Ungated, like `stop-session`: a user whose microphone was denied has to be
+	// able to reach the OS setting, and a session that could not open a device is
+	// exactly the situation in which the feature may already have been turned off.
+	ipcMain.handle('acappella:open-mic-settings', wrappedOpenMicSettings);
 
 	ipcMain.handle('acappella:get-roster', async (event): Promise<RosterAgent[]> => {
 		requireEnabled(settingsStore);

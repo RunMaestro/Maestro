@@ -17,6 +17,7 @@
 import type {
 	DispatchAction,
 	InterruptSource,
+	MicState,
 	RosterAgent,
 	VoiceEvent,
 	VoiceEventBase,
@@ -395,6 +396,34 @@ export class VoiceSessionService {
 		return true;
 	}
 
+	// -- Audio telemetry -----------------------------------------------------
+
+	/**
+	 * Publish one meter update, already downsampled by
+	 * `audio/level-meter.ts`. The service does no rate limiting of its own: the
+	 * meter owns the window, and a second opinion here would only mean two places
+	 * deciding how often a client hears about the same number.
+	 *
+	 * Dropped when no session is open - `emit` needs an envelope to stamp, and a
+	 * level that belongs to no session belongs nowhere.
+	 */
+	publishAudioLevel(level: number, speech: boolean): void {
+		this.emit('audio-level', { level: clampLevel(level), speech });
+	}
+
+	/**
+	 * Publish the microphone's state, as projected by `audio/mic-state.ts`.
+	 *
+	 * Every transition goes out, including the benign ones. The failure this
+	 * exists to prevent is a client showing a listening indicator over a
+	 * microphone that will never produce a transcript, and that failure is silent
+	 * by construction: a denied permission and a quiet room look identical from
+	 * the event stream unless something says otherwise.
+	 */
+	publishMicState(state: MicState): void {
+		this.emit('mic-state', { ...state });
+	}
+
 	/** Re-read the roster and push it to every client. */
 	async publishRoster(): Promise<RosterAgent[]> {
 		const roster = await this.getRoster();
@@ -638,4 +667,10 @@ export class VoiceSessionService {
 			}
 		}
 	}
+}
+
+/** A meter value out of range is clamped rather than published: it is only a bar. */
+function clampLevel(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	return value < 0 ? 0 : value > 1 ? 1 : value;
 }

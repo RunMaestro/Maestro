@@ -20,6 +20,7 @@
 import { create } from 'zustand';
 import type {
 	DispatchEvent,
+	MicState,
 	RosterAgent,
 	VoiceEvent,
 	VoiceScope,
@@ -91,6 +92,16 @@ interface VoiceSessionStoreState {
 	 */
 	lastDispatch: DispatchEvent | null;
 	speech: VoiceSpeechRun | null;
+	/**
+	 * Latest downsampled input level, 0 to 1. Updated ~20 times a second, so
+	 * anything that reads it should subscribe to it ALONE - see the note on
+	 * `selectVoiceAudioLevel`.
+	 */
+	audioLevel: number;
+	/** Whether the detector considered the last meter window to be speech. */
+	speechDetected: boolean;
+	/** The microphone as the session sees it. Null until the host reports. */
+	mic: MicState | null;
 	error: { code: string; message: string; recoverable: boolean } | null;
 	roster: RosterAgent[];
 	feed: VoiceFeedEntry[];
@@ -151,13 +162,21 @@ const EMPTY_STATE: VoiceSessionStoreState = {
 	decision: null,
 	lastDispatch: null,
 	speech: null,
+	audioLevel: 0,
+	speechDetected: false,
+	mic: null,
 	error: null,
 	roster: [],
 	feed: [],
 	dismissed: false,
 };
 
-/** Everything a new session must start clean. Keeps the roster: it outlives sessions. */
+/**
+ * Everything a new session must start clean. Keeps the roster, and keeps the
+ * microphone state: both outlive a session. A permission the user denied is
+ * still denied on the next attempt, and blanking it here would make the HUD
+ * forget the one thing it needs to explain why the new session hears nothing.
+ */
 function freshSessionFields(sessionId: string): Partial<VoiceSessionStoreState> {
 	return {
 		sessionId,
@@ -168,6 +187,8 @@ function freshSessionFields(sessionId: string): Partial<VoiceSessionStoreState> 
 		decision: null,
 		lastDispatch: null,
 		speech: null,
+		audioLevel: 0,
+		speechDetected: false,
 		error: null,
 		feed: [],
 		dismissed: false,
@@ -240,6 +261,11 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					break;
 				case 'listen-stop':
 					patch.partialTranscript = '';
+					// The floor closed, so nothing is arriving to move the meter. Leaving
+					// the last level on screen would draw a bar for a microphone that is
+					// no longer being read.
+					patch.audioLevel = 0;
+					patch.speechDetected = false;
 					// `stopped` is the end of the session; `error` parks it. Anything
 					// else (endpoint, interrupted) is mid-conversation and the state
 					// belongs to whichever event comes next.
@@ -295,6 +321,27 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 				case 'speak-end':
 					if (base.speech?.utteranceId === event.utteranceId) {
 						patch.speech = { ...base.speech, endedReason: event.reason };
+					}
+					break;
+				case 'audio-level':
+					patch.audioLevel = event.level;
+					patch.speechDetected = event.speech;
+					break;
+				case 'mic-state':
+					patch.mic = {
+						permission: event.permission,
+						capturing: event.capturing,
+						deviceId: event.deviceId,
+						deviceLabel: event.deviceLabel,
+						issue: event.issue,
+						deviceChanged: event.deviceChanged,
+					};
+					// A microphone that is not being read cannot be making the meter
+					// move; a bar left standing there is the same lie as a listening
+					// indicator over a denied device.
+					if (!event.capturing) {
+						patch.audioLevel = 0;
+						patch.speechDetected = false;
 					}
 					break;
 				case 'session-error':
@@ -368,6 +415,19 @@ export const selectVoiceListening = (s: VoiceSessionStore) =>
 	s.state === 'listening' || s.state === 'arming';
 
 export const selectVoiceSpeaking = (s: VoiceSessionStore) => s.state === 'speaking';
+
+/**
+ * The live input level, 0 to 1.
+ *
+ * Subscribe to this on its own, from the smallest component that draws it. It
+ * changes ~20 times a second, so a component that reads it alongside the rest of
+ * the session re-renders the whole HUD at meter rate for a bar a few pixels
+ * wide.
+ */
+export const selectVoiceAudioLevel = (s: VoiceSessionStore) => s.audioLevel;
+
+/** What is wrong with the microphone, or null when it is fine or unknown. */
+export const selectVoiceMicIssue = (s: VoiceSessionStore) => s.mic?.issue ?? null;
 
 /** What the HUD binds to, in words. */
 export const selectVoiceScopeLabel = (s: VoiceSessionStore): string => {
