@@ -144,6 +144,23 @@ export interface VoiceConverseContext {
 	tabId: string;
 	/** Rough budget for the spoken form. Reading a diff aloud is useless. */
 	maxSentences?: number;
+	/**
+	 * What was actually said out loud earlier in this conversation, oldest first.
+	 *
+	 * Carried so a spoken reply can refer back ("like I said about the token
+	 * check") rather than re-explaining, and so the second chunk of one long agent
+	 * answer does not repeat the headline the first chunk already delivered. It is
+	 * deliberately what the user HEARD, not what the agent wrote: a sentence that
+	 * was queued and then cut off by a barge-in never happened as far as the
+	 * listener is concerned, and a model told otherwise would refer back to
+	 * something nobody said.
+	 */
+	recentSpoken?: string[];
+	/**
+	 * Abort the rewrite. Set when a barge-in cancels the turn mid-stream, so a
+	 * hosted call for speech nobody will hear is dropped rather than paid for.
+	 */
+	signal?: AbortSignal;
 }
 
 export interface BrainProvider extends VoiceProviderInfo {
@@ -151,6 +168,16 @@ export interface BrainProvider extends VoiceProviderInfo {
 	route(input: string, context: VoiceRouteContext): Promise<RouteDecision>;
 	/** Reshape an agent's terminal-shaped answer into spoken-form text. */
 	converse(agentText: string, context: VoiceConverseContext): Promise<string>;
+	/**
+	 * The same rewrite, delivered as it is written.
+	 *
+	 * Optional because it is a latency optimisation, not a capability: a provider
+	 * without it is driven through `converse()` and the whole rewrite arrives at
+	 * once. The chunks are raw text deltas, NOT sentences - the caller owns
+	 * segmentation, because `src/shared/acappella/sentences.ts` is the one splitter
+	 * every side of the protocol has to agree with.
+	 */
+	converseStream?(agentText: string, context: VoiceConverseContext): AsyncIterable<string>;
 }
 
 // ---------------------------------------------------------------------------

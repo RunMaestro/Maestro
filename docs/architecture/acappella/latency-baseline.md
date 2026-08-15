@@ -116,6 +116,52 @@ of a conversation.
   off has to be instant, and a cancel that waits out a sentence reads as lag even when every number
   above is good.
 
+## Time to first spoken word
+
+The number a user actually feels is not the total turn: it is how long they stand in silence before
+anything is said. Everything in `src/main/acappella/speech/` exists to shorten that one span, and it
+is measured as `speak-sentence` index 0 minus the detector's speech end, which is the
+**First spoken sentence** column above.
+
+Three mechanisms move it, in descending order of effect:
+
+1. **The agent output tap cuts at a completed thought, not at the end of the reply.** A four hundred
+   line summary is spoken from its first paragraph while the agent is still writing the rest. This
+   is worth more than every other optimisation combined, because it removes the agent's own write
+   time from the span rather than shaving a hop.
+2. **The translator rewrites that piece alone.** One short rewrite instead of one long one, and a
+   reply that is already conversational ("yes, the tests pass") skips the model entirely.
+   `ConversationalTranslator.stats` reports the translations-to-passthroughs split, which is the
+   number to check when short answers feel slower than they should.
+3. **The scheduler synthesizes one sentence ahead of the one being delivered.** This does not shorten
+   the first word; it removes the provider round trip that would otherwise fall between every pair
+   of sentences. A reply that starts fast and then stutters is this, not the tap.
+
+### Measurements
+
+Record the median of three turns per configuration, with one short instruction ("ask backend what
+changed"). Take the numbers from **Settings > Plugins > A Cappella > Models > Turn latency**.
+
+| Configuration        | Time to first spoken word | Inter-sentence gap | Notes |
+| -------------------- | ------------------------- | ------------------ | ----- |
+| Fully local cascade  | -                         | -                  | -     |
+| Fully hosted cascade | -                         | -                  | -     |
+| Realtime             | -                         | -                  | -     |
+
+The realtime pipeline bypasses this layer: its provider produces speech directly, so the tap and the
+translator do not run and the span is the provider's own. That is the comparison the table exists to
+make - when the cascade's time to first spoken word is within a couple of hundred milliseconds of
+realtime, the streaming layer is doing its job and there is no reason to send audio to a third party
+for speed alone.
+
+### Barge-in
+
+Measured separately, from the detector's `speech-start` to playback going quiet. The teardown is
+ordered so the ducking is first (see `speech/barge-in.ts`), which puts the number the user perceives
+at roughly the duck ramp, about 20 ms, regardless of how long the cancellation behind it takes. The
+guard window (250 ms after speech starts) is deliberately excluded: it is the one span where a
+barge-in is refused on purpose.
+
 ## Related
 
 - [[system-overview]] - the two pipeline shapes and the provider resolution rules.

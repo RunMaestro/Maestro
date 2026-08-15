@@ -65,6 +65,26 @@ export const ROUTE_SYSTEM_PROMPT = [
 	'- "confidence" is 0 to 1. Be honest: a guess is 0.4, hearing an agent name by name is 0.9.',
 ].join('\n');
 
+/**
+ * The translator instructions, as the user may have edited them.
+ *
+ * Same arrangement as {@link routeSystemPrompt}: `src/prompts/acappella-translator.md`
+ * is the editable core prompt and the constant below is the fallback for a
+ * process that has not initialised the prompt store. It is read by every Brain's
+ * `converse()` and by `speech/conversational-translator.ts`, so the voice a user
+ * tuned is the voice they get on all three backends rather than on whichever one
+ * happened to import the file.
+ */
+export function converseSystemPrompt(): string {
+	try {
+		const edited = getPrompt(PROMPT_IDS.ACAPPELLA_TRANSLATOR).trim();
+		if (edited) return edited;
+	} catch {
+		/* prompts not initialised, or the id was removed: use the built-in text */
+	}
+	return CONVERSE_SYSTEM_PROMPT;
+}
+
 export const CONVERSE_SYSTEM_PROMPT = [
 	"You turn an AI coding agent's written answer into something worth hearing out loud.",
 	'',
@@ -155,11 +175,25 @@ function describeTab(tab: RosterTab): string {
 	return parts.join(' ');
 }
 
+/** How many earlier spoken lines a rewrite is shown. Enough to avoid repeating itself. */
+const MAX_SPOKEN_MEMORY_LINES = 4;
+
 export function buildConverseUserPrompt(agentText: string, context: VoiceConverseContext): string {
 	const limit = context.maxSentences ?? DEFAULT_SPOKEN_SENTENCES;
-	return [`Say this in at most ${limit} sentence${limit === 1 ? '' : 's'}:`, '', agentText].join(
-		'\n'
-	);
+	const lines: string[] = [];
+
+	const spoken = context.recentSpoken ?? [];
+	if (spoken.length > 0) {
+		// What the listener HEARD, so the rewrite can refer back instead of
+		// re-explaining, and so a second chunk of one long answer does not repeat
+		// the headline the first chunk already delivered.
+		lines.push('You already said, out loud:');
+		for (const line of spoken.slice(-MAX_SPOKEN_MEMORY_LINES)) lines.push(`- ${line}`);
+		lines.push('');
+	}
+
+	lines.push(`Say this in at most ${limit} sentence${limit === 1 ? '' : 's'}:`, '', agentText);
+	return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------

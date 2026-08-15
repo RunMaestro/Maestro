@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	MAX_SPOKEN_SENTENCE_LENGTH,
 	countSpokenSentences,
+	splitCompleteSentences,
 	splitIntoSpokenSentences,
 } from '../../shared/acappella/sentences';
 
@@ -35,6 +36,33 @@ describe('splitIntoSpokenSentences', () => {
 
 	it('keeps abbreviations intact', () => {
 		expect(splitIntoSpokenSentences('Ask Dr. Kim about it.')).toEqual(['Ask Dr. Kim about it.']);
+		expect(splitIntoSpokenSentences('Check a store, e.g. the session one.')).toEqual([
+			'Check a store, e.g. the session one.',
+		]);
+		expect(splitIntoSpokenSentences('It ships in the U.S. only.')).toEqual([
+			'It ships in the U.S. only.',
+		]);
+	});
+
+	it('splits after an acronym, which agents write constantly', () => {
+		// A `(?<![A-Z])` lookbehind used to swallow this boundary, so TTS read two
+		// sentences as one breathless run every time an agent mentioned an API.
+		expect(splitIntoSpokenSentences('Fixed the API. Then I ran the tests.')).toEqual([
+			'Fixed the API.',
+			'Then I ran the tests.',
+		]);
+	});
+
+	it('does not split inside decimals, version numbers, or file paths', () => {
+		expect(splitIntoSpokenSentences('Coverage is 99.5 percent now.')).toEqual([
+			'Coverage is 99.5 percent now.',
+		]);
+		expect(splitIntoSpokenSentences('Bumped it to v1.2.3 this morning.')).toEqual([
+			'Bumped it to v1.2.3 this morning.',
+		]);
+		expect(splitIntoSpokenSentences('The fix is in src/main/index.ts near the top.')).toEqual([
+			'The fix is in src/main/index.ts near the top.',
+		]);
 	});
 
 	it('treats an unterminated tail as its own sentence', () => {
@@ -61,5 +89,41 @@ describe('splitIntoSpokenSentences', () => {
 		const text = 'One. Two. Three.';
 		expect(countSpokenSentences(text)).toBe(splitIntoSpokenSentences(text).length);
 		expect(countSpokenSentences('   ')).toBe(0);
+	});
+});
+
+describe('splitCompleteSentences', () => {
+	it('holds back the fragment still being written', () => {
+		expect(splitCompleteSentences('All done. Now the te')).toEqual({
+			sentences: ['All done.'],
+			rest: 'Now the te',
+		});
+	});
+
+	it('holds back a token that ends in a period, because the next character decides', () => {
+		// "index." becomes "index.ts" one token later. A sentence already synthesized
+		// cannot be taken back.
+		expect(splitCompleteSentences('The fix is in index.')).toEqual({
+			sentences: [],
+			rest: 'The fix is in index.',
+		});
+	});
+
+	it('preserves the separator so the next delta does not fuse onto the tail', () => {
+		let buffer = '';
+		const spoken: string[] = [];
+		for (const delta of ['Done, ', 'the auth bug ', 'was stale. ', 'Two files changed.']) {
+			buffer += delta;
+			const result = splitCompleteSentences(buffer);
+			buffer = result.rest;
+			spoken.push(...result.sentences);
+		}
+
+		expect(spoken).toEqual(['Done, the auth bug was stale.']);
+		expect(buffer).toBe('Two files changed.');
+	});
+
+	it('has nothing to say about an empty buffer', () => {
+		expect(splitCompleteSentences('')).toEqual({ sentences: [], rest: '' });
 	});
 });
