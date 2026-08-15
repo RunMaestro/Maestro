@@ -332,16 +332,17 @@ registered from `setupIpcHandlers()` in `src/main/ipc/bootstrap/index.ts`, which
 running app actually takes; `registerAllHandlers()` in `handlers/index.ts` is not called at
 runtime, so a handler wired only there would be dead.
 
-| Channel                      | Preload method             | Returns                                                |
-| ---------------------------- | -------------------------- | ------------------------------------------------------ |
-| `acappella:start-session`    | `voice.start(scope?)`      | `{ snapshot, substitutions }`                          |
-| `acappella:stop-session`     | `voice.stop()`             | `void`                                                 |
-| `acappella:submit-utterance` | `voice.submitUtterance()`  | `boolean` (false when the state cannot take one)       |
-| `acappella:interrupt`        | `voice.interrupt(source)`  | `boolean` (false when nothing is speaking)             |
-| `acappella:stop-word`        | `voice.stopWord(payload?)` | `void`                                                 |
-| `acappella:get-roster`       | `voice.getRoster()`        | `RosterAgent[]`                                        |
-| `acappella:get-state`        | `voice.getState()`         | `VoiceSessionSnapshot`, or null before the first start |
-| `acappella:event` (push)     | `voice.onEvent(handler)`   | every `VoiceEvent`, in `seq` order                     |
+| Channel                        | Preload method             | Returns                                                |
+| ------------------------------ | -------------------------- | ------------------------------------------------------ |
+| `acappella:start-session`      | `voice.start(scope?)`      | `{ snapshot, substitutions }`                          |
+| `acappella:stop-session`       | `voice.stop()`             | `void`                                                 |
+| `acappella:submit-utterance`   | `voice.submitUtterance()`  | `boolean` (false when the state cannot take one)       |
+| `acappella:interrupt`          | `voice.interrupt(source)`  | `boolean` (false when nothing is speaking)             |
+| `acappella:stop-word`          | `voice.stopWord(payload?)` | `void`                                                 |
+| `acappella:submit-agent-reply` | `voice.submitAgentReply()` | `boolean` (false when no reply was awaited)            |
+| `acappella:get-roster`         | `voice.getRoster()`        | `RosterAgent[]`                                        |
+| `acappella:get-state`          | `voice.getState()`         | `VoiceSessionSnapshot`, or null before the first start |
+| `acappella:event` (push)       | `voice.onEvent(handler)`   | every `VoiceEvent`, in `seq` order                     |
 
 Four properties of this binding are deliberate:
 
@@ -361,6 +362,28 @@ Four properties of this binding are deliberate:
 
 A provider selection change in settings rebuilds the service on the next start, which is how Voice
 Setup takes effect without an app restart.
+
+`submit-agent-reply` is the reply seam over the transport. Phase 05 feeds real agent output to
+`VoiceSessionService.submitAgentReply()` in-process, but nothing outside main can push a session
+past `dispatching` without this channel, and a session that never leaves `dispatching` never
+speaks. It is what the dev harness uses to demonstrate speech, barge-in, and the difference
+between barge-in and the stop word.
+
+### The renderer client
+
+`src/renderer/components/ACappella/` holds the desktop client, and it is deliberately thin:
+
+- `useVoiceSession(enabled)` owns the ONE subscription to `acappella:event`. A second subscriber
+  would apply every event twice, so the HUD is the only mount point and it renders the harness
+  itself.
+- `voiceSessionStore` is a pure projection of the stream. It derives state from the event rather
+  than from the return value of an IPC call, flags a `seq` gap instead of smoothing it over, and
+  refuses to let a late `get-state` catch-up rewind a projection the stream has already carried
+  past.
+- `VoiceHud` renders that projection: bound scope, state, a listening/speaking indicator that
+  differs in shape and not only in hue, the streaming transcript, and any provider substitution.
+  Closing it ENDS the session, because an open floor behind an invisible surface is a microphone
+  the user cannot see.
 
 ## Invariants
 

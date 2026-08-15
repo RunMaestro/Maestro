@@ -210,6 +210,30 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		}
 	);
 
+	const wrappedSubmitAgentReply = withIpcErrorLogging(
+		handlerOpts('submitAgentReply'),
+		// The reply seam. Phase 05 wires real agent output straight into the
+		// service in-process; until then this is how anything outside main gets a
+		// session past `dispatching`, which is what makes the dev harness able to
+		// demonstrate speech, barge-in, and the difference between the two.
+		async (payload: unknown): Promise<boolean> => {
+			if (!isRecord(payload)) throw new Error('InvalidAgentReply');
+			const { agentSessionId, tabId, text } = payload;
+			if (
+				typeof agentSessionId !== 'string' ||
+				!agentSessionId ||
+				typeof tabId !== 'string' ||
+				!tabId ||
+				typeof text !== 'string'
+			) {
+				throw new Error('InvalidAgentReply');
+			}
+			return (
+				(await getVoiceSessionService()?.submitAgentReply({ agentSessionId, tabId, text })) ?? false
+			);
+		}
+	);
+
 	const wrappedGetRoster = withIpcErrorLogging(
 		handlerOpts('getRoster'),
 		async (): Promise<RosterAgent[]> => readAgentRoster()
@@ -251,6 +275,14 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		requireEnabled(settingsStore);
 		return wrappedStopWord(event, payload);
 	});
+
+	ipcMain.handle(
+		'acappella:submit-agent-reply',
+		async (event, payload: unknown): Promise<boolean> => {
+			requireEnabled(settingsStore);
+			return wrappedSubmitAgentReply(event, payload);
+		}
+	);
 
 	ipcMain.handle('acappella:get-roster', async (event): Promise<RosterAgent[]> => {
 		requireEnabled(settingsStore);
