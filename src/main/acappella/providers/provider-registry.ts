@@ -19,6 +19,9 @@ import type {
 	BrainProvider,
 	SttProvider,
 	TtsProvider,
+	VoiceProviderRole,
+	VoiceProviderSubstitution,
+	VoiceProviderSubstitutionReason,
 	VoiceProviderTier,
 	VoiceProviderTrio,
 } from '../../../shared/acappella/providers';
@@ -31,7 +34,10 @@ const LOG_CONTEXT = 'ACappella';
 /** Settings key holding everything A Cappella persists. */
 export const ACAPPELLA_SETTINGS_KEY = 'acappella';
 
-export type VoiceProviderRole = 'stt' | 'tts' | 'brain';
+// Re-exported so existing importers keep their one import site. The shapes
+// themselves live in shared/ because they travel to the renderer and, later, to
+// the phone.
+export type { VoiceProviderRole, VoiceProviderSubstitution, VoiceProviderSubstitutionReason };
 
 /** The provider type each role resolves to. */
 interface VoiceProviderByRole {
@@ -60,20 +66,6 @@ export interface VoiceProviderRegistration<R extends VoiceProviderRole = VoicePr
 	 */
 	isAvailable?: () => boolean;
 	create: () => VoiceProviderByRole[R];
-}
-
-/**
- * Why a role is not running what the settings asked for. `not-configured` is
- * the ordinary default path and is not reported as a substitution.
- */
-export type VoiceProviderSubstitutionReason = 'unknown-provider' | 'unavailable';
-
-export interface VoiceProviderSubstitution {
-	role: VoiceProviderRole;
-	requestedId: string;
-	resolvedId: string;
-	reason: VoiceProviderSubstitutionReason;
-	message: string;
 }
 
 export interface VoiceProviderResolution {

@@ -300,6 +300,12 @@ export const MODAL_PRIORITIES = {
 	/** Settings modal */
 	SETTINGS: 450,
 
+	/** A Cappella Voice HUD - floating, non-blocking. Above the other floating
+	 * panels because it is the surface of a live conversation: Escape has to end
+	 * the voice session before it touches a git overlay or the thought stream.
+	 * Still below real modals, which keep Escape when one is open. */
+	VOICE_HUD: 230,
+
 	/** Thought Stream introspection panel - floating, non-blocking; sits below
 	 * real modals so they take Escape/focus first, above git overlays. */
 	THOUGHT_STREAM: 210,

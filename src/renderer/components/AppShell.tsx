@@ -25,6 +25,7 @@ import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
 import { CadenzaLayer } from './Cadenza';
 import { MovementOverlay } from './Movement';
+import { VoiceHud } from './ACappella';
 import { useCadenzaStore } from '../stores/cadenzaStore';
 import { selectHasVisibleMovement, useMovementStore } from '../stores/movementStore';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
@@ -44,6 +45,7 @@ export interface AppShellProps {
 	useNativeTitleBar: boolean;
 	isMdDownViewport: boolean;
 	concertoEnabled: boolean;
+	aCappellaEnabled: boolean;
 
 	activeGroupChatId: string | null;
 	groupChats: GroupChat[];
@@ -86,6 +88,7 @@ export function AppShell({
 	useNativeTitleBar,
 	isMdDownViewport,
 	concertoEnabled,
+	aCappellaEnabled,
 	activeGroupChatId,
 	groupChats,
 	groups,
@@ -329,6 +332,12 @@ export function AppShell({
 			<ContextTimelinePanel theme={theme} />
 			{/* --- PERMISSION PROMPT (Claude Code standard mode; portal) --- */}
 			<PermissionPrompt theme={theme} />
+			{/* --- A CAPPELLA VOICE HUD (single, app-wide; Encore-gated) ---
+			    Owns the one `acappella:event` subscription, so it is mounted
+			    unconditionally and gates itself: a second mount would project every
+			    protocol event twice. Renders nothing, and subscribes to nothing,
+			    while the Encore Feature is off. */}
+			<VoiceHud theme={theme} enabled={aCappellaEnabled} />
 			{concertoEnabled && (
 				<>
 					<CadenzaLayer theme={theme} />

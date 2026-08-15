@@ -588,6 +588,27 @@ const mockMaestro = {
 		onTtsCompleted: vi.fn().mockReturnValue(() => {}), // Legacy alias
 		show: vi.fn().mockResolvedValue(undefined),
 	},
+	voice: {
+		start: vi.fn().mockResolvedValue({
+			snapshot: {
+				sessionId: 'voice-1',
+				state: 'listening',
+				scope: { kind: 'conductor' },
+				seq: 2,
+				startedAt: 0,
+				providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+			},
+			substitutions: [],
+		}),
+		stop: vi.fn().mockResolvedValue(undefined),
+		submitUtterance: vi.fn().mockResolvedValue(true),
+		interrupt: vi.fn().mockResolvedValue(true),
+		stopWord: vi.fn().mockResolvedValue(undefined),
+		submitAgentReply: vi.fn().mockResolvedValue(true),
+		getRoster: vi.fn().mockResolvedValue([]),
+		getState: vi.fn().mockResolvedValue(null),
+		onEvent: vi.fn().mockReturnValue(() => {}),
+	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
