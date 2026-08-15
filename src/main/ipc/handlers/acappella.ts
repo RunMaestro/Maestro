@@ -27,7 +27,7 @@
  * mid-session can still release the floor.
  */
 
-import { ipcMain, type BrowserWindow } from 'electron';
+import { app, ipcMain, type BrowserWindow } from 'electron';
 
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
@@ -35,6 +35,7 @@ import type { InterruptSource, RosterAgent, VoiceScope } from '../../../shared/a
 import {
 	createRendererVoiceBridge,
 	createVoiceRouteExecutor,
+	disposeVoiceSessionService,
 	getVoiceSessionService,
 	initVoiceSessionService,
 	readAgentRoster,
@@ -292,6 +293,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	ipcMain.handle('acappella:get-state', async (event): Promise<VoiceSessionSnapshot | null> => {
 		requireEnabled(settingsStore);
 		return wrappedGetState(event);
+	});
+
+	// Release the floor on the way out. The service holds no OS device in Phase
+	// 01, but a real microphone (Phase 05) does, and a session left running would
+	// keep it open past the last window. Fire-and-forget: `will-quit` is
+	// synchronous, and this is the last thing the session will ever do.
+	app.on('will-quit', () => {
+		void disposeVoiceSessionService();
+		resetACappellaHandlerState();
 	});
 }
 

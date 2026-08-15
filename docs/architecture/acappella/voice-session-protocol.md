@@ -344,7 +344,7 @@ runtime, so a handler wired only there would be dead.
 | `acappella:get-state`          | `voice.getState()`         | `VoiceSessionSnapshot`, or null before the first start |
 | `acappella:event` (push)       | `voice.onEvent(handler)`   | every `VoiceEvent`, in `seq` order                     |
 
-Four properties of this binding are deliberate:
+Five properties of this binding are deliberate:
 
 - **Registration builds nothing.** The service, its provider trio, and the dispatch executor are
   all constructed on the first `start-session`. Enabling the Encore Feature opens no device and
@@ -359,6 +359,10 @@ Four properties of this binding are deliberate:
 - **`get-state` returns null before the first start.** Synthesising an idle snapshot would have to
   name provider ids that nothing has resolved yet, and reporting a requested-but-unavailable
   provider as the running one is the substitution lie in a different costume.
+- **The floor is released on `will-quit`.** Registering the handlers also registers an
+  `app.on('will-quit')` that calls `disposeVoiceSessionService()`. The mock tier holds no OS
+  device, but a real microphone (Phase 05) does, and a live session must not outlive the last
+  window.
 
 A provider selection change in settings rebuilds the service on the next start, which is how Voice
 Setup takes effect without an app restart.

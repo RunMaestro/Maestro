@@ -377,7 +377,14 @@ export class VoiceSessionService {
 		}
 
 		this.transition('speaking');
-		await this.speak(spokenText, sentenceCount, turn);
+		try {
+			await this.speak(spokenText, sentenceCount, turn);
+		} catch (error) {
+			// A streaming voice can throw mid-iteration. Without this the rejection
+			// leaves through the caller (an IPC handler) and the session sits in
+			// `speaking` holding a floor nothing will ever hand back.
+			this.closeFloorOnUnexpectedError(error as Error, 'acappella.speak');
+		}
 		return true;
 	}
 
@@ -460,7 +467,7 @@ export class VoiceSessionService {
 
 			await this.dispatch(decision, roster, turn);
 		} catch (error) {
-			this.closeFloorOnUnexpectedError(error as Error);
+			this.closeFloorOnUnexpectedError(error as Error, 'acappella.runTurn');
 		}
 	}
 
@@ -585,10 +592,10 @@ export class VoiceSessionService {
 	 * context Sentry would otherwise lose, then close the floor honestly so the
 	 * HUD is not stuck mid-turn.
 	 */
-	private closeFloorOnUnexpectedError(error: Error): void {
+	private closeFloorOnUnexpectedError(error: Error, context: string): void {
 		logger.error(`Unexpected voice session failure: ${error.message}`, LOG_CONTEXT);
 		void captureException(error, {
-			context: 'acappella.runTurn',
+			context,
 			voiceSessionId: this.sessionId,
 			state: this.state,
 		});
