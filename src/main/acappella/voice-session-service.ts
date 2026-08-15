@@ -30,9 +30,15 @@ import type { RouteDecision } from '../../shared/acappella/route-decision';
 import { routeTargetSessionId } from '../../shared/acappella/route-decision';
 import type {
 	SttCallbacks,
+	SttProvider,
+	TtsChunk,
 	VoiceProviderTrio,
 	VoiceRouteContext,
 } from '../../shared/acappella/providers';
+import {
+	audioHostErrorToSessionError,
+	type AudioHostErrorCode,
+} from '../../shared/acappella/audio-host';
 import type { VoiceSessionState } from '../../shared/acappella/session-state';
 import { assertVoiceStateTransition } from '../../shared/acappella/session-state';
 import { countSpokenSentences } from '../../shared/acappella/sentences';
@@ -108,6 +114,17 @@ export interface VoiceSessionServiceOptions {
 	maxSpokenSentences?: number;
 	/** Utterances retained for `VoiceRouteContext.recentUtterances`. */
 	utteranceHistoryLimit?: number;
+	/**
+	 * One chunk of synthesised speech, as it comes off the TTS provider.
+	 *
+	 * The audio bridge turns these into `play` commands for the audio host. It is
+	 * a callback rather than an event because audio is the one thing in this
+	 * pipeline that must NOT be broadcast: `speak-sentence` goes to every client so
+	 * they can render the text, while the samples go to exactly one output device.
+	 * Chunks with no audio behind them (the mock tier) are still delivered - what
+	 * to do with `format: 'none'` is the sink's call, not this file's.
+	 */
+	onSpeechChunk?: (chunk: TtsChunk) => void;
 }
 
 /** Everything a client needs to catch up after `get-state`. */
@@ -137,6 +154,7 @@ export class VoiceSessionService {
 	private readonly executeRoute?: VoiceRouteExecutor;
 	private readonly maxSpokenSentences: number;
 	private readonly utteranceHistoryLimit: number;
+	private readonly onSpeechChunk?: (chunk: TtsChunk) => void;
 
 	private readonly listeners = new Set<VoiceEventListener>();
 
@@ -163,6 +181,7 @@ export class VoiceSessionService {
 		this.executeRoute = options.executeRoute;
 		this.maxSpokenSentences = options.maxSpokenSentences ?? DEFAULT_MAX_SPOKEN_SENTENCES;
 		this.utteranceHistoryLimit = options.utteranceHistoryLimit ?? DEFAULT_UTTERANCE_HISTORY;
+		this.onSpeechChunk = options.onSpeechChunk;
 	}
 
 	// -- Subscription --------------------------------------------------------
@@ -177,6 +196,18 @@ export class VoiceSessionService {
 
 	getState(): VoiceSessionState {
 		return this.state;
+	}
+
+	/**
+	 * The recogniser this session is feeding, or null when there is no session.
+	 *
+	 * The audio pipeline reads this per frame rather than capturing the provider,
+	 * so a trio rebuilt between sessions cannot leave frames going into a stopped
+	 * recogniser. Null while idle is the whole point: audio that arrives with no
+	 * session behind it is dropped and counted, never buffered.
+	 */
+	getActiveStt(): SttProvider | null {
+		return this.state === 'idle' ? null : this.providers.stt;
 	}
 
 	getSnapshot(): VoiceSessionSnapshot {
@@ -424,6 +455,21 @@ export class VoiceSessionService {
 		this.emit('mic-state', { ...state });
 	}
 
+	/**
+	 * The microphone could not be opened, or was taken away mid-session.
+	 *
+	 * Parks the session in `error` rather than leaving it listening, because a
+	 * listening indicator over a device that will never produce a transcript is
+	 * the worst outcome this feature has: the user has no screen to read and hears
+	 * nothing back. `recoverable` comes from the classified host code, so the HUD
+	 * can offer a privacy-settings button for the failures a user can actually fix
+	 * and stay quiet about the ones they cannot.
+	 */
+	reportAudioCaptureFailure(code: AudioHostErrorCode, message: string): void {
+		const translated = audioHostErrorToSessionError({ kind: 'mic-error', code, message });
+		this.fail(translated.code, translated.message, undefined, translated.recoverable);
+	}
+
 	/** Re-read the roster and push it to every client. */
 	async publishRoster(): Promise<RosterAgent[]> {
 		const roster = await this.getRoster();
@@ -555,6 +601,9 @@ export class VoiceSessionService {
 			// emitted `speak-end` and handed the floor back.
 			if (!this.isCurrentTurn(turn) || this.activeUtteranceId !== utteranceId) return;
 			this.emit('speak-sentence', { utteranceId, index: chunk.index, text: chunk.text });
+			// After the event, not before: the sentence should be on screen by the
+			// time it is audible, never the other way round.
+			this.onSpeechChunk?.(chunk);
 		}
 
 		if (!this.isCurrentTurn(turn) || this.activeUtteranceId !== utteranceId) return;
@@ -608,7 +657,15 @@ export class VoiceSessionService {
 	}
 
 	/** Classified failure: announce it and park the session in `error`. */
-	private fail(code: VoiceSessionErrorCode, message: string, providerId?: string): void {
+	private fail(
+		code: VoiceSessionErrorCode,
+		message: string,
+		providerId?: string,
+		// Most codes answer this from the code alone. A capture failure does not:
+		// a denied permission is fixable and a machine with no audio stack is not,
+		// and both arrive as `audio-capture-failed`.
+		recoverable = code !== 'provider-unavailable'
+	): void {
 		logger.warn(`Voice session error (${code}): ${message}`, LOG_CONTEXT);
 		// A provider callback can fire after teardown; there is no session left to
 		// move into `error` and no envelope to stamp the event with.
@@ -617,7 +674,7 @@ export class VoiceSessionService {
 		this.emit('session-error', {
 			code,
 			message,
-			recoverable: code !== 'provider-unavailable',
+			recoverable,
 			providerId,
 		});
 		this.transition('error');

@@ -104,3 +104,20 @@ export function splitIntoSpokenSentences(text: string): string[] {
 export function countSpokenSentences(text: string): number {
 	return splitIntoSpokenSentences(text).length;
 }
+
+/** Conversational pace. Fast enough that a typed utterance is not reported as a speech. */
+const WORDS_PER_MINUTE = 150;
+
+/**
+ * How long `text` would have taken to say.
+ *
+ * Every text-in seam (the dev harness, a client that typed instead of spoke)
+ * has to put SOMETHING in `FinalTranscriptEvent.durationMs`, because a
+ * transcript timeline with a hole in it is worse than one with an estimate. One
+ * estimator so two providers cannot report different durations for the same
+ * sentence.
+ */
+export function estimateSpokenDurationMs(text: string): number {
+	const words = text.trim().split(/\s+/).filter(Boolean).length;
+	return Math.round((words / WORDS_PER_MINUTE) * 60_000);
+}

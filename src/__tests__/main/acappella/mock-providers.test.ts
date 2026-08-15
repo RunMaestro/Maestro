@@ -22,6 +22,7 @@ import { MockBrainProvider } from '../../../main/acappella/providers/mock/mock-b
 import { MockSttProvider } from '../../../main/acappella/providers/mock/mock-stt';
 import { MockTtsProvider } from '../../../main/acappella/providers/mock/mock-tts';
 import { createMockProviderTrio } from '../../../main/acappella/providers/mock';
+import { ECHO_STT_PROVIDER_ID } from '../../../main/acappella/providers/echo-stt';
 import {
 	MOCK_PROVIDER_IDS,
 	listVoiceProviders,
@@ -512,6 +513,59 @@ describe('provider registry', () => {
 		expect(resolvedIds.tts).toBe('test-local-tts');
 		expect(resolvedIds.brain).toBe(MOCK_PROVIDER_IDS.brain);
 		expect(substitutions).toHaveLength(1);
+	});
+
+	it('defaults STT to the echo provider in a development build', () => {
+		const previous = process.env.NODE_ENV;
+		process.env.NODE_ENV = 'development';
+		try {
+			const { resolvedIds, providers, substitutions } = resolveVoiceProviders();
+
+			// Nobody asked for it, so it is a default rather than a substitution: the
+			// point is that `npm run dev` exercises the audio path without a settings
+			// edit, not that anything was swapped out from under the user.
+			expect(resolvedIds.stt).toBe(ECHO_STT_PROVIDER_ID);
+			expect(providers.stt.acceptsAudio).toBe(true);
+			expect(substitutions).toEqual([]);
+		} finally {
+			process.env.NODE_ENV = previous;
+		}
+	});
+
+	it('falls back to the text-in mock when the echo default cannot run', () => {
+		const previous = process.env.NODE_ENV;
+		process.env.NODE_ENV = 'production';
+		try {
+			const { resolvedIds, substitutions } = resolveVoiceProviders();
+
+			expect(resolvedIds.stt).toBe(MOCK_PROVIDER_IDS.stt);
+			// A default the build cannot run is not news. Reporting it would put noise
+			// in front of the substitutions that actually matter.
+			expect(substitutions).toEqual([]);
+		} finally {
+			process.env.NODE_ENV = previous;
+		}
+	});
+
+	it('reports an explicitly requested echo provider a packaged build cannot run', () => {
+		const previous = process.env.NODE_ENV;
+		process.env.NODE_ENV = 'production';
+		try {
+			const { resolvedIds, substitutions } = resolveVoiceProviders({
+				settings: { stt: ECHO_STT_PROVIDER_ID },
+			});
+
+			expect(resolvedIds.stt).toBe(MOCK_PROVIDER_IDS.stt);
+			expect(substitutions).toEqual([
+				expect.objectContaining({
+					role: 'stt',
+					requestedId: ECHO_STT_PROVIDER_ID,
+					reason: 'unavailable',
+				}),
+			]);
+		} finally {
+			process.env.NODE_ENV = previous;
+		}
 	});
 
 	it('lists the mock tier as selectable and available', () => {
