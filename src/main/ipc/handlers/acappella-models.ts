@@ -31,6 +31,7 @@ import {
 	type VoiceModelEntry,
 } from '../../../shared/acappella/model-catalog';
 import type { VoiceReadiness } from '../../../shared/acappella/readiness';
+import { requireACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import { resolveVoiceReadiness } from '../../acappella/models/capability-gate';
 import {
 	getModelDownloader,
@@ -82,16 +83,8 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	operation,
 });
 
-function isACappellaEnabled(
-	settingsStore: ACappellaModelsHandlerDependencies['settingsStore']
-): boolean {
-	const flags = (settingsStore.get('encoreFeatures', {}) ?? {}) as Record<string, unknown>;
-	return flags.aCappella === true;
-}
-
-function requireEnabled(settingsStore: ACappellaModelsHandlerDependencies['settingsStore']): void {
-	if (!isACappellaEnabled(settingsStore)) throw new Error('ACappellaDisabled');
-}
+/** The Encore gate. See `src/shared/acappella/feature-flag.ts`. */
+const requireEnabled = requireACappellaEnabled;
 
 /** Reject anything that is not a catalog id before it can reach a path join. */
 function requireModelId(raw: unknown): string {

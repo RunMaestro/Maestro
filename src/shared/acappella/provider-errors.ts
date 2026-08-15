@@ -123,8 +123,3 @@ export class VoiceProviderError extends Error {
 export function isVoiceProviderError(error: unknown): error is VoiceProviderError {
 	return error instanceof VoiceProviderError;
 }
-
-/** The protocol code for a kind, for callers that have no error object. */
-export function providerFailureSessionCode(kind: VoiceProviderFailureKind): VoiceSessionErrorCode {
-	return SESSION_CODES[kind];
-}

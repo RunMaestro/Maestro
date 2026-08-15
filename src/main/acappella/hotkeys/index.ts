@@ -17,6 +17,7 @@ import type { BrowserWindow } from 'electron';
 
 import type { VoiceOrigin, VoiceScope } from '../../../shared/acappella/protocol';
 import type { Shortcut } from '../../../shared/shortcut-types';
+import { isACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import { getGlobalHotkeyRegistry, summonMainWindow } from '../../global-hotkey-manager';
 import type { GlobalHotkeyStatus } from '../../../shared/global-hotkeys';
 import { logger } from '../../utils/logger';
@@ -73,12 +74,6 @@ export interface VoiceHotkeyInstallation {
 	 */
 	acquireFloor: (scope: VoiceScope, origin?: VoiceOrigin) => FloorController;
 	dispose: () => void;
-}
-
-/** True only when `encoreFeatures.aCappella` is explicitly on. */
-function isEnabled(store: VoiceHotkeySettingsStore): boolean {
-	const flags = (store.get('encoreFeatures', {}) ?? {}) as Record<string, unknown>;
-	return flags.aCappella === true;
 }
 
 /** The A Cappella settings blob's `controls` section, or an empty object. */
@@ -145,7 +140,7 @@ export function installVoiceHotkeys(deps: InstallVoiceHotkeysDeps): VoiceHotkeyI
 	const controller = new VoiceHotkeyController({
 		registry,
 		checkAvailability: () => {
-			if (!isEnabled(deps.settingsStore)) {
+			if (!isACappellaEnabled(deps.settingsStore)) {
 				return {
 					ok: false,
 					reason: 'feature-disabled',
@@ -173,7 +168,7 @@ export function installVoiceHotkeys(deps: InstallVoiceHotkeysDeps): VoiceHotkeyI
 	});
 
 	const sync = (): Record<VoiceHotkeyId, GlobalHotkeyStatus> => {
-		if (!isEnabled(deps.settingsStore)) {
+		if (!isACappellaEnabled(deps.settingsStore)) {
 			// Released rather than left bound: see the module header.
 			for (const id of VOICE_HOTKEY_IDS) registry.clear(id);
 			return Object.fromEntries(

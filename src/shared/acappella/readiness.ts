@@ -29,15 +29,24 @@ export type VoiceSlot = VoiceProviderRole | 'wake-word' | 'microphone';
  * Why a slot is not satisfied. Closed on purpose: a reason with no matching
  * suggested action is a dead end in front of the user, so adding one here means
  * adding its recovery too.
+ *
+ * An array rather than a bare union so the gate's test can assert it produces
+ * every one of them. "Adding a reason means adding its recovery" is only a rule
+ * if something checks; a union alone is invisible at runtime, so a new reason
+ * shipped without a `suggestedAction` would reach a user as a disabled button
+ * with nothing beside it and no test would have noticed.
  */
-export type VoiceSlotUnsatisfiedReason =
-	| 'model-not-installed'
-	| 'model-corrupt'
-	| 'api-key-missing'
-	| 'provider-unreachable'
-	| 'runtime-unavailable'
-	| 'mic-permission-denied'
-	| 'mic-permission-restricted';
+export const VOICE_SLOT_UNSATISFIED_REASONS = [
+	'model-not-installed',
+	'model-corrupt',
+	'api-key-missing',
+	'provider-unreachable',
+	'runtime-unavailable',
+	'mic-permission-denied',
+	'mic-permission-restricted',
+] as const;
+
+export type VoiceSlotUnsatisfiedReason = (typeof VOICE_SLOT_UNSATISFIED_REASONS)[number];
 
 export interface VoiceSlotReadiness {
 	slot: VoiceSlot;

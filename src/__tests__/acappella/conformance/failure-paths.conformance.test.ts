@@ -151,6 +151,58 @@ describe('conformance: a revoked pairing mid-session', () => {
 	});
 });
 
+describe('conformance: the Encore Feature switched off mid-session', () => {
+	it('drops the connection a phone was holding, without forgetting the phone', async () => {
+		const device = await world.connectClient();
+		device.client.pressFloor();
+		await world.advance();
+		expect(world.transport.signaling.isOnline(device.deviceId)).toBe(true);
+
+		// Somebody at the keyboard unticks the box. Everything the phone was
+		// holding has to go with it, or the switch is a lie.
+		world.setACappellaEnabled(false);
+		world.transport.standDown();
+		await world.advance();
+
+		expect(world.transport.signaling.isOnline(device.deviceId)).toBe(false);
+		expect(world.transport.discoveryStatus()).toEqual({ state: 'disabled' });
+
+		// But the pairing survives. "Stop" is not "forget my phone", and a device
+		// that had to be re-paired because a checkbox was toggled would teach people
+		// not to touch the checkbox.
+		const devices = await world.transport.listDevices();
+		expect(devices.map((entry) => entry.id)).toContain(device.deviceId);
+		expect(devices.find((entry) => entry.id === device.deviceId)?.revokedAt).toBeNull();
+	});
+
+	it('refuses a reconnect while the feature is off, in a sentence a phone can show', async () => {
+		const device = await world.connectClient();
+		world.setACappellaEnabled(false);
+		world.transport.standDown();
+		await world.advance();
+
+		// A phone whose socket died retries. The desktop that answers has to say
+		// which of "switched off" and "the network ate it" this is, because only one
+		// of them is worth retrying.
+		const raw = world.openRawDevice();
+		await raw.send({ op: 'auth', deviceId: device.deviceId, token: 'anything', v: 1 });
+
+		expect(raw.ofType('error')).toHaveLength(1);
+		expect(raw.ofType('error')[0].message).toMatch(/Encore Features/);
+	});
+
+	it('serves the same device again once the feature comes back on', async () => {
+		world.setACappellaEnabled(false);
+		world.transport.standDown();
+		await world.advance();
+		world.setACappellaEnabled(true);
+
+		// The transport was stood down, not disposed, so this needs no restart.
+		const device = await world.connectClient();
+		expect(world.transport.signaling.isOnline(device.deviceId)).toBe(true);
+	});
+});
+
 describe('conformance: a network drop and a reconnect', () => {
 	it('re-authenticates on a new socket and starts the floor closed (C-09, C-49)', async () => {
 		const device = await world.connectClient();

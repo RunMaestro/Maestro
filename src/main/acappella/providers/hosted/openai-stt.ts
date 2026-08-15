@@ -230,11 +230,6 @@ export class OpenAiSttProvider implements SttProvider {
 	}
 }
 
-/** Sugar matching the rest of A Cappella's factories. */
-export function createOpenAiSttProvider(options: OpenAiSttOptions = {}): OpenAiSttProvider {
-	return new OpenAiSttProvider(options);
-}
-
 // ---------------------------------------------------------------------------
 
 function encodeUtterance(pcm: Int16Array): Uint8Array {

@@ -222,13 +222,6 @@ export class ElevenLabsTtsProvider implements TtsProvider {
 	}
 }
 
-/** Sugar matching the rest of A Cappella's factories. */
-export function createElevenLabsTtsProvider(
-	options: ElevenLabsTtsOptions = {}
-): ElevenLabsTtsProvider {
-	return new ElevenLabsTtsProvider(options);
-}
-
 interface RawVoice {
 	voice_id?: string;
 	name?: string;

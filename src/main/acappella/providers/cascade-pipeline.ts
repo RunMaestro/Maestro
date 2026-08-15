@@ -48,10 +48,6 @@ export class CascadePipeline implements VoicePipeline {
 	}
 }
 
-export function createCascadePipeline(providers: VoiceProviderTrio): CascadePipeline {
-	return new CascadePipeline(providers);
-}
-
 async function release(provider: unknown): Promise<void> {
 	const target = provider as Disposable;
 	try {

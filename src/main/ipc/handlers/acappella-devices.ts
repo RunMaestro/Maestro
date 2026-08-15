@@ -23,6 +23,7 @@
 
 import { ipcMain } from 'electron';
 
+import { requireACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import type { IceProbeResult } from '../../../shared/acappella/webrtc-host';
 import { getACappellaTransport } from '../../acappella';
 import type { DeviceStatus, PairingPayload } from '../../acappella/transport';
@@ -56,15 +57,8 @@ export interface ACappellaDeviceHandlerDependencies {
 	};
 }
 
-/** True only when `encoreFeatures.aCappella` is explicitly on. */
-function isEnabled(store: ACappellaDeviceHandlerDependencies['settingsStore']): boolean {
-	const flags = (store.get('encoreFeatures', {}) ?? {}) as Record<string, unknown>;
-	return flags.aCappella === true;
-}
-
-function requireEnabled(store: ACappellaDeviceHandlerDependencies['settingsStore']): void {
-	if (!isEnabled(store)) throw new Error('ACappellaDisabled');
-}
+/** The Encore gate. See `src/shared/acappella/feature-flag.ts`. */
+const requireEnabled = requireACappellaEnabled;
 
 /** The ICE section of the A Cappella settings blob, widened. */
 export function readStoredIceSettings(

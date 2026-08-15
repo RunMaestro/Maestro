@@ -268,11 +268,6 @@ export class LlamaBrainProvider implements BrainProvider {
 	}
 }
 
-/** Sugar matching the rest of A Cappella's factories. */
-export function createLlamaBrainProvider(options: LlamaBrainOptions = {}): LlamaBrainProvider {
-	return new LlamaBrainProvider(options);
-}
-
 /** Teardown must not throw: it runs from `finally` blocks and from disposal. */
 async function safeDispose(dispose: () => Promise<void> | void | undefined): Promise<void> {
 	try {
