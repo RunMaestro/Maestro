@@ -95,6 +95,8 @@ export class MicCapture {
 	private node: AudioWorkletNode | null = null;
 	private sink: GainNode | null = null;
 	private moduleAdded = false;
+	/** True when the live stream came from a peer connection rather than a device. */
+	private externalStream = false;
 	private starting: Promise<boolean> | null = null;
 	private disposed = false;
 	private seq = 0;
@@ -127,8 +129,53 @@ export class MicCapture {
 		return this.starting;
 	}
 
+	/**
+	 * Capture from a stream we did not open: the remote audio track of a paired
+	 * device's peer connection.
+	 *
+	 * The SAME graph as a local microphone - worklet, 16 kHz mono downsample,
+	 * 20 ms frames, identical `AudioFrame` on the identical channel - because
+	 * downstream there is one recogniser, one VAD, one wake detector and one
+	 * router, and a second capture path would be a second place for them to
+	 * disagree. The phone is a microphone, not a second brain.
+	 *
+	 * Echo cancellation for this path runs on the DEVICE, not here: the echo
+	 * happens in the room the phone is in, and cancelling it needs the phone's own
+	 * speaker output as the reference signal. Nothing on this side has that
+	 * signal, so anything this end did would be guesswork. The offer asks the
+	 * device to enable it (`RemoteAudioConfig.requestRemoteEchoCancellation`),
+	 * which is the honest extent of the desktop's influence over it.
+	 *
+	 * @returns true once frames are flowing.
+	 */
+	async startWithStream(
+		stream: MediaStream,
+		info: { deviceId?: string; label?: string } = {}
+	): Promise<boolean> {
+		if (this.disposed) return false;
+		// A remote stream displaces a local one rather than mixing: two microphones
+		// summed into one utterance transcribe as neither.
+		if (this.active) this.stop('requested');
+
+		const { onStatus } = this.options;
+		try {
+			await this.ensureWorklet();
+		} catch (error) {
+			onStatus({ kind: 'mic-error', code: 'audio-init-failed', message: errorMessage(error) });
+			return false;
+		}
+		if (this.disposed) return false;
+
+		this.externalStream = true;
+		this.attachStream(stream, {
+			deviceId: info.deviceId ?? '',
+			label: info.label ?? 'Remote device',
+		});
+		return true;
+	}
+
 	private async startInternal(): Promise<boolean> {
-		const { context, workletUrl, onStatus } = this.options;
+		const { onStatus } = this.options;
 
 		if (!navigator.mediaDevices?.getUserMedia) {
 			onStatus({
@@ -152,13 +199,7 @@ export class MicCapture {
 		}
 
 		try {
-			if (!this.moduleAdded) {
-				await context.audioWorklet.addModule(workletUrl);
-				this.moduleAdded = true;
-			}
-			// A hidden window never gets a user gesture, so a context that started
-			// suspended would stay suspended forever.
-			if (context.state === 'suspended') await context.resume();
+			await this.ensureWorklet();
 		} catch (error) {
 			stream.getTracks().forEach((track) => track.stop());
 			onStatus({
@@ -174,6 +215,36 @@ export class MicCapture {
 			stream.getTracks().forEach((track) => track.stop());
 			return false;
 		}
+
+		this.externalStream = false;
+		this.attachStream(stream);
+		return true;
+	}
+
+	/** Add the worklet module once per context and wake a suspended context. */
+	private async ensureWorklet(): Promise<void> {
+		const { context, workletUrl } = this.options;
+		if (!this.moduleAdded) {
+			await context.audioWorklet.addModule(workletUrl);
+			this.moduleAdded = true;
+		}
+		// A hidden window never gets a user gesture, so a context that started
+		// suspended would stay suspended forever.
+		if (context.state === 'suspended') await context.resume();
+	}
+
+	/**
+	 * Build the capture graph over `stream`: source -> worklet -> muted sink.
+	 *
+	 * Shared by the local microphone and by a paired device's remote track, which
+	 * is the whole point - one graph means one frame format, one sequence counter,
+	 * and one place where the downsample can be wrong.
+	 */
+	private attachStream(
+		stream: MediaStream,
+		deviceOverride?: { deviceId: string; label: string }
+	): void {
+		const { context, onStatus } = this.options;
 
 		this.stream = stream;
 		this.seq = 0;
@@ -207,10 +278,12 @@ export class MicCapture {
 
 		onStatus({
 			kind: 'capture-start',
-			device: { deviceId: track?.getSettings?.().deviceId ?? '', label: track?.label ?? '' },
+			device: deviceOverride ?? {
+				deviceId: track?.getSettings?.().deviceId ?? '',
+				label: track?.label ?? '',
+			},
 			contextSampleRate: context.sampleRate,
 		});
-		return true;
 	}
 
 	/** Release the microphone. Idempotent. */
@@ -220,8 +293,12 @@ export class MicCapture {
 		this.stream.getAudioTracks().forEach((track) => {
 			track.removeEventListener('ended', this.handleTrackEnded);
 		});
-		this.stream.getTracks().forEach((track) => track.stop());
+		// A remote stream belongs to its peer connection, not to us. Stopping its
+		// tracks here would kill the receiver, so the device would have to
+		// renegotiate to be heard again after a single floor handover.
+		if (!this.externalStream) this.stream.getTracks().forEach((track) => track.stop());
 		this.stream = null;
+		this.externalStream = false;
 
 		if (this.node) {
 			this.node.port.onmessage = null;

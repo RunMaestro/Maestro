@@ -22,7 +22,14 @@ import { app, ipcMain, shell, systemPreferences } from 'electron';
 
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn(), on: vi.fn() },
-	app: { on: vi.fn() },
+	// `getPath` and `getVersion` are what the paired-device transport reads at
+	// registration: the device file lives under userData and the app version goes
+	// in the Bonjour advert.
+	app: {
+		on: vi.fn(),
+		getPath: vi.fn(() => '/tmp/maestro-test-userdata'),
+		getVersion: vi.fn(() => '0.0.0-test'),
+	},
 	shell: { openExternal: vi.fn().mockResolvedValue(undefined) },
 	// Starting a session asks for the microphone. Granted here so these tests stay
 	// about the transport; the permission's own states are covered in

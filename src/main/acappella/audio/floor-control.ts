@@ -34,6 +34,7 @@
 import type {
 	InterruptSource,
 	VoiceEvent,
+	VoiceOrigin,
 	VoiceScope,
 	WakeSource,
 } from '../../../shared/acappella/protocol';
@@ -117,7 +118,11 @@ function resolveIdleTimeoutMs(value: number): number {
  */
 export interface FloorControlSession {
 	getState(): VoiceSessionState;
-	startSession(params: { scope: VoiceScope; source?: WakeSource }): Promise<unknown>;
+	startSession(params: {
+		scope: VoiceScope;
+		source?: WakeSource;
+		origin?: VoiceOrigin;
+	}): Promise<unknown>;
 	stopSession(reason: FloorSessionStopReason): Promise<void>;
 	/** Barge-in. False when nothing was speaking. */
 	interrupt(source?: InterruptSource): boolean;
@@ -143,6 +148,16 @@ export interface FloorControlOptions extends Partial<FloorControlConfig> {
 	session: FloorControlSession;
 	/** What a floor opened by this controller binds to. Defaults to the conductor. */
 	getScope?: () => VoiceScope;
+	/**
+	 * Which microphone the next press opens. Defaults to this machine's.
+	 *
+	 * A seam for the same reason as `getScope`: there is exactly one floor and one
+	 * microphone, so a phone pressing its talk button drives THIS controller
+	 * rather than a second state machine, and the only thing that differs between
+	 * a hotkey press and a remote press is which device the session is credited
+	 * to. See `../transport/remote-session.ts`.
+	 */
+	getOrigin?: () => VoiceOrigin | undefined;
 	/**
 	 * Force the recogniser to endpoint now. The hold-to-talk release path, and the
 	 * only reason this module knows the recogniser exists: a user who let go of
@@ -363,8 +378,9 @@ export class FloorController {
 		const state = this.options.session.getState();
 		if (state === 'idle' || state === 'error') {
 			const scope = this.options.getScope?.() ?? { kind: 'conductor' };
+			const origin = this.options.getOrigin?.();
 			try {
-				await this.options.session.startSession({ scope, source });
+				await this.options.session.startSession({ scope, source, origin });
 			} catch (error) {
 				// The session reports its own classified failures as `session-error`
 				// events; anything that throws out of `startSession` is unexpected, and

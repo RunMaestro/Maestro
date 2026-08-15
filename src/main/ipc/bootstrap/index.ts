@@ -316,6 +316,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		},
 		safeSend: deps.safeSend,
 		audioHostDeps: deps.acappellaAudioHostDeps,
+		// The paired-device transport rides the web server's authenticated socket,
+		// so the QR code cannot be produced without its token and port.
+		getWebServer: deps.getWebServer,
 		// What the `voiceCurrentAgent` hotkey binds to. The renderer is the only
 		// thing that knows which agent is on screen, and it persists that here on
 		// every switch, so main can answer without a round trip - which matters,

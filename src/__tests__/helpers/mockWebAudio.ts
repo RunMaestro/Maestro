@@ -141,6 +141,8 @@ export interface FakeAudioContext {
 	createGain(): FakeGainNode;
 	createBufferSource(): FakeBufferSourceNode;
 	createMediaStreamSource(stream: unknown): FakeAudioNode & { mediaStream: unknown };
+	/** The outbound tap the WebRTC leg connects playback into. */
+	createMediaStreamDestination(): FakeAudioNode & { stream: { getAudioTracks(): unknown[] } };
 	createBuffer(channels: number, length: number, sampleRate: number): FakeAudioBuffer;
 	decodeAudioData: ReturnType<typeof vi.fn>;
 	/** Test-only: advance the audio clock. */
@@ -202,6 +204,12 @@ export function createFakeAudioContext(options: FakeAudioContextOptions = {}): F
 		},
 		createMediaStreamSource: (stream: unknown) =>
 			Object.assign(createNode(), { mediaStream: stream }),
+		createMediaStreamDestination: () => {
+			const track = { kind: 'audio', id: 'outbound' };
+			return Object.assign(createNode(), {
+				stream: { getAudioTracks: () => [track] },
+			});
+		},
 		createBuffer: (channels: number, length: number, sampleRate: number) =>
 			createFakeAudioBuffer(length, sampleRate, channels),
 		decodeAudioData: vi.fn(async (data: ArrayBuffer) =>
