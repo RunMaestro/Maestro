@@ -45,6 +45,7 @@ import type {
 } from '../../stores/settingsStore';
 import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSizing';
 import { notifyToast } from '../../stores/notificationStore';
+import { describeGlobalHotkeyStatus, globalHotkeyLabel } from '../../../shared/global-hotkeys';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 
@@ -565,13 +566,13 @@ export function useSettings(): UseSettingsReturn {
 	// another app). Mounted here so the toast fires even when Settings is closed.
 	useEffect(() => {
 		if (!window.maestro?.app?.onGlobalHotkeyRegistrationFailed) return;
-		const cleanup = window.maestro.app.onGlobalHotkeyRegistrationFailed((keys) => {
-			const combo = keys.length > 0 ? formatShortcutKeys(keys) : '(none)';
-			logger.warn(`[Settings] Global hotkey registration failed: ${combo}`);
+		const cleanup = window.maestro.app.onGlobalHotkeyRegistrationFailed((status) => {
+			const combo = status.keys.length > 0 ? formatShortcutKeys(status.keys) : '(none)';
+			logger.warn(`[Settings] Global hotkey '${status.id}' registration failed: ${combo}`);
 			notifyToast({
 				color: 'orange',
-				title: 'Global hotkey unavailable',
-				message: `${combo} is already in use by another app. Pick a different combo in Settings → General.`,
+				title: `Global hotkey unavailable: ${globalHotkeyLabel(status.id)}`,
+				message: describeGlobalHotkeyStatus(status, combo),
 				dismissible: true,
 			});
 		});
