@@ -167,6 +167,18 @@ function audioCommands(): AudioHostCommand[] {
 		.mock.calls.map(([, command]) => command as AudioHostCommand);
 }
 
+/**
+ * The real platform, restored after every test. Anything that reaches a
+ * platform-gated API (the macOS microphone prompt) has to say which platform it
+ * means; inheriting the host's is what makes a suite pass on a Mac and fail on
+ * both CI legs.
+ */
+const REAL_PLATFORM = process.platform;
+
+function setPlatform(platform: string): void {
+	Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
 beforeEach(async () => {
 	vi.clearAllMocks();
 	await disposeVoiceSessionService();
@@ -193,6 +205,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	setPlatform(REAL_PLATFORM);
 	await disposeVoiceSessionService();
 	resetACappellaHandlerState();
 });
@@ -219,7 +232,7 @@ describe('A Cappella IPC handlers - registration', () => {
 		);
 	});
 
-	it('asks for the microphone at the first session start, and not before', async () => {
+	it('asks for nothing before a session starts, on any platform', async () => {
 		// An app that prompts for the microphone at launch, or the moment an Encore
 		// Feature is switched on, is asking for a device to do something the user has
 		// not requested. Registering the handlers must ask for nothing.
@@ -229,10 +242,28 @@ describe('A Cappella IPC handlers - registration', () => {
 		// capability gate calls it on every Settings render.
 		await handlerFor('acappella:mic-permission')({});
 		expect(systemPreferences.askForMediaAccess).not.toHaveBeenCalled();
+	});
 
+	it('asks for the microphone at the first session start on macOS', async () => {
+		// The platform is pinned rather than inherited from the host: `askForMediaAccess`
+		// is a macOS-only API, so a test that assumes the developer's Mac passes locally
+		// and fails on both CI legs.
+		setPlatform('darwin');
 		vi.mocked(systemPreferences.getMediaAccessStatus).mockReturnValue('not-determined');
 		await handlerFor('acappella:start-session')({});
 		expect(systemPreferences.askForMediaAccess).toHaveBeenCalledWith('microphone');
+	});
+
+	it('starts a session without prompting where there is no prompt to show', async () => {
+		// Linux and Windows have no in-app microphone prompt. Calling the macOS API
+		// there would either throw or silently do nothing, and either way a session
+		// must still start rather than be gated behind a permission that cannot be
+		// requested.
+		setPlatform('linux');
+		vi.mocked(systemPreferences.getMediaAccessStatus).mockReturnValue('not-determined');
+		await handlerFor('acappella:start-session')({});
+		expect(systemPreferences.askForMediaAccess).not.toHaveBeenCalled();
+		expect(getVoiceSessionService()).not.toBeNull();
 	});
 
 	it('builds no session service until a session is started', async () => {
