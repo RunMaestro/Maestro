@@ -291,6 +291,32 @@ describe('runStartupAuthProbe', () => {
 		expect(result).toMatchObject({ identities: 1, probed: 1 });
 	});
 
+	it('attributes the write to the caller-supplied source without touching the status', async () => {
+		await runStartupAuthProbe(
+			makeDeps([makeSession()], { mode: 'manual', source: 'login-flow' as const })
+		);
+
+		expect(getSnapshot(DEFAULT_CLAUDE_KEY)).toMatchObject({
+			status: 'authenticated',
+			source: 'login-flow',
+		});
+	});
+
+	it('attributes a still-failing result to the login flow too', async () => {
+		probeCredentialMock.mockImplementation(async (identity: CredentialIdentity) =>
+			makeSnapshot(identity, { status: 'logged-out' })
+		);
+
+		await runStartupAuthProbe(
+			makeDeps([makeSession()], { mode: 'manual', source: 'login-flow' as const })
+		);
+
+		expect(getSnapshot(DEFAULT_CLAUDE_KEY)).toMatchObject({
+			status: 'logged-out',
+			source: 'login-flow',
+		});
+	});
+
 	it('probes nothing when onlyKeys names a key no session references', async () => {
 		const result = await runStartupAuthProbe(
 			makeDeps([makeSession()], { mode: 'manual', onlyKeys: ['claude-code::oauth::/gone::local'] })

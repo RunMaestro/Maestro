@@ -130,6 +130,12 @@ function broadcastChange(change: ProviderAuthChange): void {
 	}
 }
 
+/** What a renderer may ask for alongside a single-credential re-probe. */
+export interface ProviderAuthReprobeOptions {
+	/** Attribution for the resulting snapshot. See {@link RENDERER_SOURCES}. */
+	source?: ProviderAuthSource;
+}
+
 /** Result of a manual re-probe request. */
 export interface ProviderAuthReprobeResult extends StartupAuthProbeResult {
 	/** The stored snapshot after the pass, for a single-key re-probe. */
@@ -155,7 +161,10 @@ export function registerProviderAuthHandlers(deps: ProviderAuthHandlerDependenci
 	 * zeroed counts (never throws) when the detector is not up yet, which happens
 	 * if the renderer asks before agent detection finished on a cold boot.
 	 */
-	const runManualProbe = async (onlyKeys?: string[]): Promise<StartupAuthProbeResult> => {
+	const runManualProbe = async (
+		onlyKeys?: string[],
+		source?: ProviderAuthSource
+	): Promise<StartupAuthProbeResult> => {
 		const agentDetector = getAgentDetector();
 		if (!agentDetector) {
 			logger.warn('Skipping provider auth re-probe: agent detector not ready', LOG_CONTEXT, {
@@ -170,6 +179,7 @@ export function registerProviderAuthHandlers(deps: ProviderAuthHandlerDependenci
 			agentDetector,
 			mode: 'manual',
 			...(onlyKeys ? { onlyKeys } : {}),
+			...(source ? { source } : {}),
 		});
 	};
 
@@ -186,12 +196,22 @@ export function registerProviderAuthHandlers(deps: ProviderAuthHandlerDependenci
 	// Re-probe one credential. `snapshot` is whatever is stored afterwards, which
 	// is the previous value when the key matched no session (the agent that used
 	// it was deleted) - the store is still the source of truth either way.
+	//
+	// `options.source` re-attributes the write: the recovery modal's check passes
+	// `login-flow`, so a stored `authenticated` records that a user just finished a
+	// login rather than that a background sweep found a live token. Anything
+	// outside RENDERER_SOURCES is dropped rather than trusted.
 	ipcMain.handle(
 		'providerAuth:reprobe',
 		withIpcErrorLogging(
 			handlerOpts('reprobe'),
-			async (key: string): Promise<ProviderAuthReprobeResult> => {
-				const result = await runManualProbe([key]);
+			async (
+				key: string,
+				options?: ProviderAuthReprobeOptions
+			): Promise<ProviderAuthReprobeResult> => {
+				const source =
+					options?.source && RENDERER_SOURCES.includes(options.source) ? options.source : undefined;
+				const result = await runManualProbe([key], source);
 				return { ...result, snapshot: getSnapshot(key) };
 			}
 		)

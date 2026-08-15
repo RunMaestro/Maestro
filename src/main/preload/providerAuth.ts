@@ -48,6 +48,17 @@ export interface ProviderAuthReprobeResult extends ProviderAuthProbeCounts {
 }
 
 /**
+ * Options for a single-credential re-probe.
+ *
+ * `source` is what the recovery modal uses to attribute its check to the login
+ * flow, so a stored `authenticated` says a user just finished a login rather
+ * than that a background sweep found a live token.
+ */
+export interface ProviderAuthReprobeOptions {
+	source?: ProviderAuthSource;
+}
+
+/**
  * What a renderer sends when it learns of an auth failure without probing.
  *
  * `identity` is what lets a NEVER-PROBED credential be marked: main has no
@@ -96,7 +107,10 @@ export interface ProviderAuthStartLoginResult {
 
 export interface ProviderAuthApi {
 	getAll: () => Promise<Record<string, ProviderAuthSnapshot>>;
-	reprobe: (key: string) => Promise<ProviderAuthReprobeResult>;
+	reprobe: (
+		key: string,
+		options?: ProviderAuthReprobeOptions
+	) => Promise<ProviderAuthReprobeResult>;
 	reprobeAll: () => Promise<ProviderAuthProbeCounts>;
 	mark: (key: string, request?: ProviderAuthMarkRequest) => Promise<ProviderAuthSnapshot | null>;
 	startLogin: (request: ProviderAuthStartLoginRequest) => Promise<ProviderAuthStartLoginResult>;
@@ -113,8 +127,11 @@ export function createProviderAuthApi(): ProviderAuthApi {
 			ipcRenderer.invoke('providerAuth:getAll'),
 
 		// Re-probe one credential by `CredentialIdentity.key`.
-		reprobe: (key: string): Promise<ProviderAuthReprobeResult> =>
-			ipcRenderer.invoke('providerAuth:reprobe', key),
+		reprobe: (
+			key: string,
+			options?: ProviderAuthReprobeOptions
+		): Promise<ProviderAuthReprobeResult> =>
+			ipcRenderer.invoke('providerAuth:reprobe', key, options),
 
 		// Re-probe every credential (`manual` mode: ignores the freshness window
 		// and includes SSH remotes, so this can take a few seconds).

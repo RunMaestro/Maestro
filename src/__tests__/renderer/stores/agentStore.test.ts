@@ -461,6 +461,97 @@ describe('agentStore', () => {
 		});
 	});
 
+	describe('clearAuthErrors', () => {
+		const authError = { type: 'auth_expired', message: 'expired' } as any;
+		const otherError = { type: 'rate_limited', message: 'slow down' } as any;
+
+		const tab = (id: string, agentError?: unknown) =>
+			({
+				id,
+				agentSessionId: null,
+				name: null,
+				starred: false,
+				logs: [],
+				inputValue: '',
+				stagedImages: [],
+				createdAt: 0,
+				state: 'idle',
+				...(agentError ? { agentError } : {}),
+			}) as any;
+
+		it('clears the session frame and EVERY tab wearing an auth error', () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					state: 'error',
+					agentError: authError,
+					agentErrorTabId: 'tab-1',
+					agentErrorPaused: true,
+					aiTabs: [tab('tab-1', authError), tab('tab-2', authError), tab('tab-3')],
+					activeTabId: 'tab-1',
+				}),
+			]);
+
+			expect(useAgentStore.getState().clearAuthErrors('session-1')).toBe(true);
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('idle');
+			expect(updated.agentError).toBeUndefined();
+			expect(updated.agentErrorTabId).toBeUndefined();
+			expect(updated.agentErrorPaused).toBe(false);
+			expect(updated.aiTabs.every((t) => t.agentError === undefined)).toBe(true);
+			expect(mockClearError).toHaveBeenCalledWith('session-1');
+		});
+
+		it('leaves an error that a login cannot fix exactly where it is', () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					state: 'error',
+					agentError: otherError,
+					agentErrorTabId: 'tab-1',
+					agentErrorPaused: true,
+					aiTabs: [tab('tab-1', otherError)],
+					activeTabId: 'tab-1',
+				}),
+			]);
+
+			expect(useAgentStore.getState().clearAuthErrors('session-1')).toBe(false);
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('error');
+			expect(updated.agentError).toBe(otherError);
+			expect(updated.aiTabs[0].agentError).toBe(otherError);
+			expect(mockClearError).not.toHaveBeenCalled();
+		});
+
+		it('clears a tab-only auth error without touching the session state', () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					aiTabs: [tab('tab-1', authError)],
+					activeTabId: 'tab-1',
+				}),
+			]);
+
+			expect(useAgentStore.getState().clearAuthErrors('session-1')).toBe(true);
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
+			// No session-level frame was cleared, so nothing about the run changed.
+			expect(updated.state).toBe('busy');
+			expect(mockClearError).not.toHaveBeenCalled();
+		});
+
+		it('reports false for a session that does not exist', () => {
+			useSessionStore.getState().setSessions([]);
+
+			expect(useAgentStore.getState().clearAuthErrors('nope')).toBe(false);
+			expect(mockClearError).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('startNewSessionAfterError', () => {
 		it('clears error and creates a new tab', () => {
 			const session = createMockSession({

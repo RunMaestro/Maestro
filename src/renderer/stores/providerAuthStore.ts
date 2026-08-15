@@ -128,8 +128,16 @@ interface ProviderAuthState {
 		detail?: string,
 		source?: ProviderAuthSource
 	) => Promise<ProviderAuthSnapshot | null>;
-	/** Re-probe one credential. */
-	refreshIdentity: (identityKey: string) => Promise<void>;
+	/**
+	 * Re-probe one credential.
+	 *
+	 * `source` attributes the resulting snapshot: the recovery modal passes
+	 * `login-flow` so the record says a user just finished a login there.
+	 */
+	refreshIdentity: (
+		identityKey: string,
+		options?: { source?: ProviderAuthSource }
+	) => Promise<void>;
 	/** Re-probe every credential (seconds, not milliseconds - it spawns). */
 	refreshAllIdentities: () => Promise<void>;
 	/** Test-only: reset to initial state and drop every subscription. */
@@ -339,11 +347,14 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 				: {}),
 		}),
 
-	refreshIdentity: async (identityKey) => {
+	refreshIdentity: async (identityKey, options) => {
 		const api = bridge();
 		if (!api) return;
 		try {
-			const result = await api.reprobe(identityKey);
+			const result = await api.reprobe(
+				identityKey,
+				options?.source ? { source: options.source } : undefined
+			);
 			if (result?.snapshot !== undefined) get().applyChange(identityKey, result.snapshot);
 		} catch (error) {
 			logger.warn('Failed to re-probe identity', LOG_CONTEXT, {
@@ -459,6 +470,22 @@ function resolveSessionIdentity(
 export function getIdentityForSession(sessionId: string): CredentialIdentity | null {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	return resolveSessionIdentity(session, useProviderAuthStore.getState());
+}
+
+/**
+ * Every session presenting one credential, in Left Bar order.
+ *
+ * The counterpart to {@link getIdentityForSession}, and the list a repaired
+ * login has to act on: a user who signs in once and still sees fourteen agents
+ * wearing an error badge has not been helped. Unlike
+ * {@link selectLoggedOutIdentities} this does not care what the snapshot says,
+ * so it still answers after the login succeeded and the status flipped.
+ */
+export function getSessionsForIdentity(identityKey: string): Session[] {
+	const state = useProviderAuthStore.getState();
+	return useSessionStore
+		.getState()
+		.sessions.filter((session) => resolveSessionIdentity(session, state)?.key === identityKey);
 }
 
 // ============================================================================

@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import {
+	getSessionsForIdentity,
 	markSessionAuthFailure,
 	selectAuthSnapshotForSession,
 	selectLoggedOutIdentities,
@@ -179,6 +180,28 @@ describe('blocked roll-up across agents sharing one credential', () => {
 		const blocked = selectLoggedOutIdentities()(state);
 		expect(blocked).toHaveLength(1);
 		expect(blocked[0].sessionIds).toEqual(['shared-1', 'shared-2']);
+	});
+
+	it('lists every agent on a credential regardless of what its snapshot says', async () => {
+		installBridge();
+		useSessionStore.setState({
+			sessions: [
+				makeSession('shared-1'),
+				makeSession('shared-2'),
+				makeSession('other', { CLAUDE_CONFIG_DIR: SIBLING_DIR }),
+			],
+		});
+		await useProviderAuthStore.getState().hydrate();
+
+		// No snapshot at all, then a healthy one: the recovery flow has to reach
+		// these agents AFTER the login flipped the status, which is exactly when
+		// `selectLoggedOutIdentities` stops naming them.
+		expect(getSessionsForIdentity(DEFAULT_KEY).map((s) => s.id)).toEqual(['shared-1', 'shared-2']);
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'authenticated'));
+		expect(getSessionsForIdentity(DEFAULT_KEY).map((s) => s.id)).toEqual(['shared-1', 'shared-2']);
+		expect(getSessionsForIdentity('claude-code::oauth::/gone::local')).toEqual([]);
 	});
 
 	it('clears the indicator for every session on an identity when the probe comes back authenticated', async () => {

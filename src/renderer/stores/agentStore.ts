@@ -19,6 +19,7 @@ import type {
 	Session,
 	SessionState,
 	AgentConfig,
+	AgentError,
 	LogEntry,
 	QueuedItem,
 	CustomAICommand,
@@ -97,6 +98,20 @@ export interface AgentStoreActions {
 	 * Resets session to idle, clears error fields, notifies main process.
 	 */
 	clearAgentError: (sessionId: string, tabId?: string) => void;
+
+	/**
+	 * Clear every AUTH error on one session - the session-level frame plus each
+	 * tab carrying one - and leave every other error alone.
+	 *
+	 * Separate from `clearAgentError` because a repaired login is not a dismissed
+	 * error frame. Two differences matter: it spans all of the session's tabs (a
+	 * dead login fails every tab that tried, not just the one the user is looking
+	 * at), and it is type-scoped, so a rate-limit or network error that is still
+	 * true survives the login.
+	 *
+	 * Returns true when something was cleared.
+	 */
+	clearAuthErrors: (sessionId: string) => boolean;
 
 	/**
 	 * Start a new tab in the session after an error (recovery action).
@@ -267,6 +282,41 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		window.maestro.agentError.clearError(sessionId).catch((err) => {
 			logger.error('Failed to clear agent error:', undefined, err);
 		});
+	},
+
+	clearAuthErrors: (sessionId) => {
+		const session = getSession(sessionId);
+		if (!session) return false;
+
+		const isAuthError = (error?: AgentError): boolean => error?.type === 'auth_expired';
+		const sessionLevel = isAuthError(session.agentError);
+		const tabIds = new Set(
+			session.aiTabs.filter((tab) => isAuthError(tab.agentError)).map((tab) => tab.id)
+		);
+		if (!sessionLevel && tabIds.size === 0) return false;
+
+		updateSession(sessionId, (s) => ({
+			...s,
+			...(sessionLevel
+				? {
+						agentError: undefined,
+						agentErrorTabId: undefined,
+						agentErrorPaused: false,
+						state: 'idle' as SessionState,
+					}
+				: {}),
+			aiTabs: s.aiTabs.map((tab) => (tabIds.has(tab.id) ? { ...tab, agentError: undefined } : tab)),
+		}));
+
+		// Main holds its own copy for the error modal, so it has to be told too -
+		// same call `clearAgentError` makes, and only when the session-level frame
+		// was the thing cleared.
+		if (sessionLevel) {
+			window.maestro.agentError.clearError(sessionId).catch((err) => {
+				logger.error('Failed to clear agent error:', undefined, err);
+			});
+		}
+		return true;
 	},
 
 	startNewSessionAfterError: (sessionId, options?) => {

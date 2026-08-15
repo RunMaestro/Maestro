@@ -39,7 +39,7 @@
 import * as os from 'os';
 import Store from 'electron-store';
 
-import type { CredentialIdentity } from '../../../shared/providerAuth';
+import type { CredentialIdentity, ProviderAuthSource } from '../../../shared/providerAuth';
 import { mergeEffectiveEnv, resolveCredentialIdentity } from '../../../shared/providerAuth';
 import type { AgentSshRemoteConfig } from '../../../shared/types';
 import type { AgentConfigsData, MaestroSettings, SessionsData } from '../../stores/types';
@@ -92,6 +92,18 @@ export interface StartupAuthProbeDeps {
 	 * references any more matches nothing and simply probes nothing.
 	 */
 	onlyKeys?: string[];
+	/**
+	 * Attribution for whatever this pass writes. Defaults to the probe's own
+	 * `'probe'`.
+	 *
+	 * The recovery modal passes `'login-flow'`, so a snapshot that says
+	 * "authenticated" carries WHY it says so: the user just finished a login here,
+	 * not a background sweep that happened to find a live token. The attribution
+	 * applies to whatever the probe finds, including a still-`logged-out` result -
+	 * that check came from the login flow too, and pretending otherwise would put
+	 * a wrong provenance on disk.
+	 */
+	source?: ProviderAuthSource;
 }
 
 /** Counts emitted in the single summary log line. */
@@ -430,7 +442,9 @@ export async function runStartupAuthProbe(
 
 				result.probed++;
 				result.byStatus[snapshot.status] = (result.byStatus[snapshot.status] ?? 0) + 1;
-				setSnapshot(identity.key, snapshot);
+				// `deps.source` re-attributes the write without touching what the
+				// probe decided the status IS - see the field's docblock.
+				setSnapshot(identity.key, deps.source ? { ...snapshot, source: deps.source } : snapshot);
 			} catch (error) {
 				// A thrown probe is a bug, not a verdict: record nothing rather than
 				// letting a crash read as a login state.

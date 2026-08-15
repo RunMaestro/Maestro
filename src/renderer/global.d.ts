@@ -3603,7 +3603,10 @@ interface MaestroAPI {
 	// Provider Auth API (credential login state, re-probe, change events)
 	providerAuth: {
 		getAll: () => Promise<Record<string, import('../shared/providerAuth').ProviderAuthSnapshot>>;
-		reprobe: (key: string) => Promise<{
+		reprobe: (
+			key: string,
+			options?: { source?: import('../shared/providerAuth').ProviderAuthSource }
+		) => Promise<{
 			identities: number;
 			probed: number;
 			skippedFresh: number;

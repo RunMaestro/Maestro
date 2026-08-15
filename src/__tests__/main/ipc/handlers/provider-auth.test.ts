@@ -159,6 +159,24 @@ describe('Provider Auth IPC Handlers', () => {
 		expect(result.snapshot?.status).toBe('logged-out');
 	});
 
+	it('reprobe passes a login-flow attribution through to the pass', async () => {
+		registerProviderAuthHandlers(makeDeps());
+
+		await handlers.get('providerAuth:reprobe')!({}, KEY, { source: 'login-flow' });
+
+		expect(mockRunStartupAuthProbe.mock.calls[0][0]).toMatchObject({ source: 'login-flow' });
+	});
+
+	it('reprobe drops a source the renderer is not allowed to claim', async () => {
+		registerProviderAuthHandlers(makeDeps());
+
+		await handlers.get('providerAuth:reprobe')!({}, KEY, { source: 'probe' });
+
+		expect(
+			(mockRunStartupAuthProbe.mock.calls[0][0] as Record<string, unknown>).source
+		).toBeUndefined();
+	});
+
 	it('reprobeAll runs a manual pass with no key filter', async () => {
 		registerProviderAuthHandlers(makeDeps());
 

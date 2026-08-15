@@ -20,14 +20,14 @@
  * no `select-none` on the root - see UI-PATTERNS.md -> Text Selection in Modals.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KeyRound, RefreshCw, ShieldAlert, Terminal as TerminalIcon } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { XTerminal } from './XTerminal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
-import { useProviderAuthStore } from '../stores/providerAuthStore';
+import { verifyAuthRecovery } from '../services/authRecovery';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { buildLoginRunSessionId, resolveLoginCommand } from '../../shared/providerAuth';
 import type { CredentialIdentity, CredentialKind } from '../../shared/providerAuth';
@@ -119,7 +119,6 @@ export function AuthRecoveryModal({
 }: AuthRecoveryModalProps) {
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
-	const refreshIdentity = useProviderAuthStore((s) => s.refreshIdentity);
 
 	// Bumped by "Re-run login command": a new run id is a new PTY stream and a
 	// fresh terminal, which is what a user who aborted the browser flow needs.
@@ -130,6 +129,14 @@ export function AuthRecoveryModal({
 	const [spawnedCommandLine, setSpawnedCommandLine] = useState<string | null>(null);
 	/** Why the login could not start, from main. Null while it is running fine. */
 	const [spawnError, setSpawnError] = useState<string | null>(null);
+	/**
+	 * Latest `handleVerify`, for the PTY-exit listener below. A ref rather than a
+	 * dependency: putting the callback in the login effect's deps would kill and
+	 * re-spawn the login every time the verify phase changed.
+	 */
+	const verifyRef = useRef<() => Promise<void>>(async () => {});
+	/** True while a probe is in flight, so exit and the button cannot both run one. */
+	const verifyingRef = useRef(false);
 
 	// Only decides WHICH surface to render (terminal vs guidance) and what note to
 	// show. The command that actually runs is resolved in main, which knows the
@@ -166,6 +173,16 @@ export function AuthRecoveryModal({
 		setSpawnError(null);
 		setSpawnedCommandLine(null);
 
+		// A CLI that exits on its own is the earliest reliable "done", so check
+		// right then instead of waiting for the button. Subscribed inside this
+		// effect deliberately: the cleanup unsubscribes BEFORE killing the PTY, so
+		// Maestro's own kill (modal closed, command re-run) cannot arrive here
+		// looking like a finished login.
+		const unsubscribeExit = window.maestro?.process?.onExit?.((exitedSessionId: string) => {
+			if (exitedSessionId !== runSessionId) return;
+			void verifyRef.current();
+		});
+
 		void api
 			.startLogin({ identityKey: identity.key, runSessionId })
 			.then((result) => {
@@ -193,6 +210,7 @@ export function AuthRecoveryModal({
 
 		return () => {
 			cancelled = true;
+			unsubscribeExit?.();
 			void api.stopLogin(runSessionId);
 		};
 	}, [identity.key, runSessionId, canLogin]);
@@ -209,34 +227,39 @@ export function AuthRecoveryModal({
 	}, []);
 
 	/**
-	 * Ask main to re-probe this credential and report what it found.
+	 * Re-probe this credential and act on the verdict.
 	 *
-	 * The button exists because some CLIs keep running after the browser step, so
-	 * process exit alone is not a reliable "done". A failed check deliberately
-	 * leaves the modal open with the terminal scrollback intact: closing on
-	 * failure hides the evidence the user needs to read.
+	 * Runs on the button AND on PTY exit: some CLIs keep running after the browser
+	 * step, so process exit alone is not a reliable "done", and a user staring at a
+	 * finished flow should not have to press anything either.
+	 *
+	 * Success is the service's job (rewrite the snapshot, clear every agent's auth
+	 * error, flash) and ends with this modal closed. Failure deliberately leaves it
+	 * open with the terminal scrollback intact: closing on failure hides the
+	 * evidence the user needs to read.
 	 */
 	const handleVerify = useCallback(async () => {
+		// Exit and the button can both fire within a second of each other; two
+		// concurrent probes would spawn twice and race over the phase.
+		if (verifyingRef.current) return;
+		verifyingRef.current = true;
 		setVerifyPhase('checking');
 		try {
-			await refreshIdentity(identity.key);
-		} catch (error) {
-			logger.warn('Re-probe after login failed', LOG_CONTEXT, {
-				identityKey: identity.key,
-				error: error instanceof Error ? error.message : String(error),
-			});
+			const outcome = await verifyAuthRecovery(identity.key);
+			// Set the phase before closing, so a parent that keeps this mounted for a
+			// beat shows the confirmation rather than a stuck "Checking...".
+			setVerifyPhase(outcome.status);
+			if (outcome.status === 'authenticated') handleClose();
+		} finally {
+			verifyingRef.current = false;
 		}
-		const status = useProviderAuthStore.getState().snapshots[identity.key]?.status;
-		// TODO(Phase 04, "success detection"): on `authenticated`, clear the auth
-		// error for EVERY session on this identity, flash green, and close.
-		setVerifyPhase(
-			status === 'authenticated'
-				? 'authenticated'
-				: status === 'logged-out'
-					? 'logged-out'
-					: 'unknown'
-		);
-	}, [identity.key, refreshIdentity]);
+	}, [identity.key, handleClose]);
+
+	// Keep the exit listener pointed at the current callback without making it a
+	// dependency of the login effect (which would re-spawn the login).
+	useEffect(() => {
+		verifyRef.current = handleVerify;
+	}, [handleVerify]);
 
 	const handleCopyCommand = useCallback(() => {
 		if (!commandLine) return;
