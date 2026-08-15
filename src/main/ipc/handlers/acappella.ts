@@ -187,6 +187,25 @@ function providerKey(settings: VoiceProviderSettings): string {
  * instance, which drops its subscribers, so the fan-out is re-registered here
  * rather than accumulating a second copy.
  */
+/**
+ * Attach audio wiring to a service that has none.
+ *
+ * Audio is wired only when there is a host window to wire it to. Without one
+ * (tests, and any path that did not pass `audioHostDeps`) the session still
+ * runs: it is simply text-in, which is exactly the mock tier's contract.
+ *
+ * Called from BOTH paths in `ensureService`, because the two lifetimes differ:
+ * switching the Encore Feature off disposes the bridge and deliberately leaves
+ * the session service alone, so the next start reuses a live service that has
+ * no audio at all. That failure is silent and total - the host window opens, the
+ * device is captured, and every frame lands on a null bridge - which is why it
+ * cannot be left to the fresh-service path.
+ */
+function ensureAudioBridge(service: VoiceSessionService, deps: ACappellaHandlerDependencies): void {
+	if (audioBridge || !deps.audioHostDeps) return;
+	audioBridge = createVoiceAudioBridge({ session: service, sendCommand: sendAudioHostCommand });
+}
+
 async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 	service: VoiceSessionService;
 	substitutions: VoiceProviderSubstitution[];
@@ -196,6 +215,9 @@ async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 
 	const existing = getVoiceSessionService();
 	if (existing && key === activeProviderKey) {
+		// The service survives an Encore toggle but the bridge does not, so a reused
+		// service can arrive here with no audio wiring at all.
+		ensureAudioBridge(existing, deps);
 		return { service: existing, substitutions: activeSubstitutions };
 	}
 
@@ -215,12 +237,7 @@ async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
 	});
 	service.subscribe((event) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL, event));
 
-	// Audio is wired only when there is a host window to wire it to. Without one
-	// (tests, and any path that did not pass `audioHostDeps`) the session still
-	// runs: it is simply text-in, which is exactly the mock tier's contract.
-	if (deps.audioHostDeps) {
-		audioBridge = createVoiceAudioBridge({ session: service, sendCommand: sendAudioHostCommand });
-	}
+	ensureAudioBridge(service, deps);
 
 	activeProviderKey = key;
 	activeSubstitutions = substitutions;

@@ -601,6 +601,27 @@ describe('A Cappella IPC handlers - audio host transport', () => {
 		expect(audioCommands().map((command) => command.kind)).toContain('stop-capture');
 	});
 
+	it('rewires audio when the Encore Feature is switched back on', async () => {
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+
+		// Switching the feature off drops the bridge but deliberately leaves the
+		// session service alive, so the next start reuses it. Without rewiring, the
+		// host window opens and captures into nothing: no meter, no transcript, no
+		// barge-in, and nothing on screen to say the microphone is dead.
+		disposeACappellaAudioBridge();
+		await handlerFor('acappella:stop-session')({});
+		vi.mocked(audioHost.webContents.send).mockClear();
+		broadcasts = [];
+
+		await handlerFor('acappella:start-session')({});
+		pushStatus({ kind: 'ready' });
+		pushFrames(9);
+
+		expect(audioCommands().map((command) => command.kind)).toContain('start-capture');
+		expect(voiceEvents().filter((event) => event.type === 'audio-level').length).toBeGreaterThan(0);
+	});
+
 	it('wires no audio at all without a host window', async () => {
 		vi.clearAllMocks();
 		await disposeVoiceSessionService();
