@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import {
+	getIdentityForAgentType,
 	getSessionsForIdentity,
 	markSessionAuthFailure,
 	selectAuthSnapshotForSession,
@@ -115,6 +116,62 @@ describe('providerAuthStore smoke', () => {
 		// Reference-stable across an unrelated session-object churn.
 		useSessionStore.setState({ sessions: [...useSessionStore.getState().sessions] });
 		expect(selectLoggedOutIdentities()(useProviderAuthStore.getState())).toBe(blocked);
+	});
+});
+
+/**
+ * Fail-closed identity resolution.
+ *
+ * An identity is only as good as the env it was resolved from, and half that env
+ * (the agent-level half) arrives over IPC. Guessing at it produces a key that is
+ * wrong in the worst possible way: it names a real account, just not the one the
+ * agent presents.
+ */
+describe('unreadable agent-level env', () => {
+	beforeEach(async () => {
+		await resetStores();
+	});
+
+	it('resolves no identity for the provider rather than one built without it', async () => {
+		installBridge();
+		// An agent-level ANTHROPIC_API_KEY would make this an api-key credential,
+		// not the default config directory - so a failed read cannot be treated as
+		// "no vars set".
+		(
+			window as unknown as { maestro: { agents: { getCustomEnvVars: unknown } } }
+		).maestro.agents.getCustomEnvVars = vi.fn().mockRejectedValue(new Error('ipc down'));
+
+		useSessionStore.setState({ sessions: [makeSession('a')] });
+		await useProviderAuthStore.getState().hydrate();
+		await flush();
+
+		expect(useProviderAuthStore.getState().agentEnvFailures['claude-code']).toBe(true);
+		expect(getSessionsForIdentity(DEFAULT_KEY)).toEqual([]);
+		expect(selectAuthSnapshotForSession('a')(useProviderAuthStore.getState())).toBeNull();
+		expect(getIdentityForAgentType('claude-code')).toBeNull();
+	});
+
+	it('resolves normally again once a later read succeeds', async () => {
+		installBridge();
+		const getCustomEnvVars = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('ipc down'))
+			.mockResolvedValue({});
+		(
+			window as unknown as { maestro: { agents: { getCustomEnvVars: unknown } } }
+		).maestro.agents.getCustomEnvVars = getCustomEnvVars;
+
+		useSessionStore.setState({ sessions: [makeSession('a')] });
+		await useProviderAuthStore.getState().hydrate();
+		await flush();
+		expect(getIdentityForAgentType('claude-code')).toBeNull();
+
+		// A change to WHICH agents exist is what retries the fetch.
+		useSessionStore.setState({ sessions: [makeSession('a'), makeSession('b')] });
+		await flush();
+
+		expect(useProviderAuthStore.getState().agentEnvFailures['claude-code']).toBeUndefined();
+		expect(getIdentityForAgentType('claude-code')?.key).toBe(DEFAULT_KEY);
 	});
 });
 

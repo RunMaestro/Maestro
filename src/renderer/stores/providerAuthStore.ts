@@ -112,11 +112,38 @@ export interface MarkIdentityRequest {
 	source?: ProviderAuthSource;
 }
 
+/**
+ * What a re-probe actually did, as opposed to what is stored afterwards.
+ *
+ * `probed: false` is the answer that matters: main runs a pass that can decline
+ * to probe (the agent detector is not up yet, the CLI is not installed, no
+ * session references the key any more) and then hands back whatever was already
+ * on record. Without this flag a caller reads that stale record as a fresh
+ * verdict and tells the user they are signed out on the strength of a probe that
+ * never ran - the exact failure the whole feature exists to avoid.
+ */
+export interface AuthRefreshOutcome {
+	/** True only when a status command actually ran for this credential. */
+	probed: boolean;
+	/** Whatever is stored for the key afterwards, fresh or not. */
+	snapshot: ProviderAuthSnapshot | null;
+}
+
 interface ProviderAuthState {
 	/** Snapshot per `CredentialIdentity.key`, mirrored from main. */
 	snapshots: Record<string, ProviderAuthSnapshot>;
 	/** Agent-level `customEnvVars` per provider, which session-level vars merge over. */
 	agentEnvVars: Record<string, Record<string, string>>;
+	/**
+	 * Providers whose agent-level env could not be read.
+	 *
+	 * Identity resolution fails closed for these: the agent-level env is what
+	 * decides an identity's KIND (an `ANTHROPIC_API_KEY` set there makes it an
+	 * api-key credential, not the default config directory), so resolving without
+	 * it produces a key that matches nothing main stored and a badge pointing at
+	 * the wrong account.
+	 */
+	agentEnvFailures: Record<string, true>;
 	/** Local home dir, needed to expand the default config dir of an identity. */
 	homeDir: string;
 	/** True once the first `getAll()` has resolved (success or empty). */
@@ -150,11 +177,15 @@ interface ProviderAuthState {
 	 *
 	 * `source` attributes the resulting snapshot: the recovery modal passes
 	 * `login-flow` so the record says a user just finished a login there.
+	 *
+	 * Never rejects. The returned {@link AuthRefreshOutcome} is how a caller tells
+	 * "the probe answered" from "no probe ran"; both leave the store consistent,
+	 * but only the first is evidence of anything.
 	 */
 	refreshIdentity: (
 		identityKey: string,
 		options?: { source?: ProviderAuthSource }
-	) => Promise<void>;
+	) => Promise<AuthRefreshOutcome>;
 	/** Re-probe every credential (seconds, not milliseconds - it spawns). */
 	refreshAllIdentities: () => Promise<void>;
 	/** Test-only: reset to initial state and drop every subscription. */
@@ -164,6 +195,7 @@ interface ProviderAuthState {
 const initialState = {
 	snapshots: {} as Record<string, ProviderAuthSnapshot>,
 	agentEnvVars: {} as Record<string, Record<string, string>>,
+	agentEnvFailures: {} as Record<string, true>,
 	homeDir: '',
 	loaded: false,
 	announcedIdentityKeys: {} as Record<string, true>,
@@ -211,16 +243,33 @@ function ensureAgentEnv(toolType: string): Promise<void> {
 
 	const pending = Promise.resolve(fetchEnv(toolType))
 		.then((env) => {
-			useProviderAuthStore.setState((state) => ({
-				agentEnvVars: { ...state.agentEnvVars, [toolType]: env ?? {} },
-			}));
+			useProviderAuthStore.setState((state) => {
+				const { [toolType]: _cleared, ...remainingFailures } = state.agentEnvFailures;
+				return {
+					agentEnvVars: { ...state.agentEnvVars, [toolType]: env ?? {} },
+					agentEnvFailures: remainingFailures,
+				};
+			});
 		})
-		.catch(() => {
-			// Best-effort. An agent with no agent-level vars resolves the same way
-			// as one whose fetch failed, so record the empty map and move on.
+		.catch((error: unknown) => {
+			// NOT best-effort, and deliberately not an empty map. An agent with no
+			// agent-level vars and one whose fetch failed look identical afterwards,
+			// but they are not the same thing: an `ANTHROPIC_API_KEY` set at the agent
+			// level makes the credential an api-key identity, so pretending the fetch
+			// returned nothing files the agent under the config-directory key instead
+			// and badges an account it does not use. Fail closed - the provider
+			// resolves to no identity until a later fetch succeeds.
+			logger.warn('Failed to read agent-level env; skipping this provider', LOG_CONTEXT, {
+				toolType,
+				error: error instanceof Error ? error.message : String(error),
+			});
 			useProviderAuthStore.setState((state) => ({
-				agentEnvVars: { ...state.agentEnvVars, [toolType]: {} },
+				agentEnvFailures: { ...state.agentEnvFailures, [toolType]: true },
 			}));
+			// Drop the memo so the next pass over the agent list retries. A one-off
+			// IPC failure otherwise disables every auth surface for this provider for
+			// the rest of the app run.
+			agentEnvFetches.delete(toolType);
 		});
 	agentEnvFetches.set(toolType, pending);
 	return pending;
@@ -270,7 +319,17 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 			else {
 				await getHomeDirAsync()
 					?.then((dir) => set({ homeDir: dir }))
-					.catch(() => {});
+					.catch((error: unknown) => {
+						// Not cosmetic: every identity resolver returns null without a
+						// home dir, so this failure silently turns off badges, toasts,
+						// the Settings rows, and the marks. Nothing here can repair it,
+						// but it must not disappear.
+						logger.warn(
+							'Failed to resolve the home directory; provider auth is disabled for this run',
+							LOG_CONTEXT,
+							{ error: error instanceof Error ? error.message : String(error) }
+						);
+					});
 			}
 
 			const sessions = useSessionStore.getState().sessions;
@@ -366,18 +425,25 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 
 	refreshIdentity: async (identityKey, options) => {
 		const api = bridge();
-		if (!api) return;
+		if (!api) return { probed: false, snapshot: get().snapshots[identityKey] ?? null };
 		try {
 			const result = await api.reprobe(
 				identityKey,
 				options?.source ? { source: options.source } : undefined
 			);
 			if (result?.snapshot !== undefined) get().applyChange(identityKey, result.snapshot);
+			// A pass that ran and probed nothing still resolves, and still returns the
+			// snapshot that was already on record. Report the count, not the record.
+			return {
+				probed: (result?.probed ?? 0) > 0,
+				snapshot: result?.snapshot ?? get().snapshots[identityKey] ?? null,
+			};
 		} catch (error) {
 			logger.warn('Failed to re-probe identity', LOG_CONTEXT, {
 				identityKey,
 				error: error instanceof Error ? error.message : String(error),
 			});
+			return { probed: false, snapshot: get().snapshots[identityKey] ?? null };
 		}
 	},
 
@@ -427,7 +493,20 @@ interface IdentityCacheEntry {
 /** Per session id, so a replaced Session object does not invalidate the entry. */
 const identityCache = new Map<string, IdentityCacheEntry>();
 
-/** Stable string of the only four things that can change a session's identity. */
+/**
+ * Stable string of the only four things that can change a session's identity.
+ *
+ * NEVER log, store, or send this. It concatenates raw env VALUES, so for an
+ * api-key agent it contains the key itself - it is a cache key inside this
+ * module and nothing else. The identity built from it carries only a
+ * `fingerprintSecret()` tag, which is the one representation of a secret allowed
+ * out (see `shared/providerAuth.ts`).
+ *
+ * The separators are control characters written as escapes rather than as raw
+ * bytes: they cannot occur in a path or an env value, so no combination of
+ * inputs can collide - and unlike the literal bytes that used to be here, an
+ * escape leaves the file as text that `grep` will actually read.
+ */
 function identityFingerprint(
 	toolType: string,
 	sshRemoteId: string | null,
@@ -437,21 +516,23 @@ function identityFingerprint(
 	const envPart = Object.keys(env)
 		.sort()
 		.map((key) => `${key}=${env[key]}`)
-		.join(' ');
-	return `${toolType}${sshRemoteId ?? ''}${homeDir}${envPart}`;
+		.join('\0');
+	return `${toolType}\x01${sshRemoteId ?? ''}\x01${homeDir}\x01${envPart}`;
 }
 
 /**
  * The credential a session will present, or null when it cannot be resolved.
  *
- * Null has two causes, and both must stay null rather than falling back to a
- * local identity:
+ * Null has three causes, and all of them must stay null rather than falling back
+ * to a local identity:
  *   - The home dir has not arrived yet, so a default config dir cannot be
  *     expanded.
  *   - SSH is enabled but names no remote. The user opted this agent into a
  *     different machine; reading the local credential and filing it under this
  *     session would describe a login the agent never presents. Same fail-closed
  *     rule as `buildTarget()` in `main/agents/auth/auth-startup.ts`.
+ *   - The provider's agent-level env could not be read, so the merged env is
+ *     missing the half that decides the credential's kind.
  */
 function resolveSessionIdentity(
 	session: Session | undefined,
@@ -459,6 +540,7 @@ function resolveSessionIdentity(
 ): CredentialIdentity | null {
 	if (!session || !session.toolType) return null;
 	if (!state.homeDir) return null;
+	if (state.agentEnvFailures[session.toolType]) return null;
 
 	const sshConfig = session.sessionSshRemoteConfig;
 	const sshEnabled = sshConfig?.enabled === true;
@@ -498,8 +580,9 @@ export function getIdentityForSession(sessionId: string): CredentialIdentity | n
  * on. Only the agent-level env applies (there is no session to override it), and
  * the result is not cached because these callers ask once, on an error.
  *
- * Fails closed on an unresolved home dir or an SSH remote that names nothing,
- * for the same reasons as {@link resolveSessionIdentity}.
+ * Fails closed on an unresolved home dir, an unreadable agent-level env, or an
+ * SSH remote that names nothing, for the same reasons as
+ * {@link resolveSessionIdentity}.
  */
 export function getIdentityForAgentType(
 	toolType: string,
@@ -508,6 +591,7 @@ export function getIdentityForAgentType(
 	if (!toolType) return null;
 	const state = useProviderAuthStore.getState();
 	if (!state.homeDir) return null;
+	if (state.agentEnvFailures[toolType]) return null;
 
 	const env = mergeEffectiveEnv(state.agentEnvVars[toolType], undefined);
 	return resolveCredentialIdentity({
@@ -868,9 +952,19 @@ function describeBlockedAgents(sessionIds: string[]): string {
  */
 let announceChain: Promise<void> = Promise.resolve();
 
-/** Queue an announcement pass. Fire-and-forget; failures are swallowed. */
+/**
+ * Queue an announcement pass. Fire-and-forget: a pass that throws must not break
+ * the chain for every later write, so the rejection is absorbed here - but it is
+ * logged, because the visible symptom is a logout nobody was told about.
+ */
 function scheduleAnnouncement(): void {
-	announceChain = announceChain.then(() => announceLoggedOutIdentities()).catch(() => {});
+	announceChain = announceChain
+		.then(() => announceLoggedOutIdentities())
+		.catch((error: unknown) => {
+			logger.warn('Provider auth announcement pass failed', LOG_CONTEXT, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
 }
 
 /**

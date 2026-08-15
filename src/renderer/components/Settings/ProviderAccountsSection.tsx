@@ -18,7 +18,7 @@
  * instead of showing a button that cannot work.
  *
  * Click-driven, so the root carries `select-none`; the identity line underneath
- * each row shows config-dir paths and probe error text, so it opts back in with
+ * each row shows config-dir paths and env var names, so it opts back in with
  * `select-text`.
  */
 
@@ -30,6 +30,7 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { resolveLoginCommand, sshRemoteIdFromHost } from '../../../shared/providerAuth';
 import type { ProviderAuthStatus } from '../../../shared/providerAuth';
 import { describeCredentialFix } from '../../hooks/agent/useAgentErrorRecovery';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { getModalActions } from '../../stores/modalStore';
 import { useKnownIdentities, useProviderAuthStore } from '../../stores/providerAuthStore';
 import type { KnownIdentity } from '../../stores/providerAuthStore';
@@ -69,6 +70,24 @@ function describeAuthStatus(
 	}
 }
 
+/**
+ * When this row last learned something, and from what.
+ *
+ * "Checked" is reserved for a snapshot a probe produced. An `error-pattern`
+ * record is stamped at the moment an agent's output matched, with no status
+ * command anywhere in the story, so calling that "Checked 2 minutes ago" asserts
+ * a check that never ran - next to a red "Signed out" badge, that is the most
+ * confident line in the panel and the least earned.
+ */
+function describeLastLearned(
+	snapshot: KnownIdentity['snapshot'] | undefined | null
+): string | null {
+	if (!snapshot) return 'Never checked';
+	if (typeof snapshot.checkedAt !== 'number') return null;
+	const when = formatRelativeTime(snapshot.checkedAt);
+	return snapshot.source === 'error-pattern' ? `Reported ${when}` : `Checked ${when}`;
+}
+
 /** "3 agents", "1 agent", or the honest empty answer. */
 function describeAgentCount(count: number): string {
 	if (count === 0) return 'No agents use this account';
@@ -105,7 +124,18 @@ export function ProviderAccountsSection({
 		async (identityKey: string) => {
 			setChecking((prev) => ({ ...prev, [identityKey]: true }));
 			try {
-				await refreshIdentity(identityKey);
+				const outcome = await refreshIdentity(identityKey);
+				// A pass that declined to probe still resolves, and the row then
+				// redisplays the status it already had. Without this the spinner
+				// stopping is the only feedback, and it reads as "checked, unchanged"
+				// for a check that never happened.
+				if (!outcome?.probed) {
+					notifyCenterFlash({
+						color: 'orange',
+						message: 'Could not check this account',
+						detail: 'The provider CLI may not be installed on this machine.',
+					});
+				}
 			} finally {
 				setChecking((prev) => {
 					const { [identityKey]: _removed, ...rest } = prev;
@@ -154,6 +184,7 @@ export function ProviderAccountsSection({
 					const providerName = getAgentDisplayName(identity.provider);
 					const canLogIn = resolveLoginCommand(identity) !== null;
 					const isChecking = checking[identity.key] === true;
+					const lastLearned = describeLastLearned(snapshot);
 
 					return (
 						<div
@@ -179,10 +210,8 @@ export function ProviderAccountsSection({
 									</div>
 									<p className="text-xs opacity-70 mt-0.5">
 										{snapshot?.accountLabel ? `${snapshot.accountLabel} · ` : ''}
-										{snapshot
-											? `Checked ${formatRelativeTime(snapshot.checkedAt)}`
-											: 'Never checked'}{' '}
-										· {describeAgentCount(entry.sessionIds.length)}
+										{lastLearned ? `${lastLearned} · ` : ''}
+										{describeAgentCount(entry.sessionIds.length)}
 									</p>
 									<p className="text-[11px] opacity-55 mt-0.5 font-mono break-all select-text">
 										{describeCredentialSource(entry)}

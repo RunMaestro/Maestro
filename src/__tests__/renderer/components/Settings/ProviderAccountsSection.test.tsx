@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import { ProviderAccountsSection } from '../../../../renderer/components/Settings/ProviderAccountsSection';
+import { useCenterFlashStore } from '../../../../renderer/stores/centerFlashStore';
 import {
 	getModalActions,
 	selectModalData,
@@ -130,7 +131,7 @@ describe('ProviderAccountsSection', () => {
 	});
 
 	it('re-probes one account from its row and every account from the footer', async () => {
-		const refreshIdentity = vi.fn().mockResolvedValue(undefined);
+		const refreshIdentity = vi.fn().mockResolvedValue({ probed: true, snapshot: null });
 		const refreshAllIdentities = vi.fn().mockResolvedValue(undefined);
 		useProviderAuthStore.setState({
 			loaded: true,
@@ -146,6 +147,44 @@ describe('ProviderAccountsSection', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: /Re-Check All Accounts/i }));
 		await waitFor(() => expect(refreshAllIdentities).toHaveBeenCalledTimes(1));
+	});
+
+	// A pass that declines to probe still resolves, and the row redisplays the
+	// status it already had. Without a signal, the spinner stopping reads as
+	// "checked, unchanged" for a check that never happened.
+	it('says so when the re-check could not probe anything', async () => {
+		const refreshIdentity = vi.fn().mockResolvedValue({ probed: false, snapshot: null });
+		useProviderAuthStore.setState({
+			loaded: true,
+			snapshots: { [OAUTH_KEY]: snapshot(oauthIdentity, 'authenticated') },
+			refreshIdentity,
+		});
+
+		renderSection();
+		fireEvent.click(screen.getByRole('button', { name: /Re-check Claude Code/i }));
+
+		await waitFor(() =>
+			expect(useCenterFlashStore.getState().active?.message).toBe('Could not check this account')
+		);
+		expect(useCenterFlashStore.getState().active?.color).toBe('orange');
+	});
+
+	// A record written by an error-pattern match was never checked by anything.
+	it('does not claim a check for a credential only an error pattern reported', () => {
+		useProviderAuthStore.setState({
+			loaded: true,
+			snapshots: {
+				[OAUTH_KEY]: {
+					...snapshot(oauthIdentity, 'logged-out'),
+					source: 'error-pattern',
+				},
+			},
+		});
+
+		renderSection();
+
+		expect(screen.queryByText(/Checked /)).not.toBeInTheDocument();
+		expect(screen.getByText(/Reported /)).toBeInTheDocument();
 	});
 
 	it('lists a credential no probe has answered for yet, resolved from its agents', async () => {

@@ -338,19 +338,38 @@ function basename(canonicalPath: string): string {
 }
 
 /**
- * Host (with port) of a base URL, lowercased. Falls back to the leading path
- * segment for values a URL parser rejects, so a typo still produces a stable
- * scope instead of collapsing every malformed gateway into one identity.
+ * Drop the userinfo half of an authority - `user:token@host` becomes `host`.
+ *
+ * A base URL may carry a credential in front of the host, and the gateway scope
+ * derived from it is persisted, logged, and rendered. `URL.host` already drops
+ * userinfo; the hand-rolled fallback below parses the string itself, so it has
+ * to do the same or the token travels into the identity key.
+ */
+function stripUserInfo(authority: string): string {
+	const at = authority.lastIndexOf('@');
+	return at === -1 ? authority : authority.slice(at + 1);
+}
+
+/**
+ * Host (with port) of a base URL, lowercased and never carrying a credential.
+ * Falls back to the leading authority segment for values a URL parser rejects or
+ * parses without a host, so a typo still produces a stable scope instead of
+ * collapsing every malformed gateway into one identity.
  */
 function baseUrlHost(rawUrl: string): string {
 	try {
-		return new URL(rawUrl).host.toLowerCase() || rawUrl.toLowerCase();
+		const host = new URL(rawUrl).host.toLowerCase();
+		if (host !== '') return host;
 	} catch {
-		return rawUrl
-			.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '')
-			.split('/')[0]
-			.toLowerCase();
+		// Not URL-shaped. Handled by the same fallback as a host-less parse.
 	}
+	// The scheme is optional here so `//host/v1` is handled alongside
+	// `https://host/v1`; a value with neither keeps its whole first segment.
+	const authority = rawUrl.replace(/^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\//, '').split('/')[0] ?? '';
+	const host = stripUserInfo(authority).trim().toLowerCase();
+	// An empty result would collapse every malformed gateway into one identity,
+	// so keep the raw value (minus any userinfo) as the scope of last resort.
+	return host !== '' ? host : stripUserInfo(rawUrl).trim().toLowerCase();
 }
 
 // ============================================================================

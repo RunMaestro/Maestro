@@ -161,11 +161,34 @@ describe('providerAuthStore', () => {
 			['Bearer eyJhbGciOiJIUzI1NiJ9', 'Bearer '],
 			['ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789', 'ghp_'],
 			['github_pat_11ABCDEFG0abcdefghijklmnop', 'github_pat_'],
+			// These three are SHORTER than the 40-character catch-all, so each needs
+			// a pattern of its own or it reaches disk intact.
+			['AKIAIOSFODNN7EXAMPLE', 'AKIA'],
+			['AIzaSyD-1234567890abcdefghijklmnopqrstu', 'AIza'],
+			// Assembled rather than written out: a complete one, fake or not, trips
+			// GitHub's push protection and blocks the push.
+			[`xox${'b'}-123456789012-abcdefghijklmno`, 'xoxb-'],
 		])('replaces %s before it reaches the store', (secret, marker) => {
 			setSnapshot('k', makeSnapshot({ detail: `auth failed: ${secret}` }));
 			const stored = getSnapshot('k');
 			expect(stored?.detail).not.toContain(marker);
 			expect(stored?.detail).toContain('[redacted]');
+		});
+
+		// `accountLabel` is the other free-text field on a snapshot, and it is
+		// persisted and rendered exactly like `detail`.
+		it('scrubs the account label too', () => {
+			setSnapshot(
+				'k',
+				makeSnapshot({ accountLabel: 'acct sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFF' })
+			);
+			const stored = getSnapshot('k');
+			expect(stored?.accountLabel).toBe('acct [redacted]');
+		});
+
+		it('leaves an ordinary account label untouched', () => {
+			setSnapshot('k', makeSnapshot({ accountLabel: '.claude-gmail' }));
+			expect(getSnapshot('k')?.accountLabel).toBe('.claude-gmail');
 		});
 
 		it('replaces a long opaque token blob', () => {

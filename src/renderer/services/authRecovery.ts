@@ -87,10 +87,14 @@ export function clearAuthErrorsForIdentity(identityKey: string): string[] {
  * the modal to handle.
  */
 export async function verifyAuthRecovery(identityKey: string): Promise<AuthVerifyOutcome> {
+	let probed = false;
 	try {
 		// `login-flow` so the stored record says WHY it says what it says: a user
 		// finished a login here, not a background sweep that found a live token.
-		await useProviderAuthStore.getState().refreshIdentity(identityKey, { source: 'login-flow' });
+		const refresh = await useProviderAuthStore
+			.getState()
+			.refreshIdentity(identityKey, { source: 'login-flow' });
+		probed = refresh.probed;
 	} catch (error) {
 		// `refreshIdentity` swallows its own failures; this is the belt to its
 		// braces, and it lands on `unknown` below either way.
@@ -101,8 +105,16 @@ export async function verifyAuthRecovery(identityKey: string): Promise<AuthVerif
 	}
 
 	const snapshot = useProviderAuthStore.getState().snapshots[identityKey];
-	const status: AuthVerifyStatus =
-		snapshot?.status === 'authenticated'
+	// The stored snapshot is only evidence when a probe actually produced it. A
+	// pass that declined to probe - the detector was not up, the CLI is not
+	// installed here, no session references this credential any more - leaves the
+	// PREVIOUS record in place, and that record is usually the `error-pattern`
+	// mark that opened this modal. Reading it back would tell a user who just
+	// signed in successfully that they are still signed out, on the strength of a
+	// probe that never ran.
+	const status: AuthVerifyStatus = !probed
+		? 'unknown'
+		: snapshot?.status === 'authenticated'
 			? 'authenticated'
 			: snapshot?.status === 'logged-out'
 				? 'logged-out'

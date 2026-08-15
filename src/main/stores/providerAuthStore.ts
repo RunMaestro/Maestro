@@ -53,12 +53,19 @@ const MAX_DETAIL_LENGTH = 300;
  * contract says producers already stripped them. Order matters only in that the
  * catch-all runs last: an unbroken 40+ character run of token characters is an
  * opaque blob, never an email, an org name, or a plan tier.
+ *
+ * The named prefixes ahead of it are the credentials SHORTER than that catch-all:
+ * an AWS access key id is 20 characters and a Google API key is 39, so both slip
+ * under it by design and need a pattern of their own.
  */
 const SECRET_PATTERNS: RegExp[] = [
 	/\bBearer\s+\S+/gi,
 	/\bsk-[A-Za-z0-9_-]{8,}/g,
 	/\bgh[pousr]_[A-Za-z0-9]{8,}/g,
 	/\bgithub_pat_[A-Za-z0-9_]{8,}/g,
+	/\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{12,}/g,
+	/\bAIza[A-Za-z0-9_-]{10,}/g,
+	/\bxox[abposr]-[A-Za-z0-9-]{8,}/g,
 	/[A-Za-z0-9_-]{40,}/g,
 ];
 
@@ -88,13 +95,14 @@ function getStore(): Store<ProviderAuthStoreData> {
 }
 
 /**
- * Last line of defense on `detail` before it is persisted or pushed to the
- * renderer: replace anything token-shaped and cap the length. Producers are
- * still responsible for not putting a secret here in the first place - this
- * exists because a snapshot is written from parsed CLI output, and one provider
- * echoing a token in an error string should not turn into a secret on disk.
+ * Last line of defense on the two free-text fields before they are persisted or
+ * pushed to the renderer: replace anything token-shaped and cap the length.
+ * Producers are still responsible for not putting a secret here in the first
+ * place - this exists because a snapshot is written from parsed CLI output, and
+ * one provider echoing a token in an error string should not turn into a secret
+ * on disk.
  */
-function scrubDetail(detail: string | undefined): string | undefined {
+function scrubText(detail: string | undefined): string | undefined {
 	if (typeof detail !== 'string') {
 		return undefined;
 	}
@@ -109,14 +117,29 @@ function scrubDetail(detail: string | undefined): string | undefined {
 	return scrubbed === '' ? undefined : scrubbed;
 }
 
-/** Apply {@link scrubDetail} without mutating the caller's object. */
+/**
+ * Apply {@link scrubText} to every free-text field, without mutating the
+ * caller's object.
+ *
+ * `accountLabel` goes through it as well as `detail`. Today's probes set it from
+ * `identity.label` (a config-dir basename or an `fp_` fingerprint), which cannot
+ * carry a secret - but it is the field a future probe would naturally fill from
+ * CLI output, and a scrub that covers one free-text field and not its neighbor
+ * is an invitation to leak through the other one.
+ */
 function sanitize(snapshot: ProviderAuthSnapshot): ProviderAuthSnapshot {
-	const detail = scrubDetail(snapshot.detail);
 	const next: ProviderAuthSnapshot = { ...snapshot };
+	const detail = scrubText(snapshot.detail);
 	if (detail === undefined) {
 		delete next.detail;
 	} else {
 		next.detail = detail;
+	}
+	const accountLabel = scrubText(snapshot.accountLabel);
+	if (accountLabel === undefined) {
+		delete next.accountLabel;
+	} else {
+		next.accountLabel = accountLabel;
 	}
 	return next;
 }

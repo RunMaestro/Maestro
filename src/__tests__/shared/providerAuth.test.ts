@@ -93,6 +93,21 @@ describe('resolveCredentialIdentity - gateways', () => {
 		expect(a.key).not.toBe(c.key);
 		expect(c.scope).toBe('localhost:11434');
 	});
+
+	// The scope is persisted, logged, and rendered, so a credential embedded in
+	// the base URL must not survive into it - by any of the three parse paths.
+	it.each([
+		['a parsed URL', 'https://svc:tok-abc123@gw.example.com/v1'],
+		['a scheme-less URL', 'svc:tok-abc123@gw.example.com/v1'],
+		['a protocol-relative URL', '//svc:tok-abc123@gw.example.com/v1'],
+	])('keeps userinfo out of the gateway scope: %s', (_label, baseUrl) => {
+		const gateway = identity({ env: { ANTHROPIC_BASE_URL: baseUrl } });
+
+		expect(gateway.kind).toBe('gateway');
+		expect(gateway.scope).toBe('gw.example.com');
+		expect(gateway.key).not.toContain('tok-abc123');
+		expect(gateway.label).not.toContain('tok-abc123');
+	});
 });
 
 describe('resolveCredentialIdentity - api keys', () => {

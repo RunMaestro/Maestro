@@ -32,6 +32,7 @@ import { Modal } from './ui/Modal';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { XTerminal } from './XTerminal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { verifyAuthRecovery } from '../services/authRecovery';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -365,6 +366,16 @@ export function AuthRecoveryModal({
 			// beat shows the confirmation rather than a stuck "Checking...".
 			setVerifyPhase(outcome.status);
 			if (outcome.status === 'authenticated') handleClose();
+		} catch (error) {
+			// `verifyAuthRecovery` is documented as never throwing, so this is the
+			// guard against that promise being broken. Without it the phase stays on
+			// 'checking' forever, which leaves the button disabled and the user with
+			// no way forward but closing and reopening the modal.
+			logger.warn('Verifying the login failed', LOG_CONTEXT, {
+				identityKey: identity.key,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			setVerifyPhase('unknown');
 		} finally {
 			verifyingRef.current = false;
 		}
@@ -376,21 +387,35 @@ export function AuthRecoveryModal({
 		verifyRef.current = handleVerify;
 	}, [handleVerify]);
 
+	/**
+	 * Copy one value and confirm it, or say plainly that it did not copy.
+	 *
+	 * A denied clipboard permission rejects, and the old silent handler left the
+	 * user watching for a flash that was never coming - with the login command
+	 * still un-copied and nothing on screen admitting it.
+	 */
+	const copyWithFlash = useCallback((value: string, what: string) => {
+		void navigator.clipboard?.writeText(value).then(
+			() => flashCopiedToClipboard(value),
+			(error: unknown) => {
+				logger.warn('Clipboard write failed', LOG_CONTEXT, {
+					what,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				notifyCenterFlash({ color: 'orange', message: `Could not copy the ${what}` });
+			}
+		);
+	}, []);
+
 	const handleCopyCommand = useCallback(() => {
 		if (!commandLine) return;
-		void navigator.clipboard?.writeText(commandLine).then(
-			() => flashCopiedToClipboard(commandLine),
-			() => {}
-		);
-	}, [commandLine]);
+		copyWithFlash(commandLine, 'command');
+	}, [commandLine, copyWithFlash]);
 
 	const handleCopyUrl = useCallback(() => {
 		if (!loginUrl) return;
-		void navigator.clipboard?.writeText(loginUrl).then(
-			() => flashCopiedToClipboard(loginUrl),
-			() => {}
-		);
-	}, [loginUrl]);
+		copyWithFlash(loginUrl, 'sign-in link');
+	}, [loginUrl, copyWithFlash]);
 
 	const providerName = getAgentDisplayName(identity.provider);
 	const blockedCount = blockedSessions.length;

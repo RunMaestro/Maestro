@@ -47,6 +47,7 @@ import type { AgentConfigsData, MaestroSettings, SessionsData } from '../../stor
 import { getSnapshot, isSnapshotFresh, setSnapshot } from '../../stores/providerAuthStore';
 import { mapWithConcurrency } from '../../utils/concurrency';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { getAgentDefinition } from '../definitions';
 import type { AgentDetector } from '../detector';
@@ -459,11 +460,22 @@ export async function runStartupAuthProbe(
 				setSnapshot(identity.key, deps.source ? { ...snapshot, source: deps.source } : snapshot);
 			} catch (error) {
 				// A thrown probe is a bug, not a verdict: record nothing rather than
-				// letting a crash read as a login state.
+				// letting a crash read as a login state. `probeCredential` documents
+				// that it never throws, so reaching here means it broke its own
+				// contract - report it rather than leaving a warn line in a log file
+				// nobody reads.
 				logger.warn('Auth probe threw; leaving the stored snapshot untouched', LOG_CONTEXT, {
 					key: identity.key,
 					provider: identity.provider,
 					error: error instanceof Error ? error.message : String(error),
+				});
+				void captureException(error, {
+					context: LOG_CONTEXT,
+					operation: 'probeCredential',
+					provider: identity.provider,
+					// The key, never the env: it carries CLAUDE_CONFIG_DIR and friends,
+					// and for an api-key identity the key's scope is a fingerprint.
+					identityKey: identity.key,
 				});
 			}
 		});
@@ -474,9 +486,13 @@ export async function runStartupAuthProbe(
 		});
 		return result;
 	} catch (error) {
+		// The pass is fire-and-forget, so this is the only thing standing between a
+		// broken store read and a crash on boot. It stays caught for that reason,
+		// and reported because nothing above it will ever see the exception.
 		logger.warn('Provider auth probe pass failed', LOG_CONTEXT, {
 			error: error instanceof Error ? error.message : String(error),
 		});
+		void captureException(error, { context: LOG_CONTEXT, operation: 'runStartupAuthProbe' });
 		return result;
 	}
 }

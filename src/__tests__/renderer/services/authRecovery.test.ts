@@ -288,6 +288,36 @@ describe('authRecovery', () => {
 		expect(useCenterFlashStore.getState().active).toBeNull();
 	});
 
+	// The regression this guards: main's pass RESOLVES when it declines to probe
+	// (the detector was not up, the CLI is not installed here, no session uses the
+	// credential any more) and hands back whatever was already on record. That
+	// record is normally the error-pattern mark that opened the modal, so reading
+	// it as a verdict tells a user who just signed in that they are still signed
+	// out - on the strength of a probe that never ran.
+	it('reports `unknown` when the pass probed nothing, whatever is on record', async () => {
+		installBridge('logged-out');
+		const reprobe = vi.fn(async () => ({
+			identities: 1,
+			probed: 0,
+			skippedFresh: 0,
+			skippedNotInstalled: 1,
+			byStatus: {},
+			snapshot: snapshotFor(GMAIL_KEY, '.claude-gmail', 'logged-out'),
+		}));
+		(
+			window as unknown as { maestro: { providerAuth: Record<string, unknown> } }
+		).maestro.providerAuth.reprobe = reprobe;
+		useSessionStore.setState({ sessions: [makeSession('a', GMAIL_DIR, authError())] });
+
+		const outcome = await verifyAuthRecovery(GMAIL_KEY);
+
+		expect(reprobe).toHaveBeenCalled();
+		expect(outcome.status).toBe('unknown');
+		// And it stays a non-event: nothing cleared, nothing flashed.
+		expect(outcome.clearedSessionIds).toEqual([]);
+		expect(useCenterFlashStore.getState().active).toBeNull();
+	});
+
 	it('reports `unknown` when there is no bridge at all', async () => {
 		(window as unknown as { maestro: unknown }).maestro = undefined;
 		useSessionStore.setState({ sessions: [makeSession('a', GMAIL_DIR, authError())] });
