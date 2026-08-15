@@ -386,6 +386,28 @@ describe('pre-roll', () => {
 		expect(h.pipeline.getStats().preRollFramesDelivered).toBe(0);
 		expect(h.stt.fed).toHaveLength(1);
 	});
+
+	it('keeps the pre-roll when a device is merely plugged in', () => {
+		const h = harness();
+		h.pipeline.start();
+		h.push(tone(), 5);
+
+		// `device-change` says the device SET moved, not that ours did. Plugging in
+		// headphones mid-sentence must not throw away the words already spoken.
+		h.pipeline.handleStatus({ kind: 'device-change' });
+		h.pipeline.handleStatus({ kind: 'ready' });
+		h.pipeline.handleStatus({
+			kind: 'playback-state',
+			playing: false,
+			utteranceId: null,
+			queuedMs: 0,
+		});
+		h.session.state = 'listening';
+		h.push(tone(), 1);
+
+		expect(h.pipeline.getStats().preRollFramesDelivered).toBe(5);
+		expect(h.stt.fed).toHaveLength(6);
+	});
 });
 
 describe('barge-in', () => {
