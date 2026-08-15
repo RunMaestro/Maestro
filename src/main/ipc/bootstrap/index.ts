@@ -316,6 +316,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		safeSend: deps.safeSend,
 		audioHostDeps: deps.acappellaAudioHostDeps,
+		// What the `voiceCurrentAgent` hotkey binds to. The renderer is the only
+		// thing that knows which agent is on screen, and it persists that here on
+		// every switch, so main can answer without a round trip - which matters,
+		// because a global hotkey handler cannot await one.
+		getFocusedAgentSessionId: () =>
+			(deps.sessionsStore.get('activeSessionId') as string | undefined) || null,
 	});
 
 	// Register A Cappella model handlers (catalog, download, verify, disk). Also

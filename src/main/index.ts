@@ -27,9 +27,10 @@ import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import {
+	disposeAllGlobalHotkeys,
+	getGlobalHotkeyRegistry,
 	initGlobalHotkey,
 	setGlobalShowHotkey,
-	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
@@ -2880,25 +2881,24 @@ app
 		// any) and re-register live when the setting changes from any source
 		// (settings UI, CLI, external file edit).
 		initGlobalHotkey(() => mainWindow);
+		// One failure path for every id, so a voice hotkey the OS refused reports
+		// itself the same way the "show Maestro" one always has.
+		getGlobalHotkeyRegistry().onFailure((status) => {
+			// intentionally not bridged: window-specific
+			if (mainWindow && isWebContentsAvailable(mainWindow)) {
+				mainWindow.webContents.send('globalHotkey:registrationFailed', status);
+			}
+		});
 		const initialHotkey = store.get('globalShowHotkey', []) as string[];
 		if (Array.isArray(initialHotkey) && initialHotkey.length > 0) {
-			const ok = setGlobalShowHotkey(initialHotkey);
-			// intentionally not bridged: window-specific
-			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('globalHotkey:registrationFailed', initialHotkey);
-			}
+			setGlobalShowHotkey(initialHotkey);
 		}
 		store.onDidChange('globalShowHotkey', (value) => {
-			const keys = Array.isArray(value) ? (value as string[]) : [];
-			const ok = setGlobalShowHotkey(keys);
-			// intentionally not bridged: window-specific
-			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('globalHotkey:registrationFailed', keys);
-			}
+			setGlobalShowHotkey(Array.isArray(value) ? (value as string[]) : []);
 		});
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
-		app.on('will-quit', disposeGlobalHotkey);
+		app.on('will-quit', disposeAllGlobalHotkeys);
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);

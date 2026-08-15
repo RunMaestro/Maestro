@@ -1988,7 +1988,9 @@ interface MaestroAPI {
 				groupId?: string;
 			}) => void
 		) => () => void;
-		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
+		onGlobalHotkeyRegistrationFailed: (
+			callback: (status: import('../shared/global-hotkeys').GlobalHotkeyStatus) => void
+		) => () => void;
 		/** Publish merged shortcut bindings so the native menu shows real accelerators. */
 		setMenuShortcutKeys: (keys: Record<string, string[]>) => void;
 		/** Native application menu click, carrying the clicked item's shortcut id. */

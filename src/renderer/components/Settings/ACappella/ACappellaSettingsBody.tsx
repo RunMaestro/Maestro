@@ -9,6 +9,7 @@
  */
 
 import type { Theme } from '../../../types';
+import { VoiceControlsPanel } from './VoiceControlsPanel';
 import { VoiceModelsPage } from './VoiceModelsPage';
 import { VoiceProvidersPanel } from './VoiceProvidersPanel';
 import { VoiceSetupPanel } from './VoiceSetupPanel';
@@ -24,6 +25,7 @@ export function ACappellaSettingsBody({ theme, enabled }: ACappellaSettingsBodyP
 		<div className="space-y-6">
 			{enabled && <VoiceSetupPanel theme={theme} enabled={enabled} />}
 			{enabled && <VoiceProvidersPanel theme={theme} enabled={enabled} />}
+			{enabled && <VoiceControlsPanel theme={theme} enabled={enabled} />}
 			<VoiceModelsPage theme={theme} enabled={enabled} />
 		</div>
 	);

@@ -38,6 +38,11 @@ import type {
 	WakeSource,
 } from '../../../shared/acappella/protocol';
 import type { VoiceSessionState } from '../../../shared/acappella/session-state';
+import {
+	DEFAULT_IDLE_TIMEOUT_MS,
+	MAX_IDLE_TIMEOUT_MS,
+	MIN_IDLE_TIMEOUT_MS,
+} from '../../../shared/acappella/voice-controls';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 
@@ -53,18 +58,11 @@ export const FLOOR_MODES: readonly FloorMode[] = ['tap-to-toggle', 'hold-to-talk
  */
 export const DEFAULT_FLOOR_MODE: FloorMode = 'tap-to-toggle';
 
-/**
- * Silence that closes a listening session on its own. Long enough to survive
- * someone thinking about how to phrase a request, short enough that a mic left
- * open in an empty room goes cold before anyone forgets it is there.
- */
-export const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
-
-/** Below this an ordinary pause would hang up on the user. */
-export const MIN_IDLE_TIMEOUT_MS = 5_000;
-
-/** A half hour open microphone is already a bug; this is the ceiling on it. */
-export const MAX_IDLE_TIMEOUT_MS = 30 * 60_000;
+export {
+	DEFAULT_IDLE_TIMEOUT_MS,
+	MAX_IDLE_TIMEOUT_MS,
+	MIN_IDLE_TIMEOUT_MS,
+} from '../../../shared/acappella/voice-controls';
 
 // ---------------------------------------------------------------------------
 // Configuration

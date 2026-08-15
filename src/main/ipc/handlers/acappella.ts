@@ -88,11 +88,40 @@ import {
 	type VoiceCredentialService,
 } from '../../../shared/acappella/provider-catalog';
 import { lastTurn, type TurnBreakdown } from '../../acappella/telemetry/turn-metrics';
+import { installVoiceHotkeys, type VoiceHotkeyInstallation } from '../../acappella/hotkeys';
+import { describePressHoldCapability } from '../../acappella/hotkeys/press-hold';
+import type { GlobalHotkeyStatus } from '../../../shared/global-hotkeys';
+import {
+	createWakeDetector,
+	globalWakePhrase,
+	type WakeDetection,
+	type WakeDetector,
+	type WakePhrase,
+} from '../../acappella/wake/wake-detector';
+import type { FloorControlSession } from '../../acappella/audio/floor-control';
 
 const LOG_CONTEXT = '[ACappella]';
 
 /** The push channel every protocol event goes out on. */
 export const ACAPPELLA_EVENT_CHANNEL = 'acappella:event';
+
+/**
+ * The wake-word tuning channel.
+ *
+ * Deliberately NOT a protocol event: the Test button in Settings runs the local
+ * detector with no session behind it, and inventing a voice session id so a
+ * settings panel can light up a dot would put a fake session in every client's
+ * event stream.
+ */
+export const ACAPPELLA_WAKE_TEST_CHANNEL = 'acappella:wake-test';
+
+/** What the wake-word tuning affordance pushes while it is running. */
+export interface WakeTestEvent {
+	phraseId: string;
+	phrase: string;
+	score: number;
+	at: number;
+}
 
 /**
  * What a start returns: the session snapshot plus anything the user needs to be
@@ -108,6 +137,11 @@ export interface VoiceStartSessionResult {
 export interface ACappellaHandlerDependencies {
 	settingsStore: {
 		get: (key: string, defaultValue?: unknown) => unknown;
+		/**
+		 * Live setting changes. Optional because tests pass a plain object; without
+		 * it the voice hotkeys bind once at startup and do not follow a rebind.
+		 */
+		onDidChange?: (key: string, callback: (value: unknown) => void) => void;
 	};
 	/** The window the dispatch executor talks to. Main has no tab authority. */
 	getMainWindow: () => BrowserWindow | null;
@@ -119,6 +153,12 @@ export interface ACappellaHandlerDependencies {
 	 * the session runs without audio I/O rather than failing to start.
 	 */
 	audioHostDeps?: AudioHostWindowDeps;
+	/**
+	 * The agent the user is looking at, for the `voiceCurrentAgent` hotkey. Absent
+	 * in tests and in any host with no session store, where the agent hotkey
+	 * refuses with a reason rather than binding a session to a guessed agent.
+	 */
+	getFocusedAgentSessionId?: () => string | null;
 }
 
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -151,6 +191,24 @@ let activePipeline: VoiceProviderResolution | null = null;
  * changes.
  */
 let audioBridge: VoiceAudioBridge | null = null;
+
+/**
+ * The two global voice hotkeys.
+ *
+ * Installed once, for the life of the app, and NOT rebuilt with the pipeline: a
+ * system-wide combo that is released and re-registered every time the user
+ * changes a voice would be a combo another app can steal in the gap.
+ */
+let voiceHotkeys: VoiceHotkeyInstallation | null = null;
+
+/**
+ * The wake-word tuning run behind the Test button in Settings.
+ *
+ * Its own detector rather than the session's, because the point is to run the
+ * wake word with NO session: a user tuning sensitivity is asking "would this
+ * have fired", not "please start listening to me".
+ */
+let wakeTestDetector: WakeDetector | null = null;
 
 /** Push one command to the hidden audio host. A window that is not open is a no-op. */
 function sendAudioHostCommand(command: AudioHostCommand): void {
@@ -608,6 +666,54 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		async (): Promise<TurnBreakdown | null> => lastTurn()
 	);
 
+	// The floor's view of the session. Narrow by construction: the hotkeys can
+	// open, close, and interrupt, and nothing else.
+	const floorSession: FloorControlSession = {
+		getState: () => getVoiceSessionService()?.getState() ?? 'idle',
+		startSession: async ({ scope, source }) => {
+			await requestMicPermission();
+			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+			const { service } = await ensureService(deps);
+			return service.startSession({ scope, source });
+		},
+		stopSession: async (reason) => {
+			await getVoiceSessionService()?.stopSession(reason);
+		},
+		interrupt: (source) => getVoiceSessionService()?.interrupt(source) ?? false,
+	};
+
+	voiceHotkeys ??= installVoiceHotkeys({
+		settingsStore,
+		session: floorSession,
+		getMainWindow: deps.getMainWindow,
+		getFocusedAgentSessionId: deps.getFocusedAgentSessionId ?? (() => null),
+		// The bridge owns the recogniser handle, so the endpoint hint goes through
+		// it rather than through the session service.
+		endUtterance: () => audioBridge?.endUtterance(),
+		// Broadcast rather than logged: a hotkey that did nothing has to say why,
+		// or the user concludes the key is broken.
+		onRefused: (info) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL + ':hotkey-refused', info),
+	});
+
+	const wrappedHotkeyStatus = withIpcErrorLogging(
+		handlerOpts('hotkeyStatus'),
+		async (): Promise<{ statuses: GlobalHotkeyStatus[]; capability: string; note: string }> => ({
+			statuses: voiceHotkeys?.statuses() ?? [],
+			capability: voiceHotkeys?.controller.capability ?? 'tap-only',
+			note: describePressHoldCapability(voiceHotkeys?.controller.capability ?? 'tap-only'),
+		})
+	);
+
+	const wrappedWakeTest = withIpcErrorLogging(
+		handlerOpts('wakeTest'),
+		async (payload: unknown): Promise<boolean> => startWakeTest(deps, payload)
+	);
+
+	const wrappedWakeTestStop = withIpcErrorLogging(
+		handlerOpts('wakeTestStop'),
+		async (): Promise<void> => stopWakeTest()
+	);
+
 	const wrappedGetState = withIpcErrorLogging(
 		handlerOpts('getState'),
 		// Null means the service has never been built, so no provider is resolved
@@ -699,6 +805,20 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		return wrappedLastTurn(event);
 	});
 
+	// Ungated: the Voice Controls rows show a hotkey's registration state, and the
+	// most interesting time to read it is right after the feature was switched
+	// off and both combos were released.
+	ipcMain.handle('acappella:hotkey-status', wrappedHotkeyStatus);
+
+	ipcMain.handle('acappella:wake-test', async (event, payload: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		return wrappedWakeTest(event, payload);
+	});
+
+	// Ungated, like `stop-session`: a tuning run has an open microphone, and
+	// switching the feature off must still be able to close it.
+	ipcMain.handle('acappella:wake-test-stop', wrappedWakeTestStop);
+
 	// The audio host's own control link. `on`, not `handle`: frames arrive fifty
 	// times a second and nothing about them needs a reply, so a promise round trip
 	// per 20 ms of audio would be pure overhead.
@@ -711,6 +831,9 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		if (!isAcappellaAudioHostContents(event.sender)) return;
 		if (!isAudioFrame(frame)) return;
 		audioBridge?.handleFrame(frame);
+		// The tuning run taps the same frames rather than opening a second capture:
+		// there is one microphone, and two consumers of it is one device conflict.
+		if (wakeTestDetector) wakeTestDetector.pushFrame(new Int16Array(frame.pcm));
 	});
 
 	ipcMain.on(ACAPPELLA_AUDIO_STATUS_CHANNEL, (event, status: unknown) => {
@@ -744,6 +867,66 @@ export function disposeACappellaAudioBridge(): void {
 }
 
 /**
+ * Run the wake word with no session behind it, so a user can tune sensitivity by
+ * saying the phrase and watching it light up rather than by guessing.
+ *
+ * Refused while a session is live: the detector would be scoring the same frames
+ * the session is already using, and a hit would light the Test dot for a phrase
+ * that also just woke the assistant.
+ *
+ * @returns false when there is no audio host to capture through.
+ */
+async function startWakeTest(
+	deps: ACappellaHandlerDependencies,
+	payload: unknown
+): Promise<boolean> {
+	await stopWakeTest();
+	if (getVoiceSessionService()?.getState() !== undefined) {
+		const state = getVoiceSessionService()?.getState();
+		if (state && state !== 'idle') return false;
+	}
+	if (!deps.audioHostDeps) return false;
+
+	const body = isRecord(payload) ? payload : {};
+	const phrase =
+		typeof body.phrase === 'string' && body.phrase.trim() ? body.phrase.trim() : undefined;
+	const sensitivity = typeof body.sensitivity === 'number' ? body.sensitivity : undefined;
+	const phrases: WakePhrase[] = [globalWakePhrase(phrase, sensitivity)];
+
+	await requestMicPermission();
+	ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+
+	const detector = createWakeDetector({
+		getPhrases: () => phrases,
+		onWake: (detection: WakeDetection) => {
+			const event: WakeTestEvent = {
+				phraseId: detection.phraseId,
+				phrase: detection.phrase,
+				score: detection.score,
+				at: detection.at,
+			};
+			deps.safeSend(ACAPPELLA_WAKE_TEST_CHANNEL, event);
+		},
+	});
+	await detector.start();
+	wakeTestDetector = detector;
+	sendAudioHostCommand({ kind: 'start-capture' });
+	return true;
+}
+
+/** End a tuning run and close the microphone it opened. Safe when none is running. */
+async function stopWakeTest(): Promise<void> {
+	const detector = wakeTestDetector;
+	if (!detector) return;
+	wakeTestDetector = null;
+	await detector.stop();
+	// Only when no session owns the device: a tuning run that ended while a
+	// session was starting must not close that session's microphone.
+	const state = getVoiceSessionService()?.getState() ?? 'idle';
+	if (state === 'idle') sendAudioHostCommand({ kind: 'stop-capture' });
+}
+
+/**
  * Drop the cached provider selection. Test-only seam: the service singleton is
  * module state in `src/main/acappella/index.ts`, and this file's memo of what it
  * was built from has to be cleared alongside it.
@@ -751,6 +934,9 @@ export function disposeACappellaAudioBridge(): void {
 export function resetACappellaHandlerState(): void {
 	activeProviderKey = null;
 	activeSubstitutions = [];
+	voiceHotkeys?.dispose();
+	voiceHotkeys = null;
+	void stopWakeTest();
 	// Fire and forget: this runs from `will-quit`, which is synchronous, and from
 	// tests, which do not care how long a model file takes to close.
 	void activePipeline?.pipeline.dispose();
