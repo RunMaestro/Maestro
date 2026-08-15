@@ -1,7 +1,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { AppAgentModals } from '../../../renderer/components/AppModals';
+import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useProviderAuthStore } from '../../../renderer/stores/providerAuthStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import type { CredentialIdentity, ProviderAuthSnapshot } from '../../../shared/providerAuth';
 import type { Theme, Session, AgentError } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type {
@@ -26,6 +30,18 @@ vi.mock('../../../renderer/components/TransferProgressModal', () => ({
 vi.mock('../../../renderer/components/LeaderboardRegistrationModal', () => ({
 	LeaderboardRegistrationModal: (props: any) => (
 		<div data-testid="leaderboard-registration-modal" />
+	),
+}));
+// Stubbed so these tests are about the WIRING (which identity, which agents,
+// who closes it). The modal's own behavior is covered by its own test file.
+vi.mock('../../../renderer/components/AuthRecoveryModal', () => ({
+	AuthRecoveryModal: (props: any) => (
+		<div
+			data-testid="auth-recovery-modal"
+			data-identity-key={props.identity.key}
+			data-blocked={props.blockedSessions.map((s: Session) => s.id).join(',')}
+			onClick={props.onClose}
+		/>
 	),
 }));
 
@@ -214,5 +230,110 @@ describe('AppAgentModals', () => {
 			<AppAgentModals {...defaultProps} sendToAgentModalOpen={true} activeSession={activeSession} />
 		);
 		expect(screen.getByTestId('send-to-agent-modal')).toBeInTheDocument();
+	});
+});
+
+/**
+ * The recovery modal's slot. Every entry point (Left Bar indicator, logged-out
+ * toast, command palette) hands over an IDENTITY key, so the wiring's job is to
+ * put the right account and the right agent list on screen - a modal opened for
+ * `.claude-gmail` that signs into `.claude-smash` is the exact failure the phase
+ * exists to prevent.
+ */
+describe('AppAgentModals - auth recovery slot', () => {
+	const HOME = '/Users/x';
+	const DEFAULT_KEY = `claude-code::oauth::${HOME}/.claude::local`;
+	const SIBLING_DIR = `${HOME}/.claude-smash`;
+	const SIBLING_KEY = `claude-code::oauth::${SIBLING_DIR}::local`;
+
+	const identityFor = (key: string, label: string): CredentialIdentity => ({
+		key,
+		provider: 'claude-code',
+		kind: 'oauth',
+		scope: key.split('::')[2],
+		host: 'local',
+		label,
+	});
+
+	const snapshotFor = (key: string, label: string): ProviderAuthSnapshot => ({
+		identity: identityFor(key, label),
+		status: 'logged-out',
+		checkedAt: 1,
+		source: 'probe',
+	});
+
+	beforeEach(() => {
+		useProviderAuthStore.getState().__resetForTests();
+		useModalStore.getState().closeModal('authRecovery');
+		useProviderAuthStore.setState({
+			homeDir: HOME,
+			agentEnvVars: { 'claude-code': {} },
+			snapshots: {
+				[DEFAULT_KEY]: snapshotFor(DEFAULT_KEY, '.claude'),
+				[SIBLING_KEY]: snapshotFor(SIBLING_KEY, '.claude-smash'),
+			},
+			loaded: true,
+		});
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'a', toolType: 'claude-code' }),
+				createMockSession({ id: 'b', toolType: 'claude-code' }),
+				createMockSession({
+					id: 'sibling',
+					toolType: 'claude-code',
+					customEnvVars: { CLAUDE_CONFIG_DIR: SIBLING_DIR },
+				}),
+			],
+		});
+	});
+
+	it('renders nothing until an identity is opened', () => {
+		render(<AppAgentModals {...defaultProps} />);
+		expect(screen.queryByTestId('auth-recovery-modal')).not.toBeInTheDocument();
+	});
+
+	it("opens for the identity in the store and lists only that account's agents", () => {
+		useModalStore.getState().openModal('authRecovery', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+
+		const modal = screen.getByTestId('auth-recovery-modal');
+		expect(modal.getAttribute('data-identity-key')).toBe(DEFAULT_KEY);
+		// 'sibling' is on a different config dir, so this login does not unblock it.
+		expect(modal.getAttribute('data-blocked')).toBe('a,b');
+	});
+
+	it('opens the account the toast names, not the one already on screen', () => {
+		useModalStore.getState().openModal('authRecovery', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+
+		act(() => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:openProviderAuthRecovery', {
+					detail: { identityKey: SIBLING_KEY },
+				})
+			);
+		});
+
+		const modal = screen.getByTestId('auth-recovery-modal');
+		expect(modal.getAttribute('data-identity-key')).toBe(SIBLING_KEY);
+		expect(modal.getAttribute('data-blocked')).toBe('sibling');
+	});
+
+	it('closes through the modal store, so a reopen is not blocked by stale state', () => {
+		useModalStore.getState().openModal('authRecovery', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+
+		fireEvent.click(screen.getByTestId('auth-recovery-modal'));
+
+		expect(useModalStore.getState().isOpen('authRecovery')).toBe(false);
+		expect(screen.queryByTestId('auth-recovery-modal')).not.toBeInTheDocument();
+	});
+
+	it('renders nothing when the credential has no stored snapshot', () => {
+		// The record was cleared between the click and this render. A modal that
+		// cannot name the account it repairs must not be shown.
+		useModalStore.getState().openModal('authRecovery', { identityKey: 'gone::oauth::x::local' });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+		expect(screen.queryByTestId('auth-recovery-modal')).not.toBeInTheDocument();
 	});
 });

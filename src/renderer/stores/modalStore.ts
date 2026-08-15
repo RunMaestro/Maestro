@@ -160,6 +160,18 @@ export interface AgentErrorModalData {
 	historicalError?: AgentError;
 }
 
+/**
+ * Provider auth recovery modal data.
+ *
+ * Keyed by CREDENTIAL, not by agent: the thing that is broken is one login, and
+ * every agent presenting it is repaired by one recovery. Carrying a session id
+ * here would invite the modal to sign in to whatever account that one agent
+ * happens to use, which is the mistake the identity model exists to prevent.
+ */
+export interface AuthRecoveryModalData {
+	identityKey: string;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -286,6 +298,7 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
+	| 'authRecovery'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -376,6 +389,7 @@ export interface ModalDataMap {
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
+	authRecovery: AuthRecoveryModalData;
 	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
@@ -892,6 +906,12 @@ export function getModalActions() {
 			sessionId ? openModal('agentError', { sessionId }) : closeModal('agentError'),
 		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
 			openModal('agentError', { sessionId, historicalError: error }),
+
+		// Provider Auth Recovery Modal. Opening it for a second credential while the
+		// first is on screen replaces the data rather than stacking, since one login
+		// terminal at a time is all the user can act on.
+		openAuthRecovery: (identityKey: string) => openModal('authRecovery', { identityKey }),
+		closeAuthRecovery: () => closeModal('authRecovery'),
 
 		// Worktree Modals
 		setWorktreeConfigModalOpen: (open: boolean) =>

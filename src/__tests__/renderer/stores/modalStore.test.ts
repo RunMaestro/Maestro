@@ -1053,6 +1053,42 @@ describe('modalStore', () => {
 		});
 	});
 
+	describe('integration: provider auth recovery flow', () => {
+		it('opens keyed by credential and switches accounts in place', () => {
+			const actions = getModalActions();
+
+			actions.openAuthRecovery('claude-code::oauth::/Users/x/.claude::local');
+			expect(useModalStore.getState().getData('authRecovery')?.identityKey).toBe(
+				'claude-code::oauth::/Users/x/.claude::local'
+			);
+
+			// One login terminal at a time: a second account replaces the first
+			// rather than stacking a modal the user cannot act on.
+			actions.openAuthRecovery('claude-code::oauth::/Users/x/.claude-smash::local');
+			expect(useModalStore.getState().getData('authRecovery')?.identityKey).toBe(
+				'claude-code::oauth::/Users/x/.claude-smash::local'
+			);
+
+			actions.closeAuthRecovery();
+			expect(useModalStore.getState().isOpen('authRecovery')).toBe(false);
+			expect(useModalStore.getState().getData('authRecovery')).toBeUndefined();
+		});
+
+		it('layers over the agent error modal instead of replacing it', () => {
+			// The user reaches the login from the error modal, and the error frame
+			// has to survive a login the user abandons.
+			const actions = getModalActions();
+			actions.setAgentErrorModalSessionId('session-1');
+			actions.openAuthRecovery('claude-code::oauth::/Users/x/.claude::local');
+
+			expect(useModalStore.getState().isOpen('agentError')).toBe(true);
+			expect(useModalStore.getState().isOpen('authRecovery')).toBe(true);
+
+			actions.closeAuthRecovery();
+			expect(useModalStore.getState().isOpen('agentError')).toBe(true);
+		});
+	});
+
 	describe('compatibility layer: useModalActions()', () => {
 		it('provides reactive state that updates on modal open/close', () => {
 			const { result } = renderHook(() => useModalActions());

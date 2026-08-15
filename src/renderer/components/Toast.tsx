@@ -96,8 +96,8 @@ const ToastItem = memo(function ToastItem({
 				case 'provider-auth-recovery':
 					// Same data-driven shape as 'open-file': the toast states the
 					// intent, a listener performs it.
-					// TODO(Phase 04): the provider-auth recovery modal listens for this
-					// event. Until it lands, clicking the toast only dismisses it.
+					// The listener is the recovery modal's slot in AppAgentModals,
+					// which stays mounted for the life of the window.
 					window.dispatchEvent(
 						new CustomEvent('maestro:openProviderAuthRecovery', {
 							detail: { identityKey: action.identityKey },

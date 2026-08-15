@@ -520,12 +520,10 @@ function SessionListInner(props: SessionListProps) {
 	}, []);
 
 	// Auth indicator click - memoized to prevent SessionItem re-renders.
-	// TODO(Phase 04): open the provider-auth recovery modal for `identityKey`.
-	// Deliberately inert here: Phase 03 only surfaces the state, and a click that
-	// spawned a login flow at this point would be exactly the focus theft the
-	// phase forbids. The plumbing exists so Phase 04 supplies a handler only.
-	const handleAuthIndicatorClick = useCallback((_identityKey: string) => {
-		// no-op until Phase 04
+	// Opens the recovery modal for the CREDENTIAL, not for the row that was
+	// clicked: every agent on that login is repaired by the one sign-in.
+	const handleAuthIndicatorClick = useCallback((identityKey: string) => {
+		getModalActions().openAuthRecovery(identityKey);
 	}, []);
 
 	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders

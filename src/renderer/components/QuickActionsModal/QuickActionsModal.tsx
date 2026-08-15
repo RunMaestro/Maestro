@@ -22,6 +22,7 @@ import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/se
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useLoggedOutIdentities, useProviderAuthStore } from '../../stores/providerAuthStore';
 import { openUrl } from '../../utils/openUrl';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import { logger } from '../../utils/logger';
@@ -48,6 +49,7 @@ import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/g
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
 import { buildNotificationCommands } from './commands/notificationCommands';
+import { buildProviderAuthCommands } from './commands/providerAuthCommands';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
@@ -204,6 +206,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
+	// Hydrates the provider-auth map on first use, so the palette can offer a
+	// recovery entry even if the Left Bar never mounted an indicator this run.
+	const blockedIdentities = useLoggedOutIdentities();
+	const refreshAllIdentities = useProviderAuthStore((s) => s.refreshAllIdentities);
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -408,6 +414,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			setQuickActionOpen,
+		}),
+		...buildProviderAuthCommands({
+			blockedIdentities,
+			openAuthRecovery: (identityKey) => openModal('authRecovery', { identityKey }),
+			refreshAllIdentities,
 			setQuickActionOpen,
 		}),
 		...buildNavigationCommands({

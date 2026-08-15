@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import type {
 	Theme,
 	Session,
@@ -13,10 +13,15 @@ import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from '../AgentErrorModal';
+import { AuthRecoveryModal } from '../AuthRecoveryModal';
 import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
 import { TransferProgressModal } from '../TransferProgressModal';
 import { LeaderboardRegistrationModal } from '../LeaderboardRegistrationModal';
+
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
+import { getSessionsForIdentity, useProviderAuthStore } from '../../stores/providerAuthStore';
 
 // Re-export types used by consumers
 export type { RecoveryAction, MergeOptions, SendToAgentOptions };
@@ -99,11 +104,69 @@ export interface AppAgentModalsProps {
 }
 
 /**
+ * Provider auth recovery slot.
+ *
+ * Self-sourced from `modalStore` rather than prop-threaded through App.tsx, the
+ * same shape the snooze and startup-command modals use. Open state is keyed by
+ * CREDENTIAL, so all three entry points (the Left Bar auth indicator, the
+ * logged-out toast, the command palette) hand over an identity key and land on
+ * the same modal.
+ *
+ * Renders nothing when the key has no stored snapshot. Every entry point derives
+ * its key FROM a snapshot, so that means the record was cleared between the
+ * click and this render - and a modal that cannot name the account it is
+ * repairing is exactly the modal this phase exists to avoid.
+ */
+const AuthRecoveryModalSlot = memo(function AuthRecoveryModalSlot({
+	theme,
+	sessions,
+}: {
+	theme: Theme;
+	sessions: Session[];
+}) {
+	const identityKey = useModalStore(selectModalData('authRecovery'))?.identityKey ?? null;
+
+	// The toast states the intent as data (so it survives the IPC bridge); this is
+	// the listener that performs it.
+	useEventListener('maestro:openProviderAuthRecovery', (e: Event) => {
+		const detail = (e as CustomEvent<{ identityKey?: string }>).detail;
+		if (detail?.identityKey) getModalActions().openAuthRecovery(detail.identityKey);
+	});
+
+	const identity = useProviderAuthStore((s) =>
+		identityKey ? (s.snapshots[identityKey]?.identity ?? null) : null
+	);
+
+	// Recomputed when the agent list changes, which is what keeps the "unblocks N
+	// agents" count honest while the modal is open.
+	// `sessions` is the invalidation signal only - the lookup itself reads the
+	// session store, so the identity resolution stays in one place.
+	const blockedSessions = useMemo(
+		() => (identityKey ? getSessionsForIdentity(identityKey) : []),
+		[identityKey, sessions]
+	);
+
+	const handleClose = useCallback(() => getModalActions().closeAuthRecovery(), []);
+
+	if (!identityKey || !identity) return null;
+
+	return (
+		<AuthRecoveryModal
+			identity={identity}
+			blockedSessions={blockedSessions}
+			theme={theme}
+			onClose={handleClose}
+		/>
+	);
+});
+
+/**
  * AppAgentModals - Renders agent error and context transfer modals
  *
  * Contains:
  * - LeaderboardRegistrationModal: Register for the runmaestro.ai leaderboard
  * - AgentErrorModal: Display agent errors with recovery options (agents and group chats)
+ * - AuthRecoveryModal: Repair one expired provider login (layers above AgentErrorModal)
  * - MergeSessionModal: Merge current context into another session
  * - TransferProgressModal: Show progress during cross-agent context transfer
  * - SendToAgentModal: Send session context to another Maestro session
@@ -183,6 +246,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 					onJumpToAgent={onJumpToAgent}
 				/>
 			)}
+
+			{/* --- PROVIDER AUTH RECOVERY MODAL --- */}
+			<AuthRecoveryModalSlot theme={theme} sessions={sessions} />
 
 			{/* --- AGENT ERROR MODAL (group chats) --- */}
 			{groupChatError && (
