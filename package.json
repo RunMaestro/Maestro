@@ -59,6 +59,7 @@
 		"test:e2e:ui": "bun run build:main && bun run build:renderer && playwright test --ui",
 		"test:e2e:headed": "bun run build:main && bun run build:renderer && playwright test --headed",
 		"acappella:eval": "node scripts/acappella-routing-eval.mjs",
+		"acappella:latency": "node scripts/acappella-speech-latency.mjs",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
