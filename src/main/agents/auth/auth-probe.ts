@@ -30,6 +30,7 @@
 import * as os from 'os';
 
 import type { CredentialIdentity, ProviderAuthSnapshot } from '../../../shared/providerAuth';
+import { sshRemoteIdFromHost } from '../../../shared/providerAuth';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import type { AgentSshRemoteConfig } from '../../../shared/types';
 import { execFileNoThrow } from '../../utils/execFile';
@@ -41,11 +42,24 @@ import { getAgentDefinition } from '../definitions';
 const LOG_CONTEXT = '[AuthProbe]';
 
 /**
- * Wall-clock budget for one probe. Every status command measured returns in well
- * under a second locally; the width is for a cold SSH connection, not for the
- * command itself.
+ * Wall-clock budget for one LOCAL probe. Every status command measured returns
+ * in well under a second; the width absorbs a cold Node start and a slow disk.
  */
 export const DEFAULT_PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * Wall-clock budget for a probe that runs over SSH.
+ *
+ * A remote probe pays for TCP setup, the SSH handshake, key agent round trips,
+ * and a login shell before the status command starts, and a `ConnectTimeout`
+ * that has not been configured on the remote can sit for tens of seconds. The
+ * local budget applied to that produces `unknown` for a host that was merely
+ * slow, so the remote one is deliberately several times wider: a probe is a
+ * background question, and the cost of waiting longer is nothing next to the
+ * cost of an answer nobody can trust. Still bounded, because an unreachable
+ * host must resolve rather than hang.
+ */
+export const SSH_PROBE_TIMEOUT_MS = 60_000;
 
 /**
  * `$BROWSER` neutralizer, copied from `claude-usage-sampler.ts` for the same
@@ -59,6 +73,27 @@ const NO_BROWSER_COMMAND = '/usr/bin/true';
 /** How much probe output to keep when reporting an unparseable response. */
 const MAX_DETAIL_SNIPPET = 160;
 
+/**
+ * The exit code the ssh client reserves for its OWN failures (unreachable host,
+ * refused connection, rejected key, unknown host key). A remote command's real
+ * exit code passes through untouched, so 255 from an SSH probe means the status
+ * command never ran - it is a transport failure, not a login verdict.
+ */
+const SSH_TRANSPORT_EXIT_CODE = 255;
+
+/**
+ * Transport failures that do NOT come back as 255, mostly because a login shell
+ * on the far side swallowed the exit code, plus the messages `ssh` writes before
+ * it gives up. Matched against stderr only for a probe that used SSH.
+ *
+ * This exists so the per-provider parsers never see connection noise. Without
+ * it, `codex login status` output containing an ssh error would be handed to a
+ * matcher whose logged-out branch is a plain substring test - one banner line
+ * away from telling the user their perfectly good login had expired.
+ */
+const SSH_TRANSPORT_FAILURE_RE =
+	/\bssh:\s|could not resolve hostname|connection (?:refused|closed|timed out|reset)|no route to host|permission denied \(|host key verification failed|kex_exchange_identification|operation timed out|network is unreachable/i;
+
 export interface ProbeCredentialOptions {
 	/** Absolute path to the provider binary on the host that runs the probe. */
 	binaryPath: string;
@@ -68,7 +103,10 @@ export interface ProbeCredentialOptions {
 	 * passed to the remote shell for an SSH probe. NEVER logged.
 	 */
 	env: Record<string, string>;
-	/** Wall-clock budget. Defaults to {@link DEFAULT_PROBE_TIMEOUT_MS}. */
+	/**
+	 * Wall-clock budget. Defaults to {@link DEFAULT_PROBE_TIMEOUT_MS} locally and
+	 * to the wider {@link SSH_PROBE_TIMEOUT_MS} when the probe runs over SSH.
+	 */
 	timeoutMs?: number;
 	/** Working directory for the spawn. Defaults to the home directory. */
 	cwd?: string;
@@ -219,7 +257,35 @@ async function runStatusCommand(
 		BROWSER: NO_BROWSER_COMMAND,
 	};
 
-	if (opts.sshRemoteConfig?.enabled) {
+	// The identity's host is the machine that OWNS this credential, and it is what
+	// the stored snapshot gets filed under. If it disagrees with the SSH config
+	// the caller handed over, the probe would answer a question about one machine
+	// and record it against another. Both directions are refused rather than
+	// guessed at.
+	const identityRemoteId = sshRemoteIdFromHost(identity.host);
+	const sshEnabled = opts.sshRemoteConfig?.enabled === true;
+	if (identityRemoteId !== null && !sshEnabled) {
+		return {
+			stdout: '',
+			stderr: '',
+			exitCode: 'ESSHMISSING',
+			spawnFailure: `credential lives on ssh remote "${identityRemoteId}" but no ssh config was supplied; refusing to probe the local host`,
+		};
+	}
+	if (identityRemoteId === null && sshEnabled) {
+		return {
+			stdout: '',
+			stderr: '',
+			exitCode: 'ESSHUNEXPECTED',
+			spawnFailure:
+				'credential is local but an ssh remote was supplied; refusing to report a remote host as this identity',
+		};
+	}
+
+	const timeoutMs =
+		opts.timeoutMs ?? (sshEnabled ? SSH_PROBE_TIMEOUT_MS : DEFAULT_PROBE_TIMEOUT_MS);
+
+	if (sshEnabled) {
 		// The user explicitly opted this agent into SSH. Running the probe locally
 		// would read a completely different machine's credentials and report them
 		// as this identity's, so an unresolvable remote is a failure, not a
@@ -238,7 +304,13 @@ async function runStatusCommand(
 					command,
 					args,
 					cwd,
+					// The effective env (agent-level under session-level) travels inside
+					// the remote command line, so the remote CLI reads the same
+					// CLAUDE_CONFIG_DIR / CODEX_HOME the agent itself would spawn with.
 					customEnvVars: opts.env,
+					// Bare binary name on the far side, never the local resolved path or
+					// a local `customPath` override: those name a file on THIS machine.
+					// Same convention as every other SSH spawn site.
 					agentBinaryName: getAgentDefinition(identity.provider)?.binaryName,
 				},
 				opts.sshRemoteConfig,
@@ -252,12 +324,20 @@ async function runStatusCommand(
 					spawnFailure: 'ssh remote could not be resolved; refusing to probe the local host',
 				};
 			}
+			if (wrapped.sshRemoteUsed.id !== identityRemoteId) {
+				return {
+					stdout: '',
+					stderr: '',
+					exitCode: 'ESSHMISMATCH',
+					spawnFailure: `ssh config resolved to remote "${wrapped.sshRemoteUsed.id}" but the credential belongs to "${identityRemoteId}"`,
+				};
+			}
 			command = wrapped.command;
 			commandArgs = wrapped.args;
 			execCwd = wrapped.cwd;
 			// The remote env is baked into the SSH command line by the wrapper, so
-			// only the local process env (which carries the ssh binary's own PATH)
-			// is passed here.
+			// only the local process env (which carries the ssh binary's own PATH and
+			// SSH_AUTH_SOCK) is passed here.
 			execEnv = { ...process.env };
 		} catch (error) {
 			return {
@@ -271,7 +351,7 @@ async function runStatusCommand(
 
 	const result = await execFileNoThrow(command, commandArgs, execCwd, {
 		env: execEnv,
-		timeout: opts.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+		timeout: timeoutMs,
 	});
 
 	// `execFileNoThrow` returns a numeric exit code when the process ran and a
@@ -283,12 +363,49 @@ async function runStatusCommand(
 			exitCode: result.exitCode,
 			spawnFailure:
 				result.exitCode === 'ETIMEDOUT'
-					? `status command timed out after ${opts.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS}ms`
+					? `status command timed out after ${timeoutMs}ms${sshEnabled ? ' (remote host did not answer in time)' : ''}`
 					: `status command could not be run (${result.exitCode})`,
 		};
 	}
 
+	// An ssh that never reached the provider is a failure to RUN the probe, so it
+	// is caught here and never reaches a parser. An unreachable host is `unknown`;
+	// it is emphatically not "you are logged out".
+	if (sshEnabled) {
+		const transportFailure = describeSshTransportFailure(result.exitCode, result.stderr);
+		if (transportFailure) {
+			return {
+				stdout: result.stdout,
+				stderr: result.stderr,
+				exitCode: result.exitCode,
+				spawnFailure: transportFailure,
+			};
+		}
+	}
+
 	return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+}
+
+/**
+ * Why an SSH probe never reached the provider, or null when the remote command
+ * actually ran (whatever it then had to say).
+ *
+ * The returned string is shown to the user, so it carries the ssh client's own
+ * first line when there is one - "the host is down" is far more actionable than
+ * "unknown". stdout is deliberately not consulted: it is the provider's channel,
+ * and matching connection words there would let a provider that merely printed
+ * the phrase read as a dead host.
+ */
+function describeSshTransportFailure(exitCode: number, stderr: string): string | null {
+	const text = stripAnsiCodes(stderr);
+	const matched = SSH_TRANSPORT_FAILURE_RE.test(text);
+	if (exitCode !== SSH_TRANSPORT_EXIT_CODE && !matched) {
+		return null;
+	}
+	const reason = firstMeaningfulLine(text);
+	return reason
+		? `ssh could not run the status command on the remote host: ${reason}`
+		: `ssh could not run the status command on the remote host (exit ${exitCode})`;
 }
 
 // ============================================================================

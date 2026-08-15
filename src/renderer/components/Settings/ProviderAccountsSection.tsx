@@ -27,7 +27,7 @@ import { KeyRound, LogIn, RefreshCw } from 'lucide-react';
 
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { formatRelativeTime } from '../../../shared/formatters';
-import { resolveLoginCommand } from '../../../shared/providerAuth';
+import { resolveLoginCommand, sshRemoteIdFromHost } from '../../../shared/providerAuth';
 import type { ProviderAuthStatus } from '../../../shared/providerAuth';
 import { describeCredentialFix } from '../../hooks/agent/useAgentErrorRecovery';
 import { getModalActions } from '../../stores/modalStore';
@@ -83,7 +83,8 @@ function describeAgentCount(count: number): string {
 function describeCredentialSource(entry: KnownIdentity): string {
 	const { identity } = entry;
 	const where = identity.configDir ?? identity.envVarName ?? identity.scope;
-	const host = identity.host.startsWith('ssh:') ? ` on ${identity.host.slice(4)}` : '';
+	const remoteId = sshRemoteIdFromHost(identity.host);
+	const host = remoteId ? ` on ${remoteId}` : '';
 	return `${where}${host}`;
 }
 

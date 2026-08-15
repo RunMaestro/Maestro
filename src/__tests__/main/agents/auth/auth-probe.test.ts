@@ -21,17 +21,28 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { execFileNoThrowMock, loggerWarnMock, loggerInfoMock, loggerDebugMock, loggerErrorMock } =
-	vi.hoisted(() => ({
-		execFileNoThrowMock: vi.fn(),
-		loggerWarnMock: vi.fn(),
-		loggerInfoMock: vi.fn(),
-		loggerDebugMock: vi.fn(),
-		loggerErrorMock: vi.fn(),
-	}));
+const {
+	execFileNoThrowMock,
+	wrapSpawnWithSshMock,
+	loggerWarnMock,
+	loggerInfoMock,
+	loggerDebugMock,
+	loggerErrorMock,
+} = vi.hoisted(() => ({
+	execFileNoThrowMock: vi.fn(),
+	wrapSpawnWithSshMock: vi.fn(),
+	loggerWarnMock: vi.fn(),
+	loggerInfoMock: vi.fn(),
+	loggerDebugMock: vi.fn(),
+	loggerErrorMock: vi.fn(),
+}));
 
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: execFileNoThrowMock,
+}));
+
+vi.mock('../../../../main/utils/ssh-spawn-wrapper', () => ({
+	wrapSpawnWithSsh: wrapSpawnWithSshMock,
 }));
 
 vi.mock('../../../../main/utils/logger', () => ({
@@ -49,7 +60,11 @@ vi.mock('os', async () => {
 	return { ...actual, homedir, default: { ...actual, homedir } };
 });
 
-import { probeCredential, DEFAULT_PROBE_TIMEOUT_MS } from '../../../../main/agents/auth/auth-probe';
+import {
+	probeCredential,
+	DEFAULT_PROBE_TIMEOUT_MS,
+	SSH_PROBE_TIMEOUT_MS,
+} from '../../../../main/agents/auth/auth-probe';
 import { resolveCredentialIdentity } from '../../../../shared/providerAuth';
 import type { CredentialIdentity } from '../../../../shared/providerAuth';
 
@@ -404,15 +419,222 @@ describe('probeCredential', () => {
 		expect(execFileNoThrowMock.mock.calls[0][2]).toBe('/tmp/project');
 	});
 
-	it('refuses to probe locally when SSH is configured but no store was supplied', async () => {
-		const snapshot = await probeCredential(
-			identityFor('claude-code'),
-			probeOpts({ sshRemoteConfig: { enabled: true, remoteId: 'remote-1' } })
-		);
+	// ========================================================================
+	// SSH remotes
+	//
+	// The credential lives on the far machine, so every one of these tests is
+	// really the same assertion: the probe either runs on the host that owns the
+	// credential, or it answers `unknown`. There is no third option, and there is
+	// certainly no "check the local machine and file the result under the remote
+	// identity" option.
+	// ========================================================================
 
-		// Falling back to a local spawn would read a different machine's
-		// credentials and file them under this identity.
-		expect(snapshot.status).toBe('unknown');
-		expect(execFileNoThrowMock).not.toHaveBeenCalled();
+	describe('ssh remotes', () => {
+		const REMOTE_ID = 'remote-1';
+
+		/** An identity whose host is `ssh:remote-1`, built through the real resolver. */
+		function remoteIdentity(
+			toolType = 'claude-code',
+			env: Record<string, string> = {}
+		): CredentialIdentity {
+			return resolveCredentialIdentity({
+				toolType,
+				env,
+				homeDir: HOME,
+				sshRemoteId: REMOTE_ID,
+			});
+		}
+
+		function remoteOpts(overrides: Record<string, unknown> = {}) {
+			return probeOpts({
+				sshRemoteConfig: { enabled: true, remoteId: REMOTE_ID },
+				sshStore: { getSshRemotes: () => [] },
+				...overrides,
+			});
+		}
+
+		/** Make the wrapper report a successful wrap onto `remoteId`. */
+		function mockWrapOnto(remoteId: string): void {
+			wrapSpawnWithSshMock.mockResolvedValue({
+				command: '/usr/bin/ssh',
+				args: ['user@host', 'claude auth status --json'],
+				cwd: HOME,
+				sshRemoteUsed: { id: remoteId, name: remoteId, host: 'host' },
+			});
+		}
+
+		it('runs the status command through the ssh wrapper, by bare binary name', async () => {
+			mockWrapOnto(REMOTE_ID);
+			mockRun({ stdout: JSON.stringify({ loggedIn: true }), exitCode: 0 });
+
+			const snapshot = await probeCredential(
+				remoteIdentity(),
+				remoteOpts({ cwd: '/remote/project', env: { CLAUDE_CONFIG_DIR: '/remote/.claude-work' } })
+			);
+
+			expect(snapshot.status).toBe('authenticated');
+			const wrapConfig = wrapSpawnWithSshMock.mock.calls[0][0];
+			// A local resolved path names a file that does not exist on the far side.
+			expect(wrapConfig.agentBinaryName).toBe('claude');
+			expect(wrapConfig.args).toEqual(['auth', 'status', '--json']);
+			expect(wrapConfig.cwd).toBe('/remote/project');
+			// The effective env has to travel with the command, or the remote CLI
+			// reads its own default config dir instead of the agent's account.
+			expect(wrapConfig.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/remote/.claude-work' });
+			// And the local spawn is the ssh client the wrapper handed back.
+			expect(execFileNoThrowMock.mock.calls[0][0]).toBe('/usr/bin/ssh');
+		});
+
+		it('gives a remote probe a longer timeout than a local one', async () => {
+			mockWrapOnto(REMOTE_ID);
+			mockRun({ stdout: JSON.stringify({ loggedIn: true }), exitCode: 0 });
+
+			await probeCredential(remoteIdentity(), remoteOpts());
+
+			const options = execFileNoThrowMock.mock.calls[0][3] as { timeout: number };
+			expect(options.timeout).toBe(SSH_PROBE_TIMEOUT_MS);
+			expect(SSH_PROBE_TIMEOUT_MS).toBeGreaterThan(DEFAULT_PROBE_TIMEOUT_MS);
+		});
+
+		it('still honors an explicit timeout override', async () => {
+			mockWrapOnto(REMOTE_ID);
+			mockRun({ stdout: JSON.stringify({ loggedIn: true }), exitCode: 0 });
+
+			await probeCredential(remoteIdentity(), remoteOpts({ timeoutMs: 1234 }));
+
+			expect((execFileNoThrowMock.mock.calls[0][3] as { timeout: number }).timeout).toBe(1234);
+		});
+
+		it('refuses to probe when the remote cannot be resolved', async () => {
+			wrapSpawnWithSshMock.mockResolvedValue({
+				command: '/usr/local/bin/agent',
+				args: ['auth', 'status', '--json'],
+				cwd: HOME,
+				sshRemoteUsed: null,
+			});
+
+			const snapshot = await probeCredential(remoteIdentity(), remoteOpts());
+
+			expect(snapshot.status).toBe('unknown');
+			expect(snapshot.detail).toContain('could not be resolved');
+			expect(execFileNoThrowMock).not.toHaveBeenCalled();
+		});
+
+		it('refuses to probe when the wrapper resolves a different remote', async () => {
+			mockWrapOnto('some-other-remote');
+
+			const snapshot = await probeCredential(remoteIdentity(), remoteOpts());
+
+			expect(snapshot.status).toBe('unknown');
+			expect(execFileNoThrowMock).not.toHaveBeenCalled();
+		});
+
+		it('refuses to probe when SSH is configured but no store was supplied', async () => {
+			const snapshot = await probeCredential(
+				remoteIdentity(),
+				probeOpts({ sshRemoteConfig: { enabled: true, remoteId: REMOTE_ID } })
+			);
+
+			expect(snapshot.status).toBe('unknown');
+			expect(wrapSpawnWithSshMock).not.toHaveBeenCalled();
+			expect(execFileNoThrowMock).not.toHaveBeenCalled();
+		});
+
+		it('refuses to probe a remote credential with no ssh config at all', async () => {
+			const snapshot = await probeCredential(remoteIdentity(), probeOpts());
+
+			// This is the whole bug in one test: a local spawn here would report THIS
+			// machine's login state under a credential that lives somewhere else.
+			expect(snapshot.status).toBe('unknown');
+			expect(snapshot.detail).toContain(REMOTE_ID);
+			expect(execFileNoThrowMock).not.toHaveBeenCalled();
+		});
+
+		it('refuses to probe a local credential through an ssh remote', async () => {
+			const snapshot = await probeCredential(identityFor('claude-code'), remoteOpts());
+
+			expect(snapshot.status).toBe('unknown');
+			expect(execFileNoThrowMock).not.toHaveBeenCalled();
+		});
+
+		it('reports an unreachable host as unknown, not logged-out', async () => {
+			mockWrapOnto(REMOTE_ID);
+			mockRun({
+				stderr: 'ssh: connect to host build-box port 22: Connection refused',
+				exitCode: 255,
+			});
+
+			const snapshot = await probeCredential(remoteIdentity(), remoteOpts());
+
+			expect(snapshot.status).toBe('unknown');
+			expect(snapshot.detail).toContain('Connection refused');
+		});
+
+		it('reports a rejected key as unknown even when ssh exits zero', async () => {
+			// A login shell on the far side can swallow the exit code, so the message
+			// is checked too. Codex is the dangerous provider here: its logged-out
+			// matcher is a plain substring test over the same text.
+			mockWrapOnto(REMOTE_ID);
+			mockRun({ stderr: 'Permission denied (publickey).', exitCode: 0 });
+
+			const snapshot = await probeCredential(remoteIdentity('codex'), remoteOpts());
+
+			expect(snapshot.status).toBe('unknown');
+			expect(snapshot.detail).toContain('Permission denied');
+		});
+
+		it('reports a remote timeout as unknown', async () => {
+			mockWrapOnto(REMOTE_ID);
+			mockRun({ exitCode: 'ETIMEDOUT' });
+
+			const snapshot = await probeCredential(remoteIdentity(), remoteOpts());
+
+			expect(snapshot.status).toBe('unknown');
+			expect(snapshot.detail).toContain('timed out');
+		});
+
+		it('still reads a genuine logged-out answer from the remote', async () => {
+			// The transport guard must not swallow the real verdict: the remote ran
+			// the command, and it said no.
+			mockWrapOnto(REMOTE_ID);
+			mockRun({ stdout: JSON.stringify({ loggedIn: false }), exitCode: 1 });
+
+			const snapshot = await probeCredential(remoteIdentity(), remoteOpts());
+
+			expect(snapshot.status).toBe('logged-out');
+		});
+
+		it('reports a thrown wrapper as unknown instead of falling back to local', async () => {
+			wrapSpawnWithSshMock.mockRejectedValue(new Error('ssh config unreadable'));
+
+			const snapshot = await probeCredential(remoteIdentity(), remoteOpts());
+
+			expect(snapshot.status).toBe('unknown');
+			expect(execFileNoThrowMock).not.toHaveBeenCalled();
+		});
+
+		it('never logs the identity env when a remote probe fails', async () => {
+			// The identity KEY carries the config dir by design (it is the scope, and
+			// the Settings panel shows it). What must never appear is anything else
+			// the env block happens to carry, which for a real agent is where the
+			// tokens live.
+			const SECRET = 'ghp-remote-deploy-secret-0123456789';
+			const env = { CLAUDE_CONFIG_DIR: '/remote/.claude-work', DEPLOY_TOKEN: SECRET };
+			mockWrapOnto(REMOTE_ID);
+			mockRun({
+				stderr: 'ssh: connect to host build-box port 22: No route to host',
+				exitCode: 255,
+			});
+
+			await probeCredential(remoteIdentity('claude-code', env), remoteOpts({ env }));
+
+			const logged = JSON.stringify([
+				loggerWarnMock.mock.calls,
+				loggerInfoMock.mock.calls,
+				loggerDebugMock.mock.calls,
+				loggerErrorMock.mock.calls,
+			]);
+			expect(logged).not.toContain(SECRET);
+		});
 	});
 });

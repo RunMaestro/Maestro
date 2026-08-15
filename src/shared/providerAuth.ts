@@ -94,6 +94,34 @@ export interface CredentialIdentity {
 	label: string;
 }
 
+/** {@link CredentialIdentity.host} for a credential that lives on this machine. */
+export const LOCAL_HOST = 'local';
+
+/** Prefix of a {@link CredentialIdentity.host} that names an SSH remote. */
+export const SSH_HOST_PREFIX = 'ssh:';
+
+/**
+ * The SSH remote id a host names, or null when the credential is local.
+ *
+ * Every consumer that has to ask "does this credential live on another machine"
+ * goes through this rather than slicing the string itself. The probe treats the
+ * answer as a hard gate: a remote identity probed without an SSH config would
+ * report the LOCAL machine's login state under a REMOTE identity's key, which is
+ * the exact class of confidently-wrong answer this feature exists to prevent.
+ */
+export function sshRemoteIdFromHost(host: string): string | null {
+	if (!host.startsWith(SSH_HOST_PREFIX)) {
+		return null;
+	}
+	const remoteId = host.slice(SSH_HOST_PREFIX.length);
+	return remoteId === '' ? null : remoteId;
+}
+
+/** Whether a {@link CredentialIdentity.host} names an SSH remote. */
+export function isRemoteHost(host: string): boolean {
+	return sshRemoteIdFromHost(host) !== null;
+}
+
 /** Input to {@link resolveCredentialIdentity}. */
 export interface CredentialIdentityInput {
 	/** Agent id, e.g. `claude-code`. Unrecognized values resolve to `unknown`. */
@@ -781,7 +809,7 @@ export function resolveCredentialIdentity(input: CredentialIdentityInput): Crede
 	const { toolType, env, sshRemoteId, homeDir } = input;
 	// The same account dir on two machines is two logins. Keying on the host is
 	// what stops a remote agent's credential from masquerading as the local one.
-	const host = sshRemoteId ? `ssh:${sshRemoteId}` : 'local';
+	const host = sshRemoteId ? `${SSH_HOST_PREFIX}${sshRemoteId}` : LOCAL_HOST;
 
 	switch (toolType) {
 		case 'claude-code':
