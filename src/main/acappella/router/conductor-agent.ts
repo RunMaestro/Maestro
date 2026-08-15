@@ -43,7 +43,7 @@ import { wrapSpawnWithSsh } from '../../utils/ssh-spawn-wrapper';
 import {
 	buildConverseUserPrompt,
 	buildRouteUserPrompt,
-	CONVERSE_SYSTEM_PROMPT,
+	converseSystemPrompt,
 	limitSpokenReply,
 	parseRouteDecision,
 	routeSystemPrompt,
@@ -120,7 +120,7 @@ export class ConductorAgentBrain implements BrainProvider {
 
 	async converse(agentText: string, context: VoiceConverseContext): Promise<string> {
 		const raw = await this.ask(
-			[CONVERSE_SYSTEM_PROMPT, '', buildConverseUserPrompt(agentText, context)].join('\n')
+			[converseSystemPrompt(), '', buildConverseUserPrompt(agentText, context)].join('\n')
 		);
 		return limitSpokenReply(raw, context.maxSentences);
 	}

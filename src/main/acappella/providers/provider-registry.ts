@@ -32,6 +32,7 @@
  * substitution and is not reported as one - nobody asked for anything.
  */
 
+import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
 import {
 	summariseVoiceEgress,
@@ -100,6 +101,13 @@ export interface VoiceProviderSettings {
 	voiceId?: string;
 	/** Speech rate. 1 is the provider's natural pace. */
 	rate?: number;
+	/**
+	 * Whether an agent finishing in the background is spoken about.
+	 *
+	 * Defaults to `auto`, which is on for the Conductor scope and off inside a
+	 * focused agent session. See `src/shared/acappella/announcements.ts`.
+	 */
+	speakBackgroundCompletions?: BackgroundAnnouncementSetting;
 }
 
 export interface VoiceProviderRegistration<R extends VoiceProviderRole = VoiceProviderRole> {
@@ -473,12 +481,14 @@ export function readVoiceProviderSettings(store: {
 	get: (key: string, defaultValue: unknown) => unknown;
 }): VoiceProviderSettings {
 	const stored = store.get(ACAPPELLA_SETTINGS_KEY, {}) as
-		| { providers?: unknown; pipeline?: unknown; voice?: unknown }
+		| { providers?: unknown; pipeline?: unknown; voice?: unknown; speech?: unknown }
 		| undefined;
 	const providers = (stored?.providers ?? {}) as Record<string, unknown>;
 	const voice = (stored?.voice ?? {}) as Record<string, unknown>;
+	const speech = (stored?.speech ?? {}) as Record<string, unknown>;
 
 	return {
+		speakBackgroundCompletions: asAnnouncementSetting(speech.speakBackgroundCompletions),
 		stt: asProviderId(providers.stt),
 		tts: asProviderId(providers.tts),
 		brain: asProviderId(providers.brain),
@@ -507,6 +517,11 @@ export function pipelineKey(settings: VoiceProviderSettings): string {
 
 function asProviderId(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** Anything unrecognised reads as unset, which resolves to the scope default. */
+function asAnnouncementSetting(value: unknown): BackgroundAnnouncementSetting | undefined {
+	return value === 'on' || value === 'off' || value === 'auto' ? value : undefined;
 }
 
 // ---------------------------------------------------------------------------

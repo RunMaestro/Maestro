@@ -19,9 +19,26 @@ export const MAX_SPOKEN_SENTENCE_LENGTH = 240;
 
 /**
  * Sentence boundary: terminal punctuation followed by whitespace or end of
- * input. The lookbehind keeps "U.S." and other single-capital runs intact.
+ * input.
+ *
+ * Requiring whitespace after the period is what keeps the three things agents
+ * write constantly out of the splitter's way without a single special case:
+ * `1.5`, `v1.2.3`, and `src/main/index.ts` all have a non-space character after
+ * every internal period, so none of them is ever a candidate. Only the period
+ * that genuinely ends the clause reaches {@link endsWithAbbreviation}.
  */
-const SENTENCE_BOUNDARY = /(?<![A-Z])[.!?]+(?=\s|$)/g;
+const SENTENCE_BOUNDARY = /[.!?]+(?=\s|$)/g;
+
+/**
+ * A dotted initialism: "U.S.", "e.g.", "a.k.a". At least one internal period,
+ * every segment a single letter.
+ *
+ * This replaces an earlier `(?<![A-Z])` lookbehind on the boundary regex, which
+ * bought "U.S." at the cost of every acronym an agent actually writes: "Fixed
+ * the API. Then I ran the tests." was one unbroken sentence because the period
+ * followed a capital letter, and TTS read it as one breathless run.
+ */
+const DOTTED_INITIALISM = /^(?:[A-Za-z]\.){1,}[A-Za-z]?$/;
 
 /**
  * Words that take a trailing period without ending a sentence. Deliberately
@@ -52,8 +69,11 @@ const ABBREVIATIONS = new Set([
 /** True when the text ends in an abbreviation or an initial ("Dr", "e.g", "J"). */
 function endsWithAbbreviation(text: string): boolean {
 	const token = text.trimEnd().split(/\s+/).pop() ?? '';
+	if (DOTTED_INITIALISM.test(token)) return true;
+
 	const bare = token.replace(/\./g, '').toLowerCase();
 	if (!bare) return false;
+	// A lone letter is an initial ("J. Random"), never a whole word.
 	if (bare.length === 1 && /[a-z]/.test(bare)) return true;
 	return ABBREVIATIONS.has(bare);
 }
@@ -98,6 +118,48 @@ export function splitIntoSpokenSentences(text: string): string[] {
 	pushSentence(sentences, normalized.slice(start));
 
 	return sentences;
+}
+
+/**
+ * Split a growing buffer into the sentences that are definitely finished and the
+ * tail that is not.
+ *
+ * The streaming half of {@link splitIntoSpokenSentences}, for the translator and
+ * the speech scheduler: both are handed text a few tokens at a time and have to
+ * decide, without ever seeing the end, which prefix is safe to hand to TTS. The
+ * last fragment is always held back even when it looks terminated, because the
+ * character after a period is exactly what decides whether it was one - a buffer
+ * ending in "index." becomes "index.ts" on the next token, and a sentence that
+ * was already synthesized cannot be taken back.
+ *
+ * @returns `sentences` in order, and `rest` to keep buffering.
+ */
+export function splitCompleteSentences(buffer: string): { sentences: string[]; rest: string } {
+	// Whether the buffer ended mid-word survives into `rest`, because the caller
+	// concatenates the next delta straight onto it: swallowing the separator here
+	// is how "Done, " plus "the auth bug" becomes "Done,the auth bug".
+	const trailingSpace = /\s$/.test(buffer);
+	const normalized = buffer.replace(/\s+/g, ' ').trimStart();
+	if (!normalized) return { sentences: [], rest: trailingSpace ? ' ' : '' };
+
+	// A trailing space proves the writer moved past the punctuation, so the whole
+	// buffer is decidable and nothing has to be held back.
+	const settled = trailingSpace ? normalized : normalized.replace(/\S+$/, '');
+	const tail = normalized.slice(settled.length);
+
+	const sentences = splitIntoSpokenSentences(settled);
+	// An unterminated remainder is not a sentence yet, however long it is: it is
+	// the front half of the one still being written.
+	const last = sentences[sentences.length - 1];
+	let carry = '';
+	if (last && !/[.!?]$/.test(last)) {
+		sentences.pop();
+		carry = last;
+	}
+
+	let rest = [carry, tail].filter(Boolean).join(' ');
+	if (rest && !tail && trailingSpace) rest += ' ';
+	return { sentences, rest };
 }
 
 /** How many `speak-sentence` events a given text will produce. */

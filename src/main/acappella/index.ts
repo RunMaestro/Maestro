@@ -41,6 +41,7 @@ export type {
 	VoiceRouteExecutorOptions,
 } from './dispatch/route-executor';
 export * from './router';
+export * from './speech';
 export type {
 	VoiceDispatchResult,
 	VoiceEventListener,

@@ -22,7 +22,7 @@ import type { RouteDecision } from '../../../../shared/acappella/route-decision'
 import {
 	buildConverseUserPrompt,
 	buildRouteUserPrompt,
-	CONVERSE_SYSTEM_PROMPT,
+	converseSystemPrompt,
 	limitSpokenReply,
 	parseRouteDecision,
 	routeSystemPrompt,
@@ -92,7 +92,7 @@ export class AnthropicBrainProvider implements BrainProvider {
 
 	async converse(agentText: string, context: VoiceConverseContext): Promise<string> {
 		const content = await this.complete({
-			system: CONVERSE_SYSTEM_PROMPT,
+			system: converseSystemPrompt(),
 			user: buildConverseUserPrompt(agentText, context),
 			timeoutMs: this.converseTimeoutMs,
 			maxTokens: CONVERSE_MAX_TOKENS,

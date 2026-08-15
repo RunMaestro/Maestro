@@ -202,6 +202,18 @@ export interface SpeakStartEvent extends VoiceEventBase {
 	utteranceId: string;
 	sentenceCount: number;
 	ttsProviderId: string;
+	/**
+	 * The reply is still being written, so `sentenceCount` is a LOWER BOUND and
+	 * `speak-sentence` indices will run past it.
+	 *
+	 * Set by the sentence-streaming scheduler, which starts speaking the first
+	 * sentence while the agent is still typing the rest - the entire reason the
+	 * first spoken word arrives when it does. A client showing "3 of 5" must treat
+	 * the total as provisional while this is true rather than clamping the index,
+	 * because the honest alternative is holding every sentence back until the
+	 * whole reply exists.
+	 */
+	streaming?: boolean;
 }
 
 export interface SpeakSentenceEvent extends VoiceEventBase {
