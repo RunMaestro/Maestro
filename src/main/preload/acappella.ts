@@ -16,7 +16,9 @@ import { ipcRenderer } from 'electron';
 import type { RosterAgent, VoiceEvent, VoiceScope } from '../../shared/acappella/protocol';
 import type { VoiceReadiness } from '../../shared/acappella/readiness';
 import type { VoiceSessionSnapshot } from '../acappella';
-import type { VoiceStartSessionResult } from '../ipc/handlers/acappella';
+import type { VoiceStartSessionResult, WakeTestEvent } from '../ipc/handlers/acappella';
+import type { GlobalHotkeyStatus } from '../../shared/global-hotkeys';
+import type { VoiceHotkeyRefusalInfo } from '../acappella/hotkeys/voice-hotkeys';
 import type { VoiceModelListing } from '../ipc/handlers/acappella-models';
 import type { DownloadProgress, DownloadResult } from '../acappella/models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../acappella/models/model-store';
@@ -263,6 +265,60 @@ export function createVoiceApi() {
 				handler(voiceEvent);
 			ipcRenderer.on('acappella:event', wrappedHandler);
 			return () => ipcRenderer.removeListener('acappella:event', wrappedHandler);
+		},
+
+		/**
+		 * Whether each voice hotkey is actually bound, and what a press can do on
+		 * this platform.
+		 *
+		 * The settings rows render this inline rather than assuming success: a combo
+		 * the OS already owns is the single most common way a global hotkey silently
+		 * does nothing, and "registered" is the only honest thing to show next to a
+		 * key the user just recorded.
+		 */
+		hotkeyStatus: (): Promise<{
+			statuses: GlobalHotkeyStatus[];
+			capability: 'hold-and-tap' | 'tap-only';
+			note: string;
+		}> => ipcRenderer.invoke('acappella:hotkey-status'),
+
+		/**
+		 * Start a wake-word tuning run: the local detector, no session, so a user can
+		 * say the phrase and watch it fire while moving the sensitivity slider.
+		 *
+		 * @returns false when a session is already running or there is no audio host.
+		 */
+		wakeTest: (payload?: { phrase?: string; sensitivity?: number }): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:wake-test', payload),
+
+		/** End a tuning run and close the microphone it opened. */
+		wakeTestStop: (): Promise<void> => ipcRenderer.invoke('acappella:wake-test-stop'),
+
+		/**
+		 * Hits from a tuning run. Its own channel rather than a protocol event: a
+		 * run has no session, and synthesising one so a settings panel can light a
+		 * dot would put a fake session in every client's stream.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onWakeTest: (handler: (event: WakeTestEvent) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, hit: WakeTestEvent) =>
+				handler(hit);
+			ipcRenderer.on('acappella:wake-test', wrappedHandler);
+			return () => ipcRenderer.removeListener('acappella:wake-test', wrappedHandler);
+		},
+
+		/**
+		 * A voice hotkey was pressed and did nothing, with the reason. Subscribed by
+		 * the HUD so a refused press says why rather than looking like a dead key.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onHotkeyRefused: (handler: (info: VoiceHotkeyRefusalInfo) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, info: VoiceHotkeyRefusalInfo) =>
+				handler(info);
+			ipcRenderer.on('acappella:event:hotkey-refused', wrappedHandler);
+			return () => ipcRenderer.removeListener('acappella:event:hotkey-refused', wrappedHandler);
 		},
 	};
 }
