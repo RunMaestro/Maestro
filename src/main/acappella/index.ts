@@ -12,6 +12,19 @@ import { VoiceSessionService } from './voice-session-service';
 import type { VoiceSessionServiceOptions } from './voice-session-service';
 
 export { VoiceSessionService, VoiceDispatchError } from './voice-session-service';
+export {
+	buildAgentRoster,
+	createRendererVoiceBridge,
+	createVoiceRouteExecutor,
+	executeRouteDecision,
+	readAgentRoster,
+} from './dispatch/route-executor';
+export type {
+	CommandReceipt,
+	NewTabWithPromptResult,
+	VoiceRendererBridge,
+	VoiceRouteExecutorOptions,
+} from './dispatch/route-executor';
 export type {
 	VoiceDispatchResult,
 	VoiceEventListener,
