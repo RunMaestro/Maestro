@@ -23,14 +23,15 @@
  * the gate getting in the way rather than doing its job.
  */
 
+import { OPENWAKEWORD_BASE_ID, getVoiceModel } from '../../../shared/acappella/model-catalog';
 import {
-	KOKORO_82M_ID,
-	OPENWAKEWORD_BASE_ID,
-	QWEN3_1_7B_ID,
-	WHISPER_BASE_EN_ID,
-	getVoiceModel,
-} from '../../../shared/acappella/model-catalog';
+	credentialLabel,
+	voiceProviderRequirement,
+	type VoiceCredentialService,
+	type VoiceProviderRequirement,
+} from '../../../shared/acappella/provider-catalog';
 import type { NativeRuntimeId } from '../../../shared/acappella/native-runtimes';
+import { hasCredential } from '../providers/credentials';
 import type { MicPermission } from '../../../shared/acappella/protocol';
 import type {
 	VoiceReadiness,
@@ -45,18 +46,12 @@ import { getStatus, type ModelStatus } from './model-store';
 /**
  * Provider ids for the local tier.
  *
- * Declared here rather than in the registry so the requirement table and the
- * registrations that Phases 05 and 07 add cannot drift into two different
- * spellings of the same provider. A local provider whose id is not in
- * {@link PROVIDER_REQUIREMENTS} is treated as needing nothing, which is correct
- * for the mock tier and wrong for a real one, so a new local provider MUST be
- * added below in the same change that registers it.
+ * Re-exported from the shared catalog rather than re-declared: the requirement
+ * table, the registry's registrations, and the settings panel all have to spell
+ * a provider id the same way, and three literals in three files is three chances
+ * for a slot the gate blocks and the panel says is fine.
  */
-export const LOCAL_PROVIDER_IDS = {
-	stt: 'whisper-local',
-	tts: 'kokoro-local',
-	brain: 'qwen3-local',
-} as const;
+export { LOCAL_PROVIDER_IDS } from '../../../shared/acappella/provider-catalog';
 
 /** The wake word slot has one implementation and it is always local. */
 export const WAKE_WORD_PROVIDER_ID = 'openwakeword-local';
@@ -70,33 +65,23 @@ export const WAKE_WORD_PROVIDER_ID = 'openwakeword-local';
  */
 export const MICROPHONE_PROVIDER_ID = 'system-microphone';
 
-/** What a provider needs before it can run. */
-type ProviderRequirement =
-	| { kind: 'model'; modelId: string; runtimeId?: NativeRuntimeId }
-	| { kind: 'api-key'; settingsKey: string; serviceLabel: string }
-	| { kind: 'none' };
-
 /**
- * The requirement table. Anything absent needs nothing, which is the mock tier's
- * contract: it opens no device, downloads nothing, and is always ready.
+ * What a provider needs before it can run.
+ *
+ * Every entry comes from the shared catalog except the wake word, which has no
+ * provider slot of its own to be selected in and so is stated here.
  *
  * A local provider needs BOTH its model and its native runtime, and the runtime
  * is checked first: a llama.cpp binary that will not load on this machine is not
  * fixed by downloading another gigabyte, so telling the user to download is the
  * wrong instruction even though the model may also be missing.
  */
-const PROVIDER_REQUIREMENTS: Record<string, ProviderRequirement> = {
-	[LOCAL_PROVIDER_IDS.stt]: { kind: 'model', modelId: WHISPER_BASE_EN_ID, runtimeId: 'whisper' },
-	[LOCAL_PROVIDER_IDS.tts]: { kind: 'model', modelId: KOKORO_82M_ID, runtimeId: 'onnx' },
-	[LOCAL_PROVIDER_IDS.brain]: { kind: 'model', modelId: QWEN3_1_7B_ID, runtimeId: 'llama' },
-	[WAKE_WORD_PROVIDER_ID]: { kind: 'model', modelId: OPENWAKEWORD_BASE_ID, runtimeId: 'onnx' },
-	'openai-realtime': { kind: 'api-key', settingsKey: 'openaiApiKey', serviceLabel: 'OpenAI' },
-	'elevenlabs-tts': {
-		kind: 'api-key',
-		settingsKey: 'elevenLabsApiKey',
-		serviceLabel: 'ElevenLabs',
-	},
-};
+function requirementFor(providerId: string): VoiceProviderRequirement {
+	if (providerId === WAKE_WORD_PROVIDER_ID) {
+		return { kind: 'model', modelId: OPENWAKEWORD_BASE_ID, runtimeId: 'onnx' };
+	}
+	return voiceProviderRequirement(providerId);
+}
 
 /**
  * Slot order, which is also the order Voice Setup renders and errors list them.
@@ -124,8 +109,14 @@ export interface ResolveVoiceReadinessOptions {
 	 * or required on its account.
 	 */
 	handsFreeEnabled?: boolean;
-	/** Reads an API key by settings key. Absent means "no keys are configured". */
-	getApiKey?: (settingsKey: string) => string | undefined;
+	/**
+	 * Whether a service's API key is stored. Defaults to the OS keychain.
+	 *
+	 * A boolean, not the key: the gate has no business holding a credential, and a
+	 * seam that returned one would put keys in every test fixture that configures
+	 * a hosted provider.
+	 */
+	hasApiKey?: (service: VoiceCredentialService) => boolean;
 	/**
 	 * Optional reachability probe for cloud providers, keyed by provider id.
 	 * Absent means "assume reachable": a gate that reported every cloud provider
@@ -270,7 +261,7 @@ async function resolveSlot(
 	readModelStatus: (modelId: string) => Promise<ModelStatus>
 ): Promise<VoiceSlotReadiness> {
 	const label = SLOT_LABELS[slot];
-	const requirement = PROVIDER_REQUIREMENTS[providerId] ?? { kind: 'none' };
+	const requirement = requirementFor(providerId);
 
 	if (requirement.kind === 'none') {
 		return { slot, providerId, satisfied: true };
@@ -316,14 +307,14 @@ async function resolveSlot(
 		};
 	}
 
-	const key = options.getApiKey?.(requirement.settingsKey);
-	if (!key || !key.trim()) {
+	const readKey = options.hasApiKey ?? hasCredential;
+	if (!readKey(requirement.service)) {
 		return {
 			slot,
 			providerId,
 			satisfied: false,
 			reason: 'api-key-missing',
-			detail: `${label}: ${providerId} needs a ${requirement.serviceLabel} API key.`,
+			detail: `${label}: ${providerId} needs a ${credentialLabel(requirement.service)} API key.`,
 			// Naming the alternative matters: the honest recovery for "no key" is
 			// often "use the local model instead", and the gate is the only place
 			// that knows both options exist.

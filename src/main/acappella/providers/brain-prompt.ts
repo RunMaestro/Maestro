@@ -1,0 +1,232 @@
+/**
+ * The Brain's prompts and its output validator, shared by every Brain backend.
+ *
+ * Three implementations (a local Qwen3, OpenAI, Anthropic) have to produce the
+ * SAME `RouteDecision` for the same utterance, or switching Brain providers would
+ * quietly change where a spoken instruction lands. So the prompt is written once
+ * here and the parser is the only thing that turns model output into a decision.
+ *
+ * The parser is deliberately paranoid. A model asked for JSON will eventually
+ * return a fenced block, a preamble, a `sessionId` for an agent that closed while
+ * it was thinking, or a confidence of 7. None of those may become a dispatch:
+ * sending someone's spoken instruction to the wrong agent is the single worst
+ * thing this feature can do, and it is worse than doing nothing. Every field is
+ * therefore validated against the roster that was actually passed in, and
+ * anything unrecognised collapses to the conductor rather than to a guess.
+ */
+
+import type { RosterAgent } from '../../../shared/acappella/protocol';
+import type { VoiceConverseContext, VoiceRouteContext } from '../../../shared/acappella/providers';
+import type { RouteDecision, RouteTabAction } from '../../../shared/acappella/route-decision';
+import { ROUTE_TAB_ACTIONS } from '../../../shared/acappella/route-decision';
+import { splitIntoSpokenSentences } from '../../../shared/acappella/sentences';
+import { stripMarkdown } from '../../../shared/markdown';
+
+/** Spoken replies stay short unless the caller asks for more. */
+const DEFAULT_SPOKEN_SENTENCES = 2;
+
+/** Cap on the roster handed to a model. A hundred agents is a prompt, not context. */
+const MAX_ROSTER_AGENTS = 40;
+const MAX_TABS_PER_AGENT = 12;
+
+export const ROUTE_SYSTEM_PROMPT = [
+	'You route spoken instructions inside Maestro, a desktop app that runs several AI coding agents at once.',
+	'Given one utterance and the list of running agents, decide which agent it is for, what to do with tabs, and what prompt to actually send.',
+	'',
+	'Rules:',
+	'- Answer with ONE JSON object and nothing else. No prose, no code fence.',
+	'- "target" is either the string "conductor" or {"sessionId": "<an id from the roster>"}. Never invent an id.',
+	'- Use "conductor" when the utterance is about Maestro itself, or when no agent is clearly meant.',
+	'- "tabAction" is "current" (use the active tab), "new" (open a fresh tab), or "recall" (go back to an existing tab, and then "tabId" is required and must come from that agent\'s tabs).',
+	'- "prompt" is what the agent should receive: the request itself, with the routing words removed. Keep the user\'s own wording.',
+	'- "confidence" is 0 to 1. Be honest: a guess is 0.4, hearing an agent name by name is 0.9.',
+].join('\n');
+
+export const CONVERSE_SYSTEM_PROMPT = [
+	"You turn an AI coding agent's written answer into something worth hearing out loud.",
+	'',
+	'Rules:',
+	'- Speak the outcome, not the transcript. The listener has no screen.',
+	'- Never read code, diffs, file paths, URLs, or command output aloud. Say what changed instead.',
+	'- Plain sentences. No markdown, no bullet points, no headings.',
+	'- If the answer is a question for the user, ask it directly.',
+	'- Answer with the spoken text only. No preamble, no quotes around it.',
+].join('\n');
+
+/** The user-side message for a routing call. */
+export function buildRouteUserPrompt(input: string, context: VoiceRouteContext): string {
+	const lines: string[] = [];
+
+	lines.push('Running agents:');
+	const agents = context.roster.slice(0, MAX_ROSTER_AGENTS);
+	if (agents.length === 0) {
+		lines.push('  (none)');
+	}
+	for (const agent of agents) {
+		lines.push(`- ${agent.name} [${agent.sessionId}] (${agent.agentType}) in ${agent.cwd}`);
+		for (const tab of agent.tabs.slice(0, MAX_TABS_PER_AGENT)) {
+			lines.push(`    tab ${tab.id}: ${tab.name ?? 'untitled'}`);
+		}
+	}
+
+	if (context.scope.kind === 'agent') {
+		lines.push('', `The user is currently bound to agent ${context.scope.sessionId}.`);
+	} else if (context.activeAgentSessionId) {
+		lines.push('', `The user is looking at agent ${context.activeAgentSessionId}.`);
+	}
+
+	const recent = context.recentUtterances ?? [];
+	if (recent.length > 0) {
+		lines.push('', 'Earlier in this conversation:');
+		for (const utterance of recent.slice(-5)) lines.push(`- ${utterance}`);
+	}
+
+	lines.push('', `Utterance: ${input}`);
+	return lines.join('\n');
+}
+
+export function buildConverseUserPrompt(agentText: string, context: VoiceConverseContext): string {
+	const limit = context.maxSentences ?? DEFAULT_SPOKEN_SENTENCES;
+	return [`Say this in at most ${limit} sentence${limit === 1 ? '' : 's'}:`, '', agentText].join(
+		'\n'
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Turn raw model output into a decision that is safe to dispatch.
+ *
+ * `fallbackPrompt` is what the agent receives when the model gave no usable
+ * prompt: the user's own words. An utterance that reaches an agent verbatim is a
+ * worse prompt than a cleaned one and an infinitely better outcome than a turn
+ * that silently did nothing.
+ */
+export function parseRouteDecision(
+	raw: string,
+	context: VoiceRouteContext,
+	fallbackPrompt: string
+): RouteDecision {
+	const parsed = extractJsonObject(raw);
+	const agent = resolveAgent(parsed?.target, context.roster);
+
+	let tabAction = asTabAction(parsed?.tabAction);
+	let tabId = typeof parsed?.tabId === 'string' ? parsed.tabId : undefined;
+
+	if (tabAction === 'recall') {
+		// A recall the executor cannot perform is worse than no recall: it fails the
+		// turn instead of using the tab the user is already looking at.
+		const known = agent?.tabs.some((tab) => tab.id === tabId);
+		if (!known) {
+			tabAction = 'current';
+			tabId = undefined;
+		}
+	} else {
+		tabId = undefined;
+	}
+
+	const prompt = asNonEmptyString(parsed?.prompt) ?? fallbackPrompt.trim();
+	const tabName = tabAction === 'new' ? asNonEmptyString(parsed?.tabName) : undefined;
+
+	return {
+		target: agent ? { sessionId: agent.sessionId } : 'conductor',
+		tabAction,
+		tabId,
+		tabName,
+		prompt,
+		confidence: clampConfidence(parsed?.confidence),
+	};
+}
+
+/**
+ * Pull the first JSON object out of a model response.
+ *
+ * Brace matching rather than a regex: a `prompt` field can legally contain
+ * braces, and the non-greedy regex that "worked" would truncate the object at the
+ * first one.
+ */
+export function extractJsonObject(raw: string): Record<string, unknown> | null {
+	const text = raw.trim();
+	const start = text.indexOf('{');
+	if (start === -1) return null;
+
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = start; i < text.length; i++) {
+		const char = text[i];
+
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+
+		if (char === '"') inString = true;
+		else if (char === '{') depth++;
+		else if (char === '}' && --depth === 0) {
+			try {
+				const parsed: unknown = JSON.parse(text.slice(start, i + 1));
+				return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+					? (parsed as Record<string, unknown>)
+					: null;
+			} catch {
+				return null;
+			}
+		}
+	}
+
+	return null;
+}
+
+/** The roster agent a target names, or null for the conductor and for junk. */
+function resolveAgent(target: unknown, roster: RosterAgent[]): RosterAgent | null {
+	const sessionId =
+		typeof target === 'string'
+			? null
+			: ((target as { sessionId?: unknown })?.sessionId as string | undefined);
+	if (typeof sessionId !== 'string' || !sessionId) return null;
+	// The id must be one that is RUNNING. A hallucinated id would otherwise reach
+	// the session service, which would correctly refuse the turn - but this is the
+	// layer that knows the honest recovery is "the conductor takes it".
+	return roster.find((agent) => agent.sessionId === sessionId) ?? null;
+}
+
+function asTabAction(value: unknown): RouteTabAction {
+	return typeof value === 'string' && (ROUTE_TAB_ACTIONS as readonly string[]).includes(value)
+		? (value as RouteTabAction)
+		: 'current';
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function clampConfidence(value: unknown): number {
+	const num = typeof value === 'number' ? value : Number(value);
+	if (!Number.isFinite(num)) return 0.5;
+	return Math.min(1, Math.max(0, Math.round(num * 100) / 100));
+}
+
+// ---------------------------------------------------------------------------
+// Spoken form
+// ---------------------------------------------------------------------------
+
+/**
+ * Trim a model's spoken rewrite to the sentence budget.
+ *
+ * Applied to every Brain's `converse()` output, including a hosted one that was
+ * asked for two sentences and returned five. The session service already
+ * announced `sentenceCount` from the same splitter, so a reply that overruns
+ * would leave a client's "3 of 2" progress permanently wrong.
+ */
+export function limitSpokenReply(text: string, maxSentences?: number): string {
+	const plain = stripMarkdown(text).replace(/\s+/g, ' ').trim();
+	if (!plain) return '';
+	const limit = Math.max(1, maxSentences ?? DEFAULT_SPOKEN_SENTENCES);
+	return splitIntoSpokenSentences(plain).slice(0, limit).join(' ');
+}

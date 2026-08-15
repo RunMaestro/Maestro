@@ -21,6 +21,7 @@ import type {
 	RosterAgent,
 	VoiceEvent,
 	VoiceEventBase,
+	VoiceEventPayload,
 	VoiceEventType,
 	VoiceScope,
 	VoiceSessionErrorCode,
@@ -32,9 +33,15 @@ import type {
 	SttCallbacks,
 	SttProvider,
 	TtsChunk,
+	VoicePipelineShape,
 	VoiceProviderTrio,
 	VoiceRouteContext,
 } from '../../shared/acappella/providers';
+import {
+	isVoiceProviderError,
+	type VoiceProviderError,
+} from '../../shared/acappella/provider-errors';
+import { recordTurn, TurnTimer } from './telemetry/turn-metrics';
 import {
 	audioHostErrorToSessionError,
 	type AudioHostErrorCode,
@@ -107,6 +114,13 @@ export type VoiceRouteExecutor = (
 export interface VoiceSessionServiceOptions {
 	/** The active provider trio. Resolved by `providers/provider-registry.ts`. */
 	providers: VoiceProviderTrio;
+	/**
+	 * Which pipeline shape the trio came from. Recorded with every turn's timings
+	 * so a latency report can be compared against the right configuration; nothing
+	 * in this file branches on it, which is the whole point of the two shapes
+	 * sharing one interface.
+	 */
+	pipelineShape?: VoicePipelineShape;
 	/** Current agents and their tabs. Defaults to an empty roster. */
 	getRoster?: () => RosterAgent[] | Promise<RosterAgent[]>;
 	/** Executes route decisions. Absent until the executor is wired. */
@@ -138,6 +152,14 @@ export interface VoiceSessionServiceOptions {
 	 * Absent means "no gate", which is the mock tier: nothing to be missing.
 	 */
 	checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
+	/**
+	 * The body of the `provider-state` event, from whoever resolved the pipeline.
+	 *
+	 * A supplier rather than a value because a slot can be substituted, and only
+	 * the registry knows what was requested; and a supplier rather than an import
+	 * because this file must never learn how providers are chosen.
+	 */
+	getProviderState?: () => Omit<VoiceEventPayload<'provider-state'>, 'type'> | null;
 }
 
 /** Everything a client needs to catch up after `get-state`. */
@@ -169,6 +191,12 @@ export class VoiceSessionService {
 	private readonly utteranceHistoryLimit: number;
 	private readonly onSpeechChunk?: (chunk: TtsChunk) => void;
 	private readonly checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
+	private readonly getProviderState?: () => Omit<
+		VoiceEventPayload<'provider-state'>,
+		'type'
+	> | null;
+
+	private readonly pipelineShape: VoicePipelineShape;
 
 	private readonly listeners = new Set<VoiceEventListener>();
 
@@ -189,6 +217,15 @@ export class VoiceSessionService {
 	/** The speech run currently on the floor, or null when nothing is speaking. */
 	private activeUtteranceId: string | null = null;
 
+	/**
+	 * Timings for the turn being spoken now.
+	 *
+	 * Started at the DETECTOR's endpoint rather than at the transcript, because the
+	 * decode between those two moments is the hop most often to blame and the one a
+	 * transcript-anchored timer cannot see. Null between turns.
+	 */
+	private timer: TurnTimer | null = null;
+
 	constructor(options: VoiceSessionServiceOptions) {
 		this.providers = options.providers;
 		this.getRoster = options.getRoster ?? (() => []);
@@ -197,6 +234,8 @@ export class VoiceSessionService {
 		this.utteranceHistoryLimit = options.utteranceHistoryLimit ?? DEFAULT_UTTERANCE_HISTORY;
 		this.onSpeechChunk = options.onSpeechChunk;
 		this.checkReadiness = options.checkReadiness;
+		this.getProviderState = options.getProviderState;
+		this.pipelineShape = options.pipelineShape ?? 'cascade';
 	}
 
 	// -- Subscription --------------------------------------------------------
@@ -285,16 +324,23 @@ export class VoiceSessionService {
 		try {
 			await this.providers.stt.start(this.sttCallbacks());
 		} catch (error) {
-			this.fail(
-				'provider-unavailable',
-				`Speech provider '${this.providers.stt.id}' could not start: ${(error as Error).message}`,
-				this.providers.stt.id
-			);
+			if (isVoiceProviderError(error)) {
+				this.failFromProvider(error, this.providers.stt.id);
+			} else {
+				this.fail(
+					'provider-unavailable',
+					`Speech provider '${this.providers.stt.id}' could not start: ${(error as Error).message}`,
+					this.providers.stt.id
+				);
+			}
 			return this.getSnapshot();
 		}
 
 		this.transition('listening');
 		this.emit('listen-start', { scope: params.scope, sttProviderId: this.providers.stt.id });
+		// Immediately after the floor opens, so a client that joined mid-session
+		// never has to guess which engines it is actually talking to.
+		this.publishProviderState();
 		await this.publishRoster();
 
 		return this.getSnapshot();
@@ -421,11 +467,20 @@ export class VoiceSessionService {
 		}
 
 		const turn = this.turn;
-		const spokenText = await this.providers.brain.converse(params.text, {
-			agentSessionId: params.agentSessionId,
-			tabId: params.tabId,
-			maxSentences: this.maxSpokenSentences,
-		});
+		this.timer?.mark('agentFirstToken');
+
+		let spokenText: string;
+		try {
+			spokenText = await this.providers.brain.converse(params.text, {
+				agentSessionId: params.agentSessionId,
+				tabId: params.tabId,
+				maxSentences: this.maxSpokenSentences,
+			});
+		} catch (error) {
+			if (!isVoiceProviderError(error)) throw error;
+			this.failFromProvider(error, error.providerId);
+			return true;
+		}
 		if (!this.isCurrentTurn(turn)) return false;
 
 		this.emit('agent-reply', {
@@ -451,7 +506,8 @@ export class VoiceSessionService {
 			// A streaming voice can throw mid-iteration. Without this the rejection
 			// leaves through the caller (an IPC handler) and the session sits in
 			// `speaking` holding a floor nothing will ever hand back.
-			this.closeFloorOnUnexpectedError(error as Error, 'acappella.speak');
+			if (isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
+			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.speak');
 		}
 		return true;
 	}
@@ -499,6 +555,20 @@ export class VoiceSessionService {
 		this.fail(translated.code, translated.message, undefined, translated.recoverable);
 	}
 
+	/**
+	 * Announce which engines are live.
+	 *
+	 * The body is supplied by whoever resolved the pipeline, because the honest
+	 * answer includes what the user ASKED for and this file deliberately never
+	 * learns that: it is handed a trio and has no idea whether it is the configured
+	 * one. Without a supplier this is a no-op, which is the mock tier's case.
+	 */
+	publishProviderState(): void {
+		const state = this.getProviderState?.();
+		if (!state) return;
+		this.emit('provider-state', state);
+	}
+
 	/** Re-read the roster and push it to every client. */
 	async publishRoster(): Promise<RosterAgent[]> {
 		const roster = await this.getRoster();
@@ -514,10 +584,30 @@ export class VoiceSessionService {
 
 	// -- Turn pipeline -------------------------------------------------------
 
+	/**
+	 * The detector heard the user stop talking.
+	 *
+	 * The zero point for the turn's timings. Wired from the audio pipeline, which
+	 * is the only place that instant is known: everything downstream sees the
+	 * consequences (a flush, then a transcript) rather than the moment itself.
+	 */
+	noteSpeechEnd(): void {
+		if (this.state !== 'listening') return;
+		this.timer = new TurnTimer(generateUUID(), {
+			pipeline: this.pipelineShape,
+			providerIds: {
+				stt: this.providers.stt.id,
+				tts: this.providers.tts.id,
+				brain: this.providers.brain.id,
+			},
+		});
+	}
+
 	private sttCallbacks(): SttCallbacks {
 		return {
 			onPartial: (text, stability) => {
 				if (this.state !== 'listening') return;
+				this.timer?.mark('firstPartial');
 				this.emit('partial-transcript', { text, stability });
 			},
 			onFinal: (text, confidence, durationMs) => {
@@ -525,7 +615,7 @@ export class VoiceSessionService {
 				void this.runTurn(text, confidence, durationMs);
 			},
 			onError: (error) => {
-				this.fail('provider-unavailable', error.message, this.providers.stt.id);
+				this.failFromProvider(error, this.providers.stt.id);
 			},
 		};
 	}
@@ -543,6 +633,7 @@ export class VoiceSessionService {
 		const turn = ++this.turn;
 
 		try {
+			this.timer?.mark('finalTranscript');
 			this.emit('final-transcript', { text, confidence, durationMs });
 			this.transition('transcribing');
 
@@ -569,6 +660,7 @@ export class VoiceSessionService {
 				return;
 			}
 
+			this.timer?.mark('routeDecision');
 			this.emit('route-decision', {
 				decision,
 				brainProviderId: this.providers.brain.id,
@@ -578,6 +670,13 @@ export class VoiceSessionService {
 
 			await this.dispatch(decision, roster, turn);
 		} catch (error) {
+			// A provider that predicted its own failure is announced, not reported: it
+			// has a message written for the user and a recovery to go with it.
+			// Anything else is a bug and keeps the Sentry path.
+			if (isVoiceProviderError(error)) {
+				this.failFromProvider(error, error.providerId);
+				return;
+			}
 			this.closeFloorOnUnexpectedError(error as Error, 'acappella.runTurn');
 		}
 	}
@@ -629,6 +728,7 @@ export class VoiceSessionService {
 			// A cancelled run's stragglers are dropped: `interrupt()` already
 			// emitted `speak-end` and handed the floor back.
 			if (!this.isCurrentTurn(turn) || this.activeUtteranceId !== utteranceId) return;
+			this.timer?.mark('firstSpokenSentence');
 			this.emit('speak-sentence', { utteranceId, index: chunk.index, text: chunk.text });
 			// After the event, not before: the sentence should be on screen by the
 			// time it is audible, never the other way round.
@@ -639,8 +739,24 @@ export class VoiceSessionService {
 
 		this.activeUtteranceId = null;
 		this.emit('speak-end', { utteranceId, reason: 'complete' });
+		this.closeTurnMetrics();
 		this.transition('listening');
 		this.emitListenStart();
+	}
+
+	/**
+	 * Close the current turn's timings and file them.
+	 *
+	 * Only a turn that reached spoken audio is recorded: a turn abandoned by a
+	 * barge-in has a "total" that measures how long the user waited before giving
+	 * up, and averaging that into the latency history would make an impatient user
+	 * look like a slow provider.
+	 */
+	private closeTurnMetrics(): void {
+		const timer = this.timer;
+		this.timer = null;
+		if (!timer) return;
+		recordTurn(timer.finish());
 	}
 
 	// -- Internals -----------------------------------------------------------
@@ -707,6 +823,29 @@ export class VoiceSessionService {
 			providerId,
 		});
 		this.transition('error');
+	}
+
+	/**
+	 * A provider reported a failure it predicted.
+	 *
+	 * The error carries its own protocol code (auth, quota, network, or plain
+	 * unavailable), its own recoverable flag, and a message written for someone
+	 * with no screen in front of them. Collapsing all four into
+	 * `provider-unavailable` would tell a user with an expired API key to go and
+	 * download a model.
+	 */
+	private failFromProvider(error: Error, providerId?: string): void {
+		if (!isVoiceProviderError(error)) {
+			this.fail('provider-unavailable', error.message, providerId);
+			return;
+		}
+		const failure: VoiceProviderError = error;
+		this.fail(
+			failure.sessionErrorCode,
+			failure.message,
+			providerId ?? failure.providerId,
+			failure.recoverable
+		);
 	}
 
 	/**

@@ -12,6 +12,7 @@
  * docs/architecture/acappella/voice-session-protocol.md.
  */
 
+import type { VoiceProviderRole, VoiceProviderTier } from './providers';
 import type { RouteDecision } from './route-decision';
 
 /**
@@ -189,6 +190,17 @@ export interface StopWordEvent extends VoiceEventBase {
  */
 export const VOICE_SESSION_ERROR_CODES = [
 	'provider-unavailable',
+	/**
+	 * A hosted provider rejected the API key. Its own code because the recovery is
+	 * specific and nobody can guess it from silence: replace the key in Voice
+	 * Setup. Folding it into `provider-unavailable` would tell a user with a
+	 * revoked key to go and download a model.
+	 */
+	'provider-auth-failed',
+	/** Rate limited or out of credit. Distinct from auth: the key is fine. */
+	'provider-quota-exceeded',
+	/** The service could not be reached, or answered too slowly to speak with. */
+	'provider-network-error',
 	'no-agent-matched',
 	'dispatch-failed',
 	/**
@@ -291,6 +303,42 @@ export interface MicStateEvent extends VoiceEventBase, MicState {
 	type: 'mic-state';
 }
 
+// ---------------------------------------------------------------------------
+// Providers
+// ---------------------------------------------------------------------------
+
+/** One slot of the live configuration, as the engines actually resolved. */
+export interface ProviderSlotState {
+	role: VoiceProviderRole;
+	/** What is RUNNING, which is not always what settings asked for. */
+	providerId: string;
+	label: string;
+	/** `unresolved` means nothing is filling this slot. It is not a working tier. */
+	tier: VoiceProviderTier;
+	/** Set when this slot is not the one that was requested. */
+	substitutedFor?: string;
+}
+
+/**
+ * Which engines are live, pushed whenever that changes.
+ *
+ * Its own event rather than a field on `listen-start` because a provider swap
+ * happens between turns, and because every client - the HUD, the phone, a CLI -
+ * has to be able to answer "what am I actually talking to right now" without
+ * having been listening when the session began. A silently swapped engine is the
+ * failure this whole subsystem is arranged to prevent; broadcasting the truth is
+ * the cheap half of preventing it.
+ */
+export interface ProviderStateEvent extends VoiceEventBase {
+	type: 'provider-state';
+	pipeline: 'cascade' | 'realtime';
+	slots: ProviderSlotState[];
+	/** The one sentence about where audio goes. Computed, never hard-coded copy. */
+	egressStatement: string;
+	/** True when the microphone's samples reach a service. */
+	audioLeavesMachine: boolean;
+}
+
 /** The bound agent's tab set or active tab changed. */
 export interface TabStateEvent extends VoiceEventBase {
 	type: 'tab-state';
@@ -323,6 +371,7 @@ export type VoiceEvent =
 	| SessionErrorEvent
 	| AudioLevelEvent
 	| MicStateEvent
+	| ProviderStateEvent
 	| TabStateEvent
 	| AgentRosterEvent;
 
@@ -363,6 +412,7 @@ export const VOICE_EVENT_DIRECTIONS: Record<VoiceEventType, VoiceEventDirection>
 	'session-error': 'service-to-client',
 	'audio-level': 'service-to-client',
 	'mic-state': 'service-to-client',
+	'provider-state': 'service-to-client',
 	'tab-state': 'service-to-client',
 	'agent-roster': 'service-to-client',
 };

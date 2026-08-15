@@ -16,8 +16,14 @@ import type { RouteDecision } from './route-decision';
 /**
  * Where a provider runs. The registry uses this to enforce the rule that a
  * cloud provider is NEVER silently substituted for a missing local one.
+ *
+ * `unresolved` is the slot that could not be built at all. It is a tier of its
+ * own rather than being folded into `mock` because those two are opposites: the
+ * mock is a working tier somebody chose, and an unresolved slot is a refusal.
+ * Reporting a refusal as a mock is how a broken configuration ends up looking
+ * like a healthy session that happens to say nothing.
  */
-export type VoiceProviderTier = 'mock' | 'local' | 'cloud';
+export type VoiceProviderTier = 'mock' | 'local' | 'cloud' | 'unresolved';
 
 export interface VoiceProviderInfo {
 	/** Stable id carried in the protocol (`mock-stt`, `whisper-local`, ...). */
@@ -174,4 +180,46 @@ export interface VoiceProviderTrio {
 	stt: SttProvider;
 	tts: TtsProvider;
 	brain: BrainProvider;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Which shape the turn takes.
+ *
+ *   - `cascade`  - three independent engines, speech to text to speech. The
+ *                  default, and the only shape a local install or an ElevenLabs
+ *                  voice can take.
+ *   - `realtime` - one provider's speech-to-speech API, roughly 300 ms instead of
+ *                  three serial hops, at the cost of using that provider's voice
+ *                  and sending audio to their servers.
+ */
+export type VoicePipelineShape = 'cascade' | 'realtime';
+
+/**
+ * The unit the session service is handed at start.
+ *
+ * There are exactly two implementations, `CascadePipeline` and `RealtimePipeline`,
+ * and the reason they share this interface rather than being two code paths is
+ * that everything downstream of the session service - the protocol, the router,
+ * the transport, every client - must not be able to tell which one is running. A
+ * realtime pipeline satisfies it by being ONE adapter wearing all three hats:
+ * `stt`, `tts`, and `brain` are the same object, so the service's turn loop is
+ * unchanged and the provider's own endpointing and interruption drive it.
+ *
+ * Selection happens once, at `resolveVoicePipeline()`. Nothing after that point
+ * branches on `shape`, and anything that finds itself wanting to should be asking
+ * a provider a question instead.
+ */
+export interface VoicePipeline {
+	readonly shape: VoicePipelineShape;
+	/** The three seams. For a realtime pipeline all three are the same instance. */
+	readonly providers: VoiceProviderTrio;
+	/**
+	 * Release everything the pipeline holds: sockets, loaded models, decoders.
+	 * Idempotent, because a hot-swap and an app quit can both reach it.
+	 */
+	dispose(): Promise<void>;
 }

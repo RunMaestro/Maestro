@@ -166,14 +166,27 @@ the only module allowed to import a concrete provider. Two rules are non-negotia
    audio path without a settings edit. A default is not a substitution and is not reported as one.
    Whether a microphone is opened at all follows from `SttProvider.acceptsAudio` rather than from a
    list of provider ids, so a text-in provider never costs the user a permission prompt.
-2. **Never silently substitute a cloud provider for a missing local one.** If the user asked for
-   local Whisper and the model is not downloaded, the role falls back to the mock and the
-   resolution carries a `VoiceProviderSubstitution` naming what was asked for, what is running, and
-   why. That record is logged and handed to the caller to put in front of the user; it is never a
-   quiet upload of their microphone to a vendor.
+2. **Never substitute anything for a provider that cannot be built.** Not a cloud provider, which
+   would spend the user's money and send their microphone somewhere they did not choose; and not
+   the mock either, because a session that transcribes nothing while looking healthy hides the
+   reason. A slot whose provider is unknown or unrunnable resolves to an `Unresolved*` provider
+   that refuses BY NAME the first time anything asks it to work, and the resolution carries a
+   `VoiceProviderSubstitution` recording what was asked for and why it could not run. That record
+   is logged and handed to the caller to put in front of the user.
 
-The fallback is always the mock for that role. There is no search over the catalog that could land
-on a different tier, which is what makes rule 2 structural rather than a promise.
+There is no search over the catalog that could land on a different tier, which is what makes rule 2
+structural rather than a promise. The mock tier is selected, never substituted in: it is what an
+unconfigured install runs on purpose, and it is what the tests and the dev harness drive.
+
+Phase 05 added the concrete backends behind these rules: `providers/local/` (Whisper, Kokoro,
+Qwen3 through `runtime/native-loader.ts`), `providers/hosted/` (OpenAI STT and Brain, Anthropic
+Brain, ElevenLabs TTS, all through one retrying and classifying transport), and
+`providers/realtime/` for the speech-to-speech tier. Which engine fills which slot, and what each
+one needs and sends, is declared once in `src/shared/acappella/provider-catalog.ts`, so the
+capability gate, the registry, the credential layer, and the settings panel cannot drift apart.
+
+API keys live in the OS keychain (`providers/credentials.ts`) and never in `settings.json`. Every
+turn is timed per hop in `telemetry/turn-metrics.ts`; see [[latency-baseline]].
 
 ## Client model
 
@@ -267,5 +280,7 @@ holding a floor nothing will ever hand back, which reads to the user as a frozen
 - [[model-manager]] - the local model catalog, downloads, verification, and the capability gate.
 - [[packaging-notes]] - native runtimes, asar unpacking, entitlements, notarization, and the
   microphone permission.
+- [[latency-baseline]] - the per-hop latency budget for each provider configuration, and how it is
+  measured.
 - [[adr-001-webrtc-transport]] - why WebRTC beats WebSocket plus Opus for the phone leg.
 - [[adr-002-main-process-session]] - why the session is headless in main.

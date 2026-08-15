@@ -131,7 +131,7 @@ describe('capability-gate', () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: { ...ALL_LOCAL, tts: 'elevenlabs-tts' },
 				readModelStatus: statusReader(),
-				getApiKey: () => undefined,
+				hasApiKey: () => false,
 			});
 
 			const tts = readiness.slots.find((slot) => slot.slot === 'tts')!;
@@ -141,11 +141,11 @@ describe('capability-gate', () => {
 			expect(tts.suggestedAction).toContain('local model');
 		});
 
-		it('treats a whitespace-only API key as missing', async () => {
+		it('treats an absent stored key as missing', async () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: { ...ALL_LOCAL, brain: 'openai-realtime' },
 				readModelStatus: statusReader(),
-				getApiKey: () => '   ',
+				hasApiKey: () => false,
 			});
 
 			expect(readiness.slots.find((slot) => slot.slot === 'brain')?.reason).toBe('api-key-missing');
@@ -155,7 +155,7 @@ describe('capability-gate', () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: { ...ALL_LOCAL, brain: 'openai-realtime' },
 				readModelStatus: statusReader(),
-				getApiKey: () => 'sk-configured',
+				hasApiKey: () => true,
 				probeProvider: () => false,
 			});
 
@@ -206,7 +206,7 @@ describe('capability-gate', () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: { ...ALL_LOCAL, brain: 'openai-realtime' },
 				readModelStatus: statusReader(),
-				getApiKey: () => 'sk-configured',
+				hasApiKey: () => true,
 			});
 
 			expect(readiness.canStartSession).toBe(true);
@@ -233,7 +233,7 @@ describe('capability-gate', () => {
 				// Deliberately hostile settings: nothing here may reach the wake word.
 				settings: { stt: 'openai-realtime', tts: 'elevenlabs-tts', brain: 'openai-realtime' },
 				readModelStatus: statusReader(),
-				getApiKey: () => 'sk-configured',
+				hasApiKey: () => true,
 			});
 
 			expect(readiness.slots.find((slot) => slot.slot === 'wake-word')?.providerId).toBe(
@@ -254,7 +254,7 @@ describe('capability-gate', () => {
 		it('never names a provider other than the one configured', async () => {
 			for (const stt of providerChoices) {
 				for (const disk of diskStates) {
-					for (const key of [undefined, 'sk-configured']) {
+					for (const key of [false, true]) {
 						for (const reachable of [true, false]) {
 							const readiness = await resolveVoiceReadiness({
 								settings: { ...ALL_LOCAL, stt },
@@ -264,7 +264,7 @@ describe('capability-gate', () => {
 									[QWEN3_1_7B_ID]: disk,
 									[OPENWAKEWORD_BASE_ID]: disk,
 								}),
-								getApiKey: () => key,
+								hasApiKey: () => key,
 								probeProvider: () => reachable,
 							});
 

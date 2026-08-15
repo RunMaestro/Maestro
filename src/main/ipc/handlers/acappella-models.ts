@@ -110,13 +110,11 @@ export async function readVoiceReadiness(
 	settingsStore: ACappellaModelsHandlerDependencies['settingsStore']
 ): Promise<VoiceReadiness> {
 	const stored = (settingsStore.get('acappella', {}) ?? {}) as { handsFree?: unknown };
+	// No `hasApiKey` override: keys live in the OS keychain, never in settings, so
+	// the gate's default (which reads the keychain) is the only correct answer.
 	return resolveVoiceReadiness({
 		settings: readVoiceProviderSettings(settingsStore),
 		handsFreeEnabled: stored.handsFree === true,
-		getApiKey: (key) => {
-			const value = settingsStore.get(key, undefined);
-			return typeof value === 'string' ? value : undefined;
-		},
 	});
 }
 
