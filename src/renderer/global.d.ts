@@ -193,6 +193,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { VoiceApi } from '../main/preload/acappella';
+import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 
 interface MaestroAPI {
@@ -4434,6 +4435,13 @@ interface MaestroAPI {
 	 * Encore flag is off.
 	 */
 	voice: VoiceApi;
+
+	/**
+	 * A Cappella audio host control link. Only the hidden audio window
+	 * (`?acappellaAudio`) uses this: main answers PCM frames from that
+	 * webContents alone, so calling it from the app window sends into a void.
+	 */
+	voiceAudioHost: VoiceAudioHostApi;
 }
 
 declare global {

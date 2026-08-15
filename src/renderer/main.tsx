@@ -5,6 +5,7 @@ import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/electron/renderer';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import MaestroConsole from './App';
+import { AudioHostRoot } from './acappella-audio';
 import { CadenzaHudRoot } from './cadenzaHud';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
@@ -118,7 +119,14 @@ if (isAcappellaAudioHost) {
 	// The window is never painted, but drop the static splash anyway so anything
 	// that does force it visible (devtools, a stray show()) shows an empty page.
 	document.getElementById('initial-splash')?.remove();
-	// Phase 02: AudioHostRoot mounts here (src/renderer/acappella-audio/).
+	// Renders null and owns the mic/AudioContext; no chrome, no providers.
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<AudioHostRoot />
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
 } else if (isCadenzaHud) {
 	document.documentElement.classList.add('cadenza-hud');
 	document.body.classList.add('cadenza-hud');
