@@ -3,3 +3,8 @@
 # `{...}` examples that are valid Markdown but not valid MDX, so exclude the whole
 # directory from the Mintlify build to keep the deploy green.
 agent-guides/
+
+# Internal architecture notes and ADRs (structured markdown with YAML front
+# matter and `[[wiki-links]]` for DocGraph, not part of docs.json navigation).
+# Same MDX-hostile `{...}` type examples as above.
+architecture/
