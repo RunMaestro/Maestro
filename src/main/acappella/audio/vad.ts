@@ -223,6 +223,17 @@ export interface VadFrameResult {
 	 * through the hangover, which is the point of the hangover.
 	 */
 	active: boolean;
+	/**
+	 * Whether this frame on its own looks like voice: the full onset test while the
+	 * floor is closed, energy above the exit threshold while it is open.
+	 *
+	 * Deliberately weaker evidence than {@link VadFrameResult.event} - one frame is
+	 * not enough to open the floor - and that is exactly what makes it useful. The
+	 * pipeline ducks TTS output on the first candidate frame, 80 ms before a
+	 * `speech-start` could possibly be confirmed, and restores the gain if the
+	 * candidate does not turn into speech.
+	 */
+	candidate: boolean;
 	/** The transition this frame caused, if any. At most one per frame. */
 	event: VadEvent | null;
 	/** Root mean square of the frame, 0 to 1. */
@@ -343,9 +354,10 @@ export class VoiceActivityDetector {
 
 		this.frameIndex += 1;
 		let event: VadEvent | null = null;
+		let candidate: boolean;
 
 		if (this.currentState === 'silence') {
-			const candidate =
+			candidate =
 				rms >= enterThreshold &&
 				zeroCrossingRate >= this.config.minZeroCrossingRate &&
 				zeroCrossingRate <= this.config.maxZeroCrossingRate;
@@ -366,6 +378,7 @@ export class VoiceActivityDetector {
 		} else {
 			// Hysteresis: anything not under the exit threshold sustains speech, even
 			// though it would not have been loud enough to open the floor.
+			candidate = !quiet;
 			if (quiet) {
 				this.silenceFrames += 1;
 			} else {
@@ -391,6 +404,7 @@ export class VoiceActivityDetector {
 		return {
 			state: this.currentState,
 			active: this.currentState === 'speech' && this.silenceFrames <= this.config.hangoverFrames,
+			candidate,
 			event,
 			rms,
 			zeroCrossingRate,
