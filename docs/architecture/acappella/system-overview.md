@@ -95,6 +95,38 @@ tabs the renderer does not know about.
 The corollary for the phone: the iPhone never talks to tabs either. It sends a voice event, main
 routes it, and the renderer performs it. One execution path, three possible originators.
 
+### What the executor actually does
+
+`src/main/acappella/dispatch/route-executor.ts` maps each `tabAction` onto one existing channel:
+
+| Decision             | Channel(s)                                                         | Reported action |
+| -------------------- | ------------------------------------------------------------------ | --------------- |
+| `new` with a prompt  | `remote:newAITabWithPrompt`, then `remote:renameTab` for `tabName` | `created`       |
+| `new` with no prompt | `remote:newTab`, then `remote:renameTab`                           | `created`       |
+| `current`            | `remote:selectSession`, then `remote:executeCommand`               | `focused`       |
+| `recall`             | `remote:selectSession`, then `remote:executeCommand`               | `recalled`      |
+
+Creation and prompt delivery are one atomic renderer operation because a separate create-then-send
+leaves an orphan tab behind whenever the send is dropped. The `dispatch` event is emitted only
+after the renderer answers, so "opened a new tab named Auth Refactor on agent Backend" is a report,
+not a hope.
+
+Four rules the executor holds to, all of them about refusing to guess:
+
+- **The roster is re-read at dispatch time**, not carried over from routing. The user can close a
+  tab while a decision is in flight, and the fresh read is the authority.
+- **A recalled tab that is gone is a `dispatch-failed`**, never a quiet landing in some other tab.
+  Recall is a promise to return somewhere specific.
+- **A `conductor` target resolves to the session's bound agent, then the agent the desktop is
+  showing, then the only agent there is.** With several agents and no signal, it fails: a spoken
+  instruction in the wrong repository is worse than an error.
+- **A rejected delivery receipt is a failure, not a `promptSent: false` footnote.** The session
+  holds the floor open waiting for a reply, so a dropped prompt has to be reported as one.
+
+The renderer round trip sits behind a `VoiceRendererBridge` interface, for the same reason the
+session service takes its providers injected: the routing rules are testable without an Electron
+window, and the phone leg gets the same executor with a different bridge.
+
 ## Provider tiers
 
 A Cappella supports two fundamentally different pipeline shapes behind one set of interfaces.
