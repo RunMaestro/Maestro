@@ -11,6 +11,7 @@ import { isCoarsePointer } from '../../utils/touch';
 import { getTabKindColor } from './tabBarUtils';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
+import { TabVoiceIndicator } from './TabVoiceIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
 
 export interface AITabProps {
@@ -539,6 +540,11 @@ export const AITab = memo(function AITab({
 
 			{/* Inline wizard indicator - purple wand (sparkles while generating Auto Run docs) */}
 			<WizardIndicator active={isWizard} generatingDocs={!!tab.wizardState?.isGeneratingDocs} />
+
+			{/* A Cappella - this is the tab voice-dispatched prompts are landing in.
+			    Reads the voice store itself and renders null when the Encore Feature
+			    is off, so nothing needs threading through the tab bar. */}
+			<TabVoiceIndicator tabId={tabId} theme={theme} />
 
 			{/* Generating name indicator - spinning loader while tab name is being generated */}
 			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}

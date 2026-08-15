@@ -20,6 +20,7 @@ import {
 	Zap,
 	Fingerprint,
 	AppWindow,
+	Mic,
 	Plus,
 	Pencil,
 	Check,
@@ -28,6 +29,7 @@ import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
+import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
 import { GitRunningBadge } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
@@ -226,6 +228,7 @@ export function SessionContextMenu({
 	// branch pill's dropdown uses, so both entry points behave identically -
 	// here they act on the right-clicked agent rather than the active one.
 	const gitActions = useGitAgentActions(session);
+	const voiceActions = useVoiceAgentActions(session);
 
 	// `onCreatePR` is the worktree-child path that App already wires up; for any
 	// other git agent the shared action opens the same modal for this session.
@@ -589,6 +592,36 @@ export function SessionContextMenu({
 						</div>
 					)}
 				</div>
+			)}
+
+			{/* A Cappella - the same "Talk to this agent" entry the header and the
+			    command palette offer, off the one hook, so the three cannot drift. */}
+			{voiceActions.enabled && (
+				<>
+					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+					<button
+						type="button"
+						onClick={() => {
+							// Fire-and-forget: starting a session opens a microphone and
+							// reports its own refusals, so the menu closes right away.
+							void (voiceActions.hasVoiceFloor
+								? voiceActions.endVoiceSession()
+								: voiceActions.talkToAgent());
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-context-talk-to-agent"
+					>
+						<Mic className="w-3.5 h-3.5" />
+						{voiceActions.hasVoiceFloor ? 'End voice session' : 'Talk to this agent'}
+						{voiceActions.wakePhrase && (
+							<span className="ml-auto text-[10px] opacity-60 truncate max-w-[120px]">
+								&ldquo;{voiceActions.wakePhrase}&rdquo;
+							</span>
+						)}
+					</button>
+				</>
 			)}
 
 			{/* Git actions - mirrors the header branch pill's dropdown so the same

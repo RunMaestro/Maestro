@@ -1,50 +1,58 @@
 /**
  * VoiceHud - the one on-screen surface for an A Cappella voice session.
  *
- * Mounted once, app-wide (next to the other single-instance hosts in
- * AppShell), gated on the `aCappella` Encore flag. It renders nothing until
- * there is something to show: a live session, an error worth reading, or the
- * dev harness in a development build.
+ * Mounted once, app-wide (next to the other single-instance hosts in AppShell)
+ * and gated on the `aCappella` Encore flag. It owns the `acappella:event`
+ * subscription, so a second mount would project every protocol event twice. It
+ * renders nothing until there is something to show: a live session, an error
+ * worth reading, or the dev harness in a development build.
  *
- * The indicator has to differ between LISTENING and SPEAKING at a glance, and
- * it must differ by more than colour: a voice UI is read from across the room,
- * and both states are drawn from the same theme accent. Listening is an outlined
- * ring around a microphone, filled by a disc that tracks the real input level;
- * speaking is a filled accent disc around a speaker, plus a sentence counter.
- * Every derived foreground runs through `readableTextOn()`, since the fills come
- * from the theme.
+ * **Minimize and close are different actions, and must stay that way.**
+ * Minimize collapses the widget to a small indicator and leaves the session
+ * running; close ENDS the session. That pairing is the opposite of the media
+ * player's, and deliberately so: there, sound is the evidence that something is
+ * still running, so hiding the widget is safe. Here, silence is - a microphone
+ * with no visible surface is one the user cannot see, so the button that hides
+ * the widget must leave an indicator behind, and the button that looks like an
+ * exit must actually close the floor.
  *
- * The level meter is the reason `VoiceIndicator` reads the store itself instead
- * of taking a prop. `audio-level` lands ~20 times a second, and a subscription
- * in the HUD body would re-render the transcript, the feed, and the harness at
- * meter rate to move a disc a few pixels. The subscription belongs in the
- * smallest component that draws the number.
- *
- * Closing the HUD ENDS the session. It is not a hide: an open floor with no
- * visible surface is a microphone the user cannot see, and the media player's
- * lesson (a control that hides itself must not silently keep running) points
- * the other way here, because there the sound is the evidence and here silence
- * is.
+ * The widget is draggable and remembers where it was put, through
+ * `usePointerDrag` (the same gesture the Concerto surfaces use) and the `ui`
+ * section of the A Cappella settings blob.
  */
 
-import { useCallback, useMemo } from 'react';
-import { Mic, MicOff, Radio, Volume2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
+import { Minus, MicOff } from 'lucide-react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
+import {
+	VOICE_HUD_STATE_DESCRIPTIONS,
+	VOICE_HUD_STATE_LABELS,
+	voiceHudVisualState,
+} from '../../../shared/acappella/hud-state';
+import {
+	clampVoiceHudPosition,
+	defaultVoiceHudPosition,
+	type VoiceHudPosition,
+} from '../../../shared/acappella/ui-prefs';
+import { DEFAULT_TTS_VOLUME } from '../../../shared/acappella/voice-controls';
 import type { MicIssue } from '../../../shared/acappella/protocol';
 import { micSettingsLabel, micSettingsUrl } from '../../../shared/acappella/mic-settings';
 import { getPlatform } from '../../utils/platformUtils';
-import {
-	selectVoiceAudioLevel,
-	selectVoiceScopeLabel,
-	useVoiceSessionStore,
-	type VoiceFeedEntry,
-} from '../../stores/voiceSessionStore';
+import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { VoiceDevHarness } from './VoiceDevHarness';
+import { VoiceHudControls } from './VoiceHudControls';
+import { VoiceIndicator } from './VoiceIndicator';
+import { VoiceTranscript } from './VoiceTranscript';
+import { useVoiceScope } from './useVoiceScope';
 import { useVoiceSession } from './useVoiceSession';
 
 export interface VoiceHudProps {
@@ -52,35 +60,22 @@ export interface VoiceHudProps {
 	/** The A Cappella Encore flag. False renders nothing and subscribes to nothing. */
 	enabled: boolean;
 	/**
-	 * Show the dev harness. Defaults to the development build: the harness is
-	 * the only way to drive a session in Phase 01 (there is no hotkey and no
-	 * microphone yet), and it has no place in a production window.
+	 * Show the dev harness. Defaults to the development build: it is the only way
+	 * to drive a session without a microphone, and it has no place in a production
+	 * window.
 	 */
 	showDevHarness?: boolean;
 }
 
-/** Short, spoken-English label per state. The HUD is read at a glance. */
-const STATE_LABELS: Record<string, string> = {
-	idle: 'Idle',
-	arming: 'Waking',
-	listening: 'Listening',
-	transcribing: 'Heard you',
-	routing: 'Thinking',
-	dispatching: 'Working',
-	speaking: 'Speaking',
-	interrupted: 'Interrupted',
-	error: 'Error',
-};
+/** Widget width. Fixed: this is a status readout, not a document. */
+const HUD_WIDTH = 340;
 
-const FEED_LABELS: Record<VoiceFeedEntry['kind'], string> = {
-	you: 'You',
-	assistant: 'Agent',
-	system: 'Maestro',
-};
+/** Height used for clamping before the widget has been measured. */
+const HUD_FALLBACK_HEIGHT = 160;
 
 /**
- * What a broken microphone says. Plain, specific, and free of alarm language:
- * a denied permission is a setting the user has not turned on yet, not a crash,
+ * What a broken microphone says. Plain, specific, and free of alarm language: a
+ * denied permission is a setting the user has not turned on yet, not a crash,
  * and dressing it in error red teaches people to ignore the colour that matters.
  */
 const MIC_ISSUE_MESSAGES: Record<MicIssue, string> = {
@@ -90,25 +85,15 @@ const MIC_ISSUE_MESSAGES: Record<MicIssue, string> = {
 	unavailable: 'Audio capture is unavailable on this system.',
 };
 
-/**
- * Where the level sits when the meter is full. Speech from a laptop mic at arm's
- * length lands around 0.05 to 0.2 RMS, so a bar scaled linearly to 1.0 would
- * barely move; the square root spends the range where the voice actually is.
- */
-const METER_FULL_SCALE = 0.25;
-
-function meterFill(level: number): number {
-	if (!Number.isFinite(level) || level <= 0) return 0;
-	return Math.min(1, Math.sqrt(level / METER_FULL_SCALE));
+function viewport() {
+	return { width: window.innerWidth, height: window.innerHeight };
 }
 
 export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const actions = useVoiceSession(enabled);
 
 	const state = useVoiceSessionStore((s) => s.state);
-	const scopeLabel = useVoiceSessionStore(selectVoiceScopeLabel);
 	const partial = useVoiceSessionStore((s) => s.partialTranscript);
-	const feed = useVoiceSessionStore((s) => s.feed);
 	const speech = useVoiceSessionStore((s) => s.speech);
 	const mic = useVoiceSessionStore((s) => s.mic);
 	const error = useVoiceSessionStore((s) => s.error);
@@ -117,20 +102,150 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const dismissed = useVoiceSessionStore((s) => s.dismissed);
 	const setDismissed = useVoiceSessionStore((s) => s.setDismissed);
 
+	const loadPrefs = useVoiceUiStore((s) => s.load);
+	const storedPosition = useVoiceUiStore((s) => s.hudPosition);
+	const setHudPosition = useVoiceUiStore((s) => s.setHudPosition);
+	const transcriptVisible = useVoiceUiStore((s) => s.transcriptVisible);
+	const toggleTranscript = useVoiceUiStore((s) => s.toggleTranscript);
+	const minimized = useVoiceUiStore((s) => s.minimized);
+	const setMinimized = useVoiceUiStore((s) => s.setMinimized);
+	const minimizeBehavior = useVoiceUiStore((s) => s.minimizeBehavior);
+	const muted = useVoiceUiStore((s) => s.muted);
+	const setMuted = useVoiceUiStore((s) => s.setMuted);
+	const holdThresholdMs = useVoiceUiStore((s) => s.holdThresholdMs);
+
+	const scope = useVoiceScope(theme);
+	// `HTMLElement`, not `HTMLDivElement`: the collapsed form is a button, and the
+	// clamp measures whichever one is currently mounted.
+	const rootRef = useRef<HTMLElement | null>(null);
+	// A callback ref, because the same ref is attached to a <div> in the expanded
+	// form and a <button> in the collapsed one, and a typed RefObject can only be
+	// one of those.
+	const setRootRef = useCallback((el: HTMLElement | null) => {
+		rootRef.current = el;
+	}, []);
+	const startDrag = usePointerDrag();
+
 	const devHarness = showDevHarness ?? process.env.NODE_ENV === 'development';
 	const active = isVoiceSessionActive(state);
+	const visualState = voiceHudVisualState(state);
 
-	// Escape and the ESC pill do the same thing, from one callback: end the
-	// session, then hide. Stopping an already-idle session is a no-op in the
-	// service, so the harness case (idle, HUD open) closes cleanly too.
+	// Live geometry. Seeded from the remembered position, or parked bottom-right.
+	const [position, setPosition] = useState<VoiceHudPosition | null>(null);
+	const positionRef = useRef<VoiceHudPosition | null>(null);
+	positionRef.current = position;
+
+	useEffect(() => {
+		if (!enabled) return;
+		void loadPrefs();
+	}, [enabled, loadPrefs]);
+
+	const measuredSize = useCallback(
+		() => ({
+			width: HUD_WIDTH,
+			height: rootRef.current?.offsetHeight || HUD_FALLBACK_HEIGHT,
+		}),
+		[]
+	);
+
+	// Adopt the stored position once it has loaded, pulled back on screen. A
+	// position saved on a monitor that is no longer attached is the reason this
+	// clamps rather than trusts.
+	useEffect(() => {
+		setPosition(
+			storedPosition
+				? clampVoiceHudPosition(storedPosition, measuredSize(), viewport())
+				: defaultVoiceHudPosition(measuredSize(), viewport())
+		);
+	}, [measuredSize, storedPosition]);
+
+	// A window resize can leave the widget partly or wholly off screen.
+	useEventListener('resize', () =>
+		setPosition((prev) => (prev ? clampVoiceHudPosition(prev, measuredSize(), viewport()) : prev))
+	);
+
+	const onDragHandle = useCallback(
+		(event: ReactPointerEvent<HTMLElement>) => {
+			const origin = positionRef.current;
+			if (!origin) return;
+			startDrag(
+				event,
+				(dx, dy) =>
+					setPosition(
+						clampVoiceHudPosition(
+							{ top: origin.top + dy, left: origin.left + dx },
+							measuredSize(),
+							viewport()
+						)
+					),
+				{
+					// Header buttons still click: without this, pressing minimize would
+					// start a drag and swallow the click.
+					ignoreButtons: true,
+					// Persist on release only, so a drag is one settings write instead of
+					// one per pointer move.
+					onEnd: () => {
+						const next = positionRef.current;
+						if (next) void setHudPosition(next);
+					},
+				}
+			);
+		},
+		[measuredSize, setHudPosition, startDrag]
+	);
+
+	// Escape and the ESC pill do exactly the same thing, from one callback: end
+	// the session, then hide. Stopping an already-idle session is a no-op in the
+	// service, so closing the harness (idle, HUD open) works too.
 	const handleClose = useCallback(() => {
 		void actions.stop();
+		setMinimized(false);
 		setDismissed(true);
-	}, [actions, setDismissed]);
+	}, [actions, setDismissed, setMinimized]);
 
-	// Non-blocking: the HUD floats over the workspace while the user keeps
-	// typing, so it takes neither focus nor the lower layers' clicks. It still
-	// registers, so Escape reaches it before the surfaces underneath.
+	// The other button. It does NOT touch the session.
+	const handleMinimize = useCallback(() => setMinimized(true), [setMinimized]);
+
+	const handleStart = useCallback(() => {
+		void actions.start();
+	}, [actions]);
+
+	const handleStop = useCallback(() => {
+		void actions.stop();
+	}, [actions]);
+
+	const handleInterrupt = useCallback(() => {
+		void actions.interrupt();
+	}, [actions]);
+
+	/**
+	 * Mute applies to the live output and is deliberately not persisted: a mute
+	 * that survived a restart is a voice assistant that has silently stopped
+	 * talking to you, with a button you have long forgotten pressing.
+	 */
+	const handleToggleMute = useCallback(() => {
+		const next = !muted;
+		setMuted(next);
+		void window.maestro.voice.setVolume(next ? 0 : DEFAULT_TTS_VOLUME).catch(() => undefined);
+	}, [muted, setMuted]);
+
+	// Auto-idle: collapse when a turn finishes, expand the moment there is
+	// something to show again. Never closes - see the header comment.
+	useEffect(() => {
+		if (minimizeBehavior !== 'auto-idle') return;
+		if (visualState === 'idle-armed') setMinimized(true);
+		else setMinimized(false);
+	}, [minimizeBehavior, setMinimized, visualState]);
+
+	// A new session un-hides the widget. Otherwise a hotkey or a wake word would
+	// open a microphone behind a HUD the user dismissed an hour ago.
+	useEffect(() => {
+		if (active) setDismissed(false);
+	}, [active, setDismissed]);
+
+	// Non-blocking: the HUD floats over the workspace while the user keeps typing,
+	// so it takes neither focus nor the lower layers' clicks, and it never traps
+	// focus. It still registers, so Escape reaches it before the surfaces beneath.
 	useModalLayer(MODAL_PRIORITIES.VOICE_HUD, 'Voice HUD', handleClose, {
 		enabled: enabled && !dismissed && (active || devHarness),
 		blocksLowerLayers: false,
@@ -138,10 +253,6 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 		focusTrap: 'none',
 	});
 
-	const accentText = useMemo(
-		() => readableTextOn(theme.colors.accent, [theme.colors.bgSidebar, theme.colors.bgMain]),
-		[theme.colors.accent, theme.colors.bgSidebar, theme.colors.bgMain]
-	);
 	const warningText = useMemo(
 		() => readableTextOn(theme.colors.warning, [theme.colors.bgSidebar]),
 		[theme.colors.warning, theme.colors.bgSidebar]
@@ -160,235 +271,210 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	if (!enabled || dismissed) return null;
 	if (!active && !devHarness && !error && !micIssue) return null;
 
-	const listening = state === 'listening' || state === 'arming';
-	const speaking = state === 'speaking';
 	const spoken = speech ? speech.sentences.length : 0;
 	// The mic row says the same thing as an `audio-capture-failed` session error,
-	// only in the calmer words and with the button that fixes it. Showing both
-	// would put the identical sentence on screen twice, one of them in red.
+	// only in calmer words and with the button that fixes it. Showing both would
+	// put the identical sentence on screen twice, one of them in red.
 	const showError = error && !(micIssue && error.code === 'audio-capture-failed');
 
-	return (
+	const stateLabel = VOICE_HUD_STATE_LABELS[visualState];
+	const placement = position ?? { top: 0, left: 0 };
+
+	/*
+	 * The live region lives outside the collapsed/expanded branch on purpose:
+	 * minimizing must not stop a screen reader being told that the microphone
+	 * just opened. `polite` rather than `assertive` because state changes are
+	 * frequent and none of them are emergencies.
+	 */
+	const liveRegion = (
 		<div
-			data-testid="voice-hud"
-			className="fixed bottom-4 right-4 z-[90000] w-[340px] rounded-lg border shadow-xl select-none overflow-hidden"
-			style={{
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: active ? theme.colors.accent : theme.colors.border,
-				color: theme.colors.textMain,
-			}}
+			data-testid="voice-hud-live-region"
+			role="status"
+			aria-live="polite"
+			aria-atomic="true"
+			className="sr-only"
 		>
-			{/* Header: what it is bound to, what it is doing, and the way out. */}
-			<div
-				className="flex items-center gap-2 px-3 py-2 border-b"
-				style={{ borderColor: theme.colors.border }}
-			>
-				<VoiceIndicator
-					theme={theme}
-					listening={listening}
-					speaking={speaking}
-					deviceLabel={mic?.capturing ? mic.deviceLabel : null}
-				/>
-				<div className="min-w-0 flex-1">
-					<div className="text-xs font-bold truncate" style={{ color: accentText }}>
-						{STATE_LABELS[state] ?? state}
-					</div>
-					<div className="text-[10px] truncate" style={{ color: theme.colors.textDim }}>
-						{scopeLabel}
-					</div>
-				</div>
-				{speaking && speech && (
-					<span
-						data-testid="voice-hud-speech-progress"
-						className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
-						style={{ backgroundColor: theme.colors.accent, color: onAccent }}
-					>
-						{spoken} of {speech.sentenceCount}
-					</span>
-				)}
-				<EscCloseButton
-					theme={theme}
-					onClose={handleClose}
-					label="End voice session (Esc)"
-					testId="voice-hud-close"
-				/>
-			</div>
-
-			{/* Anything the user is running that they did not ask for. */}
-			{substitutions.length > 0 && (
-				<div
-					data-testid="voice-hud-substitutions"
-					className="px-3 py-1.5 text-[10px] border-b"
-					style={{ borderColor: theme.colors.border, color: warningText }}
-				>
-					{substitutions.map((sub) => (
-						<div key={sub.role} className="truncate">
-							{sub.message}
-						</div>
-					))}
-				</div>
-			)}
-
-			{lostEvents && (
-				<div
-					data-testid="voice-hud-gap"
-					className="px-3 py-1.5 text-[10px] border-b"
-					style={{ borderColor: theme.colors.border, color: warningText }}
-				>
-					Some voice events were lost; this transcript may be incomplete.
-				</div>
-			)}
-
-			{micIssue && <MicIssueNotice theme={theme} issue={micIssue} color={warningText} />}
-
-			{showError && error && (
-				<div
-					data-testid="voice-hud-error"
-					className="px-3 py-1.5 text-[10px] border-b select-text"
-					style={{ borderColor: theme.colors.border, color: errorText }}
-				>
-					{error.message}
-				</div>
-			)}
-
-			{/* Transcript. Content-driven, so it opts back into selection. */}
-			<div
-				data-testid="voice-hud-transcript"
-				className="max-h-48 overflow-y-auto px-3 py-2 space-y-1.5 select-text"
-			>
-				{feed.length === 0 && !partial && (
-					<div className="text-[11px] italic" style={{ color: theme.colors.textDim }}>
-						{active ? 'Say something.' : 'No session.'}
-					</div>
-				)}
-				{feed.map((entry) => (
-					<div key={entry.id} className="text-[11px] leading-snug">
-						<span
-							className="font-bold mr-1"
-							style={{
-								color: entry.kind === 'you' ? accentText : theme.colors.textDim,
-							}}
-						>
-							{FEED_LABELS[entry.kind]}
-						</span>
-						<span style={{ color: theme.colors.textMain }}>{entry.text}</span>
-					</div>
-				))}
-				{partial && (
-					<div
-						data-testid="voice-hud-partial"
-						className="text-[11px] leading-snug italic"
-						style={{ color: theme.colors.textDim }}
-					>
-						{partial}
-					</div>
-				)}
-				{speech && speech.sentences.length > 0 && (
-					<div data-testid="voice-hud-spoken" className="text-[11px] leading-snug">
-						{speech.sentences.map((sentence, index) => (
-							<span key={index} style={{ color: accentText }}>
-								{sentence}{' '}
-							</span>
-						))}
-						{speech.endedReason === 'cancelled' && (
-							<span style={{ color: theme.colors.textDim }}>(cut off)</span>
-						)}
-					</div>
-				)}
-			</div>
-
-			{devHarness && <VoiceDevHarness theme={theme} actions={actions} />}
+			{`${stateLabel}. ${VOICE_HUD_STATE_DESCRIPTIONS[visualState]} Bound to ${scope.label}${
+				scope.tabLabel ? `, tab ${scope.tabLabel}` : ''
+			}.`}
 		</div>
 	);
-}
 
-/**
- * Listening and speaking must be distinguishable without reading the label and
- * without relying on hue alone, so they differ in SHAPE and in motion: a ring
- * breathing with the room versus a filled disc.
- */
-function VoiceIndicator({
-	theme,
-	listening,
-	speaking,
-	deviceLabel,
-}: {
-	theme: Theme;
-	listening: boolean;
-	speaking: boolean;
-	/** The microphone in use, shown on hover. Null when nothing is being captured. */
-	deviceLabel: string | null;
-}) {
-	// Read here rather than in the HUD body: this is the only thing that moves at
-	// meter rate, so it is the only thing that should re-render at meter rate.
-	const level = useVoiceSessionStore(selectVoiceAudioLevel);
-	const onAccent = readableTextOn(theme.colors.accentForeground, [theme.colors.accent]);
-
-	if (speaking) {
+	if (minimized) {
 		return (
-			<div
-				data-testid="voice-indicator-speaking"
-				aria-label="Speaking"
-				className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-				style={{ backgroundColor: theme.colors.accent, color: onAccent }}
-			>
-				<Volume2 className="w-4 h-4 animate-pulse" />
-			</div>
-		);
-	}
-
-	if (listening) {
-		const fill = meterFill(level);
-		return (
-			<div
-				data-testid="voice-indicator-listening"
-				data-level={fill.toFixed(2)}
-				aria-label="Listening"
-				title={deviceLabel ?? undefined}
-				role="meter"
-				aria-valuemin={0}
-				aria-valuemax={1}
-				aria-valuenow={Number(fill.toFixed(2))}
-				className="relative w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-				style={{
-					border: `2px solid ${theme.colors.accent}`,
-					color: readableTextOn(theme.colors.accent, [theme.colors.bgSidebar]),
-				}}
-			>
-				{/*
-				 * The level itself, behind the icon. A real signal is worth more than
-				 * `animate-pulse` was: a ring that moves with the room proves the
-				 * microphone is live, which is the single question a user has while
-				 * looking at this thing. It floors at a visible sliver so an open floor
-				 * in a silent room still reads as open rather than as switched off.
-				 */}
-				<span
-					data-testid="voice-hud-level"
-					aria-hidden="true"
-					className="absolute inset-0 m-auto rounded-full pointer-events-none"
+			<>
+				{liveRegion}
+				<button
+					type="button"
+					ref={setRootRef}
+					data-testid="voice-hud-minimized"
+					aria-label={`Voice session: ${stateLabel}. Restore the voice HUD.`}
+					title={`Voice session: ${stateLabel} (${scope.label})`}
+					onClick={() => setMinimized(false)}
+					className="fixed z-[90000] flex items-center gap-1.5 px-2 py-1.5 rounded-full border shadow-lg select-none focus:outline-none focus-visible:ring-2"
 					style={{
-						width: '1.25rem',
-						height: '1.25rem',
-						backgroundColor: theme.colors.accent,
-						opacity: 0.18 + 0.5 * fill,
-						transform: `scale(${(0.2 + 0.8 * fill).toFixed(3)})`,
-						transition: 'transform 80ms linear, opacity 80ms linear',
+						top: placement.top,
+						left: placement.left,
+						backgroundColor: theme.colors.bgSidebar,
+						borderColor: active ? theme.colors.accent : theme.colors.border,
+						color: theme.colors.textMain,
+						visibility: position ? undefined : 'hidden',
 					}}
-				/>
-				<Mic className="w-3.5 h-3.5 relative" />
-			</div>
+				>
+					<VoiceIndicator theme={theme} state={visualState} size={20} />
+					<span className="text-[10px] font-medium truncate max-w-[120px]">{scope.label}</span>
+				</button>
+			</>
 		);
 	}
 
 	return (
-		<div
-			data-testid="voice-indicator-idle"
-			aria-label="Idle"
-			className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-			style={{ border: `2px solid ${theme.colors.border}`, color: theme.colors.textDim }}
-		>
-			<Radio className="w-3.5 h-3.5" />
-		</div>
+		<>
+			{liveRegion}
+			<div
+				ref={setRootRef}
+				data-testid="voice-hud"
+				className="fixed z-[90000] rounded-lg border shadow-xl select-none overflow-hidden"
+				style={{
+					top: placement.top,
+					left: placement.left,
+					width: HUD_WIDTH,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: active ? theme.colors.accent : theme.colors.border,
+					color: theme.colors.textMain,
+					// Hidden until the first placement lands, so the widget does not flash
+					// in the top-left corner on the frame before its position is known.
+					visibility: position ? undefined : 'hidden',
+				}}
+			>
+				{/* Header: what it is bound to, what it is doing, and the two ways out.
+				    It doubles as the drag handle. */}
+				<div
+					data-testid="voice-hud-header"
+					className="flex items-center gap-2 px-3 py-2 border-b"
+					style={{ borderColor: theme.colors.border, cursor: 'grab' }}
+					onPointerDown={onDragHandle}
+					title="Drag to move"
+				>
+					<VoiceIndicator
+						theme={theme}
+						state={visualState}
+						deviceLabel={mic?.capturing ? mic.deviceLabel : null}
+					/>
+					<div className="min-w-0 flex-1">
+						{/* The scope is the prominent line, not the state: the state is
+						    obvious from the indicator, and WHERE you are talking is not. */}
+						<div
+							data-testid="voice-hud-scope"
+							className="text-xs font-bold truncate"
+							style={{ color: scope.color }}
+						>
+							{scope.label}
+							{scope.tabLabel && (
+								<span className="font-normal opacity-80"> / {scope.tabLabel}</span>
+							)}
+						</div>
+						<div className="text-[10px] truncate" style={{ color: theme.colors.textDim }}>
+							{stateLabel}
+						</div>
+					</div>
+					{visualState === 'speaking' && speech && (
+						<span
+							data-testid="voice-hud-speech-progress"
+							className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+							style={{ backgroundColor: theme.colors.accent, color: onAccent }}
+						>
+							{spoken} of {speech.sentenceCount}
+						</span>
+					)}
+					<button
+						type="button"
+						data-testid="voice-hud-minimize"
+						aria-label="Minimize the voice HUD (the session keeps running)"
+						title="Minimize (the session keeps running)"
+						onClick={handleMinimize}
+						className="p-0.5 rounded shrink-0 hover:bg-white/10 focus:outline-none focus-visible:ring-2"
+						style={{ color: theme.colors.textDim }}
+					>
+						<Minus className="w-3.5 h-3.5" />
+					</button>
+					<EscCloseButton
+						theme={theme}
+						onClose={handleClose}
+						label="End voice session (Esc)"
+						testId="voice-hud-close"
+					/>
+				</div>
+
+				{/* Anything the user is running that they did not ask for. */}
+				{substitutions.length > 0 && (
+					<div
+						data-testid="voice-hud-substitutions"
+						className="px-3 py-1.5 text-[10px] border-b"
+						style={{ borderColor: theme.colors.border, color: warningText }}
+					>
+						{substitutions.map((sub) => (
+							<div key={sub.role} className="truncate">
+								{sub.message}
+							</div>
+						))}
+					</div>
+				)}
+
+				{lostEvents && (
+					<div
+						data-testid="voice-hud-gap"
+						className="px-3 py-1.5 text-[10px] border-b"
+						style={{ borderColor: theme.colors.border, color: warningText }}
+					>
+						Some voice events were lost; this transcript may be incomplete.
+					</div>
+				)}
+
+				{micIssue && <MicIssueNotice theme={theme} issue={micIssue} color={warningText} />}
+
+				{showError && error && (
+					<div
+						data-testid="voice-hud-error"
+						className="px-3 py-1.5 text-[10px] border-b select-text"
+						style={{ borderColor: theme.colors.border, color: errorText }}
+					>
+						{error.message}
+					</div>
+				)}
+
+				{/* The last thing heard, always visible. The full scrollback is behind
+				    the transcript toggle; this one line is what stops the collapsed HUD
+				    from being a widget with no content at all. */}
+				{!transcriptVisible && (partial || spoken > 0) && (
+					<div
+						data-testid="voice-hud-latest"
+						className="px-3 py-1.5 text-[11px] leading-snug truncate select-text"
+						style={{ color: partial ? theme.colors.textDim : theme.colors.textMain }}
+					>
+						{partial || speech?.sentences[speech.sentences.length - 1]}
+					</div>
+				)}
+
+				{transcriptVisible && <VoiceTranscript theme={theme} />}
+
+				<VoiceHudControls
+					theme={theme}
+					state={visualState}
+					active={active}
+					transcriptVisible={transcriptVisible}
+					muted={muted}
+					holdThresholdMs={holdThresholdMs}
+					onStart={handleStart}
+					onStop={handleStop}
+					onInterrupt={handleInterrupt}
+					onToggleTranscript={() => void toggleTranscript()}
+					onToggleMute={handleToggleMute}
+				/>
+
+				{devHarness && <VoiceDevHarness theme={theme} actions={actions} />}
+			</div>
+		</>
 	);
 }
 
@@ -427,7 +513,7 @@ function MicIssueNotice({ theme, issue, color }: { theme: Theme; issue: MicIssue
 					type="button"
 					data-testid="voice-hud-mic-settings"
 					onClick={openSettings}
-					className="shrink-0 px-1.5 py-0.5 rounded border text-[10px] hover:opacity-80"
+					className="shrink-0 px-1.5 py-0.5 rounded border text-[10px] hover:opacity-80 focus:outline-none focus-visible:ring-2"
 					style={{ borderColor: theme.colors.border, color }}
 				>
 					{micSettingsLabel(platform)}

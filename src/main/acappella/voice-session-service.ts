@@ -162,6 +162,14 @@ export interface VoiceSessionServiceOptions {
 	maxSpokenSentences?: number;
 	/** Hard cap on sentences spoken per turn, across every chunk of one reply. */
 	maxSentencesPerTurn?: number;
+	/**
+	 * The voice and rate the user chose, read fresh for every sentence.
+	 *
+	 * A getter, not a value, so the Settings sliders take effect on the NEXT
+	 * SPOKEN SENTENCE rather than on the next session. A voice assistant that
+	 * needs restarting to change its own speed is one nobody will ever tune.
+	 */
+	getSpeechOptions?: () => { voiceId?: string; rate?: number };
 	/** Utterances retained for `VoiceRouteContext.recentUtterances`. */
 	utteranceHistoryLimit?: number;
 	/**
@@ -269,6 +277,7 @@ export class VoiceSessionService {
 	private readonly executeRoute?: VoiceRouteExecutor;
 	private readonly maxSpokenSentences: number;
 	private readonly maxSentencesPerTurn?: number;
+	private readonly getSpeechOptions?: () => { voiceId?: string; rate?: number };
 	private readonly utteranceHistoryLimit: number;
 	private readonly onSpeechChunk?: (chunk: TtsChunk) => void;
 	private readonly agentReplyStream?: AgentReplyStream;
@@ -372,6 +381,7 @@ export class VoiceSessionService {
 		this.executeRoute = options.executeRoute;
 		this.maxSpokenSentences = options.maxSpokenSentences ?? DEFAULT_MAX_SPOKEN_SENTENCES;
 		this.maxSentencesPerTurn = options.maxSentencesPerTurn;
+		this.getSpeechOptions = options.getSpeechOptions;
 		this.utteranceHistoryLimit = options.utteranceHistoryLimit ?? DEFAULT_UTTERANCE_HISTORY;
 		this.onSpeechChunk = options.onSpeechChunk;
 		this.checkReadiness = options.checkReadiness;
@@ -1214,6 +1224,7 @@ export class VoiceSessionService {
 		const scheduler = new SpeechScheduler({
 			tts: this.providers.tts,
 			maxSentencesPerTurn: this.maxSentencesPerTurn,
+			speechOptions: this.getSpeechOptions,
 			onStart: (event) =>
 				this.emit('speak-start', {
 					utteranceId: event.utteranceId,

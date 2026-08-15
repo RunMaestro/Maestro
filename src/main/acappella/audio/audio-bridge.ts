@@ -86,6 +86,8 @@ export class VoiceAudioBridge {
 	 * for exactly one of them: the `start-capture` that a session start races.
 	 */
 	private hostReady = false;
+	/** Last volume asked for, replayed on `ready`. Null means never set. */
+	private playbackVolume: number | null = null;
 	private disposed = false;
 
 	constructor(options: VoiceAudioBridgeOptions) {
@@ -214,6 +216,18 @@ export class VoiceAudioBridge {
 	}
 
 	/**
+	 * Set the base output volume (0 to 1) the assistant speaks at.
+	 *
+	 * Its own command rather than a duck, because it has to survive every
+	 * barge-in: `flush()` restores gain, and a volume expressed as a duck would be
+	 * silently undone the first time the user interrupted.
+	 */
+	setPlaybackVolume(volume: number): void {
+		this.playbackVolume = volume;
+		this.send({ kind: 'set-volume', volume });
+	}
+
+	/**
 	 * Stop capture, release the host, and drop the subscription. Safe to repeat.
 	 *
 	 * The disposed flag is set LAST on purpose: `pipeline.dispose()` is what sends
@@ -291,6 +305,13 @@ export class VoiceAudioBridge {
 	 */
 	private onHostReady(): void {
 		this.hostReady = true;
+		// Replayed for the same reason capture is: the volume is normally set the
+		// moment a session starts, which is before the host window has a listener.
+		// Dropping it would give the user's first sentence the default level and
+		// silently un-mute a muted session.
+		if (this.playbackVolume !== null) {
+			this.send({ kind: 'set-volume', volume: this.playbackVolume });
+		}
 		if (!this.pipeline.isRunning) return;
 		logger.debug('Audio host became ready mid-capture; re-requesting capture', LOG_CONTEXT);
 		this.send({ kind: 'start-capture' });

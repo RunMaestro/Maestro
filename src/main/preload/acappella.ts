@@ -195,6 +195,20 @@ export function createVoiceApi() {
 			ipcRenderer.invoke('acappella:preview-voice', text),
 
 		/**
+		 * Apply an output volume (0 to 1) to the assistant's voice, immediately.
+		 *
+		 * Applies only; it does NOT persist. The volume slider saves the value
+		 * itself and then calls this so the change is audible on the sentence
+		 * currently playing, and the HUD's mute button calls it WITHOUT saving,
+		 * because a mute that survived a restart is a voice assistant that has
+		 * silently stopped talking.
+		 *
+		 * @returns false when there is no audio host to apply it to.
+		 */
+		setVolume: (volume: number): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:set-volume', volume),
+
+		/**
 		 * Open a voice session. Omit the scope for conductor scope. Any live
 		 * session is replaced rather than stacked.
 		 *
