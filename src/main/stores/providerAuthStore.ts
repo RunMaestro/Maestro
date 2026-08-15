@@ -120,6 +120,42 @@ function sanitize(snapshot: ProviderAuthSnapshot): ProviderAuthSnapshot {
 	return next;
 }
 
+/**
+ * One snapshot write, as handed to a {@link onSnapshotChange} listener.
+ * `snapshot` is null when the record was cleared.
+ */
+export interface ProviderAuthChange {
+	key: string;
+	snapshot: ProviderAuthSnapshot | null;
+}
+
+type ProviderAuthChangeListener = (change: ProviderAuthChange) => void;
+
+const changeListeners = new Set<ProviderAuthChangeListener>();
+
+/**
+ * Subscribe to snapshot writes. Returns an unsubscribe function.
+ *
+ * This lives on the store rather than at each writer so no write path can
+ * forget to announce itself: the startup pass, a manual re-probe, and the
+ * reactive `auth_expired` marker all go through `setSnapshot`, so registering
+ * the renderer broadcaster once here covers all three (and whatever writes next).
+ *
+ * Listeners MUST NOT throw - they run inline on the write path.
+ */
+export function onSnapshotChange(listener: ProviderAuthChangeListener): () => void {
+	changeListeners.add(listener);
+	return () => {
+		changeListeners.delete(listener);
+	};
+}
+
+function emitChange(change: ProviderAuthChange): void {
+	for (const listener of changeListeners) {
+		listener(change);
+	}
+}
+
 /** Read one snapshot by identity key. Returns null when nothing is stored. */
 export function getSnapshot(key: string): ProviderAuthSnapshot | null {
 	return getStore().get('snapshots', {})[key] ?? null;
@@ -138,8 +174,10 @@ export function getAllSnapshots(): Record<string, ProviderAuthSnapshot> {
 export function setSnapshot(key: string, snapshot: ProviderAuthSnapshot): void {
 	const store = getStore();
 	const next = { ...store.get('snapshots', {}) };
-	next[key] = sanitize(snapshot);
+	const sanitized = sanitize(snapshot);
+	next[key] = sanitized;
 	store.set('snapshots', next);
+	emitChange({ key, snapshot: sanitized });
 }
 
 /**
@@ -195,6 +233,7 @@ export function clearSnapshot(key: string): void {
 	const next = { ...current };
 	delete next[key];
 	store.set('snapshots', next);
+	emitChange({ key, snapshot: null });
 }
 
 /**
@@ -214,8 +253,10 @@ export function isSnapshotFresh(
 
 /**
  * Test-only hook: reset the cached singleton so the next call constructs a
- * fresh `Store`. Not part of the module's public API.
+ * fresh `Store`, and drop every change listener so one test's broadcaster
+ * cannot fire on another test's writes. Not part of the module's public API.
  */
 export function __resetForTests(): void {
 	_store = null;
+	changeListeners.clear();
 }

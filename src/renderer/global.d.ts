@@ -3600,6 +3600,37 @@ interface MaestroAPI {
 		delete: (filePath: string) => Promise<void>;
 	};
 
+	// Provider Auth API (credential login state, re-probe, change events)
+	providerAuth: {
+		getAll: () => Promise<Record<string, import('../shared/providerAuth').ProviderAuthSnapshot>>;
+		reprobe: (key: string) => Promise<{
+			identities: number;
+			probed: number;
+			skippedFresh: number;
+			skippedNotInstalled: number;
+			byStatus: Record<string, number>;
+			snapshot?: import('../shared/providerAuth').ProviderAuthSnapshot | null;
+		}>;
+		reprobeAll: () => Promise<{
+			identities: number;
+			probed: number;
+			skippedFresh: number;
+			skippedNotInstalled: number;
+			byStatus: Record<string, number>;
+		}>;
+		markLoggedOut: (
+			key: string,
+			detail?: string,
+			source?: import('../shared/providerAuth').ProviderAuthSource
+		) => Promise<import('../shared/providerAuth').ProviderAuthSnapshot | null>;
+		onChange: (
+			callback: (change: {
+				key: string;
+				snapshot: import('../shared/providerAuth').ProviderAuthSnapshot | null;
+			}) => void
+		) => () => void;
+	};
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;

@@ -83,6 +83,15 @@ export interface StartupAuthProbeDeps {
 	now?: () => number;
 	/** See the mode notes in the module docblock. Defaults to `'startup'`. */
 	mode?: 'startup' | 'manual';
+	/**
+	 * Restrict the pass to these identity keys. Omit to probe every identity.
+	 *
+	 * This is how "re-probe just this one credential" is expressed: env
+	 * resolution and dedup stay here rather than being re-derived by the caller,
+	 * which is the only place they are known to be correct. A key no session
+	 * references any more matches nothing and simply probes nothing.
+	 */
+	onlyKeys?: string[];
 }
 
 /** Counts emitted in the single summary log line. */
@@ -298,6 +307,17 @@ export async function runStartupAuthProbe(
 			if (!target) continue;
 			if (!targetsByKey.has(target.identity.key)) {
 				targetsByKey.set(target.identity.key, target);
+			}
+		}
+
+		// Single-identity refresh: keep the dedup above intact and narrow after,
+		// so a filtered pass and a full pass resolve the same target for a key.
+		if (deps.onlyKeys) {
+			const wanted = new Set(deps.onlyKeys);
+			for (const key of Array.from(targetsByKey.keys())) {
+				if (!wanted.has(key)) {
+					targetsByKey.delete(key);
+				}
 			}
 		}
 
