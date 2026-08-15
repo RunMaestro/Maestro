@@ -26,23 +26,30 @@ fast machine hides the failures this list exists to find.
 
 ## Precondition: the layer has to be reachable
 
-> [!IMPORTANT]
-> As of 2026-08-15 this checklist **cannot pass**, and not because of hardware. The Phase 08 speech
-> modules are built, tested, and exported from `src/main/acappella/speech/index.ts`, but nothing
-> calls them. `voice-session-service.ts` still speaks an agent reply the pre-Phase-08 way: it waits
-> for the complete reply text, makes one blocking `brain.converse()` call, and speaks the result
-> (`voice-session-service.ts:507-547`). That is precisely the `buffered` counterfactual the latency
-> harness measures the shipped path against in [[latency-baseline]].
-
-Until the connector exists, checks 1, 2, 4, and 5 below will report the old behaviour rather than a
-regression in the new layer. Confirm the seam is wired before treating any failure here as a bug:
+The speech layer is wired as of 2026-08-15. `VoiceSessionService` composes the translator, the
+scheduler, the barge-in controller, the detail buffer, and the background announcer directly, and
+`src/main/ipc/handlers/acappella.ts` builds the agent-output tap over the process manager and hands
+it in as `agentReplyStream`. Confirm both seams before treating any failure below as a bug:
 
 ```bash
-grep -rn "AgentOutputTap\|ConversationalTranslator\|SpeechScheduler" src/main/acappella \
-  --include=*.ts | grep -v "acappella/speech/" | grep -v __tests__
+grep -rn "ConversationalTranslator\|SpeechScheduler\|BargeInController" \
+  src/main/acappella/voice-session-service.ts
+grep -rn "createAgentOutputTap\|agentReplyStream" src/main/ipc/handlers/acappella.ts
 ```
 
-Nothing outside `speech/` and its tests means the layer is inert.
+Two things can still leave the layer inert at runtime, and both are silent:
+
+- **No process manager.** `agentReplyStream` is optional, and without it the session waits for a
+  whole reply through `submitAgentReply()` - the `buffered` counterfactual the latency harness
+  measures the shipped path against in [[latency-baseline]]. This is the mock tier and the dev
+  harness. In the packaged app the manager is passed from `src/main/ipc/bootstrap/index.ts`.
+- **A focus-only dispatch.** The tap is only armed when the dispatch actually sent a prompt, so
+  "switch to the backend agent" is correctly followed by silence rather than by the tab's previous
+  output being read aloud.
+
+One thing is genuinely not wired yet: `focusTarget`, which is what a "show me" needs to put a tab on
+screen. Nothing supplies it, so check 5's `show` case focuses nothing today. That is a renderer
+round trip and belongs with the Phase 09 tab affordances.
 
 ## What else you need
 

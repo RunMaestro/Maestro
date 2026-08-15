@@ -42,9 +42,13 @@ import { captureException } from '../../../main/utils/sentry';
 import {
 	VoiceSessionService,
 	VoiceDispatchError,
+	type AgentReplyStream,
 	type VoiceDispatchResult,
+	type VoiceFocusTarget,
 	type VoiceRouteExecutor,
 } from '../../../main/acappella/voice-session-service';
+import type { AgentOutputChunk } from '../../../main/acappella/speech';
+import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { RosterAgent, VoiceEvent, VoiceEventType } from '../../../shared/acappella/protocol';
 import type {
 	BrainProvider,
@@ -167,6 +171,17 @@ class FakeTts implements TtsProvider {
 	}
 }
 
+/**
+ * An agent reply the translator will NOT pass through.
+ *
+ * Two lines, so it is markdown-shaped by the passthrough test's own rule, which
+ * is what sends it to the Brain and makes `FakeBrain.spoken` the thing that gets
+ * said. A short single-line reply is passed through untouched on purpose - that
+ * is the "no translation hop for `yes, done`" behaviour, covered on its own in
+ * conversational-translator.test.ts and again below.
+ */
+const AGENT_REPLY = 'Rewrote the stale token check in the auth middleware.\nTwo files changed.';
+
 function makeRoster(): RosterAgent[] {
 	return [
 		{
@@ -194,6 +209,10 @@ function makeHarness(
 		executeRoute?: VoiceRouteExecutor;
 		onSpeechChunk?: (chunk: TtsChunk) => void;
 		checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
+		agentReplyStream?: AgentReplyStream;
+		focusTarget?: VoiceFocusTarget;
+		getBackgroundAnnouncementSetting?: () => BackgroundAnnouncementSetting | undefined;
+		bargeInGuardMs?: number;
 	} = {}
 ): Harness {
 	const stt = new FakeStt();
@@ -216,6 +235,13 @@ function makeHarness(
 		executeRoute: overrides.executeRoute ?? (executor as unknown as VoiceRouteExecutor),
 		onSpeechChunk: overrides.onSpeechChunk,
 		checkReadiness: overrides.checkReadiness,
+		agentReplyStream: overrides.agentReplyStream,
+		focusTarget: overrides.focusTarget,
+		getBackgroundAnnouncementSetting: overrides.getBackgroundAnnouncementSetting,
+		// Off unless a test asks for it. The guard is real-time dead time after
+		// speech starts, so leaving it on would make every barge-in assertion here a
+		// race against the wall clock; it has its own tests below.
+		bargeInGuardMs: overrides.bargeInGuardMs ?? 0,
 	});
 
 	const events: VoiceEvent[] = [];
@@ -397,7 +423,7 @@ describe('VoiceSessionService speech', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'Raw terminal output.',
+			text: AGENT_REPLY,
 		});
 
 		expect(h.types()).toEqual([
@@ -424,7 +450,7 @@ describe('VoiceSessionService speech', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'noise',
+			text: AGENT_REPLY,
 		});
 
 		expect(h.types()).toEqual(['agent-reply', 'listen-start']);
@@ -454,14 +480,17 @@ describe('VoiceSessionService barge-in versus stop', () => {
 	});
 
 	it('barge-in cancels speech mid-run and keeps the floor', async () => {
-		h.tts.onChunk = () => {
-			h.service.interrupt('voice');
-		};
+		// Triggered from the FIRST spoken sentence rather than from a TTS chunk: the
+		// scheduler synthesizes a sentence ahead of the one being heard, so a chunk
+		// arriving says nothing about what the user has actually listened to.
+		h.service.subscribe((event) => {
+			if (event.type === 'speak-sentence' && event.index === 0) h.service.interrupt('voice');
+		});
 
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'anything',
+			text: AGENT_REPLY,
 		});
 
 		expect(h.types()).toEqual([
@@ -501,7 +530,7 @@ describe('VoiceSessionService barge-in versus stop', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'anything',
+			text: AGENT_REPLY,
 		});
 
 		expect(h.tts.cancelled).toBe(true);
@@ -783,16 +812,21 @@ describe('VoiceSessionService audio seams', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'Raw terminal output.',
+			text: AGENT_REPLY,
 		});
 
 		// One per sentence, and each after the `speak-sentence` that announced it:
-		// the text should be on screen by the time it is audible.
-		expect(seen.map((s) => s.index)).toEqual([0, 1]);
+		// the text should be on screen by the time it is audible. The chunk's own
+		// `index` is the PROVIDER's, and the scheduler synthesises one sentence per
+		// call, so it is 0 for both here - what is being asserted is the ordering
+		// against the events, not a counter the provider owns.
+		expect(seen).toHaveLength(2);
 		const sentenceEvents = h.events
 			.map((event, index) => ({ event, index }))
 			.filter(({ event }) => event.type === 'speak-sentence');
+		expect(sentenceEvents).toHaveLength(2);
 		expect(seen[0].eventsSoFar).toBe(sentenceEvents[0].index + 1);
+		expect(seen[1].eventsSoFar).toBe(sentenceEvents[1].index + 1);
 	});
 
 	it('drops chunks from a run that was cancelled mid-sentence', async () => {
@@ -802,16 +836,19 @@ describe('VoiceSessionService audio seams', () => {
 		h.service.submitUtterance('what changed');
 		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
 
-		h.tts.onChunk = () => h.service.interrupt('voice');
+		h.service.subscribe((event) => {
+			if (event.type === 'speak-sentence' && event.index === 0) h.service.interrupt('voice');
+		});
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'Raw terminal output.',
+			text: AGENT_REPLY,
 		});
 
-		// The interrupt lands after the first chunk was handed over; the second must
-		// never reach an output device the user has already talked over.
-		expect(chunks).toHaveLength(1);
+		// The interrupt lands while the first sentence is being announced, so nothing
+		// reaches an output device the user has already talked over - including the
+		// second sentence, which the scheduler had synthesized ahead.
+		expect(chunks).toHaveLength(0);
 	});
 });
 
@@ -1031,7 +1068,7 @@ describe('VoiceSessionService state machine', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'Raw terminal output.',
+			text: AGENT_REPLY,
 		});
 
 		expect(takeEdges()).toEqual(['dispatching -> speaking', 'speaking -> listening']);
@@ -1047,7 +1084,7 @@ describe('VoiceSessionService state machine', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'noise',
+			text: AGENT_REPLY,
 		});
 
 		expect(takeEdges()).toEqual(['dispatching -> listening']);
@@ -1075,7 +1112,7 @@ describe('VoiceSessionService state machine', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'anything',
+			text: AGENT_REPLY,
 		});
 
 		expect(takeEdges()).toEqual([
@@ -1098,7 +1135,7 @@ describe('VoiceSessionService state machine', () => {
 		await h.service.submitAgentReply({
 			agentSessionId: 'agent-backend',
 			tabId: 'tab-1',
-			text: 'anything',
+			text: AGENT_REPLY,
 		});
 		await vi.waitFor(() => expect(h.service.getState()).toBe('idle'));
 
@@ -1118,7 +1155,7 @@ describe('VoiceSessionService state machine', () => {
 			h.service.submitAgentReply({
 				agentSessionId: 'agent-backend',
 				tabId: 'tab-1',
-				text: 'anything',
+				text: AGENT_REPLY,
 			})
 		).resolves.toBe(true);
 
@@ -1414,5 +1451,287 @@ describe('wrong-tab correction', () => {
 		expect(snapshot.lastDecision).toMatchObject({ confidence: 0.9 });
 		expect(snapshot.lastDispatch).toMatchObject({ agentName: 'Backend', tabId: 'tab-1' });
 		await h.service.stopSession('user');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The Phase 08 speech layer, wired
+// ---------------------------------------------------------------------------
+
+/** A fake tap: records what it was asked to follow, and lets a test push chunks. */
+function makeReplyStream(): AgentReplyStream & { watched: string[]; unwatched: string[] } {
+	const watched: string[] = [];
+	const unwatched: string[] = [];
+	return {
+		watched,
+		unwatched,
+		watch: ({ agentSessionId, tabId }) => watched.push(`${agentSessionId}/${tabId}`),
+		unwatch: ({ agentSessionId, tabId }) => unwatched.push(`${agentSessionId}/${tabId}`),
+	};
+}
+
+function chunk(overrides: Partial<AgentOutputChunk> = {}): AgentOutputChunk {
+	return {
+		agentSessionId: 'agent-backend',
+		tabId: 'tab-1',
+		kind: 'text',
+		text: AGENT_REPLY,
+		ts: 1,
+		...overrides,
+	};
+}
+
+describe('VoiceSessionService streamed agent output', () => {
+	/** Dispatch a turn and leave the session waiting on the tap. */
+	async function dispatched(overrides: Parameters<typeof makeHarness>[0] = {}) {
+		const stream = overrides.agentReplyStream ?? makeReplyStream();
+		const h = makeHarness({ ...overrides, agentReplyStream: stream });
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		h.events.length = 0;
+		return { h, stream: stream as ReturnType<typeof makeReplyStream> };
+	}
+
+	it('follows the dispatched tab and speaks a chunk before the turn is over', async () => {
+		const { h, stream } = await dispatched();
+		expect(stream.watched).toEqual(['agent-backend/tab-1']);
+
+		h.service.pushAgentOutput(chunk());
+		await vi.waitFor(() => expect(h.types()).toContain('speak-sentence'));
+
+		// Still speaking: the agent has not said it is finished, so the run stays
+		// open for the rest of the reply rather than closing after the first thought.
+		expect(h.service.getState()).toBe('speaking');
+		expect(h.types()).not.toContain('speak-end');
+	});
+
+	it('announces a streamed run as streaming, so the count is a lower bound', async () => {
+		const { h } = await dispatched();
+		h.service.pushAgentOutput(chunk());
+		await vi.waitFor(() => expect(h.types()).toContain('speak-start'));
+
+		const started = h.events.find((event) => event.type === 'speak-start');
+		expect(started).toMatchObject({ streaming: true, sentenceCount: 0 });
+	});
+
+	it('closes the run and hands the floor back on the final chunk', async () => {
+		const { h, stream } = await dispatched();
+
+		h.service.pushAgentOutput(chunk({ kind: 'final' }));
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		// The speech events in order. `agent-reply` is deliberately not pinned in
+		// among them: the record of the chunk is written when its rewrite finishes,
+		// while its last sentences are still being spoken, and holding it back until
+		// the audio caught up would put the transcript behind the voice.
+		expect(h.types().filter((type) => type !== 'agent-reply')).toEqual([
+			'speak-start',
+			'speak-sentence',
+			'speak-sentence',
+			'speak-end',
+			'listen-start',
+		]);
+		expect(h.types()).toContain('agent-reply');
+		expect(stream.unwatched).toEqual(['agent-backend/tab-1']);
+	});
+
+	it('hands the floor back when the whole turn produced nothing speakable', async () => {
+		const { h } = await dispatched();
+		h.brain.spoken = '   ';
+
+		h.service.pushAgentOutput(chunk({ kind: 'final' }));
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		// No run was ever opened: a chunk the translator had nothing to say about
+		// must not strand the session in `speaking` with a silent floor.
+		expect(h.types()).toEqual(['listen-start']);
+	});
+
+	it('speaks a status chunk straight through, without a translation hop', async () => {
+		const { h } = await dispatched();
+
+		h.service.pushAgentOutput(chunk({ kind: 'status', text: 'It hit an error: exit code 1.' }));
+		await vi.waitFor(() => expect(h.types()).toContain('speak-sentence'));
+
+		expect(h.events.filter((event) => event.type === 'speak-sentence')).toEqual([
+			expect.objectContaining({ text: 'It hit an error: exit code 1.' }),
+		]);
+	});
+
+	it('ignores output from a tab this turn is not about', async () => {
+		const { h } = await dispatched();
+
+		h.service.pushAgentOutput(chunk({ tabId: 'tab-other' }));
+		await Promise.resolve();
+
+		expect(h.events).toHaveLength(0);
+		expect(h.service.getState()).toBe('dispatching');
+	});
+
+	it('stops following the tab when the session ends', async () => {
+		const { h, stream } = await dispatched();
+		await h.service.stopSession('user');
+		expect(stream.unwatched).toEqual(['agent-backend/tab-1']);
+	});
+});
+
+describe('VoiceSessionService follow-ups', () => {
+	/** Speak one reply, so there is a retained turn to drill into. */
+	async function afterAReply(overrides: Parameters<typeof makeHarness>[0] = {}) {
+		const h = makeHarness(overrides);
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: `${AGENT_REPLY}\nThe stale check lived in src/main/auth/session.ts.`,
+		});
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+		h.events.length = 0;
+		h.executor.mockClear();
+		return h;
+	}
+
+	it('serves "tell me more" from the retained output, with no agent turn', async () => {
+		const h = await afterAReply();
+
+		h.service.submitUtterance('tell me more');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		expect(h.executor).not.toHaveBeenCalled();
+		expect(h.types()).not.toContain('route-decision');
+		expect(h.events.filter((event) => event.type === 'speak-sentence').length).toBeGreaterThan(0);
+	});
+
+	it('repeats what was actually said, not what was queued', async () => {
+		const h = await afterAReply();
+
+		h.service.submitUtterance('say that again');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		const spoken = h.events
+			.filter((event) => event.type === 'speak-sentence')
+			.map((event) => (event.type === 'speak-sentence' ? event.text : ''));
+		expect(spoken.join(' ')).toContain('All done.');
+	});
+
+	it('answers "show me" on screen and says nothing at all', async () => {
+		const focused: unknown[] = [];
+		const h = await afterAReply({ focusTarget: (target) => focused.push(target) });
+
+		h.service.submitUtterance('show me that file');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+
+		expect(focused).toEqual([
+			expect.objectContaining({ agentSessionId: 'agent-backend', tabId: 'tab-1' }),
+		]);
+		expect(h.types()).not.toContain('speak-start');
+		expect(h.executor).not.toHaveBeenCalled();
+	});
+
+	it('still routes a fresh request that only looks like a follow-up', async () => {
+		const h = await afterAReply();
+
+		h.service.submitUtterance('open a new tab for the migration');
+		await vi.waitFor(() => expect(h.executor).toHaveBeenCalled());
+
+		expect(h.types()).toContain('route-decision');
+	});
+});
+
+describe('VoiceSessionService barge-in guard window', () => {
+	it('refuses a voice barge-in inside the guard window', async () => {
+		const h = makeHarness({ bargeInGuardMs: 60_000 });
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		h.service.subscribe((event) => {
+			if (event.type === 'speak-sentence' && event.index === 0) h.service.interrupt('voice');
+		});
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: AGENT_REPLY,
+		});
+
+		// The assistant's own leaked syllable must not interrupt the assistant.
+		expect(h.types()).not.toContain('barge-in');
+		expect(h.events.filter((event) => event.type === 'speak-sentence')).toHaveLength(2);
+	});
+
+	it('still takes a button press inside the guard window', async () => {
+		const h = makeHarness({ bargeInGuardMs: 60_000 });
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		h.service.subscribe((event) => {
+			if (event.type === 'speak-sentence' && event.index === 0) {
+				h.service.interrupt('client-button');
+			}
+		});
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: AGENT_REPLY,
+		});
+
+		expect(h.types()).toContain('barge-in');
+		expect(h.service.getState()).toBe('listening');
+	});
+});
+
+describe('VoiceSessionService background completions', () => {
+	const completion = {
+		agentSessionId: 'agent-api',
+		agentName: 'API',
+		summary: 'the migration',
+	};
+
+	it('speaks a completion at a pause, naming the source', async () => {
+		const h = makeHarness({ getBackgroundAnnouncementSetting: () => 'on' });
+		await start(h);
+
+		expect(h.service.noteAgentCompletion(completion)).toBe(true);
+		await vi.waitFor(() => expect(h.types()).toContain('speak-sentence'));
+
+		const spoken = h.events
+			.filter((event) => event.type === 'speak-sentence')
+			.map((event) => (event.type === 'speak-sentence' ? event.text : ''));
+		expect(spoken.join(' ')).toContain('the API agent finished the migration');
+	});
+
+	it('waits for the pause rather than talking over the turn in progress', async () => {
+		const h = makeHarness({ getBackgroundAnnouncementSetting: () => 'on' });
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		h.events.length = 0;
+
+		expect(h.service.noteAgentCompletion(completion)).toBe(true);
+		expect(h.types()).toEqual([]);
+
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: AGENT_REPLY,
+		});
+		await vi.waitFor(() => {
+			const spoken = h.events
+				.filter((event) => event.type === 'speak-sentence')
+				.map((event) => (event.type === 'speak-sentence' ? event.text : ''));
+			expect(spoken.join(' ')).toContain('the API agent finished');
+		});
+	});
+
+	it('says nothing when the setting is off', async () => {
+		const h = makeHarness({ getBackgroundAnnouncementSetting: () => 'off' });
+		await start(h);
+
+		expect(h.service.noteAgentCompletion(completion)).toBe(false);
+		expect(h.types()).toEqual([]);
 	});
 });

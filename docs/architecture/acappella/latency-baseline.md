@@ -97,9 +97,9 @@ because the first turn of a local configuration includes the model load and is n
 of a conversation.
 
 The by-hand pass that produces these numbers, including what to say and what to listen for on each
-check, is [[conversation-acceptance]]. Read its precondition section first: the Phase 08 speech
-layer is not yet wired into `voice-session-service.ts`, so a run today measures the buffered path
-rather than the streamed one.
+check, is [[conversation-acceptance]]. Read its precondition section first: a session built without
+an `agentReplyStream` still waits for a whole reply, which measures the `buffered` arm below rather
+than the streamed one.
 
 ## What each hop tells you
 

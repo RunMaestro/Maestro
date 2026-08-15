@@ -19,6 +19,7 @@ import type {
 	InterruptSource,
 	MicState,
 	RosterAgent,
+	SpeakEndReason,
 	VoiceEvent,
 	VoiceEventBase,
 	VoiceEventPayload,
@@ -53,10 +54,16 @@ import {
 	assertVoiceStateTransition,
 	canTransitionVoiceState,
 } from '../../shared/acappella/session-state';
-import { countSpokenSentences } from '../../shared/acappella/sentences';
+import type { BackgroundAnnouncementSetting } from '../../shared/acappella/announcements';
 import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import type { AgentOutputChunk } from './speech/agent-output-tap';
+import { BackgroundAnnouncer, type BackgroundCompletion } from './speech/background-announcer';
+import { BargeInController } from './speech/barge-in';
+import { ConversationalTranslator } from './speech/conversational-translator';
+import { DetailBuffer, detectDrillDownIntent } from './speech/drill-down';
+import { SpeechScheduler, type SpeechRunResult } from './speech/speech-scheduler';
 
 const LOG_CONTEXT = 'ACappella';
 
@@ -115,6 +122,28 @@ export type VoiceRouteExecutor = (
 	context: { roster: RosterAgent[]; scope: VoiceScope }
 ) => Promise<VoiceDispatchResult>;
 
+/**
+ * The slice of `speech/agent-output-tap.ts` this file drives.
+ *
+ * A narrow interface rather than the class, for the same reason no concrete
+ * provider is imported here: the tap reaches into the process manager and the
+ * per-agent output parsers, and a session service that imported it would drag
+ * both into every context that only wants to speak a string. The owner
+ * constructs the tap with `pushAgentOutput` as its sink and hands the two verbs
+ * over. See `src/main/ipc/handlers/acappella.ts`.
+ */
+export interface AgentReplyStream {
+	watch(params: { agentSessionId: string; tabId: string }): void;
+	unwatch(params: { agentSessionId: string; tabId: string }): void;
+}
+
+/** Where a "show me" lands. Main has no tab authority, so this is injected. */
+export type VoiceFocusTarget = (target: {
+	agentSessionId: string;
+	tabId: string;
+	path?: string;
+}) => void;
+
 export interface VoiceSessionServiceOptions {
 	/** The active provider trio. Resolved by `providers/provider-registry.ts`. */
 	providers: VoiceProviderTrio;
@@ -129,10 +158,49 @@ export interface VoiceSessionServiceOptions {
 	getRoster?: () => RosterAgent[] | Promise<RosterAgent[]>;
 	/** Executes route decisions. Absent until the executor is wired. */
 	executeRoute?: VoiceRouteExecutor;
-	/** Spoken-form budget handed to `BrainProvider.converse()`. */
+	/** Spoken-form budget handed to the translator for one rewritten chunk. */
 	maxSpokenSentences?: number;
+	/** Hard cap on sentences spoken per turn, across every chunk of one reply. */
+	maxSentencesPerTurn?: number;
 	/** Utterances retained for `VoiceRouteContext.recentUtterances`. */
 	utteranceHistoryLimit?: number;
+	/**
+	 * The live tap on a dispatched agent's output.
+	 *
+	 * Present means a reply is spoken AS IT IS WRITTEN: the tap hands over a
+	 * completed thought, the translator rewrites that piece alone, and the
+	 * scheduler starts speaking it while the agent is still typing the rest.
+	 * Absent means the session waits for a whole reply through
+	 * {@link VoiceSessionService.submitAgentReply}, which is the mock tier and the
+	 * dev harness.
+	 */
+	agentReplyStream?: AgentReplyStream;
+	/** Puts a tab, and optionally a file, on screen for a spoken "show me". */
+	focusTarget?: VoiceFocusTarget;
+	/**
+	 * Whether an agent finishing outside the current turn is announced out loud.
+	 * `auto` (the default) is on for the Conductor and off inside an agent scope.
+	 */
+	getBackgroundAnnouncementSetting?: () => BackgroundAnnouncementSetting | undefined;
+	/**
+	 * Drop playback gain for a barge-in, ahead of the flush.
+	 *
+	 * Optional because the audio pipeline already ducks on a CANDIDATE frame,
+	 * before the detector has confirmed anything - which is what makes the duck
+	 * feel instant. This is the confirmed-barge-in duck for a host that has no
+	 * pipeline in front of it (a client button, the phone), and a no-op otherwise.
+	 */
+	duckPlayback?: (gain: number, rampMs: number) => void;
+	/** Discard audio already queued in the host. Same optionality as `duckPlayback`. */
+	flushPlayback?: () => void;
+	/**
+	 * Dead time after speech starts during which a VOICE barge-in is refused.
+	 *
+	 * Zero disables it. Only voice is guarded: echo cancellation is at its worst in
+	 * the first moments of playback, so the assistant's own first syllable can trip
+	 * the detector and it interrupts itself. A button press has no such ambiguity.
+	 */
+	bargeInGuardMs?: number;
 	/**
 	 * One chunk of synthesised speech, as it comes off the TTS provider.
 	 *
@@ -200,8 +268,11 @@ export class VoiceSessionService {
 	private readonly getRoster: () => RosterAgent[] | Promise<RosterAgent[]>;
 	private readonly executeRoute?: VoiceRouteExecutor;
 	private readonly maxSpokenSentences: number;
+	private readonly maxSentencesPerTurn?: number;
 	private readonly utteranceHistoryLimit: number;
 	private readonly onSpeechChunk?: (chunk: TtsChunk) => void;
+	private readonly agentReplyStream?: AgentReplyStream;
+	private readonly focusTarget?: VoiceFocusTarget;
 	private readonly checkReadiness?: () => VoiceReadiness | Promise<VoiceReadiness>;
 	private readonly getProviderState?: () => Omit<
 		VoiceEventPayload<'provider-state'>,
@@ -210,9 +281,22 @@ export class VoiceSessionService {
 
 	private readonly pipelineShape: VoicePipelineShape;
 
+	/**
+	 * The speech half, from `speech/`. Composed here because this is the only
+	 * object that knows all four facts they need between them: what state the
+	 * session is in, whose turn it is, what was actually heard, and when the floor
+	 * is quiet.
+	 */
+	private readonly translator: ConversationalTranslator;
+	private readonly detail = new DetailBuffer();
+	private readonly announcer: BackgroundAnnouncer;
+	private readonly bargeIn: BargeInController;
+
 	private readonly listeners = new Set<VoiceEventListener>();
 
 	private state: VoiceSessionState = 'idle';
+	/** A teardown is in flight. Guards the await inside `stopSession`. */
+	private stopping = false;
 	private sessionId: string | null = null;
 	private scope: VoiceScope | null = null;
 	private seq = 0;
@@ -243,6 +327,36 @@ export class VoiceSessionService {
 	/** The speech run currently on the floor, or null when nothing is speaking. */
 	private activeUtteranceId: string | null = null;
 
+	/** The scheduler driving the run on the floor. One per run, never reused. */
+	private scheduler: SpeechScheduler | null = null;
+	/**
+	 * Suppresses the scheduler's end handling for a run being torn down.
+	 *
+	 * A stop word and a session teardown cancel speech on their way out and own
+	 * the events themselves; without this the scheduler would emit a `speak-end`
+	 * into a session that is already closing and try to hand the floor back.
+	 */
+	private speechTeardown = false;
+	/** A provider failure reported by the scheduler, read when the run ends. */
+	private speechError: Error | null = null;
+	/** Cancels the translator stream feeding the run. Barge-in's fourth step. */
+	private translationAbort: AbortController | null = null;
+
+	/** The agent turn the tap is following, or null when nothing is being streamed. */
+	private streamTarget: { agentSessionId: string; tabId: string; turn: number } | null = null;
+	/**
+	 * Translations run one at a time, chained.
+	 *
+	 * The tap emits chunks from a process event while the previous chunk's rewrite
+	 * is still in flight, and a spoken reply whose second thought overtakes its
+	 * first is worse than a slow one.
+	 */
+	private streamChain: Promise<void> = Promise.resolve();
+	/** The untranslated output of the turn being spoken, for `drill-down.ts`. */
+	private streamDetail = '';
+	/** The turn's first-token timing is marked once, on the first chunk, not per chunk. */
+	private streamMarked = false;
+
 	/**
 	 * Timings for the turn being spoken now.
 	 *
@@ -257,11 +371,38 @@ export class VoiceSessionService {
 		this.getRoster = options.getRoster ?? (() => []);
 		this.executeRoute = options.executeRoute;
 		this.maxSpokenSentences = options.maxSpokenSentences ?? DEFAULT_MAX_SPOKEN_SENTENCES;
+		this.maxSentencesPerTurn = options.maxSentencesPerTurn;
 		this.utteranceHistoryLimit = options.utteranceHistoryLimit ?? DEFAULT_UTTERANCE_HISTORY;
 		this.onSpeechChunk = options.onSpeechChunk;
 		this.checkReadiness = options.checkReadiness;
 		this.getProviderState = options.getProviderState;
 		this.pipelineShape = options.pipelineShape ?? 'cascade';
+		this.agentReplyStream = options.agentReplyStream;
+		this.focusTarget = options.focusTarget;
+
+		this.translator = new ConversationalTranslator({
+			brain: this.providers.brain,
+			maxSentences: this.maxSpokenSentences,
+		});
+		this.announcer = new BackgroundAnnouncer({
+			getScope: () => this.scope ?? { kind: 'conductor' },
+			getSetting: () => options.getBackgroundAnnouncementSetting?.(),
+			getForegroundAgentSessionId: () => this.streamTarget?.agentSessionId ?? null,
+		});
+		this.bargeIn = new BargeInController({
+			// Both default to no-ops: the audio pipeline ducks on a candidate frame
+			// and the audio bridge flushes on a non-complete `speak-end`, so a host
+			// with those in front of it has already done these two steps.
+			duck: (gain, rampMs) => options.duckPlayback?.(gain, rampMs),
+			flushPlayback: () => options.flushPlayback?.(),
+			cancelSpeech: () => this.scheduler?.cancel('interrupted') ?? null,
+			cancelTranslation: () => this.abortTranslation(),
+			// Deliberately no `rememberSpoken`: the scheduler's end handler is the one
+			// owner of the conversation memory, and a second writer here would record
+			// every interrupted turn twice.
+			toListening: () => this.finishBargeIn(),
+			guardMs: options.bargeInGuardMs,
+		});
 	}
 
 	// -- Subscription --------------------------------------------------------
@@ -379,8 +520,20 @@ export class VoiceSessionService {
 
 	/** End the session and release the floor. Safe to call when already idle. */
 	async stopSession(reason: VoiceStopReason): Promise<void> {
-		if (this.state === 'idle') return;
+		// Re-entrant by construction: this awaits the recogniser's own teardown, and
+		// a second caller arriving inside that window (two hotkeys, a stop word and a
+		// window close) would find the state still non-idle and tear the same session
+		// down twice.
+		if (this.state === 'idle' || this.stopping) return;
+		this.stopping = true;
+		try {
+			await this.runStopSession(reason);
+		} finally {
+			this.stopping = false;
+		}
+	}
 
+	private async runStopSession(reason: VoiceStopReason): Promise<void> {
 		this.turn += 1;
 		this.cancelSpeech();
 
@@ -406,6 +559,13 @@ export class VoiceSessionService {
 		// both belong to the session that just ended.
 		this.pendingClarification = null;
 		this.lastDispatch = null;
+		// So does the conversation: what was said out loud, the detail behind it,
+		// and a backlog of completions nobody is listening for any more.
+		this.translator.reset();
+		this.detail.clear();
+		this.announcer.clear();
+		this.streamDetail = '';
+		this.streamMarked = false;
 	}
 
 	/**
@@ -414,7 +574,7 @@ export class VoiceSessionService {
 	 * assistant hang up on it.
 	 */
 	async hardStop(source: InterruptSource = 'voice', phrase?: string): Promise<void> {
-		if (this.state === 'idle') return;
+		if (this.state === 'idle' || this.stopping) return;
 		this.emit('stop-word', { source, phrase });
 		await this.stopSession('stop-word');
 	}
@@ -428,19 +588,35 @@ export class VoiceSessionService {
 	 */
 	interrupt(source: InterruptSource = 'voice'): boolean {
 		if (this.state !== 'speaking') return false;
+		// The guard window, which applies to voice and not to a button press: echo
+		// cancellation is at its worst in the first moments of playback, so the
+		// assistant's own first syllable can otherwise interrupt it.
+		if (!this.bargeIn.canInterrupt(source)) return false;
 
-		const cancelledUtteranceId = this.activeUtteranceId ?? undefined;
-		this.cancelSpeech();
+		// Announced BEFORE the teardown, because the teardown's own `speak-end` is
+		// the consequence: a client reading the stream should see what happened and
+		// then what it cost, in that order.
+		this.emit('barge-in', { source, cancelledUtteranceId: this.activeUtteranceId ?? undefined });
 
-		this.emit('barge-in', { source, cancelledUtteranceId });
-		if (cancelledUtteranceId) {
-			this.emit('speak-end', { utteranceId: cancelledUtteranceId, reason: 'cancelled' });
-		}
+		// Duck, flush, cancel the synthesis, cancel the rewrite behind it, then
+		// reopen the floor. The order is the controller's, not this file's.
+		this.bargeIn.trigger(source);
+		return true;
+	}
 
+	/**
+	 * The tail of a barge-in: back to `listening` with the floor retained.
+	 *
+	 * Separate from `trigger()` because the state machine and the event stream are
+	 * this file's alone, and because a barge-in that found nothing to cancel still
+	 * has to hand the floor back.
+	 */
+	private finishBargeIn(): void {
+		this.stopStreaming();
+		if (this.state !== 'speaking') return;
 		this.transition('interrupted');
 		this.transition('listening');
 		this.emitListenStart();
-		return true;
 	}
 
 	// -- Input ---------------------------------------------------------------
@@ -484,10 +660,13 @@ export class VoiceSessionService {
 	}
 
 	/**
-	 * An agent answered. Reshapes the text for the ear and speaks it.
+	 * A WHOLE agent reply, already finished. Reshapes it for the ear and speaks it.
 	 *
-	 * This is the seam Phase 05 wires real agent output to; until then the dev
-	 * harness calls it directly.
+	 * The text-in seam, for a caller that has the complete reply in hand: the dev
+	 * harness, the CLI, and the Phase 10 phone. A live desktop agent does not come
+	 * through here - it comes through {@link pushAgentOutput}, sentence by
+	 * sentence, while it is still writing. The two share the translator and the
+	 * scheduler, so what is spoken is identical; only the arrival is different.
 	 *
 	 * @returns `false` when the session was not waiting on a reply.
 	 */
@@ -503,14 +682,20 @@ export class VoiceSessionService {
 
 		const turn = this.turn;
 		this.timer?.mark('agentFirstToken');
+		// Nothing is arriving on the tap for this turn: the whole reply is right
+		// here, so a tap still following the tab would only double-speak it.
+		this.stopStreaming();
 
-		let spokenText: string;
+		const sentences: string[] = [];
 		try {
-			spokenText = await this.providers.brain.converse(params.text, {
+			for await (const sentence of this.translator.translate({
 				agentSessionId: params.agentSessionId,
 				tabId: params.tabId,
-				maxSentences: this.maxSpokenSentences,
-			});
+				text: params.text,
+				kind: 'final',
+			})) {
+				sentences.push(sentence);
+			}
 		} catch (error) {
 			if (!isVoiceProviderError(error)) throw error;
 			this.failFromProvider(error, error.providerId);
@@ -518,15 +703,22 @@ export class VoiceSessionService {
 		}
 		if (!this.isCurrentTurn(turn)) return false;
 
+		const spokenText = sentences.join(' ');
 		this.emit('agent-reply', {
 			agentSessionId: params.agentSessionId,
 			tabId: params.tabId,
 			text: params.text,
 			spokenText,
 		});
+		// The real output, retained so "tell me more" is instant and costs nothing.
+		this.detail.record({
+			agentSessionId: params.agentSessionId,
+			tabId: params.tabId,
+			detail: params.text,
+			spoken: [],
+		});
 
-		const sentenceCount = countSpokenSentences(spokenText);
-		if (sentenceCount === 0) {
+		if (sentences.length === 0) {
 			// Nothing worth speaking. Take the floor back rather than opening a
 			// speech run with no sentences in it.
 			this.transition('listening');
@@ -536,7 +728,7 @@ export class VoiceSessionService {
 
 		this.transition('speaking');
 		try {
-			await this.speak(spokenText, sentenceCount, turn);
+			await this.speak(spokenText, turn);
 		} catch (error) {
 			// A streaming voice can throw mid-iteration. Without this the rejection
 			// leaves through the caller (an IPC handler) and the session sits in
@@ -545,6 +737,59 @@ export class VoiceSessionService {
 			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.speak');
 		}
 		return true;
+	}
+
+	/**
+	 * One coherent piece of a dispatched agent's output, as it is written.
+	 *
+	 * The sink for `speech/agent-output-tap.ts`, and the thing that makes the first
+	 * spoken word land while the agent is still typing: the chunk is rewritten on
+	 * its own and its sentences go straight to the scheduler, rather than the whole
+	 * reply being waited for and then rewritten in one hop.
+	 *
+	 * Chunks are translated one at a time, in arrival order. A spoken reply whose
+	 * second thought overtakes its first is worse than a slow one.
+	 */
+	pushAgentOutput(chunk: AgentOutputChunk): void {
+		const target = this.streamTarget;
+		if (!target) return;
+		if (chunk.agentSessionId !== target.agentSessionId || chunk.tabId !== target.tabId) return;
+		if (!this.isCurrentTurn(target.turn)) {
+			// The user has moved on. Stop following the tab rather than speaking an
+			// answer to a question they have already replaced.
+			this.stopStreaming();
+			return;
+		}
+		if (this.state !== 'dispatching' && this.state !== 'speaking') return;
+
+		// Retained untranslated, which is what every follow-up is served from.
+		this.streamDetail += this.streamDetail ? ` ${chunk.text}` : chunk.text;
+
+		this.streamChain = this.streamChain
+			.then(() => this.speakChunk(chunk, target.turn))
+			.catch((error: Error) => {
+				if (isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
+				else this.closeFloorOnUnexpectedError(error, 'acappella.pushAgentOutput');
+			});
+	}
+
+	/**
+	 * An agent finished outside the current voice turn.
+	 *
+	 * Queued rather than spoken: interrupting the conversation you are having with
+	 * one agent because a different one finished is the failure this exists to
+	 * prevent. It is released at the next natural pause, source named.
+	 *
+	 * @returns `false` when it was declined - the setting is off for this scope, or
+	 *          it is the agent the current turn is already about.
+	 */
+	noteAgentCompletion(completion: BackgroundCompletion): boolean {
+		if (!this.sessionId) return false;
+		const queued = this.announcer.queue(completion) !== null;
+		// The floor may already be quiet, in which case there is no later pause to
+		// wait for and holding it back would be silence for no reason.
+		if (queued) this.deliverBackgroundAnnouncement();
+		return queued;
 	}
 
 	// -- Audio telemetry -----------------------------------------------------
@@ -680,6 +925,13 @@ export class VoiceSessionService {
 			}
 
 			this.rememberUtterance(utterance);
+
+			// "Tell me more" is not a request, so it never reaches the router or the
+			// agent: it is served from the real output of the last turn, which makes
+			// it instant and makes it about the answer the user actually heard.
+			if (await this.serveFollowUp(utterance, turn)) return;
+			if (!this.isCurrentTurn(turn)) return;
+
 			this.transition('routing');
 
 			const roster = await this.publishRoster();
@@ -767,6 +1019,9 @@ export class VoiceSessionService {
 		// can show where the last thing went.
 		this.lastDispatch = { decision, result };
 		this.emit('dispatch', result);
+		// Follow the tab from here, so the reply is spoken as it is written rather
+		// than after it is finished.
+		this.beginStreaming(result, turn);
 	}
 
 	/**
@@ -794,7 +1049,7 @@ export class VoiceSessionService {
 
 		this.transition('speaking');
 		try {
-			await this.speak(question, countSpokenSentences(question) || 1, turn);
+			await this.speak(question, turn);
 		} catch (error) {
 			if (isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
 			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.askForClarification');
@@ -848,24 +1103,24 @@ export class VoiceSessionService {
 
 		const roster = await this.publishRoster();
 		const turn = ++this.turn;
-		this.walkToDispatching();
+		this.walkTo(['transcribing', 'routing', 'dispatching']);
 
 		return this.correctTo(agentSessionId, roster, turn, source);
 	}
 
 	/**
-	 * Take the session from wherever it is to `dispatching`, one legal edge at a
-	 * time.
+	 * Walk the session to the last state in `path`, one legal edge at a time.
 	 *
-	 * A correction arrives from a button rather than from a turn, so it can start
-	 * in `listening` with the whole transcribe-and-route path still in front of
-	 * it. The machine has no shortcut edge and should not grow one for a case that
-	 * is three legal transitions away.
+	 * A correction arrives from a button rather than from a turn, and a background
+	 * announcement arrives from another agent entirely, so both can start in
+	 * `listening` with the whole transcribe-and-route path still in front of them.
+	 * The machine has no shortcut edge and should not grow one for a case that is
+	 * three legal transitions away.
 	 */
-	private walkToDispatching(): void {
-		const path: VoiceSessionState[] = ['transcribing', 'routing', 'dispatching'];
+	private walkTo(path: readonly VoiceSessionState[]): void {
+		const destination = path[path.length - 1];
 		for (const next of path) {
-			if (this.state === 'dispatching') return;
+			if (this.state === destination) return;
 			if (canTransitionVoiceState(this.state, next)) this.transition(next);
 		}
 	}
@@ -922,35 +1177,298 @@ export class VoiceSessionService {
 		return true;
 	}
 
-	/** Stream one reply through TTS, one event per sentence. */
-	private async speak(spokenText: string, sentenceCount: number, turn: number): Promise<void> {
+	// -- Speech --------------------------------------------------------------
+
+	/**
+	 * Speak text that is already in its final spoken form, and wait for it.
+	 *
+	 * Used by every caller that has the whole thing in hand: a translated reply, a
+	 * clarifying question, a background announcement. It goes through the same
+	 * scheduler as a streamed reply, so the cap, the no-gap synthesis, and the
+	 * spoken-versus-queued bookkeeping are the same in both.
+	 */
+	private async speak(spokenText: string, turn: number): Promise<void> {
+		const scheduler = this.beginSpeechRun({ seed: spokenText, streaming: false, turn });
+		scheduler.close();
+		await scheduler.drained();
+	}
+
+	/**
+	 * Open a speech run.
+	 *
+	 * `streaming` says whether more sentences are still being written, and it is
+	 * the honest answer to a client asking "how many sentences is this": for a
+	 * streamed reply the announced count is a lower bound, because the alternative
+	 * is holding the first sentence back until the whole reply exists and losing
+	 * the entire point of the pipeline.
+	 */
+	private beginSpeechRun(params: {
+		seed?: string;
+		streaming: boolean;
+		turn: number;
+	}): SpeechScheduler {
 		const utteranceId = generateUUID();
 		this.activeUtteranceId = utteranceId;
+		this.speechTeardown = false;
 
-		this.emit('speak-start', {
-			utteranceId,
-			sentenceCount,
-			ttsProviderId: this.providers.tts.id,
+		const scheduler = new SpeechScheduler({
+			tts: this.providers.tts,
+			maxSentencesPerTurn: this.maxSentencesPerTurn,
+			onStart: (event) =>
+				this.emit('speak-start', {
+					utteranceId: event.utteranceId,
+					sentenceCount: event.sentenceCount,
+					ttsProviderId: event.ttsProviderId,
+					streaming: params.streaming,
+				}),
+			onSentence: (event) => {
+				this.timer?.mark('firstSpokenSentence');
+				// Before the audio reaches the sink, so the sentence is on screen by
+				// the time it is audible rather than after it.
+				this.emit('speak-sentence', event);
+			},
+			onChunk: (chunk) => this.onSpeechChunk?.(chunk),
+			onError: (error) => {
+				this.speechError = error;
+			},
+			onEnd: (result) => this.completeSpeechRun(result, params.turn),
 		});
 
-		for await (const chunk of this.providers.tts.speak(spokenText, { utteranceId })) {
-			// A cancelled run's stragglers are dropped: `interrupt()` already
-			// emitted `speak-end` and handed the floor back.
-			if (!this.isCurrentTurn(turn) || this.activeUtteranceId !== utteranceId) return;
-			this.timer?.mark('firstSpokenSentence');
-			this.emit('speak-sentence', { utteranceId, index: chunk.index, text: chunk.text });
-			// After the event, not before: the sentence should be on screen by the
-			// time it is audible, never the other way round.
-			this.onSpeechChunk?.(chunk);
+		// Assigned before `begin()`, which emits and pumps synchronously: a barge-in
+		// landing inside that first tick must find something to cancel.
+		this.scheduler = scheduler;
+		this.bargeIn.noteSpeechStarted();
+		scheduler.begin(utteranceId, params.seed);
+		return scheduler;
+	}
+
+	/**
+	 * A speech run ended, however it ended.
+	 *
+	 * The one place the conversation memory is written, and it is written from
+	 * `spoken` alone. A model told it already said something the user never heard
+	 * will refer back to it, and the user will have no idea what it means.
+	 */
+	private completeSpeechRun(result: SpeechRunResult, turn: number): void {
+		this.scheduler = null;
+		this.activeUtteranceId = null;
+		this.bargeIn.noteSpeechEnded();
+
+		this.translator.rememberSpoken(result.spoken);
+		this.detail.noteSpoken(result.spoken);
+
+		// A stop word or a session teardown owns its own events and has already
+		// decided where the session is going.
+		if (this.speechTeardown) return;
+
+		this.emit('speak-end', { utteranceId: result.utteranceId, reason: speakEndReason(result) });
+
+		// The barge-in owns the transitions on its own path (`interrupted` then
+		// `listening`), so this must not race it back to the floor.
+		if (result.reason === 'interrupted') return;
+
+		if (result.reason === 'error') {
+			const error = this.speechError;
+			this.speechError = null;
+			if (error && isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
+			else if (error) this.closeFloorOnUnexpectedError(error, 'acappella.speak');
+			return;
 		}
 
-		if (!this.isCurrentTurn(turn) || this.activeUtteranceId !== utteranceId) return;
-
-		this.activeUtteranceId = null;
-		this.emit('speak-end', { utteranceId, reason: 'complete' });
-		this.closeTurnMetrics();
+		this.stopStreaming();
+		if (this.state !== 'speaking') return;
+		if (this.isCurrentTurn(turn)) this.closeTurnMetrics();
 		this.transition('listening');
 		this.emitListenStart();
+		// The floor is quiet now, which is the moment a queued completion from a
+		// different agent has been waiting for.
+		this.deliverBackgroundAnnouncement();
+	}
+
+	/**
+	 * Translate one tapped chunk and speak it.
+	 *
+	 * The speech run opens on the first SENTENCE rather than on the chunk: a chunk
+	 * the translator had nothing to say about (a status the user has already heard,
+	 * an empty rewrite) must not open a silent run and strand the session in
+	 * `speaking`.
+	 */
+	private async speakChunk(chunk: AgentOutputChunk, turn: number): Promise<void> {
+		if (!this.isCurrentTurn(turn)) return;
+		if (!this.streamMarked) {
+			this.streamMarked = true;
+			this.timer?.mark('agentFirstToken');
+		}
+
+		const abort = (this.translationAbort ??= new AbortController());
+		const spoken: string[] = [];
+
+		for await (const sentence of this.translator.translate({
+			agentSessionId: chunk.agentSessionId,
+			tabId: chunk.tabId,
+			text: chunk.text,
+			kind: chunk.kind,
+			signal: abort.signal,
+		})) {
+			if (abort.signal.aborted || !this.isCurrentTurn(turn)) return;
+			const scheduler = this.ensureSpeechRun(turn);
+			if (!scheduler) return;
+			spoken.push(sentence);
+			scheduler.pushSentence(sentence);
+		}
+
+		if (spoken.length > 0) {
+			// Per chunk rather than per reply, and after its sentences rather than
+			// before them: the sentences are what the user is already hearing, and
+			// holding the record back until the whole reply existed would put the
+			// transcript behind the audio.
+			this.emit('agent-reply', {
+				agentSessionId: chunk.agentSessionId,
+				tabId: chunk.tabId,
+				text: chunk.text,
+				spokenText: spoken.join(' '),
+			});
+		}
+
+		if (chunk.kind === 'final') this.closeStream();
+	}
+
+	/** The open run, or a new one. Null when the session cannot speak right now. */
+	private ensureSpeechRun(turn: number): SpeechScheduler | null {
+		if (this.scheduler) return this.scheduler;
+		if (this.state === 'dispatching') this.transition('speaking');
+		if (this.state !== 'speaking') return null;
+		return this.beginSpeechRun({ streaming: true, turn });
+	}
+
+	/**
+	 * Follow a dispatched tab's output. The turn stays open until the agent
+	 * finishes writing, which is what lets the reply be spoken as it arrives.
+	 */
+	private beginStreaming(result: VoiceDispatchResult, turn: number): void {
+		if (!this.agentReplyStream) return;
+		// A focus-only dispatch asked the agent nothing, so nothing is coming back
+		// and a tap on it would only pick up whatever it was already doing.
+		if (!result.promptSent) return;
+
+		this.stopStreaming();
+		this.streamDetail = '';
+		this.streamMarked = false;
+		this.translationAbort = new AbortController();
+		this.streamTarget = {
+			agentSessionId: result.agentSessionId,
+			tabId: result.tabId,
+			turn,
+		};
+		this.agentReplyStream.watch({
+			agentSessionId: result.agentSessionId,
+			tabId: result.tabId,
+		});
+	}
+
+	/** The agent finished writing. Retain what it said and let the run drain. */
+	private closeStream(): void {
+		const target = this.streamTarget;
+		this.stopStreaming();
+
+		if (target && this.streamDetail.trim()) {
+			this.detail.record({
+				agentSessionId: target.agentSessionId,
+				tabId: target.tabId,
+				detail: this.streamDetail,
+				spoken: [],
+			});
+		}
+
+		if (this.scheduler) {
+			this.scheduler.close();
+			return;
+		}
+		// The whole turn produced nothing speakable. Hand the floor back rather than
+		// sitting in `dispatching` waiting for a reply that has already happened.
+		if (this.state === 'dispatching') {
+			this.transition('listening');
+			this.emitListenStart();
+		}
+	}
+
+	/** Stop following the dispatched tab. Any run already on the floor is untouched. */
+	private stopStreaming(): void {
+		const target = this.streamTarget;
+		if (!target) return;
+		this.streamTarget = null;
+		this.agentReplyStream?.unwatch({
+			agentSessionId: target.agentSessionId,
+			tabId: target.tabId,
+		});
+	}
+
+	/** Barge-in's fourth step: the rewrite behind the synthesis. */
+	private abortTranslation(): void {
+		this.translationAbort?.abort();
+		this.translationAbort = null;
+	}
+
+	/**
+	 * Release one queued background announcement, if the floor is quiet.
+	 *
+	 * `listening` is the only quiet state: every other one has a turn in it, and
+	 * "the backend agent finished the migration" arriving over the answer you are
+	 * waiting for is exactly the interruption the queue exists to prevent.
+	 */
+	private deliverBackgroundAnnouncement(): void {
+		const announcement = this.announcer.take(this.state === 'listening');
+		if (!announcement) return;
+
+		const turn = ++this.turn;
+		this.walkTo(['transcribing', 'routing', 'speaking']);
+		if (this.state !== 'speaking') return;
+
+		void this.speak(announcement.text, turn).catch((error: Error) => {
+			if (isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
+			else this.closeFloorOnUnexpectedError(error, 'acappella.backgroundAnnouncement');
+		});
+	}
+
+	/**
+	 * Serve a follow-up from the last turn's real output.
+	 *
+	 * It never becomes a routing decision and never costs an agent turn, which is
+	 * the whole point: re-asking would be slow AND would produce a different
+	 * answer, because the work has moved on since the sentence being asked about.
+	 *
+	 * @returns `false` when this was a fresh request rather than a follow-up.
+	 */
+	private async serveFollowUp(utterance: string, turn: number): Promise<boolean> {
+		const intent = detectDrillDownIntent(utterance);
+		if (!intent) return false;
+
+		const response = this.detail.serve(intent);
+		if (response.kind === 'none') return false;
+
+		if (response.kind === 'focus') {
+			// Deliberately silent. Anything the user wants to SEE is answered on
+			// screen, and reading a path character by character is the worst thing
+			// this feature could do with a request to look at something.
+			this.focusTarget?.({
+				agentSessionId: response.agentSessionId,
+				tabId: response.tabId,
+				path: response.path,
+			});
+			this.transition('listening');
+			this.emitListenStart();
+			return true;
+		}
+
+		this.walkTo(['routing', 'speaking']);
+		if (this.state !== 'speaking') return true;
+		try {
+			await this.speak(response.text, turn);
+		} catch (error) {
+			if (isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
+			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.serveFollowUp');
+		}
+		return true;
 	}
 
 	/**
@@ -997,11 +1515,26 @@ export class VoiceSessionService {
 		return this.turn === turn && this.sessionId !== null;
 	}
 
-	/** Cancel any speech run without emitting. Callers own the events. */
+	/**
+	 * Cancel any speech run WITHOUT emitting. Callers own the events.
+	 *
+	 * Used by the paths that are ending the session (the stop word, teardown, an
+	 * unexpected failure): they have already decided where the session is going,
+	 * and a `speak-end` from underneath them would hand a floor back that is about
+	 * to be released. Barge-in does not come through here - it wants the events.
+	 */
 	private cancelSpeech(): void {
-		if (!this.activeUtteranceId) return;
-		this.activeUtteranceId = null;
-		this.providers.tts.cancel();
+		this.abortTranslation();
+		this.stopStreaming();
+
+		const scheduler = this.scheduler;
+		if (!scheduler) {
+			this.activeUtteranceId = null;
+			return;
+		}
+		this.speechTeardown = true;
+		scheduler.cancel('interrupted');
+		this.speechTeardown = false;
 	}
 
 	private transition(to: VoiceSessionState): void {
@@ -1107,6 +1640,20 @@ export class VoiceSessionService {
 			}
 		}
 	}
+}
+
+/**
+ * A speech run's end reason, in the protocol's words.
+ *
+ * `interrupted` and `completed` are kept apart all the way out to the client:
+ * collapsing them makes a turn the user talked over indistinguishable from one
+ * they listened to, and that difference is what the conversation memory is
+ * built on. A capped run still COMPLETED - it wrapped up out loud rather than
+ * being cut off.
+ */
+function speakEndReason(result: SpeechRunResult): SpeakEndReason {
+	if (result.reason === 'interrupted') return 'cancelled';
+	return result.reason === 'error' ? 'error' : 'complete';
 }
 
 /** A meter value out of range is clamped rather than published: it is only a bar. */
