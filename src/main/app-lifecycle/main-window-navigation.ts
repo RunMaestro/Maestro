@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
 import { blocksSubframeNavigation } from '../../shared/plugins/panel-navigation';
 import { parseConcertoHtmlUrl } from '../../shared/concerto-html';
+import { isAcappellaAudioHostContents } from '../acappella/audio-host-window';
 
 const ALLOWED_APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
 
@@ -92,12 +93,19 @@ export function attachMainWindowNavigationGuards(
 
 	// Deny most browser permission requests (camera, mic, geolocation, etc.)
 	// Allow clipboard access for the app window only, never embedded browser tabs.
+	//
+	// The one microphone exception is A Cappella's hidden audio host window. Its
+	// whole purpose is capture, and permission handlers are per-session (this is
+	// the shared default session), so the grant is scoped to that exact
+	// webContents rather than loosened for every `window`-type contents.
 	browserWindow.webContents.session.setPermissionRequestHandler(
 		(webContents, permission, callback) => {
 			const contentsType = webContents?.getType?.();
 			const isAppWindow = contentsType === 'window';
 
-			if (isAppWindow && ALLOWED_APP_PERMISSIONS.has(permission)) {
+			if (permission === 'media' && isAcappellaAudioHostContents(webContents)) {
+				callback(true);
+			} else if (isAppWindow && ALLOWED_APP_PERMISSIONS.has(permission)) {
 				callback(true);
 			} else {
 				if (contentsType === 'webview') {

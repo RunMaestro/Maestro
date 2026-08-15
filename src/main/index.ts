@@ -158,6 +158,9 @@ import {
 	closeCadenzaHudWindow,
 	type QuitHandler,
 } from './app-lifecycle';
+// A Cappella's hidden audio host window (created lazily on the first voice
+// session, closed here when the Encore Feature is switched off).
+import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
@@ -520,6 +523,17 @@ const cadenzaHudDeps = {
 	windowRegistry,
 };
 
+// Same shape, different boot query: A Cappella's hidden audio host loads the
+// renderer bundle with `?acappellaAudio`. Nothing is created here - the window
+// is built on the first voice session start.
+const acappellaAudioHostDeps = {
+	isDevelopment,
+	preloadPath,
+	rendererProductionUrl,
+	devServerUrl,
+	windowRegistry,
+};
+
 // See src/main/cadenza-bridge/ and src/main/plugin-host-view-bridge/ for what
 // each of these does (Phase 5 refactoring).
 const { deliverCadenza } = createCadenzaDelivery({
@@ -541,6 +555,10 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // read path to refresh plugin discovery.
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	if (encoreFeatures?.concerto !== true) closeCadenzaHudWindow();
+	// Switching A Cappella off releases the microphone immediately rather than at
+	// quit: a hidden window holding an open capture device is exactly the thing a
+	// user turning the feature off is asking to be rid of.
+	if (encoreFeatures?.aCappella !== true) closeAcappellaAudioHostWindow();
 	if (encoreFeatures?.plugins !== true) {
 		pluginSandboxHost?.stopAll();
 		pluginGroupingRegistry?.clearAll();
@@ -2712,6 +2730,7 @@ app
 			bootstrapStore,
 			safeSend,
 			windowRegistry,
+			acappellaAudioHostDeps,
 			windowManager,
 			createWebServer,
 			wakatimeManager,

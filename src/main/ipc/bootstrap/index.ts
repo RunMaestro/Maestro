@@ -306,6 +306,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
 		safeSend: deps.safeSend,
+		audioHostDeps: deps.acappellaAudioHostDeps,
 	});
 
 	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).

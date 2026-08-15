@@ -15,6 +15,7 @@ import type { WakaTimeManager } from '../../wakatime-manager';
 import type { MaestroCliManager } from '../../maestro-cli-manager';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { WindowRegistry } from '../../window-registry';
+import type { AudioHostWindowDeps } from '../../acappella/audio-host-window';
 import type { createWindowManager } from '../../app-lifecycle';
 import type { createWebServerFactory } from '../../web-server/web-server-factory';
 import type {
@@ -59,6 +60,8 @@ export interface IpcBootstrapDependencies {
 	bootstrapStore: ReturnType<typeof initializeStores>['bootstrapStore'];
 	safeSend: SafeSendFn;
 	windowRegistry: WindowRegistry;
+	/** Bundle/preload paths the hidden A Cappella audio host window loads from. */
+	acappellaAudioHostDeps: AudioHostWindowDeps;
 	windowManager: ReturnType<typeof createWindowManager>;
 	createWebServer: ReturnType<typeof createWebServerFactory>;
 	wakatimeManager: WakaTimeManager;
