@@ -139,8 +139,57 @@ Three mechanisms move it, in descending order of effect:
 
 ### Measurements
 
-Record the median of three turns per configuration, with one short instruction ("ask backend what
-changed"). Take the numbers from **Settings > Plugins > A Cappella > Models > Turn latency**.
+Two instruments, because they answer different questions and neither replaces the other.
+
+**The harness** (`npm run acappella:latency`) measures the span this layer owns, with the providers
+replaced by stubs whose costs are declared in the script. It exists because a microphone session
+measures four things at once - the decode, the model on the day, the network on the day, and the
+streaming layer - and only the last of those is ours to regress. Everything between the stubs is the
+shipping code: `AgentOutputTap`, `ConversationalTranslator`, `SpeechScheduler`, and the splitter.
+Each fixture runs twice: `streamed` is the shipped path, `buffered` is the counterfactual the layer
+replaced (wait for the whole reply, rewrite the whole thing, then speak). The agent writes at the
+same rate in both arms, so the difference between them is the tap and nothing else.
+
+Recorded 2026-08-15, one run per cell, zero point the agent's first token. **First sound** and
+**first word of the answer** are different numbers on a long reply: the buffered arm makes a noise at
+twenty seconds because the tap refuses to go silent and says the agent is still working, which is the
+safety net firing rather than an answer arriving.
+
+| Profile | Fixture      | Arm      | First sound | First word of the answer | Longest mid-turn silence |
+| ------- | ------------ | -------- | ----------- | ------------------------ | ------------------------ |
+| local   | long summary | streamed | 220 ms      | 220 ms                   | 0 ms                     |
+| local   | long summary | buffered | 20221 ms    | 33734 ms                 | 11227 ms                 |
+| local   | diff-heavy   | streamed | 226 ms      | 226 ms                   | 11903 ms                 |
+| local   | diff-heavy   | buffered | 14248 ms    | 14248 ms                 | 0 ms                     |
+| local   | confirmation | streamed | 206 ms      | 206 ms                   | 0 ms                     |
+| local   | confirmation | buffered | 206 ms      | 206 ms                   | 0 ms                     |
+| hosted  | long summary | streamed | 280 ms      | 280 ms                   | 0 ms                     |
+| hosted  | long summary | buffered | 20283 ms    | 33795 ms                 | 11226 ms                 |
+| hosted  | diff-heavy   | streamed | 284 ms      | 284 ms                   | 12061 ms                 |
+| hosted  | diff-heavy   | buffered | 14307 ms    | 14307 ms                 | 0 ms                     |
+| hosted  | confirmation | streamed | 271 ms      | 271 ms                   | 0 ms                     |
+| hosted  | confirmation | buffered | 275 ms      | 275 ms                   | 0 ms                     |
+
+Three things to read out of it:
+
+- **The tap is worth 33 seconds on a long reply and 14 on a diff-heavy one.** That is the whole
+  argument for the layer, and it is not a hop that was shaved - it is the agent's own write time
+  removed from the span. Both profiles land within 60 ms of each other on the streamed arm, which is
+  the point: once the first spoken word costs one short rewrite, the choice of provider stops
+  mattering to the number the user feels.
+- **A one-line confirmation is identical in both arms.** No model hop, because the passthrough test
+  catches it. If that row ever shows the streamed arm slower, the passthrough stopped firing.
+- **The diff-heavy streamed row has a 12 second silence in the middle of the turn.** The intro line
+  is spoken at 226 ms, the fence is correctly never spoken, and nothing is said again until the
+  closing prose. The hang notice does not cover it, because the diff keeps arriving as `data` and
+  keeps resetting the timer. Nothing here is behaving incorrectly, and it is still the worst listening
+  experience the harness produces - the thing to watch if a user reports the assistant "stopping
+  halfway".
+
+**The real pipeline**, which the harness deliberately does not stand in for. Record the median of
+three turns per configuration with one short instruction ("ask backend what changed"), taken from
+**Settings > Plugins > A Cappella > Models > Turn latency**. Zero point is the detector's speech end,
+so these include the decode and the route that the harness excludes.
 
 | Configuration        | Time to first spoken word | Inter-sentence gap | Notes |
 | -------------------- | ------------------------- | ------------------ | ----- |
@@ -152,7 +201,7 @@ The realtime pipeline bypasses this layer: its provider produces speech directly
 translator do not run and the span is the provider's own. That is the comparison the table exists to
 make - when the cascade's time to first spoken word is within a couple of hundred milliseconds of
 realtime, the streaming layer is doing its job and there is no reason to send audio to a third party
-for speed alone.
+for speed alone. It is also why the harness has no realtime arm: there would be nothing of ours in it.
 
 ### Barge-in
 
