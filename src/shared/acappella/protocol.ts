@@ -191,6 +191,13 @@ export const VOICE_SESSION_ERROR_CODES = [
 	'provider-unavailable',
 	'no-agent-matched',
 	'dispatch-failed',
+	/**
+	 * The microphone could not be opened or was taken away mid-session. Its own
+	 * code because the recovery is the user's, not the app's: grant permission,
+	 * plug a device back in, pick another input. See
+	 * `audioHostErrorToSessionError` in `./audio-host.ts`.
+	 */
+	'audio-capture-failed',
 ] as const;
 
 export type VoiceSessionErrorCode = (typeof VOICE_SESSION_ERROR_CODES)[number];
