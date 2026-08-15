@@ -147,6 +147,46 @@ export function countLines(content: string): number {
 	return scanLineStats(content).lines;
 }
 
+// ─── Font Zoom ────────────────────────────────────────────────────────────────
+
+/** What the file preview currently shows, as far as font zoom is concerned. */
+export interface FontScaleTargetView {
+	/** The CodeMirror edit pane is up (it scales whatever the file type is). */
+	isEditing: boolean;
+	/** Edit mode is available at all - false for images and binaries. */
+	isEditableText: boolean;
+	isImage: boolean;
+	isBinary: boolean;
+	isMermaid: boolean;
+	/** CSV / TSV table view. */
+	isCsv: boolean;
+	/** JSONL viewer, including JSON under a jq filter. */
+	isJsonlView: boolean;
+	/** HTML being rendered in the sandboxed iframe (not shown as source). */
+	isRenderedHtml: boolean;
+}
+
+/**
+ * Should the font-zoom control be offered for this view?
+ *
+ * Only where zoom actually moves type. The views that own their own layout -
+ * images, the binary card, rendered HTML inside a sandboxed iframe we cannot
+ * style, Mermaid diagrams, and the CSV / JSONL table viewers - are excluded: a
+ * control that changes nothing reads as broken, which is exactly why Rich Mode
+ * lost its copy of these buttons in Director's Notes.
+ */
+export function canScaleFontForView(view: FontScaleTargetView): boolean {
+	if (view.isEditing) return view.isEditableText;
+	return (
+		!view.isImage &&
+		!view.isBinary &&
+		!view.isCsv &&
+		!view.isJsonlView &&
+		!view.isMermaid &&
+		!view.isRenderedHtml
+	);
+}
+
 // ─── Language Detection ───────────────────────────────────────────────────────
 
 /** Map filename extension to syntax highlighting language code */

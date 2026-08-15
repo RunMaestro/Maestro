@@ -71,6 +71,7 @@ import {
 	LARGE_FILE_PREVIEW_LIMIT,
 	pickPreviewTier,
 	scanLineStats,
+	canScaleFontForView,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -84,6 +85,8 @@ import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
 import { computeTocWidth } from '../Toc';
+import { FontScaleControl } from '../ui/FontScaleControl';
+import { useFontScale } from '../../hooks/ui/useFontScale';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
 import {
@@ -110,6 +113,13 @@ const TextPreviewFast = lazy(() => import('./textFast'));
 // million-line files where even the Fast tiers would struggle to parse +
 // render. CM6 is ~300 KB gz so we keep it well off the main bundle.
 const GiantPreview = lazy(() => import('./giantPreview'));
+
+// Font-zoom persistence key. Shared by every file preview tab: the size a user
+// reads at is a property of their eyes, not of the file they opened.
+const FONT_SCALE_STORAGE_KEY = 'filePreview.fontScale';
+
+// Unzoomed font size of the syntax-highlighted code view, in CSS pixels.
+const CODE_BASE_FONT_PX = 13;
 
 export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
@@ -159,6 +169,11 @@ export const FilePreview = React.memo(
 		ref
 	) {
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
+		// Reader font zoom for the preview / edit pane. One shared preference
+		// across file tabs (persisted by useFontScale), applied to whichever tier
+		// is currently mounted.
+		const fontScaleControl = useFontScale(FONT_SCALE_STORAGE_KEY);
+		const { fontScale } = fontScaleControl;
 		const [fileStats, setFileStats] = useState<FileStats | null>(null);
 		const [showStatsBar, setShowStatsBar] = useState(
 			() => initialScrollTop === undefined || initialScrollTop <= 10
@@ -400,6 +415,21 @@ export const FilePreview = React.memo(
 		// the auto-picked tier. The PreviewTierChip in the header lets the user
 		// flip between modes; selection is persisted via onPreviewTierChange.
 		const previewTier = previewTierOverride ?? autoTier;
+
+		// Offer the font-zoom control only where it moves type (see
+		// canScaleFontForView for which views opt out and why).
+		const canScaleFont =
+			!!file &&
+			canScaleFontForView({
+				isEditing: markdownEditMode,
+				isEditableText,
+				isImage,
+				isBinary,
+				isMermaid,
+				isCsv,
+				isJsonlView: isJsonl || (isJson && searchMode === 'jq'),
+				isRenderedHtml: isHtml && htmlRenderMode,
+			});
 
 		// For very large files, truncate content for syntax highlighting to prevent freezes
 		const displayContent = useMemo(() => {
@@ -1752,12 +1782,41 @@ export const FilePreview = React.memo(
 					</div>
 				)}
 
-				{/* Content - isolated scroll to prevent scroll chaining */}
+				{/* Content - isolated scroll to prevent scroll chaining.
+				    `--fp-font-scale` is the font-zoom multiplier; the tier
+				    stylesheets (rich prose, markdown Fast) read it from here so a
+				    zoom is a repaint, not a re-parse. */}
 				<div
 					ref={contentRef}
 					className="flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin"
-					style={{ overscrollBehavior: 'contain' }}
+					style={
+						{
+							overscrollBehavior: 'contain',
+							'--fp-font-scale': String(fontScale),
+						} as React.CSSProperties
+					}
 				>
+					{/* Floating font zoom - pinned to the top-right of the pane, the
+					    mirror of the Table of Contents button at the bottom-right.
+					    Sticky (not absolute) so it stays put while the pane scrolls
+					    without depending on a positioned ancestor. Drops below the
+					    find bar when that is open so the two never overlap. */}
+					{canScaleFont && (
+						<div
+							className={`sticky z-20 h-0 flex justify-end pointer-events-none ${
+								searchOpen ? 'top-14' : 'top-0'
+							}`}
+						>
+							<FontScaleControl
+								theme={theme}
+								control={fontScaleControl}
+								variant="floating"
+								target={markdownEditMode ? 'editor' : 'preview'}
+								className="pointer-events-auto"
+								testId="file-preview-font-scale"
+							/>
+						</div>
+					)}
 					{/* Floating Search */}
 					{searchOpen && (
 						<div className="sticky top-0 z-10 pb-4" ref={jqHelpRef}>
@@ -2097,6 +2156,7 @@ export const FilePreview = React.memo(
 							spellCheck={spellCheckEnabled}
 							wrap={fileEditWordWrap}
 							showLineNumbers={fileEditShowLineNumbers}
+							fontScale={fontScale}
 							onLineNumberContextMenu={(lineNumber, event) => {
 								setLineCtxMenu({
 									lineNumber,
@@ -2201,6 +2261,7 @@ export const FilePreview = React.memo(
 								theme={theme}
 								containerRef={markdownContainerRef}
 								filePath={file.path}
+								fontScale={fontScale}
 							/>
 						</Suspense>
 					) : isMarkdown && previewTier === 'fast' && !markdownEditMode ? (
@@ -2236,9 +2297,14 @@ export const FilePreview = React.memo(
 							className="file-preview-content prose prose-sm max-w-none"
 							style={{ color: theme.colors.textMain }}
 						>
-							{/* Scoped prose styles to avoid CSS conflicts with other prose containers */}
+							{/* Scoped prose styles to avoid CSS conflicts with other prose
+							    containers. The base size reads the font-zoom variable set on the
+							    scroll container - Tailwind's `prose-sm` pins it in absolute rem
+							    otherwise and swallows the zoom. Everything below is in `em`, so
+							    it follows. */}
 							<style>{`
-              .file-preview-content.prose h1 { color: ${theme.colors.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
+              .file-preview-content.prose { font-size: calc(0.875rem * var(--fp-font-scale, 1)); }
+            .file-preview-content.prose h1 { color: ${theme.colors.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
               .file-preview-content.prose h2 { color: ${theme.colors.success}; font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
               .file-preview-content.prose h3 { color: ${theme.colors.warning}; font-size: 1.17em; font-weight: bold; margin: 0.83em 0; }
               .file-preview-content.prose h4 { color: ${theme.colors.textMain}; font-size: 1em; font-weight: bold; margin: 1em 0; opacity: 0.9; }
@@ -2291,6 +2357,7 @@ export const FilePreview = React.memo(
 								theme={theme}
 								containerRef={markdownContainerRef}
 								filePath={file.path}
+								fontScale={fontScale}
 							/>
 						</Suspense>
 					) : isReadableText && !markdownEditMode ? (
@@ -2327,7 +2394,10 @@ export const FilePreview = React.memo(
 							<BionifyTextBlock
 								ref={markdownContainerRef}
 								className="prose prose-sm max-w-none whitespace-pre-wrap break-words"
-								style={{ color: theme.colors.textMain }}
+								style={{
+									color: theme.colors.textMain,
+									fontSize: `calc(0.875rem * ${fontScale})`,
+								}}
 								enabled={effectiveBionifyReadingMode}
 								intensity={bionifyIntensity}
 								algorithm={bionifyAlgorithm}
@@ -2357,6 +2427,7 @@ export const FilePreview = React.memo(
 								theme={theme}
 								containerRef={markdownContainerRef}
 								filePath={file.path}
+								fontScale={fontScale}
 							/>
 						</Suspense>
 					) : (
@@ -2397,7 +2468,7 @@ export const FilePreview = React.memo(
 									margin: 0,
 									padding: '24px',
 									background: 'transparent',
-									fontSize: '13px',
+									fontSize: `${CODE_BASE_FONT_PX * fontScale}px`,
 								}}
 								showLineNumbers
 								PreTag="div"

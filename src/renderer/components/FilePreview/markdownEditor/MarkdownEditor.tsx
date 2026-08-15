@@ -46,6 +46,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			showLineNumbers = true,
 			onLineNumberContextMenu,
 			onKeyDown,
+			fontScale = 1,
 			className,
 		},
 		ref
@@ -109,7 +110,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				doc: value,
 				extensions: [
 					compartments.base.of(baseExt),
-					compartments.theme.of(buildEditorTheme(theme)),
+					compartments.theme.of(buildEditorTheme(theme, fontScale)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
 					updateListener,
@@ -155,12 +156,16 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			}
 		}, [value]);
 
-		// Theme change → reconfigure the theme compartment.
+		// Theme or font-zoom change → reconfigure the theme compartment. Font size
+		// rides in the theme (see themeAdapter) so a zoom re-measures line heights
+		// the same way a theme swap does.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
-			view.dispatch({ effects: compartments.theme.reconfigure(buildEditorTheme(theme)) });
-		}, [theme, compartments.theme]);
+			view.dispatch({
+				effects: compartments.theme.reconfigure(buildEditorTheme(theme, fontScale)),
+			});
+		}, [theme, fontScale, compartments.theme]);
 
 		// Language change → reload + reconfigure. Plain-text falls through to
 		// an empty extension so the previously loaded grammar is cleared.

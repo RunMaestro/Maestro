@@ -16,6 +16,8 @@ import {
 	TEXT_PAGE_CLASS,
 	TEXT_PAGE_GUTTER_CLASS,
 	TEXT_PAGE_CONTENT_CLASS,
+	TEXT_BASE_FONT_PX,
+	TEXT_LINE_HEIGHT,
 	generateTextProseCss,
 } from './proseStyles';
 import type { TextPage, TextPreviewFastHandle, TextPreviewFastProps } from './types';
@@ -25,9 +27,12 @@ import type { TextPage, TextPreviewFastHandle, TextPreviewFastProps } from './ty
 const SYNC_PARSE_BYTES = 64 * 1024;
 
 /** Approximate per-page rendered height in CSS pixels. Each page is
- * `DEFAULT_LINES_PER_PAGE` lines × 13px font × 1.6 line-height. Fixed-size
- * virtualization means we don't need real measurement. */
-const PAGE_HEIGHT_PX = Math.ceil(DEFAULT_LINES_PER_PAGE * 13 * 1.6);
+ * `DEFAULT_LINES_PER_PAGE` lines × base font × line-height, times the reader's
+ * font zoom. Fixed-size virtualization means we don't need real measurement,
+ * but it does mean this must track the font size the stylesheet paints. */
+function pageHeightFor(fontScale: number): number {
+	return Math.ceil(DEFAULT_LINES_PER_PAGE * TEXT_BASE_FONT_PX * fontScale * TEXT_LINE_HEIGHT);
+}
 
 /** Pixels of overscan above/below the viewport - TanStack Virtual unit is
  * items, not pixels. With ~1280px-tall pages, 1 item ≈ a full page; 1 is
@@ -58,10 +63,20 @@ function escapeHtmlForPre(value: string): string {
  * (pagination, codeHighlighter, searchHits, proseStyles).
  */
 export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFastProps>(
-	function TextPreviewFast({ content, language, theme, containerRef, filePath: _filePath }, ref) {
+	function TextPreviewFast(
+		{ content, language, theme, containerRef, filePath: _filePath, fontScale = 1 },
+		ref
+	) {
 		const isCode = isCodeLanguage(language);
 		const scrollRef = useRef<HTMLDivElement | null>(null);
 		const [pages, setPages] = useState<TextPage[]>([]);
+
+		// Page height follows the zoom. Mirrored into a ref so the (deliberately
+		// stable) imperative handle's line ⇄ pixel math reads the current value
+		// instead of the one captured when the handle was built.
+		const pageHeightPx = pageHeightFor(fontScale);
+		const pageHeightRef = useRef(pageHeightPx);
+		pageHeightRef.current = pageHeightPx;
 
 		// Keep refs to the latest values so the imperative handle's closures
 		// (which we want stable across renders) can read fresh data.
@@ -97,9 +112,16 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 		const virtualizer = useVirtualizer({
 			count: pages.length,
 			getScrollElement: () => scrollRef.current,
-			estimateSize: () => PAGE_HEIGHT_PX,
+			estimateSize: () => pageHeightPx,
 			overscan: OVERSCAN_PAGES,
 		});
+
+		// Zoom change → re-run the size estimate. Fixed-size virtualization caches
+		// measurements, so without this the pages keep their pre-zoom offsets and
+		// the text overlaps the page below it.
+		useEffect(() => {
+			virtualizer.measure();
+		}, [pageHeightPx, virtualizer]);
 
 		// Lazy Shiki for code pages only. Plain-text Fast tier never loads Shiki.
 		useEffect(() => {
@@ -143,13 +165,13 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 						scrollRangeIntoView(range);
 					});
 				},
-				// Fixed-size virtualization (every page is PAGE_HEIGHT_PX tall, holding
-				// up to DEFAULT_LINES_PER_PAGE lines) makes the line ⇄ pixel mapping a
-				// constant multiply - no per-line measurement needed.
+				// Fixed-size virtualization (every page is one page-height tall,
+				// holding up to DEFAULT_LINES_PER_PAGE lines) makes the line ⇄ pixel
+				// mapping a constant multiply - no per-line measurement needed.
 				getTopLine: () => {
 					const root = scrollRef.current;
 					if (!root) return 1;
-					const lineHeight = PAGE_HEIGHT_PX / DEFAULT_LINES_PER_PAGE;
+					const lineHeight = pageHeightRef.current / DEFAULT_LINES_PER_PAGE;
 					const pageList = pagesRef.current;
 					const total = pageList.length ? pageList[pageList.length - 1].endLine : 1;
 					const line = Math.floor(root.scrollTop / lineHeight) + 1;
@@ -158,7 +180,7 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 				scrollToLine: (line: number) => {
 					const root = scrollRef.current;
 					if (!root) return;
-					const lineHeight = PAGE_HEIGHT_PX / DEFAULT_LINES_PER_PAGE;
+					const lineHeight = pageHeightRef.current / DEFAULT_LINES_PER_PAGE;
 					root.scrollTop = Math.max(0, (line - 1) * lineHeight);
 				},
 			}),
@@ -175,7 +197,7 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 			[containerRef]
 		);
 
-		const proseCss = useMemo(() => generateTextProseCss(theme), [theme]);
+		const proseCss = useMemo(() => generateTextProseCss(theme, fontScale), [theme, fontScale]);
 
 		// Pre-compute the gutter contents per page once per parse - line
 		// numbers are stable so we don't need to do this in render.
@@ -248,7 +270,7 @@ export const TextPreviewFast = forwardRef<TextPreviewFastHandle, TextPreviewFast
 										left: 0,
 										width: '100%',
 										transform: `translateY(${item.start}px)`,
-										height: `${PAGE_HEIGHT_PX}px`,
+										height: `${pageHeightPx}px`,
 									}}
 								>
 									{renderPage(page)}

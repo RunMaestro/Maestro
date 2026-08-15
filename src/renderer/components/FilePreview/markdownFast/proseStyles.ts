@@ -16,11 +16,16 @@ export const FAST_BLOCK_CLASS = 'markdown-fast-block';
  * Kept as a function (not a static template) so we can re-evaluate when the
  * theme changes; the React shell drops the returned string into a `<style>`
  * tag inside the scrolling container.
+ *
+ * The block base size reads `--fp-font-scale` (set by FilePreview's font-zoom
+ * control, default 1) rather than taking a prop, so a zoom change repaints via
+ * CSS without re-running the parse pipeline. Heading/code sizes stay in `em`
+ * and follow it.
  */
 export function generateProseCss(theme: Theme): string {
 	const c = theme.colors;
 	return `
-		.${FAST_BLOCK_CLASS} { color: ${c.textMain}; }
+		.${FAST_BLOCK_CLASS} { color: ${c.textMain}; font-size: calc(0.875rem * var(--fp-font-scale, 1)); }
 		.${FAST_BLOCK_CLASS} h1 { color: ${c.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
 		.${FAST_BLOCK_CLASS} h2 { color: ${c.success}; font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
 		.${FAST_BLOCK_CLASS} h3 { color: ${c.warning}; font-size: 1.17em; font-weight: bold; margin: 0.83em 0; }

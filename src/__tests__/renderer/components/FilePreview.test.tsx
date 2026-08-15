@@ -46,6 +46,9 @@ vi.mock('lucide-react', () => ({
 	Type: () => <span data-testid="type-icon">Type</span>,
 	Regex: () => <span data-testid="regex-icon">Regex</span>,
 	Hash: () => <span data-testid="hash-icon">Hash</span>,
+	// Icons added by the floating font-zoom control.
+	AArrowUp: () => <span data-testid="a-arrow-up-icon">AArrowUp</span>,
+	AArrowDown: () => <span data-testid="a-arrow-down-icon">AArrowDown</span>,
 }));
 
 // Mock react-markdown

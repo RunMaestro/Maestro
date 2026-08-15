@@ -7,20 +7,11 @@ import {
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
-import {
-	RefreshCw,
-	Save,
-	Clock,
-	Copy,
-	Check,
-	Bot,
-	History,
-	Timer,
-	AArrowUp,
-	AArrowDown,
-} from 'lucide-react';
+import { RefreshCw, Save, Clock, Copy, Check, Bot, History, Timer } from 'lucide-react';
 import rehypeSlug from 'rehype-slug';
 import { Spinner } from '../ui/Spinner';
+import { FontScaleControl } from '../ui/FontScaleControl';
+import { useFontScale } from '../../hooks/ui/useFontScale';
 import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { RichOverview } from './RichOverview';
@@ -53,24 +44,9 @@ interface AIOverviewTabProps {
 }
 
 // Font-scale zoom for the rendered synopsis. Stored as an em multiplier so the
-// em-based prose styles scale proportionally. Persisted to localStorage so the
-// chosen size is remembered across opens of Director's Notes.
+// em-based prose styles scale proportionally, and persisted (by useFontScale)
+// so the chosen size is remembered across opens of Director's Notes.
 const FONT_SCALE_STORAGE_KEY = 'directorNotes.fontScale';
-const FONT_SCALE_MIN = 0.7;
-const FONT_SCALE_MAX = 2.0;
-const FONT_SCALE_STEP = 0.1;
-const FONT_SCALE_DEFAULT = 1.0;
-
-function clampFontScale(value: number): number {
-	if (!Number.isFinite(value)) return FONT_SCALE_DEFAULT;
-	return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, value));
-}
-
-function loadFontScale(): number {
-	const raw = localStorage.getItem(FONT_SCALE_STORAGE_KEY);
-	if (raw === null) return FONT_SCALE_DEFAULT;
-	return clampFontScale(Number(raw));
-}
 
 // Rich vs Plain reading mode for the AI Overview. Rich is a widget dashboard
 // (stat cards, timeline, breakdowns) rendered from deterministic data. Plain
@@ -169,7 +145,8 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	const [copied, setCopied] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [stats, setStats] = useState<SynopsisStats | null>(cachedSynopsis?.stats ?? null);
-	const [fontScale, setFontScale] = useState<number>(loadFontScale);
+	const fontScaleControl = useFontScale(FONT_SCALE_STORAGE_KEY);
+	const { fontScale } = fontScaleControl;
 	// Baseline default from the persisted setting; the localStorage override
 	// (written by the in-tab toggle) layers on top of it.
 	const [viewMode, setViewMode] = useState<ViewMode>(() =>
@@ -178,15 +155,6 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	const mountedRef = useRef(true);
 	/** Scrollable notes region: the TOC's scroll target and keyboard host. */
 	const contentRef = useRef<HTMLDivElement>(null);
-
-	// Adjust the synopsis font size and persist the new scale.
-	const adjustFontScale = useCallback((direction: -1 | 1) => {
-		setFontScale((prev) => {
-			const next = clampFontScale(prev + direction * FONT_SCALE_STEP);
-			localStorage.setItem(FONT_SCALE_STORAGE_KEY, String(next));
-			return next;
-		});
-	}, []);
 
 	// Switch reading mode and persist the choice.
 	const changeViewMode = useCallback((mode: ViewMode) => {
@@ -221,8 +189,9 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 	// base font size and ignore the zoom control. Override it with a scaled size
 	// (same selector → higher specificity than the utility class) so the em-based
 	// prose children scale proportionally. Injected at the content-container
-	// level so it applies to both the Plain block and the Rich narrative, which
-	// share the `.director-notes-content` class.
+	// level so any `.director-notes-content` prose block picks it up. The zoom
+	// buttons themselves are Plain-only: Rich Mode is mostly fixed-size widget
+	// chrome that the rule cannot touch.
 	const proseScaleRule = `.director-notes-content .prose { font-size: calc(0.875rem * ${fontScale}) !important; }`;
 
 	// Format generation duration for display
@@ -600,41 +569,18 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 						</div>
 					)}
 
-					{/* Font-size controls - right-justified, scale only the synopsis text */}
-					<div className="ml-auto flex items-center gap-1">
-						<button
-							type="button"
-							onClick={() => adjustFontScale(-1)}
-							disabled={fontScale <= FONT_SCALE_MIN}
-							aria-label="Decrease font size"
-							title="Decrease font size"
-							className="focus-ring flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
-							style={{
-								color: theme.colors.textDim,
-								border: `1px solid ${theme.colors.border}`,
-								opacity: fontScale <= FONT_SCALE_MIN ? 0.4 : 0.8,
-								cursor: fontScale <= FONT_SCALE_MIN ? 'default' : 'pointer',
-							}}
-						>
-							<AArrowDown className="w-4 h-4" />
-						</button>
-						<button
-							type="button"
-							onClick={() => adjustFontScale(1)}
-							disabled={fontScale >= FONT_SCALE_MAX}
-							aria-label="Increase font size"
-							title="Increase font size"
-							className="focus-ring flex items-center justify-center w-7 h-7 rounded transition-colors hover:opacity-100"
-							style={{
-								color: theme.colors.textDim,
-								border: `1px solid ${theme.colors.border}`,
-								opacity: fontScale >= FONT_SCALE_MAX ? 0.4 : 0.8,
-								cursor: fontScale >= FONT_SCALE_MAX ? 'default' : 'pointer',
-							}}
-						>
-							<AArrowUp className="w-4 h-4" />
-						</button>
-					</div>
+					{/* Font-size controls - Plain Mode only. Rich Mode is a widget
+					    dashboard whose stat cards, timeline and breakdowns carry their
+					    own fixed sizing, so the zoom moved nothing there and the
+					    buttons read as broken. */}
+					{viewMode === 'plain' && (
+						<FontScaleControl
+							theme={theme}
+							control={fontScaleControl}
+							className="ml-auto"
+							testId="director-notes-font-scale"
+						/>
+					)}
 				</div>
 			)}
 

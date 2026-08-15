@@ -789,6 +789,33 @@ The row editor for an agent's extra directory grants (path + independent R / W s
 
 Always run the value through `normalizeAdditionalDirectories(dirs, homeDir)` (`src/shared/additionalDirectories.ts`) before persisting it on the session - the component keeps raw rows so the user can type and toggle freely. Grants are prompt-level only; see SHARED-UTILS.md → Additional Directories.
 
+### `<FontScaleControl>` (`src/renderer/components/ui/FontScaleControl.tsx`)
+
+Decrease / reset / increase font zoom for a reading pane. Pair it with
+`useFontScale(storageKey)` (`src/renderer/hooks/ui/useFontScale.ts`), which owns
+the value, the clamping (0.7 - 2.0, rounded to two decimals so no
+`calc(0.875rem * 1.0000000000000002)` reaches the DOM) and the localStorage
+persistence. Do NOT hand-roll another pair of `AArrowUp` / `AArrowDown` buttons.
+
+```tsx
+const fontScale = useFontScale('filePreview.fontScale');
+<FontScaleControl theme={theme} control={fontScale} variant="floating" target="preview" />;
+```
+
+- `variant="inline"` - bordered squares for a toolbar or stats bar (Director's Notes).
+- `variant="floating"` - frosted pill for overlaying a scrolling pane (file preview,
+  pinned top-right as the mirror of the Table of Contents button at bottom-right).
+- The percentage in the middle appears only once zoomed and doubles as the reset.
+
+**Only render it where the zoom moves type.** A control that changes nothing reads
+as broken: Director's Notes hides it in Rich Mode (fixed-size widget chrome), and
+the file preview gates it on `canScaleFontForView()` in `filePreviewUtils.ts`
+(images, binary card, rendered HTML iframe, Mermaid, CSV / JSONL tables opt out).
+Applying the scale is per-surface: prose reads `--fp-font-scale` from the scroll
+container, the CM6 panes take a `fontScale` prop that rides in the theme, and the
+Fast text tier must scale its fixed virtualizer page height by the same number or
+the pages overlap.
+
 ### `<FormInput>` (`src/renderer/components/ui/FormInput.tsx`)
 
 Themed form input with label, validation, and Enter-to-submit:

@@ -26,6 +26,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 			getTotalSize: () => opts.count * opts.estimateSize(),
 			getVirtualItems: () => items,
 			scrollToIndex: vi.fn(),
+			measure: vi.fn(),
 		};
 	},
 }));
@@ -35,7 +36,7 @@ import {
 	type TextPreviewFastHandle,
 } from '../../../../../renderer/components/FilePreview/textFast';
 
-function renderPreview(opts: { content: string; language?: string }) {
+function renderPreview(opts: { content: string; language?: string; fontScale?: number }) {
 	const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
 	const ref = { current: null } as React.MutableRefObject<TextPreviewFastHandle | null>;
 	const result = render(
@@ -45,6 +46,7 @@ function renderPreview(opts: { content: string; language?: string }) {
 			language={opts.language ?? 'text'}
 			theme={mockTheme}
 			containerRef={containerRef}
+			fontScale={opts.fontScale}
 		/>
 	);
 	return { ...result, containerRef, ref };
@@ -121,6 +123,26 @@ describe('TextPreviewFast', () => {
 			const { container } = renderPreview({ content: 'x' });
 			const style = container.querySelector('style');
 			expect(style?.textContent).toContain('.text-fast-page');
+		});
+	});
+
+	// Fixed-size virtualization means the painted font size and the page height
+	// are two expressions of one number. If they disagree, pages overlap.
+	describe('font zoom', () => {
+		const pageEl = (container: HTMLElement) =>
+			container.querySelector('[data-virtual-page="0"]') as HTMLElement;
+
+		it('paints the base size and page height when unzoomed', () => {
+			const { container } = renderPreview({ content: 'x' });
+			expect(container.querySelector('style')!.textContent).toContain('font-size: 13px');
+			// 80 lines × 13px × 1.6
+			expect(pageEl(container).style.height).toBe('1664px');
+		});
+
+		it('scales the stylesheet and the page height together', () => {
+			const { container } = renderPreview({ content: 'x', fontScale: 1.5 });
+			expect(container.querySelector('style')!.textContent).toContain('font-size: 19.5px');
+			expect(pageEl(container).style.height).toBe('2496px');
 		});
 	});
 

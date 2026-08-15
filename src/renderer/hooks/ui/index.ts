@@ -69,6 +69,17 @@ export type {
 	UseResizableTextareaReturn,
 } from './useResizableTextarea';
 
+// Persisted font zoom for reading surfaces
+export {
+	useFontScale,
+	clampFontScale,
+	FONT_SCALE_MIN,
+	FONT_SCALE_MAX,
+	FONT_SCALE_STEP,
+	FONT_SCALE_DEFAULT,
+} from './useFontScale';
+export type { UseFontScaleReturn } from './useFontScale';
+
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';
 export type { UseAppHandlersDeps, UseAppHandlersReturn } from './useAppHandlers';

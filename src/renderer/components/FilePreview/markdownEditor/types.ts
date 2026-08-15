@@ -51,5 +51,7 @@ export interface MarkdownEditorProps {
 	onLineNumberContextMenu?: (lineNumber: number, event: MouseEvent) => void;
 	/** Forwarded to the editor's content element so Cmd+S etc. still fire. */
 	onKeyDown?: (event: KeyboardEvent) => void;
+	/** Reader font zoom (1 = unzoomed), applied to the CM6 theme. */
+	fontScale?: number;
 	className?: string;
 }

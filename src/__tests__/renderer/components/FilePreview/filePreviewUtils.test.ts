@@ -20,6 +20,8 @@ import {
 	GIANT_TIER_BYTES,
 	GIANT_TIER_LINES,
 	LINE_LENGTH_GIANT_THRESHOLD,
+	canScaleFontForView,
+	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
 
 describe('filePreviewUtils', () => {
@@ -523,6 +525,53 @@ describe('filePreviewUtils', () => {
 
 		it('returns true for any other non-empty language identifier', () => {
 			expect(isCodeFile('whatever')).toBe(true);
+		});
+	});
+
+	describe('canScaleFontForView', () => {
+		const view = (overrides: Partial<FontScaleTargetView> = {}): FontScaleTargetView => ({
+			isEditing: false,
+			isEditableText: true,
+			isImage: false,
+			isBinary: false,
+			isMermaid: false,
+			isCsv: false,
+			isJsonlView: false,
+			isRenderedHtml: false,
+			...overrides,
+		});
+
+		it('offers the zoom for ordinary markdown / text / code previews', () => {
+			expect(canScaleFontForView(view())).toBe(true);
+		});
+
+		it('offers the zoom in the edit pane whatever the file type', () => {
+			expect(canScaleFontForView(view({ isEditing: true }))).toBe(true);
+		});
+
+		// Images and binaries never enter edit mode; if the flag ever survives a
+		// navigation, the control must not claim it can zoom them.
+		it('withholds the zoom when the edit pane cannot open', () => {
+			expect(canScaleFontForView(view({ isEditing: true, isEditableText: false }))).toBe(false);
+		});
+
+		it('withholds the zoom from views it cannot move', () => {
+			for (const key of [
+				'isImage',
+				'isBinary',
+				'isMermaid',
+				'isCsv',
+				'isJsonlView',
+				'isRenderedHtml',
+			] as const) {
+				expect(canScaleFontForView(view({ [key]: true }))).toBe(false);
+			}
+		});
+
+		// HTML shown as source is just text - only the rendered iframe opts out.
+		it('offers the zoom for HTML source, not the rendered iframe', () => {
+			expect(canScaleFontForView(view({ isRenderedHtml: false }))).toBe(true);
+			expect(canScaleFontForView(view({ isRenderedHtml: true }))).toBe(false);
 		});
 	});
 });

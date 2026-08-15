@@ -366,6 +366,23 @@ describe('AIOverviewTab', () => {
 				synopsis: '# Synopsis',
 				stats: { agentCount: 3, entryCount: 42, durationMs: 95000 },
 			});
+			// The zoom controls belong to Plain Mode - see the Rich-mode test below.
+			settingsMock.value.directorNotesSettings.defaultMode = 'plain';
+		});
+
+		// The buttons scale prose, and Rich Mode is fixed-size widget chrome, so
+		// clicking them there moved nothing and read as a broken control.
+		it('hides the controls in Rich Mode', async () => {
+			settingsMock.value.directorNotesSettings.defaultMode = 'rich';
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			expect(screen.queryByLabelText('Increase font size')).toBeNull();
+			expect(screen.queryByLabelText('Decrease font size')).toBeNull();
 		});
 
 		it('renders increase/decrease font-size controls with the stats bar', async () => {

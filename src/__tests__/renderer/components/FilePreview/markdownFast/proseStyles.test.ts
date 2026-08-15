@@ -31,6 +31,13 @@ describe('generateProseCss', () => {
 		}
 	});
 
+	// The Fast tier reads the zoom from a CSS variable the host sets, so a font
+	// change repaints instead of re-running the parse pipeline.
+	it('bases the block font size on the file-preview font-scale variable', () => {
+		const css = generateProseCss(makeTheme());
+		expect(css).toContain('font-size: calc(0.875rem * var(--fp-font-scale, 1))');
+	});
+
 	it('embeds theme accent in h1', () => {
 		const css = generateProseCss(makeTheme({ accent: '#deadbe' }));
 		expect(css).toContain('color: #deadbe');
