@@ -13,6 +13,12 @@
  *     window.maestro with the same factory output the desktop gets.
  */
 
+// Type-only, and it is what declares `window.__MAESTRO_CONFIG__` for this file:
+// the server injects one config object and there is one declaration of its
+// shape. A second, narrower copy here disagreed with it the moment the bundle
+// was type-checked alongside the renderer.
+import type {} from '../web/utils/config';
+
 import { captureException } from './sentry-shim';
 
 type Listener = (event: { senderFrame: null }, ...args: unknown[]) => void;
@@ -24,12 +30,6 @@ interface PendingInvoke {
 
 interface BridgeConfig {
 	wsUrl: string;
-}
-
-declare global {
-	interface Window {
-		__MAESTRO_CONFIG__?: { wsUrl: string; apiBase: string; securityToken: string };
-	}
 }
 
 function getWsUrl(): string {
