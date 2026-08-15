@@ -143,6 +143,8 @@ export class PairingService {
 
 	private devices = new Map<string, PairedDeviceRecord>();
 	private loaded = false;
+	/** The most recently queued write, for {@link whenPersisted}. */
+	private lastWrite: Promise<void> = Promise.resolve();
 
 	/** The one open pairing window. A second `startPairing` replaces it. */
 	private offer: (PairingOffer & { claimed: boolean }) | null = null;
@@ -485,10 +487,25 @@ export class PairingService {
 	private async persist(): Promise<void> {
 		const devices = [...this.devices.values()];
 		this.emitChange();
-		await this.writes.enqueue(this.options.filePath, async () => {
+		this.lastWrite = this.writes.enqueue(this.options.filePath, async () => {
 			await fs.mkdir(path.dirname(this.options.filePath), { recursive: true });
 			await atomicWriteJson(this.options.filePath, { version: 1, devices });
 		});
+		await this.lastWrite;
+	}
+
+	/**
+	 * Resolves once every queued write has hit disk.
+	 *
+	 * Several callers persist as a side effect and do not await it -
+	 * `noteConnected()` runs off a peer connecting - so this is how a shutdown or
+	 * a test knows the device file is settled rather than half written.
+	 */
+	whenPersisted(): Promise<void> {
+		return this.lastWrite.then(
+			() => {},
+			() => {}
+		);
 	}
 
 	// -- Internals -----------------------------------------------------------
