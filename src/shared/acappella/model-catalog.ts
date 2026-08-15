@@ -311,11 +311,6 @@ export function formatModelSetSize(setId: VoiceModelSetId): string {
 	return formatSize(MODEL_SETS[setId].bytes);
 }
 
-/** Total size of an arbitrary selection of models, formatted. */
-export function formatModelsSize(ids: readonly string[]): string {
-	return formatSize(sumModelBytes(ids));
-}
-
 /** Total bytes of an arbitrary selection of models. Unknown ids contribute zero. */
 export function sumModelBytes(ids: readonly string[]): number {
 	return ids.reduce((total, id) => total + (getVoiceModel(id)?.bytes ?? 0), 0);

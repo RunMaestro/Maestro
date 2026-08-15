@@ -31,7 +31,14 @@ import {
 	resolveVoiceReadiness,
 } from '../../../../main/acappella/models/capability-gate';
 import type { ModelStatus } from '../../../../main/acappella/models/model-store';
-import { readinessErrorMessage } from '../../../../shared/acappella/readiness';
+import {
+	VOICE_SLOT_UNSATISFIED_REASONS,
+	readinessErrorMessage,
+	type VoiceReadiness,
+	type VoiceSlotReadiness,
+	type VoiceSlotUnsatisfiedReason,
+} from '../../../../shared/acappella/readiness';
+import type { NativeRuntimeUnavailable } from '../../../../main/acappella/runtime/native-loader';
 import {
 	KOKORO_82M_ID,
 	OPENWAKEWORD_BASE_ID,
@@ -297,6 +304,166 @@ describe('capability-gate', () => {
 			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
 			expect(brain.providerId).toBe('not-a-registered-provider');
 			expect(brain.satisfied).toBe(true);
+		});
+	});
+
+	describe('the microphone slot', () => {
+		it('reports mic-permission-denied as a permission, with the privacy pane as the fix', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				readModelStatus: statusReader(),
+				readMicPermission: () => 'denied',
+			});
+
+			const mic = readiness.slots.find((slot) => slot.slot === 'microphone')!;
+			expect(mic.satisfied).toBe(false);
+			expect(mic.reason).toBe('mic-permission-denied');
+			// Named as a permission, never as "voice unavailable": a user with every
+			// model on disk and a denied microphone has a one-checkbox problem.
+			expect(mic.detail).toMatch(/microphone access/i);
+			expect(mic.suggestedAction).toMatch(/privacy settings/i);
+			expect(readiness.canStartSession).toBe(false);
+		});
+
+		it('reports mic-permission-restricted without sending the user to a checkbox they cannot tick', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				readModelStatus: statusReader(),
+				readMicPermission: () => 'restricted',
+			});
+
+			const mic = readiness.slots.find((slot) => slot.slot === 'microphone')!;
+			expect(mic.reason).toBe('mic-permission-restricted');
+			expect(mic.suggestedAction).toMatch(/manages this machine/i);
+			expect(mic.suggestedAction).not.toMatch(/privacy settings/i);
+		});
+
+		it.each(['granted', 'not-determined', 'unknown'] as const)(
+			'does not block on %s, which is a machine that has not been asked yet',
+			async (permission) => {
+				const readiness = await resolveVoiceReadiness({
+					settings: ALL_LOCAL,
+					readModelStatus: statusReader(),
+					readMicPermission: () => permission,
+				});
+
+				const mic = readiness.slots.find((slot) => slot.slot === 'microphone')!;
+				expect(mic.satisfied).toBe(true);
+				// Reported even when satisfied, so Voice Setup can say "you will be asked
+				// when you start" instead of describing it as a problem.
+				expect(mic.micPermission).toBe(permission);
+			}
+		);
+	});
+
+	describe('no unsatisfied slot is a dead end', () => {
+		/** A runtime that has already failed to load in this process. */
+		const whisperRuntimeFailure: NativeRuntimeUnavailable = {
+			kind: 'runtime-unavailable',
+			runtimeId: 'whisper',
+			moduleId: 'whisper-node',
+			platform: 'darwin',
+			arch: 'arm64',
+			failure: 'load-failed',
+			message: 'whisper.cpp could not be loaded on this machine.',
+			suggestedAction: 'Reinstall Maestro, or switch Speech-to-Text to a hosted provider.',
+			detail: 'dlopen failed',
+		};
+
+		/**
+		 * Every reason in the union, each produced by a real configuration.
+		 *
+		 * "Voice mode unavailable" with no reason is indistinguishable from a bug,
+		 * so the gate's contract is that an unsatisfied slot ALWAYS carries a
+		 * sentence naming the missing piece and a sentence saying what to do. A new
+		 * reason added without either would otherwise reach a user as a disabled
+		 * button with nothing next to it.
+		 */
+		const CASES: Array<[VoiceSlotUnsatisfiedReason, () => Promise<VoiceReadiness>]> = [
+			[
+				'model-not-installed',
+				() =>
+					resolveVoiceReadiness({
+						settings: ALL_LOCAL,
+						readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'not-installed' }),
+					}),
+			],
+			[
+				'model-corrupt',
+				() =>
+					resolveVoiceReadiness({
+						settings: ALL_LOCAL,
+						readModelStatus: statusReader({ [KOKORO_82M_ID]: 'corrupt' }),
+					}),
+			],
+			[
+				'api-key-missing',
+				() =>
+					resolveVoiceReadiness({
+						settings: { ...ALL_LOCAL, stt: 'openai-stt' },
+						readModelStatus: statusReader(),
+						hasApiKey: () => false,
+					}),
+			],
+			[
+				'provider-unreachable',
+				() =>
+					resolveVoiceReadiness({
+						settings: { ...ALL_LOCAL, stt: 'openai-stt' },
+						readModelStatus: statusReader(),
+						hasApiKey: () => true,
+						probeProvider: () => false,
+					}),
+			],
+			[
+				'runtime-unavailable',
+				() =>
+					resolveVoiceReadiness({
+						settings: ALL_LOCAL,
+						readModelStatus: statusReader(),
+						readRuntimeFailure: (runtimeId) =>
+							runtimeId === 'whisper' ? whisperRuntimeFailure : null,
+					}),
+			],
+			[
+				'mic-permission-denied',
+				() =>
+					resolveVoiceReadiness({
+						settings: ALL_LOCAL,
+						readModelStatus: statusReader(),
+						readMicPermission: () => 'denied',
+					}),
+			],
+			[
+				'mic-permission-restricted',
+				() =>
+					resolveVoiceReadiness({
+						settings: ALL_LOCAL,
+						readModelStatus: statusReader(),
+						readMicPermission: () => 'restricted',
+					}),
+			],
+		];
+
+		it('covers every reason in the union, so a new one cannot be added silently', () => {
+			expect(CASES.map(([reason]) => reason).sort()).toEqual(
+				[...VOICE_SLOT_UNSATISFIED_REASONS].sort()
+			);
+		});
+
+		it.each(CASES)('%s carries a detail and a recovery', async (reason, resolve) => {
+			const readiness = await resolve();
+			const slot = readiness.slots.find((entry: VoiceSlotReadiness) => entry.reason === reason);
+
+			expect(slot, `no slot reported ${reason}`).toBeDefined();
+			expect(slot!.satisfied).toBe(false);
+			expect(slot!.detail).toEqual(expect.any(String));
+			expect(slot!.detail!.length).toBeGreaterThan(0);
+			expect(slot!.suggestedAction).toEqual(expect.any(String));
+			expect(slot!.suggestedAction!.length).toBeGreaterThan(0);
+			// The recovery has to be a different sentence from the diagnosis, or it is
+			// not a recovery.
+			expect(slot!.suggestedAction).not.toBe(slot!.detail);
 		});
 	});
 

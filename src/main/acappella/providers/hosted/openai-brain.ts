@@ -146,11 +146,6 @@ export class OpenAiBrainProvider implements BrainProvider {
 	}
 }
 
-/** Sugar matching the rest of A Cappella's factories. */
-export function createOpenAiBrainProvider(options: OpenAiBrainOptions = {}): OpenAiBrainProvider {
-	return new OpenAiBrainProvider(options);
-}
-
 interface ChatCompletion {
 	choices?: Array<{ message?: { content?: string } }>;
 }

@@ -305,6 +305,33 @@ describe('model-store', () => {
 			expect(footprint.models.map((model) => model.id)).toContain('retired-model');
 		});
 
+		it('removeAll leaves nothing behind: installed, half-downloaded, or orphaned', async () => {
+			// The reclaim-disk promise in Settings, in one test. A user who switches
+			// the Encore Feature off and accepts the offer is told a number of bytes;
+			// anything this misses is disk they were told they got back and did not.
+			await writeFilesOfDeclaredLength(wakeWord.id);
+			await writeFilesOfDeclaredLength(whisper.id);
+			// A download that was paused or interrupted. The bytes are real and they
+			// are not inside any manifest.
+			await fs.writeFile(
+				`${modelFilePath(whisper.id, whisper.files[0].path)}.part`,
+				Buffer.alloc(4096)
+			);
+			// A directory left by a model the catalog has since dropped. Disk the user
+			// cannot see is disk they cannot get back.
+			const orphan = path.join(tempRoot.dir, 'models', 'acappella', 'retired-model');
+			await fs.mkdir(orphan, { recursive: true });
+			await fs.writeFile(path.join(orphan, 'weights.bin'), Buffer.alloc(2048));
+
+			const expected = (await totalFootprint()).bytes;
+			expect(expected).toBe(wakeWord.bytes + whisper.bytes + 4096 + 2048);
+
+			const reclaimed = await removeAll();
+
+			expect(reclaimed).toBe(expected);
+			expect(await totalFootprint()).toEqual({ bytes: 0, models: [] });
+		});
+
 		it('removeAll deletes only the A Cappella root', async () => {
 			await writeFilesOfDeclaredLength(wakeWord.id);
 			const neighbour = path.join(tempRoot.dir, 'plugins');

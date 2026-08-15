@@ -97,21 +97,11 @@ export const TUNNEL_MEDIA_NOTE =
 	'Off your network, a phone on cellular sits behind carrier-grade NAT and genuinely requires a ' +
 	'TURN relay.';
 
-/** The one sentence per candidate type, used by the device list and the test button. */
-export const CANDIDATE_TYPE_LABELS: Record<DeviceCandidateType, string> = {
-	lan: 'Direct (LAN or overlay)',
-	stun: 'Direct (through NAT)',
-	relay: 'Relayed (TURN)',
-	unknown: 'Not connected',
-};
-
-export const CANDIDATE_TYPE_DESCRIPTIONS: Record<DeviceCandidateType, string> = {
-	lan: 'Audio goes straight between the two devices on your own network. Nothing else is in the path.',
-	stun: 'Audio goes straight between the two devices. A STUN server was used to find the route, but carries no audio.',
-	relay:
-		'Audio is being forwarded by your TURN server. This is the path that works on cellular, and it adds a hop of latency.',
-	unknown: 'No connection has been negotiated yet.',
-};
+// The label map moved to `shared/acappella/device-protocol.ts` so the renderer's
+// device list and this file read the same words. Re-exported rather than
+// re-pointed at every call site: the labels belong to the candidate type, and
+// whoever already has this module has no reason to need a second import.
+export { CANDIDATE_TYPE_LABELS } from '../../../shared/acappella/device-protocol';
 
 // ---------------------------------------------------------------------------
 // Reading stored settings

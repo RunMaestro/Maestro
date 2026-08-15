@@ -494,6 +494,12 @@ export interface ConformanceWorld {
 	connectClient(options?: { name?: string; platform?: string }): Promise<ConformanceClient>;
 	/** A socket that speaks signaling by hand, with no client behind it. */
 	openRawDevice(): RawDevice;
+	/**
+	 * Flip the Encore Feature. Off is a state a CONNECTED phone can be put into by
+	 * somebody at the keyboard, so it is a wire behaviour and not just a settings
+	 * concern.
+	 */
+	setACappellaEnabled(enabled: boolean): void;
 	/** Run every pending microtask and timer up to `ms`. */
 	advance(ms?: number): Promise<void>;
 	dispose(): Promise<void>;
@@ -575,8 +581,19 @@ export async function createConformanceWorld(): Promise<ConformanceWorld> {
 		statsIntervalMs: 10 * 60_000,
 	});
 
+	/**
+	 * Settings, mutable, with the Encore Feature on.
+	 *
+	 * On because a conformance run is by definition a run with A Cappella
+	 * enabled, and mutable because switching it off is itself a failure path a
+	 * connected phone will hit.
+	 */
+	const settings: Record<string, unknown> = { encoreFeatures: { aCappella: true } };
+
 	transport = new ACappellaTransport({
-		settingsStore: { get: (_key: string, defaultValue?: unknown) => defaultValue ?? {} },
+		settingsStore: {
+			get: (key: string, defaultValue?: unknown) => settings[key] ?? defaultValue ?? {},
+		},
 		userDataPath,
 		sendToAudioHost: (command: WebRtcHostCommand) => {
 			hostCommands.push(command);
@@ -605,6 +622,17 @@ export async function createConformanceWorld(): Promise<ConformanceWorld> {
 			url,
 			handlers,
 			(payload) => {
+				// The Encore gate, exactly as `acappellaSignal.ts` applies it: the
+				// transport outlives the flag on purpose, so its existence is not
+				// permission to serve.
+				if (!transport.featureEnabled()) {
+					socket.receive({
+						op: 'error',
+						code: 'not-authenticated',
+						message: 'A Cappella is not running on this desktop. Turn it on in Encore Features.',
+					});
+					return;
+				}
 				// Lazy, idempotent registration on the first message, exactly as the
 				// WebSocket route does it.
 				transport.registerClient({
@@ -774,6 +802,9 @@ export async function createConformanceWorld(): Promise<ConformanceWorld> {
 		detached,
 		connectClient,
 		openRawDevice,
+		setACappellaEnabled: (enabled: boolean) => {
+			settings.encoreFeatures = { aCappella: enabled };
+		},
 		advance,
 		dispose: async () => {
 			transport.dispose();

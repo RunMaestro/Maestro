@@ -386,6 +386,35 @@ UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - d
 
 ---
 
+## A Cappella Encore Flag (`src/shared/acappella/feature-flag.ts` - Both)
+
+The ONE reader of the `encoreFeatures.aCappella` flag. Do NOT hand-roll
+`flags.aCappella === true` at a new call site: the surfaces that gate on it are
+not one system (IPC handlers, the hotkey installation, the WebSocket signaling
+adapter, the transport, the debug-package collector), they each control a real
+resource - a microphone, a global shortcut, a Bonjour advert - and a surface that
+disagrees with the rest leaves one of those running behind a switch the user
+believes is off. Five byte-identical copies had already accumulated.
+
+| Function / Constant              | Signature                   | Purpose                                                                                                                      |
+| -------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `isACappellaEnabled(store)`      | `(EncoreFlagStore) => bool` | True only for the literal `true`. A hand-edited `"true"` or `1` reads as OFF, which is the safe direction for a mic feature. |
+| `requireACappellaEnabled(store)` | `(EncoreFlagStore) => void` | Throw `ACappellaDisabled` unless the flag is on. What a gated IPC handler calls.                                             |
+| `ACAPPELLA_DISABLED_ERROR`       | `'ACappellaDisabled'`       | The stable error string the renderer maps. Not prose - a sentence here would be a wire contract.                             |
+| `EncoreFlagStore`                | `{ get(key, default?) }`    | The narrow store slice this needs, so an electron-store or a plain object both satisfy it.                                   |
+
+**Turning the flag off is a teardown, not just a gate.**
+`shutdownACappellaForDisable()` in `src/main/ipc/handlers/acappella.ts` is what
+`main/index.ts` runs from its `encoreFeatures` watcher: it stops the session,
+drops the audio bridge, disposes the inference pipeline (which is also what lets
+reclaim-disk delete model files on Windows), and calls
+`ACappellaTransport.standDown()` for the advert and the connected phones. It
+deliberately does NOT dispose the transport or the hotkey installation - both are
+built once per process, so tearing them down would mean switching the feature
+back on did nothing until the next restart.
+
+---
+
 ## Synopsis Parsing (`src/shared/synopsis.ts` - Both)
 
 | Function / Constant           | Signature                    | Purpose                                                                                                                            |

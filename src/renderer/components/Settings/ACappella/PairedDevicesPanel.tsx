@@ -24,7 +24,7 @@ import { useCallback, useState } from 'react';
 import { Check, Radio, Smartphone, Trash2, Wifi, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
-import type { DeviceCandidateType } from '../../../../shared/acappella/device-protocol';
+import { CANDIDATE_TYPE_LABELS } from '../../../../shared/acappella/device-protocol';
 import { formatRelativeTime } from '../../../../shared/formatters';
 import type { Theme } from '../../../types';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
@@ -48,13 +48,6 @@ export interface PairedDevicesPanelProps {
 const CAPABILITY_STATEMENT =
 	'A paired device can hold this computer’s microphone, hear replies in your configured voice, ' +
 	'and dispatch spoken prompts to your agents. It cannot read your files or change your settings.';
-
-const CANDIDATE_LABELS: Record<DeviceCandidateType, string> = {
-	lan: 'Direct (LAN or overlay)',
-	stun: 'Direct (through NAT)',
-	relay: 'Relayed (TURN)',
-	unknown: 'Not connected',
-};
 
 export function PairedDevicesPanel({ theme, enabled }: PairedDevicesPanelProps) {
 	const devices = usePairedDevices(enabled);
@@ -440,7 +433,7 @@ function describeDevice(device: DeviceStatus): string {
 	const parts = [device.platform];
 	parts.push(device.online ? 'connected' : 'not connected');
 	const candidate = device.quality?.candidateType ?? device.lastCandidateType;
-	if (device.online || candidate !== 'unknown') parts.push(CANDIDATE_LABELS[candidate]);
+	if (device.online || candidate !== 'unknown') parts.push(CANDIDATE_TYPE_LABELS[candidate]);
 	if (device.quality?.rttMs !== null && device.quality?.rttMs !== undefined) {
 		parts.push(`${device.quality.rttMs} ms round trip`);
 	}

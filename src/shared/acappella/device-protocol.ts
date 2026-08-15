@@ -290,6 +290,22 @@ export type DeviceMessageType = DeviceMessage['type'];
  */
 export type DeviceCandidateType = 'lan' | 'stun' | 'relay' | 'unknown';
 
+/**
+ * What each candidate type is called on screen.
+ *
+ * Shared rather than main-side, because the two places that render it are the
+ * Test Connection verdict (main, through the ICE config) and the paired-device
+ * list (renderer), and a renderer cannot import from main. That is exactly how
+ * this map came to exist twice, byte for byte, and how one copy could have
+ * started calling a relayed connection something the other did not.
+ */
+export const CANDIDATE_TYPE_LABELS: Record<DeviceCandidateType, string> = {
+	lan: 'Direct (LAN or overlay)',
+	stun: 'Direct (through NAT)',
+	relay: 'Relayed (TURN)',
+	unknown: 'Not connected',
+};
+
 // ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------

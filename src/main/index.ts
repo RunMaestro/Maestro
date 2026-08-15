@@ -162,7 +162,7 @@ import {
 // A Cappella's hidden audio host window (created lazily on the first voice
 // session, closed here when the Encore Feature is switched off).
 import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
-import { disposeACappellaAudioBridge } from './ipc/handlers/acappella';
+import { shutdownACappellaForDisable } from './ipc/handlers/acappella';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
@@ -561,11 +561,12 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	// quit: a hidden window holding an open capture device is exactly the thing a
 	// user turning the feature off is asking to be rid of.
 	if (encoreFeatures?.aCappella !== true) {
-		// Order matters: the bridge stops capture through the window it is about to
-		// lose. Closing first would leave the pipeline counting frames from a device
-		// nobody owns any more.
-		disposeACappellaAudioBridge();
-		closeAcappellaAudioHostWindow();
+		// The full stand-down: session, audio bridge, inference pipeline, Bonjour
+		// advert, and every connected device. Awaited only for its own ordering -
+		// the window is closed after it, because the bridge stops capture through
+		// the window it is about to lose, and closing first would leave the pipeline
+		// counting frames from a device nobody owns any more.
+		void shutdownACappellaForDisable().finally(() => closeAcappellaAudioHostWindow());
 	}
 	if (encoreFeatures?.plugins !== true) {
 		pluginSandboxHost?.stopAll();
