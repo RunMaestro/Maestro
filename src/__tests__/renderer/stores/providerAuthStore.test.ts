@@ -1,66 +1,106 @@
 /**
- * providerAuthStore - identity resolution, snapshot lookup, and the blocked-agent
- * roll-up. Phase 03 task 5 extends this with the reactive-marking and toast cases.
+ * providerAuthStore - identity resolution, snapshot lookup, the blocked-agent
+ * roll-up, the reactive `auth_expired` marking, and the throttled startup toast.
+ *
+ * The thing under test throughout is the identity model paying off: fifteen
+ * agents on one Anthropic login are ONE problem, so they share one snapshot,
+ * one toast, and one recovery - and a sibling account on the same machine is
+ * untouched by any of it.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import {
 	markSessionAuthFailure,
 	selectAuthSnapshotForSession,
 	selectLoggedOutIdentities,
 	useProviderAuthStore,
 } from '../../../renderer/stores/providerAuthStore';
+import { describeAuthIndicator } from '../../../renderer/components/SessionList/AuthIndicator';
+import type { CredentialIdentity, ProviderAuthSnapshot } from '../../../shared/providerAuth';
+import { createMockSession } from '../../helpers/mockSession';
 import type { Session } from '../../../renderer/types';
 
+const HOME = '/Users/x';
+const DEFAULT_KEY = `claude-code::oauth::${HOME}/.claude::local`;
+const SIBLING_DIR = `${HOME}/.claude-smash`;
+const SIBLING_KEY = `claude-code::oauth::${SIBLING_DIR}::local`;
+
 const makeSession = (id: string, env?: Record<string, string>): Session =>
-	({
+	createMockSession({
 		id,
 		name: id,
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/tmp',
-		projectRoot: '/tmp',
-		aiTabs: [],
-		filePreviewTabs: [],
-		unifiedTabOrder: [],
-		inputMode: 'ai',
-		customEnvVars: env,
-	}) as unknown as Session;
+		...(env ? { customEnvVars: env } : {}),
+	});
+
+const identity = (key: string, label: string): CredentialIdentity => ({
+	key,
+	provider: 'claude-code',
+	kind: 'oauth',
+	scope: key.split('::')[2],
+	host: 'local',
+	label,
+});
+
+const snapshotFor = (
+	key: string,
+	label: string,
+	status: ProviderAuthSnapshot['status'],
+	checkedAt = 1
+): ProviderAuthSnapshot => ({
+	identity: identity(key, label),
+	status,
+	checkedAt,
+	source: 'probe',
+});
+
+/**
+ * The announcement pass runs off a store subscription, not off the call that
+ * triggered it, so tests have to let the queued pass finish before asserting on
+ * the toast queue. A macrotask drains the promise chain it is serialized on.
+ */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+function installBridge(overrides: Record<string, unknown> = {}): {
+	mark: ReturnType<typeof vi.fn>;
+	getAll: ReturnType<typeof vi.fn>;
+} {
+	const mark = vi.fn().mockResolvedValue(null);
+	const getAll = vi.fn().mockResolvedValue({});
+	(window as unknown as { maestro: unknown }).maestro = {
+		providerAuth: { getAll, onChange: () => () => {}, mark, ...overrides },
+		agents: { getCustomEnvVars: vi.fn().mockResolvedValue({}) },
+		fs: { homeDir: vi.fn().mockResolvedValue(HOME) },
+	};
+	return { mark, getAll };
+}
+
+async function resetStores(): Promise<void> {
+	useProviderAuthStore.getState().__resetForTests();
+	useSessionStore.setState({ sessions: [] });
+	// An announcement pass queued by a previous test can still be in flight; let
+	// it finish against the now-empty state before clearing the toast queue.
+	await flush();
+	useNotificationStore.setState({ toasts: [] });
+	useNotificationStore.getState().setDefaultDuration(20);
+}
 
 describe('providerAuthStore smoke', () => {
-	beforeEach(() => {
-		useProviderAuthStore.getState().__resetForTests();
-		useSessionStore.setState({ sessions: [] });
+	beforeEach(async () => {
+		await resetStores();
 	});
 
 	it('resolves sessions onto one shared identity', async () => {
-		const getAll = vi.fn().mockResolvedValue({});
-		(window as unknown as { maestro: unknown }).maestro = {
-			providerAuth: { getAll, onChange: () => () => {}, mark: vi.fn() },
-			agents: { getCustomEnvVars: vi.fn().mockResolvedValue({}) },
-			fs: { homeDir: vi.fn().mockResolvedValue('/Users/x') },
-		};
+		installBridge();
 
 		useSessionStore.setState({
 			sessions: [makeSession('a'), makeSession('b'), makeSession('c', { CLAUDE_CONFIG_DIR: '/o' })],
 		});
 		await useProviderAuthStore.getState().hydrate();
-		expect(useProviderAuthStore.getState().homeDir).toBe('/Users/x');
+		expect(useProviderAuthStore.getState().homeDir).toBe(HOME);
 
-		const snapshot = {
-			identity: {
-				key: 'claude-code::oauth::/Users/x/.claude::local',
-				provider: 'claude-code',
-				kind: 'oauth' as const,
-				scope: '/Users/x/.claude',
-				host: 'local',
-				label: '.claude',
-			},
-			status: 'logged-out' as const,
-			checkedAt: 1,
-			source: 'probe' as const,
-		};
+		const snapshot = snapshotFor(DEFAULT_KEY, '.claude', 'logged-out');
 		useProviderAuthStore.getState().applyChange(snapshot.identity.key, snapshot);
 
 		expect(selectAuthSnapshotForSession('a')(useProviderAuthStore.getState())).toEqual(snapshot);
@@ -76,27 +116,104 @@ describe('providerAuthStore smoke', () => {
 });
 
 /**
+ * The fan-out. One credential, many agents: the roll-up has to name every agent
+ * the dead login costs, leave every agent on a different account alone, and
+ * release all of them together when the login comes back.
+ */
+describe('blocked roll-up across agents sharing one credential', () => {
+	beforeEach(async () => {
+		await resetStores();
+	});
+
+	const fifteen = (): Session[] => Array.from({ length: 15 }, (_, i) => makeSession(`agent-${i}`));
+
+	it('reports all fifteen agents blocked when the single shared identity goes logged out', async () => {
+		installBridge();
+		useSessionStore.setState({ sessions: fifteen() });
+		await useProviderAuthStore.getState().hydrate();
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+
+		const blocked = selectLoggedOutIdentities()(useProviderAuthStore.getState());
+		// One problem, not fifteen.
+		expect(blocked).toHaveLength(1);
+		expect(blocked[0].identity.key).toBe(DEFAULT_KEY);
+		expect(blocked[0].sessionIds).toHaveLength(15);
+
+		// ...and every row shows it.
+		const state = useProviderAuthStore.getState();
+		for (const session of useSessionStore.getState().sessions) {
+			const snapshot = selectAuthSnapshotForSession(session.id)(state);
+			expect(snapshot?.status).toBe('logged-out');
+			expect(describeAuthIndicator(snapshot)).toEqual({
+				tooltip: 'Claude Code (.claude) needs re-authentication',
+				canSignIn: true,
+			});
+		}
+	});
+
+	it('leaves an agent on a different account untouched when its sibling logs out', async () => {
+		installBridge();
+		useSessionStore.setState({
+			sessions: [
+				makeSession('shared-1'),
+				makeSession('shared-2'),
+				makeSession('other', { CLAUDE_CONFIG_DIR: SIBLING_DIR }),
+			],
+		});
+		await useProviderAuthStore.getState().hydrate();
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		useProviderAuthStore
+			.getState()
+			.applyChange(SIBLING_KEY, snapshotFor(SIBLING_KEY, '.claude-smash', 'authenticated'));
+
+		const state = useProviderAuthStore.getState();
+		expect(selectAuthSnapshotForSession('other')(state)?.status).toBe('authenticated');
+		expect(describeAuthIndicator(selectAuthSnapshotForSession('other')(state))).toBeNull();
+
+		const blocked = selectLoggedOutIdentities()(state);
+		expect(blocked).toHaveLength(1);
+		expect(blocked[0].sessionIds).toEqual(['shared-1', 'shared-2']);
+	});
+
+	it('clears the indicator for every session on an identity when the probe comes back authenticated', async () => {
+		installBridge();
+		useSessionStore.setState({ sessions: fifteen() });
+		await useProviderAuthStore.getState().hydrate();
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		expect(selectLoggedOutIdentities()(useProviderAuthStore.getState())).toHaveLength(1);
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'authenticated', 2));
+
+		const state = useProviderAuthStore.getState();
+		expect(selectLoggedOutIdentities()(state)).toEqual([]);
+		for (const session of useSessionStore.getState().sessions) {
+			expect(describeAuthIndicator(selectAuthSnapshotForSession(session.id)(state))).toBeNull();
+		}
+	});
+});
+
+/**
  * The reactive path: a live `auth_expired` marks the credential, and WHICH mark
  * it writes depends on the credential's kind. An OAuth login can be repaired by
  * signing in; a rejected API key cannot, so it must not land in the bucket the
  * login button reads from.
  */
 describe('markSessionAuthFailure', () => {
-	const mark = vi.fn().mockResolvedValue(null);
+	let mark: ReturnType<typeof vi.fn>;
 
-	function installBridge(): void {
-		(window as unknown as { maestro: unknown }).maestro = {
-			providerAuth: { getAll: vi.fn().mockResolvedValue({}), onChange: () => () => {}, mark },
-			agents: { getCustomEnvVars: vi.fn().mockResolvedValue({}) },
-			fs: { homeDir: vi.fn().mockResolvedValue('/Users/x') },
-		};
-	}
-
-	beforeEach(() => {
-		useProviderAuthStore.getState().__resetForTests();
-		useSessionStore.setState({ sessions: [] });
-		mark.mockClear();
-		installBridge();
+	beforeEach(async () => {
+		await resetStores();
+		({ mark } = installBridge());
 	});
 
 	it('marks an oauth credential logged out, with the identity attached', async () => {
@@ -106,7 +223,7 @@ describe('markSessionAuthFailure', () => {
 
 		expect(mark).toHaveBeenCalledTimes(1);
 		const [key, request] = mark.mock.calls[0];
-		expect(key).toBe('claude-code::oauth::/Users/x/.claude::local');
+		expect(key).toBe(DEFAULT_KEY);
 		expect(request).toMatchObject({
 			status: 'logged-out',
 			source: 'error-pattern',
@@ -125,16 +242,175 @@ describe('markSessionAuthFailure', () => {
 		await markSessionAuthFailure('a', 'authentication_error');
 
 		const [key, request] = mark.mock.calls[0];
+		// A sign-in cannot repair a rejected key, so this must never reach the
+		// bucket the recovery flow offers a login for.
 		expect(request.status).toBe('unsupported');
+		expect(request.status).not.toBe('logged-out');
 		expect(request.detail).toContain('ANTHROPIC_API_KEY');
+		expect(request.identity.kind).toBe('api-key');
 		// The raw secret never leaves the identity resolver.
 		expect(key).not.toContain('sk-ant-secret-value');
 		expect(JSON.stringify(request)).not.toContain('sk-ant-secret-value');
+	});
+
+	it('renders a rejected api-key mark as unfixable-by-login in the Left Bar', () => {
+		// The status alone is not the whole contract: `unsupported` from a PROBE is
+		// a healthy agent whose provider has nothing to probe, and must not be
+		// badged. The same status from a live failure must be.
+		const rejected: ProviderAuthSnapshot = {
+			identity: {
+				key: 'claude-code::api-key::ANTHROPIC_API_KEY:abc123::local',
+				provider: 'claude-code',
+				kind: 'api-key',
+				scope: 'ANTHROPIC_API_KEY:abc123',
+				host: 'local',
+				label: 'ANTHROPIC_API_KEY',
+				envVarName: 'ANTHROPIC_API_KEY',
+			},
+			status: 'unsupported',
+			checkedAt: 1,
+			source: 'error-pattern',
+			detail: 'ANTHROPIC_API_KEY was rejected.',
+		};
+
+		expect(describeAuthIndicator(rejected)).toEqual({
+			tooltip: 'Claude Code (ANTHROPIC_API_KEY) rejected its credential',
+			canSignIn: false,
+		});
+		expect(describeAuthIndicator({ ...rejected, source: 'probe' })).toBeNull();
 	});
 
 	it('does nothing for a session that resolves to no identity', async () => {
 		const result = await markSessionAuthFailure('missing-session', 'expired');
 		expect(result).toBeNull();
 		expect(mark).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The startup announcement. One toast per dead IDENTITY, never per agent, and
+ * never twice for the same one - a user who has already been told is not told
+ * again until the account actually changes state.
+ */
+describe('logged-out announcement', () => {
+	beforeEach(async () => {
+		await resetStores();
+	});
+
+	const toasts = () => useNotificationStore.getState().toasts;
+
+	async function hydrateWith(sessions: Session[]): Promise<void> {
+		installBridge();
+		useSessionStore.setState({ sessions });
+		await useProviderAuthStore.getState().hydrate();
+		await flush();
+	}
+
+	it('fires exactly one toast for fifteen agents sharing the dead login', async () => {
+		await hydrateWith(Array.from({ length: 15 }, (_, i) => makeSession(`agent-${i}`)));
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		await flush();
+
+		expect(toasts()).toHaveLength(1);
+		const toast = toasts()[0];
+		// Names the ACCOUNT, since that is the one thing that is broken.
+		expect(toast.title).toBe('Claude Code (.claude) is signed out');
+		// ...and the body names what it costs.
+		expect(toast.message).toContain('15 agents are blocked');
+		expect(toast.message).toContain('agent-0');
+		expect(toast.message).toContain('and 11 more');
+		// Sticky and click-to-act: this phase surfaces and waits.
+		expect(toast.color).toBe('orange');
+		expect(toast.dismissible).toBe(true);
+		expect(toast.duration).toBe(0);
+		expect(toast.clickAction).toEqual({
+			kind: 'provider-auth-recovery',
+			identityKey: DEFAULT_KEY,
+		});
+		expect(useProviderAuthStore.getState().announcedIdentityKeys).toEqual({
+			[DEFAULT_KEY]: true,
+		});
+	});
+
+	it('does not re-fire for an already-announced identity that has not changed', async () => {
+		await hydrateWith([makeSession('a'), makeSession('b')]);
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		await flush();
+		expect(toasts()).toHaveLength(1);
+
+		// A later probe re-confirms the same dead login. Same answer, no news.
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out', 999));
+		await flush();
+		expect(toasts()).toHaveLength(1);
+	});
+
+	it('announces again after the account recovers and later logs out a second time', async () => {
+		await hydrateWith([makeSession('a')]);
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		await flush();
+		expect(toasts()).toHaveLength(1);
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'authenticated', 2));
+		await flush();
+		expect(useProviderAuthStore.getState().announcedIdentityKeys).toEqual({});
+
+		// A genuinely new event, so it earns a new toast.
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out', 3));
+		await flush();
+		expect(toasts()).toHaveLength(2);
+	});
+
+	it('fires one toast per distinct dead account, not one per agent', async () => {
+		await hydrateWith([
+			makeSession('a'),
+			makeSession('b'),
+			makeSession('c', { CLAUDE_CONFIG_DIR: SIBLING_DIR }),
+		]);
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		useProviderAuthStore
+			.getState()
+			.applyChange(SIBLING_KEY, snapshotFor(SIBLING_KEY, '.claude-smash', 'logged-out'));
+		await flush();
+
+		expect(toasts()).toHaveLength(2);
+		expect(
+			toasts()
+				.map((t) => t.title)
+				.sort()
+		).toEqual(['Claude Code (.claude) is signed out', 'Claude Code (.claude-smash) is signed out']);
+	});
+
+	it('stays silent when toasts are switched off, so an unattended run gets nothing', async () => {
+		await hydrateWith([makeSession('a')]);
+		// The app's toast kill switch. notifyToast honors it for the visible queue
+		// but still fires audio and the OS notification, which a 3am Cue run must
+		// not get for a login nobody is there to fix.
+		useNotificationStore.getState().setDefaultDuration(-1);
+
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		await flush();
+
+		expect(toasts()).toHaveLength(0);
+		expect(useProviderAuthStore.getState().announcedIdentityKeys).toEqual({});
 	});
 });
