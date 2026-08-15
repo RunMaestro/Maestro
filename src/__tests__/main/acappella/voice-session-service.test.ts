@@ -16,6 +16,28 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+/**
+ * Every transition the service takes, recorded in order.
+ *
+ * `transition()` is private and most edges are invisible in the event stream
+ * (`transcribing` and `routing` emit nothing of their own), so the only honest
+ * way to prove which edges the pipeline actually walks is to wrap the shared
+ * assertion the service routes all of them through. The wrapper still delegates,
+ * so an illegal edge throws exactly as it would in production.
+ */
+const transitionLog = vi.hoisted(() => ({ edges: [] as string[] }));
+
+vi.mock('../../../shared/acappella/session-state', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/acappella/session-state')>();
+	return {
+		...actual,
+		assertVoiceStateTransition: (from: string, to: string) => {
+			transitionLog.edges.push(`${from} -> ${to}`);
+			actual.assertVoiceStateTransition(from as VoiceSessionState, to as VoiceSessionState);
+		},
+	};
+});
+
 import { captureException } from '../../../main/utils/sentry';
 import {
 	VoiceSessionService,
@@ -36,7 +58,11 @@ import type {
 } from '../../../shared/acappella/providers';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import { splitIntoSpokenSentences } from '../../../shared/acappella/sentences';
-import { InvalidVoiceStateTransitionError } from '../../../shared/acappella/session-state';
+import {
+	InvalidVoiceStateTransitionError,
+	VOICE_STATE_TRANSITIONS,
+	type VoiceSessionState,
+} from '../../../shared/acappella/session-state';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -85,8 +111,11 @@ class FakeBrain implements BrainProvider {
 	};
 	spoken = 'All done. Two files changed.';
 	routeError: Error | null = null;
+	/** When set, `route()` parks here, so a test can act while the brain thinks. */
+	routeGate: Promise<void> | null = null;
 
 	async route(_input: string, _context: VoiceRouteContext): Promise<RouteDecision> {
+		if (this.routeGate) await this.routeGate;
 		if (this.routeError) throw this.routeError;
 		return this.decision;
 	}
@@ -186,6 +215,20 @@ function makeHarness(overrides: { executeRoute?: VoiceRouteExecutor } = {}): Har
 async function start(h: Harness): Promise<void> {
 	await h.service.startSession({ scope: { kind: 'conductor' }, source: 'hotkey' });
 	h.events.length = 0;
+	takeEdges();
+}
+
+/** Read and clear the recorded transitions. */
+function takeEdges(): string[] {
+	return transitionLog.edges.splice(0, transitionLog.edges.length);
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve!: () => void;
+	const promise = new Promise<void>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +622,292 @@ describe('VoiceSessionService subscribers', () => {
 		h.events.length = 0;
 		await h.service.startSession({ scope: { kind: 'conductor' } });
 		expect(h.events).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// State machine coverage
+//
+// One test per edge the service can actually reach, each asserting the exact
+// sequence of transitions it took. `DEFENSIVE_EDGES` names the rest, and the
+// last test fails if the table grows an edge that appears in neither list.
+// ---------------------------------------------------------------------------
+
+/** Edges driven end to end by the tests in this block. */
+const DRIVEN_EDGES = [
+	'idle -> arming',
+	'arming -> listening',
+	'arming -> error',
+	'listening -> transcribing',
+	'listening -> idle',
+	'listening -> error',
+	'transcribing -> routing',
+	'transcribing -> listening',
+	'routing -> dispatching',
+	'routing -> idle',
+	'routing -> error',
+	'dispatching -> speaking',
+	'dispatching -> listening',
+	'dispatching -> idle',
+	'dispatching -> error',
+	'speaking -> interrupted',
+	'speaking -> listening',
+	'speaking -> idle',
+	'interrupted -> listening',
+	'error -> idle',
+];
+
+/**
+ * Edges the table allows that nothing in Phase 01 can reach. Each is a guard
+ * against a shape a later phase adds, not dead weight: leaving them out of the
+ * table would turn that phase's first real failure into a thrown
+ * `InvalidVoiceStateTransitionError` instead of a clean teardown.
+ */
+const DEFENSIVE_EDGES = [
+	// `arming` is only held across `stt.start()`, which no client can interrupt
+	// today. A real microphone permission prompt (Phase 05) is cancellable.
+	'arming -> idle',
+	// `transcribing` and `interrupted` are both crossed synchronously, so nothing
+	// can stop or fail a session while it is in either one.
+	'transcribing -> idle',
+	'transcribing -> error',
+	'interrupted -> idle',
+	'interrupted -> error',
+	// A throw from inside the TTS iterator leaves `speak()` through its caller
+	// rather than through `closeFloorOnUnexpectedError`. The mock tier cannot
+	// throw; a streaming cloud voice can, and Phase 05 owns that edge.
+	'speaking -> error',
+];
+
+describe('VoiceSessionService state machine', () => {
+	let h: Harness;
+
+	beforeEach(() => {
+		h = makeHarness();
+		takeEdges();
+	});
+
+	it('idle -> arming -> listening on wake', async () => {
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		expect(takeEdges()).toEqual(['idle -> arming', 'arming -> listening']);
+	});
+
+	it('arming -> error when the speech provider will not open', async () => {
+		h.stt.startError = new Error('microphone busy');
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		expect(takeEdges()).toEqual(['idle -> arming', 'arming -> error']);
+	});
+
+	it('error -> idle is the only way out of error', async () => {
+		h.stt.startError = new Error('microphone busy');
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		takeEdges();
+
+		await h.service.stopSession('error');
+		expect(takeEdges()).toEqual(['error -> idle']);
+		expect(h.service.getState()).toBe('idle');
+	});
+
+	it('listening -> idle when the session is stopped', async () => {
+		await start(h);
+		await h.service.stopSession('user');
+		expect(takeEdges()).toEqual(['listening -> idle']);
+	});
+
+	it('listening -> error when the speech provider drops out mid-session', async () => {
+		await start(h);
+		h.stt.callbacks?.onError(new Error('device disappeared'));
+		expect(takeEdges()).toEqual(['listening -> error']);
+	});
+
+	it('listening -> transcribing -> routing -> dispatching for a full utterance', async () => {
+		await start(h);
+		h.service.submitUtterance('open the auth tab');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+
+		expect(takeEdges()).toEqual([
+			'listening -> transcribing',
+			'transcribing -> routing',
+			'routing -> dispatching',
+		]);
+	});
+
+	it('transcribing -> listening when the utterance was empty', async () => {
+		await start(h);
+		h.service.submitUtterance('   ');
+		await vi.waitFor(() => expect(transitionLog.edges).toContain('transcribing -> listening'));
+
+		expect(takeEdges()).toEqual(['listening -> transcribing', 'transcribing -> listening']);
+	});
+
+	it('routing -> idle when the stop word lands while the brain is still thinking', async () => {
+		await start(h);
+		const gate = deferred();
+		h.brain.routeGate = gate.promise;
+
+		h.service.submitUtterance('think about it');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('routing'));
+
+		await h.service.hardStop('voice', 'never mind');
+		expect(h.service.getState()).toBe('idle');
+
+		// The superseded turn resumes and drops itself rather than transitioning.
+		gate.resolve();
+		await gate.promise;
+		expect(takeEdges()).toEqual([
+			'listening -> transcribing',
+			'transcribing -> routing',
+			'routing -> idle',
+		]);
+	});
+
+	it('routing -> error when the decision names an agent that is gone', async () => {
+		await start(h);
+		h.brain.decision = {
+			target: { sessionId: 'agent-ghost' },
+			tabAction: 'current',
+			prompt: 'hi',
+			confidence: 0.5,
+		};
+
+		h.service.submitUtterance('talk to the ghost');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('error'));
+
+		expect(takeEdges()).toEqual([
+			'listening -> transcribing',
+			'transcribing -> routing',
+			'routing -> error',
+		]);
+	});
+
+	it('dispatching -> error when the dispatch itself fails', async () => {
+		const failing = makeHarness({
+			executeRoute: async () => {
+				throw new VoiceDispatchError('renderer did not answer in time');
+			},
+		});
+		await start(failing);
+
+		failing.service.submitUtterance('open a new tab');
+		await vi.waitFor(() => expect(failing.service.getState()).toBe('error'));
+
+		expect(takeEdges()).toEqual([
+			'listening -> transcribing',
+			'transcribing -> routing',
+			'routing -> dispatching',
+			'dispatching -> error',
+		]);
+	});
+
+	it('dispatching -> speaking -> listening for a spoken reply', async () => {
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		takeEdges();
+
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: 'Raw terminal output.',
+		});
+
+		expect(takeEdges()).toEqual(['dispatching -> speaking', 'speaking -> listening']);
+	});
+
+	it('dispatching -> listening when the reply is not worth speaking', async () => {
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		takeEdges();
+
+		h.brain.spoken = '   ';
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: 'noise',
+		});
+
+		expect(takeEdges()).toEqual(['dispatching -> listening']);
+	});
+
+	it('dispatching -> idle when the session is stopped before the reply lands', async () => {
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		takeEdges();
+
+		await h.service.stopSession('user');
+		expect(takeEdges()).toEqual(['dispatching -> idle']);
+	});
+
+	it('speaking -> interrupted -> listening on barge-in, keeping the floor', async () => {
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		takeEdges();
+
+		h.tts.onChunk = () => {
+			h.service.interrupt('voice');
+		};
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: 'anything',
+		});
+
+		expect(takeEdges()).toEqual([
+			'dispatching -> speaking',
+			'speaking -> interrupted',
+			'interrupted -> listening',
+		]);
+		expect(h.service.getSnapshot().sessionId).toBeTruthy();
+	});
+
+	it('speaking -> idle when the stop word lands mid-sentence', async () => {
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		takeEdges();
+
+		h.tts.onChunk = () => {
+			void h.service.hardStop('voice');
+		};
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: 'anything',
+		});
+		await vi.waitFor(() => expect(h.service.getState()).toBe('idle'));
+
+		expect(takeEdges()).toEqual(['dispatching -> speaking', 'speaking -> idle']);
+	});
+
+	it('never takes an edge the table does not name', async () => {
+		await start(h);
+		h.service.submitUtterance('open the auth tab');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: 'done',
+		});
+		await h.service.stopSession('user');
+
+		// The wrapper delegates, so an illegal edge would already have thrown. This
+		// asserts the recorder is watching the same table the service asserts on.
+		for (const edge of takeEdges()) {
+			const [from, to] = edge.split(' -> ') as [VoiceSessionState, VoiceSessionState];
+			expect(VOICE_STATE_TRANSITIONS[from]).toContain(to);
+		}
+	});
+
+	it('has a driving test or a documented reason for every edge in the table', () => {
+		const declared = Object.entries(VOICE_STATE_TRANSITIONS).flatMap(([from, targets]) =>
+			targets.map((to) => `${from} -> ${to}`)
+		);
+
+		expect(DRIVEN_EDGES.filter((edge) => DEFENSIVE_EDGES.includes(edge))).toEqual([]);
+		expect([...DRIVEN_EDGES, ...DEFENSIVE_EDGES].sort()).toEqual([...declared].sort());
 	});
 });
 
