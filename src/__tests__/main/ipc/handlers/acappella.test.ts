@@ -18,10 +18,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn() },
+	app: { on: vi.fn() },
 }));
 vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../../main/utils/logger', () => ({
@@ -157,6 +158,22 @@ describe('A Cappella IPC handlers - registration', () => {
 
 		await handlerFor('acappella:start-session')({});
 		expect(getVoiceSessionService()).not.toBeNull();
+	});
+
+	it('disposes the live session on app quit', async () => {
+		await handlerFor('acappella:start-session')({});
+		expect(getVoiceSessionService()).not.toBeNull();
+
+		// `app.on` is a union of ~40 per-event overloads, so the mock's call tuples
+		// narrow to the first one. Widen them before looking for our event.
+		const lifecycleCalls = vi.mocked(app.on).mock.calls as unknown as Array<[string, () => void]>;
+		const willQuit = lifecycleCalls.find(([event]) => event === 'will-quit')?.[1];
+		expect(willQuit, 'no will-quit listener registered').toBeDefined();
+
+		willQuit?.();
+		// The dispose is fire-and-forget from a synchronous lifecycle hook, so the
+		// singleton is cleared on the next tick rather than inline.
+		await vi.waitFor(() => expect(getVoiceSessionService()).toBeNull());
 	});
 });
 

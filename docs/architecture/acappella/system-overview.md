@@ -241,6 +241,13 @@ classified into `session-error` events:
 
 Anything else is a bug and should reach Sentry with context.
 
+Two places have no caller to bubble to, so they report explicitly instead of rethrowing: the turn
+pipeline (which runs from an STT callback) and the speech run (whose only caller is the reply
+seam, and from there an IPC handler). Both call `captureException` with the session context, emit
+`listen-stop(error)`, and park the session in `error`. Swallowing is not the point: an escaping
+rejection there would reach the process handler stripped of session context AND leave the session
+holding a floor nothing will ever hand back, which reads to the user as a frozen HUD.
+
 ## What Phase 01 deliberately does not do
 
 - No network calls, no API keys, no model downloads. The mock tier proves the pipeline end to end.

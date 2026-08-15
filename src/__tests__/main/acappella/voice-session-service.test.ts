@@ -136,6 +136,8 @@ class FakeTts implements TtsProvider {
 	cancelled = false;
 	/** Called after each chunk, so a test can interrupt mid-run. */
 	onChunk: (() => void) | null = null;
+	/** Thrown from inside the iterator, the way a streaming cloud voice fails. */
+	speakError: Error | null = null;
 
 	speak(text: string, options: { utteranceId: string }): AsyncIterable<TtsChunk> {
 		this.cancelled = false;
@@ -145,6 +147,7 @@ class FakeTts implements TtsProvider {
 			async *[Symbol.asyncIterator]() {
 				for (let index = 0; index < sentences.length; index++) {
 					if (self.cancelled) return;
+					if (self.speakError) throw self.speakError;
 					yield {
 						utteranceId: options.utteranceId,
 						index,
@@ -653,6 +656,7 @@ const DRIVEN_EDGES = [
 	'speaking -> interrupted',
 	'speaking -> listening',
 	'speaking -> idle',
+	'speaking -> error',
 	'interrupted -> listening',
 	'error -> idle',
 ];
@@ -673,10 +677,6 @@ const DEFENSIVE_EDGES = [
 	'transcribing -> error',
 	'interrupted -> idle',
 	'interrupted -> error',
-	// A throw from inside the TTS iterator leaves `speak()` through its caller
-	// rather than through `closeFloorOnUnexpectedError`. The mock tier cannot
-	// throw; a streaming cloud voice can, and Phase 05 owns that edge.
-	'speaking -> error',
 ];
 
 describe('VoiceSessionService state machine', () => {
@@ -880,6 +880,30 @@ describe('VoiceSessionService state machine', () => {
 		await vi.waitFor(() => expect(h.service.getState()).toBe('idle'));
 
 		expect(takeEdges()).toEqual(['dispatching -> speaking', 'speaking -> idle']);
+	});
+
+	it('speaking -> error when the voice throws mid-run, releasing the floor', async () => {
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		takeEdges();
+
+		h.tts.speakError = new Error('voice stream closed');
+		// The rejection must not escape: a caller that only awaited this would
+		// otherwise leave the session in `speaking` with the floor held.
+		await expect(
+			h.service.submitAgentReply({
+				agentSessionId: 'agent-backend',
+				tabId: 'tab-1',
+				text: 'anything',
+			})
+		).resolves.toBe(true);
+
+		expect(takeEdges()).toEqual(['dispatching -> speaking', 'speaking -> error']);
+		expect(h.service.getState()).toBe('error');
+		expect(h.events.filter((e) => e.type === 'listen-stop')).toEqual([
+			expect.objectContaining({ reason: 'error' }),
+		]);
 	});
 
 	it('never takes an edge the table does not name', async () => {
