@@ -9,7 +9,26 @@
 import { ipcRenderer } from 'electron';
 import type { DebugPackageOptions } from '../../shared/debugPackage';
 
+import type { RuntimeSelfTestReport } from '../acappella/runtime/runtime-selftest';
+
+// Re-exported rather than re-declared: rc moved the canonical definition to
+// `shared/debugPackage`, and a second local copy of the same shape is exactly
+// how the two drift apart.
 export type { DebugPackageOptions };
+
+/**
+ * The voice self-test response.
+ *
+ * `success` is the IPC envelope (did the handler run), `report.passed` is the
+ * diagnosis (did the runtimes work). They are different questions and a caller
+ * has to be able to tell "the self-test could not run" from "the self-test says
+ * ONNX is broken".
+ */
+export interface VoiceSelfTestResponse {
+	success: boolean;
+	report?: RuntimeSelfTestReport;
+	error?: string;
+}
 
 /**
  * Document graph file change event
@@ -121,6 +140,11 @@ export function createDebugApi() {
 		previewPackage: () => ipcRenderer.invoke('debug:previewPackage'),
 
 		getAppStats: (): Promise<AppStatsSnapshot> => ipcRenderer.invoke('debug:getAppStats'),
+
+		// A Cappella voice self-test: loads each native runtime, runs a trivial
+		// operation, and reports per-runtime pass/fail with timings. Loads no model,
+		// so it is safe to run at any time, including before anything is downloaded.
+		voiceSelfTest: (): Promise<VoiceSelfTestResponse> => ipcRenderer.invoke('debug:voiceSelfTest'),
 
 		// Performance profiling (Chromium contentTracing). Off by default with no
 		// steady-state cost; see src/main/profiling.

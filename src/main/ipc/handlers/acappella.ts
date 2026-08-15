@@ -27,12 +27,19 @@
  * mid-session can still release the floor.
  */
 
-import { app, ipcMain, shell, type BrowserWindow } from 'electron';
+import { app, ipcMain, type BrowserWindow } from 'electron';
 
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { InterruptSource, RosterAgent, VoiceScope } from '../../../shared/acappella/protocol';
-import { micSettingsUrl } from '../../../shared/acappella/mic-settings';
+import {
+	getMicPermission,
+	noteCaptureFailure,
+	noteCaptureStarted,
+	openMicSystemSettings,
+	requestMicPermission,
+	type MicPermissionInfo,
+} from '../../acappella/permissions/mic-permission';
 import {
 	ACAPPELLA_AUDIO_COMMAND_CHANNEL,
 	ACAPPELLA_AUDIO_FRAME_CHANNEL,
@@ -173,6 +180,23 @@ function parseScope(raw: unknown): VoiceScope {
 	return { kind: 'agent', sessionId: raw.sessionId };
 }
 
+/**
+ * Teach the permission tracker what the device just did.
+ *
+ * Windows and Linux have no usable permission query, so a failed capture is the
+ * only evidence there is, and a successful one is the only proof of a grant that
+ * exists on any platform: Chromium hands over a live track only after the user
+ * agrees. Kept here, at the one place host statuses arrive, so the tracker
+ * cannot fall out of step with the microphone the user is actually looking at.
+ */
+function notePermissionFromStatus(status: AudioHostStatus): void {
+	if (status.kind === 'capture-start') {
+		noteCaptureStarted();
+		return;
+	}
+	if (status.kind === 'mic-error') noteCaptureFailure(status.code);
+}
+
 /** An IPC caller is a client by definition, so a bare request is a button press. */
 function parseInterruptSource(raw: unknown): InterruptSource {
 	return raw === 'voice' ? 'voice' : 'client-button';
@@ -263,6 +287,17 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		handlerOpts('startSession'),
 		async (rawScope: unknown): Promise<VoiceStartSessionResult> => {
 			const scope = parseScope(rawScope);
+			// The microphone is asked for HERE and nowhere earlier. Not at app
+			// launch, not when the Encore Feature is switched on: a first run that
+			// prompts for the microphone for a feature nobody turned on spends trust
+			// the app has not earned. This is the first moment the user has asked for
+			// something that genuinely needs a device.
+			//
+			// The result is not branched on. A refusal belongs to the capability
+			// gate, which names the microphone as its own blocking slot with its own
+			// recovery; throwing a second, differently-worded error from here would
+			// give the same problem two voices.
+			await requestMicPermission();
 			// First start is what pays for the audio host: enabling the Encore
 			// Feature opens no device and builds no second renderer.
 			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
@@ -333,12 +368,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		// http/https/mailto. Widening that allowlist so one button can open one
 		// hard-coded URL would trade a real security property for nothing; here the
 		// URL is a constant the caller cannot influence.
-		async (): Promise<boolean> => {
-			const url = micSettingsUrl(process.platform);
-			if (!url) return false;
-			await shell.openExternal(url);
-			return true;
-		}
+		async (): Promise<boolean> => openMicSystemSettings()
+	);
+
+	const wrappedMicPermission = withIpcErrorLogging(
+		handlerOpts('micPermission'),
+		// A pure query. It never prompts, which is what lets the HUD and Settings
+		// call it on render without the app asking for the microphone behind a user
+		// who has not asked for voice.
+		async (): Promise<MicPermissionInfo> => getMicPermission()
 	);
 
 	const wrappedGetRoster = withIpcErrorLogging(
@@ -396,6 +434,10 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	// exactly the situation in which the feature may already have been turned off.
 	ipcMain.handle('acappella:open-mic-settings', wrappedOpenMicSettings);
 
+	// Ungated for the same reason: a client showing "microphone access denied"
+	// must still be able to read the state after the feature was switched off.
+	ipcMain.handle('acappella:mic-permission', wrappedMicPermission);
+
 	ipcMain.handle('acappella:get-roster', async (event): Promise<RosterAgent[]> => {
 		requireEnabled(settingsStore);
 		return wrappedGetRoster(event);
@@ -423,6 +465,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	ipcMain.on(ACAPPELLA_AUDIO_STATUS_CHANNEL, (event, status: unknown) => {
 		if (!isAcappellaAudioHostContents(event.sender)) return;
 		if (!status || typeof (status as AudioHostStatus).kind !== 'string') return;
+		notePermissionFromStatus(status as AudioHostStatus);
 		audioBridge?.handleStatus(status as AudioHostStatus);
 	});
 

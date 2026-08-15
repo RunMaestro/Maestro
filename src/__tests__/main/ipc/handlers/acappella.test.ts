@@ -18,12 +18,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { app, ipcMain, shell } from 'electron';
+import { app, ipcMain, shell, systemPreferences } from 'electron';
 
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn(), on: vi.fn() },
 	app: { on: vi.fn() },
 	shell: { openExternal: vi.fn().mockResolvedValue(undefined) },
+	// Starting a session asks for the microphone. Granted here so these tests stay
+	// about the transport; the permission's own states are covered in
+	// mic-permission.test.ts.
+	systemPreferences: {
+		getMediaAccessStatus: vi.fn(() => 'granted'),
+		askForMediaAccess: vi.fn().mockResolvedValue(true),
+	},
 }));
 
 /**
@@ -200,8 +207,25 @@ describe('A Cappella IPC handlers - registration', () => {
 				'acappella:get-roster',
 				'acappella:get-state',
 				'acappella:open-mic-settings',
+				'acappella:mic-permission',
 			])
 		);
+	});
+
+	it('asks for the microphone at the first session start, and not before', async () => {
+		// An app that prompts for the microphone at launch, or the moment an Encore
+		// Feature is switched on, is asking for a device to do something the user has
+		// not requested. Registering the handlers must ask for nothing.
+		expect(systemPreferences.askForMediaAccess).not.toHaveBeenCalled();
+
+		// Reading the permission is a pure query and must not prompt either: the
+		// capability gate calls it on every Settings render.
+		await handlerFor('acappella:mic-permission')({});
+		expect(systemPreferences.askForMediaAccess).not.toHaveBeenCalled();
+
+		vi.mocked(systemPreferences.getMediaAccessStatus).mockReturnValue('not-determined');
+		await handlerFor('acappella:start-session')({});
+		expect(systemPreferences.askForMediaAccess).toHaveBeenCalledWith('microphone');
 	});
 
 	it('builds no session service until a session is started', async () => {
