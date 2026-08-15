@@ -14,6 +14,7 @@ import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from '../AgentErrorModal';
 import { AuthRecoveryModal } from '../AuthRecoveryModal';
+import { AuthResendModal, type AuthResendRow } from '../AuthResendModal';
 import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
 import { TransferProgressModal } from '../TransferProgressModal';
@@ -22,6 +23,13 @@ import { LeaderboardRegistrationModal } from '../LeaderboardRegistrationModal';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
 import { getSessionsForIdentity, useProviderAuthStore } from '../../stores/providerAuthStore';
+import {
+	discardBlockedPrompts,
+	getBlockedPrompts,
+	resendBlockedPrompts,
+	useRetryStore,
+} from '../../stores/retryStore';
+import { getTabDisplayName } from '../../utils/tabHelpers';
 
 // Re-export types used by consumers
 export type { RecoveryAction, MergeOptions, SendToAgentOptions };
@@ -161,12 +169,84 @@ const AuthRecoveryModalSlot = memo(function AuthRecoveryModalSlot({
 });
 
 /**
+ * Post-login resume slot.
+ *
+ * Opened by `verifyAuthRecovery` when a repaired credential still has prompts
+ * parked against it. Everything on screen is resolved HERE rather than carried
+ * in the modal data: the user spends time in the login flow, and an agent
+ * deleted (or a prompt re-sent by hand) while they were signing in must drop
+ * off the list instead of being offered and then silently skipped.
+ */
+const AuthResendModalSlot = memo(function AuthResendModalSlot({
+	theme,
+	sessions,
+}: {
+	theme: Theme;
+	sessions: Session[];
+}) {
+	const identityKey = useModalStore(selectModalData('authResend'))?.identityKey ?? null;
+
+	const identity = useProviderAuthStore((s) =>
+		identityKey ? (s.snapshots[identityKey]?.identity ?? null) : null
+	);
+
+	// The parked-prompt map is the invalidation signal - a prompt superseded
+	// while this modal is open disappears from the list rather than going out
+	// when the user clicks Resend.
+	const blocked = useRetryStore((s) => s.blocked);
+
+	const sessionIds = useMemo(
+		() => (identityKey ? getSessionsForIdentity(identityKey).map((s) => s.id) : []),
+		[identityKey, sessions]
+	);
+
+	const rows = useMemo<AuthResendRow[]>(
+		() =>
+			getBlockedPrompts(sessionIds).map((prompt) => {
+				const session = sessions.find((s) => s.id === prompt.sessionId);
+				const tab = session?.aiTabs.find((t) => t.id === prompt.tabId);
+				return {
+					key: prompt.key,
+					agentName: session?.name ?? 'Agent',
+					tabName: tab ? getTabDisplayName(tab) : '',
+					preview: prompt.preview,
+					failedAt: prompt.failedAt,
+				};
+			}),
+		[sessionIds, sessions, blocked]
+	);
+
+	const handleResend = useCallback(() => {
+		getModalActions().closeAuthResend();
+		void resendBlockedPrompts(sessionIds);
+	}, [sessionIds]);
+
+	const handleDecline = useCallback(() => {
+		getModalActions().closeAuthResend();
+		discardBlockedPrompts(sessionIds);
+	}, [sessionIds]);
+
+	if (!identityKey || !identity || rows.length === 0) return null;
+
+	return (
+		<AuthResendModal
+			identity={identity}
+			rows={rows}
+			theme={theme}
+			onResend={handleResend}
+			onDecline={handleDecline}
+		/>
+	);
+});
+
+/**
  * AppAgentModals - Renders agent error and context transfer modals
  *
  * Contains:
  * - LeaderboardRegistrationModal: Register for the runmaestro.ai leaderboard
  * - AgentErrorModal: Display agent errors with recovery options (agents and group chats)
  * - AuthRecoveryModal: Repair one expired provider login (layers above AgentErrorModal)
+ * - AuthResendModal: Ask whether to resume the prompts that login had blocked
  * - MergeSessionModal: Merge current context into another session
  * - TransferProgressModal: Show progress during cross-agent context transfer
  * - SendToAgentModal: Send session context to another Maestro session
@@ -249,6 +329,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 
 			{/* --- PROVIDER AUTH RECOVERY MODAL --- */}
 			<AuthRecoveryModalSlot theme={theme} sessions={sessions} />
+
+			{/* --- POST-LOGIN RESUME CONFIRMATION --- */}
+			<AuthResendModalSlot theme={theme} sessions={sessions} />
 
 			{/* --- AGENT ERROR MODAL (group chats) --- */}
 			{groupChatError && (

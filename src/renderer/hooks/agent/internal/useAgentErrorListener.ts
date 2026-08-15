@@ -19,8 +19,9 @@
  * An `auth_expired` error additionally marks the CREDENTIAL behind the agent
  * (`markSessionAuthFailure`), so every other agent sharing that login surfaces
  * the problem immediately rather than each rediscovering it one wasted prompt at
- * a time. That marking is purely additive - nothing else in this listener
- * changes shape because of it.
+ * a time, and parks the killed prompt (`noteAuthBlockedPrompt`) so the login can
+ * offer to resume it. Both are purely additive - nothing else in this listener
+ * changes shape because of them.
  */
 
 import { useEffect } from 'react';
@@ -39,7 +40,11 @@ import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
-import { scheduleRetryForError, getRetryEntry } from '../../../stores/retryStore';
+import {
+	scheduleRetryForError,
+	getRetryEntry,
+	noteAuthBlockedPrompt,
+} from '../../../stores/retryStore';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -148,10 +153,15 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			// Mark the CREDENTIAL, not the agent. An expired login is dead for every
 			// agent presenting it, so the other fourteen show it now instead of each
 			// discovering it by burning a prompt. Fire-and-forget and additive: this
-			// changes nothing about the error frame, the modal, or auto-retry below
-			// (Phase 05 rewires the modal on top of this state).
+			// changes nothing about the error frame, the modal, or auto-retry below.
+			//
+			// The prompt this error killed is parked at the same time, so a successful
+			// login can offer to resume it instead of the user discovering their work
+			// was silently dropped. Parking is not sending: nothing replays until the
+			// login lands and the user confirms.
 			if (agentError.type === 'auth_expired') {
 				void markSessionAuthFailure(actualSessionId, agentError.message);
+				if (tabIdFromSession) noteAuthBlockedPrompt(actualSessionId, tabIdFromSession);
 			}
 
 			const isSessionNotFound = agentError.type === 'session_not_found';

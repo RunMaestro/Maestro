@@ -14,6 +14,10 @@
  *     other fourteen wearing a badge for a login that already works. Clearing is
  *     type-scoped: a rate-limit or network error on one of those agents is still
  *     true and survives.
+ *   - **The work the dead login ate is offered back, never replayed silently.**
+ *     Each blocked prompt was parked in `retryStore`; a successful probe raises
+ *     the confirm modal listing them, and nothing is sent until the user says
+ *     so.
  *
  * Lives in `services/` rather than in a store because it is glue - it spans
  * `providerAuthStore` (which credential, which agents), `agentStore` (clear the
@@ -26,6 +30,7 @@ import { useAgentStore } from '../stores/agentStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { getModalActions, selectModalData, useModalStore } from '../stores/modalStore';
 import { getSessionsForIdentity, useProviderAuthStore } from '../stores/providerAuthStore';
+import { getBlockedPrompts } from '../stores/retryStore';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = '[AuthRecovery]';
@@ -72,8 +77,9 @@ export function clearAuthErrorsForIdentity(identityKey: string): string[] {
  * Re-probe one credential after a login and act on what comes back.
  *
  * On success this is the whole payoff: the snapshot is rewritten as
- * `login-flow`, every agent on the credential drops its auth error, and one
- * green flash confirms it. On anything else it reports honestly and changes
+ * `login-flow`, every agent on the credential drops its auth error, one green
+ * flash confirms it, and any prompt the outage killed is offered back through
+ * the resume modal. On anything else it reports honestly and changes
  * nothing - the caller keeps its modal (and the terminal scrollback that
  * explains what went wrong) on screen.
  *
@@ -107,6 +113,15 @@ export async function verifyAuthRecovery(identityKey: string): Promise<AuthVerif
 	}
 
 	const clearedSessionIds = clearAuthErrorsForIdentity(identityKey);
+
+	// The prompts this credential killed are parked, not lost. Offer them back
+	// rather than resending on our own: minutes have passed, and a prompt the
+	// user has since changed their mind about must not leave without being seen.
+	// Asked over every agent on the credential, not just the ones we cleared - a
+	// blocked prompt whose error was dismissed by hand is still a blocked prompt.
+	const resumable = getBlockedPrompts(getSessionsForIdentity(identityKey).map((s) => s.id));
+	if (resumable.length > 0) getModalActions().openAuthResend(identityKey);
+
 	const identity = snapshot?.identity;
 	const account = identity ? `${getAgentDisplayName(identity.provider)} (${identity.label})` : null;
 	notifyCenterFlash({

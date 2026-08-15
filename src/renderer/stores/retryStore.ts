@@ -22,6 +22,12 @@
  *   - Timers live at module scope (not React state) so re-renders never disturb
  *     a pending retry. Retries do NOT survive an app quit - intentional: a
  *     closed app should not silently burn quota/hours in the background.
+ *
+ * The same snapshot map also backs auth recovery (see "Auth-blocked prompts"
+ * below): a prompt killed by an expired login is parked rather than scheduled,
+ * and replayed through the SAME dispatch path once the user finishes the login
+ * and confirms. Two resend implementations would be two sets of bugs about
+ * images, slash commands, and spawn behavior.
  */
 
 import { create } from 'zustand';
@@ -37,6 +43,7 @@ import { resilienceEnabled } from '../../shared/agentConstants';
 import { failoverArmed, selectNextEndpoint } from '../../shared/providerFailover';
 import { switchToNextEndpoint, useFailoverStore } from './failoverStore';
 import { generateId } from '../utils/ids';
+import { getQueuedItemLabel } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById } from './sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
@@ -123,6 +130,34 @@ export interface OutageRecord {
 	lastMessage: string;
 }
 
+/**
+ * A prompt that died on an `auth_expired` error and can be replayed once the
+ * credential behind it is repaired.
+ *
+ * The prompt itself is NOT copied in here - it stays in the same `snapshots`
+ * map the Agent Resilience retry replays from, so there is exactly one resend
+ * implementation for both paths. This record is only the bookkeeping around it:
+ * which turn died, when (resend order is failure order), and which item it was,
+ * so a newer dispatch on the same tab supersedes it.
+ *
+ * Auth failures are NOT auto-retried on a timer - a login is a human step, and
+ * retrying before it happens just burns another prompt. So there is no timer
+ * and no `RetryEntry` here: the record waits until a successful login asks for
+ * it, and the user confirms before anything is sent.
+ */
+export interface BlockedPrompt {
+	sessionId: string;
+	tabId: string;
+	/** `${sessionId}:${tabId}` */
+	key: string;
+	/** Id of the `QueuedItem` that failed, for the supersession check. */
+	itemId: string;
+	/** Epoch ms of the auth failure. Resends fire in this order. */
+	failedAt: number;
+	/** One-line label of the prompt, so the confirm surface can show what it will send. */
+	preview: string;
+}
+
 interface DispatchSnapshot {
 	item: QueuedItem;
 	deps: ProcessQueuedItemDeps;
@@ -133,6 +168,11 @@ interface RetryStoreState {
 	retries: Record<string, RetryEntry>;
 	/** Persistent per-outage records keyed by `outageId` (drives transcript cards). */
 	outages: Record<string, OutageRecord>;
+	/**
+	 * Prompts parked by an auth failure, keyed by `${sessionId}:${tabId}`. In the
+	 * reactive store because the post-login confirm modal lists them live.
+	 */
+	blocked: Record<string, BlockedPrompt>;
 }
 
 interface RetryStoreActions {
@@ -140,6 +180,8 @@ interface RetryStoreActions {
 	setEntry: (key: string, entry: RetryEntry | null) => void;
 	/** Internal upsert/patch for an outage record - callers use exported helpers. */
 	patchOutage: (outageId: string, patch: Partial<OutageRecord> | null) => void;
+	/** Internal setter for a parked prompt - callers use the exported functions. */
+	setBlocked: (key: string, entry: BlockedPrompt | null) => void;
 }
 
 export type RetryStore = RetryStoreState & RetryStoreActions;
@@ -151,6 +193,7 @@ export type RetryStore = RetryStoreState & RetryStoreActions;
 export const useRetryStore = create<RetryStore>()((set) => ({
 	retries: {},
 	outages: {},
+	blocked: {},
 	setEntry: (key, entry) =>
 		set((state) => {
 			const next = { ...state.retries };
@@ -164,6 +207,13 @@ export const useRetryStore = create<RetryStore>()((set) => ({
 			if (patch === null) delete next[outageId];
 			else next[outageId] = { ...next[outageId], ...patch } as OutageRecord;
 			return { outages: next };
+		}),
+	setBlocked: (key, entry) =>
+		set((state) => {
+			const next = { ...state.blocked };
+			if (entry) next[key] = entry;
+			else delete next[key];
+			return { blocked: next };
 		}),
 }));
 
@@ -229,6 +279,30 @@ export function noteDispatch(
 		logger.info('[retry] New dispatch supersedes pending retry', undefined, { key });
 		removeEntry(key);
 	}
+
+	// Same rule for a prompt parked by an auth failure: a DIFFERENT item on this
+	// tab means that turn already went out by other means (the user re-sent it,
+	// or moved on), so there is nothing left to replay after the login. Our own
+	// resend re-dispatches the same item id, which never matches this.
+	const blocked = useRetryStore.getState().blocked[key];
+	if (blocked && blocked.itemId !== item.id) {
+		logger.info('[retry] New dispatch supersedes parked auth prompt', undefined, { key });
+		useRetryStore.getState().setBlocked(key, null);
+	}
+}
+
+/**
+ * Replay the snapshotted prompt for one `${sessionId}:${tabId}` through the
+ * normal dispatch path. Returns false when there is nothing snapshotted to
+ * send. The ONE resend implementation: both the backoff retry and the
+ * post-login resume go through here, so images, slash commands, and spawn
+ * behavior cannot drift apart between them.
+ */
+async function dispatchSnapshot(sessionId: string, key: string): Promise<boolean> {
+	const snapshot = snapshots.get(key);
+	if (!snapshot) return false;
+	await useAgentStore.getState().processQueuedItem(sessionId, snapshot.item, snapshot.deps);
+	return true;
 }
 
 /**
@@ -414,12 +488,8 @@ async function fireRetry(key: string): Promise<void> {
 			else removeEntry(key);
 			return;
 		}
-		const snapshot = snapshots.get(key);
-		if (!snapshot) {
-			removeEntry(key);
-			return;
-		}
-		await useAgentStore.getState().processQueuedItem(entry.sessionId, snapshot.item, snapshot.deps);
+		const dispatched = await dispatchSnapshot(entry.sessionId, key);
+		if (!dispatched) removeEntry(key);
 	} catch (error) {
 		// A dispatch-time throw is itself a failure; leave the entry in-flight so
 		// the incoming agent-error (or a manual action) drives the next step.
@@ -546,4 +616,100 @@ export function useStuckTabSignature(sessionId: string): string {
 		}
 		return ids.sort().join(',');
 	});
+}
+
+// ============================================================================
+// Auth-blocked prompts (resume after a provider login)
+// ============================================================================
+
+/**
+ * Park the prompt an `auth_expired` error just killed, so a successful login
+ * can offer to resume it.
+ *
+ * Returns false when the tab has no dispatch snapshot - there is then nothing
+ * to replay, and recording an entry we could not honor would put a row in the
+ * confirm modal that sends nothing when clicked.
+ */
+export function noteAuthBlockedPrompt(sessionId: string, tabId: string): boolean {
+	const key = keyFor(sessionId, tabId);
+	const snapshot = snapshots.get(key);
+	if (!snapshot) return false;
+
+	useRetryStore.getState().setBlocked(key, {
+		sessionId,
+		tabId,
+		key,
+		itemId: snapshot.item.id,
+		failedAt: Date.now(),
+		preview: getQueuedItemLabel(snapshot.item, 120),
+	});
+	logger.info('[retry] Parked prompt blocked by auth failure', undefined, { key });
+	return true;
+}
+
+/**
+ * Prompts still worth resending for a set of agents, oldest failure first.
+ *
+ * Everything unreplayable is dropped here rather than at send time, so the
+ * confirm surface and the resend agree on exactly what will happen:
+ *   - the agent or its tab is gone (deleted between the failure and the login),
+ *   - the snapshot was replaced, meaning that turn already went out by other
+ *     means.
+ */
+export function getBlockedPrompts(sessionIds: readonly string[]): BlockedPrompt[] {
+	const wanted = new Set(sessionIds);
+	const sessionState = useSessionStore.getState();
+	const { blocked } = useRetryStore.getState();
+
+	const pending: BlockedPrompt[] = [];
+	for (const key in blocked) {
+		const entry = blocked[key];
+		if (!wanted.has(entry.sessionId)) continue;
+
+		const session = selectSessionById(entry.sessionId)(sessionState);
+		if (!session || !session.aiTabs.some((tab) => tab.id === entry.tabId)) continue;
+		if (snapshots.get(entry.key)?.item.id !== entry.itemId) continue;
+
+		pending.push(entry);
+	}
+	return pending.sort((a, b) => a.failedAt - b.failedAt);
+}
+
+/** Forget every parked prompt for these agents (the user declined, or we just sent them). */
+export function discardBlockedPrompts(sessionIds: readonly string[]): void {
+	const wanted = new Set(sessionIds);
+	const { blocked, setBlocked } = useRetryStore.getState();
+	for (const key in blocked) {
+		if (wanted.has(blocked[key].sessionId)) setBlocked(key, null);
+	}
+}
+
+/**
+ * Resend every parked prompt for these agents, in the order they failed.
+ * Returns the keys that actually went out.
+ *
+ * The whole queue is dropped up front, stale entries included: the user
+ * answered this question once, and a leftover record would re-ask it after the
+ * next login. One prompt that throws at dispatch does not stop the rest - the
+ * others are separate agents and have nothing to do with it.
+ */
+export async function resendBlockedPrompts(sessionIds: readonly string[]): Promise<string[]> {
+	const pending = getBlockedPrompts(sessionIds);
+	discardBlockedPrompts(sessionIds);
+
+	const resent: string[] = [];
+	for (const entry of pending) {
+		// Sequential on purpose: "in the order they failed" is only true if each
+		// dispatch is accepted before the next one starts.
+		try {
+			if (await dispatchSnapshot(entry.sessionId, entry.key)) resent.push(entry.key);
+		} catch (error) {
+			logger.error('[retry] Resend after login threw', undefined, { key: entry.key, error });
+		}
+	}
+	logger.info('[retry] Resent prompts after provider login', undefined, {
+		requested: pending.length,
+		resent: resent.length,
+	});
+	return resent;
 }

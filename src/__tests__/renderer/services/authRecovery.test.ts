@@ -16,7 +16,13 @@ import {
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { getModalActions, useModalStore } from '../../../renderer/stores/modalStore';
 import { useProviderAuthStore } from '../../../renderer/stores/providerAuthStore';
+import {
+	noteAuthBlockedPrompt,
+	noteDispatch,
+	useRetryStore,
+} from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import type { CredentialIdentity, ProviderAuthSnapshot } from '../../../shared/providerAuth';
 import type { AgentError, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -115,6 +121,24 @@ function installBridge(status: ProviderAuthSnapshot['status'] | null): {
 const sessionById = (id: string): Session | undefined =>
 	useSessionStore.getState().sessions.find((s) => s.id === id);
 
+const dispatchDeps = {
+	conductorProfile: '',
+	customAICommands: [],
+	speckitCommands: [],
+	openspecCommands: [],
+} as unknown as ProcessQueuedItemDeps;
+
+/** Park the prompt an agent's auth failure killed, the way the error listener does. */
+function parkPrompt(id: string): void {
+	const tabId = `${id}-tab`;
+	noteDispatch(
+		id,
+		{ id: `${id}-item`, timestamp: 1, tabId, type: 'message', text: 'ship it' },
+		dispatchDeps
+	);
+	noteAuthBlockedPrompt(id, tabId);
+}
+
 describe('authRecovery', () => {
 	beforeEach(() => {
 		useProviderAuthStore.getState().__resetForTests();
@@ -122,6 +146,44 @@ describe('authRecovery', () => {
 		useSessionStore.setState({ sessions: [] });
 		useCenterFlashStore.getState().setActive(null);
 		useModalStore.setState({ modals: new Map() });
+		useRetryStore.setState({ retries: {}, outages: {}, blocked: {} });
+	});
+
+	it('offers back the prompts the dead login blocked', async () => {
+		installBridge('authenticated');
+		useSessionStore.setState({
+			sessions: [
+				makeSession('a', GMAIL_DIR, authError()),
+				makeSession('b', GMAIL_DIR, authError()),
+			],
+		});
+		parkPrompt('a');
+		parkPrompt('b');
+
+		await verifyAuthRecovery(GMAIL_KEY);
+
+		// Offered, not sent: the modal asks before anything goes back out.
+		expect(useModalStore.getState().isOpen('authResend')).toBe(true);
+		expect(useModalStore.getState().getData('authResend')).toEqual({ identityKey: GMAIL_KEY });
+	});
+
+	it('asks nothing when the login blocked no prompt', async () => {
+		installBridge('authenticated');
+		useSessionStore.setState({ sessions: [makeSession('a', GMAIL_DIR, authError())] });
+
+		await verifyAuthRecovery(GMAIL_KEY);
+
+		expect(useModalStore.getState().isOpen('authResend')).toBe(false);
+	});
+
+	it('asks nothing when the login did not actually work', async () => {
+		installBridge('logged-out');
+		useSessionStore.setState({ sessions: [makeSession('a', GMAIL_DIR, authError())] });
+		parkPrompt('a');
+
+		await verifyAuthRecovery(GMAIL_KEY);
+
+		expect(useModalStore.getState().isOpen('authResend')).toBe(false);
 	});
 
 	it('clears the auth error on EVERY agent on the identity and nobody else', async () => {

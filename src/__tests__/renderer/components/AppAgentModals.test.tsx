@@ -5,9 +5,16 @@ import { AppAgentModals } from '../../../renderer/components/AppModals';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useProviderAuthStore } from '../../../renderer/stores/providerAuthStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
+import {
+	noteAuthBlockedPrompt,
+	noteDispatch,
+	useRetryStore,
+} from '../../../renderer/stores/retryStore';
 import type { CredentialIdentity, ProviderAuthSnapshot } from '../../../shared/providerAuth';
 import type { Theme, Session, AgentError } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 import type {
 	AppAgentModalsProps,
 	GroupChatErrorInfo,
@@ -42,6 +49,17 @@ vi.mock('../../../renderer/components/AuthRecoveryModal', () => ({
 			data-blocked={props.blockedSessions.map((s: Session) => s.id).join(',')}
 			onClick={props.onClose}
 		/>
+	),
+}));
+vi.mock('../../../renderer/components/AuthResendModal', () => ({
+	AuthResendModal: (props: any) => (
+		<div data-testid="auth-resend-modal" data-identity-key={props.identity.key}>
+			<span data-testid="auth-resend-rows">
+				{props.rows.map((r: any) => `${r.agentName}/${r.tabName}/${r.preview}`).join('|')}
+			</span>
+			<button data-testid="auth-resend-stub-confirm" onClick={props.onResend} />
+			<button data-testid="auth-resend-stub-decline" onClick={props.onDecline} />
+		</div>
 	),
 }));
 
@@ -335,5 +353,153 @@ describe('AppAgentModals - auth recovery slot', () => {
 		useModalStore.getState().openModal('authRecovery', { identityKey: 'gone::oauth::x::local' });
 		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
 		expect(screen.queryByTestId('auth-recovery-modal')).not.toBeInTheDocument();
+	});
+});
+
+/**
+ * The post-login resume slot. Its job is to be honest about what a click will
+ * do: list every prompt that will actually be sent, drop the ones that stopped
+ * being sendable while the user was signing in, and send nothing at all until
+ * the user says so.
+ */
+describe('AppAgentModals - auth resend slot', () => {
+	const HOME = '/Users/x';
+	const DEFAULT_KEY = `claude-code::oauth::${HOME}/.claude::local`;
+	const SIBLING_DIR = `${HOME}/.claude-smash`;
+
+	const dispatchDeps = {
+		conductorProfile: '',
+		customAICommands: [],
+		speckitCommands: [],
+		openspecCommands: [],
+	} as unknown as ProcessQueuedItemDeps;
+
+	let processQueuedItem: ReturnType<typeof vi.fn>;
+
+	/** Dispatch a prompt on an agent's tab, then park it as an auth casualty. */
+	function park(sessionId: string, text: string) {
+		const tabId = `${sessionId}-tab`;
+		noteDispatch(
+			sessionId,
+			{ id: `${sessionId}-item`, timestamp: 1, tabId, type: 'message', text },
+			dispatchDeps
+		);
+		noteAuthBlockedPrompt(sessionId, tabId);
+	}
+
+	function agent(id: string, extra: Partial<Session> = {}): Session {
+		return createMockSession({
+			id,
+			name: id,
+			toolType: 'claude-code',
+			aiTabs: [createMockAITab({ id: `${id}-tab`, name: `${id} tab` })],
+			activeTabId: `${id}-tab`,
+			...extra,
+		});
+	}
+
+	beforeEach(() => {
+		useProviderAuthStore.getState().__resetForTests();
+		useModalStore.setState({ modals: new Map() });
+		useRetryStore.setState({ retries: {}, outages: {}, blocked: {} });
+		processQueuedItem = vi.fn().mockResolvedValue(undefined);
+		useAgentStore.setState({ processQueuedItem } as any);
+		useProviderAuthStore.setState({
+			homeDir: HOME,
+			agentEnvVars: { 'claude-code': {} },
+			snapshots: {
+				[DEFAULT_KEY]: {
+					identity: {
+						key: DEFAULT_KEY,
+						provider: 'claude-code',
+						kind: 'oauth',
+						scope: `${HOME}/.claude`,
+						host: 'local',
+						label: '.claude',
+					},
+					status: 'authenticated',
+					checkedAt: 1,
+					source: 'login-flow',
+				},
+			},
+			loaded: true,
+		});
+		useSessionStore.setState({
+			sessions: [
+				agent('a'),
+				agent('b'),
+				agent('sibling', { customEnvVars: { CLAUDE_CONFIG_DIR: SIBLING_DIR } }),
+			],
+		});
+	});
+
+	it('renders nothing when nothing is parked for the credential', () => {
+		useModalStore.getState().openModal('authResend', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+		expect(screen.queryByTestId('auth-resend-modal')).not.toBeInTheDocument();
+	});
+
+	it("lists only this credential's prompts, oldest failure first", () => {
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(2_000);
+			park('b', 'second prompt');
+			vi.setSystemTime(1_000);
+			park('a', 'first prompt');
+			park('sibling', 'not this account');
+		} finally {
+			vi.useRealTimers();
+		}
+
+		useModalStore.getState().openModal('authResend', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+
+		expect(screen.getByTestId('auth-resend-modal').getAttribute('data-identity-key')).toBe(
+			DEFAULT_KEY
+		);
+		expect(screen.getByTestId('auth-resend-rows').textContent).toBe(
+			'a/a tab/first prompt|b/b tab/second prompt'
+		);
+	});
+
+	it('sends every listed prompt when the user confirms, then closes', async () => {
+		park('a', 'first prompt');
+		park('b', 'second prompt');
+		useModalStore.getState().openModal('authResend', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('auth-resend-stub-confirm'));
+		});
+
+		expect(processQueuedItem.mock.calls.map((call) => call[0])).toEqual(['a', 'b']);
+		expect(useModalStore.getState().isOpen('authResend')).toBe(false);
+	});
+
+	it('sends nothing when the user declines, and does not ask again', async () => {
+		park('a', 'first prompt');
+		useModalStore.getState().openModal('authResend', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('auth-resend-stub-decline'));
+		});
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expect(useModalStore.getState().isOpen('authResend')).toBe(false);
+		expect(useRetryStore.getState().blocked).toEqual({});
+	});
+
+	it('drops an agent deleted while the user was logging in', () => {
+		park('a', 'first prompt');
+		park('b', 'second prompt');
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.filter((s) => s.id !== 'a'),
+		});
+
+		useModalStore.getState().openModal('authResend', { identityKey: DEFAULT_KEY });
+		render(<AppAgentModals {...defaultProps} sessions={useSessionStore.getState().sessions} />);
+
+		expect(screen.getByTestId('auth-resend-rows').textContent).toBe('b/b tab/second prompt');
 	});
 });

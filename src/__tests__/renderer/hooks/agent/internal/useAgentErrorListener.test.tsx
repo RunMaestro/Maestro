@@ -55,7 +55,7 @@ beforeEach(() => {
 		removedWorktreePaths: new Set(),
 	});
 	useModalStore.getState().closeAll();
-	useRetryStore.setState({ retries: {}, outages: {} });
+	useRetryStore.setState({ retries: {}, outages: {}, blocked: {} });
 	(window as any).maestro = { ...((window as any).maestro || {}), process: mockProcess };
 });
 
@@ -116,6 +116,40 @@ describe('useAgentErrorListener', () => {
 		// Additive only: the existing error state and modal are untouched.
 		expect(useSessionStore.getState().sessions[0].state).toBe('error');
 		expect(useModalStore.getState().modals.get('agentError')).toBeDefined();
+	});
+
+	it('parks the prompt the auth failure killed, without sending anything', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', baseError);
+
+		// Parked for the login to offer back - NOT scheduled: a timer would just
+		// burn another prompt against a credential no one has repaired yet.
+		expect(useRetryStore.getState().blocked['sess-1:tab-1']).toMatchObject({
+			sessionId: 'sess-1',
+			tabId: 'tab-1',
+			itemId: 'item-1',
+			preview: 'hi',
+		});
+		expect(useRetryStore.getState().retries['sess-1:tab-1']).toBeUndefined();
+		// The error still surfaces normally.
+		expect(useSessionStore.getState().sessions[0].state).toBe('error');
+	});
+
+	it('parks nothing for a non-auth error', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'permission_denied' });
+
+		expect(useRetryStore.getState().blocked).toEqual({});
 	});
 
 	it('does not mark a credential for a non-auth error', () => {

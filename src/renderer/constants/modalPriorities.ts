@@ -34,6 +34,14 @@ export const MODAL_PRIORITIES = {
 	 */
 	AUTH_RECOVERY: 1015,
 
+	/**
+	 * Post-login resume confirmation ("resend the prompts that died?").
+	 * Opens as AUTH_RECOVERY closes, and sits above AGENT_ERROR because the error
+	 * modal underneath may still be settling closed - the user must answer this
+	 * one before anything is sent on their behalf.
+	 */
+	AUTH_RESEND: 1014,
+
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 

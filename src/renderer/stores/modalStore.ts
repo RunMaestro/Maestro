@@ -172,6 +172,18 @@ export interface AuthRecoveryModalData {
 	identityKey: string;
 }
 
+/**
+ * Post-login resume confirmation data.
+ *
+ * Keyed by the same CREDENTIAL as the recovery it follows: the prompts on offer
+ * are the ones that credential blocked, and the modal resolves them from the
+ * retry store at render time so a prompt that stopped being replayable while
+ * the user was logging in simply is not listed.
+ */
+export interface AuthResendModalData {
+	identityKey: string;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -299,6 +311,7 @@ export type ModalId =
 	| 'renameInstance'
 	| 'agentError'
 	| 'authRecovery'
+	| 'authResend'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -390,6 +403,7 @@ export interface ModalDataMap {
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
 	authRecovery: AuthRecoveryModalData;
+	authResend: AuthResendModalData;
 	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
@@ -912,6 +926,11 @@ export function getModalActions() {
 		// terminal at a time is all the user can act on.
 		openAuthRecovery: (identityKey: string) => openModal('authRecovery', { identityKey }),
 		closeAuthRecovery: () => closeModal('authRecovery'),
+
+		// Post-login resume confirmation. Opened by the recovery service only when
+		// that credential actually has prompts to replay.
+		openAuthResend: (identityKey: string) => openModal('authResend', { identityKey }),
+		closeAuthResend: () => closeModal('authResend'),
 
 		// Worktree Modals
 		setWorktreeConfigModalOpen: (open: boolean) =>
