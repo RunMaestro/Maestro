@@ -68,6 +68,7 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createVoiceApi } from './acappella';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -274,6 +275,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
+
+	// A Cappella Voice API (headless voice session in main; this is one client)
+	voice: createVoiceApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -378,6 +382,8 @@ export {
 	createWindowsApi,
 	// Session Images
 	createImagesApi,
+	// A Cappella Voice
+	createVoiceApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -666,3 +672,7 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From acappella
+	VoiceApi,
+} from './acappella';

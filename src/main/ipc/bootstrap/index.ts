@@ -54,6 +54,7 @@ import {
 	registerTabsHandlers,
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
+	registerACappellaHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
 	registerCoworkingHandlers,
@@ -304,6 +305,16 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 			supervisor: pianolaSupervisor,
 		});
 	}
+
+	// Register A Cappella handlers (voice sessions). Registration is free: the
+	// session service, its providers, and the dispatch executor are all built
+	// lazily on the first start-session, so an app with the Encore Feature off
+	// pays nothing for these channels being present.
+	registerACappellaHandlers({
+		settingsStore: deps.settingsStore,
+		getMainWindow: deps.getMainWindow,
+		safeSend: deps.safeSend,
+	});
 
 	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
 	// The manager is constructed during core-service init above; guard for types.

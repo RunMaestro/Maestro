@@ -324,6 +324,44 @@ sequenceDiagram
 	S-->>C: speak-end(cancelled), listen-start
 ```
 
+## Electron IPC binding
+
+The desktop client speaks the protocol over `src/main/ipc/handlers/acappella.ts`, exposed to the
+renderer as `window.maestro.voice.*` (`src/main/preload/acappella.ts`). The handlers are
+registered from `setupIpcHandlers()` in `src/main/ipc/bootstrap/index.ts`, which is the path the
+running app actually takes; `registerAllHandlers()` in `handlers/index.ts` is not called at
+runtime, so a handler wired only there would be dead.
+
+| Channel                      | Preload method             | Returns                                                |
+| ---------------------------- | -------------------------- | ------------------------------------------------------ |
+| `acappella:start-session`    | `voice.start(scope?)`      | `{ snapshot, substitutions }`                          |
+| `acappella:stop-session`     | `voice.stop()`             | `void`                                                 |
+| `acappella:submit-utterance` | `voice.submitUtterance()`  | `boolean` (false when the state cannot take one)       |
+| `acappella:interrupt`        | `voice.interrupt(source)`  | `boolean` (false when nothing is speaking)             |
+| `acappella:stop-word`        | `voice.stopWord(payload?)` | `void`                                                 |
+| `acappella:get-roster`       | `voice.getRoster()`        | `RosterAgent[]`                                        |
+| `acappella:get-state`        | `voice.getState()`         | `VoiceSessionSnapshot`, or null before the first start |
+| `acappella:event` (push)     | `voice.onEvent(handler)`   | every `VoiceEvent`, in `seq` order                     |
+
+Four properties of this binding are deliberate:
+
+- **Registration builds nothing.** The service, its provider trio, and the dispatch executor are
+  all constructed on the first `start-session`. Enabling the Encore Feature opens no device and
+  downloads nothing.
+- **Events are broadcast, not addressed.** `acappella:event` goes to every window and to the
+  web-desktop bridge through `safeSend`, matching the multi-window invariant in
+  `src/main/utils/safe-send.ts`. There is no per-window subscriber list: a client that does not
+  want the stream simply does not listen.
+- **The Encore gate rejects with `ACappellaDisabled`**, so the renderer can tell "feature off"
+  from "no session". `stop-session` is the one ungated channel, because toggling the feature off
+  mid-session must still be able to release the floor.
+- **`get-state` returns null before the first start.** Synthesising an idle snapshot would have to
+  name provider ids that nothing has resolved yet, and reporting a requested-but-unavailable
+  provider as the running one is the substitution lie in a different costume.
+
+A provider selection change in settings rebuilds the service on the next start, which is how Voice
+Setup takes effect without an app restart.
+
 ## Invariants
 
 1. **`seq` is never reused and never goes backwards** within a voice session.
