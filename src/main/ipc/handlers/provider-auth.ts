@@ -22,7 +22,10 @@ import type Store from 'electron-store';
 
 import { runStartupAuthProbe } from '../../agents/auth/auth-startup';
 import type { StartupAuthProbeResult } from '../../agents/auth/auth-startup';
+import { startAuthLogin, stopAuthLogin } from '../../agents/auth/auth-login';
+import type { StartAuthLoginRequest, StartAuthLoginResult } from '../../agents/auth/auth-login';
 import type { AgentDetector } from '../../agents';
+import type { ProcessManager } from '../../process-manager/ProcessManager';
 import type { CredentialIdentity } from '../../../shared/providerAuth';
 import type {
 	AuthFailureStatus,
@@ -102,6 +105,8 @@ export interface ProviderAuthHandlerDependencies {
 	agentConfigsStore: Pick<Store<AgentConfigsData>, 'get'>;
 	settingsStore: Pick<Store<MaestroSettings>, 'get'>;
 	getAgentDetector: () => AgentDetector | null;
+	/** Lazy, like every other handler's: the manager outlives no single window. */
+	getProcessManager: () => ProcessManager | null;
 }
 
 /**
@@ -139,7 +144,8 @@ export interface ProviderAuthReprobeResult extends StartupAuthProbeResult {
  * call that function.
  */
 export function registerProviderAuthHandlers(deps: ProviderAuthHandlerDependencies): void {
-	const { sessionsStore, agentConfigsStore, settingsStore, getAgentDetector } = deps;
+	const { sessionsStore, agentConfigsStore, settingsStore, getAgentDetector, getProcessManager } =
+		deps;
 
 	unsubscribeChangeBroadcast?.();
 	unsubscribeChangeBroadcast = onSnapshotChange(broadcastChange);
@@ -234,6 +240,36 @@ export function registerProviderAuthHandlers(deps: ProviderAuthHandlerDependenci
 					validateIdentity(key, request?.identity)
 				);
 			}
+		)
+	);
+
+	// Run one credential's login command in a PTY the recovery modal renders.
+	//
+	// The renderer supplies the process id (it mounted a terminal on it before
+	// asking), and `startAuthLogin` refuses anything that is not login-shaped - see
+	// `isLoginRunSessionId()`. Everything else about the spawn is decided in main:
+	// the account's env, its binary, its SSH remote, and the command line.
+	ipcMain.handle(
+		'providerAuth:startLogin',
+		withIpcErrorLogging(
+			handlerOpts('startLogin'),
+			async (request: StartAuthLoginRequest): Promise<StartAuthLoginResult> =>
+				startAuthLogin(
+					{ sessionsStore, agentConfigsStore, settingsStore, getAgentDetector, getProcessManager },
+					request
+				)
+		)
+	);
+
+	// Kill a login PTY: the modal closed, or the user asked to re-run. False just
+	// means nothing was running under that id, which is the normal case for a modal
+	// dismissed before its spawn landed.
+	ipcMain.handle(
+		'providerAuth:stopLogin',
+		withIpcErrorLogging(
+			handlerOpts('stopLogin'),
+			async (runSessionId: string): Promise<boolean> =>
+				stopAuthLogin(getProcessManager, runSessionId)
 		)
 	);
 }

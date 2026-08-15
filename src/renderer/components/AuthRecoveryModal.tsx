@@ -20,7 +20,7 @@
  * no `select-none` on the root - see UI-PATTERNS.md -> Text Selection in Modals.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyRound, RefreshCw, ShieldAlert, Terminal as TerminalIcon } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { EscCloseButton } from './ui/EscCloseButton';
@@ -29,12 +29,8 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useProviderAuthStore } from '../stores/providerAuthStore';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
-import { resolveLoginCommand } from '../../shared/providerAuth';
-import type {
-	CredentialIdentity,
-	CredentialKind,
-	ProviderAuthSnapshot,
-} from '../../shared/providerAuth';
+import { buildLoginRunSessionId, resolveLoginCommand } from '../../shared/providerAuth';
+import type { CredentialIdentity, CredentialKind } from '../../shared/providerAuth';
 import { generateId } from '../utils/ids';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { logger } from '../utils/logger';
@@ -45,25 +41,6 @@ const LOG_CONTEXT = '[AuthRecovery]';
 // ============================================================================
 // Helpers (exported for tests)
 // ============================================================================
-
-/**
- * The process id the login PTY streams under.
- *
- * Synthetic, for the same reason `buildShellRunSessionId()` in
- * `services/shellCommand.ts` is: `process.onData` keys by session id, and reusing
- * a real one would route login output into the agent listeners and land it in
- * that agent's transcript. This shape matches no listener pattern (no `-ai-`
- * segment, no `-terminal` suffix, no `-batch-` segment) and no session in the
- * store, so this modal owns the stream.
- *
- * The identity is folded in for debuggability - two accounts logging in at once
- * are told apart in the process list - and the run id makes "Re-run login
- * command" a genuinely new stream rather than a reused one.
- */
-export function buildLoginRunSessionId(identityKey: string, runId: string): string {
-	const slug = identityKey.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '');
-	return `auth-login-${slug}-${runId}`;
-}
 
 /** Plain-language name for a credential kind, for the header line. */
 export function describeCredentialKind(kind: CredentialKind): string {
@@ -118,25 +95,6 @@ export function describeCredentialRemedy(identity: CredentialIdentity): {
 	}
 }
 
-/**
- * An email to pre-fill the login page with, when the stored snapshot still knows
- * one.
- *
- * For a user with several accounts this is the difference between landing on the
- * right one and re-authenticating the account that already worked. Read from the
- * snapshot's `detail`, which the claude-code probe fills with
- * `email · org · subscription` on a successful check. Returns undefined when
- * nothing email-shaped is there - a guessed address is worse than none.
- */
-export function extractLoginEmail(snapshot: ProviderAuthSnapshot | null): string | undefined {
-	const candidates = [snapshot?.accountLabel, snapshot?.detail];
-	for (const candidate of candidates) {
-		const match = (candidate ?? '').match(/[^\s·,;()<>]+@[^\s·,;()<>]+\.[A-Za-z]{2,}/);
-		if (match) return match[0];
-	}
-	return undefined;
-}
-
 // ============================================================================
 // Component
 // ============================================================================
@@ -161,7 +119,6 @@ export function AuthRecoveryModal({
 }: AuthRecoveryModalProps) {
 	const fontFamily = useSettingsStore((s) => s.fontFamily);
 	const fontSize = useSettingsStore((s) => s.fontSize);
-	const snapshot = useProviderAuthStore((s) => s.snapshots[identity.key] ?? null);
 	const refreshIdentity = useProviderAuthStore((s) => s.refreshIdentity);
 
 	// Bumped by "Re-run login command": a new run id is a new PTY stream and a
@@ -169,18 +126,76 @@ export function AuthRecoveryModal({
 	const [runId, setRunId] = useState(() => generateId());
 	const [verifyPhase, setVerifyPhase] = useState<VerifyPhase>('idle');
 	const [commandRevealed, setCommandRevealed] = useState(false);
+	/** Command line as main actually spawned it; see the login effect below. */
+	const [spawnedCommandLine, setSpawnedCommandLine] = useState<string | null>(null);
+	/** Why the login could not start, from main. Null while it is running fine. */
+	const [spawnError, setSpawnError] = useState<string | null>(null);
 
-	const loginCommand = useMemo(
-		() => resolveLoginCommand(identity, { email: extractLoginEmail(snapshot) }),
-		[identity, snapshot]
-	);
-	const commandLine = loginCommand
+	// Only decides WHICH surface to render (terminal vs guidance) and what note to
+	// show. The command that actually runs is resolved in main, which knows the
+	// account's env and the email from its last good snapshot.
+	const loginCommand = useMemo(() => resolveLoginCommand(identity), [identity]);
+	const canLogin = loginCommand !== null;
+	const localCommandLine = loginCommand
 		? [loginCommand.command, ...loginCommand.args].join(' ')
 		: undefined;
+	const commandLine = spawnedCommandLine ?? localCommandLine;
 	const runSessionId = useMemo(
 		() => buildLoginRunSessionId(identity.key, runId),
 		[identity.key, runId]
 	);
+
+	/**
+	 * Own the login PTY for the life of this run id.
+	 *
+	 * Start on mount and on every "Re-run"; kill on unmount and before each
+	 * re-run, so a closed modal cannot leave a live PTY (and a half-finished OAuth
+	 * flow) behind. App quit is covered by the ProcessManager's `killAll()`, since
+	 * the login is a normal managed process.
+	 *
+	 * `canLogin` rather than `loginCommand` in the deps on purpose: the memo
+	 * returns a fresh object whenever the identity object changes, and re-running
+	 * this effect would kill and re-spawn a login the user is halfway through.
+	 */
+	useEffect(() => {
+		if (!canLogin) return;
+		const api = window.maestro?.providerAuth;
+		if (!api) return;
+
+		let cancelled = false;
+		setSpawnError(null);
+		setSpawnedCommandLine(null);
+
+		void api
+			.startLogin({ identityKey: identity.key, runSessionId })
+			.then((result) => {
+				// The modal closed (or re-ran) while the spawn was in flight. Kill what
+				// we just started rather than leaking it - the cleanup below already ran
+				// and found nothing to stop.
+				if (cancelled) {
+					void api.stopLogin(runSessionId);
+					return;
+				}
+				if (!result?.started) {
+					setSpawnError(result?.error ?? 'The login command could not be started.');
+					return;
+				}
+				if (result.commandLine) setSpawnedCommandLine(result.commandLine);
+			})
+			.catch((error: unknown) => {
+				if (cancelled) return;
+				logger.warn('Failed to start the login command', LOG_CONTEXT, {
+					identityKey: identity.key,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				setSpawnError('The login command could not be started.');
+			});
+
+		return () => {
+			cancelled = true;
+			void api.stopLogin(runSessionId);
+		};
+	}, [identity.key, runSessionId, canLogin]);
 
 	// One handler for both exits, so the ESC pill cannot drift from the Escape
 	// key. `<Modal>` registers the layer with this same function.
@@ -321,6 +336,17 @@ export function AuthRecoveryModal({
 					{loginCommand.note && (
 						<p className="text-xs" style={{ color: theme.colors.textDim }}>
 							{loginCommand.note}
+						</p>
+					)}
+					{/* A terminal that stayed black because nothing could be spawned is
+					    indistinguishable from one that is thinking, so say what happened. */}
+					{spawnError && (
+						<p
+							className="text-xs"
+							style={{ color: theme.colors.warning }}
+							data-testid="auth-recovery-spawn-error"
+						>
+							{spawnError}
 						</p>
 					)}
 					{/* The terminal is sized by the modal and reflows with it: an

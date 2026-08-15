@@ -3627,6 +3627,23 @@ interface MaestroAPI {
 				identity?: import('../shared/providerAuth').CredentialIdentity;
 			}
 		) => Promise<import('../shared/providerAuth').ProviderAuthSnapshot | null>;
+		startLogin: (request: {
+			identityKey: string;
+			runSessionId: string;
+			cols?: number;
+			rows?: number;
+			preferConsole?: boolean;
+			sso?: boolean;
+		}) => Promise<{
+			started: boolean;
+			runSessionId: string;
+			commandLine?: string;
+			note?: string;
+			remote?: boolean;
+			pid?: number;
+			error?: string;
+		}>;
+		stopLogin: (runSessionId: string) => Promise<boolean>;
 		onChange: (
 			callback: (change: {
 				key: string;

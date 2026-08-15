@@ -97,6 +97,7 @@ function makeWindow(): {
 describe('Provider Auth IPC Handlers', () => {
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	const detector = { getAgent: vi.fn() } as unknown as never;
+	const processManager = { spawn: vi.fn(), kill: vi.fn() } as unknown as never;
 
 	function makeDeps(overrides: Record<string, unknown> = {}) {
 		return {
@@ -104,6 +105,7 @@ describe('Provider Auth IPC Handlers', () => {
 			agentConfigsStore: { get: vi.fn().mockReturnValue({}) },
 			settingsStore: { get: vi.fn().mockReturnValue(undefined) },
 			getAgentDetector: () => detector,
+			getProcessManager: () => processManager,
 			...overrides,
 		} as Parameters<typeof registerProviderAuthHandlers>[0];
 	}
@@ -126,6 +128,8 @@ describe('Provider Auth IPC Handlers', () => {
 			'providerAuth:mark',
 			'providerAuth:reprobe',
 			'providerAuth:reprobeAll',
+			'providerAuth:startLogin',
+			'providerAuth:stopLogin',
 		]);
 	});
 

@@ -11,6 +11,9 @@ import {
 	canonicalizeDirPath,
 	fingerprintSecret,
 	mergeEffectiveEnv,
+	buildLoginRunSessionId,
+	extractLoginEmail,
+	isLoginRunSessionId,
 	resolveCredentialIdentity,
 	resolveLoginCommand,
 	type CredentialIdentityInput,
@@ -435,5 +438,71 @@ describe('canonicalizeDirPath', () => {
 	it('returns empty for a blank input so callers can fall back to their default', () => {
 		expect(canonicalizeDirPath('', HOME)).toBe('');
 		expect(canonicalizeDirPath('   ', HOME)).toBe('');
+	});
+});
+
+describe('buildLoginRunSessionId / isLoginRunSessionId', () => {
+	it('produces an id that no agent listener claims', () => {
+		const id = buildLoginRunSessionId(`claude-code::oauth::${HOME}/.claude::local`, 'run1');
+		expect(id.startsWith('auth-login-')).toBe(true);
+		expect(id.includes('-ai-')).toBe(false);
+		expect(id.includes('-batch-')).toBe(false);
+		expect(id.endsWith('-terminal')).toBe(false);
+		expect(isLoginRunSessionId(id)).toBe(true);
+	});
+
+	it('gives two runs of the same account two ids', () => {
+		const key = `claude-code::oauth::${HOME}/.claude::local`;
+		expect(buildLoginRunSessionId(key, 'run1')).not.toBe(buildLoginRunSessionId(key, 'run2'));
+	});
+
+	it('gives two accounts two ids', () => {
+		expect(buildLoginRunSessionId('a::oauth::/x::local', 'r')).not.toBe(
+			buildLoginRunSessionId('a::oauth::/y::local', 'r')
+		);
+	});
+
+	it('defuses a config dir that would otherwise forge a reserved segment', () => {
+		// `~/terminal/.claude` is a legal account directory, and the naive slug of
+		// it contains `-terminal-`, which the terminal-tab checks match on.
+		const id = buildLoginRunSessionId(`claude-code::oauth::${HOME}/terminal/.claude::local`, 'r');
+		expect(id.includes('-terminal-')).toBe(false);
+		expect(isLoginRunSessionId(id)).toBe(true);
+	});
+
+	it('rejects ids it did not mint', () => {
+		expect(isLoginRunSessionId('session-42-ai-tab-7')).toBe(false);
+		expect(isLoginRunSessionId('session-42-terminal')).toBe(false);
+		expect(isLoginRunSessionId('auth-login-')).toBe(false);
+		expect(isLoginRunSessionId('auth-login-x-terminal-1')).toBe(false);
+		expect(isLoginRunSessionId('auth-login-x-batch-1')).toBe(false);
+	});
+});
+
+describe('extractLoginEmail', () => {
+	it('pulls the address out of a claude probe detail', () => {
+		expect(
+			extractLoginEmail({
+				identity: identity(),
+				status: 'authenticated',
+				detail: 'ada@example.com \u00b7 Acme \u00b7 max',
+				checkedAt: 0,
+				source: 'probe',
+			})
+		).toBe('ada@example.com');
+	});
+
+	it('prefers nothing over a guess', () => {
+		expect(
+			extractLoginEmail({
+				identity: identity(),
+				status: 'logged-out',
+				detail: 'claude auth status reports no active login',
+				checkedAt: 0,
+				source: 'probe',
+			})
+		).toBeUndefined();
+		expect(extractLoginEmail(null)).toBeUndefined();
+		expect(extractLoginEmail(undefined)).toBeUndefined();
 	});
 });

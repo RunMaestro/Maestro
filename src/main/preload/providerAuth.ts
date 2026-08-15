@@ -62,11 +62,45 @@ export interface ProviderAuthMarkRequest {
 	identity?: CredentialIdentity;
 }
 
+/**
+ * What the recovery modal asks for when it starts a login.
+ *
+ * `runSessionId` comes from `buildLoginRunSessionId()` in `shared/providerAuth`:
+ * the renderer mounts its terminal on that id first, so it has to mint it. Main
+ * validates the shape before spawning - see `isLoginRunSessionId()`.
+ */
+export interface ProviderAuthStartLoginRequest {
+	identityKey: string;
+	runSessionId: string;
+	cols?: number;
+	rows?: number;
+	/** claude-code: bill against Anthropic Console instead of a subscription. */
+	preferConsole?: boolean;
+	/** claude-code: force the SSO flow. */
+	sso?: boolean;
+}
+
+/** Outcome of a login spawn. `started: false` always carries an `error`. */
+export interface ProviderAuthStartLoginResult {
+	started: boolean;
+	runSessionId: string;
+	/** The command line as spawned, for the modal's "Show command" reveal. */
+	commandLine?: string;
+	/** Note about the flow's shape (device code, provider picker). */
+	note?: string;
+	/** True when the login is running on an SSH remote rather than this machine. */
+	remote?: boolean;
+	pid?: number;
+	error?: string;
+}
+
 export interface ProviderAuthApi {
 	getAll: () => Promise<Record<string, ProviderAuthSnapshot>>;
 	reprobe: (key: string) => Promise<ProviderAuthReprobeResult>;
 	reprobeAll: () => Promise<ProviderAuthProbeCounts>;
 	mark: (key: string, request?: ProviderAuthMarkRequest) => Promise<ProviderAuthSnapshot | null>;
+	startLogin: (request: ProviderAuthStartLoginRequest) => Promise<ProviderAuthStartLoginResult>;
+	stopLogin: (runSessionId: string) => Promise<boolean>;
 	onChange: (callback: (change: ProviderAuthChange) => void) => () => void;
 }
 
@@ -91,6 +125,16 @@ export function createProviderAuthApi(): ProviderAuthApi {
 		// abandoned login) against one credential. See ProviderAuthMarkRequest.
 		mark: (key: string, request?: ProviderAuthMarkRequest): Promise<ProviderAuthSnapshot | null> =>
 			ipcRenderer.invoke('providerAuth:mark', key, request),
+
+		// Run this credential's login command in a PTY. Output and input flow over
+		// the normal `process.onData` / `process.write` channels under
+		// `request.runSessionId`, which matches no agent listener.
+		startLogin: (request: ProviderAuthStartLoginRequest): Promise<ProviderAuthStartLoginResult> =>
+			ipcRenderer.invoke('providerAuth:startLogin', request),
+
+		// Kill a login PTY (modal closed, or the user re-ran the command).
+		stopLogin: (runSessionId: string): Promise<boolean> =>
+			ipcRenderer.invoke('providerAuth:stopLogin', runSessionId),
 
 		// Snapshot writes from anywhere in main - the startup pass, a manual
 		// re-probe, the reactive auth_expired marker.

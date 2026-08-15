@@ -685,6 +685,84 @@ export function resolveLoginCommand(
 	}
 }
 
+// ============================================================================
+// Login run ids
+// ============================================================================
+
+/** Marks a process id as belonging to a login flow rather than to an agent. */
+const LOGIN_RUN_PREFIX = 'auth-login-';
+
+/**
+ * Session-id segments other subsystems key behavior off: `-ai-` (an AI tab),
+ * `-terminal` (a terminal tab), `-batch-` / `-synopsis-` (background runs). A
+ * login id is built from a CONFIG DIRECTORY PATH, so a user whose account lives
+ * in `~/terminal/.claude` would otherwise produce an id that one of those checks
+ * claims. Removing the leading hyphen (`x-terminal-y` -> `xterminal-y`) leaves
+ * the slug readable while making the segment unmatchable.
+ */
+const RESERVED_ID_SEGMENT_RE = /-(ai|terminal|batch|synopsis)(?=-|$)/g;
+
+/**
+ * The process id a login PTY streams under.
+ *
+ * Synthetic, for the same reason `buildShellRunSessionId()` in
+ * `renderer/services/shellCommand.ts` is: process output is keyed by session id,
+ * and reusing a real one would route login output into the agent listeners and
+ * land it in that agent's transcript. This shape matches no listener pattern and
+ * no session in the store, so the recovery modal owns the stream.
+ *
+ * The identity is folded in for debuggability - two accounts logging in at once
+ * are told apart in the process list - and the run id makes "Re-run login
+ * command" a genuinely new stream rather than a reused one.
+ *
+ * Lives here rather than in the modal so main can recognize the ids it is asked
+ * to spawn under without re-deriving the rule. See {@link isLoginRunSessionId}.
+ */
+export function buildLoginRunSessionId(identityKey: string, runId: string): string {
+	const slug = identityKey
+		.replace(/[^a-zA-Z0-9]+/g, '-')
+		.replace(/^-|-$/g, '')
+		.replace(RESERVED_ID_SEGMENT_RE, '$1');
+	return `${LOGIN_RUN_PREFIX}${slug}-${runId}`;
+}
+
+/**
+ * Whether a process id was minted by {@link buildLoginRunSessionId}.
+ *
+ * Main checks this before spawning under a renderer-supplied id. Without it a
+ * bug (or a compromised renderer) could ask for a login PTY under a live agent's
+ * session id, which would kill that agent's process - `ProcessManager.spawn()`
+ * kills whatever already holds the key - and then stream login output into its
+ * transcript.
+ */
+export function isLoginRunSessionId(sessionId: string): boolean {
+	return (
+		sessionId.startsWith(LOGIN_RUN_PREFIX) &&
+		sessionId.length > LOGIN_RUN_PREFIX.length &&
+		!/-(ai|terminal|batch|synopsis)(-|$)/.test(sessionId.slice(LOGIN_RUN_PREFIX.length))
+	);
+}
+
+/**
+ * An email to pre-fill the login page with, when the stored snapshot still knows
+ * one.
+ *
+ * For a user with several accounts this is the difference between landing on the
+ * right one and re-authenticating the account that already worked. Read from the
+ * snapshot's `detail`, which the claude-code probe fills with
+ * `email · org · subscription` on a successful check. Returns undefined when
+ * nothing email-shaped is there - a guessed address is worse than none.
+ */
+export function extractLoginEmail(
+	snapshot: ProviderAuthSnapshot | null | undefined
+): string | undefined {
+	for (const candidate of [snapshot?.accountLabel, snapshot?.detail]) {
+		const match = (candidate ?? '').match(/[^\s·,;()<>]+@[^\s·,;()<>]+\.[A-Za-z]{2,}/);
+		if (match) return match[0];
+	}
+	return undefined;
+}
+
 /**
  * Map a session onto the credential it will present.
  *

@@ -108,8 +108,16 @@ export interface StartupAuthProbeResult {
 	byStatus: Record<string, number>;
 }
 
-/** One unique credential identity plus everything needed to probe it. */
-interface ProbeTarget {
+/**
+ * One unique credential identity plus everything needed to run a provider
+ * command as it: the effective env, a working directory, and the SSH config when
+ * the credential lives on another machine.
+ *
+ * Exported because the login flow (`auth-login.ts`) needs exactly this and must
+ * NOT re-derive it. Resolving the env twice is how a login ends up repairing
+ * `.claude-smash` while the blocked account is `.claude-gmail`.
+ */
+export interface AuthTarget {
 	identity: CredentialIdentity;
 	env: Record<string, string>;
 	cwd: string;
@@ -161,7 +169,7 @@ function buildTarget(
 	agentLevelEnvVars: Record<string, string>,
 	mode: 'startup' | 'manual',
 	homeDir: string
-): ProbeTarget | null {
+): AuthTarget | null {
 	const toolType = typeof session.toolType === 'string' ? session.toolType : '';
 	if (toolType === '') {
 		return null;
@@ -224,10 +232,34 @@ function buildTarget(
 }
 
 /**
- * Resolve the provider binary path once per provider, memoized. Returns null
- * when the agent is not installed on this host, which is the caller's cue to
- * skip every LOCAL identity for that provider.
+ * Absolute path to a provider binary on THIS host, or null when the agent is not
+ * installed here - the caller's cue to skip every LOCAL identity for it. A
+ * REMOTE identity is never gated on this: `wrapSpawnWithSsh` invokes the
+ * provider by bare binary name on the far side.
+ *
+ * Exported so the login flow resolves its binary the same way the probe does.
  */
+export async function resolveProviderBinaryPath(
+	agentDetector: AgentDetector,
+	provider: string
+): Promise<string | null> {
+	try {
+		const agent = await agentDetector.getAgent(provider);
+		if (!agent) return null;
+		// Same `path || command` convention the spawner uses: prefer the resolved
+		// absolute path, fall back to the bare binary name so PATH resolution can
+		// still find it.
+		return agent.path || agent.command || null;
+	} catch (error) {
+		logger.warn('Agent detection failed while resolving a provider binary', LOG_CONTEXT, {
+			provider,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return null;
+	}
+}
+
+/** Memoized {@link resolveProviderBinaryPath}, one entry per provider per pass. */
 function createBinaryPathResolver(
 	agentDetector: AgentDetector
 ): (provider: string) => Promise<string | null> {
@@ -237,27 +269,64 @@ function createBinaryPathResolver(
 		if (cached) {
 			return cached;
 		}
-		const pending = agentDetector
-			.getAgent(provider)
-			.then((agent) => {
-				if (!agent) {
-					return null;
-				}
-				// Same `path || command` convention the spawner uses: prefer the
-				// resolved absolute path, fall back to the bare binary name so PATH
-				// resolution can still find it.
-				return agent.path || agent.command || null;
-			})
-			.catch((error) => {
-				logger.warn('Agent detection failed while resolving a probe binary', LOG_CONTEXT, {
-					provider,
-					error: error instanceof Error ? error.message : String(error),
-				});
-				return null;
-			});
+		const pending = resolveProviderBinaryPath(agentDetector, provider);
 		cache.set(provider, pending);
 		return pending;
 	};
+}
+
+/** Inputs to {@link collectAuthTargets}. */
+export interface CollectAuthTargetsDeps {
+	sessionsStore: Pick<Store<SessionsData>, 'get'>;
+	agentConfigsStore: Pick<Store<AgentConfigsData>, 'get'>;
+	/** See the mode notes in the module docblock. */
+	mode: 'startup' | 'manual';
+	/** Epoch ms the pass runs at, for the `'startup'` recency window. */
+	now: number;
+	/** Home directory on this host, used to expand default config dirs. */
+	homeDir: string;
+}
+
+/**
+ * Every unique credential identity referenced by an eligible stored session,
+ * keyed by {@link CredentialIdentity.key}.
+ *
+ * This is the one place a session's tool type, agent-level env, session-level
+ * env, and SSH config are folded into a credential. Both the probe pass and the
+ * login flow go through it, so "which account is this" cannot answer differently
+ * depending on who is asking.
+ *
+ * Dedup keeps the FIRST session that resolves a key: the target describes a
+ * credential, not a session, so any session presenting it produces the same run.
+ */
+export function collectAuthTargets(deps: CollectAuthTargetsDeps): Map<string, AuthTarget> {
+	const { sessionsStore, agentConfigsStore, mode, now, homeDir } = deps;
+	const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+
+	const targetsByKey = new Map<string, AuthTarget>();
+	const agentEnvCache = new Map<string, Record<string, string>>();
+	for (const session of storedSessions) {
+		if (mode === 'startup') {
+			const touchedAt = sessionTouchedAt(session);
+			if (touchedAt === null || touchedAt < now - AUTH_STARTUP_SESSION_WINDOW_MS) {
+				continue;
+			}
+		}
+		const toolType = typeof session.toolType === 'string' ? session.toolType : '';
+		if (toolType === '') continue;
+		let agentLevelEnvVars = agentEnvCache.get(toolType);
+		if (!agentLevelEnvVars) {
+			agentLevelEnvVars = getAgentLevelEnvVars(agentConfigsStore, toolType);
+			agentEnvCache.set(toolType, agentLevelEnvVars);
+		}
+		const target = buildTarget(session, agentLevelEnvVars, mode, homeDir);
+		if (!target) continue;
+		if (!targetsByKey.has(target.identity.key)) {
+			targetsByKey.set(target.identity.key, target);
+		}
+	}
+
+	return targetsByKey;
 }
 
 /**
@@ -287,28 +356,13 @@ export async function runStartupAuthProbe(
 		// Dedup by identity key. First session wins on env / cwd shape: the
 		// snapshot describes a credential, not a session, so any session that
 		// presents this credential produces the same probe.
-		const targetsByKey = new Map<string, ProbeTarget>();
-		const agentEnvCache = new Map<string, Record<string, string>>();
-		for (const session of storedSessions) {
-			if (mode === 'startup') {
-				const touchedAt = sessionTouchedAt(session);
-				if (touchedAt === null || touchedAt < now - AUTH_STARTUP_SESSION_WINDOW_MS) {
-					continue;
-				}
-			}
-			const toolType = typeof session.toolType === 'string' ? session.toolType : '';
-			if (toolType === '') continue;
-			let agentLevelEnvVars = agentEnvCache.get(toolType);
-			if (!agentLevelEnvVars) {
-				agentLevelEnvVars = getAgentLevelEnvVars(deps.agentConfigsStore, toolType);
-				agentEnvCache.set(toolType, agentLevelEnvVars);
-			}
-			const target = buildTarget(session, agentLevelEnvVars, mode, homeDir);
-			if (!target) continue;
-			if (!targetsByKey.has(target.identity.key)) {
-				targetsByKey.set(target.identity.key, target);
-			}
-		}
+		const targetsByKey = collectAuthTargets({
+			sessionsStore: deps.sessionsStore,
+			agentConfigsStore: deps.agentConfigsStore,
+			mode,
+			now,
+			homeDir,
+		});
 
 		// Single-identity refresh: keep the dedup above intact and narrow after,
 		// so a filtered pass and a full pass resolve the same target for a key.

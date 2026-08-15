@@ -1611,6 +1611,7 @@ function setupIpcHandlers() {
 		agentConfigsStore,
 		settingsStore: store,
 		getAgentDetector: () => agentDetector,
+		getProcessManager: () => processManager,
 	});
 
 	// Register Context Merge handlers for session context transfer and grooming

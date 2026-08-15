@@ -338,6 +338,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		getAgentDetector: deps.getAgentDetector,
+		getProcessManager: deps.getProcessManager,
 	});
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
