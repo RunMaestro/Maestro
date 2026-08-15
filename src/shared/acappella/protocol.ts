@@ -235,8 +235,23 @@ export interface AudioLevelEvent extends VoiceEventBase {
 	speech: boolean;
 }
 
-/** Whether the OS lets Maestro open the microphone. */
-export type MicPermission = 'unknown' | 'granted' | 'denied';
+/**
+ * Whether the OS lets Maestro open the microphone.
+ *
+ * Four real states plus `unknown`, because collapsing them loses the user's next
+ * action every time:
+ *
+ *   - `unknown` - nobody has asked and the platform cannot say (Linux, and any
+ *     state before the first query). Blocks nothing.
+ *   - `not-determined` - macOS has a TCC record slot for us and it is empty. The
+ *     prompt has not been shown yet, which is the normal state of a first run
+ *     and is NOT a denial.
+ *   - `granted` / `denied` - the user answered.
+ *   - `restricted` - policy (parental controls, MDM) forbids it. Distinct from
+ *     `denied` because the user cannot fix it in the privacy pane, so sending
+ *     them there would be a dead end.
+ */
+export type MicPermission = 'unknown' | 'not-determined' | 'granted' | 'denied' | 'restricted';
 
 /**
  * Why the microphone is unusable, or null when it is fine.

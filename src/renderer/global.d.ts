@@ -193,6 +193,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { VoiceApi } from '../main/preload/acappella';
+import type { VoiceSelfTestResponse } from '../main/preload/debug';
 import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 
@@ -2772,6 +2773,14 @@ interface MaestroAPI {
 				error?: string;
 			}) => void
 		) => () => void;
+		/**
+		 * A Cappella voice self-test. Loads each native runtime, runs a trivial
+		 * operation, and reports per-runtime pass/fail with timings. Loads no model
+		 * and opens no device, so it is safe to run before anything is downloaded.
+		 *
+		 * `success` is "the self-test ran", `report.passed` is "the runtimes work".
+		 */
+		voiceSelfTest: () => Promise<VoiceSelfTestResponse>;
 	};
 	// Sync API (custom storage location)
 	sync: {

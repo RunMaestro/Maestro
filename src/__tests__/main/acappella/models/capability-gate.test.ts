@@ -15,6 +15,14 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('electron', () => ({
 	app: { getPath: () => '/tmp/acappella-capability-gate-test' },
+	shell: { openExternal: vi.fn() },
+	// The gate reads the microphone permission, which is a pure query and never
+	// prompts. Granted here so these tests stay about providers and models; the
+	// permission's own behaviour is covered in mic-permission.test.ts.
+	systemPreferences: {
+		getMediaAccessStatus: () => 'granted',
+		askForMediaAccess: vi.fn(),
+	},
 }));
 
 import {
@@ -64,7 +72,11 @@ describe('capability-gate', () => {
 			expect(readiness.canStartSession).toBe(true);
 			expect(readiness.canRunHandsFree).toBe(true);
 			expect(readiness.blocking).toHaveLength(0);
+			// The microphone leads: it is the one requirement that holds regardless of
+			// which providers are configured, and a user who reads "microphone access
+			// denied" first does not need to read the rest.
 			expect(readiness.slots.map((slot) => slot.slot)).toEqual([
+				'microphone',
 				'stt',
 				'tts',
 				'brain',
@@ -150,6 +162,44 @@ describe('capability-gate', () => {
 			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
 			expect(brain.reason).toBe('provider-unreachable');
 			expect(brain.detail).toContain('could not be reached');
+		});
+
+		it('reports runtime-unavailable, and reports it INSTEAD of a download', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				// Model missing AND runtime broken: the runtime wins, because
+				// downloading 1.1 GB does not fix a binary that will not load.
+				readModelStatus: statusReader({ [QWEN3_1_7B_ID]: 'not-installed' }),
+				readRuntimeFailure: (runtimeId) =>
+					runtimeId === 'llama'
+						? {
+								kind: 'runtime-unavailable',
+								runtimeId: 'llama',
+								moduleId: 'node-llama-cpp',
+								platform: 'linux',
+								arch: 'x64',
+								failure: 'load-failed',
+								message: 'llama.cpp failed to load on linux-x64.',
+								suggestedAction: 'Run the voice self-test and include the result.',
+							}
+						: null,
+			});
+
+			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
+			expect(brain.reason).toBe('runtime-unavailable');
+			expect(brain.detail).toContain('failed to load');
+			expect(brain.suggestedAction).toContain('self-test');
+			expect(readiness.canStartSession).toBe(false);
+		});
+
+		it('leaves a slot alone when its runtime has never failed', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				readModelStatus: statusReader(),
+				readRuntimeFailure: () => null,
+			});
+
+			expect(readiness.canStartSession).toBe(true);
 		});
 
 		it('assumes reachable when no probe is wired', async () => {
