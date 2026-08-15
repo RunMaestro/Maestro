@@ -149,13 +149,6 @@ export class AnthropicBrainProvider implements BrainProvider {
 	}
 }
 
-/** Sugar matching the rest of A Cappella's factories. */
-export function createAnthropicBrainProvider(
-	options: AnthropicBrainOptions = {}
-): AnthropicBrainProvider {
-	return new AnthropicBrainProvider(options);
-}
-
 interface MessagesResponse {
 	content?: Array<{ type?: string; text?: string }>;
 }

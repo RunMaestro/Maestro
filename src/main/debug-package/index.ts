@@ -137,10 +137,10 @@ export async function generateDebugPackage(
 		logger.error('Failed to collect Windows diagnostics', 'DebugPackage', error);
 	}
 
-	// Collect A Cappella voice runtime state and run the voice self-test (always
-	// included). Cheap when the feature is off: nothing native is a dependency
-	// until a runtime is declared, and no model or audio device is touched either
-	// way.
+	// Collect A Cappella voice runtime state (always included). The self-test runs
+	// only when the Encore Feature is on, so a package built with voice switched
+	// off loads no native runtime; the static runtime table is reported either
+	// way. No model and no audio device is touched in either case.
 	try {
 		const voiceRuntime = await collectVoiceRuntime(deps.settingsStore);
 		contents['voice-runtime.json'] = voiceRuntime;

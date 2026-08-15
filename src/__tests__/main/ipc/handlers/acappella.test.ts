@@ -81,6 +81,7 @@ import {
 	disposeACappellaAudioBridge,
 	registerACappellaHandlers,
 	resetACappellaHandlerState,
+	shutdownACappellaForDisable,
 	type VoiceStartSessionResult,
 } from '../../../../main/ipc/handlers/acappella';
 import {
@@ -93,7 +94,11 @@ import {
 	type AudioHostStatus,
 } from '../../../../shared/acappella/audio-host';
 import { ECHO_STT_PROVIDER_ID } from '../../../../main/acappella/providers/echo-stt';
-import { disposeVoiceSessionService, getVoiceSessionService } from '../../../../main/acappella';
+import {
+	disposeVoiceSessionService,
+	getACappellaTransport,
+	getVoiceSessionService,
+} from '../../../../main/acappella';
 import type { RosterAgent, VoiceEvent } from '../../../../shared/acappella/protocol';
 import type { VoiceSessionSnapshot } from '../../../../main/acappella';
 import type { StoredSession } from '../../../../main/stores/types';
@@ -333,6 +338,73 @@ describe('A Cappella IPC handlers - Encore gate', () => {
 		await expect(handlerFor('acappella:open-mic-settings')({})).resolves.toEqual(
 			expect.any(Boolean)
 		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Switching the feature off
+// ---------------------------------------------------------------------------
+
+/**
+ * The stand-down that `main/index.ts` runs from its `encoreFeatures` watcher.
+ *
+ * Rejecting new IPC calls is not the same as stopping: before this existed,
+ * turning A Cappella off released the microphone and closed the audio host, and
+ * left a live session, a loaded inference pipeline, and the paired-device
+ * transport running behind a switch its owner believed was off.
+ */
+describe('A Cappella IPC handlers - shutdownACappellaForDisable', () => {
+	it('returns a live session to idle', async () => {
+		await handlerFor('acappella:start-session')({});
+		expect(getVoiceSessionService()?.getState()).not.toBe('idle');
+
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+
+		expect(getVoiceSessionService()?.getState()).toBe('idle');
+	});
+
+	it('stands the transport down, so no advert and no device outlive the switch', async () => {
+		const transport = getACappellaTransport();
+		expect(transport, 'registration must have built a transport').not.toBeNull();
+		const standDown = vi.spyOn(transport!, 'standDown');
+
+		await shutdownACappellaForDisable();
+
+		expect(standDown).toHaveBeenCalled();
+	});
+
+	it('keeps the transport, so switching the feature back on needs no restart', async () => {
+		const before = getACappellaTransport();
+
+		await shutdownACappellaForDisable();
+
+		// Disposing it here would be the tempting move and the wrong one: it is
+		// built once, at handler registration, which only runs at boot.
+		expect(getACappellaTransport()).toBe(before);
+	});
+
+	it('drops the provider pipeline, so reclaiming disk is not blocked by an open model', async () => {
+		await handlerFor('acappella:start-session')({});
+		settings.encoreFeatures = { aCappella: false };
+		await shutdownACappellaForDisable();
+		settings.encoreFeatures = { aCappella: true };
+
+		// A rebuild rather than a reuse is the observable proof the pipeline was
+		// disposed: the memo of what it was built from is cleared with it, so the
+		// next start cannot hand back a disposed pipeline. On Windows this is also
+		// what lets `fs.rm` delete a model directory whose files were mapped.
+		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
+		expect(result.snapshot.state).not.toBe('idle');
+	});
+
+	it('is safe with nothing running at all', async () => {
+		vi.clearAllMocks();
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		register();
+
+		await expect(shutdownACappellaForDisable()).resolves.toBeUndefined();
 	});
 });
 

@@ -20,6 +20,7 @@
 import * as path from 'path';
 
 import type { DeviceMessage } from '../../../shared/acappella/device-protocol';
+import { isACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import type { VoiceOrigin, VoiceScope } from '../../../shared/acappella/protocol';
 import {
 	ACAPPELLA_WEBRTC_COMMAND_CHANNEL,
@@ -179,6 +180,37 @@ export class ACappellaTransport {
 		this.signaling.dispose();
 		this.remote?.dispose();
 		void this.discovery.stop();
+	}
+
+	/**
+	 * Stand down because the Encore Feature was switched off.
+	 *
+	 * Not `dispose()`, and the difference matters: the transport is constructed
+	 * once per process (see `initACappellaTransport`, called from handler
+	 * registration at boot), so disposing it here would mean switching the feature
+	 * back on did nothing until the next restart. This releases every resource the
+	 * flag actually promises are gone - the advert, the live connections, and any
+	 * half-finished pairing - while leaving the object able to serve again.
+	 *
+	 * Devices are disconnected rather than revoked. A user switching the feature
+	 * off is saying "stop", not "forget my phone", and re-pairing a phone because
+	 * a checkbox was toggled is a punishment for reading the settings screen.
+	 */
+	standDown(): void {
+		void this.discovery.stop();
+		this.pairing.cancelPairing();
+		this.disconnectAll('A Cappella was switched off on the desktop');
+	}
+
+	/**
+	 * Whether the Encore Feature is on right now.
+	 *
+	 * Read straight from settings on every call so the signaling adapter and the
+	 * IPC handlers cannot disagree about it, and so a device that was mid-handshake
+	 * when the flag flipped is refused rather than served.
+	 */
+	featureEnabled(): boolean {
+		return isACappellaEnabled(this.deps.settingsStore);
 	}
 
 	// -- Pairing -------------------------------------------------------------

@@ -11,6 +11,19 @@
  * it. It loads no model and touches no audio device, so generating a debug
  * package stays a read-only act.
  *
+ * It is skipped entirely while the Encore Feature is off, and that is a rule
+ * rather than an optimisation. "A Cappella off means no native module loads" has
+ * to hold structurally: it is true today only because no runtime is a declared
+ * dependency yet, so the loader declines before it imports anything. The moment
+ * the real runtimes ship, an ungated self-test would `dlopen` three inference
+ * engines every time anybody built a debug package for a feature they had never
+ * switched on - and it would populate the loader's process-wide failure memo,
+ * which the capability gate reads, on their behalf.
+ *
+ * The static runtime table is still reported either way. That is the half of the
+ * answer worth having with the feature off: which binaries this build expects,
+ * on this platform, and how they are meant to arrive.
+ *
  * Privacy: no paths, no device names, no audio, no keys. Runtime ids, platform,
  * timings, and a permission string.
  */
@@ -22,6 +35,7 @@ import {
 	nativePlatformKey,
 	type NativePrebuildAvailability,
 } from '../../../shared/acappella/native-runtimes';
+import { isACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import type { MicPermission } from '../../../shared/acappella/protocol';
 import { runSelfTest, type RuntimeSelfTestReport } from '../../acappella/runtime/runtime-selftest';
 
@@ -43,15 +57,15 @@ export interface VoiceRuntimeInfo {
 		prebuild: NativePrebuildAvailability | 'unsupported-platform';
 		requiresElectronRebuild: boolean;
 	}>;
-	/** Null when the self-test could not run at all. */
+	/** Null when the self-test did not run. `selfTestSkipped` or `selfTestError` says why. */
 	selfTest: RuntimeSelfTestReport | null;
 	selfTestError?: string;
-}
-
-/** Read the A Cappella Encore flag without importing the whole settings surface. */
-function isEnabled(settingsStore: Store<any>): boolean {
-	const flags = (settingsStore.get('encoreFeatures', {}) ?? {}) as Record<string, unknown>;
-	return flags.aCappella === true;
+	/**
+	 * Why the self-test was deliberately not run. Distinct from `selfTestError`,
+	 * which means it ran and blew up: a reader of a support package has to be able
+	 * to tell "we chose not to" from "it broke".
+	 */
+	selfTestSkipped?: string;
 }
 
 export async function collectVoiceRuntime(settingsStore: Store<any>): Promise<VoiceRuntimeInfo> {
@@ -66,24 +80,33 @@ export async function collectVoiceRuntime(settingsStore: Store<any>): Promise<Vo
 		requiresElectronRebuild: runtime.requiresElectronRebuild,
 	}));
 
+	const enabled = isACappellaEnabled(settingsStore);
+
 	let selfTest: RuntimeSelfTestReport | null = null;
 	let selfTestError: string | undefined;
-	try {
-		selfTest = await runSelfTest();
-	} catch (error) {
-		// runSelfTest is written not to throw, so this is belt and braces: a
-		// diagnostic that takes the whole debug package down with it would remove
-		// the one artifact the user was trying to produce.
-		selfTestError = error instanceof Error ? error.message : String(error);
+	let selfTestSkipped: string | undefined;
+	if (!enabled) {
+		selfTestSkipped =
+			'A Cappella is switched off in Encore Features, so no native runtime was loaded.';
+	} else {
+		try {
+			selfTest = await runSelfTest();
+		} catch (error) {
+			// runSelfTest is written not to throw, so this is belt and braces: a
+			// diagnostic that takes the whole debug package down with it would remove
+			// the one artifact the user was trying to produce.
+			selfTestError = error instanceof Error ? error.message : String(error);
+		}
 	}
 
 	return {
-		enabled: isEnabled(settingsStore),
+		enabled,
 		microphone: selfTest
 			? selfTest.microphone
 			: { permission: 'unknown' as MicPermission, canPrompt: false },
 		runtimes,
 		selfTest,
 		selfTestError,
+		selfTestSkipped,
 	};
 }

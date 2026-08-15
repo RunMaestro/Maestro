@@ -28,10 +28,7 @@
  * otherwise be a session.
  */
 
-import {
-	ACAPPELLA_AUDIO_FRAME_SAMPLES,
-	ACAPPELLA_AUDIO_SAMPLE_RATE,
-} from '../../../shared/acappella/audio-host';
+import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
 import { OPENWAKEWORD_BASE_ID } from '../../../shared/acappella/model-catalog';
 import type { VoiceScope } from '../../../shared/acappella/protocol';
 import {
@@ -638,6 +635,3 @@ export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 		},
 	};
 }
-
-/** The sample rate the detector assumes. Re-exported so a caller cannot guess wrong. */
-export const WAKE_SAMPLE_RATE = ACAPPELLA_AUDIO_SAMPLE_RATE;

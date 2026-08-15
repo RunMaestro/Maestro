@@ -33,7 +33,11 @@ export function handleACappellaSignal(
 	message: WebClientMessage
 ): void {
 	const transport = getACappellaTransport();
-	if (!transport) {
+	// Both halves of one condition. The transport is built once at boot and kept
+	// so the feature can be switched back on without a restart, so its existence
+	// does NOT mean the feature is on: a device that was connected when the user
+	// unticked the box would otherwise keep signaling into a live transport.
+	if (!transport || !transport.featureEnabled()) {
 		// A stated refusal rather than silence: a phone that gets no answer cannot
 		// tell "the feature is off" from "the network ate it", and only one of those
 		// is worth retrying.

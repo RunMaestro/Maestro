@@ -91,6 +91,7 @@ import {
 } from '../../acappella/speech';
 import { readVoiceReadiness } from './acappella-models';
 import { DEFAULT_TTS_VOLUME } from '../../../shared/acappella/voice-controls';
+import { requireACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import {
 	buildProviderState,
 	pipelineKey,
@@ -328,18 +329,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * True only when `encoreFeatures.aCappella` is explicitly on. Read on every call
- * so a toggle takes effect without a restart.
- */
-function isACappellaEnabled(settingsStore: ACappellaHandlerDependencies['settingsStore']): boolean {
-	const flags = (settingsStore.get('encoreFeatures', {}) ?? {}) as Record<string, unknown>;
-	return flags.aCappella === true;
-}
-
-function requireEnabled(settingsStore: ACappellaHandlerDependencies['settingsStore']): void {
-	if (!isACappellaEnabled(settingsStore)) throw new Error('ACappellaDisabled');
-}
+/** The Encore gate. See `src/shared/acappella/feature-flag.ts`. */
+const requireEnabled = requireACappellaEnabled;
 
 /** An unrecognised scope is conductor scope; a malformed AGENT scope is not. */
 function parseScope(raw: unknown): VoiceScope {
@@ -1187,6 +1178,47 @@ function watchRosterChanges(): void {
 export function disposeACappellaAudioBridge(): void {
 	audioBridge?.dispose();
 	audioBridge = null;
+}
+
+/**
+ * Wind everything down because the Encore Feature was switched off.
+ *
+ * The switch has to mean what it says. Before this existed, turning A Cappella
+ * off released the microphone and closed the audio host, and left three things
+ * running that a user would reasonably believe were gone: a live voice session, a
+ * loaded inference pipeline holding native runtimes and model files open, and the
+ * transport with its Bonjour advert and its connected phones.
+ *
+ * The pipeline is the one with a second consequence. The reclaim-disk button
+ * lives on the Models page precisely so it can be pressed after the feature is
+ * off, and on Windows `fs.rm` of a directory whose files are still mapped by a
+ * loaded runtime fails outright. Dropping the pipeline here is what makes
+ * reclaiming disk work rather than error.
+ *
+ * What it deliberately does NOT do is dispose the hotkey installation or the
+ * transport object. Both are constructed once per process at handler
+ * registration, so tearing them down would make switching the feature back on a
+ * no-op until the next restart. The hotkeys release their combos through their
+ * own settings watcher; the transport stands down and stays reusable.
+ */
+export async function shutdownACappellaForDisable(): Promise<void> {
+	// The advert and the phones go first. A device that still holds the floor
+	// would otherwise be able to reopen the microphone during the teardown below.
+	getACappellaTransport()?.standDown();
+	await stopWakeTest();
+	// `shutdown` rather than `user`: nobody pressed stop, and the distinction is
+	// what the session's own telemetry and the History entry read.
+	await getVoiceSessionService()?.stopSession('shutdown');
+	// Order matters, and matches the audio host teardown in main/index.ts: the
+	// bridge stops capture through a window it is about to lose.
+	disposeACappellaAudioBridge();
+	await activePipeline?.pipeline.dispose();
+	activePipeline = null;
+	// Cleared together. `activeProviderKey` is the memo of what `activePipeline`
+	// was built from, so leaving it set would make the next start believe a
+	// disposed pipeline still matches settings and reuse it.
+	activeProviderKey = null;
+	activeSubstitutions = [];
 }
 
 /**

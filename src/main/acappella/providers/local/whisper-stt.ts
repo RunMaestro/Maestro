@@ -245,8 +245,3 @@ export class WhisperSttProvider implements SttProvider {
 		this.partialsInUtterance = 0;
 	}
 }
-
-/** Sugar matching the rest of A Cappella's factories. */
-export function createWhisperSttProvider(options: WhisperSttOptions = {}): WhisperSttProvider {
-	return new WhisperSttProvider(options);
-}

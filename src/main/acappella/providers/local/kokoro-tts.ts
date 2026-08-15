@@ -262,11 +262,6 @@ export class KokoroTtsProvider implements TtsProvider {
 	}
 }
 
-/** Sugar matching the rest of A Cappella's factories. */
-export function createKokoroTtsProvider(options: KokoroTtsOptions = {}): KokoroTtsProvider {
-	return new KokoroTtsProvider(options);
-}
-
 // ---------------------------------------------------------------------------
 
 /**

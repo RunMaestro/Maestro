@@ -619,11 +619,6 @@ export function getModelDownloader(): ModelDownloader {
 	return instance;
 }
 
-/** Test seam: replace or drop the singleton. */
-export function setModelDownloader(next: ModelDownloader | null): void {
-	instance = next;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
