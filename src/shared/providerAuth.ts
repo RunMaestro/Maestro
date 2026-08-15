@@ -111,6 +111,42 @@ export interface CredentialIdentityInput {
 	homeDir: string;
 }
 
+/**
+ * How a {@link ProviderAuthSnapshot} learned its status, which decides how much
+ * to trust it.
+ *
+ * - `probe` - a status subcommand was run and its output parsed.
+ * - `error-pattern` - an `auth_expired` match in a live agent's output. Reactive,
+ *   so it can mark an identity logged out before any probe has run.
+ * - `login-flow` - the user completed (or abandoned) a login Maestro drove.
+ */
+export type ProviderAuthSource = 'probe' | 'error-pattern' | 'login-flow';
+
+/**
+ * The stored login state of one {@link CredentialIdentity}.
+ *
+ * One snapshot per identity key, not per session: fifteen agents sharing an
+ * Anthropic account share this record.
+ */
+export interface ProviderAuthSnapshot {
+	/** The credential this describes. Carries the remedy via its `kind`. */
+	identity: CredentialIdentity;
+	/** Login state. `unknown` is the safe default; see {@link ProviderAuthStatus}. */
+	status: ProviderAuthStatus;
+	/**
+	 * Human-readable specifics for the UI: the signed-in email or org on success,
+	 * the reason on failure. NEVER a token, an API key, or a command line
+	 * containing one - the store scrubs it, but producers must not rely on that.
+	 */
+	detail?: string;
+	/** Short account name for the UI, when the probe surfaced one. */
+	accountLabel?: string;
+	/** Epoch ms the status was determined. Drives the re-probe cadence. */
+	checkedAt: number;
+	/** Where the status came from. See {@link ProviderAuthSource}. */
+	source: ProviderAuthSource;
+}
+
 // ============================================================================
 // Env-var tables
 // ============================================================================
