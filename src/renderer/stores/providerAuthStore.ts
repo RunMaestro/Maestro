@@ -44,6 +44,7 @@ import {
 	type CredentialIdentity,
 	type ProviderAuthSnapshot,
 	type ProviderAuthSource,
+	type ProviderAuthStatus,
 } from '../../shared/providerAuth';
 import type { Session } from '../types';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
@@ -66,6 +67,32 @@ export interface BlockedIdentity {
 	sessionIds: string[];
 }
 
+/**
+ * The two statuses the renderer may write without a probe.
+ *
+ * `unsupported` is deliberately reused rather than a sixth status being added:
+ * an `api-key`, `gateway`, or `cloud-provider` credential that was rejected is
+ * not a login that expired, and a login flow cannot repair one. The distinction
+ * the UI needs is carried by the status plus the snapshot's `detail`.
+ */
+export type AuthFailureStatus = Extract<ProviderAuthStatus, 'logged-out' | 'unsupported'>;
+
+/**
+ * A failure a renderer observed, as handed to {@link ProviderAuthState.markIdentityAuthFailure}.
+ *
+ * Either `identityKey` or `identity` identifies the credential; passing the full
+ * `identity` is what lets a NEVER-PROBED credential be recorded, since main has
+ * no stored record to read it from.
+ */
+export interface MarkIdentityRequest {
+	identityKey?: string;
+	identity?: CredentialIdentity;
+	/** Defaults to `logged-out`. See {@link AuthFailureStatus}. */
+	status?: AuthFailureStatus;
+	detail?: string;
+	source?: ProviderAuthSource;
+}
+
 interface ProviderAuthState {
 	/** Snapshot per `CredentialIdentity.key`, mirrored from main. */
 	snapshots: Record<string, ProviderAuthSnapshot>;
@@ -82,7 +109,9 @@ interface ProviderAuthState {
 	applyChange: (key: string, snapshot: ProviderAuthSnapshot | null) => void;
 	/** Pull the map from main and start following changes. Safe to call repeatedly. */
 	hydrate: () => Promise<void>;
-	/** Flip an identity to `logged-out` through the bridge. */
+	/** Record an auth failure against an identity through the bridge. */
+	markIdentityAuthFailure: (request: MarkIdentityRequest) => Promise<ProviderAuthSnapshot | null>;
+	/** {@link markIdentityAuthFailure} with the `logged-out` status. */
 	markIdentityLoggedOut: (
 		identityKey: string,
 		detail?: string,
@@ -237,24 +266,48 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 		return hydratePromise;
 	},
 
-	markIdentityLoggedOut: async (identityKey, detail, source = 'error-pattern') => {
+	markIdentityAuthFailure: async (request) => {
+		const key = request.identity?.key ?? request.identityKey;
+		if (!key) return null;
 		const api = bridge();
 		if (!api) return null;
 		try {
-			const snapshot = await api.markLoggedOut(identityKey, detail, source);
+			const snapshot = await api.mark(key, {
+				status: request.status ?? 'logged-out',
+				source: request.source ?? 'error-pattern',
+				...(request.detail !== undefined ? { detail: request.detail } : {}),
+				// Pass the identity through so a credential that has never been
+				// probed still gets a record; without it main has nothing to file
+				// the mark under and returns null.
+				...(request.identity ? { identity: request.identity } : {}),
+			});
 			// Main broadcasts this write back to every window, but applying it here
 			// too means the badge does not wait on a round trip (and shows up in a
 			// test that stubs the bridge without the change channel).
-			if (snapshot) get().applyChange(identityKey, snapshot);
+			if (snapshot) get().applyChange(key, snapshot);
 			return snapshot;
 		} catch (error) {
-			logger.warn('Failed to mark identity logged out', LOG_CONTEXT, {
-				identityKey,
+			logger.warn('Failed to mark identity auth failure', LOG_CONTEXT, {
+				identityKey: key,
+				status: request.status ?? 'logged-out',
 				error: error instanceof Error ? error.message : String(error),
 			});
 			return null;
 		}
 	},
+
+	markIdentityLoggedOut: async (identityKey, detail, source = 'error-pattern') =>
+		get().markIdentityAuthFailure({
+			identityKey,
+			status: 'logged-out',
+			source,
+			...(detail !== undefined ? { detail } : {}),
+			// A key with a stored snapshot needs no identity; one without it can
+			// still be marked when the caller resolved the identity itself.
+			...(get().snapshots[identityKey]?.identity
+				? { identity: get().snapshots[identityKey].identity }
+				: {}),
+		}),
 
 	refreshIdentity: async (identityKey) => {
 		const api = bridge();
@@ -376,6 +429,87 @@ export function getIdentityForSession(sessionId: string): CredentialIdentity | n
 }
 
 // ============================================================================
+// Reactive marking (the `auth_expired` path)
+// ============================================================================
+
+/**
+ * What an `auth_expired` failure means for each {@link CredentialKind}.
+ *
+ * Only an `oauth` credential can be `logged-out`, because that is the only kind
+ * a login flow repairs. Everything else is recorded as `unsupported`: the
+ * credential is genuinely broken, but sending the user to `claude auth login`
+ * for a revoked API key or a gateway operator's outage wastes their time on a
+ * command that cannot help. The status carries the remedy; the detail carries
+ * the explanation.
+ */
+function authFailureFor(
+	identity: CredentialIdentity,
+	message: string
+): { status: AuthFailureStatus; detail: string } {
+	const trimmed = message.trim();
+	switch (identity.kind) {
+		case 'oauth':
+			return { status: 'logged-out', detail: trimmed };
+		case 'api-key':
+			return {
+				status: 'unsupported',
+				detail: `${identity.envVarName ?? 'API key'} was rejected. Update the key; signing in cannot fix it. ${trimmed}`,
+			};
+		case 'gateway':
+			return {
+				status: 'unsupported',
+				detail: `${identity.label} rejected the credential. This gateway is not Anthropic, so signing in cannot fix it. ${trimmed}`,
+			};
+		case 'cloud-provider':
+			return {
+				status: 'unsupported',
+				detail: `${identity.label} credentials were rejected. They come from the cloud SDK chain, not from the agent CLI. ${trimmed}`,
+			};
+		default:
+			return {
+				status: 'unsupported',
+				detail: `${identity.label} reported an auth failure with no known login flow. ${trimmed}`,
+			};
+	}
+}
+
+/**
+ * Mark the credential behind one agent as failed, from a live `auth_expired`.
+ *
+ * This is the reactive half of the identity model: the agent that failed is one
+ * of possibly fifteen presenting the same login, and marking the IDENTITY makes
+ * the other fourteen show the problem before their next prompt burns.
+ *
+ * Hydrates first, since identity resolution needs the home dir and the
+ * agent-level env, and an error can arrive before any UI has mounted. Never
+ * throws and never rejects - an unmarkable identity costs a badge, and this runs
+ * alongside error handling that must not be disturbed.
+ */
+export async function markSessionAuthFailure(
+	sessionId: string,
+	message: string
+): Promise<ProviderAuthSnapshot | null> {
+	try {
+		await useProviderAuthStore.getState().hydrate();
+		const identity = getIdentityForSession(sessionId);
+		if (!identity) return null;
+		const { status, detail } = authFailureFor(identity, message);
+		return await useProviderAuthStore.getState().markIdentityAuthFailure({
+			identity,
+			status,
+			detail,
+			source: 'error-pattern',
+		});
+	} catch (error) {
+		logger.warn('Failed to mark session auth failure', LOG_CONTEXT, {
+			sessionId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return null;
+	}
+}
+
+// ============================================================================
 // Selectors
 // ============================================================================
 
@@ -446,6 +580,7 @@ export function getProviderAuthActions(): Pick<
 	ProviderAuthState,
 	| 'hydrate'
 	| 'applyChange'
+	| 'markIdentityAuthFailure'
 	| 'markIdentityLoggedOut'
 	| 'refreshIdentity'
 	| 'refreshAllIdentities'
@@ -455,6 +590,7 @@ export function getProviderAuthActions(): Pick<
 	return {
 		hydrate: state.hydrate,
 		applyChange: state.applyChange,
+		markIdentityAuthFailure: state.markIdentityAuthFailure,
 		markIdentityLoggedOut: state.markIdentityLoggedOut,
 		refreshIdentity: state.refreshIdentity,
 		refreshAllIdentities: state.refreshAllIdentities,

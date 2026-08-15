@@ -4,7 +4,8 @@
  * Provides the window.maestro.providerAuth namespace for:
  * - Reading every stored credential login state
  * - Re-probing one credential or all of them
- * - Marking a credential logged out
+ * - Marking a credential logged out (or unsupported, for a credential no login
+ *   flow can repair)
  * - Subscribing to snapshot changes pushed from main
  *
  * Types come from `shared/providerAuth`, never from `main/stores`, so the
@@ -12,7 +13,12 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { ProviderAuthSnapshot, ProviderAuthSource } from '../../shared/providerAuth';
+import type {
+	CredentialIdentity,
+	ProviderAuthSnapshot,
+	ProviderAuthSource,
+	ProviderAuthStatus,
+} from '../../shared/providerAuth';
 
 export type {
 	CredentialIdentity,
@@ -41,15 +47,26 @@ export interface ProviderAuthReprobeResult extends ProviderAuthProbeCounts {
 	snapshot?: ProviderAuthSnapshot | null;
 }
 
+/**
+ * What a renderer sends when it learns of an auth failure without probing.
+ *
+ * `identity` is what lets a NEVER-PROBED credential be marked: main has no
+ * record to read the identity from, and the renderer resolved it to find the key
+ * in the first place. `status` is what keeps a revoked API key out of the
+ * logged-out bucket, since no login flow can fix one.
+ */
+export interface ProviderAuthMarkRequest {
+	status?: Extract<ProviderAuthStatus, 'logged-out' | 'unsupported'>;
+	detail?: string;
+	source?: ProviderAuthSource;
+	identity?: CredentialIdentity;
+}
+
 export interface ProviderAuthApi {
 	getAll: () => Promise<Record<string, ProviderAuthSnapshot>>;
 	reprobe: (key: string) => Promise<ProviderAuthReprobeResult>;
 	reprobeAll: () => Promise<ProviderAuthProbeCounts>;
-	markLoggedOut: (
-		key: string,
-		detail?: string,
-		source?: ProviderAuthSource
-	) => Promise<ProviderAuthSnapshot | null>;
+	mark: (key: string, request?: ProviderAuthMarkRequest) => Promise<ProviderAuthSnapshot | null>;
 	onChange: (callback: (change: ProviderAuthChange) => void) => () => void;
 }
 
@@ -70,12 +87,10 @@ export function createProviderAuthApi(): ProviderAuthApi {
 		reprobeAll: (): Promise<ProviderAuthProbeCounts> =>
 			ipcRenderer.invoke('providerAuth:reprobeAll'),
 
-		markLoggedOut: (
-			key: string,
-			detail?: string,
-			source?: ProviderAuthSource
-		): Promise<ProviderAuthSnapshot | null> =>
-			ipcRenderer.invoke('providerAuth:markLoggedOut', key, detail, source),
+		// Record a failure the renderer observed (an `auth_expired` match, an
+		// abandoned login) against one credential. See ProviderAuthMarkRequest.
+		mark: (key: string, request?: ProviderAuthMarkRequest): Promise<ProviderAuthSnapshot | null> =>
+			ipcRenderer.invoke('providerAuth:mark', key, request),
 
 		// Snapshot writes from anywhere in main - the startup pass, a manual
 		// re-probe, the reactive auth_expired marker.

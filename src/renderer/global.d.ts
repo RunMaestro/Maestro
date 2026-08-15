@@ -3618,10 +3618,14 @@ interface MaestroAPI {
 			skippedNotInstalled: number;
 			byStatus: Record<string, number>;
 		}>;
-		markLoggedOut: (
+		mark: (
 			key: string,
-			detail?: string,
-			source?: import('../shared/providerAuth').ProviderAuthSource
+			request?: {
+				status?: 'logged-out' | 'unsupported';
+				detail?: string;
+				source?: import('../shared/providerAuth').ProviderAuthSource;
+				identity?: import('../shared/providerAuth').CredentialIdentity;
+			}
 		) => Promise<import('../shared/providerAuth').ProviderAuthSnapshot | null>;
 		onChange: (
 			callback: (change: {

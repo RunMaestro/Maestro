@@ -44,6 +44,7 @@ import {
 	getSnapshot,
 	getAllSnapshots,
 	setSnapshot,
+	markAuthFailure,
 	markLoggedOut,
 	clearSnapshot,
 	isSnapshotFresh,
@@ -253,6 +254,40 @@ describe('providerAuthStore', () => {
 				identity
 			);
 			expect(result?.detail).toBe('rejected [redacted]');
+		});
+	});
+
+	describe('markAuthFailure', () => {
+		it('records `unsupported` for a credential no login flow can repair', () => {
+			// A revoked API key is broken, but `claude auth login` cannot fix it, so
+			// it must never land in the logged-out bucket the login button reads.
+			const identity = makeIdentity({
+				key: 'claude-code::api-key::fp_1a2b3c4d::local',
+				kind: 'api-key',
+				scope: 'fp_1a2b3c4d',
+				envVarName: 'ANTHROPIC_API_KEY',
+				label: 'Claude Code fp_1a2b3c4d',
+			});
+
+			const result = markAuthFailure(
+				identity.key,
+				'unsupported',
+				'ANTHROPIC_API_KEY was rejected.',
+				'error-pattern',
+				identity
+			);
+
+			expect(result?.status).toBe('unsupported');
+			expect(getSnapshot(identity.key)?.status).toBe('unsupported');
+		});
+
+		it('overwrites an authenticated snapshot with the failure status', () => {
+			const snapshot = makeSnapshot();
+			setSnapshot(snapshot.identity.key, snapshot);
+
+			markAuthFailure(snapshot.identity.key, 'unsupported', 'revoked', 'error-pattern');
+
+			expect(getSnapshot(snapshot.identity.key)?.status).toBe('unsupported');
 		});
 	});
 

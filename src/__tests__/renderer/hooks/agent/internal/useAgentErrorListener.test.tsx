@@ -12,6 +12,14 @@ import {
 	registerBatchResumer,
 } from '../../../../../renderer/stores/retryStore';
 
+// The reactive auth marking is a fire-and-forget call into the provider auth
+// store; the store's own resolution is covered in its test, so here we only care
+// that the listener routes `auth_expired` to it and nothing else.
+const mockMarkSessionAuthFailure = vi.fn().mockResolvedValue(null);
+vi.mock('../../../../../renderer/stores/providerAuthStore', () => ({
+	markSessionAuthFailure: (...args: unknown[]) => mockMarkSessionAuthFailure(...args),
+}));
+
 let handler: ((sessionId: string, error: any) => void) | undefined;
 const mockUnsubscribe = vi.fn();
 
@@ -94,6 +102,31 @@ describe('useAgentErrorListener', () => {
 		const agentErrorEntry = modal.modals.get('agentError');
 		expect(agentErrorEntry).toBeDefined();
 		expect(agentErrorEntry?.data).toEqual({ sessionId: 'sess-1' });
+	});
+
+	it('marks the credential behind the agent on auth_expired', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', baseError);
+
+		expect(mockMarkSessionAuthFailure).toHaveBeenCalledWith('sess-1', 'expired');
+		// Additive only: the existing error state and modal are untouched.
+		expect(useSessionStore.getState().sessions[0].state).toBe('error');
+		expect(useModalStore.getState().modals.get('agentError')).toBeDefined();
+	});
+
+	it('does not mark a credential for a non-auth error', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'network_error' });
+
+		expect(mockMarkSessionAuthFailure).not.toHaveBeenCalled();
 	});
 
 	it('clears stale agentSessionId on session_not_found', () => {

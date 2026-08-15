@@ -23,7 +23,9 @@ import type Store from 'electron-store';
 import { runStartupAuthProbe } from '../../agents/auth/auth-startup';
 import type { StartupAuthProbeResult } from '../../agents/auth/auth-startup';
 import type { AgentDetector } from '../../agents';
+import type { CredentialIdentity } from '../../../shared/providerAuth';
 import type {
+	AuthFailureStatus,
 	ProviderAuthChange,
 	ProviderAuthSnapshot,
 	ProviderAuthSource,
@@ -31,7 +33,7 @@ import type {
 import {
 	getAllSnapshots,
 	getSnapshot,
-	markLoggedOut,
+	markAuthFailure,
 	onSnapshotChange,
 } from '../../stores/providerAuthStore';
 import type { AgentConfigsData, MaestroSettings, SessionsData } from '../../stores/types';
@@ -49,8 +51,50 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	operation,
 });
 
-/** Sources a renderer is allowed to attribute a logged-out mark to. */
+/** Sources a renderer is allowed to attribute a mark to. */
 const RENDERER_SOURCES: readonly ProviderAuthSource[] = ['error-pattern', 'login-flow'];
+
+/** Statuses a renderer may write without a probe. See {@link AuthFailureStatus}. */
+const RENDERER_STATUSES: readonly AuthFailureStatus[] = ['logged-out', 'unsupported'];
+
+/** What the renderer sends with a mark. Everything but the key is optional. */
+export interface ProviderAuthMarkRequest {
+	/** Defaults to `logged-out`; anything outside {@link RENDERER_STATUSES} is ignored. */
+	status?: AuthFailureStatus;
+	detail?: string;
+	source?: ProviderAuthSource;
+	/**
+	 * The resolved identity, so an agent that fails auth BEFORE any probe ran
+	 * still gets a record. Without it the store has nothing to file the mark
+	 * under and the call is a no-op.
+	 */
+	identity?: CredentialIdentity;
+}
+
+/**
+ * Accept a renderer-supplied identity only when it is complete and self-consistent.
+ *
+ * This value is persisted and then rendered, so a half-filled object would put a
+ * record on disk that the Left Bar cannot describe. The key check matters most:
+ * an identity filed under someone else's key would report the wrong account as
+ * broken.
+ */
+function validateIdentity(key: string, identity: unknown): CredentialIdentity | undefined {
+	if (!identity || typeof identity !== 'object') return undefined;
+	const candidate = identity as Record<string, unknown>;
+	const strings = ['key', 'provider', 'kind', 'scope', 'host', 'label'];
+	if (strings.some((field) => typeof candidate[field] !== 'string' || candidate[field] === '')) {
+		return undefined;
+	}
+	if (candidate.key !== key) {
+		logger.warn('Ignoring provider auth identity filed under a different key', LOG_CONTEXT, {
+			key,
+			identityKey: String(candidate.key),
+		});
+		return undefined;
+	}
+	return candidate as unknown as CredentialIdentity;
+}
 
 export interface ProviderAuthHandlerDependencies {
 	/** Read-only store slices; the probe pass never writes to them. */
@@ -156,23 +200,39 @@ export function registerProviderAuthHandlers(deps: ProviderAuthHandlerDependenci
 		)
 	);
 
-	// Flip a credential to `logged-out` without probing. Returns null when
-	// nothing is stored for the key yet: with no identity on record there is
-	// nothing to file the mark under, and a half-record the UI cannot render is
-	// worse than none. A caller that HAS the identity should write it through
-	// `markLoggedOut(key, detail, source, identity)` in main instead.
+	// Record an auth failure against a credential without probing.
+	//
+	// The reactive `auth_expired` path is the caller, and it knows two things the
+	// store may not: WHICH identity failed (an agent can fail before any probe ran,
+	// so there may be no record to read the identity from) and WHAT KIND of failure
+	// it is. A revoked API key is not a logged-out login - it is marked
+	// `unsupported` so no login button is offered for something a login cannot fix.
+	//
+	// Still returns null when neither the store nor the caller can supply an
+	// identity: a half-record the UI cannot render is worse than none.
 	ipcMain.handle(
-		'providerAuth:markLoggedOut',
+		'providerAuth:mark',
 		withIpcErrorLogging(
-			handlerOpts('markLoggedOut'),
+			handlerOpts('mark'),
 			async (
 				key: string,
-				detail?: string,
-				source?: ProviderAuthSource
+				request?: ProviderAuthMarkRequest
 			): Promise<ProviderAuthSnapshot | null> => {
-				const resolvedSource: ProviderAuthSource =
-					source && RENDERER_SOURCES.includes(source) ? source : 'error-pattern';
-				return markLoggedOut(key, detail, resolvedSource);
+				const source: ProviderAuthSource =
+					request?.source && RENDERER_SOURCES.includes(request.source)
+						? request.source
+						: 'error-pattern';
+				const status: AuthFailureStatus =
+					request?.status && RENDERER_STATUSES.includes(request.status)
+						? request.status
+						: 'logged-out';
+				return markAuthFailure(
+					key,
+					status,
+					request?.detail,
+					source,
+					validateIdentity(key, request?.identity)
+				);
 			}
 		)
 	);

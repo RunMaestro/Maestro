@@ -15,6 +15,12 @@
  * If an Auto Run batch is active, this listener pauses it via
  * `pauseBatchOnErrorRef` and records a USER-facing history entry with a
  * remediation hint specific to the error type.
+ *
+ * An `auth_expired` error additionally marks the CREDENTIAL behind the agent
+ * (`markSessionAuthFailure`), so every other agent sharing that login surfaces
+ * the problem immediately rather than each rediscovering it one wasted prompt at
+ * a time. That marking is purely additive - nothing else in this listener
+ * changes shape because of it.
  */
 
 import { useEffect } from 'react';
@@ -22,6 +28,7 @@ import { useSessionStore } from '../../../stores/sessionStore';
 import { useModalStore } from '../../../stores/modalStore';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
 import { notifyToast } from '../../../stores/notificationStore';
+import { markSessionAuthFailure } from '../../../stores/providerAuthStore';
 import {
 	parseSessionId,
 	parseGroupChatSessionId,
@@ -137,6 +144,15 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				message: error.message,
 				recoverable: error.recoverable,
 			});
+
+			// Mark the CREDENTIAL, not the agent. An expired login is dead for every
+			// agent presenting it, so the other fourteen show it now instead of each
+			// discovering it by burning a prompt. Fire-and-forget and additive: this
+			// changes nothing about the error frame, the modal, or auto-retry below
+			// (Phase 05 rewires the modal on top of this state).
+			if (agentError.type === 'auth_expired') {
+				void markSessionAuthFailure(actualSessionId, agentError.message);
+			}
 
 			const isSessionNotFound = agentError.type === 'session_not_found';
 

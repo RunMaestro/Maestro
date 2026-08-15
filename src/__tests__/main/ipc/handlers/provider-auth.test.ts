@@ -123,7 +123,7 @@ describe('Provider Auth IPC Handlers', () => {
 		registerProviderAuthHandlers(makeDeps());
 		expect([...handlers.keys()].sort()).toEqual([
 			'providerAuth:getAll',
-			'providerAuth:markLoggedOut',
+			'providerAuth:mark',
 			'providerAuth:reprobe',
 			'providerAuth:reprobeAll',
 		]);
@@ -176,16 +176,14 @@ describe('Provider Auth IPC Handlers', () => {
 		expect(result).toEqual(EMPTY_RESULT);
 	});
 
-	it('markLoggedOut flips a stored snapshot and keeps the identity', async () => {
+	it('mark flips a stored snapshot and keeps the identity', async () => {
 		registerProviderAuthHandlers(makeDeps());
 		setSnapshot(KEY, makeSnapshot({ accountLabel: 'dev@example.com' }));
 
-		const result = (await handlers.get('providerAuth:markLoggedOut')!(
-			{},
-			KEY,
-			'session expired',
-			'login-flow'
-		)) as ProviderAuthSnapshot | null;
+		const result = (await handlers.get('providerAuth:mark')!({}, KEY, {
+			detail: 'session expired',
+			source: 'login-flow',
+		})) as ProviderAuthSnapshot | null;
 
 		expect(result).toMatchObject({
 			status: 'logged-out',
@@ -196,27 +194,94 @@ describe('Provider Auth IPC Handlers', () => {
 		});
 	});
 
-	it('markLoggedOut falls back to error-pattern for an unrecognized source', async () => {
+	it('mark falls back to error-pattern for an unrecognized source', async () => {
 		registerProviderAuthHandlers(makeDeps());
 		setSnapshot(KEY, makeSnapshot());
 
-		const result = (await handlers.get('providerAuth:markLoggedOut')!(
-			{},
-			KEY,
-			undefined,
-			'probe'
-		)) as ProviderAuthSnapshot | null;
+		const result = (await handlers.get('providerAuth:mark')!({}, KEY, {
+			source: 'probe',
+		})) as ProviderAuthSnapshot | null;
 
 		// `probe` is a real source but not one a renderer may claim - it would
 		// mean "a status command said so", which no renderer ever ran.
 		expect(result?.source).toBe('error-pattern');
 	});
 
-	it('markLoggedOut returns null for a key with nothing stored', async () => {
+	it('mark records an unsupported status for a credential no login can fix', async () => {
+		registerProviderAuthHandlers(makeDeps());
+		const apiKeyIdentity: CredentialIdentity = {
+			key: 'claude-code::api-key::fp_1a2b3c4d::local',
+			provider: 'claude-code',
+			kind: 'api-key',
+			scope: 'fp_1a2b3c4d',
+			host: 'local',
+			envVarName: 'ANTHROPIC_API_KEY',
+			label: 'Claude Code fp_1a2b3c4d',
+		};
+
+		const result = (await handlers.get('providerAuth:mark')!({}, apiKeyIdentity.key, {
+			status: 'unsupported',
+			detail: 'ANTHROPIC_API_KEY was rejected.',
+			identity: apiKeyIdentity,
+		})) as ProviderAuthSnapshot | null;
+
+		expect(result).toMatchObject({
+			status: 'unsupported',
+			identity: apiKeyIdentity,
+			source: 'error-pattern',
+		});
+	});
+
+	it('mark records a never-probed identity supplied by the caller', async () => {
 		registerProviderAuthHandlers(makeDeps());
 
-		const result = await handlers.get('providerAuth:markLoggedOut')!({}, 'unknown::key');
+		const result = (await handlers.get('providerAuth:mark')!({}, KEY, {
+			identity: IDENTITY,
+			detail: 'not signed in',
+		})) as ProviderAuthSnapshot | null;
+
+		expect(result).toMatchObject({ status: 'logged-out', identity: IDENTITY });
+	});
+
+	it('mark rejects an identity filed under a different key', async () => {
+		registerProviderAuthHandlers(makeDeps());
+
+		const result = await handlers.get('providerAuth:mark')!({}, 'someone::else::key', {
+			identity: IDENTITY,
+		});
+
+		// Nothing stored for that key and the identity does not belong to it, so
+		// there is nothing to file the mark under.
 		expect(result).toBeNull();
+	});
+
+	it('mark rejects a malformed identity rather than persisting it', async () => {
+		registerProviderAuthHandlers(makeDeps());
+
+		const result = await handlers.get('providerAuth:mark')!({}, KEY, {
+			identity: { key: KEY, provider: 'claude-code' },
+		});
+
+		expect(result).toBeNull();
+	});
+
+	it('mark returns null for a key with nothing stored and no identity', async () => {
+		registerProviderAuthHandlers(makeDeps());
+
+		const result = await handlers.get('providerAuth:mark')!({}, 'unknown::key');
+		expect(result).toBeNull();
+	});
+
+	it('mark ignores a status a renderer may not claim', async () => {
+		registerProviderAuthHandlers(makeDeps());
+		setSnapshot(KEY, makeSnapshot());
+
+		const result = (await handlers.get('providerAuth:mark')!({}, KEY, {
+			status: 'authenticated',
+		})) as ProviderAuthSnapshot | null;
+
+		// A renderer never ran a probe, so it cannot declare a credential healthy.
+		expect(result?.status).toBe('logged-out');
 	});
 
 	it('broadcasts a snapshot write to every live window', () => {

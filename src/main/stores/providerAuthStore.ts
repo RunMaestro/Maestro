@@ -25,6 +25,7 @@ import type {
 	CredentialIdentity,
 	ProviderAuthSnapshot,
 	ProviderAuthSource,
+	ProviderAuthStatus,
 } from '../../shared/providerAuth';
 
 // Re-export so consumers can grab the types from either module.
@@ -181,7 +182,18 @@ export function setSnapshot(key: string, snapshot: ProviderAuthSnapshot): void {
 }
 
 /**
- * Flip an identity to `logged-out`, preserving the identity already on record.
+ * The two statuses a failure may be recorded as without running a probe.
+ *
+ * `logged-out` means an interactive login can fix it; `unsupported` means no
+ * login flow exists for this credential (a revoked API key, a gateway operator's
+ * token, a provider with no probe). Keeping the second one out of `logged-out`
+ * is what stops the UI from offering a login button that cannot work.
+ */
+export type AuthFailureStatus = Extract<ProviderAuthStatus, 'logged-out' | 'unsupported'>;
+
+/**
+ * Record an auth failure against an identity, preserving the identity already on
+ * record.
  *
  * `identity` is optional because the usual caller is the reactive `auth_expired`
  * path, which is reacting to a key it just resolved. It is needed only when
@@ -193,8 +205,9 @@ export function setSnapshot(key: string, snapshot: ProviderAuthSnapshot): void {
  *
  * Returns the stored snapshot so the caller can broadcast it.
  */
-export function markLoggedOut(
+export function markAuthFailure(
 	key: string,
+	status: AuthFailureStatus,
 	detail: string | undefined,
 	source: ProviderAuthSource,
 	identity?: CredentialIdentity
@@ -206,7 +219,7 @@ export function markLoggedOut(
 	}
 	const snapshot: ProviderAuthSnapshot = {
 		identity: resolvedIdentity,
-		status: 'logged-out',
+		status,
 		checkedAt: Date.now(),
 		source,
 	};
@@ -221,6 +234,16 @@ export function markLoggedOut(
 	}
 	setSnapshot(key, snapshot);
 	return getSnapshot(key);
+}
+
+/** {@link markAuthFailure} with the `logged-out` status. */
+export function markLoggedOut(
+	key: string,
+	detail: string | undefined,
+	source: ProviderAuthSource,
+	identity?: CredentialIdentity
+): ProviderAuthSnapshot | null {
+	return markAuthFailure(key, 'logged-out', detail, source, identity);
 }
 
 /** Drop one snapshot. A missing key is a no-op. */
