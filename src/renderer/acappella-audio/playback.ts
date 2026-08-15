@@ -75,6 +75,19 @@ export class TtsPlayback {
 		this.gain.connect(options.context.destination);
 	}
 
+	/**
+	 * The node every scheduled chunk passes through on its way to the speakers.
+	 *
+	 * Exposed so the WebRTC leg can tap the SAME output the local speakers hear
+	 * (`peer-connection.ts` wires it into a `MediaStreamAudioDestinationNode`).
+	 * Tapping here rather than re-synthesising per device is what guarantees a
+	 * phone hears the voice the user configured, at the volume they set, with the
+	 * same ducking - one TTS run, two places it comes out.
+	 */
+	get outputNode(): AudioNode {
+		return this.gain;
+	}
+
 	/** Audio scheduled but not yet heard. Bounds how late a barge-in can land. */
 	get queuedMs(): number {
 		return Math.max(0, (this.nextStartTime - this.options.context.currentTime) * 1000);

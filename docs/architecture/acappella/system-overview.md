@@ -10,6 +10,7 @@ related:
   - '[[voice-session-protocol]]'
   - '[[adr-001-webrtc-transport]]'
   - '[[adr-002-main-process-session]]'
+  - '[[transport-and-pairing]]'
 ---
 
 # A Cappella System Overview

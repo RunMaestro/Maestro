@@ -15,7 +15,7 @@
 
 import type { BrowserWindow } from 'electron';
 
-import type { VoiceScope } from '../../../shared/acappella/protocol';
+import type { VoiceOrigin, VoiceScope } from '../../../shared/acappella/protocol';
 import type { Shortcut } from '../../../shared/shortcut-types';
 import { getGlobalHotkeyRegistry, summonMainWindow } from '../../global-hotkey-manager';
 import type { GlobalHotkeyStatus } from '../../../shared/global-hotkeys';
@@ -62,6 +62,16 @@ export interface VoiceHotkeyInstallation {
 	/** Re-read settings and rebind. Called by the settings watcher and by tests. */
 	sync: () => Record<VoiceHotkeyId, GlobalHotkeyStatus>;
 	statuses: () => GlobalHotkeyStatus[];
+	/**
+	 * The one floor controller, aimed at a scope and an origin.
+	 *
+	 * Exposed so a paired device presses the SAME state machine the hotkey does
+	 * (see `../transport/remote-session.ts`). There is one microphone and one
+	 * session, so a second controller would be two state machines racing for the
+	 * same device - which is exactly the failure the hotkey path already avoids by
+	 * keeping one instance behind a mutable scope.
+	 */
+	acquireFloor: (scope: VoiceScope, origin?: VoiceOrigin) => FloorController;
 	dispose: () => void;
 }
 
@@ -109,14 +119,22 @@ export function installVoiceHotkeys(deps: InstallVoiceHotkeysDeps): VoiceHotkeyI
 	 * floor's own `getScope` seam.
 	 */
 	let pendingScope: VoiceScope = { kind: 'conductor' };
+	/**
+	 * Which microphone the next press opens. Same mutable-field pattern as the
+	 * scope, and for the same reason: one controller, several surfaces, and the
+	 * only thing that differs between them is what the session is credited to.
+	 */
+	let pendingOrigin: VoiceOrigin = { kind: 'local' };
 	let floor: FloorController | null = null;
 
-	const acquireFloor = (scope: VoiceScope): FloorController => {
+	const acquireFloor = (scope: VoiceScope, origin?: VoiceOrigin): FloorController => {
 		pendingScope = scope;
+		pendingOrigin = origin ?? { kind: 'local' };
 		if (!floor) {
 			floor = createFloorController({
 				session: deps.session,
 				getScope: () => pendingScope,
+				getOrigin: () => pendingOrigin,
 				endUtterance: deps.endUtterance,
 				idleTimeoutMs: readIdleTimeoutMs(deps.settingsStore),
 			});
@@ -186,6 +204,7 @@ export function installVoiceHotkeys(deps: InstallVoiceHotkeysDeps): VoiceHotkeyI
 	return {
 		controller,
 		sync,
+		acquireFloor,
 		statuses: () =>
 			VOICE_HOTKEY_IDS.map(
 				(id) => registry.status(id) ?? { id, keys: [], accelerator: null, registered: false }

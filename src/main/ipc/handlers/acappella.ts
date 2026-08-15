@@ -28,6 +28,7 @@
  */
 
 import { app, ipcMain, type BrowserWindow } from 'electron';
+import { hostname } from 'os';
 
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
@@ -123,6 +124,22 @@ import {
 	type WakePhrase,
 } from '../../acappella/wake/wake-detector';
 import type { FloorControlSession } from '../../acappella/audio/floor-control';
+import {
+	disposeACappellaTransport,
+	getACappellaTransport,
+	initACappellaTransport,
+} from '../../acappella';
+import type { ACappellaTransport } from '../../acappella/transport';
+import {
+	ACAPPELLA_WEBRTC_COMMAND_CHANNEL,
+	ACAPPELLA_WEBRTC_EVENT_CHANNEL,
+	type WebRtcHostEvent,
+} from '../../../shared/acappella/webrtc-host';
+import {
+	ACAPPELLA_DEVICES_CHANNEL,
+	ACAPPELLA_PAIRING_REQUEST_CHANNEL,
+	registerACappellaDeviceHandlers,
+} from './acappella-devices';
 
 const LOG_CONTEXT = '[ACappella]';
 
@@ -205,6 +222,16 @@ export interface ACappellaHandlerDependencies {
 	getProcessManager?: () => AgentOutputSource | null;
 	/** The agent type behind a session id, for the tap's stream-json parsing. */
 	getAgentType?: (agentSessionId: string) => string | undefined;
+	/**
+	 * The running web server, for the paired-device transport.
+	 *
+	 * Its security token and port are what a phone needs to reach the signaling
+	 * socket, so a QR code cannot be produced without it. Absent in tests and
+	 * before the user has ever switched the web interface on, in which case
+	 * pairing reports that there is nothing to pair to rather than inventing a
+	 * port.
+	 */
+	getWebServer?: () => { getSecurityToken: () => string; getPort: () => number } | null;
 }
 
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -265,6 +292,13 @@ let wakeTestDetector: WakeDetector | null = null;
  * over it would speak every chunk twice.
  */
 let agentOutputTap: AgentOutputTap | null = null;
+
+/**
+ * The paired-device transport. Module state alongside the hotkeys and for the
+ * same reason: it holds live signaling sessions and a Bonjour advert, both of
+ * which outlive any one voice session.
+ */
+let transport: ACappellaTransport | null = null;
 
 /** Push one command to the hidden audio host. A window that is not open is a no-op. */
 function sendAudioHostCommand(command: AudioHostCommand): void {
@@ -851,11 +885,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	// open, close, and interrupt, and nothing else.
 	const floorSession: FloorControlSession = {
 		getState: () => getVoiceSessionService()?.getState() ?? 'idle',
-		startSession: async ({ scope, source }) => {
+		startSession: async ({ scope, source, origin }) => {
+			// A remote origin does NOT skip this: the desktop still opens its audio
+			// host, because that window is where the peer connection and the playback
+			// live. What it skips is nothing at all, which is the point - a remote
+			// session takes the same path as a local one.
 			await requestMicPermission();
 			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 			const { service } = await ensureService(deps);
-			return service.startSession({ scope, source });
+			return service.startSession({ scope, source, origin });
 		},
 		stopSession: async (reason) => {
 			await getVoiceSessionService()?.stopSession(reason);
@@ -863,7 +901,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		interrupt: (source) => getVoiceSessionService()?.interrupt(source) ?? false,
 	};
 
-	voiceHotkeys ??= installVoiceHotkeys({
+	const hotkeys = (voiceHotkeys ??= installVoiceHotkeys({
 		settingsStore,
 		session: floorSession,
 		getMainWindow: deps.getMainWindow,
@@ -874,7 +912,36 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		// Broadcast rather than logged: a hotkey that did nothing has to say why,
 		// or the user concludes the key is broken.
 		onRefused: (info) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL + ':hotkey-refused', info),
+	}));
+
+	/**
+	 * The paired-device transport.
+	 *
+	 * Built here, next to the floor, because it presses the SAME controller a
+	 * hotkey does: a phone's talk button and a keyboard chord are two surfaces
+	 * over one state machine, not two ways to open a microphone. Constructed
+	 * eagerly and cheaply - it opens no socket and advertises nothing until a user
+	 * asks it to.
+	 */
+	transport ??= initACappellaTransport({
+		settingsStore,
+		userDataPath: app.getPath('userData'),
+		sendToAudioHost: (command) => {
+			const win = getAcappellaAudioHostWindow();
+			if (!win || win.webContents.isDestroyed()) return;
+			win.webContents.send(ACAPPELLA_WEBRTC_COMMAND_CHANNEL, command);
+		},
+		acquireFloor: (scope, origin) => hotkeys.acquireFloor(scope, origin),
+		getSession: () => getVoiceSessionService(),
+		getServerToken: () => deps.getWebServer?.()?.getSecurityToken() ?? null,
+		getServerPort: () => deps.getWebServer?.()?.getPort() ?? null,
+		getAppVersion: () => app.getVersion(),
+		getMachineName: () => hostname(),
+		onDevicesChanged: () => deps.safeSend(ACAPPELLA_DEVICES_CHANNEL, null),
+		onPairingRequest: (request) => deps.safeSend(ACAPPELLA_PAIRING_REQUEST_CHANNEL, request),
 	});
+
+	registerACappellaDeviceHandlers({ settingsStore });
 
 	const wrappedHotkeyStatus = withIpcErrorLogging(
 		handlerOpts('hotkeyStatus'),
@@ -1065,6 +1132,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		audioBridge?.handleStatus(status as AudioHostStatus);
 	});
 
+	// The peer-connection control plane, from the same window and with the same
+	// sender check: an answer or a data-channel message forged by any other
+	// renderer would be a paired device's traffic with no pairing behind it.
+	ipcMain.on(ACAPPELLA_WEBRTC_EVENT_CHANNEL, (event, hostEvent: unknown) => {
+		if (!isAcappellaAudioHostContents(event.sender)) return;
+		if (!hostEvent || typeof (hostEvent as WebRtcHostEvent).kind !== 'string') return;
+		getACappellaTransport()?.handleHostEvent(hostEvent as WebRtcHostEvent);
+	});
+
 	// Release the floor on the way out, and with it the microphone: the audio host
 	// window holds a real capture device, and a session left running would keep it
 	// open past the last app window. Fire-and-forget: `will-quit` is synchronous,
@@ -1185,6 +1261,8 @@ export function resetACappellaHandlerState(): void {
 	agentOutputTap = null;
 	voiceHotkeys?.dispose();
 	voiceHotkeys = null;
+	disposeACappellaTransport();
+	transport = null;
 	void stopWakeTest();
 	// Fire and forget: this runs from `will-quit`, which is synchronous, and from
 	// tests, which do not care how long a model file takes to close.

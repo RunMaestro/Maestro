@@ -4,12 +4,14 @@
  * Stacked in the order a user meets them: acquire the models (Voice Setup),
  * choose the engines and say where audio goes (Voice Providers), decide how to
  * open the floor (Voice Controls), tune what it sounds like and how the HUD
- * behaves (Voice and Speed), then own the files (Models). The Models page is
+ * behaves (Voice and Speed), let a phone in (Paired Devices), then own the files
+ * (Models). The Models page is
  * rendered whether or not the Encore Feature is on, which is deliberate - the
  * reclaim-disk offer only makes sense after the feature has been switched off.
  */
 
 import type { Theme } from '../../../types';
+import { PairedDevicesPanel } from './PairedDevicesPanel';
 import { VoiceControlsPanel } from './VoiceControlsPanel';
 import { VoiceModelsPage } from './VoiceModelsPage';
 import { VoiceOutputPanel } from './VoiceOutputPanel';
@@ -29,6 +31,7 @@ export function ACappellaSettingsBody({ theme, enabled }: ACappellaSettingsBodyP
 			{enabled && <VoiceProvidersPanel theme={theme} enabled={enabled} />}
 			{enabled && <VoiceControlsPanel theme={theme} enabled={enabled} />}
 			{enabled && <VoiceOutputPanel theme={theme} enabled={enabled} />}
+			{enabled && <PairedDevicesPanel theme={theme} enabled={enabled} />}
 			<VoiceModelsPage theme={theme} enabled={enabled} />
 		</div>
 	);

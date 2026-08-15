@@ -27,6 +27,11 @@ import type { RoutingLogEntry, RoutingQuality } from '../acappella/router/routin
 import type { CredentialState, CredentialValidation } from '../acappella/providers/credentials';
 import type { VoiceCredentialService } from '../../shared/acappella/provider-catalog';
 import type { TurnBreakdown } from '../acappella/telemetry/turn-metrics';
+import type { DeviceStatus, PairingPayload } from '../acappella/transport';
+import type { IceTransportSettings } from '../acappella/transport/ice-config';
+import type { DiscoveryStatus } from '../acappella/pairing/discovery';
+import type { PairingRequest } from '../acappella/pairing/pairing-service';
+import type { IceProbeResult } from '../../shared/acappella/webrtc-host';
 
 /**
  * `window.maestro.voice.models.*` - the model manager.
@@ -130,6 +135,115 @@ function createVoiceCredentialsApi() {
 }
 
 /**
+ * `window.maestro.voice.devices.*` - paired phones and the transport they use.
+ *
+ * The pairing payload returned by {@link startPairing} contains the server
+ * token, because that is what a device needs to reach the signaling socket at
+ * all. It exists to be rendered as a QR code on a screen the user is looking at,
+ * and nothing in the renderer should persist it.
+ *
+ * `list`, `revoke`, and `revokeAll` deliberately keep working when the Encore
+ * Feature is off, for the same reason model removal does: the moment somebody
+ * switches voice off is exactly when they may want to cut a phone loose.
+ */
+function createVoiceDevicesApi() {
+	return {
+		/**
+		 * Open a pairing window and get the QR payload. Null when the web server is
+		 * not running, which the panel shows as "start the web interface first".
+		 */
+		startPairing: (): Promise<PairingPayload | null> =>
+			ipcRenderer.invoke('acappella:start-pairing'),
+
+		/** The open window, any device waiting for approval, and the advert's state. */
+		pairingStatus: (): Promise<{
+			payload: PairingPayload | null;
+			request: PairingRequest | null;
+			discovery: DiscoveryStatus | null;
+			manualHint: string;
+		}> => ipcRenderer.invoke('acappella:pairing-status'),
+
+		/** Close the pairing window without pairing anything. */
+		cancelPairing: (): Promise<void> => ipcRenderer.invoke('acappella:cancel-pairing'),
+
+		/**
+		 * Approve a waiting device. THE affirmative action: without it, knowing a
+		 * six-character code would be enough to hold somebody's microphone.
+		 */
+		approve: (requestId: string, name?: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:approve-device', { requestId, name }),
+
+		deny: (requestId: string): Promise<void> =>
+			ipcRenderer.invoke('acappella:deny-device', requestId),
+
+		/** Every paired device, joined onto its live connection state and quality. */
+		list: (): Promise<DeviceStatus[]> => ipcRenderer.invoke('acappella:list-devices'),
+
+		rename: (deviceId: string, name: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:rename-device', { deviceId, name }),
+
+		/**
+		 * End a pairing. Takes effect on a LIVE connection, immediately: the peer is
+		 * torn down and any session that device was holding ends.
+		 */
+		revoke: (deviceId: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:revoke-device', deviceId),
+
+		/** Remove a revoked device from the list entirely. */
+		forget: (deviceId: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:forget-device', deviceId),
+
+		revokeAll: (): Promise<number> => ipcRenderer.invoke('acappella:revoke-all-devices'),
+
+		/** Drop every live connection WITHOUT revoking anything. They can reconnect. */
+		disconnectAll: (): Promise<void> => ipcRenderer.invoke('acappella:disconnect-all-devices'),
+
+		/** ICE configuration, what it can reach, and the Cloudflare tunnel caveat. */
+		iceSettings: (): Promise<{
+			settings: IceTransportSettings;
+			reach: string;
+			tunnelNote: string;
+			discovery: DiscoveryStatus | null;
+		}> => ipcRenderer.invoke('acappella:ice-settings'),
+
+		/**
+		 * Gather ICE candidates against the configured servers and report which
+		 * types actually came back. A relay candidate is proof the TURN credentials
+		 * work, rather than a claim that they should.
+		 */
+		testConnection: (): Promise<IceProbeResult> => ipcRenderer.invoke('acappella:test-connection'),
+
+		/** Start or stop the Bonjour advert. Returns what the advert is actually doing. */
+		setDiscovery: (enabled: boolean): Promise<DiscoveryStatus | null> =>
+			ipcRenderer.invoke('acappella:set-discovery', enabled),
+
+		/**
+		 * The device list or a connection state changed. Broadcast, so every window
+		 * repaints.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onChanged: (handler: () => void): (() => void) => {
+			const wrappedHandler = () => handler();
+			ipcRenderer.on('acappella:devices-changed', wrappedHandler);
+			return () => ipcRenderer.removeListener('acappella:devices-changed', wrappedHandler);
+		},
+
+		/**
+		 * A device is asking to pair, or stopped asking (`null`).
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onPairingRequest: (handler: (request: PairingRequest | null) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, request: PairingRequest | null) =>
+				handler(request);
+			ipcRenderer.on('acappella:pairing-request', wrappedHandler);
+			return () => ipcRenderer.removeListener('acappella:pairing-request', wrappedHandler);
+		},
+	};
+}
+
+/**
  * Creates the A Cappella voice API object for contextBridge exposure.
  */
 export function createVoiceApi() {
@@ -139,6 +253,9 @@ export function createVoiceApi() {
 
 		/** API keys for the hosted tier, stored in the OS keychain. */
 		credentials: createVoiceCredentialsApi(),
+
+		/** Paired phones, the pairing flow, and the WebRTC transport's settings. */
+		devices: createVoiceDevicesApi(),
 
 		/**
 		 * Apply a provider change to the running app.

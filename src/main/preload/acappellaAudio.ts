@@ -2,8 +2,9 @@
  * Preload API for A Cappella's hidden audio host window.
  *
  * Provides `window.maestro.voiceAudioHost`, the only bridge the audio host
- * renderer needs: it ships PCM frames and device/playback status up to main and
- * receives capture and playback commands back.
+ * renderer needs: it ships PCM frames and device/playback status up to main,
+ * receives capture and playback commands back, and carries the WebRTC control
+ * plane for the paired-device peers that terminate in the same window.
  *
  * This is deliberately NOT part of `window.maestro.voice`. That namespace is the
  * client-facing protocol (any window, and later the phone, may call it); this
@@ -25,6 +26,12 @@ import {
 	type AudioHostCommand,
 	type AudioHostStatus,
 } from '../../shared/acappella/audio-host';
+import {
+	ACAPPELLA_WEBRTC_COMMAND_CHANNEL,
+	ACAPPELLA_WEBRTC_EVENT_CHANNEL,
+	type WebRtcHostCommand,
+	type WebRtcHostEvent,
+} from '../../shared/acappella/webrtc-host';
 
 /**
  * Creates the A Cappella audio host API object for contextBridge exposure.
@@ -51,6 +58,30 @@ export function createVoiceAudioHostApi() {
 				handler(command);
 			ipcRenderer.on(ACAPPELLA_AUDIO_COMMAND_CHANNEL, wrappedHandler);
 			return () => ipcRenderer.removeListener(ACAPPELLA_AUDIO_COMMAND_CHANNEL, wrappedHandler);
+		},
+
+		/**
+		 * Report a peer event: an answer, a trickled candidate, a connection state,
+		 * a stats reading, or one inbound data-channel message.
+		 *
+		 * The same `send` reasoning as frames. Stats arrive on a timer and inbound
+		 * levels arrive twenty times a second, and neither needs a reply.
+		 */
+		sendWebRtcEvent: (event: WebRtcHostEvent): void => {
+			ipcRenderer.send(ACAPPELLA_WEBRTC_EVENT_CHANNEL, event);
+		},
+
+		/**
+		 * Subscribe to peer commands from the main process: accept an offer, trickle
+		 * a candidate in, close a peer, send a protocol message.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onWebRtcCommand: (handler: (command: WebRtcHostCommand) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, command: WebRtcHostCommand) =>
+				handler(command);
+			ipcRenderer.on(ACAPPELLA_WEBRTC_COMMAND_CHANNEL, wrappedHandler);
+			return () => ipcRenderer.removeListener(ACAPPELLA_WEBRTC_COMMAND_CHANNEL, wrappedHandler);
 		},
 	};
 }
