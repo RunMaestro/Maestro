@@ -452,6 +452,37 @@ describe('mediaPlaybackStore', () => {
 			expect(useMediaPlaybackStore.getState().items.map((i) => i.id)).toEqual([idOf(a), idOf(b)]);
 		});
 
+		it('loads the track just queued when idle, not a leftover queue entry', () => {
+			// After closing the loaded track the queue can still hold others. Queueing
+			// something new must load THAT, not whatever happens to sit at index 0.
+			const old = request({ path: '/files/old.mp3', name: 'old.mp3' });
+			const fresh = request({ path: '/files/fresh.mp4', name: 'fresh.mp4', kind: 'video' });
+			initial.enqueueMedia([old]);
+			initial.closeItem(idOf(old));
+			initial.enqueueMedia([request({ path: '/files/leftover.mp3', name: 'leftover.mp3' })]);
+			initial.closeItem(mediaItemId('s1', '/files/leftover.mp3'));
+			// Queue two so there is a leftover ahead of the new one.
+			initial.enqueueMedia([old]);
+			initial.closeItem(idOf(old));
+
+			initial.enqueueMedia([fresh]);
+			expect(useMediaPlaybackStore.getState().activeItemId).toBe(idOf(fresh));
+		});
+
+		it('never starts playback, whatever the loaded track is doing', () => {
+			const a = request();
+			const b = request({ path: '/files/b.mp4', name: 'b.mp4', kind: 'video' });
+			initial.openMedia(a);
+			initial.consumeAutoplay();
+
+			// Paused is still "the track the user is on" - queueing behind it must
+			// not yank the player away.
+			initial.setPlaying(false);
+			initial.enqueueMedia([b]);
+			expect(useMediaPlaybackStore.getState().activeItemId).toBe(idOf(a));
+			expect(useMediaPlaybackStore.getState().pendingAutoplay).toBe(false);
+		});
+
 		it('does not touch history - nothing has been played', () => {
 			initial.enqueueMedia([request({ path: '/files/b.mp3', name: 'b.mp3' })]);
 			expect(useMediaPlaybackStore.getState().history).toEqual([]);

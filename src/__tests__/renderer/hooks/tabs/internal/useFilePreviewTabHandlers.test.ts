@@ -64,6 +64,69 @@ describe('useFilePreviewTabHandlers', () => {
 			expect(media.pendingAutoplay).toBe(true);
 		});
 
+		it('queues a second file instead of taking the player over', () => {
+			// Queueing an mp4 behind a playing mp3 must leave the mp3 loaded and
+			// audible - the whole point of "Add to Play Queue".
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: STREAM,
+				});
+			});
+			act(() => {
+				useMediaPlaybackStore.getState().consumeAutoplay();
+				useMediaPlaybackStore.getState().setPlaying(true);
+			});
+			const playingId = useMediaPlaybackStore.getState().activeItemId;
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/files/clip.mp4', name: 'clip.mp4', content: STREAM },
+					{ mediaMode: 'queue' }
+				);
+			});
+
+			const media = useMediaPlaybackStore.getState();
+			expect(media.items).toHaveLength(2);
+			expect(media.activeItemId).toBe(playingId);
+			expect(media.playing).toBe(true);
+			expect(media.pendingAutoplay).toBe(false);
+		});
+
+		it('queues without playing even when the loaded track is paused', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			act(() => {
+				result.current.handleOpenFileTab({
+					path: '/files/podcast.mp3',
+					name: 'podcast.mp3',
+					content: STREAM,
+				});
+			});
+			act(() => {
+				useMediaPlaybackStore.getState().consumeAutoplay();
+				useMediaPlaybackStore.getState().setPlaying(false);
+			});
+			const pausedId = useMediaPlaybackStore.getState().activeItemId;
+
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/files/clip.mp4', name: 'clip.mp4', content: STREAM },
+					{ mediaMode: 'queue' }
+				);
+			});
+
+			const media = useMediaPlaybackStore.getState();
+			expect(media.activeItemId).toBe(pausedId);
+			expect(media.pendingAutoplay).toBe(false);
+			expect(media.playing).toBe(false);
+		});
+
 		it('stamps the owning agent, so the player says where the file came from', () => {
 			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
 			const { result } = renderHook(() => useFilePreviewTabHandlers());

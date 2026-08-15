@@ -336,23 +336,34 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 		set((state) => {
 			const items = [...state.items];
 			const known = new Set(items.map((item) => item.id));
+			let firstAddedId: string | null = null;
 			for (const request of requests) {
 				const id = mediaItemId(request.sessionId, request.path);
 				if (known.has(id)) continue;
 				known.add(id);
 				items.push({ ...request, id });
+				if (!firstAddedId) firstAddedId = id;
 				added++;
 			}
 			if (added === 0) return state;
 
-			// Nothing loaded means no widget on screen, so the queue would be
-			// invisible. Load the first entry paused: the user asked to queue, not
-			// to listen, so it does not start itself.
-			const activeItemId = state.activeItemId ?? items[0].id;
+			// Queueing NEVER interrupts: whatever is loaded stays loaded and keeps
+			// playing, which is the entire difference between this and `openMedia`.
+			// It is also not conditional on `playing` - a paused track is still the
+			// one the user is on, so queueing behind it must not yank the player
+			// away from it.
+			if (state.activeItemId) {
+				return { items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId) };
+			}
+
+			// Idle player: there is no widget on screen, so a pure append would
+			// queue into the void. Load the track that was just queued - NOT
+			// `items[0]`, which after a close is some leftover the user never asked
+			// for. It loads paused, because queueing is not a request to listen.
 			return {
-				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, activeItemId),
-				activeItemId,
-				...(state.activeItemId ? {} : { dismissed: false }),
+				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstAddedId),
+				activeItemId: firstAddedId,
+				dismissed: false,
 			};
 		});
 		if (added > 0) persistQueue();
