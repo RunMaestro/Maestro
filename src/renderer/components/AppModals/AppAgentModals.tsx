@@ -22,7 +22,11 @@ import { LeaderboardRegistrationModal } from '../LeaderboardRegistrationModal';
 
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
-import { getSessionsForIdentity, useProviderAuthStore } from '../../stores/providerAuthStore';
+import {
+	getSessionsForIdentity,
+	selectKnownIdentity,
+	useProviderAuthStore,
+} from '../../stores/providerAuthStore';
 import {
 	discardBlockedPrompts,
 	getBlockedPrompts,
@@ -116,14 +120,16 @@ export interface AppAgentModalsProps {
  *
  * Self-sourced from `modalStore` rather than prop-threaded through App.tsx, the
  * same shape the snooze and startup-command modals use. Open state is keyed by
- * CREDENTIAL, so all three entry points (the Left Bar auth indicator, the
- * logged-out toast, the command palette) hand over an identity key and land on
- * the same modal.
+ * CREDENTIAL, so every entry point (the Left Bar auth indicator, the logged-out
+ * toast, the command palette, the Provider Accounts settings section) hands over
+ * an identity key and lands on the same modal.
  *
- * Renders nothing when the key has no stored snapshot. Every entry point derives
- * its key FROM a snapshot, so that means the record was cleared between the
- * click and this render - and a modal that cannot name the account it is
- * repairing is exactly the modal this phase exists to avoid.
+ * The identity comes from the stored snapshot when there is one and from the
+ * agents themselves when there is not: Settings lists credentials the startup
+ * pass skipped (SSH agents, agents nobody opened this week), and those have a
+ * resolvable identity with no record yet. Rendering nothing on an UNRESOLVABLE
+ * key is still the rule - a modal that cannot name the account it is repairing
+ * is exactly the modal this phase exists to avoid.
  */
 const AuthRecoveryModalSlot = memo(function AuthRecoveryModalSlot({
 	theme,
@@ -142,7 +148,7 @@ const AuthRecoveryModalSlot = memo(function AuthRecoveryModalSlot({
 	});
 
 	const identity = useProviderAuthStore((s) =>
-		identityKey ? (s.snapshots[identityKey]?.identity ?? null) : null
+		identityKey ? selectKnownIdentity(identityKey)(s) : null
 	);
 
 	// Recomputed when the agent list changes, which is what keeps the "unblocks N

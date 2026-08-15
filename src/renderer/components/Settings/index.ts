@@ -18,6 +18,10 @@ export type { SshRemoteModalProps } from './SshRemoteModal';
 export { SshRemotesSection } from './SshRemotesSection';
 export type { SshRemotesSectionProps } from './SshRemotesSection';
 
+// Provider account logins (status, re-probe, sign in)
+export { ProviderAccountsSection } from './ProviderAccountsSection';
+export type { ProviderAccountsSectionProps } from './ProviderAccountsSection';
+
 // Environment Variables editor
 export { EnvVarsEditor } from './EnvVarsEditor';
 export type { EnvVarsEditorProps, EnvVarEntry } from './EnvVarsEditor';

@@ -258,6 +258,24 @@ describe('runStartupAuthProbe', () => {
 		expect(manual).toMatchObject({ identities: 1, probed: 1 });
 	});
 
+	it('skips the whole pass when the user turned startup probing off, but still runs a manual one', async () => {
+		const sessions = [makeSession()];
+		const settingsStore = makeStore({
+			sshRemotes: [],
+			providerAuthProbeOnStartup: false,
+		}) as unknown as StartupAuthProbeDeps['settingsStore'];
+
+		const startup = await runStartupAuthProbe(makeDeps(sessions, { settingsStore }));
+		expect(probeCredentialMock).not.toHaveBeenCalled();
+		expect(startup).toMatchObject({ identities: 0, probed: 0 });
+
+		// The opt-out is about the boot cost, not about refusing to check: the
+		// Provider Accounts panel would have no working button otherwise.
+		const manual = await runStartupAuthProbe(makeDeps(sessions, { settingsStore, mode: 'manual' }));
+		expect(probeCredentialMock).toHaveBeenCalledTimes(1);
+		expect(manual).toMatchObject({ identities: 1, probed: 1 });
+	});
+
 	it('treats a recently opened AI tab as activity on an old session', async () => {
 		// `createdAt` alone would read a daily-driver agent created months ago as
 		// permanently stale, so it would never be probed at any boot.

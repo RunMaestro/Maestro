@@ -14,9 +14,10 @@
  * `CLAUDE_CONFIG_DIR`.
  *
  * Modes:
- *   - `'startup'` (default): skip identities whose stored snapshot is younger
- *     than `PROBE_STALE_MS`, skip sessions nobody has touched in a week, and
- *     skip SSH-remote sessions entirely (see below). Keeps boot cheap.
+ *   - `'startup'` (default): skip the whole pass when the user turned
+ *     `providerAuthProbeOnStartup` off, skip identities whose stored snapshot is
+ *     younger than `PROBE_STALE_MS`, skip sessions nobody has touched in a week,
+ *     and skip SSH-remote sessions entirely (see below). Keeps boot cheap.
  *   - `'manual'`: ignore both filters and re-probe everything, including
  *     SSH-remote sessions. This is what a user-triggered refresh calls - they
  *     asked for fresh data and are present to wait for it.
@@ -361,6 +362,17 @@ export async function runStartupAuthProbe(
 	try {
 		const now = (deps.now ?? Date.now)();
 		const mode = deps.mode ?? 'startup';
+
+		// The user's opt-out (Settings -> Environment -> Provider Accounts) applies
+		// to the SCHEDULED pass only. A manual re-probe is an explicit request, and
+		// refusing to run it would leave the panel with no way to check anything.
+		// Enforced here rather than at the boot call site so a second scheduled
+		// caller cannot forget it.
+		if (mode === 'startup' && deps.settingsStore.get('providerAuthProbeOnStartup') === false) {
+			logger.info('Startup provider auth probe disabled by setting', LOG_CONTEXT);
+			return result;
+		}
+
 		const homeDir = os.homedir();
 
 		const storedSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;

@@ -323,6 +323,10 @@ export interface UseSettingsReturn {
 	sshRemoteHonorGitignore: boolean;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 
+	// Provider account login probing
+	providerAuthProbeOnStartup: boolean;
+	setProviderAuthProbeOnStartup: (value: boolean) => void;
+
 	// Browser settings
 	useSystemBrowser: boolean;
 	setUseSystemBrowser: (value: boolean) => void;

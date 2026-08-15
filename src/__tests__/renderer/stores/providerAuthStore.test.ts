@@ -15,6 +15,8 @@ import {
 	getSessionsForIdentity,
 	markSessionAuthFailure,
 	selectAuthSnapshotForSession,
+	selectKnownIdentities,
+	selectKnownIdentity,
 	selectLoggedOutIdentities,
 	useProviderAuthStore,
 } from '../../../renderer/stores/providerAuthStore';
@@ -222,6 +224,83 @@ describe('blocked roll-up across agents sharing one credential', () => {
 		for (const session of useSessionStore.getState().sessions) {
 			expect(describeAuthIndicator(selectAuthSnapshotForSession(session.id)(state))).toBeNull();
 		}
+	});
+});
+
+/**
+ * The known-credential roll-up behind the Provider Accounts settings section.
+ *
+ * Unlike the blocked roll-up this one has to answer when NOTHING is wrong -
+ * that is the whole point of a manual entry point - and it has to answer for a
+ * credential the startup pass never probed, which is the normal state of an SSH
+ * agent or one nobody opened this week.
+ */
+describe('known-identity roll-up', () => {
+	beforeEach(async () => {
+		await resetStores();
+	});
+
+	it('lists a healthy account, a never-probed one, and one whose agents are gone', async () => {
+		installBridge();
+		useSessionStore.setState({
+			sessions: [
+				makeSession('shared-1'),
+				makeSession('shared-2'),
+				makeSession('other', { CLAUDE_CONFIG_DIR: SIBLING_DIR }),
+			],
+		});
+		await useProviderAuthStore.getState().hydrate();
+
+		// Only one of the two live credentials has ever been probed...
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'authenticated'));
+		// ...and a third is stored with no agent left referencing it.
+		const orphanKey = 'codex::oauth::/Users/x/.codex::local';
+		useProviderAuthStore.getState().applyChange(orphanKey, {
+			...snapshotFor(orphanKey, '.codex', 'logged-out'),
+			identity: { ...identity(orphanKey, '.codex'), provider: 'codex' },
+		});
+
+		const known = selectKnownIdentities()(useProviderAuthStore.getState());
+		const byKey = new Map(known.map((entry) => [entry.identity.key, entry]));
+
+		expect(known).toHaveLength(3);
+		// Signed out sorts first: the row that needs the user leads the list.
+		expect(known[0].identity.key).toBe(orphanKey);
+		expect(byKey.get(orphanKey)?.sessionIds).toEqual([]);
+		expect(byKey.get(DEFAULT_KEY)?.sessionIds).toEqual(['shared-1', 'shared-2']);
+		expect(byKey.get(DEFAULT_KEY)?.snapshot?.status).toBe('authenticated');
+		// The never-probed credential is listed anyway, with an honest null.
+		expect(byKey.get(SIBLING_KEY)?.snapshot).toBeNull();
+		expect(byKey.get(SIBLING_KEY)?.sessionIds).toEqual(['other']);
+	});
+
+	it('is reference-stable across unrelated session churn', async () => {
+		installBridge();
+		useSessionStore.setState({ sessions: [makeSession('a')] });
+		await useProviderAuthStore.getState().hydrate();
+
+		const first = selectKnownIdentities()(useProviderAuthStore.getState());
+		useSessionStore.setState({ sessions: [...useSessionStore.getState().sessions] });
+		expect(selectKnownIdentities()(useProviderAuthStore.getState())).toBe(first);
+
+		// A real change to the answer does produce a new array.
+		useProviderAuthStore
+			.getState()
+			.applyChange(DEFAULT_KEY, snapshotFor(DEFAULT_KEY, '.claude', 'logged-out'));
+		expect(selectKnownIdentities()(useProviderAuthStore.getState())).not.toBe(first);
+	});
+
+	it('resolves a never-probed credential by key, so the recovery modal can name it', async () => {
+		installBridge();
+		useSessionStore.setState({ sessions: [makeSession('a')] });
+		await useProviderAuthStore.getState().hydrate();
+
+		const state = useProviderAuthStore.getState();
+		expect(state.snapshots[DEFAULT_KEY]).toBeUndefined();
+		expect(selectKnownIdentity(DEFAULT_KEY)(state)?.label).toBe('.claude');
+		expect(selectKnownIdentity('claude-code::oauth::/gone::local')(state)).toBeNull();
 	});
 });
 

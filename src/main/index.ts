@@ -840,6 +840,10 @@ app
 		// reactive `auth_expired` path still marks an identity logged out the
 		// moment a live agent hits the error, so the worst case is a badge that
 		// appears on first failure instead of at launch.
+		//
+		// The `providerAuthProbeOnStartup` opt-out (Settings -> Environment ->
+		// Provider Accounts) is enforced inside the pass, not here, so a future
+		// second boot-time caller cannot miss it.
 		void runStartupAuthProbe({
 			sessionsStore,
 			agentConfigsStore,

@@ -415,6 +415,7 @@ export interface SettingsStoreState {
 	sshReduceEntryCapFraction: number;
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
+	providerAuthProbeOnStartup: boolean;
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
 	htmlDoubleClickOpensInBrowser: boolean;
@@ -565,6 +566,7 @@ export interface SettingsStoreActions {
 	setSshReduceEntryCapFraction: (value: number) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
+	setProviderAuthProbeOnStartup: (value: boolean) => void;
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
 	setHtmlDoubleClickOpensInBrowser: (value: boolean) => void;
@@ -798,6 +800,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
+		providerAuthProbeOnStartup: true,
 		useSystemBrowser: false,
 		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		htmlDoubleClickOpensInBrowser: false,
@@ -1401,6 +1404,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setSshRemoteHonorGitignore: (value) => {
 			set({ sshRemoteHonorGitignore: value });
 			window.maestro.settings.set('sshRemoteHonorGitignore', value);
+		},
+
+		setProviderAuthProbeOnStartup: (value) => {
+			set({ providerAuthProbeOnStartup: value });
+			window.maestro.settings.set('providerAuthProbeOnStartup', value);
 		},
 
 		setUseSystemBrowser: (value) => {
@@ -2827,6 +2835,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['sshRemoteHonorGitignore'] !== undefined)
 			patch.sshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'] as boolean;
 
+		if (allSettings['providerAuthProbeOnStartup'] !== undefined)
+			patch.providerAuthProbeOnStartup = allSettings['providerAuthProbeOnStartup'] as boolean;
+
 		if (allSettings['useSystemBrowser'] !== undefined)
 			patch.useSystemBrowser = allSettings['useSystemBrowser'] as boolean;
 
@@ -3228,6 +3239,7 @@ export function getSettingsActions() {
 		setLocalHonorGitignore: state.setLocalHonorGitignore,
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
+		setProviderAuthProbeOnStartup: state.setProviderAuthProbeOnStartup,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
 		setNewTabPlacement: state.setNewTabPlacement,
 		setNewBrowserTabPlacement: state.setNewBrowserTabPlacement,

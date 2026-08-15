@@ -70,6 +70,23 @@ export interface BlockedIdentity {
 }
 
 /**
+ * One credential Maestro knows about, whether or not it has ever been probed.
+ *
+ * The superset {@link BlockedIdentity} is a filtered view of: a manual entry
+ * point has to list the accounts that are FINE too, otherwise the only way to
+ * reach the flow is to already be broken. `snapshot` is null for a credential no
+ * probe has answered for yet, which is the normal state of an SSH agent or one
+ * nobody has opened in a week - both are skipped by the startup pass.
+ */
+export interface KnownIdentity {
+	identity: CredentialIdentity;
+	/** Last stored probe result, or null when this credential has never been probed. */
+	snapshot: ProviderAuthSnapshot | null;
+	/** Sessions presenting this credential, in Left Bar order. Empty is possible. */
+	sessionIds: string[];
+}
+
+/**
  * The two statuses the renderer may write without a probe.
  *
  * `unsupported` is deliberately reused rather than a sixth status being added:
@@ -393,6 +410,7 @@ export const useProviderAuthStore = create<ProviderAuthState>((set, get) => ({
 		agentEnvFetches.clear();
 		identityCache.clear();
 		loggedOutMemo = null;
+		knownMemo = null;
 		set({ ...initialState });
 	},
 }));
@@ -704,6 +722,104 @@ export function selectLoggedOutIdentities() {
 	};
 }
 
+/**
+ * The credential behind one key, whether or not it has been probed.
+ *
+ * A stored snapshot answers immediately; without one the sessions are walked,
+ * because the key of a NEVER-PROBED credential is still resolvable from the
+ * agent that presents it. That fallback is what lets a surface which lists every
+ * known account (Settings -> Environment) open the recovery modal on a
+ * credential the startup pass skipped, instead of showing a row whose only
+ * action is a probe.
+ */
+export const selectKnownIdentity =
+	(identityKey: string) =>
+	(state: ProviderAuthState): CredentialIdentity | null => {
+		const stored = state.snapshots[identityKey]?.identity;
+		if (stored) return stored;
+		for (const session of useSessionStore.getState().sessions) {
+			const identity = resolveSessionIdentity(session, state);
+			if (identity?.key === identityKey) return identity;
+		}
+		return null;
+	};
+
+/** Cached result of {@link selectKnownIdentities}, for reference stability. */
+let knownMemo: KnownIdentity[] | null = null;
+
+/** Whether two roll-ups describe the same thing, by reference where possible. */
+function sameKnownIdentities(a: KnownIdentity[], b: KnownIdentity[]): boolean {
+	if (a.length !== b.length) return false;
+	return a.every(
+		(entry, i) =>
+			entry.identity === b[i].identity &&
+			entry.snapshot === b[i].snapshot &&
+			entry.sessionIds.length === b[i].sessionIds.length &&
+			entry.sessionIds.every((id, j) => id === b[i].sessionIds[j])
+	);
+}
+
+/**
+ * Order for a list a human reads: what needs them first, then a stable
+ * alphabetical run so a re-probe cannot reshuffle rows under the cursor.
+ */
+const KNOWN_STATUS_RANK: Record<string, number> = {
+	'logged-out': 0,
+	unsupported: 1,
+	unknown: 2,
+	authenticated: 3,
+};
+
+/**
+ * Every credential Maestro knows about, each with its snapshot and the agents
+ * presenting it.
+ *
+ * Two sources, deliberately unioned: the agents that exist right now (which
+ * covers a credential no probe has run against yet) and the stored snapshot map
+ * (which covers an account whose agents have all been deleted, still repairable
+ * and still worth listing). Reference-stable on the same terms as
+ * {@link selectLoggedOutIdentities}, since this drives a settings panel that
+ * would otherwise re-render on every stdout chunk.
+ */
+export function selectKnownIdentities() {
+	return (state: ProviderAuthState): KnownIdentity[] => {
+		const byKey = new Map<string, KnownIdentity>();
+
+		for (const session of useSessionStore.getState().sessions) {
+			const identity = resolveSessionIdentity(session, state);
+			if (!identity) continue;
+			const existing = byKey.get(identity.key);
+			if (existing) existing.sessionIds.push(session.id);
+			else {
+				byKey.set(identity.key, {
+					identity,
+					snapshot: state.snapshots[identity.key] ?? null,
+					sessionIds: [session.id],
+				});
+			}
+		}
+
+		for (const [key, snapshot] of Object.entries(state.snapshots)) {
+			if (byKey.has(key)) continue;
+			byKey.set(key, { identity: snapshot.identity, snapshot, sessionIds: [] });
+		}
+
+		const value = Array.from(byKey.values()).sort((a, b) => {
+			const rank =
+				(KNOWN_STATUS_RANK[a.snapshot?.status ?? 'unknown'] ?? 2) -
+				(KNOWN_STATUS_RANK[b.snapshot?.status ?? 'unknown'] ?? 2);
+			if (rank !== 0) return rank;
+			if (a.identity.provider !== b.identity.provider)
+				return a.identity.provider.localeCompare(b.identity.provider);
+			return a.identity.label.localeCompare(b.identity.label);
+		});
+
+		if (knownMemo && sameKnownIdentities(knownMemo, value)) return knownMemo;
+		knownMemo = value;
+		return value;
+	};
+}
+
 // ============================================================================
 // Startup announcement (one toast per newly-discovered logged-out identity)
 // ============================================================================
@@ -871,6 +987,16 @@ export function useSessionIdentity(sessionId: string): CredentialIdentity | null
 export function useLoggedOutIdentities(): BlockedIdentity[] {
 	useHydrateProviderAuth();
 	return useProviderAuthStore(selectLoggedOutIdentities());
+}
+
+/**
+ * Every known credential, signed in or not, with its snapshot and agents.
+ * Hydrates on first use, so the settings panel is the first thing that pulls the
+ * map on a run where nothing has failed yet.
+ */
+export function useKnownIdentities(): KnownIdentity[] {
+	useHydrateProviderAuth();
+	return useProviderAuthStore(selectKnownIdentities());
 }
 
 /**

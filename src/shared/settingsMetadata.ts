@@ -745,6 +745,15 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'ssh',
 	},
 
+	// --- Provider Accounts ---
+	providerAuthProbeOnStartup: {
+		description:
+			'Run one login status check per provider account at startup, so an expired login is visible before a prompt is sent into it.',
+		type: 'boolean',
+		default: true,
+		category: 'integrations',
+	},
+
 	// --- File Indexing ---
 	localIgnorePatterns: {
 		description: 'Glob patterns to exclude from local file indexing.',
