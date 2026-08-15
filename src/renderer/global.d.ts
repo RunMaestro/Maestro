@@ -198,6 +198,7 @@ import type { AggregatedContributions as PluginContributions } from '../shared/p
 import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
+import type { VoiceApi } from '../main/preload/acappella';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 
 interface MaestroAPI {
@@ -4543,6 +4544,16 @@ interface MaestroAPI {
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
 	};
+
+	/**
+	 * A Cappella Voice API. The session itself is headless and lives in the main
+	 * process, so this window is one client among several (the iPhone is another)
+	 * and holds no authoritative state: render from the `onEvent` stream.
+	 *
+	 * Every channel except `stop` rejects with 'ACappellaDisabled' when the
+	 * Encore flag is off.
+	 */
+	voice: VoiceApi;
 }
 
 declare global {
