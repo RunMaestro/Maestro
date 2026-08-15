@@ -1,0 +1,607 @@
+/**
+ * Provider Auth - credential identity for agent login state.
+ *
+ * Maestro discovers auth failure only after a prompt has been spent: the agent
+ * spawns, the CLI complains, `parsers/error-patterns.ts` matches an
+ * `auth_expired` regex, and a modal appears. Fifteen agents on one Anthropic
+ * account produce fifteen of those modals for one underlying fact.
+ *
+ * The fix starts here: credentials belong to an IDENTITY, not to an agent. This
+ * module maps a session (its tool type, its effective env, its host) onto the
+ * credential it will actually present, so probes, stores, and UI can all dedupe
+ * on one key. It is the same move `claude-usage-startup.ts` already makes for
+ * quota, where one `maestro-p --status` per unique `CLAUDE_CONFIG_DIR` replaces
+ * one per session.
+ *
+ * The second idea the type system enforces: NOT EVERY CREDENTIAL IS AN OAUTH
+ * LOGIN. A gateway agent (`ANTHROPIC_BASE_URL` pointed at a third-party
+ * operator), an API-key agent, and a Bedrock/Vertex agent are all things
+ * `claude auth login` cannot fix, and offering that button to them is worse than
+ * offering nothing. {@link CredentialKind} records which remedy applies.
+ *
+ * ## Purity
+ *
+ * No Node builtins, like `shared/providerFailover.ts`, so the renderer can call
+ * this as freely as the main process (the one import, `agentMetadata`, is itself
+ * dependency-free). That is why {@link canonicalizeDirPath} exists
+ * instead of `path.resolve` and why {@link fingerprintSecret} carries its own
+ * SHA-256 instead of `crypto.createHash`: both of those are Node builtins, the
+ * renderer bundle has no polyfill for either (it never imports one - checked),
+ * and a shared module that throws on import in one of the two processes is not
+ * shared. The canonicalizer deliberately reproduces the `path.resolve` semantics
+ * `resolveConfigDirKey()` (`main/stores/claudeUsageStore.ts`) already relies on:
+ * lexical normalization only, no `realpath`, no symlink resolution, no case
+ * folding.
+ */
+
+import { getAgentDisplayName } from './agentMetadata';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/**
+ * What kind of credential an agent presents, which decides what "fix it" means.
+ *
+ * - `oauth` - a browser/device login against a config directory. The ONLY kind a
+ *   login flow can repair.
+ * - `api-key` - a secret in the environment. The remedy is editing the key, not
+ *   logging in.
+ * - `gateway` - `ANTHROPIC_BASE_URL` (or equivalent) points the agent at a
+ *   third-party operator. Whatever failed belongs to that operator.
+ * - `cloud-provider` - Bedrock or Vertex. Credentials come from the cloud SDK
+ *   chain, not from the agent CLI.
+ * - `unknown` - the provider has no probe we trust. Must render as
+ *   `unsupported`, never as `logged-out`.
+ */
+export type CredentialKind = 'oauth' | 'api-key' | 'gateway' | 'cloud-provider' | 'unknown';
+
+/**
+ * Login state for one {@link CredentialIdentity}.
+ *
+ * `unknown` means "not probed yet, or the probe failed"; `unsupported` means
+ * "there is nothing to probe". Keeping them distinct stops an unprobeable
+ * provider (factory-droid) from ever being reported as logged out.
+ */
+export type ProviderAuthStatus = 'authenticated' | 'logged-out' | 'unknown' | 'unsupported';
+
+/**
+ * The credential an agent will present, independent of which agent presents it.
+ *
+ * Two sessions that resolve to the same {@link key} share one login, so they are
+ * probed once, stored once, and surfaced once.
+ */
+export interface CredentialIdentity {
+	/** `${provider}::${kind}::${scope}::${host}` - the dedup key. */
+	key: string;
+	/** Agent id the credential belongs to (`claude-code`, `codex`, ...). */
+	provider: string;
+	/** Which remedy applies. See {@link CredentialKind}. */
+	kind: CredentialKind;
+	/**
+	 * What distinguishes this credential from another of the same kind: a
+	 * canonical config dir, a gateway host, a secret fingerprint, or `'default'`.
+	 * Never contains a raw secret.
+	 */
+	scope: string;
+	/** `'local'` or `` `ssh:${remoteId}` `` - the machine the credential lives on. */
+	host: string;
+	/** The env var that determines this identity, when one does. */
+	envVarName?: string;
+	/** Canonical config directory, for `oauth` identities only. */
+	configDir?: string;
+	/** Short human name for UI: `.claude-smash`, `api.z.ai`, `Codex fp_1a2b3c4d`. */
+	label: string;
+}
+
+/** Input to {@link resolveCredentialIdentity}. */
+export interface CredentialIdentityInput {
+	/** Agent id, e.g. `claude-code`. Unrecognized values resolve to `unknown`. */
+	toolType: string;
+	/**
+	 * The EFFECTIVE env for the spawn - agent-level merged under session-level.
+	 * Build it with {@link mergeEffectiveEnv}; never pass `process.env` when the
+	 * spawn will use something else, for the same reason `resolveConfigDirKey()`
+	 * makes its env argument required.
+	 */
+	env: Record<string, string>;
+	/** SSH remote id when the agent runs remotely; omitted for local agents. */
+	sshRemoteId?: string;
+	/** Home directory ON THE HOST the agent runs on, used to expand defaults. */
+	homeDir: string;
+}
+
+// ============================================================================
+// Env-var tables
+// ============================================================================
+
+/**
+ * Anthropic secret-bearing keys, checked in this order so the more specific
+ * gateway token wins over the plain API key. Mirrors
+ * `ANTHROPIC_CREDENTIAL_ENV_KEYS` in `shared/providerFailover.ts`, which is the
+ * failover module's name for the same two vars.
+ */
+const ANTHROPIC_SECRET_ENV_KEYS = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
+
+/** Flags that route claude-code at a cloud provider instead of Anthropic's API. */
+const CLAUDE_CLOUD_PROVIDER_FLAGS = [
+	{ envVarName: 'CLAUDE_CODE_USE_BEDROCK', scope: 'bedrock', label: 'AWS Bedrock' },
+	{ envVarName: 'CLAUDE_CODE_USE_VERTEX', scope: 'vertex', label: 'Google Vertex AI' },
+] as const;
+
+/**
+ * Copilot token vars in the CLI's own precedence order, verified against
+ * `copilot login --help`. Note the error bank's `gh auth login` advice is stale;
+ * the CLI's command is `copilot login`.
+ */
+const COPILOT_TOKEN_ENV_KEYS = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'] as const;
+
+/**
+ * OpenCode recognizes roughly a hundred provider key vars (`ANTHROPIC_API_KEY`,
+ * `GROQ_API_KEY`, `MOONSHOT_API_KEY`, ...), and `agents/definitions.ts` lists
+ * none of them - its opencode entry only sets `OPENCODE_CONFIG_CONTENT`. Rather
+ * than freeze a list that goes stale on every opencode release, match the shape
+ * they all share, plus the one non-conforming name.
+ *
+ * The trade-off is a false positive: a stray `OPENAI_API_KEY` in the environment
+ * of an agent that is really logged in via OAuth reads as `api-key`. That costs
+ * a login button we would not have offered anyway, which is the safer direction
+ * to be wrong in.
+ */
+const OPENCODE_API_KEY_PATTERN = /^[A-Z][A-Z0-9_]*_API_KEY$/;
+const OPENCODE_EXTRA_SECRET_ENV_KEYS = ['ANTHROPIC_AUTH_TOKEN'] as const;
+
+/** Where each provider keeps its OAuth credentials, relative to `homeDir`. */
+const DEFAULT_CONFIG_SUBDIRS = {
+	'claude-code': '.claude',
+	codex: '.codex',
+	'copilot-cli': '.copilot',
+	// Verified from `opencode auth list`, which prints the credential file path.
+	opencode: '.local/share/opencode',
+} as const;
+
+// ============================================================================
+// Env helpers
+// ============================================================================
+
+/**
+ * Read an env var, treating whitespace-only as unset.
+ *
+ * Both halves of that rule are load-bearing. `resolveCodexHomeKey()` length-checks
+ * `CODEX_HOME` while `resolveConfigDirKey()` uses `??`, so an empty
+ * `CLAUDE_CONFIG_DIR` silently resolves to the process cwd there - this module
+ * uses the Codex semantics everywhere. And `resolveFailoverEnv()` skips blank
+ * values so a half-filled editor row cannot clobber a working var; a half-filled
+ * row must not invent a credential identity either.
+ */
+function envValue(env: Record<string, string>, key: string): string {
+	return (env[key] ?? '').trim();
+}
+
+/** First key in `keys` with a non-blank value, or `undefined`. */
+function firstSetKey(env: Record<string, string>, keys: readonly string[]): string | undefined {
+	return keys.find((key) => envValue(env, key) !== '');
+}
+
+/**
+ * Whether a boolean-ish env flag is on. Unset, empty, `0`, `false`, `no`, and
+ * `off` are off; anything else (including `1` and `true`) is on.
+ */
+function isFlagEnabled(value: string): boolean {
+	const normalized = value.trim().toLowerCase();
+	if (normalized === '') return false;
+	return !['0', 'false', 'no', 'off'].includes(normalized);
+}
+
+/**
+ * Merge agent-level and session-level `customEnvVars` into the effective env for
+ * a spawn. Session-level wins.
+ *
+ * This precedence is already implemented in `claude-usage-startup.ts`
+ * (`buildTarget()`) and `useQuotaAccounts.ts`, once on each side of the IPC
+ * boundary. This is the third site and the last one that should be written by
+ * hand: every consumer in the auth feature calls this so main and renderer
+ * cannot drift.
+ *
+ * Blank values are preserved rather than dropped - an explicitly emptied session
+ * var is how a user turns an inherited agent-level var off, and {@link envValue}
+ * already reads blank as unset at the point of use.
+ */
+export function mergeEffectiveEnv(
+	agentLevel: Record<string, string> | undefined,
+	sessionLevel: Record<string, string> | undefined
+): Record<string, string> {
+	return { ...(agentLevel ?? {}), ...(sessionLevel ?? {}) };
+}
+
+// ============================================================================
+// Path canonicalization
+// ============================================================================
+
+/** True for `/x`, `C:/x`, and `C:\x`. */
+function isAbsolutePath(candidate: string): boolean {
+	return candidate.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(candidate);
+}
+
+/** Split a path into its root prefix (`''`, `'/'`, or `'C:/'`) and the rest. */
+function splitRoot(candidate: string): { root: string; rest: string } {
+	const drive = /^([a-zA-Z]):\//.exec(candidate);
+	if (drive) return { root: `${drive[1].toUpperCase()}:/`, rest: candidate.slice(drive[0].length) };
+	if (candidate.startsWith('/')) return { root: '/', rest: candidate.slice(1) };
+	return { root: '', rest: candidate };
+}
+
+/**
+ * Canonicalize a config-directory path so the same directory written three ways
+ * produces one identity key.
+ *
+ * Handles `~`, trailing separators, `.` / `..` segments, and Windows backslashes;
+ * resolves a relative path against `homeDir` rather than the process cwd, because
+ * a config dir is a home-relative concept and the app's cwd has nothing to do
+ * with it (this is the one place the behavior differs from `path.resolve`, which
+ * has no home to resolve against). Purely lexical otherwise, matching
+ * `resolveConfigDirKey()`: no `realpath`, no symlink resolution, no case folding.
+ *
+ * Returns `''` for a blank input so callers can fall back to their default.
+ */
+export function canonicalizeDirPath(raw: string, homeDir: string): string {
+	const trimmed = raw.trim();
+	if (trimmed === '') return '';
+
+	const home = homeDir.trim().replace(/\\/g, '/');
+	let candidate = trimmed.replace(/\\/g, '/');
+	if (candidate === '~') candidate = home;
+	else if (candidate.startsWith('~/')) candidate = `${home}/${candidate.slice(2)}`;
+	if (!isAbsolutePath(candidate)) candidate = `${home}/${candidate}`;
+
+	const { root, rest } = splitRoot(candidate);
+	const segments: string[] = [];
+	for (const segment of rest.split('/')) {
+		if (segment === '' || segment === '.') continue;
+		if (segment === '..') {
+			segments.pop();
+			continue;
+		}
+		segments.push(segment);
+	}
+	return root + segments.join('/');
+}
+
+/** Last segment of a canonical path, used as the UI label for a config dir. */
+function basename(canonicalPath: string): string {
+	const segments = canonicalPath.split('/').filter((segment) => segment !== '');
+	return segments[segments.length - 1] ?? canonicalPath;
+}
+
+/**
+ * Host (with port) of a base URL, lowercased. Falls back to the leading path
+ * segment for values a URL parser rejects, so a typo still produces a stable
+ * scope instead of collapsing every malformed gateway into one identity.
+ */
+function baseUrlHost(rawUrl: string): string {
+	try {
+		return new URL(rawUrl).host.toLowerCase() || rawUrl.toLowerCase();
+	} catch {
+		return rawUrl
+			.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '')
+			.split('/')[0]
+			.toLowerCase();
+	}
+}
+
+// ============================================================================
+// Secret fingerprinting
+// ============================================================================
+
+/** SHA-256 round constants (first 32 bits of the cube roots of the first 64 primes). */
+// prettier-ignore
+const SHA256_K = new Uint32Array([
+	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+	0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+	0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+	0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+	0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+	0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+	0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+
+/** 32-bit rotate right. */
+function rotr(value: number, bits: number): number {
+	return ((value >>> bits) | (value << (32 - bits))) >>> 0;
+}
+
+/**
+ * SHA-256 of a UTF-8 string, as lowercase hex.
+ *
+ * Vendored (FIPS 180-4) rather than imported so this module stays free of Node
+ * builtins - see the purity note at the top of the file. `TextEncoder`,
+ * `Uint32Array`, and `DataView` are globals in both processes.
+ */
+function sha256Hex(input: string): string {
+	const message = new TextEncoder().encode(input);
+	const bitLength = message.length * 8;
+	// One 0x80 byte, then zeros, then a 64-bit big-endian length, padded to 64.
+	const withTerminator = message.length + 1;
+	const total = withTerminator + ((56 - (withTerminator % 64) + 64) % 64) + 8;
+
+	const buffer = new Uint8Array(total);
+	buffer.set(message);
+	buffer[message.length] = 0x80;
+	const view = new DataView(buffer.buffer);
+	view.setUint32(total - 8, Math.floor(bitLength / 0x100000000));
+	view.setUint32(total - 4, bitLength >>> 0);
+
+	const h = new Uint32Array([
+		0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+	]);
+	const w = new Uint32Array(64);
+
+	for (let offset = 0; offset < total; offset += 64) {
+		for (let i = 0; i < 16; i++) w[i] = view.getUint32(offset + i * 4);
+		for (let i = 16; i < 64; i++) {
+			const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+			const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+			w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+		}
+
+		let [a, b, c, d, e, f, g, hh] = h;
+		for (let i = 0; i < 64; i++) {
+			const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+			const ch = (e & f) ^ (~e & g);
+			const t1 = (hh + S1 + ch + SHA256_K[i] + w[i]) >>> 0;
+			const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+			const maj = (a & b) ^ (a & c) ^ (b & c);
+			const t2 = (S0 + maj) >>> 0;
+			hh = g;
+			g = f;
+			f = e;
+			e = (d + t1) >>> 0;
+			d = c;
+			c = b;
+			b = a;
+			a = (t1 + t2) >>> 0;
+		}
+
+		h[0] = (h[0] + a) >>> 0;
+		h[1] = (h[1] + b) >>> 0;
+		h[2] = (h[2] + c) >>> 0;
+		h[3] = (h[3] + d) >>> 0;
+		h[4] = (h[4] + e) >>> 0;
+		h[5] = (h[5] + f) >>> 0;
+		h[6] = (h[6] + g) >>> 0;
+		h[7] = (h[7] + hh) >>> 0;
+	}
+
+	return Array.from(h, (word) => word.toString(16).padStart(8, '0')).join('');
+}
+
+/**
+ * Short, stable, non-reversible tag for a secret.
+ *
+ * Two different secrets get two different tags, the same secret always gets the
+ * same one, and the raw value can never be recovered from it. The `fp_` prefix
+ * is there so a reader of a log line or a store record recognizes it as a
+ * fingerprint rather than mistaking it for a truncated key.
+ *
+ * This is the ONLY representation of a secret allowed to leave this module. The
+ * raw value must never reach an identity, the store, a log line, or the UI.
+ */
+export function fingerprintSecret(value: string): string {
+	return `fp_${sha256Hex(value).slice(0, 8)}`;
+}
+
+// ============================================================================
+// Resolver
+// ============================================================================
+
+/** Assemble an identity and derive its dedup key. */
+function buildIdentity(parts: Omit<CredentialIdentity, 'key'>): CredentialIdentity {
+	return {
+		key: `${parts.provider}::${parts.kind}::${parts.scope}::${parts.host}`,
+		...parts,
+	};
+}
+
+/** An `api-key` identity scoped to a fingerprint of the secret it presents. */
+function apiKeyIdentity(
+	provider: string,
+	host: string,
+	envVarName: string,
+	secret: string
+): CredentialIdentity {
+	const fingerprint = fingerprintSecret(secret);
+	return buildIdentity({
+		provider,
+		kind: 'api-key',
+		scope: fingerprint,
+		host,
+		envVarName,
+		label: `${getAgentDisplayName(provider)} ${fingerprint}`,
+	});
+}
+
+/** An `oauth` identity scoped to a canonical config directory. */
+function oauthIdentity(
+	provider: string,
+	host: string,
+	configDir: string,
+	envVarName?: string
+): CredentialIdentity {
+	return buildIdentity({
+		provider,
+		kind: 'oauth',
+		scope: configDir,
+		host,
+		envVarName,
+		configDir,
+		label: basename(configDir),
+	});
+}
+
+function resolveClaudeCode(
+	env: Record<string, string>,
+	host: string,
+	homeDir: string
+): CredentialIdentity {
+	// Cloud provider first: Bedrock/Vertex ignore both the config dir and the
+	// Anthropic vars, so anything below would describe a credential the CLI is
+	// not going to use.
+	for (const flag of CLAUDE_CLOUD_PROVIDER_FLAGS) {
+		if (!isFlagEnabled(envValue(env, flag.envVarName))) continue;
+		return buildIdentity({
+			provider: 'claude-code',
+			kind: 'cloud-provider',
+			scope: flag.scope,
+			host,
+			envVarName: flag.envVarName,
+			label: flag.label,
+		});
+	}
+
+	// A gateway outranks the token check even when a token is present: the token
+	// belongs to the gateway operator, and `claude auth login` cannot fix it.
+	// Same reasoning as `failoverUnsetEnvKeys()` in shared/providerFailover.ts.
+	const baseUrl = envValue(env, 'ANTHROPIC_BASE_URL');
+	if (baseUrl !== '') {
+		const gatewayHost = baseUrlHost(baseUrl);
+		return buildIdentity({
+			provider: 'claude-code',
+			kind: 'gateway',
+			scope: gatewayHost,
+			host,
+			envVarName: 'ANTHROPIC_BASE_URL',
+			label: gatewayHost,
+		});
+	}
+
+	const secretKey = firstSetKey(env, ANTHROPIC_SECRET_ENV_KEYS);
+	if (secretKey) return apiKeyIdentity('claude-code', host, secretKey, envValue(env, secretKey));
+
+	const configured = envValue(env, 'CLAUDE_CONFIG_DIR');
+	const configDir = canonicalizeDirPath(
+		configured || `${homeDir}/${DEFAULT_CONFIG_SUBDIRS['claude-code']}`,
+		homeDir
+	);
+	return oauthIdentity('claude-code', host, configDir, 'CLAUDE_CONFIG_DIR');
+}
+
+function resolveCodex(
+	env: Record<string, string>,
+	host: string,
+	homeDir: string
+): CredentialIdentity {
+	const secret = envValue(env, 'OPENAI_API_KEY');
+	if (secret !== '') return apiKeyIdentity('codex', host, 'OPENAI_API_KEY', secret);
+
+	const configured = envValue(env, 'CODEX_HOME');
+	const configDir = canonicalizeDirPath(
+		configured || `${homeDir}/${DEFAULT_CONFIG_SUBDIRS.codex}`,
+		homeDir
+	);
+	return oauthIdentity('codex', host, configDir, 'CODEX_HOME');
+}
+
+function resolveCopilot(
+	env: Record<string, string>,
+	host: string,
+	homeDir: string
+): CredentialIdentity {
+	const tokenKey = firstSetKey(env, COPILOT_TOKEN_ENV_KEYS);
+	if (tokenKey) return apiKeyIdentity('copilot-cli', host, tokenKey, envValue(env, tokenKey));
+
+	// `copilot login` stores its device-flow token in the system credential store,
+	// falling back to a plain-text config under ~/.copilot. No env var relocates
+	// it, so the config dir is the whole scope and there is nothing to name.
+	const configDir = canonicalizeDirPath(
+		`${homeDir}/${DEFAULT_CONFIG_SUBDIRS['copilot-cli']}`,
+		homeDir
+	);
+	return oauthIdentity('copilot-cli', host, configDir);
+}
+
+function resolveOpenCode(
+	env: Record<string, string>,
+	host: string,
+	homeDir: string
+): CredentialIdentity {
+	// OpenCode keeps every provider's credential in one auth.json, so a key set
+	// for ANY provider changes what this agent presents. Fingerprint the whole
+	// matching set, sorted, so the identity is order-independent.
+	const secretKeys = Object.keys(env)
+		.filter(
+			(key) =>
+				OPENCODE_API_KEY_PATTERN.test(key) ||
+				(OPENCODE_EXTRA_SECRET_ENV_KEYS as readonly string[]).includes(key)
+		)
+		.filter((key) => envValue(env, key) !== '')
+		.sort();
+	if (secretKeys.length > 0) {
+		const material = secretKeys.map((key) => `${key}=${envValue(env, key)}`).join('\n');
+		return apiKeyIdentity('opencode', host, secretKeys[0], material);
+	}
+
+	// OPENCODE_CONFIG_DIR is the explicit override; otherwise the credential file
+	// follows XDG, defaulting to ~/.local/share/opencode (verified from the path
+	// `opencode auth list` prints).
+	const explicit = envValue(env, 'OPENCODE_CONFIG_DIR');
+	if (explicit !== '') {
+		return oauthIdentity(
+			'opencode',
+			host,
+			canonicalizeDirPath(explicit, homeDir),
+			'OPENCODE_CONFIG_DIR'
+		);
+	}
+	const xdgDataHome = envValue(env, 'XDG_DATA_HOME');
+	if (xdgDataHome !== '') {
+		return oauthIdentity(
+			'opencode',
+			host,
+			canonicalizeDirPath(`${xdgDataHome}/opencode`, homeDir),
+			'XDG_DATA_HOME'
+		);
+	}
+	const configDir = canonicalizeDirPath(`${homeDir}/${DEFAULT_CONFIG_SUBDIRS.opencode}`, homeDir);
+	return oauthIdentity('opencode', host, configDir);
+}
+
+/**
+ * Map a session onto the credential it will present.
+ *
+ * Pure: the same input always produces the same identity, and nothing is read
+ * from disk, the environment of the calling process, or the network. Within each
+ * provider the checks run most-specific first, so a gateway agent that also
+ * carries a config dir resolves as a gateway.
+ *
+ * Providers with no verified auth surface (factory-droid, terminal, and the
+ * hidden agents) resolve to `kind: 'unknown'`. Consumers MUST render those as
+ * {@link ProviderAuthStatus} `unsupported`, never as `logged-out`: claiming a
+ * login has expired when nothing was ever probed sends the user to a command
+ * that does not exist.
+ */
+export function resolveCredentialIdentity(input: CredentialIdentityInput): CredentialIdentity {
+	const { toolType, env, sshRemoteId, homeDir } = input;
+	// The same account dir on two machines is two logins. Keying on the host is
+	// what stops a remote agent's credential from masquerading as the local one.
+	const host = sshRemoteId ? `ssh:${sshRemoteId}` : 'local';
+
+	switch (toolType) {
+		case 'claude-code':
+			return resolveClaudeCode(env, host, homeDir);
+		case 'codex':
+			return resolveCodex(env, host, homeDir);
+		case 'copilot-cli':
+			return resolveCopilot(env, host, homeDir);
+		case 'opencode':
+			return resolveOpenCode(env, host, homeDir);
+		default:
+			return buildIdentity({
+				provider: toolType,
+				kind: 'unknown',
+				scope: 'default',
+				host,
+				label: getAgentDisplayName(toolType),
+			});
+	}
+}
