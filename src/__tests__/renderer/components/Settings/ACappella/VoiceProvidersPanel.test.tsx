@@ -204,16 +204,4 @@ describe('VoiceProvidersPanel', () => {
 		expect(await screen.findByText('Audio is sent to OpenAI.')).toBeInTheDocument();
 		expect(screen.queryByLabelText('Speech-to-Text provider')).not.toBeInTheDocument();
 	});
-
-	it('previews one fixed line so two voices can be compared', async () => {
-		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
-
-		fireEvent.click(await screen.findByText('Preview'));
-
-		await waitFor(() =>
-			expect(voice().previewVoice).toHaveBeenCalledWith(
-				'Backend agent finished the migration and all tests pass.'
-			)
-		);
-	});
 });

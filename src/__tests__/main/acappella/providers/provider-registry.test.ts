@@ -472,6 +472,9 @@ describe('provider registry', () => {
 			realtime: undefined,
 			voiceId: 'af_heart',
 			rate: 1.1,
+			// Clamped rather than passed through: this becomes a gain on a live
+			// output node, so an absent or nonsensical value reads as full volume.
+			volume: 1,
 		});
 	});
 
@@ -486,6 +489,7 @@ describe('provider registry', () => {
 			realtime: undefined,
 			voiceId: undefined,
 			rate: undefined,
+			volume: 1,
 		});
 	});
 

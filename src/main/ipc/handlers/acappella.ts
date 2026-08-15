@@ -623,7 +623,8 @@ async function listVoiceOptions(
  */
 async function previewVoiceLine(
 	deps: ACappellaHandlerDependencies,
-	text: string
+	text: string,
+	voiceId?: string
 ): Promise<boolean> {
 	const live = getVoiceSessionService();
 	if (live && live.getState() !== 'idle') return false;
@@ -636,7 +637,10 @@ async function previewVoiceLine(
 	let spoke = false;
 	for await (const chunk of activePipeline.providers.tts.speak(text, {
 		utteranceId: `preview-${Date.now()}`,
-		voiceId: settings.voiceId,
+		// The caller may name a voice it has NOT selected. That is the point of a
+		// per-voice preview: hearing a voice before committing to it beats
+		// selecting each one in turn and undoing the ones you did not want.
+		voiceId: voiceId ?? settings.voiceId,
 		rate: settings.rate,
 	})) {
 		audioBridge.handleSpeechChunk(chunk);
@@ -806,9 +810,10 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	const wrappedPreviewVoice = withIpcErrorLogging(
 		handlerOpts('previewVoice'),
-		async (text: unknown): Promise<boolean> => {
+		async (text: unknown, voiceId: unknown): Promise<boolean> => {
 			if (typeof text !== 'string' || !text.trim()) throw new Error('InvalidPreviewText');
-			return previewVoiceLine(deps, text);
+			if (voiceId !== undefined && typeof voiceId !== 'string') throw new Error('InvalidVoiceId');
+			return previewVoiceLine(deps, text, voiceId || undefined);
 		}
 	);
 
@@ -1004,10 +1009,13 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		return wrappedListVoices(event);
 	});
 
-	ipcMain.handle('acappella:preview-voice', async (event, text: unknown): Promise<boolean> => {
-		requireEnabled(settingsStore);
-		return wrappedPreviewVoice(event, text);
-	});
+	ipcMain.handle(
+		'acappella:preview-voice',
+		async (event, text: unknown, voiceId: unknown): Promise<boolean> => {
+			requireEnabled(settingsStore);
+			return wrappedPreviewVoice(event, text, voiceId);
+		}
+	);
 
 	ipcMain.handle('acappella:set-volume', async (event, volume: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);

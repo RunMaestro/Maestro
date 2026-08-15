@@ -18,8 +18,12 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			showAgentName: true,
 			showSessionIdPill: true,
 			showSessionCostPill: true,
+			encoreFeatures: {},
 		})
 	),
+	// The header's voice pill gates on this. Mocked to off, so these tests keep
+	// describing the header a user without the Encore Feature sees.
+	selectACappellaEnabled: () => false,
 }));
 
 // Mutable UI state + stable setters so tests can drive the sidebar opener.

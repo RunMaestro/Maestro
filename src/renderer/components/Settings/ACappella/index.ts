@@ -6,6 +6,7 @@ export { VoiceSelfTestCard } from './VoiceSelfTestCard';
 export { VoiceLatencyCard } from './VoiceLatencyCard';
 export { VoiceProvidersPanel } from './VoiceProvidersPanel';
 export { VoiceControlsPanel } from './VoiceControlsPanel';
+export { VoiceOutputPanel, VOICE_PREVIEW_LINE } from './VoiceOutputPanel';
 export { AgentWakePhraseSection } from './AgentWakePhraseSection';
 export { DEFAULT_VOICE_CONTROLS, readVoiceControls, useVoiceControls } from './useVoiceControls';
 export type { AgentWakePhrase, VoiceControlSettings } from './useVoiceControls';
