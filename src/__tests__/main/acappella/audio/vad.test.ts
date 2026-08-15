@@ -82,6 +82,15 @@ describe('measure', () => {
 		expect(measure(new Int16Array(0))).toEqual({ rms: 0, zeroCrossingRate: 0 });
 	});
 
+	it('reports a real level for a one-sample frame without dividing by zero', () => {
+		// A truncated frame is a transport artefact, not a signal. The level is
+		// still measurable; the crossing rate needs two samples to have a meaning,
+		// and a NaN here would poison every threshold comparison downstream.
+		const { rms, zeroCrossingRate } = measure(new Int16Array([16384]));
+		expect(rms).toBeCloseTo(0.5, 2);
+		expect(zeroCrossingRate).toBe(0);
+	});
+
 	it('puts a 200 Hz tone inside the default zero-crossing band', () => {
 		const { zeroCrossingRate } = measure(tone(0.5));
 		expect(zeroCrossingRate).toBeGreaterThan(DEFAULT_VAD_CONFIG.minZeroCrossingRate);

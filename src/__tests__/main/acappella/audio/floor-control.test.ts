@@ -563,6 +563,35 @@ describe('failures', () => {
 		expect(h.session.starts).toHaveLength(1);
 	});
 
+	it('reports a throwing floor subscriber without abandoning the rest of the action', async () => {
+		const session = new FakeSession();
+		const errors: Error[] = [];
+		const floor = createFloorController({
+			session,
+			onError: (error) => errors.push(error),
+			// The capture gate is this seam and it sends IPC, so a window destroyed
+			// between the press and the notify throws right here.
+			onFloorChange: () => {
+				throw new Error('audio host is gone');
+			},
+		});
+
+		await floor.press();
+		expect(errors).toHaveLength(1);
+		expect(captureException).toHaveBeenCalled();
+		// The session did open; only the notification failed.
+		expect(session.starts).toHaveLength(1);
+
+		await floor.release();
+		await floor.press();
+
+		// The close notify throws too, and the session is still stopped: a listener
+		// that cannot be told must not leave a live session behind a shut floor.
+		expect(errors).toHaveLength(2);
+		expect(session.stops).toEqual(['user']);
+		expect(floor.isFloorOpen).toBe(false);
+	});
+
 	it('reports a failing stop without leaving the floor open', async () => {
 		const h = harness();
 		await h.floor.press();
