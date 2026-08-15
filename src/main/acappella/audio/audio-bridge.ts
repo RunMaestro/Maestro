@@ -197,6 +197,23 @@ export class VoiceAudioBridge {
 	}
 
 	/**
+	 * Drop playback gain, for a barge-in the pipeline did not see coming.
+	 *
+	 * The pipeline already ducks on a CANDIDATE frame, before the detector has
+	 * confirmed anything, which is what makes a spoken interruption feel instant.
+	 * This is the other door: a client button, and the Phase 10 phone, where the
+	 * first the audio path hears of it is that the session cancelled a run.
+	 */
+	duckPlayback(gain: number, ms: number): void {
+		this.send({ kind: 'duck', gain, ms });
+	}
+
+	/** Discard audio already queued in the host. Audio the user talked over. */
+	flushPlayback(): void {
+		this.send({ kind: 'flush' });
+	}
+
+	/**
 	 * Stop capture, release the host, and drop the subscription. Safe to repeat.
 	 *
 	 * The disposed flag is set LAST on purpose: `pipeline.dispose()` is what sends

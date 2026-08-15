@@ -312,13 +312,20 @@ export class SpeechScheduler {
 			// back; `cancel()` has emitted `speak-end` and moved on.
 			if (this.ended || this.utteranceId !== utteranceId) return;
 
-			this.pipeline.shift();
 			// The event fires before the audio reaches the sink, so the sentence is on
 			// screen by the time it is audible rather than after it.
 			this.options.onSentence({ utteranceId, index: this.delivered, text: head.sentence });
-			for (const chunk of chunks) this.options.onChunk?.(chunk);
+
+			// A barge-in can arrive from INSIDE that event: the transcript rendering a
+			// sentence is exactly what a user talks over. Checked before the shift, so
+			// a sentence that was announced but never audible is reported as unspoken
+			// rather than vanishing from both lists.
+			if (this.ended || this.utteranceId !== utteranceId) return;
+
+			this.pipeline.shift();
 			this.spoken.push(head.sentence);
 			this.delivered += 1;
+			for (const chunk of chunks) this.options.onChunk?.(chunk);
 		}
 	}
 
@@ -338,7 +345,14 @@ export class SpeechScheduler {
 		) {
 			const sentence = this.queue.shift() as string;
 			this.started += 1;
-			this.pipeline.push({ sentence, chunks: this.synthesize(utteranceId, sentence) });
+			const chunks = this.synthesize(utteranceId, sentence);
+			// A prefetched sentence can reject long before the delivery loop reaches
+			// it - a provider that failed for the whole run fails every sentence in
+			// flight. Attaching a handler here is what keeps that from surfacing as an
+			// unhandled rejection; the delivery loop still sees the rejection when it
+			// awaits the same promise, and still ends the run with `error`.
+			void chunks.catch(() => {});
+			this.pipeline.push({ sentence, chunks });
 		}
 	}
 

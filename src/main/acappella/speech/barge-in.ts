@@ -119,9 +119,16 @@ export class BargeInController {
 		this.speechStartedAt = null;
 	}
 
-	/** False while the guard window is open, or when nothing is speaking. */
-	canInterrupt(): boolean {
+	/**
+	 * False while the guard window is open, or when nothing is speaking.
+	 *
+	 * The guard applies to VOICE only. A button press carries no ambiguity about
+	 * who pressed it, so refusing one because the assistant started talking 80 ms
+	 * ago would be a dead control rather than a protection.
+	 */
+	canInterrupt(source: InterruptSource = 'voice'): boolean {
 		if (this.speechStartedAt === null) return false;
+		if (source !== 'voice') return true;
 		return this.now() - this.speechStartedAt >= this.guardMs;
 	}
 
@@ -132,7 +139,7 @@ export class BargeInController {
 	 *          still open, so a self-interrupt is a no-op rather than an error.
 	 */
 	trigger(source: InterruptSource = 'voice'): BargeInOutcome | null {
-		if (!this.canInterrupt()) return null;
+		if (!this.canInterrupt(source)) return null;
 
 		const steps: BargeInStep[] = [];
 
