@@ -328,7 +328,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							willAutoRetryBatch
 								? '- Agent Resilience is retrying this automatically; the run will continue on its own once the provider recovers.'
 								: agentError.type === 'auth_expired'
-									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
+									? '- Sign in from the agent error dialog (or the provider badge in the Left Bar); Maestro runs the login for you'
 									: agentError.type === 'token_exhaustion'
 										? '- Start a new session to reset the context window'
 										: agentError.type === 'rate_limited'

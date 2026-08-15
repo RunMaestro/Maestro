@@ -1,17 +1,32 @@
 /**
  * Wizard Error Detection
  *
- * Detects provider errors from agent output during wizard conversations.
- * Provides user-friendly error messages and recovery guidance.
+ * Detects provider errors from agent output during wizard conversations and
+ * turns them into something the conversation screen can show.
+ *
+ * The regexes are NOT here. This module used to carry its own bank of about
+ * twenty patterns, including six for auth, which had already drifted behind the
+ * canonical bank in `src/shared/agentErrorPatterns.ts` (eleven auth patterns for
+ * claude-code alone) and was provider-agnostic in a screen that always knows
+ * which provider it is driving. Two banks means the wizard recognises a failure
+ * the rest of the app does not, or misses one it does. So detection now runs
+ * through the canonical bank for the agent actually in use, and what stays here
+ * is presentation: a title, a recovery hint, and whether retrying the same
+ * message could possibly help.
+ *
+ * The auth hint points INTO the app. Maestro signs the user in from the Auth
+ * Recovery Modal, so sending them to a terminal to guess a login command is a
+ * dead end - see `useWizardAuthRecovery` for the button that opens it.
  */
 
-export type WizardErrorType =
-	| 'auth_expired'
-	| 'rate_limited'
-	| 'token_exhaustion'
-	| 'network_error'
-	| 'agent_crashed'
-	| 'unknown';
+import { getErrorPatterns, matchErrorPattern } from '../../../../shared/agentErrorPatterns';
+import type { AgentErrorType, ToolType } from '../../../types';
+
+/**
+ * The error taxonomy is the app's, not the wizard's. Kept as an alias because
+ * the screens import this name.
+ */
+export type WizardErrorType = AgentErrorType;
 
 export interface WizardError {
 	type: WizardErrorType;
@@ -22,197 +37,72 @@ export interface WizardError {
 	canRetry: boolean;
 }
 
+/** Heading for the error panel, per error type. */
+const ERROR_TITLES: Record<AgentErrorType, string> = {
+	auth_expired: 'Authentication Required',
+	token_exhaustion: 'Context Limit Reached',
+	rate_limited: 'Rate Limited',
+	network_error: 'Network Error',
+	agent_crashed: 'Agent Error',
+	permission_denied: 'Permission Denied',
+	session_not_found: 'Session Not Found',
+	hitl_gate: 'Review Required',
+	unknown: 'Agent Error',
+};
+
 /**
- * Error patterns for detecting provider errors in agent output.
- * These patterns match common error messages from Claude Code and other providers.
+ * What to do about it. Every line describes something the user can do from
+ * here - none of them sends the user to a terminal.
  */
-const ERROR_PATTERNS: Array<{
-	pattern: RegExp;
-	type: WizardErrorType;
-	title: string;
-	message: string;
-	recoveryHint: string;
-	canRetry: boolean;
-}> = [
-	// Authentication errors
-	{
-		pattern: /OAuth\s*token\s*has\s*expired/i,
-		type: 'auth_expired',
-		title: 'Authentication Expired',
-		message: 'Your OAuth token has expired.',
-		recoveryHint:
-			'Run "claude login" in your terminal to re-authenticate, then try the wizard again.',
-		canRetry: false,
-	},
-	{
-		pattern: /authentication_error/i,
-		type: 'auth_expired',
-		title: 'Authentication Error',
-		message: 'Authentication failed with the provider.',
-		recoveryHint:
-			'Run "claude login" in your terminal to re-authenticate, then try the wizard again.',
-		canRetry: false,
-	},
-	{
-		pattern: /invalid\s*api\s*key/i,
-		type: 'auth_expired',
-		title: 'Invalid API Key',
-		message: 'Your API key is invalid or has been revoked.',
-		recoveryHint: 'Check your API key configuration or run "claude login" to re-authenticate.',
-		canRetry: false,
-	},
-	{
-		pattern: /please\s*run\s*.*login/i,
-		type: 'auth_expired',
-		title: 'Login Required',
-		message: 'You need to log in to the provider.',
-		recoveryHint: 'Run the login command shown in your terminal, then try the wizard again.',
-		canRetry: false,
-	},
-	{
-		pattern: /unauthorized|401/i,
-		type: 'auth_expired',
-		title: 'Unauthorized',
-		message: 'Your credentials are not valid.',
-		recoveryHint: 'Re-authenticate with your provider and try the wizard again.',
-		canRetry: false,
-	},
-	{
-		pattern: /not\s*authenticated/i,
-		type: 'auth_expired',
-		title: 'Not Authenticated',
-		message: 'You are not currently authenticated.',
-		recoveryHint: 'Run the login command for your agent provider.',
-		canRetry: false,
-	},
+const RECOVERY_HINTS: Record<AgentErrorType, string> = {
+	auth_expired:
+		'Sign in below and Maestro runs the login for you, then pick up where you left off.',
+	token_exhaustion: 'Start the wizard again with a fresh conversation.',
+	rate_limited: 'Wait a moment, then try again.',
+	network_error: 'Check your internet connection, then try again.',
+	agent_crashed: 'Try again. If it keeps happening, check the agent installation.',
+	permission_denied: 'The agent was refused access. Check the folder permissions, then try again.',
+	session_not_found: 'Start the wizard again with a fresh conversation.',
+	hitl_gate: 'The agent is waiting on a human review step. Try again once it is cleared.',
+	unknown: 'Try again. If the problem persists, check the debug logs below.',
+};
 
-	// Rate limiting
-	{
-		pattern: /rate\s*limit/i,
-		type: 'rate_limited',
-		title: 'Rate Limited',
-		message: 'Too many requests to the provider.',
-		recoveryHint: 'Wait a few minutes before trying again.',
-		canRetry: true,
-	},
-	{
-		pattern: /too\s*many\s*requests|429/i,
-		type: 'rate_limited',
-		title: 'Too Many Requests',
-		message: 'The provider is limiting your requests.',
-		recoveryHint: 'Wait a minute or two before retrying.',
-		canRetry: true,
-	},
-	{
-		pattern: /overloaded|529/i,
-		type: 'rate_limited',
-		title: 'Service Overloaded',
-		message: 'The service is temporarily overloaded.',
-		recoveryHint: 'The provider is experiencing high demand. Try again in a few moments.',
-		canRetry: true,
-	},
-	{
-		pattern: /quota\s*exceeded/i,
-		type: 'rate_limited',
-		title: 'Quota Exceeded',
-		message: 'Your API quota has been exceeded.',
-		recoveryHint: 'Check your plan limits or wait for your quota to reset.',
-		canRetry: false,
-	},
-
-	// Token/context exhaustion
-	{
-		pattern: /context.*too\s*long|context\s*window/i,
-		type: 'token_exhaustion',
-		title: 'Context Too Long',
-		message: 'The conversation has exceeded the context limit.',
-		recoveryHint: 'Start the wizard again with a fresh conversation.',
-		canRetry: false,
-	},
-	{
-		pattern: /maximum.*tokens|token\s*limit/i,
-		type: 'token_exhaustion',
-		title: 'Token Limit Reached',
-		message: 'The maximum token limit has been reached.',
-		recoveryHint: 'Start the wizard again with a fresh conversation.',
-		canRetry: false,
-	},
-
-	// Network errors
-	{
-		pattern: /connection\s*(failed|refused|error|reset)/i,
-		type: 'network_error',
-		title: 'Connection Failed',
-		message: 'Could not connect to the provider.',
-		recoveryHint: 'Check your internet connection and try again.',
-		canRetry: true,
-	},
-	{
-		pattern: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
-		type: 'network_error',
-		title: 'Network Error',
-		message: 'A network error occurred.',
-		recoveryHint: 'Check your internet connection and firewall settings.',
-		canRetry: true,
-	},
-	{
-		pattern: /network\s*(error|failure|unavailable)/i,
-		type: 'network_error',
-		title: 'Network Unavailable',
-		message: 'The network is unavailable.',
-		recoveryHint: 'Ensure you have an active internet connection.',
-		canRetry: true,
-	},
-	{
-		pattern: /socket\s*hang\s*up/i,
-		type: 'network_error',
-		title: 'Connection Interrupted',
-		message: 'The connection was unexpectedly closed.',
-		recoveryHint: 'This may be a temporary issue. Try again.',
-		canRetry: true,
-	},
-
-	// Agent crashes
-	{
-		pattern: /fatal\s*error|unhandled\s*error|internal\s*error/i,
-		type: 'agent_crashed',
-		title: 'Agent Error',
-		message: 'The agent encountered an unexpected error.',
-		recoveryHint: 'Try again. If the problem persists, check the agent installation.',
-		canRetry: true,
-	},
-	{
-		pattern: /panic/i,
-		type: 'agent_crashed',
-		title: 'Agent Crashed',
-		message: 'The agent crashed unexpectedly.',
-		recoveryHint: 'Try again or restart the application.',
-		canRetry: true,
-	},
-];
+/**
+ * Types where sending the same message again can work.
+ *
+ * This is NOT the bank's `recoverable` flag, which means "the user can fix
+ * this", not "resending helps". An expired login is recoverable and retrying it
+ * is pointless until the user signs in.
+ */
+const RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>([
+	'rate_limited',
+	'network_error',
+	'agent_crashed',
+	'unknown',
+]);
 
 /**
  * Detect provider errors in agent output.
  *
  * @param output - The raw output from the agent (stdout/stderr combined)
+ * @param agentType - The agent that produced it, which selects the pattern bank
  * @returns Detected error or null if no provider error found
  */
-export function detectWizardError(output: string): WizardError | null {
+export function detectWizardError(output: string, agentType: ToolType): WizardError | null {
 	if (!output) return null;
 
-	for (const errorDef of ERROR_PATTERNS) {
-		if (errorDef.pattern.test(output)) {
-			return {
-				type: errorDef.type,
-				title: errorDef.title,
-				message: errorDef.message,
-				recoveryHint: errorDef.recoveryHint,
-				canRetry: errorDef.canRetry,
-			};
-		}
-	}
+	// minLength 0: the streaming guard exists for single-token chunks, and this
+	// is a whole finished output buffer.
+	const match = matchErrorPattern(getErrorPatterns(agentType), output, { minLength: 0 });
+	if (!match) return null;
 
-	return null;
+	return {
+		type: match.type,
+		title: ERROR_TITLES[match.type] ?? ERROR_TITLES.unknown,
+		message: match.message,
+		recoveryHint: RECOVERY_HINTS[match.type] ?? RECOVERY_HINTS.unknown,
+		canRetry: RETRYABLE_TYPES.has(match.type),
+	};
 }
 
 /**

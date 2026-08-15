@@ -497,7 +497,9 @@ class ConversationManager {
 						} else {
 							// Check for provider errors in the output
 							const rawOutput = this.session?.outputBuffer || '';
-							const detectedError = detectWizardError(rawOutput);
+							// The bank is per-agent, so the classification is only as good as
+							// the agent id we hand it - never assume claude-code here.
+							const detectedError = detectWizardError(rawOutput, this.session.agentType);
 
 							if (detectedError) {
 								wizardDebugLogger.log('error', 'Detected provider error', {

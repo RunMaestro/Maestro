@@ -473,6 +473,34 @@ export function getIdentityForSession(sessionId: string): CredentialIdentity | n
 }
 
 /**
+ * The credential an agent TYPE presents, for callers that have no Session.
+ *
+ * The wizard is why this exists: it drives a provider before any agent has been
+ * created, so an auth failure there has a real credential and nothing to hang it
+ * on. Only the agent-level env applies (there is no session to override it), and
+ * the result is not cached because these callers ask once, on an error.
+ *
+ * Fails closed on an unresolved home dir or an SSH remote that names nothing,
+ * for the same reasons as {@link resolveSessionIdentity}.
+ */
+export function getIdentityForAgentType(
+	toolType: string,
+	sshRemoteId?: string | null
+): CredentialIdentity | null {
+	if (!toolType) return null;
+	const state = useProviderAuthStore.getState();
+	if (!state.homeDir) return null;
+
+	const env = mergeEffectiveEnv(state.agentEnvVars[toolType], undefined);
+	return resolveCredentialIdentity({
+		toolType,
+		env,
+		homeDir: state.homeDir,
+		...(sshRemoteId ? { sshRemoteId } : {}),
+	});
+}
+
+/**
  * Every session presenting one credential, in Left Bar order.
  *
  * The counterpart to {@link getIdentityForSession}, and the list a repaired
@@ -563,6 +591,42 @@ export async function markSessionAuthFailure(
 	} catch (error) {
 		logger.warn('Failed to mark session auth failure', LOG_CONTEXT, {
 			sessionId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return null;
+	}
+}
+
+/**
+ * The session-free counterpart of {@link markSessionAuthFailure}, for a failure
+ * observed against an agent TYPE (the wizard runs a provider before any agent
+ * exists).
+ *
+ * Returns the identity rather than the snapshot, because the caller's next move
+ * is to open the recovery modal on it. Marking first is what makes that possible:
+ * the modal resolves its identity out of the snapshot map, so a credential that
+ * has never been probed has to be recorded before it can be repaired.
+ */
+export async function markAgentTypeAuthFailure(
+	toolType: string,
+	sshRemoteId: string | null,
+	message: string
+): Promise<CredentialIdentity | null> {
+	try {
+		await useProviderAuthStore.getState().hydrate();
+		const identity = getIdentityForAgentType(toolType, sshRemoteId);
+		if (!identity) return null;
+		const { status, detail } = authFailureFor(identity, message);
+		await useProviderAuthStore.getState().markIdentityAuthFailure({
+			identity,
+			status,
+			detail,
+			source: 'error-pattern',
+		});
+		return identity;
+	} catch (error) {
+		logger.warn('Failed to mark agent auth failure', LOG_CONTEXT, {
+			toolType,
 			error: error instanceof Error ? error.message : String(error),
 		});
 		return null;

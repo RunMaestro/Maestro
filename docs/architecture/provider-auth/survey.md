@@ -246,6 +246,36 @@ This is the manual-hint surface Phase 05 rewires. `detectWizardError()` returns 
 array order, and `formatWizardError()` renders `title: message\n\nrecoveryHint`. Since the wizard is
 not always driving claude-code, the hint is wrong whenever it is not.
 
+#### Resolved in Phase 05: the two banks are now one (2026-08-15)
+
+The wizard bank is gone. The canonical bank moved to `src/shared/agentErrorPatterns.ts` (unchanged
+patterns; `src/main/parsers/error-patterns.ts` is now a thin wrapper that installs the main logger
+and re-exports), so the renderer can use it directly. It could not before: the module imported
+`main/utils/logger`, which pulls in `fs`/`os`, and the renderer bundle has no Node polyfill.
+`detectWizardError(output, agentType)` now takes the agent it is driving and matches against THAT
+agent's patterns with `minLength: 0`; what stays in `wizardErrorDetection.ts` is presentation only
+(title, recovery hint, and whether resending can help).
+
+Coverage the wizard gained: 11 claude-code auth patterns instead of 6 generic ones, plus the codex,
+opencode, factory-droid and copilot banks it never had, plus `permission_denied` and
+`session_not_found`, which it used to report as an unclassified generic error.
+
+Three wizard patterns have no canonical counterpart, and all three were dropped **deliberately**
+rather than merged in. Each is a bare token that the canonical bank must scan against streaming agent
+output line by line, where the same token appears constantly in ordinary prose and code:
+
+| Wizard-only pattern                       | Why it is not adopted                                                                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401` (bare, in `unauthorized\|401`)      | Canonical requires `api error:\s*401`. A bare `401` matches a line number, a port, a byte count. `unauthorized` alone still covers the real case. |
+| `429` (bare, in `too many requests\|429`) | Same. Canonical keeps `too many requests` for claude-code and scopes numeric codes with `\b` only where the code is unambiguous (`\b529\b`).      |
+| `panic`                                   | An agent discussing a Go panic would be reported as having crashed. `\b(fatal\|unexpected\|internal\|unhandled)\s+error\b` covers a real crash.   |
+
+Also changed while consolidating: the `auth_expired` messages in the claude-code and copilot-cli
+banks no longer name a shell command (`claude login`, `gh auth login`). They state what failed and
+stop there, because the remedy depends on the credential, and `claude login` is not even a real
+command (discrepancy 3 in section 5). The remedy is now the surface's job: the agent error modal,
+the wizard error panel, and the Auth Recovery Modal each name the right one.
+
 ## 4. Provider CLI auth surfaces (verified on this machine, 2026-08-15)
 
 Recorded so later phases do not re-derive them. `claude`, `codex`, `opencode`, and `copilot` are all

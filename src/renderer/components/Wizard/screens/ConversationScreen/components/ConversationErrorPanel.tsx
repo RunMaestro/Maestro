@@ -1,5 +1,7 @@
 import type { CSSProperties } from 'react';
+import { LogIn } from 'lucide-react';
 import type { Theme } from '../../../../../types';
+import type { WizardAuthRecovery } from '../hooks/useWizardAuthRecovery';
 import type { WizardError } from '../../../services/wizardErrorDetection';
 
 export function ConversationErrorPanel({
@@ -7,6 +9,7 @@ export function ConversationErrorPanel({
 	error,
 	detectedError,
 	errorRetryCount,
+	authRecovery,
 	onRetry,
 	onGoBack,
 	onDownloadDebugLogs,
@@ -15,6 +18,8 @@ export function ConversationErrorPanel({
 	error: string;
 	detectedError: WizardError | null;
 	errorRetryCount: number;
+	/** Credential-aware copy and login button for an auth failure; null otherwise. */
+	authRecovery?: WizardAuthRecovery | null;
 	onRetry: () => void;
 	onGoBack: () => void;
 	onDownloadDebugLogs: () => void;
@@ -40,10 +45,27 @@ export function ConversationErrorPanel({
 			</p>
 			{detectedError && (
 				<p className="text-xs mb-3 opacity-80" style={{ color: theme.colors.textDim }}>
-					{detectedError.recoveryHint}
+					{authRecovery?.hint ?? detectedError.recoveryHint}
 				</p>
 			)}
 			<div className="flex justify-center gap-2">
+				{authRecovery?.action && (
+					<button
+						onClick={authRecovery.action.onClick}
+						className="px-4 py-1.5 rounded text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 flex items-center gap-1.5"
+						style={
+							{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.bgMain,
+								'--tw-ring-color': theme.colors.accent,
+								'--tw-ring-offset-color': theme.colors.bgMain,
+							} as CSSProperties
+						}
+					>
+						<LogIn className="w-3.5 h-3.5" />
+						{authRecovery.action.label}
+					</button>
+				)}
 				<button
 					onClick={onRetry}
 					className="px-4 py-1.5 rounded text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1"

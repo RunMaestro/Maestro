@@ -21,6 +21,7 @@ import {
 	useConversationAutoContinue,
 	useConversationBootstrap,
 	useConversationScrollFocus,
+	useWizardAuthRecovery,
 	useWizardConversationSend,
 } from './hooks';
 import { getConversationProviderName } from './utils/providerName';
@@ -147,6 +148,15 @@ export function ConversationScreen({
 	useEffect(() => {
 		handleSendMessageRef.current = handleSendMessage;
 	}, [handleSendMessage]);
+
+	// An auth failure is the one error the wizard can repair itself, so it gets a
+	// credential-aware hint and (for an oauth login) a button, instead of the
+	// generic per-type hint.
+	const authRecovery = useWizardAuthRecovery(
+		detectedError,
+		state.selectedAgent,
+		state.sessionSshRemoteConfig
+	);
 
 	useEffect(() => {
 		if (
@@ -276,6 +286,7 @@ export function ConversationScreen({
 						error={state.conversationError}
 						detectedError={detectedError}
 						errorRetryCount={errorRetryCount}
+						authRecovery={authRecovery}
 						onRetry={handleRetry}
 						onGoBack={previousStep}
 						onDownloadDebugLogs={handleDownloadDebugLogs}
