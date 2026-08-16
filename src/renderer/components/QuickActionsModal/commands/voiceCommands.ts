@@ -24,6 +24,17 @@ interface BuildVoiceCommandsArgs {
 	setQuickActionOpen: (open: boolean) => void;
 }
 
+/**
+ * What a user types when they want this.
+ *
+ * "Talk to Backend" is the clearest label for starting a voice session and the
+ * least findable one: palette search is over labels, so before these existed,
+ * typing "voice" surfaced the transcript toggle and nothing that could actually
+ * start talking. Both the feature's name and the thing it is are here, because
+ * nobody searches for "A Cappella" and everybody searches for "voice".
+ */
+const VOICE_KEYWORDS = ['voice', 'acappella', 'a cappella', 'talk', 'speak', 'microphone', 'mic'];
+
 export function buildVoiceCommands({
 	activeSession,
 	voiceActions,
@@ -38,6 +49,7 @@ export function buildVoiceCommands({
 	if (activeSession) {
 		commands.push({
 			id: 'voiceTalkToAgent',
+			keywords: VOICE_KEYWORDS,
 			label: `Talk to ${activeSession.name}`,
 			// The wake phrase is surfaced here too: the palette is where people go
 			// looking for a capability, and it is the cheapest place to teach them
@@ -54,16 +66,34 @@ export function buildVoiceCommands({
 
 	commands.push({
 		id: 'voiceTalkToConductor',
+		keywords: VOICE_KEYWORDS,
 		label: 'Talk to the Conductor',
 		subtext: 'Open a voice session that can route to any agent',
 		action: () => {
-			void window.maestro.voice.start().catch(() => undefined);
+			void voiceActions.talkToConductor();
 			setQuickActionOpen(false);
 		},
 	});
 
+	// Recovery for a hidden HUD, the same entry the media player has for its
+	// hidden widget: minimizing leaves the session running, so there has to be a
+	// way back to the controls that does not depend on finding the Left Bar pill.
+	if (voiceActions.hudHidden) {
+		commands.push({
+			id: 'voiceShowHud',
+			keywords: VOICE_KEYWORDS,
+			label: 'Show Voice HUD',
+			subtext: 'Bring back the minimized voice controls',
+			action: () => {
+				voiceActions.showHud();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
 	commands.push({
 		id: 'voiceToggleTranscript',
+		keywords: VOICE_KEYWORDS,
 		label: transcriptVisible ? 'Hide Voice Transcript' : 'Show Voice Transcript',
 		action: () => {
 			void toggleTranscript();
@@ -76,6 +106,7 @@ export function buildVoiceCommands({
 	if (voiceActions.hasVoiceFloor) {
 		commands.push({
 			id: 'voiceEndSession',
+			keywords: VOICE_KEYWORDS,
 			label: 'End Voice Session',
 			action: () => {
 				void voiceActions.endVoiceSession();

@@ -41,8 +41,21 @@ export interface VoiceAgentActions {
 	 * exists to prevent.
 	 */
 	talkToAgent: () => Promise<void>;
+	/**
+	 * Open a conductor-scoped session, and un-hide the HUD.
+	 *
+	 * Same un-hiding as {@link talkToAgent}, and here for the same reason: the
+	 * palette used to call `voice.start()` straight through, so asking for the
+	 * conductor while the HUD was minimized opened a microphone whose only
+	 * on-screen surface was still collapsed.
+	 */
+	talkToConductor: () => Promise<void>;
 	/** End whatever voice session is running. */
 	endVoiceSession: () => Promise<void>;
+	/** Bring a minimized or closed HUD back without touching the session. */
+	showHud: () => void;
+	/** True when a session is running behind a HUD the user has put away. */
+	hudHidden: boolean;
 }
 
 /**
@@ -69,6 +82,7 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 	const state = useVoiceSessionStore((s) => s.state);
 	const lastDispatch = useVoiceSessionStore((s) => s.lastDispatch);
 	const wakePhrases = useVoiceUiStore((s) => s.wakePhrases);
+	const minimized = useVoiceUiStore((s) => s.minimized);
 	const setDismissed = useVoiceSessionStore((s) => s.setDismissed);
 	const setMinimized = useVoiceUiStore((s) => s.setMinimized);
 
@@ -104,9 +118,29 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 		}
 	}, [agentSessionId, enabled, setDismissed, setMinimized]);
 
+	const talkToConductor = useCallback(async () => {
+		if (!enabled) return;
+		setDismissed(false);
+		setMinimized(false);
+		try {
+			await window.maestro.voice.start();
+		} catch (error) {
+			notifyToast({
+				color: 'orange',
+				title: 'Voice session could not start',
+				message: (error as Error).message,
+			});
+		}
+	}, [enabled, setDismissed, setMinimized]);
+
 	const endVoiceSession = useCallback(async () => {
 		await window.maestro.voice.stop().catch(() => undefined);
 	}, []);
+
+	const showHud = useCallback(() => {
+		setDismissed(false);
+		setMinimized(false);
+	}, [setDismissed, setMinimized]);
 
 	return {
 		enabled,
@@ -114,6 +148,11 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 		isSpeaking,
 		wakePhrase: agentSessionId ? (wakePhrases[agentSessionId] ?? null) : null,
 		talkToAgent,
+		talkToConductor,
 		endVoiceSession,
+		showHud,
+		// Minimized only, matching `VoiceStatusIndicator`: `dismissed` is the close
+		// button, and it ends the session, so it is never a HUD worth restoring.
+		hudHidden: isVoiceSessionActive(state) && minimized,
 	};
 }
