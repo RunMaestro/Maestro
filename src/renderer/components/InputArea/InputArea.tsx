@@ -647,6 +647,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							voiceSupported={voice.voiceSupported}
 							isVoiceListening={voice.isListening}
 							onToggleVoiceInput={handleToggleVoiceInput}
+							voiceHandledElsewhere={voice.usesACappella}
 							onOpenPromptComposer={onOpenPromptComposer}
 							shortcuts={shortcuts}
 							showFlashNotification={showFlashNotification}
@@ -687,6 +688,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					theme={theme}
 					isTerminalMode={isTerminalMode}
 					processInput={processInput}
+					// Only when A Cappella owns the microphone. With it off, the button
+					// stays the Web Speech dictation one in the toolbar row, which is
+					// touch-only - so there is never a second microphone on screen.
+					showVoiceButton={!isTerminalMode && voice.usesACappella}
+					isVoiceListening={voice.isListening}
+					onToggleVoice={handleToggleVoiceInput}
 				/>
 			</div>
 		</div>
