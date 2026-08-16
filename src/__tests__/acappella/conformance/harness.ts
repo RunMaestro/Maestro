@@ -811,9 +811,11 @@ export async function createConformanceWorld(): Promise<ConformanceWorld> {
 			peers.closeAll('the conformance world was torn down');
 			vi.useRealTimers();
 			// `noteConnected()` persists off a peer connecting and nobody awaits it,
-			// so a `devices.json` write can still be in flight here. Removing the
-			// directory underneath it renames into nothing and fails the run.
-			await transport.pairing.whenPersisted();
+			// so a `devices.json` write can still be in flight here, and one can even
+			// be enqueued after a plain drain. Closing settles what is queued and
+			// drops what comes later, so removing the directory cannot rename into
+			// nothing.
+			await transport.pairing.close();
 			await fs.rm(userDataPath, {
 				recursive: true,
 				force: true,
