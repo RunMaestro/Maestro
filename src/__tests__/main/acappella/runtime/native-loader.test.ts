@@ -118,6 +118,7 @@ import {
 	allNativeRuntimeFailures,
 	describeRuntimeUnavailable,
 	isNativeRuntimeLoaded,
+	knownNativeRuntimeUnavailability,
 	lastNativeRuntimeFailure,
 	loadNativeRuntime,
 	resetNativeRuntimes,
@@ -375,6 +376,55 @@ describe('native-loader', () => {
 
 			await tryLoadNativeRuntime('llama');
 			expect(importer).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	/**
+	 * The question a capability gate actually has is "will this work here", not
+	 * "has this already gone wrong here". Answering the second one in place of the
+	 * first is how readiness came back "everything satisfied" on a fresh boot for
+	 * runtimes that are not in the build at all, and the opposite answer once
+	 * anything had attempted a load.
+	 */
+	describe('known unavailability, without loading', () => {
+		it('reports a runtime that is not a dependency before anything tries it', () => {
+			const importer = vi.fn();
+			__setNativeImporter(importer);
+
+			const verdict = knownNativeRuntimeUnavailability('whisper');
+
+			expect(verdict?.failure).toBe('not-a-dependency');
+			expect(importer).not.toHaveBeenCalled();
+		});
+
+		it('reports a platform with no build before anything tries it', () => {
+			setPlatform('darwin', 'arm64');
+
+			// `onnx` is declared but shipped nowhere in the stand-in registry.
+			expect(knownNativeRuntimeUnavailability('onnx')?.failure).toBe('unsupported-platform');
+		});
+
+		it('is null for a runtime that should load', () => {
+			setPlatform('darwin', 'arm64');
+
+			expect(knownNativeRuntimeUnavailability('llama')).toBeNull();
+		});
+
+		it('prefers what actually happened over what the registry predicts', async () => {
+			setPlatform('darwin', 'arm64');
+			__setNativeImporter(vi.fn().mockRejectedValue(new Error('boom')));
+			await tryLoadNativeRuntime('llama');
+
+			expect(knownNativeRuntimeUnavailability('llama')?.failure).toBe('load-failed');
+		});
+
+		it('does not record a failure nobody hit', () => {
+			knownNativeRuntimeUnavailability('whisper');
+
+			// Asking must not put anything in the support report: the debug package
+			// lists failures that HAPPENED, not answers to hypothetical questions.
+			expect(allNativeRuntimeFailures()).toHaveLength(0);
+			expect(lastNativeRuntimeFailure('whisper')).toBeNull();
 		});
 	});
 });

@@ -13,6 +13,65 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
+/**
+ * Which runtimes this "build" ships, flipped per test.
+ *
+ * The gate now asks the loader whether a runtime will load at all, and the real
+ * registry has every one at `declared: false` until the providers land. Against
+ * that, every test below would block on the runtime and never reach the provider
+ * and model logic they exist to cover. Declared by default, so a test that cares
+ * about the runtime dimension is the one that says so.
+ */
+// `vi.hoisted` because the mock factory runs during the import phase, before a
+// plain `const` at this scope has been initialised.
+const { declared } = vi.hoisted(() => ({
+	declared: { llama: true, whisper: true, onnx: true } as Record<string, boolean>,
+}));
+
+vi.mock('../../../../shared/acappella/native-runtimes', () => {
+	const descriptor = (id: string, moduleId: string, label: string) => ({
+		id,
+		moduleId,
+		versionPin: '1.0.0',
+		label,
+		slots: [],
+		get declared() {
+			return declared[id];
+		},
+		requiresElectronRebuild: false,
+		prebuilds: {
+			'darwin-arm64': 'prebuilt',
+			'darwin-x64': 'prebuilt',
+			'win32-x64': 'prebuilt',
+			'linux-x64': 'prebuilt',
+		},
+		asarUnpack: [],
+		packagedBinaries: {
+			'darwin-arm64': [],
+			'darwin-x64': [],
+			'win32-x64': [],
+			'linux-x64': [],
+		},
+		rationale: '',
+		notes: '',
+	});
+
+	const runtimes = [
+		descriptor('llama', 'fake-llama', 'Fake llama'),
+		descriptor('whisper', 'fake-whisper', 'Fake whisper'),
+		descriptor('onnx', 'fake-onnx', 'Fake onnx'),
+	];
+
+	return {
+		NATIVE_RUNTIMES: runtimes,
+		getNativeRuntime: (id: string) => runtimes.find((runtime) => runtime.id === id),
+		nativePlatformKey: (platform: string, arch: string) => {
+			const key = `${platform}-${arch}`;
+			return ['darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64'].includes(key) ? key : null;
+		},
+	};
+});
+
 vi.mock('electron', () => ({
 	app: { getPath: () => '/tmp/acappella-capability-gate-test' },
 	shell: { openExternal: vi.fn() },
@@ -207,6 +266,28 @@ describe('capability-gate', () => {
 			});
 
 			expect(readiness.canStartSession).toBe(true);
+		});
+
+		it('blocks a runtime that is not in this build, before anything tries to load it', async () => {
+			// The default reader, deliberately: a gate that only knows about loads
+			// that have already been attempted says "ready" on a fresh boot for a
+			// runtime the build does not contain, and the user finds out when the
+			// session dies. Every model is on disk here; the runtime still decides.
+			declared.whisper = false;
+			try {
+				const readiness = await resolveVoiceReadiness({
+					settings: ALL_LOCAL,
+					readModelStatus: statusReader(),
+				});
+
+				const stt = readiness.slots.find((slot) => slot.slot === 'stt')!;
+				expect(stt.satisfied).toBe(false);
+				expect(stt.reason).toBe('runtime-unavailable');
+				expect(stt.detail).toContain('not part of this build');
+				expect(readiness.canStartSession).toBe(false);
+			} finally {
+				declared.whisper = true;
+			}
 		});
 
 		it('assumes reachable when no probe is wired', async () => {

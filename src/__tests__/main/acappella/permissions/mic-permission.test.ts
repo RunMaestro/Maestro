@@ -280,6 +280,11 @@ describe('mic-permission', () => {
 				settings: { stt: 'whisper-local' },
 				readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'not-installed' }),
 				readMicPermission: () => 'denied',
+				// This test is about permission and model being separate answers, so
+				// the third dimension is held out of it: against the real registry the
+				// local runtime is not in the build yet, and the gate reports that
+				// ahead of a download it would not fix.
+				readRuntimeFailure: () => null,
 			});
 
 			// The failure this whole module exists to prevent: one generic "voice
