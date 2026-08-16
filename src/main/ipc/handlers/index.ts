@@ -154,6 +154,7 @@ export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
 export { registerTabsHandlers };
+export { registerContextTimelineHandlers };
 export { registerAgentRunHandlers };
 export { registerWindowsHandlers };
 export { wireWindowRegistryBroadcast };
