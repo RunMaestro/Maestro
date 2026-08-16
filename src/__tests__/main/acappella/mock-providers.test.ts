@@ -207,6 +207,50 @@ describe('MockBrainProvider routing', () => {
 		expect(decision.target).toEqual({ sessionId: 'agent-frontend' });
 	});
 
+	it('ignores a leading "hey maestro" when an agent is called Maestro', async () => {
+		// Found by driving the running app: an agent named "Maestro" is what you
+		// call the agent working on Maestro itself, so it is a very common name,
+		// and "hey maestro" is how you address the conductor. Matching the address
+		// as a name sent every routed sentence to that one agent.
+		const withConductorName: RosterAgent[] = [
+			{
+				sessionId: 'agent-maestro',
+				name: 'Maestro',
+				agentType: 'claude-code',
+				cwd: '/repo/maestro',
+				tabs: [],
+			},
+			...roster,
+		];
+
+		const decision = await brain.route('hey maestro ask backend to run the migrations', {
+			roster: withConductorName,
+			scope: { kind: 'conductor' },
+		});
+
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+	});
+
+	it('still targets an agent named Maestro when it is named mid-utterance', async () => {
+		const withConductorName: RosterAgent[] = [
+			{
+				sessionId: 'agent-maestro',
+				name: 'Maestro',
+				agentType: 'claude-code',
+				cwd: '/repo/maestro',
+				tabs: [],
+			},
+			...roster,
+		];
+
+		const decision = await brain.route('hey maestro what is maestro working on', {
+			roster: withConductorName,
+			scope: { kind: 'conductor' },
+		});
+
+		expect(decision.target).toEqual({ sessionId: 'agent-maestro' });
+	});
+
 	it('lets a named agent beat the bound one', async () => {
 		const decision = await brain.route('backend, run the tests', {
 			roster,
