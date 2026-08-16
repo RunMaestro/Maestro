@@ -32,7 +32,7 @@ interface DesktopSessionEntry {
 	toolType: string;
 	name: string | null;
 	agentSessionId: string | null;
-	state: 'idle' | 'busy';
+	state: 'idle' | 'busy' | 'unknown';
 	createdAt: number;
 	starred: boolean;
 }
@@ -137,10 +137,10 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 		// Compact human-readable view: one tab per line so the output is grep-able
 		// and pipes cleanly into other tools while still being readable for a
 		// quick glance. Columns: state | star | tabId | agent | name | createdAt.
-		// `state` is spelled out (busy/idle) rather than relying on the `*` marker
+		// `state` is spelled out (busy/idle/unknown) rather than relying on the `*` marker
 		// alone so `grep busy` works without column-counting.
 		for (const s of sessions) {
-			const state = s.state === 'busy' ? 'busy' : 'idle';
+			const state = s.state;
 			const star = s.starred ? '★' : ' ';
 			const name = s.name ?? '(unnamed)';
 			const created = Number.isFinite(s.createdAt) ? formatRelativeTime(s.createdAt) : '-';

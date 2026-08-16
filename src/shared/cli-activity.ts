@@ -126,9 +126,15 @@ export function isSessionBusyWithCli(sessionId: string): boolean {
 	try {
 		process.kill(activity.pid, 0); // Doesn't kill, just checks if process exists
 		return true;
-	} catch {
-		// Process not running, clean up stale entry
-		unregisterCliActivity(sessionId);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		// EPERM proves the process exists but is outside this caller's signal
+		// permission. Keep the activity and report it busy instead of erasing
+		// truthful evidence from a sandboxed read-only monitor.
+		if (code === 'EPERM') return true;
+		// Only ESRCH proves the process is gone. Unknown probe failures are not
+		// enough evidence to mutate the shared activity file.
+		if (code === 'ESRCH') unregisterCliActivity(sessionId);
 		return false;
 	}
 }
