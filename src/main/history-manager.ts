@@ -40,6 +40,34 @@ import {
 const LOG_CONTEXT = '[HistoryManager]';
 
 /**
+ * Error codes that mean "this machine cannot watch right now", not "Maestro is
+ * broken". ENOENT/EPERM/UNKNOWN are the directory going away or turning
+ * unreadable; EMFILE/ENFILE/ENOSPC are OS resource ceilings (fd limit, and on
+ * Linux the inotify `max_user_watches` cap, which surfaces as ENOSPC rather
+ * than a disk-space error).
+ *
+ * Watching only powers live refresh when another process edits history on disk;
+ * the caller already degrades to a null watcher and history keeps working, so
+ * these are best-effort failures and reporting them to Sentry is pure noise.
+ *
+ * Deliberately NOT shared with `isExpectedSessionReadError` in
+ * ipc/handlers/agentSessions.ts, which excludes EMFILE on purpose: an EMFILE
+ * while *reading* a session file can mean a real fd leak worth reporting.
+ */
+const EXPECTED_WATCH_ERROR_CODES = new Set([
+	'ENOENT',
+	'EPERM',
+	'UNKNOWN',
+	'EMFILE',
+	'ENFILE',
+	'ENOSPC',
+]);
+
+function isExpectedWatchError(code: string | undefined): boolean {
+	return typeof code === 'string' && EXPECTED_WATCH_ERROR_CODES.has(code);
+}
+
+/**
  * Best-effort fs.access: resolves true if the path is readable, false on
  * ENOENT. Other errors propagate to the caller (or are caught at the
  * outer try in the public method).
@@ -754,7 +782,7 @@ export class HistoryManager {
 			// so we keep visibility into novel failure modes in production.
 			this.watcher.on('error', (err) => {
 				const code = (err as NodeJS.ErrnoException | undefined)?.code;
-				if (code === 'ENOENT' || code === 'EPERM' || code === 'UNKNOWN') {
+				if (isExpectedWatchError(code)) {
 					logger.warn(`History watcher error (${code}): ${String(err)}`, LOG_CONTEXT);
 					return;
 				}
@@ -768,10 +796,13 @@ export class HistoryManager {
 			logger.info('Started watching history directory', LOG_CONTEXT);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			void captureException(error, {
-				operation: 'history:watch:start',
-				historyDir: this.historyDir,
-			});
+			const code = (error as NodeJS.ErrnoException | undefined)?.code;
+			if (!isExpectedWatchError(code)) {
+				void captureException(error, {
+					operation: 'history:watch:start',
+					historyDir: this.historyDir,
+				});
+			}
 			logger.warn(`Failed to start history watcher: ${message}`, LOG_CONTEXT);
 			this.watcher = null;
 		}

@@ -2482,6 +2482,15 @@ export async function loadAllSettings(): Promise<void> {
 			const commandsById = new Map<string, CustomAICommand>();
 			DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
 			(allSettings['customAICommands'] as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
+				// The persisted array is whatever is on disk, not necessarily CustomAICommand[]:
+				// electron-store hands back hand-edited / sync-mangled / legacy-schema entries
+				// unchanged. Every consumer keys off `id` (edit, save, reset, delete, React keys),
+				// so an entry without one is unusable and would otherwise be stored under the
+				// Map key `undefined` and rendered anyway. Skip it instead of crashing later.
+				if (!cmd || typeof cmd !== 'object' || typeof cmd.id !== 'string' || !cmd.id) {
+					logger.warn('Skipping malformed customAICommands entry (missing id)');
+					return;
+				}
 				// Migration: Skip old /synopsis command
 				if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
 					return;
