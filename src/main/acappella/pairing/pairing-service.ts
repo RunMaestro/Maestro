@@ -145,6 +145,8 @@ export class PairingService {
 	private loaded = false;
 	/** The most recently queued write, for {@link whenPersisted}. */
 	private lastWrite: Promise<void> = Promise.resolve();
+	/** Set by {@link close}; a persist after this point is dropped. */
+	private closed = false;
 
 	/** The one open pairing window. A second `startPairing` replaces it. */
 	private offer: (PairingOffer & { claimed: boolean }) | null = null;
@@ -485,6 +487,7 @@ export class PairingService {
 	}
 
 	private async persist(): Promise<void> {
+		if (this.closed) return;
 		const devices = [...this.devices.values()];
 		this.emitChange();
 		this.lastWrite = this.writes.enqueue(this.options.filePath, async () => {
@@ -506,6 +509,22 @@ export class PairingService {
 			() => {},
 			() => {}
 		);
+	}
+
+	/**
+	 * Drain the queued writes and stop accepting new ones.
+	 *
+	 * {@link whenPersisted} alone is not enough to settle this file, because
+	 * `noteConnected()` is fire-and-forget off a peer reaching `connected` and it
+	 * awaits {@link load} before it persists. A caller that only drains can have a
+	 * write enqueued a microtask after it looked, which is how tearing down a
+	 * conformance world renamed into a directory that had just been removed.
+	 * Closing sets the flag synchronously first, so anything still in flight
+	 * becomes a no-op rather than a late write.
+	 */
+	async close(): Promise<void> {
+		this.closed = true;
+		await this.whenPersisted();
 	}
 
 	// -- Internals -----------------------------------------------------------
