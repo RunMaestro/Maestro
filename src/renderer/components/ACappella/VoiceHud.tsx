@@ -8,13 +8,14 @@
  * worth reading, or the dev harness in a development build.
  *
  * **Minimize and close are different actions, and must stay that way.**
- * Minimize collapses the widget to a small indicator and leaves the session
- * running; close ENDS the session. That pairing is the opposite of the media
- * player's, and deliberately so: there, sound is the evidence that something is
- * still running, so hiding the widget is safe. Here, silence is - a microphone
- * with no visible surface is one the user cannot see, so the button that hides
- * the widget must leave an indicator behind, and the button that looks like an
- * exit must actually close the floor.
+ * Minimize hides the widget and leaves the session running, handing the
+ * indicator to `VoiceStatusIndicator` in the Left Bar header; close ENDS the
+ * session. That pairing is the opposite of the media player's, and deliberately
+ * so: there, sound is the evidence that something is still running, so hiding
+ * the widget is safe. Here, silence is - a microphone with no visible surface is
+ * one the user cannot see, so the button that hides the widget must leave an
+ * indicator behind, and the button that looks like an exit must actually close
+ * the floor.
  *
  * The widget is draggable and remembers where it was put, through
  * `usePointerDrag` (the same gesture the Concerto surfaces use) and the `ui`
@@ -318,33 +319,14 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 		</div>
 	);
 
-	if (minimized) {
-		return (
-			<>
-				{liveRegion}
-				<button
-					type="button"
-					ref={setRootRef}
-					data-testid="voice-hud-minimized"
-					aria-label={`Voice session: ${stateLabel}. Restore the voice HUD.`}
-					title={`Voice session: ${stateLabel} (${scope.label})`}
-					onClick={() => setMinimized(false)}
-					className="fixed z-[90000] flex items-center gap-1.5 px-2 py-1.5 rounded-full border shadow-lg select-none focus:outline-none focus-visible:ring-2"
-					style={{
-						top: placement.top,
-						left: placement.left,
-						backgroundColor: theme.colors.bgSidebar,
-						borderColor: active ? theme.colors.accent : theme.colors.border,
-						color: theme.colors.textMain,
-						visibility: position ? undefined : 'hidden',
-					}}
-				>
-					<VoiceIndicator theme={theme} state={visualState} size={20} />
-					<span className="text-[10px] font-medium truncate max-w-[120px]">{scope.label}</span>
-				</button>
-			</>
-		);
-	}
+	// Minimized: the widget leaves the workspace entirely and its indicator is
+	// `VoiceStatusIndicator` in the Left Bar header, next to the media player's.
+	// It used to collapse to a floating pill parked at the HUD's own position,
+	// which is the one place a "get it out of the way" control must not leave
+	// something - the pill sat over the same work the widget was covering. The
+	// live region stays either way: minimizing must not stop a screen reader being
+	// told that the microphone just opened.
+	if (minimized) return liveRegion;
 
 	return (
 		<>
