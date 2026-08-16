@@ -279,6 +279,15 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	if (!active && !devHarness && !error && !micIssue) return null;
 
 	const spoken = speech ? speech.sentences.length : 0;
+	// While the reply is still being written the total is a lower bound, so the
+	// delivered index legitimately runs past it - the live app read "1 of 0" on
+	// the first sentence of a streamed answer. Show the larger of the two with a
+	// "+" instead of printing a total that is not one.
+	const speechProgress = speech
+		? speech.streaming
+			? `${spoken} of ${Math.max(spoken, speech.sentenceCount)}+`
+			: `${spoken} of ${speech.sentenceCount}`
+		: '';
 	// The mic row says the same thing as an `audio-capture-failed` session error,
 	// only in calmer words and with the button that fixes it. Showing both would
 	// put the identical sentence on screen twice, one of them in red.
@@ -393,7 +402,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 							className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
 							style={{ backgroundColor: theme.colors.accent, color: onAccent }}
 						>
-							{spoken} of {speech.sentenceCount}
+							{speechProgress}
 						</span>
 					)}
 					<button

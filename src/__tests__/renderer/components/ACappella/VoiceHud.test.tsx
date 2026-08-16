@@ -213,6 +213,25 @@ describe('VoiceHud rendering', () => {
 		expect(screen.getByTestId('voice-transcript-spoken').textContent).toContain('The tests pass.');
 	});
 
+	it('marks the total provisional while the reply is still being written', () => {
+		// A streamed reply starts speaking before the sentence count is known, so
+		// the count at `speak-start` is a lower bound the delivered index runs past.
+		// The live app printed "1 of 0" here.
+		renderHud({ transcript: true });
+		startSession();
+		emit(
+			event('speak-start', {
+				utteranceId: 'u1',
+				sentenceCount: 0,
+				ttsProviderId: 'mock-tts',
+				streaming: true,
+			}),
+			event('speak-sentence', { utteranceId: 'u1', index: 0, text: 'On it.' })
+		);
+
+		expect(screen.getByTestId('voice-hud-speech-progress').textContent).toBe('1 of 1+');
+	});
+
 	it('marks a barge-in as a cut and hands the floor back', () => {
 		renderHud({ transcript: true });
 		startSession();

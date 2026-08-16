@@ -68,7 +68,17 @@ export interface VoiceFeedEntry {
 /** One speech run, so the HUD can show "2 of 4" and where it was cut off. */
 export interface VoiceSpeechRun {
 	utteranceId: string;
+	/**
+	 * How many sentences the run knew about at `speak-start`.
+	 *
+	 * A LOWER BOUND while {@link streaming} is true, per the protocol: the
+	 * scheduler starts speaking sentence one while the agent is still writing the
+	 * rest, so the delivered index runs past this. Anything rendering a total has
+	 * to say so rather than print it as fact.
+	 */
 	sentenceCount: number;
+	/** True while more sentences are still being written. */
+	streaming: boolean;
 	sentences: string[];
 	/** Null while the run is live. */
 	endedReason: 'complete' | 'cancelled' | 'error' | null;
@@ -335,6 +345,7 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					patch.speech = {
 						utteranceId: event.utteranceId,
 						sentenceCount: event.sentenceCount,
+						streaming: event.streaming === true,
 						sentences: [],
 						endedReason: null,
 					};
