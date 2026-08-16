@@ -204,4 +204,16 @@ describe('ToolbarControls', () => {
 			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
 		});
 	});
+
+	describe('layout', () => {
+		it('pins the pill row to the bottom of the composer box', () => {
+			// The A Cappella microphone makes the Send column taller than the
+			// textarea, so the composer box stretches and the pills would otherwise
+			// float mid-height with dead space beneath them. jsdom has no layout
+			// engine, so the margin class is the only thing there is to assert.
+			const { container } = renderToolbar();
+
+			expect(container.firstElementChild).toHaveClass('mt-auto');
+		});
+	});
 });

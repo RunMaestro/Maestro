@@ -138,8 +138,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
 		rawPermissionMode === 'standard' && !hasStandardCapability ? 'full' : rawPermissionMode;
 
+	// mt-auto pins the row to the bottom of the composer box. The A Cappella
+	// microphone makes the Send column taller than the textarea, and the box
+	// stretches to match it - without this the pills float in the middle with
+	// dead space under them.
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
+		<div className="mt-auto flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
 			<div className="flex min-w-0 flex-1 gap-1 items-center">
 				{isTerminalMode && (
 					<div
