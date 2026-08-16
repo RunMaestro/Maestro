@@ -39,7 +39,10 @@ import type {
 	VoiceSlotReadiness,
 } from '../../../shared/acappella/readiness';
 import { getMicPermission } from '../permissions/mic-permission';
-import { lastNativeRuntimeFailure, type NativeRuntimeUnavailable } from '../runtime/native-loader';
+import {
+	knownNativeRuntimeUnavailability,
+	type NativeRuntimeUnavailable,
+} from '../runtime/native-loader';
 import { DEFAULT_PROVIDER_IDS, type VoiceProviderSettings } from '../providers/provider-registry';
 import { getStatus, type ModelStatus } from './model-store';
 
@@ -134,10 +137,12 @@ export interface ResolveVoiceReadinessOptions {
 	 */
 	readMicPermission?: () => MicPermission;
 	/**
-	 * The last known native runtime failure, or null. Defaults to the loader's
-	 * memory of what has already failed in this process; it deliberately does NOT
-	 * attempt a load, because dlopen'ing an inference engine to draw a settings
-	 * panel is exactly the startup cost the lazy loader exists to avoid.
+	 * Why a native runtime will not load, or null when it will. Defaults to the
+	 * loader's answer: a remembered failure if there is one, otherwise the facts
+	 * knowable from the registry alone (not a dependency of this build, no binary
+	 * for this platform). It deliberately does NOT attempt a load, because
+	 * dlopen'ing an inference engine to draw a settings panel is exactly the
+	 * startup cost the lazy loader exists to avoid.
 	 */
 	readRuntimeFailure?: (runtimeId: NativeRuntimeId) => NativeRuntimeUnavailable | null;
 }
@@ -231,8 +236,12 @@ function resolveMicrophone(options: ResolveVoiceReadinessOptions): VoiceSlotRead
 }
 
 /**
- * A native runtime that has already failed to load in this process, as a slot
- * verdict. Null when the runtime has never failed, which includes "never tried".
+ * A native runtime that will not load, as a slot verdict. Null when it will.
+ *
+ * "Will not load" rather than "has already failed": a runtime that is not part
+ * of this build, or has no binary for this platform, is unusable before anything
+ * tries it, and a gate that waited for an attempt would call the slot ready
+ * right up until the session died in the provider's `start()`.
  */
 function runtimeFailureFor(
 	slot: VoiceSlot,
@@ -240,7 +249,7 @@ function runtimeFailureFor(
 	runtimeId: NativeRuntimeId,
 	options: ResolveVoiceReadinessOptions
 ): VoiceSlotReadiness | null {
-	const read = options.readRuntimeFailure ?? lastNativeRuntimeFailure;
+	const read = options.readRuntimeFailure ?? knownNativeRuntimeUnavailability;
 	const failure = read(runtimeId);
 	if (!failure) return null;
 

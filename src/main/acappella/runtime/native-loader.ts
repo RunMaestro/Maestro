@@ -154,6 +154,39 @@ export function allNativeRuntimeFailures(): NativeRuntimeUnavailable[] {
 }
 
 /**
+ * Why this runtime will not load, WITHOUT loading it. Null when it should.
+ *
+ * The difference from {@link lastNativeRuntimeFailure} is the difference between
+ * "has this already gone wrong here" and "will this work here", and the second
+ * is the only one a capability gate can act on. Two of the reasons a runtime
+ * cannot load are knowable from the registry alone - the package is not a
+ * dependency of this build, or there is no binary for this platform - and a gate
+ * that only reads remembered failures reports those runtimes as FINE until
+ * something attempts a load and fails.
+ *
+ * That gap is not theoretical. On a fresh boot nothing has attempted anything,
+ * so readiness came back "everything satisfied, start a session" for slots whose
+ * runtime is not in the build at all; the user got a green button, downloaded
+ * gigabytes of models on its say-so, and the session then died mid-flight in a
+ * provider's `start()`. The same call after any load attempt said the opposite,
+ * which made readiness depend on the order the app happened to do things in.
+ *
+ * Side-effect free on purpose: it does NOT record into the remembered failures,
+ * so asking the question cannot make the debug package report a failure nobody
+ * ever hit.
+ */
+export function knownNativeRuntimeUnavailability(
+	id: NativeRuntimeId
+): NativeRuntimeUnavailable | null {
+	const remembered = failures.get(id);
+	if (remembered) return remembered;
+
+	const descriptor = getNativeRuntime(id);
+	if (!descriptor) return unknownRuntime(id);
+	return declineBeforeLoading(descriptor);
+}
+
+/**
  * Load a native runtime, or throw {@link NativeRuntimeUnavailableError}.
  *
  * Resolves to the module's namespace object. Callers cast to their own minimal
