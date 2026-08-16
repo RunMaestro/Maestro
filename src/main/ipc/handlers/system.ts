@@ -188,7 +188,16 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	});
 
 	// Shell operations - open external URLs
-	const ALLOWED_PROTOCOLS = ['http:', 'https:', 'mailto:'];
+	//
+	// `clickup:` lets a ClickUp task link open the native desktop app instead of a browser tab. ClickUp
+	// registers the scheme (CFBundleURLSchemes) but declares no associated-domains, so macOS universal links
+	// never redirect app.clickup.com on their own - the scheme is the only route to the app, and this
+	// allowlist was the one thing standing in the way.
+	//
+	// Safe on the same grounds that already admit `mailto:`: the OS hands the URL to whichever app claims the
+	// scheme, with no code execution here, and unlike `file:` (handled above) it cannot reach the filesystem.
+	// The vectors this list exists to stop, `javascript:` and `data:`, remain blocked.
+	const ALLOWED_PROTOCOLS = ['http:', 'https:', 'mailto:', 'clickup:'];
 	ipcMain.handle('shell:openExternal', async (_event, url: string) => {
 		// Validate URL before opening - Fixes MAESTRO-1S
 		if (!url || typeof url !== 'string') {
