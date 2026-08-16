@@ -172,8 +172,23 @@ function containsPhrase(haystack: string, phrase: string): boolean {
 	return ` ${haystack} `.includes(` ${phrase} `);
 }
 
+/**
+ * Drop the conductor address off the front of an utterance.
+ *
+ * "hey maestro" is how you address the conductor, not how you name an agent,
+ * but an agent called "Maestro" is extremely common - it is what you call the
+ * agent working on Maestro itself. Without this, "hey maestro, ask Scratch to
+ * check the disk usage" matched the word `maestro` and every routed sentence
+ * landed on that one agent. Only the LEADING address is removed, so "ask
+ * Maestro about the release" still means that agent.
+ */
+function stripConductorAddress(normalizedInput: string): string {
+	return normalizedInput.replace(/^(?:hey |ok |okay |yo )?maestro\b\s*/, '').trim();
+}
+
 /** The longest agent name mentioned, so "backend api" wins over "backend". */
-function matchAgentByName(normalizedInput: string, roster: RosterAgent[]): RosterAgent | null {
+function matchAgentByName(input: string, roster: RosterAgent[]): RosterAgent | null {
+	const normalizedInput = stripConductorAddress(input);
 	let best: RosterAgent | null = null;
 	let bestLength = 0;
 
