@@ -10,9 +10,10 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
-import { VoiceHud } from '../../../../renderer/components/ACappella';
+import { VoiceHud, VoiceStatusIndicator } from '../../../../renderer/components/ACappella';
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import type { VoiceEvent } from '../../../../shared/acappella/protocol';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -63,11 +64,27 @@ async function flushLayout(): Promise<void> {
 }
 
 function renderHud(
-	props: { enabled?: boolean; showDevHarness?: boolean; transcript?: boolean } = {}
+	props: {
+		enabled?: boolean;
+		showDevHarness?: boolean;
+		transcript?: boolean;
+		/**
+		 * Also mount the Left Bar indicator, which is where a minimized HUD lives.
+		 * Off by default so the HUD's own tests render only the HUD.
+		 */
+		withStatusIndicator?: boolean;
+	} = {}
 ) {
 	// The transcript is off by default and lives behind the toggle, so a test
 	// that wants to read the scrollback has to open it - exactly as a user does.
 	useVoiceUiStore.setState({ transcriptVisible: props.transcript === true, loaded: true });
+	// The HUD takes the Encore flag as a prop; the Left Bar indicator reads it
+	// from the store, the way every other Left Bar surface does.
+	if (props.withStatusIndicator) {
+		useSettingsStore.setState((state) => ({
+			encoreFeatures: { ...state.encoreFeatures, aCappella: props.enabled ?? true },
+		}));
+	}
 	return render(
 		<LayerStackProvider>
 			<VoiceHud
@@ -75,6 +92,7 @@ function renderHud(
 				enabled={props.enabled ?? true}
 				showDevHarness={props.showDevHarness ?? false}
 			/>
+			{props.withStatusIndicator && <VoiceStatusIndicator theme={mockTheme} />}
 		</LayerStackProvider>
 	);
 }
@@ -474,30 +492,47 @@ describe('VoiceHud dismissal', () => {
 
 describe('VoiceHud minimize versus close', () => {
 	it('minimize leaves the session running behind a restore affordance', async () => {
-		renderHud();
+		renderHud({ withStatusIndicator: true });
 		startSession();
 
 		await act(async () => {
 			fireEvent.click(screen.getByTestId('voice-hud-minimize'));
 		});
 
-		// The widget is collapsed, NOT gone, and nothing touched the floor.
+		// The widget is gone from the workspace and nothing touched the floor. The
+		// restore affordance is the Left Bar indicator, not a floating pill parked
+		// over the work the user just asked to see.
 		expect(screen.queryByTestId('voice-hud')).toBeNull();
-		expect(screen.getByTestId('voice-hud-minimized')).toBeTruthy();
+		expect(screen.getByTestId('voice-status-indicator')).toBeTruthy();
 		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
 		expect(useVoiceSessionStore.getState().state).toBe('listening');
 	});
 
-	it('restores from the collapsed indicator', async () => {
-		renderHud();
+	it('restores from the Left Bar indicator', async () => {
+		renderHud({ withStatusIndicator: true });
 		startSession();
 		await act(async () => {
 			fireEvent.click(screen.getByTestId('voice-hud-minimize'));
 		});
 		await act(async () => {
-			fireEvent.click(screen.getByTestId('voice-hud-minimized'));
+			fireEvent.click(screen.getByTestId('voice-status-indicator'));
 		});
 		expect(screen.getByTestId('voice-hud')).toBeTruthy();
+	});
+
+	it('leaves no indicator anywhere once the session is closed', async () => {
+		// The pair that matters: minimize must leave something visible, and close
+		// must not. An indicator that outlived the session would claim an open
+		// microphone that is not there.
+		renderHud({ withStatusIndicator: true });
+		startSession();
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-close'));
+		});
+
+		expect(screen.queryByTestId('voice-hud')).toBeNull();
+		expect(screen.queryByTestId('voice-status-indicator')).toBeNull();
 	});
 
 	it('close ends the session, unlike minimize', async () => {
