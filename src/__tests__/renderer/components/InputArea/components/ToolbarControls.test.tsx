@@ -178,6 +178,20 @@ describe('ToolbarControls', () => {
 			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
 		});
 
+		it('hides the mic when A Cappella owns it, so there is never a second one', () => {
+			// A Cappella's microphone lives under Send, where it shows on every
+			// pointer type. Without this gate a touch device with the Encore Feature
+			// on would draw two microphones wired to the same toggle.
+			setCoarsePointer(true);
+			renderToolbar({
+				voiceSupported: true,
+				onToggleVoiceInput: vi.fn(),
+				voiceHandledElsewhere: true,
+			});
+
+			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
+
 		it('hides the mic in terminal mode', () => {
 			setCoarsePointer(true);
 			renderToolbar({

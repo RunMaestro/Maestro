@@ -47,6 +47,14 @@ interface ToolbarControlsProps {
 	isVoiceListening?: boolean;
 	/** Toggle voice dictation on/off. Stable identity (see InputArea). */
 	onToggleVoiceInput?: () => void;
+	/**
+	 * A Cappella owns the composer's microphone, so this row must not draw one.
+	 *
+	 * The A Cappella button lives under Send in `NotificationSendControls`, where
+	 * it is visible on every pointer type. Without this flag a touch device with
+	 * the Encore Feature on would show two microphones wired to the same toggle.
+	 */
+	voiceHandledElsewhere?: boolean;
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
@@ -82,6 +90,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 	voiceSupported,
 	isVoiceListening,
 	onToggleVoiceInput,
+	voiceHandledElsewhere,
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
@@ -114,7 +123,12 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// targets would defeat the point. Shown only when the Web Speech API is
 	// supported AND the primary pointer is coarse (touch), so mouse/keyboard
 	// desktop users never see it.
-	const showVoiceButton = isAiMode && !!voiceSupported && !!onToggleVoiceInput && isCoarsePointer();
+	const showVoiceButton =
+		isAiMode &&
+		!!voiceSupported &&
+		!!onToggleVoiceInput &&
+		!voiceHandledElsewhere &&
+		isCoarsePointer();
 
 	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
 	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
