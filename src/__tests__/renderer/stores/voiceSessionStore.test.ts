@@ -101,6 +101,39 @@ describe('voiceSessionStore projection', () => {
 		expect(state.error?.message).toContain('Backend');
 	});
 
+	it('keeps a refusal on screen while the session is still parked in error', () => {
+		// No `listen-stop` is emitted for a session that failed, which is how the
+		// user gets to read why it would not start.
+		apply(
+			wake(),
+			event('session-error', {
+				code: 'provider-unavailable',
+				message: 'whisper.cpp is not part of this build yet.',
+				recoverable: false,
+			})
+		);
+
+		expect(useVoiceSessionStore.getState().error).not.toBeNull();
+	});
+
+	it('clears the error once the user ends the session', () => {
+		// The HUD renders whenever `error` is set, so an error outliving its
+		// session left a voice panel on screen indefinitely that nobody opened.
+		apply(
+			wake(),
+			event('session-error', {
+				code: 'provider-unavailable',
+				message: 'whisper.cpp is not part of this build yet.',
+				recoverable: false,
+			}),
+			event('listen-stop', { reason: 'stopped' })
+		);
+
+		const state = useVoiceSessionStore.getState();
+		expect(state.state).toBe('idle');
+		expect(state.error).toBeNull();
+	});
+
 	it('streams partials and clears them when the utterance settles', () => {
 		apply(
 			wake(),
