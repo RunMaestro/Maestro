@@ -27,16 +27,18 @@
  * mid-session can still release the floor.
  */
 
-import { app, ipcMain, type BrowserWindow } from 'electron';
+import { app, ipcMain, type BrowserWindow, type WebContents } from 'electron';
 import { hostname } from 'os';
 
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
+import { logger } from '../../utils/logger';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type {
 	InterruptSource,
 	RosterAgent,
 	VoiceEvent,
 	VoiceScope,
+	VoiceWindowId,
 } from '../../../shared/acappella/protocol';
 import { getSessionsStore } from '../../stores/getters';
 import { createConductorRouter } from '../../acappella/router/conductor-router';
@@ -197,6 +199,20 @@ export interface ACappellaHandlerDependencies {
 	 * window is the right answer by construction.
 	 */
 	getWindowForSession?: (agentSessionId: string) => BrowserWindow | null;
+	/**
+	 * Which window's HUD a session started from THIS trigger belongs to.
+	 *
+	 * `sender` is the IPC sender for a click (composer microphone, palette, Left
+	 * Bar menu); it is absent for a trigger that has no window behind it - a
+	 * global hotkey, a wake word, a paired phone - and the implementation then
+	 * answers with the focused window.
+	 *
+	 * Every main -> renderer push is broadcast to all windows, so without this the
+	 * same HUD rendered in every window at once and one microphone looked like
+	 * several. Absent in tests and in any single-window host, where null means the
+	 * primary window shows it, which is the only window there is.
+	 */
+	resolveVoiceWindowId?: (sender?: WebContents | null) => VoiceWindowId;
 	/** Broadcasts to every window and to the web-desktop bridge. */
 	safeSend: SafeSendFn;
 	/**
@@ -700,7 +716,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	const wrappedStart = withIpcErrorLogging(
 		handlerOpts('startSession'),
-		async (rawScope: unknown): Promise<VoiceStartSessionResult> => {
+		async (rawScope: unknown, windowId: VoiceWindowId): Promise<VoiceStartSessionResult> => {
 			const scope = parseScope(rawScope);
 			// The microphone is asked for HERE and nowhere earlier. Not at app
 			// launch, not when the Encore Feature is switched on: a first run that
@@ -717,7 +733,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 			// Feature opens no device and builds no second renderer.
 			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 			const { service, substitutions } = await ensureService(deps);
-			const snapshot = await service.startSession({ scope, source: 'client-button' });
+			const snapshot = await service.startSession({
+				scope,
+				source: 'client-button',
+				windowId,
+			});
 			return { snapshot, substitutions };
 		}
 	);
@@ -884,7 +904,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 			await requestMicPermission();
 			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
 			const { service } = await ensureService(deps);
-			return service.startSession({ scope, source, origin });
+			return service.startSession({
+				scope,
+				source,
+				origin,
+				// No IPC sender to resolve: a global hotkey, a wake word, and a paired
+				// phone all arrive with no window behind them, so the HUD belongs to
+				// the window the user is looking at.
+				windowId: deps.resolveVoiceWindowId?.() ?? null,
+			});
 		},
 		stopSession: async (reason) => {
 			await getVoiceSessionService()?.stopSession(reason);
@@ -990,7 +1018,10 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		'acappella:start-session',
 		async (event, scope: unknown): Promise<VoiceStartSessionResult> => {
 			requireEnabled(settingsStore);
-			return wrappedStart(event, scope);
+			// Resolved HERE rather than inside the wrapped handler, because
+			// `withIpcErrorLogging` strips the event and the sender is the only
+			// evidence of which window the user actually clicked in.
+			return wrappedStart(event, scope, deps.resolveVoiceWindowId?.(event?.sender) ?? null);
 		}
 	);
 
@@ -1201,6 +1232,25 @@ export function disposeACappellaAudioBridge(): void {
  * no-op until the next restart. The hotkeys release their combos through their
  * own settings watcher; the transport stands down and stays reusable.
  */
+/**
+ * End the session if it belonged to a window that just closed.
+ *
+ * A session is shown by exactly one window, so closing that window would
+ * otherwise leave an open microphone with no surface anywhere - the same
+ * "something is listening and nobody can see it" failure the HUD's close button
+ * exists to prevent, arrived at by a different route. Closing the window that
+ * holds the floor is a clear enough intent to end the session.
+ *
+ * A session with no window (null) is deliberately left alone: it is not this
+ * window's to end, and the primary window still shows it.
+ */
+export async function stopVoiceSessionForClosedWindow(windowId: string): Promise<void> {
+	const service = getVoiceSessionService();
+	if (!service || service.getSnapshot().windowId !== windowId) return;
+	logger.info(`Voice session ended: its window (${windowId}) closed`, LOG_CONTEXT);
+	await service.stopSession('shutdown');
+}
+
 export async function shutdownACappellaForDisable(): Promise<void> {
 	// The advert and the phones go first. A device that still holds the floor
 	// would otherwise be able to reopen the microphone during the teardown below.

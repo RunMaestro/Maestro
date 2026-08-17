@@ -12,7 +12,7 @@
  * manager's `createSecondaryWindow`, which registers the new window itself.
  */
 
-import { BrowserWindow, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import type {
 	WindowBounds,
 	WindowHighlightDropZonePayload,
@@ -72,19 +72,18 @@ function toWindowInfo(entry: RegisteredWindow): WindowInfo {
 	};
 }
 
-/** Resolve the registry entry for the window that sent an IPC message. */
+/**
+ * Resolve the registry entry for the window that sent an IPC message.
+ *
+ * A thin alias for `registry.findBySender`, which is where the resolution lives
+ * so A Cappella (which scopes a voice session to the window that opened it) does
+ * not need a second copy of it.
+ */
 function resolveCallingWindow(
 	event: Electron.IpcMainInvokeEvent,
 	registry: WindowRegistry
 ): RegisteredWindow | undefined {
-	// Web-desktop bridge invokes arrive with a synthetic event that has no
-	// sender (FAKE_EVENT in web-server/handlers/bridgeHandlers.ts). A web
-	// client is not a window; resolve to "no window" instead of letting
-	// BrowserWindow.fromWebContents throw on the missing WebContents.
-	if (!event?.sender) return undefined;
-	const browserWindow = BrowserWindow.fromWebContents(event.sender);
-	if (!browserWindow) return undefined;
-	return registry.getAll().find((entry) => entry.browserWindow === browserWindow);
+	return registry.findBySender(event?.sender);
 }
 
 /**
