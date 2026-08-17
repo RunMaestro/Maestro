@@ -43,6 +43,8 @@ import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
+import { listTerminals } from './commands/list-terminals';
+import { sendTerminal } from './commands/send-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
@@ -239,6 +241,13 @@ list
 	.description('List all configured SSH remotes')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listSshRemotes);
+
+list
+	.command('terminals')
+	.description('List open terminal tabs in the desktop app (all agents unless --agent is given)')
+	.option('-a, --agent <id>', 'Only list terminals belonging to this agent')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(listTerminals);
 
 // Show command
 const show = program.command('show').description('Show details of a resource');
@@ -487,8 +496,26 @@ program
 	.option('--cwd <path>', "Working directory for the terminal (must be within the agent's cwd)")
 	.option('--shell <shell>', 'Shell binary to use (default: zsh)')
 	.option('--name <name>', 'Display name for the tab')
+	.option(
+		'--command <command>',
+		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
+
+// Send terminal command - run something in a terminal tab that already exists
+program
+	.command('send-terminal [command]')
+	.description('Run a command in an existing Maestro terminal tab')
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option(
+		'--tab <id-or-name>',
+		"Terminal tab ID or display name (defaults to the agent's active terminal)"
+	)
+	.option('--control <letter>', 'Send a control character instead of a command (e.g. C for Ctrl-C)')
+	.option('--no-enter', 'Type the command without pressing Enter')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(sendTerminal);
 
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program

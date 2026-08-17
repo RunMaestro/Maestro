@@ -125,6 +125,15 @@ List all configured SSH remotes
 | -------- | ------------------------------------ | ------- |
 | `--json` | Output as JSON lines (for scripting) | -       |
 
+## `maestro-cli list terminals`
+
+List open terminal tabs in the desktop app (all agents unless --agent is given)
+
+| Option             | Description                                 | Default |
+| ------------------ | ------------------------------------------- | ------- |
+| `-a, --agent <id>` | Only list terminals belonging to this agent | -       |
+| `--json`           | Output as JSON (for scripting)              | -       |
+
 ## `maestro-cli show`
 
 Show details of a resource
@@ -311,13 +320,26 @@ Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
 
 Open a new terminal tab in the Maestro desktop app
 
-| Option             | Description                                                         | Default |
-| ------------------ | ------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent by ID (defaults to active)                             | -       |
-| `--cwd <path>`     | Working directory for the terminal (must be within the agent's cwd) | -       |
-| `--shell <shell>`  | Shell binary to use (default: zsh)                                  | -       |
-| `--name <name>`    | Display name for the tab                                            | -       |
-| `--json`           | Output as JSON (for scripting)                                      | -       |
+| Option                | Description                                                                                     | Default |
+| --------------------- | ----------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Target agent by ID (defaults to active)                                                         | -       |
+| `--cwd <path>`        | Working directory for the terminal (must be within the agent's cwd)                             | -       |
+| `--shell <shell>`     | Shell binary to use (default: zsh)                                                              | -       |
+| `--name <name>`       | Display name for the tab                                                                        | -       |
+| `--command <command>` | Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts) | -       |
+| `--json`              | Output as JSON (for scripting)                                                                  | -       |
+
+## `maestro-cli send-terminal [command]`
+
+Run a command in an existing Maestro terminal tab
+
+| Option               | Description                                                               | Default |
+| -------------------- | ------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`   | Target agent by ID (defaults to active)                                   | -       |
+| `--tab <id-or-name>` | Terminal tab ID or display name (defaults to the agent's active terminal) | -       |
+| `--control <letter>` | Send a control character instead of a command (e.g. C for Ctrl-C)         | -       |
+| `--no-enter`         | Type the command without pressing Enter                                   | -       |
+| `--json`             | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli refresh-files`
 

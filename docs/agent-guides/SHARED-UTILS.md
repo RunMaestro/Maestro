@@ -205,6 +205,42 @@ true calendar arithmetic must use `Date`, not this module.
 
 ---
 
+## Sleep-Aware Durations (`src/shared/sleepTracking.ts` - Both)
+
+**Any duration that measures work must not count machine sleep.** `Date.now() - start`
+does count it: the wall clock runs through a suspend, so an overnight sleep turns a
+20-minute Auto Run into an 8-hour one. The Page Visibility API does not save you either -
+a system suspend never fires `visibilitychange`, because the window stays "visible" while
+the whole process is frozen. Only `powerMonitor` in the main process sees the
+suspend/resume pair.
+
+`createSleepTracker()` is the shared math. Each process owns exactly one instance, and you
+use the process-local wrapper rather than the factory:
+
+| Process  | Module                                 | Fed by                                      |
+| -------- | -------------------------------------- | ------------------------------------------- |
+| Main     | `src/main/utils/sleep-tracker.ts`      | `powerMonitor` suspend/resume in `index.ts` |
+| Renderer | `src/renderer/services/systemSleep.ts` | the `app:systemResume` IPC payload          |
+
+Both expose the same shape:
+
+| Function                        | Purpose                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `beginSleepAwareSpan()`         | Open a span. Keep the returned object: a start timestamp alone can't tell you what was sleep. |
+| `sleepAwareElapsedMs(span)`     | Elapsed time with sleep removed. Never negative.                                              |
+| `getTotalSleepMs()`             | Cumulative measured sleep since the process started.                                          |
+| `onSystemSleep(handler)`        | (Renderer) Subscribe to each measured gap - for live trackers that pause their own clock.     |
+| `sleepAwareElapsedSince(start)` | (Renderer) For a display that only has a stored `startTime` and can't hold a span.            |
+
+Prefer a span. `sleepAwareElapsedSince()` reads a bounded log of recent wakes and exists
+for UI that reads a start timestamp out of state (the Auto Run pill, the thinking timer).
+
+Live trackers that pause and resume their own clock (`useTimeTracking`) subscribe with
+`onSystemSleep()` and walk their stored timestamps forward by the gap, clamped to the live
+span so a platform that DID fire a hide/show pair can't subtract the same sleep twice.
+
+---
+
 ## Emoji Utilities (`src/shared/emojiUtils.ts` - Both)
 
 | Function                           | Signature                    | Purpose                                         |

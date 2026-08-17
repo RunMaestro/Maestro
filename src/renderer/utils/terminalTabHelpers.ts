@@ -71,6 +71,55 @@ export function hasRunningTerminalProcess(session: Session): boolean {
 	return (session.terminalTabs || []).some((tab) => tab.state === 'busy');
 }
 
+/**
+ * Resolve which terminal tab a remote caller (CLI / web) meant.
+ *
+ * `ref` is matched as an id first and searched across ALL sessions, because tab
+ * ids are unique and `open-terminal` hands one back without the caller having to
+ * remember which agent owns it. Only if no id matches do we fall back to a
+ * display-name match, and that one is scoped to `targetSessionId` - names are
+ * user-chosen and routinely collide across agents ("Dev server" in three
+ * projects), so a cross-agent name match would silently type into the wrong
+ * shell.
+ *
+ * With no `ref`, the agent's active terminal tab wins (the terminal they used
+ * last), falling back to the only tab when there is exactly one. Ambiguity
+ * returns null rather than guessing - typing a command into the wrong terminal
+ * is not a recoverable mistake.
+ */
+export function resolveTerminalTab(
+	sessions: Session[],
+	targetSessionId: string,
+	ref?: string
+): { session: Session; tab: TerminalTab } | null {
+	const trimmedRef = ref?.trim();
+
+	if (trimmedRef) {
+		for (const session of sessions) {
+			const tab = (session.terminalTabs || []).find((t) => t.id === trimmedRef);
+			if (tab) return { session, tab };
+		}
+		const target = sessions.find((s) => s.id === targetSessionId);
+		if (!target) return null;
+		const tabs = target.terminalTabs || [];
+		const byName = tabs.filter(
+			(tab, index) =>
+				getTerminalTabDisplayName(tab, index).toLowerCase() === trimmedRef.toLowerCase()
+		);
+		// Two tabs sharing a name is ambiguous - make the caller pass an id.
+		return byName.length === 1 ? { session: target, tab: byName[0] } : null;
+	}
+
+	const target = sessions.find((s) => s.id === targetSessionId);
+	if (!target) return null;
+	const tabs = target.terminalTabs || [];
+	if (target.activeTerminalTabId) {
+		const active = tabs.find((t) => t.id === target.activeTerminalTabId);
+		if (active) return { session: target, tab: active };
+	}
+	return tabs.length === 1 ? { session: target, tab: tabs[0] } : null;
+}
+
 // ─── Session ID Helpers ──────────────────────────────────────────────────────
 
 /**

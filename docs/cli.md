@@ -1120,6 +1120,9 @@ maestro-cli open-terminal
 # Custom cwd, shell, and tab label
 maestro-cli open-terminal --cwd ./packages/api --shell bash --name "API tests"
 
+# Start a dev server in a named terminal
+maestro-cli open-terminal --name "Dev server" --command "npm run dev"
+
 # Target a specific agent
 maestro-cli open-terminal -a <agent-id> --name "Build watch"
 ```
@@ -1130,6 +1133,56 @@ maestro-cli open-terminal -a <agent-id> --name "Build watch"
 | `--cwd <path>`     | Working directory for the terminal (must be inside the agent's cwd) | agent's cwd |
 | `--shell <bin>`    | Shell binary to use                                                 | `zsh`       |
 | `--name <label>`   | Display name for the tab                                            | -           |
+| `--command <cmd>`  | Command to run once the shell is ready                              | -           |
+
+`--command` is stored as the tab's startup command, the same field the tab's right-click "Startup Command…" menu writes. The command runs as soon as the shell finishes loading its rc files, and it runs again if the tab is restarted or the app is reopened. That is what you want for `npm run dev`; for a one-shot command that should not come back, close the tab when it finishes, or use `send-terminal` instead.
+
+The command prints the new tab's ID. Keep it: it is the handle for `send-terminal --tab`.
+
+#### Run a Command in an Existing Terminal Tab
+
+`open-terminal` makes a new terminal. `send-terminal` types into one that is already open, which is what you want to drive a shell the user is watching.
+
+```bash
+# Run something in the agent's active terminal
+maestro-cli send-terminal "npm test"
+
+# Target a terminal by the ID open-terminal printed, or by its tab name
+maestro-cli send-terminal --tab <tab-id> "git status"
+maestro-cli send-terminal --tab "Dev server" "npm run build"
+
+# Stop whatever is running (Ctrl-C)
+maestro-cli send-terminal --tab "Dev server" --control C
+
+# Type the command but leave it unexecuted, so a human can read it first
+maestro-cli send-terminal --no-enter "rm -rf ./dist"
+```
+
+| Flag                 | Description                                                  | Default                     |
+| -------------------- | ------------------------------------------------------------ | --------------------------- |
+| `-a, --agent <id>`   | Target agent by ID                                           | active agent                |
+| `--tab <id-or-name>` | Terminal tab ID, or its display name                         | the agent's active terminal |
+| `--control <letter>` | Send a control character instead of a command (`C` = Ctrl-C) | -                           |
+| `--no-enter`         | Type the command without pressing Enter                      | Enter is sent               |
+
+Notes:
+
+- A tab **ID** is matched across every agent, so an ID from `open-terminal` works without `--agent`. A tab **name** is matched only within the target agent, because names collide (three projects can each have a "Dev server").
+- With no `--tab`, the agent's active terminal receives the command. If several terminals are open and none is active, the command fails rather than guessing.
+- The terminal must have a running shell. A tab that has never been displayed has no shell yet: open it with `open-terminal --command` instead, or select it in the app first.
+- Text is typed into the shell verbatim. If something is already half-typed at the prompt, your command lands on the end of it.
+
+#### List Open Terminal Tabs
+
+Terminal tabs live in the desktop app, so this asks the running app rather than reading from disk.
+
+```bash
+maestro-cli list terminals              # every agent
+maestro-cli list terminals -a <agent-id>
+maestro-cli list terminals --json
+```
+
+Each row is `state | active-marker | tabId | agent | name | cwd`, with the startup command appended when the tab has one. `*` marks the agent's active terminal (the one `send-terminal` writes to by default).
 
 #### Refresh the File Tree
 

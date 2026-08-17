@@ -32,6 +32,7 @@ import {
 	renameTerminalTab,
 	setTerminalTabStartupCommand,
 	reorderTerminalTabs,
+	resolveTerminalTab,
 } from '../../../renderer/utils/terminalTabHelpers';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -757,6 +758,104 @@ describe('hasRunningTerminalProcess', () => {
 			terminalTabs: [createMockTerminalTab({ id: 'tab-1', state: 'exited' })],
 		});
 		expect(hasRunningTerminalProcess(session)).toBe(false);
+	});
+});
+
+describe('resolveTerminalTab', () => {
+	const agentA = createMockSession({
+		id: 'agent-a',
+		terminalTabs: [
+			createMockTerminalTab({ id: 'a1', name: 'Dev server' }),
+			createMockTerminalTab({ id: 'a2', name: 'Logs' }),
+		],
+		activeTerminalTabId: 'a2',
+	});
+	const agentB = createMockSession({
+		id: 'agent-b',
+		terminalTabs: [createMockTerminalTab({ id: 'b1', name: 'Dev server' })],
+		activeTerminalTabId: 'b1',
+	});
+	const sessions = [agentA, agentB];
+
+	it('resolves a tab id belonging to another agent', () => {
+		// Ids are unique, so open-terminal's id works without also naming the agent.
+		const result = resolveTerminalTab(sessions, 'agent-a', 'b1');
+		expect(result?.session.id).toBe('agent-b');
+		expect(result?.tab.id).toBe('b1');
+	});
+
+	it('scopes a name match to the target agent', () => {
+		// Both agents have a "Dev server" - the name must not cross agents.
+		const result = resolveTerminalTab(sessions, 'agent-b', 'Dev server');
+		expect(result?.session.id).toBe('agent-b');
+		expect(result?.tab.id).toBe('b1');
+	});
+
+	it('matches a name case-insensitively', () => {
+		expect(resolveTerminalTab(sessions, 'agent-a', 'dev SERVER')?.tab.id).toBe('a1');
+	});
+
+	it('matches the auto-generated "Terminal N" name', () => {
+		const session = createMockSession({
+			id: 'agent-c',
+			terminalTabs: [createMockTerminalTab({ id: 'c1', name: null })],
+		});
+		expect(resolveTerminalTab([session], 'agent-c', 'Terminal 1')?.tab.id).toBe('c1');
+	});
+
+	it('returns null when two tabs in one agent share a name', () => {
+		const session = createMockSession({
+			id: 'agent-d',
+			terminalTabs: [
+				createMockTerminalTab({ id: 'd1', name: 'Build' }),
+				createMockTerminalTab({ id: 'd2', name: 'Build' }),
+			],
+		});
+		expect(resolveTerminalTab([session], 'agent-d', 'Build')).toBeNull();
+	});
+
+	it('falls back to the active terminal tab with no ref', () => {
+		expect(resolveTerminalTab(sessions, 'agent-a')?.tab.id).toBe('a2');
+	});
+
+	it('uses the only tab when there is no active pointer', () => {
+		const session = createMockSession({
+			id: 'agent-e',
+			terminalTabs: [createMockTerminalTab({ id: 'e1' })],
+			activeTerminalTabId: null,
+		});
+		expect(resolveTerminalTab([session], 'agent-e')?.tab.id).toBe('e1');
+	});
+
+	it('returns null rather than guessing between several inactive tabs', () => {
+		const session = createMockSession({
+			id: 'agent-f',
+			terminalTabs: [createMockTerminalTab({ id: 'f1' }), createMockTerminalTab({ id: 'f2' })],
+			activeTerminalTabId: null,
+		});
+		expect(resolveTerminalTab([session], 'agent-f')).toBeNull();
+	});
+
+	it('returns null when the agent has no terminal tabs', () => {
+		const session = createMockSession({ id: 'agent-g', terminalTabs: [] });
+		expect(resolveTerminalTab([session], 'agent-g')).toBeNull();
+	});
+
+	it('returns null for an unknown agent', () => {
+		expect(resolveTerminalTab(sessions, 'nope')).toBeNull();
+	});
+
+	it('returns null for a ref that matches nothing', () => {
+		expect(resolveTerminalTab(sessions, 'agent-a', 'missing')).toBeNull();
+	});
+
+	it('ignores a stale active pointer', () => {
+		const session = createMockSession({
+			id: 'agent-h',
+			terminalTabs: [createMockTerminalTab({ id: 'h1' }), createMockTerminalTab({ id: 'h2' })],
+			activeTerminalTabId: 'gone',
+		});
+		expect(resolveTerminalTab([session], 'agent-h')).toBeNull();
 	});
 });
 

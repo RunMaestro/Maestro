@@ -18,6 +18,9 @@ import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderU
 import {
 	createTerminalTab as createTerminalTabHelper,
 	addTerminalTab as addTerminalTabHelper,
+	resolveTerminalTab,
+	getTerminalTabDisplayName,
+	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
@@ -255,12 +258,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
 		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
 			sessionId: string;
-			config: { cwd?: string; shell?: string; name?: string | null };
+			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
 			responseChannel?: string;
 		};
-		const ack = (success: boolean) => {
+		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
-				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success);
+				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success, tabId);
 			}
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -270,11 +273,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 		setActiveSessionId(sessionId);
-		const tab = createTerminalTabHelper(
+		const baseTab = createTerminalTabHelper(
 			config?.shell,
 			config?.cwd ?? session.cwd,
 			config?.name ?? null
 		);
+		// A requested command becomes the tab's startup command rather than a
+		// one-shot write: TerminalView already runs that once the PTY is up, and
+		// storing it means a `npm run dev` terminal comes back after a restart or
+		// a manual restart of the tab instead of reopening to an empty shell.
+		const command = config?.command?.trim();
+		const tab = command ? { ...baseTab, startupCommand: command } : baseTab;
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
@@ -282,7 +291,122 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return { ...updated, inputMode: 'terminal' as const };
 			})
 		);
-		ack(true);
+		ack(true, tab.id);
+	});
+
+	// Handle remote writes into an existing terminal tab from CLI/web interface.
+	// This is the "type into the terminal the user is looking at" path, as
+	// opposed to openTerminalTab which makes a new one.
+	useEventListener('maestro:writeTerminalTab', async (e: Event) => {
+		const { sessionId, tabRef, data, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			tabRef?: string;
+			data: string;
+			responseChannel?: string;
+		};
+		const ack = (
+			success: boolean,
+			result?: { error?: string; tabId?: string; tabName?: string }
+		) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteWriteTerminalTabResponse(responseChannel, success, result);
+			}
+		};
+
+		const resolved = resolveTerminalTab(sessionsRef.current, sessionId, tabRef);
+		if (!resolved) {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) {
+				ack(false, { error: 'Agent not found' });
+			} else if (tabRef) {
+				ack(false, { error: `No terminal tab matching "${tabRef}"` });
+			} else if ((session.terminalTabs || []).length === 0) {
+				ack(false, {
+					error: 'No terminal tab is open for this agent. Use open-terminal first.',
+				});
+			} else {
+				ack(false, {
+					error: 'Several terminal tabs are open and none is active. Pass --tab to pick one.',
+				});
+			}
+			return;
+		}
+
+		const { session: owner, tab } = resolved;
+		const index = (owner.terminalTabs || []).findIndex((t) => t.id === tab.id);
+		const tabName = getTerminalTabDisplayName(tab, index);
+
+		// The PTY lives in the main process and outlives its React view, so a
+		// write lands even when the owning agent is not on screen. A tab that was
+		// never rendered has no PTY at all though (pid 0), and only the ACTIVE
+		// session has a live TerminalView that would spawn one. Waiting for a
+		// background agent would stall until the timeout for a shell that is
+		// never coming, so wait only when it can actually arrive - and never
+		// switch agents to force it, since that would yank the screen away to
+		// service a background command.
+		let pid = tab.pid;
+		if (pid === 0 && tab.state !== 'exited') {
+			const isActiveSession = useSessionStore.getState().activeSessionId === owner.id;
+			if (isActiveSession) {
+				const deadline = Date.now() + 4000;
+				while (pid === 0 && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+					pid =
+						(sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []).find(
+							(t) => t.id === tab.id
+						)?.pid ?? 0;
+				}
+			}
+		}
+		if (pid === 0) {
+			ack(false, {
+				error:
+					tab.state === 'exited'
+						? `Terminal "${tabName}" has exited. Restart it from the tab menu, or open a new one.`
+						: `Terminal "${tabName}" has no running shell yet. Select the tab in Maestro, or use open-terminal --command.`,
+				tabId: tab.id,
+				tabName,
+			});
+			return;
+		}
+
+		const success = await window.maestro.process.write(
+			getTerminalSessionId(owner.id, tab.id),
+			data
+		);
+		ack(success, {
+			error: success ? undefined : `Failed to write to terminal "${tabName}"`,
+			tabId: tab.id,
+			tabName,
+		});
+	});
+
+	// Handle remote terminal tab listing from CLI/web interface. Terminal tabs
+	// live only in renderer state, so this is the only way a caller can discover
+	// what is open before writing to it.
+	useEventListener('maestro:listTerminalTabs', (e: Event) => {
+		const { sessionId, responseChannel } = (e as CustomEvent).detail as {
+			sessionId?: string;
+			responseChannel?: string;
+		};
+		if (!responseChannel) return;
+		const sessions = sessionId
+			? sessionsRef.current.filter((s) => s.id === sessionId)
+			: sessionsRef.current;
+		const tabs = sessions.flatMap((session) =>
+			(session.terminalTabs || []).map((tab, index) => ({
+				tabId: tab.id,
+				agentId: session.id,
+				agentName: session.name,
+				name: getTerminalTabDisplayName(tab, index),
+				cwd: tab.cwd || session.cwd || '',
+				pid: tab.pid,
+				state: tab.state,
+				active: session.activeTerminalTabId === tab.id,
+				startupCommand: tab.startupCommand ?? null,
+			}))
+		);
+		window.maestro.process.sendRemoteListTerminalTabsResponse(responseChannel, tabs);
 	});
 
 	// --- Auto Run Operations ---

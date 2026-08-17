@@ -194,6 +194,14 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteOpenTerminalTabResponse: vi.fn(),
+		onRemoteWriteTerminalTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteWriteTerminalTabResponse: vi.fn(),
+		onRemoteListTerminalTabs: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteListTerminalTabsResponse: vi.fn(),
 		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),

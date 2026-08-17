@@ -28,6 +28,7 @@ import {
 	getProcessList,
 } from './cue-process-lifecycle';
 import { getOutputParser } from '../parsers';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
@@ -151,7 +152,9 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		config;
 
 	const startedAt = new Date().toISOString();
-	const startTime = Date.now();
+	// Sleep-aware: a run that spans a lid close must not report the sleep as
+	// agent work time (durationMs feeds the Conductor time credit).
+	const runSpan = beginSleepAwareSpan();
 
 	// Helper to build a failed result
 	const failedResult = (message: string): CueRunResult => ({
@@ -165,7 +168,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		stdout: '',
 		stderr: message,
 		exitCode: null,
-		durationMs: Date.now() - startTime,
+		durationMs: sleepAwareElapsedMs(runSpan),
 		startedAt,
 		endedAt: new Date().toISOString(),
 	});
@@ -239,7 +242,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		stdout: extractCleanStdout(processResult.stdout, config.toolType),
 		stderr: processResult.stderr,
 		exitCode: processResult.exitCode,
-		durationMs: Date.now() - startTime,
+		durationMs: sleepAwareElapsedMs(runSpan),
 		startedAt,
 		endedAt: new Date().toISOString(),
 		providerSessionId: extractProviderSessionId(processResult.stdout, config.toolType),

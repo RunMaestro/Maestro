@@ -12,6 +12,7 @@ import type {
 	GroupData,
 	GitStatusResult,
 	GitDiffResult,
+	TerminalTabInfo,
 	GitBranchesResult,
 	ListWorktreesResult,
 	GroupChatState,
@@ -121,8 +122,13 @@ export interface MessageHandlerCallbacks {
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null }
-	) => Promise<boolean>;
+		config: { cwd?: string; shell?: string; name?: string | null; command?: string }
+	) => Promise<{ success: boolean; tabId?: string }>;
+	writeTerminalTab: (
+		sessionId: string,
+		payload: { tabRef?: string; data: string }
+	) => Promise<{ success: boolean; error?: string; tabId?: string; tabName?: string }>;
+	listTerminalTabs: (sessionId?: string) => Promise<TerminalTabInfo[]>;
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string,

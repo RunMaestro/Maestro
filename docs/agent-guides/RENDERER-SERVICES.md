@@ -316,7 +316,30 @@ Structurally identical to speckit.ts - same 3 functions, same error handling pat
 
 ---
 
-### index.ts (~36 lines)
+### systemSleep.ts (~90 lines)
+
+Machine-sleep accounting for the renderer. Any duration measured as
+`Date.now() - start` counts an overnight suspend as work: the wall clock runs while the
+process is frozen, and a system suspend never fires `visibilitychange` (the window stays
+"visible" the whole time). The main process measures the real gap with `powerMonitor` and
+ships it over `app:systemResume`; this module accumulates it and every Auto Run duration
+subtracts it.
+
+- `beginSleepAwareSpan()` / `sleepAwareElapsedMs(span)` - the preferred pair. Per task, per
+  loop, per run.
+- `onSystemSleep(handler)` - for a live tracker that pauses its own clock (`useTimeTracking`
+  walks its per-session timestamps forward by the gap).
+- `sleepAwareElapsedSince(startTime)` - for a display that only kept a start timestamp
+  (the Auto Run pill, the thinking timer).
+- `getTotalSleepMs()`, `recordSystemSleep()` (tests), `resetSystemSleepTracking()` (tests).
+
+Singleton: one IPC listener, attached lazily on first use, one counter, so every consumer
+measures the same sleep. The math lives in `src/shared/sleepTracking.ts` and is shared with
+the main-process counterpart `src/main/utils/sleep-tracker.ts`.
+
+---
+
+### index.ts (~45 lines)
 
 Barrel export file. Re-exports from:
 
@@ -325,6 +348,7 @@ Barrel export file. Re-exports from:
 - `ipcWrapper` (createIpcMethod + types)
 - `contextGroomer` (ContextGroomingService + singleton + types)
 - `contextSummarizer` (ContextSummarizationService + singleton + types)
+- `systemSleep` (span helpers, `onSystemSleep`, `getTotalSleepMs` + types)
 - `wizardIntentParser` (parseWizardIntent, suggestsIterateIntent, suggestsNewIntent + types)
 
 Notable omissions from the barrel: `speckit.ts`, `openspec.ts`, `inlineWizardConversation.ts`, `inlineWizardDocumentGeneration.ts` are imported directly by consumers.

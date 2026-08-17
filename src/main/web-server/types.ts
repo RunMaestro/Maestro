@@ -474,11 +474,58 @@ export interface OpenTerminalTabConfig {
 	cwd?: string;
 	shell?: string;
 	name?: string | null;
+	/**
+	 * Command to run in the new terminal. Stored as the tab's startup command, so
+	 * it also re-runs if the tab is restarted or the app is reopened - which is
+	 * the behavior a long-running `npm run dev` wants.
+	 */
+	command?: string;
+}
+export interface OpenTerminalTabResult {
+	success: boolean;
+	tabId?: string;
 }
 export type OpenTerminalTabCallback = (
 	sessionId: string,
 	config: OpenTerminalTabConfig
-) => Promise<boolean>;
+) => Promise<OpenTerminalTabResult>;
+
+/**
+ * Writes raw data into an already-open desktop terminal tab. `tabRef` is a tab
+ * id or display name; omitted means the agent's active terminal tab.
+ */
+export interface WriteTerminalTabPayload {
+	tabRef?: string;
+	data: string;
+}
+export interface WriteTerminalTabResult {
+	success: boolean;
+	error?: string;
+	/** The tab that actually received the write, echoed back for reporting. */
+	tabId?: string;
+	tabName?: string;
+}
+export type WriteTerminalTabCallback = (
+	sessionId: string,
+	payload: WriteTerminalTabPayload
+) => Promise<WriteTerminalTabResult>;
+
+/**
+ * A desktop terminal tab. Terminal tabs live only in renderer state, so this is
+ * assembled there and passed back through the remote bridge.
+ */
+export interface TerminalTabInfo {
+	tabId: string;
+	agentId: string;
+	agentName: string;
+	name: string;
+	cwd: string;
+	pid: number;
+	state: string;
+	active: boolean;
+	startupCommand: string | null;
+}
+export type ListTerminalTabsCallback = (sessionId?: string) => Promise<TerminalTabInfo[]>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
 
 /**

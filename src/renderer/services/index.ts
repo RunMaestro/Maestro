@@ -30,6 +30,16 @@ export type { GroomingResult, GroomingConfig } from './contextGroomer';
 export { ContextSummarizationService, contextSummarizationService } from './contextSummarizer';
 export type { SummarizationConfig } from './contextSummarizer';
 
+// System sleep tracking (keeps machine sleep out of measured durations)
+export {
+	getTotalSleepMs,
+	onSystemSleep,
+	beginSleepAwareSpan,
+	sleepAwareElapsedMs,
+	sleepAwareElapsedSince,
+} from './systemSleep';
+export type { SleepAwareSpan } from './systemSleep';
+
 // Wizard intent parser service
 export { parseWizardIntent, suggestsIterateIntent, suggestsNewIntent } from './wizardIntentParser';
 export type { WizardIntentResult } from './wizardIntentParser';
