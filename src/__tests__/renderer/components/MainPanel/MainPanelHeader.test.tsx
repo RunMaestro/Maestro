@@ -21,9 +21,10 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			encoreFeatures: {},
 		})
 	),
-	// The header renders no voice surface any more (the composer's Send column
-	// owns the microphone), but other header pills still read this selector.
-	selectACappellaEnabled: () => false,
+	// ON, so the "no microphone in the header" test below is not vacuous: with the
+	// flag off, an assertion that no voice surface renders would pass even if the
+	// header still had one.
+	selectACappellaEnabled: () => true,
 }));
 
 // Mutable UI state + stable setters so tests can drive the sidebar opener.
@@ -771,5 +772,15 @@ describe('MainPanelHeader', () => {
 		// The ahead/behind counts are only visible in the tooltip, which requires hover
 		// Just verify the header renders without errors
 		expect(screen.getByText('main')).toBeInTheDocument();
+	});
+
+	it('has no voice microphone, even with A Cappella switched on', () => {
+		// The composer's Send column owns that button. A second microphone here was
+		// the same action twice on one screen, in the busiest row in the app.
+		// `selectACappellaEnabled` is mocked ON above, so this fails if the header
+		// ever grows one back.
+		render(<MainPanelHeader {...defaultProps} />);
+
+		expect(screen.queryByTestId('header-voice-pill')).not.toBeInTheDocument();
 	});
 });
