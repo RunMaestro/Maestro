@@ -61,11 +61,35 @@ export interface VoiceHudProps {
 	/** The A Cappella Encore flag. False renders nothing and subscribes to nothing. */
 	enabled: boolean;
 	/**
-	 * Show the dev harness. Defaults to the development build: it is the only way
-	 * to drive a session without a microphone, and it has no place in a production
-	 * window.
+	 * Show the dev harness - the type-an-utterance box that drives a session
+	 * without a microphone.
+	 *
+	 * Defaults to OFF, including in development, and opts in through
+	 * {@link DEV_HARNESS_STORAGE_KEY}. It used to default to the development
+	 * build, and because the harness is also a reason for the widget to render,
+	 * every dev build opened a voice panel at startup that nobody had asked for -
+	 * the one thing A Cappella must never do. A debugging tool is not a reason to
+	 * put a microphone widget on screen.
 	 */
 	showDevHarness?: boolean;
+}
+
+/**
+ * Opt in to the dev harness: `localStorage.setItem(key, 'true')`, then reload.
+ *
+ * localStorage rather than a build flag so it can be switched on in the window
+ * that is misbehaving, and read once at mount so toggling it mid-session cannot
+ * make a widget appear underneath the user.
+ */
+export const DEV_HARNESS_STORAGE_KEY = 'maestro.acappella.devHarness';
+
+function devHarnessOptedIn(): boolean {
+	try {
+		return globalThis.localStorage?.getItem(DEV_HARNESS_STORAGE_KEY) === 'true';
+	} catch {
+		// A window with storage denied has not opted in to anything.
+		return false;
+	}
 }
 
 /** Widget width. Fixed: this is a status readout, not a document. */
@@ -134,7 +158,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	}, []);
 	const startDrag = usePointerDrag();
 
-	const devHarness = showDevHarness ?? process.env.NODE_ENV === 'development';
+	// Read once, at mount: see DEV_HARNESS_STORAGE_KEY.
+	const [harnessOptedIn] = useState(devHarnessOptedIn);
+	const devHarness = showDevHarness ?? harnessOptedIn;
 	const active = isVoiceSessionActive(state);
 	const visualState = voiceHudVisualState(state);
 
@@ -251,11 +277,28 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 		if (active) setDismissed(false);
 	}, [active, setDismissed]);
 
+	const micIssue = mic?.issue ?? null;
+
+	/**
+	 * Every reason the widget is on screen, in one place.
+	 *
+	 * One expression rather than two, because the render gate and the Escape
+	 * layer had drifted: the layer was registered for `active || devHarness`
+	 * while the widget also rendered for an error or a microphone problem, so the
+	 * HUD showing a refusal drew an ESC pill that Escape did not actually reach.
+	 * A widget that is visible is a widget Escape must close.
+	 *
+	 * The dev harness stays a reason, because opting into it IS a trigger: someone
+	 * who set the storage key wants the box to type into. What changed is that it
+	 * no longer opts itself in on every developer's behalf.
+	 */
+	const visible = enabled && !dismissed && (active || devHarness || !!error || !!micIssue);
+
 	// Non-blocking: the HUD floats over the workspace while the user keeps typing,
 	// so it takes neither focus nor the lower layers' clicks, and it never traps
 	// focus. It still registers, so Escape reaches it before the surfaces beneath.
 	useModalLayer(MODAL_PRIORITIES.VOICE_HUD, 'Voice HUD', handleClose, {
-		enabled: enabled && !dismissed && (active || devHarness),
+		enabled: visible,
 		blocksLowerLayers: false,
 		capturesFocus: false,
 		focusTrap: 'none',
@@ -274,10 +317,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 		[theme.colors.accentForeground, theme.colors.accent]
 	);
 
-	const micIssue = mic?.issue ?? null;
-
-	if (!enabled || dismissed) return null;
-	if (!active && !devHarness && !error && !micIssue) return null;
+	if (!visible) return null;
 
 	const spoken = speech ? speech.sentences.length : 0;
 	// While the reply is still being written the total is a lower bound, so the

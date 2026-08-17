@@ -8,7 +8,7 @@
  * state - it is the minimized HUD's home in the Left Bar header.
  */
 
-export { VoiceHud, type VoiceHudProps } from './VoiceHud';
+export { VoiceHud, DEV_HARNESS_STORAGE_KEY, type VoiceHudProps } from './VoiceHud';
 export { VoiceStatusIndicator } from './VoiceStatusIndicator';
 export { VoiceHudControls, type VoiceHudControlsProps } from './VoiceHudControls';
 export { VoiceIndicator, type VoiceIndicatorProps, meterFill } from './VoiceIndicator';
