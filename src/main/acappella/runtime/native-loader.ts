@@ -269,8 +269,10 @@ function declineBeforeLoading(
 			arch: process.arch,
 			failure: 'not-a-dependency',
 			message: `${descriptor.label} is not part of this build yet.`,
-			suggestedAction:
-				'Use a hosted provider or the mock tier for this slot until the local runtime ships.',
+			// No "for this slot": the detail this rides behind already names the slot,
+			// and `readinessErrorMessage` hoists a shared recovery to the end of a
+			// multi-slot refusal, where a singular "this slot" would be wrong.
+			suggestedAction: 'Use a hosted provider or the mock tier until the local runtime ships.',
 		};
 	}
 
