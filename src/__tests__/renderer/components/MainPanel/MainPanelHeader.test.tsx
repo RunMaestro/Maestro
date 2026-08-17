@@ -21,8 +21,8 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			encoreFeatures: {},
 		})
 	),
-	// The header's voice pill gates on this. Mocked to off, so these tests keep
-	// describing the header a user without the Encore Feature sees.
+	// The header renders no voice surface any more (the composer's Send column
+	// owns the microphone), but other header pills still read this selector.
 	selectACappellaEnabled: () => false,
 }));
 
