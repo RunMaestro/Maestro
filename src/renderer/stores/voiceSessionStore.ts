@@ -311,8 +311,16 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					// `stopped` is the end of the session; `error` parks it. Anything
 					// else (endpoint, interrupted) is mid-conversation and the state
 					// belongs to whichever event comes next.
-					if (event.reason === 'stopped') patch.state = 'idle';
-					else if (event.reason === 'error') patch.state = 'error';
+					if (event.reason === 'stopped') {
+						patch.state = 'idle';
+						// An error describes the session that carried it. A refusal from a
+						// session the user has since ended is describing nothing, and the
+						// HUD renders whenever `error` is set - so keeping it here left a
+						// voice panel on screen indefinitely that nobody had opened. The
+						// error still outlives a session that FAILED (no `listen-stop` is
+						// emitted for that, which is how the user gets to read why).
+						patch.error = null;
+					} else if (event.reason === 'error') patch.state = 'error';
 					break;
 				case 'partial-transcript':
 					patch.partialTranscript = event.text;
