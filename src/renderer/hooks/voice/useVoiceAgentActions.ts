@@ -1,12 +1,12 @@
 /**
  * useVoiceAgentActions - the voice actions available for a single agent.
  *
- * Three surfaces offer "Talk to this agent": the Left Bar right-click menu, the
- * Main Panel header, and the command palette. They all call this hook rather
- * than each re-deriving the Encore gate, the scope shape, and the IPC call, for
- * the same reason `useGitAgentActions` exists - three implementations of one
- * menu entry drift, and the one that drifts is always the one the user reaches
- * for.
+ * Three surfaces offer "Talk to this agent": the microphone under the composer's
+ * Send button, the Left Bar right-click menu, and the command palette. They all
+ * call this hook rather than each re-deriving the Encore gate, the scope shape,
+ * and the IPC call, for the same reason `useGitAgentActions` exists - three
+ * implementations of one menu entry drift, and the one that drifts is always the
+ * one the user reaches for.
  *
  * It also owns jumping to a tab a turn was dispatched into, because that is the
  * other direction of the same relationship: the transcript's route chips, and
