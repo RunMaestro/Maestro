@@ -60,3 +60,6 @@ export type { FontScaleControlProps } from './FontScaleControl';
 
 export { GitChangeCounts } from './GitChangeCounts';
 export type { GitChangeCountsProps } from './GitChangeCounts';
+
+export { CornerDot } from './CornerDot';
+export type { CornerDotProps } from './CornerDot';

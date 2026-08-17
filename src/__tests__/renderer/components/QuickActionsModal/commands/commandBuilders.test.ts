@@ -9,6 +9,7 @@ import { buildGitWorktreeCommands } from '../../../../../renderer/components/Qui
 import {
 	buildGroupChatCommands,
 	buildGroupChatJumpCommands,
+	buildGroupChatSwitcherCommands,
 } from '../../../../../renderer/components/QuickActionsModal/commands/groupChatCommands';
 import { buildMoveToGroupCommands } from '../../../../../renderer/components/QuickActionsModal/commands/moveToGroupCommands';
 import { buildNavigationCommands } from '../../../../../renderer/components/QuickActionsModal/commands/navigationCommands';
@@ -128,6 +129,33 @@ describe('QuickActions command builders', () => {
 				setQuickActionOpen: close,
 			}).map((a) => a.id)
 		).toEqual(['newGroupChat', 'closeGroupChat', 'deleteGroupChat']);
+	});
+
+	it('lists only running group chats in the agent switcher, bucketed live', () => {
+		const chats = [
+			{ id: 'chat1', name: 'Squad', participants: [] },
+			{ id: 'chat2', name: 'Idle Room', participants: [] },
+		] as any;
+		const onOpenGroupChat = vi.fn();
+		const commands = buildGroupChatSwitcherCommands({
+			groupChats: chats,
+			busySnapshot: {
+				activeGroupChatId: 'chat1',
+				groupChatState: 'moderator-thinking',
+			},
+			onOpenGroupChat,
+		});
+
+		expect(commands).toHaveLength(1);
+		expect(commands[0]).toMatchObject({
+			id: 'jump-groupchat-chat1',
+			label: 'Group Chat: Squad',
+			isRunningAgent: true,
+			runningInfo: { state: 'busy', statusLabel: 'Moderator thinking', queueCount: 0 },
+		});
+
+		commands[0].action();
+		expect(onOpenGroupChat).toHaveBeenCalledWith('chat1');
 	});
 
 	it('builds navigation, tab, context, right-panel, and search commands', async () => {

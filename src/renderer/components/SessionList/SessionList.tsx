@@ -70,6 +70,7 @@ import {
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
@@ -370,6 +371,28 @@ function SessionListInner(props: SessionListProps) {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const unreadGroupChatIds = useGroupChatStore((s) => s.unreadGroupChatIds);
+
+	// Shared with the group chat rows' status dots and the agent jumper's LIVE
+	// bucket, so all three agree on what "running" means.
+	const isAnyGroupChatBusy = useMemo(
+		() =>
+			getBusyGroupChatIds(groupChats, {
+				activeGroupChatId,
+				groupChatState,
+				participantStates,
+				groupChatStates,
+				allGroupChatParticipantStates,
+			}).length > 0,
+		[
+			groupChats,
+			activeGroupChatId,
+			groupChatState,
+			participantStates,
+			groupChatStates,
+			allGroupChatParticipantStates,
+		]
+	);
 
 	// Keep the keyboard-selected Left Bar row in view as navigation moves it.
 	// Rows are tagged with `data-nav-key`; we resolve the current key from the
@@ -486,10 +509,15 @@ function SessionListInner(props: SessionListProps) {
 		[scopeSessionsToWindow, sortedSessionsAll]
 	);
 
-	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
+	// Derive whether any session is busy or in auto-run (for wand sparkle
+	// animation). A running group chat counts too: the room burns real agent
+	// time, and the wand is the app-wide "something is working" tell.
 	const isAnyBusy = useMemo(
-		() => sessions.some((s) => s.state === 'busy') || activeBatchSessionIds.length > 0,
-		[sessions, activeBatchSessionIds]
+		() =>
+			sessions.some((s) => s.state === 'busy') ||
+			activeBatchSessionIds.length > 0 ||
+			isAnyGroupChatBusy,
+		[sessions, activeBatchSessionIds, isAnyGroupChatBusy]
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
@@ -522,9 +550,15 @@ function SessionListInner(props: SessionListProps) {
 		}),
 		[activeBatchSessionIds, stuckOutageSignature]
 	);
+	// Drives the Bell button's dot. It must agree with what the unread filter
+	// would actually reveal, and that filter keeps unread group chats too - a
+	// dot-less bell that still un-hides a room reads as a bug. Agents route
+	// through sessionNeedsAttention so this can't drift from the filter itself.
 	const hasUnreadAgents = useMemo(
-		() => sessions.some((s) => sessionNeedsAttention(s, attentionCtx)),
-		[sessions, attentionCtx]
+		() =>
+			sessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
+			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)),
+		[sessions, attentionCtx, groupChats, unreadGroupChatIds]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -2139,6 +2173,7 @@ function SessionListInner(props: SessionListProps) {
 								groupChatStates={groupChatStates}
 								allGroupChatParticipantStates={allGroupChatParticipantStates}
 								showUnreadAgentsOnly={showUnreadAgentsOnly}
+								unreadGroupChatIds={unreadGroupChatIds}
 							/>
 						)}
 				</div>

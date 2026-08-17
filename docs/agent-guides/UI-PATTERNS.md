@@ -789,6 +789,29 @@ The row editor for an agent's extra directory grants (path + independent R / W s
 
 Always run the value through `normalizeAdditionalDirectories(dirs, homeDir)` (`src/shared/additionalDirectories.ts`) before persisting it on the session - the component keeps raw rows so the user can type and toggle freely. Grants are prompt-level only; see SHARED-UTILS.md → Additional Directories.
 
+### `<CornerDot>` (`src/renderer/components/ui/CornerDot.tsx`)
+
+The small pip pinned to the corner of something else: the red unread dot over a
+status dot, the accent dot over the Bell filter, the pulsing dot over the Group
+Chats count badge. Render it inside a `relative` parent. Do NOT hand-roll
+another `absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full` - there were
+four copies and they had already drifted on size and offset.
+
+```tsx
+<div className="relative">
+	<StatusDot />
+	{hasUnread && <CornerDot color={theme.colors.error} title="Unread messages" />}
+</div>
+```
+
+- `size` - `'sm'` (6px) over a status dot or small icon, `'md'` (8px) to read against a filled badge.
+- `placement` - `'top-right'` (default) or `'right'` for parents too short to have a usable corner.
+- `pulse` - live activity. Steady means "waiting for you".
+- `ringColor` - pass the surface color (e.g. `theme.colors.bgSidebar`) when the dot sits on a filled parent.
+- `title` - gives both a hover tooltip and an accessible name. Without one the dot is `aria-hidden`,
+  since it usually just repeats what its parent already says. The dot is deliberately NOT
+  `pointer-events-none` (that kills the tooltip); clicks bubble to the parent.
+
 ### `<FontScaleControl>` (`src/renderer/components/ui/FontScaleControl.tsx`)
 
 Decrease / reset / increase font zoom for a reading pane. Pair it with
