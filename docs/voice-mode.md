@@ -73,6 +73,14 @@ The Conductor Brain can also be a real Maestro agent instead of a model. It is s
 
 Local providers need model files. **Voice Setup** lists every one with its exact size, license, source repository, and install path before it downloads anything, and mounting the panel makes zero network calls.
 
+<Warning>
+	**The local speech engines are not in this build yet.** The models below install and verify fine,
+	but the runtimes that read them (whisper.cpp, ONNX Runtime, and llama.cpp) ship in a later
+	release. Until then Voice Setup says so against each affected slot and a session refuses to start
+	rather than half-opening, so you can see it before spending the download. Use a hosted provider,
+	or wait for the runtimes.
+</Warning>
+
 | Model                        | Role            | Size     | License    |
 | ---------------------------- | --------------- | -------- | ---------- |
 | Whisper Base (English)       | Speech-to-Text  | 141.1 MB | MIT        |

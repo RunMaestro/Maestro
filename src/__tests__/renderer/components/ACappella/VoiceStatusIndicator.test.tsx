@@ -10,6 +10,14 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+
+// Controlled WindowContext. `null` is "no WindowProvider", which permits
+// everything - the shape every other test in this file runs under.
+let mockWindow: { windowId: string | null; isMainWindow: boolean } | null = null;
+vi.mock('../../../../renderer/contexts/WindowContext', () => ({
+	useWindowContextOptional: () => mockWindow,
+}));
+
 import { VoiceStatusIndicator } from '../../../../renderer/components/ACappella';
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
@@ -49,6 +57,7 @@ describe('VoiceStatusIndicator', () => {
 	beforeEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+		mockWindow = null;
 		useVoiceSessionStore.getState().reset();
 		seed();
 	});
@@ -107,5 +116,42 @@ describe('VoiceStatusIndicator', () => {
 		expect(screen.getByTestId('voice-status-indicator').getAttribute('aria-label')).toContain(
 			'Speaking'
 		);
+	});
+
+	/**
+	 * The minimized HUD is still the session's surface, so it follows the HUD's
+	 * window. This is the same `useOwnsVoiceSession` rule the HUD itself uses, and
+	 * it is tested on BOTH surfaces on purpose: a session hidden in one and shown
+	 * in the other is exactly the drift the shared hook exists to prevent.
+	 */
+	describe('window scoping', () => {
+		it('shows a session this window owns', () => {
+			mockWindow = { windowId: 'w2', isMainWindow: false };
+			useVoiceSessionStore.setState({ windowId: 'w2' });
+
+			render(<VoiceStatusIndicator theme={mockTheme} />);
+
+			expect(screen.getByTestId('voice-status-indicator')).toBeTruthy();
+		});
+
+		it('renders nothing for a session another window owns', () => {
+			// Voice events reach every window, so without the gate this window's Left
+			// Bar would claim an open microphone that belongs to a different one.
+			mockWindow = { windowId: 'w2', isMainWindow: false };
+			useVoiceSessionStore.setState({ windowId: 'w1' });
+
+			render(<VoiceStatusIndicator theme={mockTheme} />);
+
+			expect(screen.queryByTestId('voice-status-indicator')).toBeNull();
+		});
+
+		it('shows a session that names no window on the primary', () => {
+			mockWindow = { windowId: 'w1', isMainWindow: true };
+			useVoiceSessionStore.setState({ windowId: null });
+
+			render(<VoiceStatusIndicator theme={mockTheme} />);
+
+			expect(screen.getByTestId('voice-status-indicator')).toBeTruthy();
+		});
 	});
 });
