@@ -116,6 +116,29 @@ describe('voiceSessionStore projection', () => {
 		expect(useVoiceSessionStore.getState().error).not.toBeNull();
 	});
 
+	it('records which window owns the session, from the very first event', () => {
+		// On `wake` rather than only in the catch-up snapshot: a window that waited
+		// for the snapshot would flash a HUD for a session belonging to another one.
+		apply(event('wake', { source: 'client-button', scope: { kind: 'conductor' }, windowId: 'w2' }));
+
+		expect(useVoiceSessionStore.getState().windowId).toBe('w2');
+	});
+
+	it('takes the owning window from a catch-up snapshot after a reload', () => {
+		// A window that reloaded mid-session never saw the `wake`, and without this
+		// it would decide it does not own a session that is in fact its own.
+		useVoiceSessionStore.getState().applySnapshot({
+			sessionId: 'reloaded-session',
+			state: 'listening',
+			scope: { kind: 'conductor' },
+			seq: 9,
+			providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+			windowId: 'w2',
+		});
+
+		expect(useVoiceSessionStore.getState().windowId).toBe('w2');
+	});
+
 	it('clears the error once the user ends the session', () => {
 		// The HUD renders whenever `error` is set, so an error outliving its
 		// session left a voice panel on screen indefinitely that nobody opened.

@@ -26,6 +26,7 @@ import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
 import { VOICE_HUD_STATE_LABELS, voiceHudVisualState } from '../../../shared/acappella/hud-state';
 import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { useOwnsVoiceSession } from './useOwnsVoiceSession';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import type { Theme } from '../../types';
 import { VoiceIndicator } from './VoiceIndicator';
@@ -50,12 +51,16 @@ export const VoiceStatusIndicator = memo(function VoiceStatusIndicator({
 	const minimized = useVoiceUiStore((s) => s.minimized);
 	const setMinimized = useVoiceUiStore((s) => s.setMinimized);
 	const scope = useVoiceScope(theme);
+	// The minimized HUD is still the session's surface, so it follows the HUD's
+	// window: a session opened in another window must not leave a live microphone
+	// indicator in this one's Left Bar.
+	const ownsSession = useOwnsVoiceSession();
 
 	// `minimized` alone, deliberately not `minimized || dismissed`. Dismissed is
 	// the close button, which ends the session, so an indicator that also
 	// respected it would sit there claiming an open microphone for the moment
 	// between the click and the service confirming the session is gone.
-	if (!enabled || !isVoiceSessionActive(state) || !minimized) return null;
+	if (!enabled || !ownsSession || !isVoiceSessionActive(state) || !minimized) return null;
 
 	const visualState = voiceHudVisualState(state);
 	const stateLabel = VOICE_HUD_STATE_LABELS[visualState];

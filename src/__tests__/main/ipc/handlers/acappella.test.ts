@@ -82,6 +82,7 @@ import {
 	registerACappellaHandlers,
 	resetACappellaHandlerState,
 	shutdownACappellaForDisable,
+	stopVoiceSessionForClosedWindow,
 	type VoiceStartSessionResult,
 } from '../../../../main/ipc/handlers/acappella';
 import {
@@ -147,6 +148,12 @@ function voiceEvents(): VoiceEvent[] {
 		.map((entry) => entry.args[0] as VoiceEvent);
 }
 
+/**
+ * What `resolveVoiceWindowId` answers, per test. `undefined` leaves the dep off
+ * entirely, which is the single-window host: no window is ever named.
+ */
+let voiceWindowId: string | null | undefined;
+
 function register(options: { withAudio?: boolean } = {}): void {
 	registerACappellaHandlers({
 		settingsStore,
@@ -155,6 +162,8 @@ function register(options: { withAudio?: boolean } = {}): void {
 		// Absent by default, exactly as in a test process with no window: the
 		// session still runs, it is simply text-in.
 		audioHostDeps: options.withAudio ? ({} as never) : undefined,
+		resolveVoiceWindowId:
+			voiceWindowId === undefined ? undefined : () => voiceWindowId as string | null,
 	});
 }
 
@@ -514,6 +523,75 @@ describe('A Cappella IPC handlers - session lifecycle', () => {
 
 	it('stop-session with no service is a no-op', async () => {
 		await expect(handlerFor('acappella:stop-session')({})).resolves.toBeUndefined();
+	});
+});
+
+/**
+ * Which window's HUD a session belongs to. Voice events are broadcast to every
+ * window, so this field is the only thing keeping a session opened in one window
+ * from drawing a HUD in all of them.
+ */
+describe('A Cappella IPC handlers - window scoping', () => {
+	afterEach(() => {
+		voiceWindowId = undefined;
+	});
+
+	it('stamps the session with the window the start came from', async () => {
+		voiceWindowId = 'window-2';
+		vi.mocked(ipcMain.handle).mockClear();
+		register();
+
+		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
+
+		expect(result.snapshot.windowId).toBe('window-2');
+		// On `wake`, the FIRST event: a window that had to wait for the catch-up
+		// snapshot would flash a HUD for a session that is not its own.
+		expect(voiceEvents()[0]).toMatchObject({ type: 'wake', windowId: 'window-2' });
+	});
+
+	it('names no window when nothing resolves one', async () => {
+		// The single-window host, and every test host: null means the primary
+		// window shows it, which is the only window there is.
+		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
+
+		expect(result.snapshot.windowId).toBeNull();
+	});
+
+	it('clears the window when the session ends', async () => {
+		voiceWindowId = 'window-2';
+		vi.mocked(ipcMain.handle).mockClear();
+		register();
+		await handlerFor('acappella:start-session')({});
+
+		await handlerFor('acappella:stop-session')({});
+
+		const snapshot = (await handlerFor('acappella:get-state')({})) as VoiceSessionSnapshot;
+		expect(snapshot.windowId).toBeNull();
+	});
+
+	it('ends the session when its own window closes', async () => {
+		// Otherwise closing that window leaves an open microphone with no surface
+		// anywhere - the failure the HUD's close button exists to prevent, reached
+		// by a different route.
+		voiceWindowId = 'window-2';
+		vi.mocked(ipcMain.handle).mockClear();
+		register();
+		await handlerFor('acappella:start-session')({});
+
+		await stopVoiceSessionForClosedWindow('window-2');
+
+		expect(getVoiceSessionService()?.getState()).toBe('idle');
+	});
+
+	it('leaves a session alone when a DIFFERENT window closes', async () => {
+		voiceWindowId = 'window-2';
+		vi.mocked(ipcMain.handle).mockClear();
+		register();
+		await handlerFor('acappella:start-session')({});
+
+		await stopVoiceSessionForClosedWindow('window-1');
+
+		expect(getVoiceSessionService()?.getState()).toBe('listening');
 	});
 });
 

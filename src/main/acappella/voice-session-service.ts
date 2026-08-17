@@ -27,6 +27,7 @@ import type {
 	VoiceOrigin,
 	VoiceScope,
 	VoiceSessionErrorCode,
+	VoiceWindowId,
 	WakeSource,
 } from '../../shared/acappella/protocol';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
@@ -253,6 +254,11 @@ export interface VoiceSessionSnapshot {
 	 * `listen-start` went out. `local` while idle.
 	 */
 	origin: VoiceOrigin;
+	/**
+	 * The window whose HUD owns this session, for a window that reloaded or opened
+	 * mid-session and so never saw the `wake`. Null while idle.
+	 */
+	windowId: VoiceWindowId;
 	/** Last `seq` emitted. A client whose next event skips this has lost events. */
 	seq: number;
 	startedAt: number | null;
@@ -320,6 +326,11 @@ export class VoiceSessionService {
 	 * under a live session would be describing a handover that cannot happen.
 	 */
 	private origin: VoiceOrigin = { kind: 'local' };
+	/**
+	 * The window whose HUD owns this session. Set at start, for the same reason
+	 * `origin` is: the surface a session belongs to cannot change under it.
+	 */
+	private windowId: VoiceWindowId = null;
 	private seq = 0;
 	private startedAt: number | null = null;
 
@@ -459,6 +470,7 @@ export class VoiceSessionService {
 			state: this.state,
 			scope: this.scope,
 			origin: this.origin,
+			windowId: this.windowId,
 			seq: this.seq,
 			startedAt: this.startedAt,
 			providerIds: {
@@ -492,6 +504,15 @@ export class VoiceSessionService {
 		 * session it was told about, not whatever is true a second later.
 		 */
 		origin?: VoiceOrigin;
+		/**
+		 * The window whose HUD owns this session. Null (the default) means no
+		 * window claimed it, and the primary window shows it.
+		 *
+		 * Resolved by the CALLER, never here: the service has no access to the IPC
+		 * sender or the window registry, and guessing "the focused window" from in
+		 * here would silently reassign a session started from a background window.
+		 */
+		windowId?: VoiceWindowId;
 	}): Promise<VoiceSessionSnapshot> {
 		if (this.state !== 'idle') {
 			await this.stopSession('replaced');
@@ -500,6 +521,7 @@ export class VoiceSessionService {
 		this.sessionId = generateUUID();
 		this.scope = params.scope;
 		this.origin = params.origin ?? { kind: 'local' };
+		this.windowId = params.windowId ?? null;
 		this.seq = 0;
 		this.startedAt = Date.now();
 		this.recentUtterances = [];
@@ -514,6 +536,9 @@ export class VoiceSessionService {
 			source: params.source ?? 'client-button',
 			scope: params.scope,
 			origin: this.origin,
+			// On the FIRST event of the session, so a window never has to render a
+			// HUD before it knows whether the session is its own.
+			windowId: this.windowId,
 		});
 
 		// Before the device, not after: a session that opened the microphone and
@@ -595,6 +620,7 @@ export class VoiceSessionService {
 		this.sessionId = null;
 		this.scope = null;
 		this.origin = { kind: 'local' };
+		this.windowId = null;
 		this.startedAt = null;
 		this.recentUtterances = [];
 		// A question nobody answered, and a dispatch nobody can correct any more:

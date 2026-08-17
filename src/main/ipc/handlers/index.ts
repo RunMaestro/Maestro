@@ -66,7 +66,11 @@ import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
-import { registerACappellaHandlers, ACappellaHandlerDependencies } from './acappella';
+import {
+	registerACappellaHandlers,
+	stopVoiceSessionForClosedWindow,
+	ACappellaHandlerDependencies,
+} from './acappella';
 import {
 	registerACappellaModelsHandlers,
 	ACappellaModelsHandlerDependencies,
@@ -151,7 +155,7 @@ export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
-export { registerACappellaHandlers };
+export { registerACappellaHandlers, stopVoiceSessionForClosedWindow };
 export type { ACappellaHandlerDependencies };
 export { registerACappellaModelsHandlers };
 export type { ACappellaModelsHandlerDependencies };

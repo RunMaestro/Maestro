@@ -69,8 +69,16 @@ class MockBrowserWindow {
 	}
 }
 
+// A GETTER, not `BrowserWindow: MockBrowserWindow`. `vi.mock` is hoisted, so
+// this factory runs the moment any imported module pulls in `electron` - which
+// happens while this file's own body (and therefore the class binding below) is
+// still in its temporal dead zone. Reading the class at property-access time
+// instead of factory time makes the mock independent of which import happens to
+// reach electron first.
 vi.mock('electron', () => ({
-	BrowserWindow: MockBrowserWindow,
+	get BrowserWindow() {
+		return MockBrowserWindow;
+	},
 }));
 
 vi.mock('../../../main/utils/logger', () => ({

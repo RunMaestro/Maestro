@@ -25,6 +25,7 @@ import type {
 	VoiceEvent,
 	VoiceOrigin,
 	VoiceScope,
+	VoiceWindowId,
 } from '../../shared/acappella/protocol';
 import type { VoiceProviderSubstitution } from '../../shared/acappella/providers';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
@@ -97,6 +98,12 @@ export interface VoiceSnapshotLike {
 	scope: VoiceScope | null;
 	seq: number;
 	providerIds: VoiceProviderIds;
+	/**
+	 * The window whose HUD owns the session. Optional so a pre-multi-window
+	 * producer (and every existing test fixture) still type-checks; absent reads
+	 * the same as null, which the primary window shows.
+	 */
+	windowId?: VoiceWindowId;
 }
 
 interface VoiceSessionStoreState {
@@ -112,6 +119,15 @@ interface VoiceSessionStoreState {
 	 * this is the field that stops it.
 	 */
 	origin: VoiceOrigin;
+	/**
+	 * The window whose HUD owns this session, or null for none.
+	 *
+	 * Mirrored in EVERY window, because every window receives the whole event
+	 * stream (see the multi-window invariant in `main/utils/safe-send.ts`) and
+	 * each one decides for itself whether to draw a surface. `useOwnsVoiceSession`
+	 * is that decision; nothing else should compare this field by hand.
+	 */
+	windowId: VoiceWindowId;
 	/** Last `seq` applied. */
 	seq: number;
 	/** True once a `seq` gap was seen. Sticky for the life of the session. */
@@ -193,6 +209,7 @@ const EMPTY_STATE: VoiceSessionStoreState = {
 	state: 'idle',
 	scope: null,
 	origin: { kind: 'local' },
+	windowId: null,
 	seq: 0,
 	lostEvents: false,
 	providerIds: null,
@@ -295,6 +312,9 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 				case 'wake':
 					patch.scope = event.scope;
 					patch.origin = event.origin ?? { kind: 'local' };
+					// The first event of the session, so no window ever renders a HUD
+					// before it knows whether the session belongs to it.
+					patch.windowId = event.windowId ?? null;
 					break;
 				case 'listen-start':
 					patch.scope = event.scope;
@@ -445,7 +465,14 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 			// ahead of the snapshot. Keep the projection and take only what a
 			// snapshot knows that events do not.
 			if (snapshot.sessionId === prev.sessionId && prev.seq >= snapshot.seq) {
-				return { ...prev, providerIds: snapshot.providerIds };
+				return {
+					...prev,
+					providerIds: snapshot.providerIds,
+					// Taken even on this path: a window that RELOADED mid-session never
+					// saw the `wake` that carries it, and without it that window would
+					// decide it does not own a session that is in fact its own.
+					windowId: snapshot.windowId ?? null,
+				};
 			}
 			const changed = snapshot.sessionId !== prev.sessionId;
 			return {
@@ -453,6 +480,7 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 				...(changed ? freshSessionFields(snapshot.sessionId) : {}),
 				state: snapshot.state,
 				scope: snapshot.scope,
+				windowId: snapshot.windowId ?? null,
 				// Adopt the snapshot's seq as the baseline: a client that joins
 				// mid-session has not lost events, it simply was not there.
 				seq: snapshot.seq,
