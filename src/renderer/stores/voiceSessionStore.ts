@@ -133,6 +133,16 @@ interface VoiceSessionStoreState {
 	/** True once a `seq` gap was seen. Sticky for the life of the session. */
 	lostEvents: boolean;
 	providerIds: VoiceProviderIds | null;
+	/**
+	 * Whether the live recogniser consumes microphone audio.
+	 *
+	 * Null until the session reports its providers. False is the case worth having
+	 * a field for: the text-in mock tier opens no capture device, so the floor is
+	 * genuinely open and nothing can ever be heard - a state that otherwise renders
+	 * as an ordinary "Listening" and sent a user through six rebuilds looking for a
+	 * broken microphone that was never opened.
+	 */
+	sttHearsAudio: boolean | null;
 	/** Roles running on the mock tier against the user's wishes. Never hidden. */
 	substitutions: VoiceProviderSubstitution[];
 	/** Live STT hypothesis. Cleared when the utterance settles. */
@@ -213,6 +223,7 @@ const EMPTY_STATE: VoiceSessionStoreState = {
 	seq: 0,
 	lostEvents: false,
 	providerIds: null,
+	sttHearsAudio: null,
 	substitutions: [],
 	partialTranscript: '',
 	utterance: null,
@@ -425,6 +436,14 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 				case 'agent-roster':
 					patch.roster = event.agents;
 					break;
+				case 'provider-state': {
+					// Only the STT slot declares this, and only it matters here: the
+					// question the HUD has to answer is whether talking can possibly
+					// produce a transcript.
+					const stt = event.slots.find((slot) => slot.role === 'stt');
+					patch.sttHearsAudio = stt?.hearsAudio ?? null;
+					break;
+				}
 				default:
 					break;
 			}
@@ -494,6 +513,28 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 
 	reset: () => set({ ...EMPTY_STATE }),
 }));
+
+/**
+ * Start a voice session and project everything the start reported.
+ *
+ * The one way any surface opens the floor. It exists because a start returns TWO
+ * things - the snapshot and the provider substitutions - and a caller that
+ * `await`s `voice.start()` for its side effect silently drops the second.
+ *
+ * That is not a hypothetical. Every trigger except the HUD's own button (the
+ * composer microphone, the Left Bar menu, the command palette) went straight to
+ * `window.maestro.voice.start()` and discarded the result, so a build whose
+ * speech-to-text had fallen back to the mock tier said "Listening" and explained
+ * nothing - the exact silent downgrade the provider registry refuses to perform,
+ * leaking back in at the last hop. Anything that starts a session goes through
+ * here so there is no second place to forget.
+ */
+export async function beginVoiceSession(scope?: VoiceScope): Promise<void> {
+	const result = await window.maestro.voice.start(scope);
+	const store = useVoiceSessionStore.getState();
+	store.applySnapshot(result.snapshot);
+	store.setSubstitutions(result.substitutions);
+}
 
 // ============================================================================
 // Selectors

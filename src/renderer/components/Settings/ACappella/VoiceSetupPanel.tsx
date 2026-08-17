@@ -32,6 +32,7 @@ import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { VoiceModelRow } from './VoiceModelRow';
 import { useVoiceModels } from './useVoiceModels';
+import { VoiceInputPicker, useVoiceInputDevices } from '../../ACappella';
 import {
 	SLOT_DEFINITIONS,
 	useVoiceProviderSelection,
@@ -51,6 +52,9 @@ const MODE_OPTIONS: Array<{ value: VoiceSlotMode; label: string }> = [
 
 export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 	const models = useVoiceModels(enabled);
+	// The same hook and the same persisted setting the HUD's quick picker writes,
+	// so the two can never disagree about which microphone is chosen.
+	const inputDevices = useVoiceInputDevices(enabled);
 	const { modes, setMode, loaded } = useVoiceProviderSelection(enabled);
 	const [pendingSet, setPendingSet] = useState(false);
 
@@ -147,6 +151,11 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 						Nothing is downloaded until you press Download. Every model below is listed with its
 						exact size, its license, and where it lands on disk.
 					</p>
+
+					{/* Above the models on purpose: which microphone is open decides whether
+					    ANY of them will hear you, and it is the one thing on this panel that
+					    costs nothing to get right. */}
+					<VoiceInputPicker theme={theme} devices={inputDevices} />
 
 					{!loaded && <p className="text-xs opacity-55">Loading your selection...</p>}
 

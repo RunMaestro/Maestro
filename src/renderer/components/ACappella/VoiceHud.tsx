@@ -55,6 +55,8 @@ import { VoiceIndicator } from './VoiceIndicator';
 import { VoiceTranscript } from './VoiceTranscript';
 import { useVoiceScope } from './useVoiceScope';
 import { useOwnsVoiceSession } from './useOwnsVoiceSession';
+import { VoiceInputPicker } from './VoiceInputPicker';
+import { useVoiceInputDevices } from './useVoiceInputDevices';
 import { useVoiceSession } from './useVoiceSession';
 
 export interface VoiceHudProps {
@@ -124,6 +126,7 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const mic = useVoiceSessionStore((s) => s.mic);
 	const error = useVoiceSessionStore((s) => s.error);
 	const substitutions = useVoiceSessionStore((s) => s.substitutions);
+	const sttHearsAudio = useVoiceSessionStore((s) => s.sttHearsAudio);
 	const lostEvents = useVoiceSessionStore((s) => s.lostEvents);
 	const dismissed = useVoiceSessionStore((s) => s.dismissed);
 	/**
@@ -300,6 +303,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	 * per-window by construction - it is opted into in the window that wants it.
 	 */
 	const ownsSession = useOwnsVoiceSession();
+	// Only while this window owns the surface: enumerating devices in every window
+	// would have each one subscribing to a list none of them is showing.
+	const inputDevices = useVoiceInputDevices(enabled && ownsSession);
 	const visible =
 		enabled && !dismissed && (devHarness || (ownsSession && (active || !!error || !!micIssue)));
 
@@ -506,6 +512,31 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				)}
 
 				{transcriptVisible && <VoiceTranscript theme={theme} />}
+
+				{/* The one thing "Listening" cannot say for itself. The floor really is
+				    open here - the state machine is not lying - but a text-in recogniser
+				    opens no capture device, so nothing spoken can ever arrive. Said
+				    plainly, and only when it is true. */}
+				{active && sttHearsAudio === false && (
+					<div
+						data-testid="voice-hud-deaf"
+						className="px-3 py-1.5 text-[10px] border-b select-text"
+						style={{ borderColor: theme.colors.border, color: warningText }}
+					>
+						This recogniser does not listen to the microphone - it takes typed input only, so
+						speaking will not produce a transcript. Pick a speech-to-text provider in Settings &gt;
+						Plugins &gt; A Cappella &gt; Voice Setup.
+					</div>
+				)}
+
+				{/* The microphone in use, and the way to change it. In the HUD because
+				    "nothing is being heard" is discovered HERE, mid-session, and sending
+				    someone to Settings to find out which device is open is the gap that
+				    made a silent session indistinguishable from a wrong input. Writes
+				    the same persisted setting Voice Setup does. */}
+				<div className="px-3 pb-1.5">
+					<VoiceInputPicker theme={theme} devices={inputDevices} compact disabled={active} />
+				</div>
 
 				<VoiceHudControls
 					theme={theme}

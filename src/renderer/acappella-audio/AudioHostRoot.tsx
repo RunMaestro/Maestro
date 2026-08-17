@@ -19,7 +19,7 @@ import type { AudioHostCommand, AudioHostStatus } from '../../shared/acappella/a
 import type { WebRtcHostCommand, WebRtcHostEvent } from '../../shared/acappella/webrtc-host';
 import { logger } from '../utils/logger';
 import { createAudioHostBridge, type AudioHostBridge } from './bridge';
-import { MicCapture } from './capture';
+import { MicCapture, listInputDevices } from './capture';
 import { PeerRegistry, applyWebRtcCommand, type PeerAudioBinding } from './peer-connection';
 import { TtsPlayback } from './playback';
 import { pcmWorkletUrl } from './worklet-url';
@@ -68,6 +68,24 @@ export function createAudioHostController(
 
 	const onStatus = (status: AudioHostStatus) => bridge.sendStatus(status);
 
+	/**
+	 * Publish the input list.
+	 *
+	 * Called on boot, on every device change, and after capture starts. The last
+	 * one matters: Chromium redacts device LABELS until a capture has been granted
+	 * once, so the boot-time list is often a set of unnamed entries, and a picker
+	 * built from it alone would offer "Microphone 1 / Microphone 2" forever.
+	 */
+	const publishInputDevices = async (): Promise<void> => {
+		if (disposed) return;
+		try {
+			onStatus({ kind: 'input-devices', devices: await listInputDevices() });
+		} catch {
+			// Enumeration failing is not a session failure - the picker just has
+			// nothing to add beyond the system default.
+		}
+	};
+
 	const ensureContext = (): AudioContext => {
 		if (!context) context = createContext();
 		return context;
@@ -94,10 +112,17 @@ export function createAudioHostController(
 		if (disposed) return;
 		switch (command.kind) {
 			case 'start-capture':
-				void ensureCapture().start();
+				void ensureCapture()
+					.start(command.deviceId)
+					// Labels are readable once a capture has been granted, so this is the
+					// moment the picker can finally show real device names.
+					.then(() => publishInputDevices());
 				break;
 			case 'stop-capture':
 				capture?.stop('requested');
+				break;
+			case 'list-input-devices':
+				void publishInputDevices();
 				break;
 			case 'play':
 				void ensurePlayback().enqueue({
@@ -188,6 +213,14 @@ export function createAudioHostController(
 	const unsubscribe = bridge.onCommand(handleCommand);
 	const unsubscribeWebRtc = bridge.onWebRtcCommand(handleWebRtcCommand);
 	bridge.sendStatus({ kind: 'ready' });
+	// So a picker has something to show before the first session. Labels may be
+	// redacted at this point; `start-capture` republishes once they are not.
+	void publishInputDevices();
+	// A microphone plugged in or pulled out changes what is selectable, and the
+	// picker has to follow rather than showing a device that is no longer there.
+	navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+		void publishInputDevices();
+	});
 	logger.info('A Cappella audio host ready', LOG_CONTEXT);
 
 	return {

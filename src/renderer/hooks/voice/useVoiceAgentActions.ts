@@ -16,7 +16,7 @@
 import { useCallback, useMemo } from 'react';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
-import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { beginVoiceSession, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { focusAiTabInSession } from '../../utils/tabHelpers';
@@ -104,7 +104,7 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 		setDismissed(false);
 		setMinimized(false);
 		try {
-			await window.maestro.voice.start({ kind: 'agent', sessionId: agentSessionId });
+			await beginVoiceSession({ kind: 'agent', sessionId: agentSessionId });
 		} catch (error) {
 			// A refusal here is expected and specific: the capability gate says a
 			// model is missing, or the microphone was denied. It reaches the user as
@@ -123,7 +123,7 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 		setDismissed(false);
 		setMinimized(false);
 		try {
-			await window.maestro.voice.start();
+			await beginVoiceSession();
 		} catch (error) {
 			notifyToast({
 				color: 'orange',

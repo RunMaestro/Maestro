@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect } from 'react';
 import type { VoiceScope } from '../../../shared/acappella/protocol';
-import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { beginVoiceSession, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 
 export interface VoiceSessionActions {
 	/** Open a session. Omit the scope for conductor scope. */
@@ -67,15 +67,10 @@ export function useVoiceSession(enabled: boolean): VoiceSessionActions {
 		return unsubscribe;
 	}, [enabled]);
 
-	const start = useCallback(async (scope?: VoiceScope) => {
-		const result = await window.maestro.voice.start(scope);
-		const store = useVoiceSessionStore.getState();
-		store.applySnapshot(result.snapshot);
-		// A role that fell back to the mock tier has to reach the user. The
-		// registry refuses to substitute silently; dropping the report here would
-		// undo that at the last hop.
-		store.setSubstitutions(result.substitutions);
-	}, []);
+	// A role that fell back to the mock tier has to reach the user, and every
+	// other trigger needs the same guarantee, so the projection lives in
+	// `beginVoiceSession` rather than here.
+	const start = useCallback((scope?: VoiceScope) => beginVoiceSession(scope), []);
 
 	const stop = useCallback(async () => {
 		await window.maestro.voice.stop();

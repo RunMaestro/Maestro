@@ -186,11 +186,16 @@ describe('provider registry', () => {
 
 	// -- Resolution ----------------------------------------------------------
 
-	it('returns the mock trio when nothing is configured', () => {
+	it('defaults to a trio that can hear, and says nothing about it', () => {
 		const { providers, substitutions, resolvedIds } = resolveVoiceProviders();
 
-		expect(resolvedIds).toEqual(MOCK_PROVIDER_IDS);
-		expect(providers.stt.tier).toBe('mock');
+		// STT is the exception to the mock default, and the important one: an
+		// unconfigured install has to be able to establish that its microphone
+		// reaches the app at all.
+		expect(resolvedIds.stt).toBe(ECHO_STT_PROVIDER_ID);
+		expect(providers.stt.acceptsAudio).toBe(true);
+		expect(resolvedIds.tts).toBe(MOCK_PROVIDER_IDS.tts);
+		expect(resolvedIds.brain).toBe(MOCK_PROVIDER_IDS.brain);
 		// The default path is documented behaviour, not something to warn about.
 		expect(substitutions).toEqual([]);
 	});
@@ -272,50 +277,59 @@ describe('provider registry', () => {
 		expect(substitutions).toHaveLength(1);
 	});
 
-	it('defaults STT to the echo provider in a development build', () => {
-		const previous = process.env.NODE_ENV;
-		process.env.NODE_ENV = 'development';
-		try {
-			const { resolvedIds, providers, substitutions } = resolveVoicePipeline();
+	it.each(['development', 'production'])(
+		'defaults STT to a provider that consumes audio in a %s build',
+		(env) => {
+			// The microphone check used to be development-only, which left a packaged
+			// app with NO provider that opens a capture device: the session reported
+			// "Listening" and the microphone was never touched. The build must not
+			// decide whether the user can hear themselves.
+			const previous = process.env.NODE_ENV;
+			process.env.NODE_ENV = env;
+			try {
+				const { resolvedIds, providers, substitutions } = resolveVoicePipeline();
 
-			// Nobody asked for it, so it is a default rather than a substitution.
-			expect(resolvedIds.stt).toBe(ECHO_STT_PROVIDER_ID);
-			expect(providers.stt.acceptsAudio).toBe(true);
-			expect(substitutions).toEqual([]);
-			expect(DEFAULT_PROVIDER_IDS.stt).toBe(ECHO_STT_PROVIDER_ID);
-		} finally {
-			process.env.NODE_ENV = previous;
+				expect(resolvedIds.stt).toBe(ECHO_STT_PROVIDER_ID);
+				expect(providers.stt.acceptsAudio).toBe(true);
+				// Nobody asked for it, so it is a default rather than a substitution.
+				expect(substitutions).toEqual([]);
+				expect(DEFAULT_PROVIDER_IDS.stt).toBe(ECHO_STT_PROVIDER_ID);
+			} finally {
+				process.env.NODE_ENV = previous;
+			}
 		}
-	});
+	);
 
-	it('falls back to the text-in mock when the echo DEFAULT cannot run', () => {
+	it('reports a DEFAULT that fell back to the mock instead of falling back silently', () => {
+		// The silence was the bug. A slot that lands on a text-in recogniser nobody
+		// chose is the one fact that explains a session which cannot hear, and it
+		// used to exist only inside the resolver.
 		const previous = process.env.NODE_ENV;
 		process.env.NODE_ENV = 'production';
+		registerVoiceProvider({
+			role: 'tts',
+			id: 'test-unavailable-default-tts',
+			label: 'Unavailable',
+			tier: 'local',
+			isAvailable: () => false,
+			create: () => ({}) as never,
+		});
+		const restoreDefault = DEFAULT_PROVIDER_IDS.tts;
+		DEFAULT_PROVIDER_IDS.tts = 'test-unavailable-default-tts';
 		try {
 			const { resolvedIds, substitutions } = resolveVoicePipeline();
 
-			// The one place the mock is reached without being named, and it is silent
-			// because the user asked for nothing.
-			expect(resolvedIds.stt).toBe(MOCK_PROVIDER_IDS.stt);
-			expect(substitutions).toEqual([]);
-		} finally {
-			process.env.NODE_ENV = previous;
-		}
-	});
-
-	it('reports an explicitly requested echo provider a packaged build cannot run', () => {
-		const previous = process.env.NODE_ENV;
-		process.env.NODE_ENV = 'production';
-		try {
-			const { resolvedIds, substitutions } = resolveVoicePipeline({
-				settings: { stt: ECHO_STT_PROVIDER_ID },
-			});
-
-			expect(resolvedIds.stt).toBe(unresolvedProviderId('stt'));
+			expect(resolvedIds.tts).toBe(MOCK_PROVIDER_IDS.tts);
 			expect(substitutions).toEqual([
-				expect.objectContaining({ requestedId: ECHO_STT_PROVIDER_ID, reason: 'unavailable' }),
+				expect.objectContaining({
+					role: 'tts',
+					requestedId: 'test-unavailable-default-tts',
+					resolvedId: MOCK_PROVIDER_IDS.tts,
+					reason: 'unavailable',
+				}),
 			]);
 		} finally {
+			DEFAULT_PROVIDER_IDS.tts = restoreDefault;
 			process.env.NODE_ENV = previous;
 		}
 	});

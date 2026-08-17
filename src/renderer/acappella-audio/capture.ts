@@ -20,6 +20,8 @@ import {
 	ACAPPELLA_AUDIO_FRAME_SAMPLES,
 	ACAPPELLA_AUDIO_SAMPLE_RATE,
 	ACAPPELLA_PCM_WORKLET_NAME,
+	ACAPPELLA_SYSTEM_DEFAULT_INPUT,
+	type AudioDeviceInfo,
 	type AudioFrame,
 	type AudioHostErrorCode,
 	type AudioHostStatus,
@@ -41,6 +43,36 @@ export const ACAPPELLA_MIC_CONSTRAINTS: MediaStreamConstraints = {
 	},
 	video: false,
 };
+
+/**
+ * The same constraints, aimed at one device.
+ *
+ * `exact` on purpose. The forgiving form lets Chromium quietly hand back a
+ * different microphone when the requested one is busy or gone, which produces
+ * the single most confusing outcome this feature has: a picker that says one
+ * device while another is being recorded. `exact` fails instead, and a failure
+ * is classified into a `mic-error` the user can read.
+ */
+export function micConstraintsForDevice(deviceId?: string): MediaStreamConstraints {
+	const audio = ACAPPELLA_MIC_CONSTRAINTS.audio as MediaTrackConstraints;
+	if (!deviceId || deviceId === ACAPPELLA_SYSTEM_DEFAULT_INPUT) return ACAPPELLA_MIC_CONSTRAINTS;
+	return { audio: { ...audio, deviceId: { exact: deviceId } }, video: false };
+}
+
+/**
+ * Every microphone this machine offers.
+ *
+ * Labels are redacted by Chromium until a capture has been granted at least
+ * once, so an early call legitimately returns entries with empty labels; the
+ * host re-publishes after `capture-start` when they are populated.
+ */
+export async function listInputDevices(): Promise<AudioDeviceInfo[]> {
+	if (!navigator.mediaDevices?.enumerateDevices) return [];
+	const devices = await navigator.mediaDevices.enumerateDevices();
+	return devices
+		.filter((device) => device.kind === 'audioinput')
+		.map((device) => ({ deviceId: device.deviceId, label: device.label }));
+}
 
 export interface MicCaptureOptions {
 	/** Shared with playback, so the echo canceller has a real reference signal. */
@@ -117,12 +149,18 @@ export class MicCapture {
 		return this.stream !== null;
 	}
 
-	/** @returns true once frames are flowing, false when capture could not start. */
-	start(): Promise<boolean> {
+	/**
+	 * Open the microphone.
+	 *
+	 * @param deviceId The user's chosen input, or undefined / the system-default
+	 *                 sentinel to follow the OS.
+	 * @returns true once frames are flowing, false when capture could not start.
+	 */
+	start(deviceId?: string): Promise<boolean> {
 		if (this.disposed) return Promise.resolve(false);
 		if (this.active) return Promise.resolve(true);
 		if (!this.starting) {
-			this.starting = this.startInternal().finally(() => {
+			this.starting = this.startInternal(deviceId).finally(() => {
 				this.starting = null;
 			});
 		}
@@ -174,7 +212,7 @@ export class MicCapture {
 		return true;
 	}
 
-	private async startInternal(): Promise<boolean> {
+	private async startInternal(deviceId?: string): Promise<boolean> {
 		const { onStatus } = this.options;
 
 		if (!navigator.mediaDevices?.getUserMedia) {
@@ -188,7 +226,7 @@ export class MicCapture {
 
 		let stream: MediaStream;
 		try {
-			stream = await navigator.mediaDevices.getUserMedia(ACAPPELLA_MIC_CONSTRAINTS);
+			stream = await navigator.mediaDevices.getUserMedia(micConstraintsForDevice(deviceId));
 		} catch (error) {
 			onStatus({
 				kind: 'mic-error',
