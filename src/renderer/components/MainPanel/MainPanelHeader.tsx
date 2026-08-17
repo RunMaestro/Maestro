@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 // Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
 // Actions button, neither of which exists on main's header.
 import {
@@ -10,7 +10,6 @@ import {
 	Bookmark,
 	Brain,
 	Menu,
-	Mic,
 	Command,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
@@ -19,9 +18,6 @@ import { GitStatusWidget } from '../GitStatusWidget';
 import { GitPillMenu } from '../GitPillMenu';
 import { useHoverTooltip } from '../../hooks';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
-import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
-import { VoicePillMenu } from '../VoicePillMenu';
-import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions } from '../../stores/modalStore';
@@ -206,14 +202,6 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// points can't drift apart.
 	const gitActions = useGitAgentActions(activeSession);
 
-	// Same arrangement for voice: one hook feeding the header, the Left Bar menu,
-	// and the command palette.
-	const voiceActions = useVoiceAgentActions(activeSession);
-	const transcriptVisible = useVoiceUiStore((s) => s.transcriptVisible);
-	const toggleTranscript = useVoiceUiStore((s) => s.toggleTranscript);
-	const voicePillRef = useRef<HTMLDivElement>(null);
-	const [voiceMenuOpen, setVoiceMenuOpen] = useState(false);
-
 	// Each action closes the menu before it opens its modal. Async actions (the
 	// diff has to be fetched first) are fire-and-forget - the menu shouldn't
 	// linger while git runs.
@@ -371,66 +359,12 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						{gitPillMenu}
 					</div>
 
-					{/* A Cappella voice pill. Third surface of `useVoiceAgentActions`,
-					    alongside the Left Bar right-click menu and the command palette.
-					    Renders nothing when the Encore Feature is off. */}
-					{voiceActions.enabled && (
-						<div ref={voicePillRef} className="relative shrink-0 flex items-center">
-							<button
-								type="button"
-								data-testid="header-voice-pill"
-								onClick={() => setVoiceMenuOpen((open) => !open)}
-								aria-haspopup="menu"
-								aria-expanded={voiceMenuOpen}
-								aria-label={
-									voiceActions.hasVoiceFloor
-										? 'Voice: this agent has the floor'
-										: 'Talk to this agent'
-								}
-								title={
-									voiceActions.hasVoiceFloor
-										? 'This agent has the voice floor'
-										: 'Talk to this agent'
-								}
-								className="px-1.5 py-1 rounded hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2"
-								style={{
-									color: voiceActions.hasVoiceFloor ? theme.colors.accent : theme.colors.textDim,
-								}}
-							>
-								<Mic
-									className="w-3.5 h-3.5"
-									fill={voiceActions.hasVoiceFloor ? theme.colors.accent : 'none'}
-								/>
-							</button>
-							{voiceMenuOpen && (
-								<VoicePillMenu
-									theme={theme}
-									anchorRef={voicePillRef}
-									agentName={activeSession.name}
-									hasVoiceFloor={voiceActions.hasVoiceFloor}
-									wakePhrase={voiceActions.wakePhrase}
-									transcriptVisible={transcriptVisible}
-									onTalkToAgent={() => {
-										setVoiceMenuOpen(false);
-										void voiceActions.talkToAgent();
-									}}
-									onTalkToConductor={() => {
-										setVoiceMenuOpen(false);
-										void window.maestro.voice.start().catch(() => undefined);
-									}}
-									onToggleTranscript={() => {
-										setVoiceMenuOpen(false);
-										void toggleTranscript();
-									}}
-									onEndSession={() => {
-										setVoiceMenuOpen(false);
-										void voiceActions.endVoiceSession();
-									}}
-									onClose={() => setVoiceMenuOpen(false)}
-								/>
-							)}
-						</div>
-					)}
+					{/* No voice microphone here. The composer's Send column owns that
+					    button, and a second microphone in the header was the same action
+					    twice on one screen. Everything the header menu offered lives in
+					    the command palette (`voiceCommands.ts`): talk to this agent, talk
+					    to the Conductor, show the HUD, toggle the transcript, end the
+					    session. */}
 				</div>
 
 				{/* Git Status Widget - compact mode handled via CSS container queries */}

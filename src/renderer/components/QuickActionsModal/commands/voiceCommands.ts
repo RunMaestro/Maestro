@@ -1,10 +1,15 @@
 /**
  * A Cappella entries for the command palette.
  *
- * The third surface of `useVoiceAgentActions`, alongside the header voice pill
- * and the Left Bar right-click menu. It takes the action set rather than
- * re-deriving it, exactly as `buildGitWorktreeCommands` takes `GitAgentActions`:
- * the palette IS the third surface, not a reimplementation of the first two.
+ * One surface of `useVoiceAgentActions`, alongside the composer's microphone and
+ * the Left Bar right-click menu. It takes the action set rather than re-deriving
+ * it, exactly as `buildGitWorktreeCommands` takes `GitAgentActions`: the palette
+ * IS a surface, not a reimplementation of the others.
+ *
+ * It is also the ONLY surface for some of these. The composer microphone talks
+ * to the agent on screen and the Left Bar menu to the agent under the cursor, so
+ * "Talk to the Conductor", "Show Voice HUD", and the transcript toggle are
+ * reachable here and nowhere else.
  *
  * Returns nothing when the Encore Feature is off, so the palette has no
  * A Cappella entries at all for users who never turned it on.

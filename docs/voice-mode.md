@@ -147,7 +147,7 @@ Rebind either one in **Voice Controls** or in the **Shortcuts** tab; they are tw
 
 ![Stop word, hotkeys, and the tap-versus-hold threshold](./screenshots/acappella-stop-word-hotkeys.png)
 
-You can also start a session from the **command palette** (`Cmd+K` / `Ctrl+K`, then "Talk to..."), the voice pill in the **Main Panel header**, or by right-clicking an agent in the **Left Bar**.
+You can also start a session from the microphone under the **Send button** in the composer, the **command palette** (`Cmd+K` / `Ctrl+K`, then "Talk to..."), or by right-clicking an agent in the **Left Bar**.
 
 ## While a session is running
 

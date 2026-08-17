@@ -171,10 +171,6 @@ and speaking in each theme.
 (outlined ring, filled disc, dashed spinner ring, error ring). The bound scope in the agent's own
 colour, legible against the panel. Nothing spilling out of the widget.
 
-**Also check the header:** open the voice pill's dropdown. It must appear BELOW the pill and be
-fully visible. If it is cut off at the header's bottom edge, something has stopped portaling it out
-of `.header-container` - see `useAnchoredMenuPosition`.
-
 ### 8. Minimize keeps the audio, close stops it
 
 **Do:** while a reply is being spoken, press the `-` button. Then restore, and press the ESC pill.
