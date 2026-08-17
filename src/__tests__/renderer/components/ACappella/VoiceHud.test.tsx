@@ -10,7 +10,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
-import { VoiceHud, VoiceStatusIndicator } from '../../../../renderer/components/ACappella';
+import {
+	DEV_HARNESS_STORAGE_KEY,
+	VoiceHud,
+	VoiceStatusIndicator,
+} from '../../../../renderer/components/ACappella';
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
@@ -135,6 +139,73 @@ describe('VoiceHud gating', () => {
 	it('renders nothing while idle in a build without the dev harness', () => {
 		renderHud();
 		expect(screen.queryByTestId('voice-hud')).toBeNull();
+	});
+
+	/**
+	 * The harness is a reason the widget renders, so its DEFAULT decides whether
+	 * A Cappella opens itself. It used to default to the development build, which
+	 * put a type-an-utterance box over every dev workspace at startup with no
+	 * session, no microphone, and nobody having asked for one.
+	 */
+	describe('the dev harness does not opt itself in', () => {
+		// This jsdom has no localStorage at all, which is itself the first case:
+		// `devHarnessOptedIn()` has to read "not opted in" from a window with no
+		// storage rather than throw on the way to rendering the app.
+		const store = new Map<string, string>();
+		let original: Storage | undefined;
+
+		beforeEach(() => {
+			store.clear();
+			original = (window as { localStorage?: Storage }).localStorage;
+			Object.defineProperty(window, 'localStorage', {
+				configurable: true,
+				value: {
+					getItem: (key: string) => store.get(key) ?? null,
+					setItem: (key: string, value: string) => void store.set(key, value),
+					removeItem: (key: string) => void store.delete(key),
+				},
+			});
+		});
+
+		afterEach(() => {
+			Object.defineProperty(window, 'localStorage', {
+				configurable: true,
+				value: original,
+			});
+		});
+
+		/** No `showDevHarness` prop at all, which is how AppShell mounts it. */
+		function renderWithDefaults() {
+			return render(
+				<LayerStackProvider>
+					<VoiceHud theme={mockTheme} enabled />
+				</LayerStackProvider>
+			);
+		}
+
+		it('renders nothing while idle when the prop is left to its default', () => {
+			renderWithDefaults();
+
+			expect(screen.queryByTestId('voice-hud')).toBeNull();
+			expect(screen.queryByTestId('voice-dev-harness')).toBeNull();
+		});
+
+		it('opens for someone who explicitly opted in', () => {
+			// An opt-in IS a trigger: whoever set the key wants the box to type into.
+			window.localStorage.setItem(DEV_HARNESS_STORAGE_KEY, 'true');
+
+			renderWithDefaults();
+
+			expect(screen.getByTestId('voice-dev-harness')).toBeTruthy();
+		});
+
+		it('ignores a key set to anything other than true', () => {
+			window.localStorage.setItem(DEV_HARNESS_STORAGE_KEY, 'false');
+
+			renderWithDefaults();
+
+			expect(screen.queryByTestId('voice-hud')).toBeNull();
+		});
 	});
 
 	it('shows the harness controls only in a dev build', () => {
@@ -579,6 +650,28 @@ describe('VoiceHud minimize versus close', () => {
 
 		expect(viaEscape).toEqual(viaPill);
 		expect(viaEscape.stopCalls).toBe(1);
+	});
+
+	it('lets Escape close a HUD that is only showing a refusal', async () => {
+		// The Escape layer was registered for an active session and the dev harness
+		// only, while the widget also renders for an error - so the HUD explaining
+		// why voice would not start drew an ESC pill that Escape never reached.
+		renderHud();
+		emit(event('wake', { source: 'client-button', scope: { kind: 'conductor' } }));
+		emit(
+			event('session-error', {
+				code: 'provider-unavailable',
+				message: 'whisper.cpp is not part of this build yet.',
+				recoverable: false,
+			})
+		);
+		expect(screen.getByTestId('voice-hud-error')).toBeTruthy();
+
+		await act(async () => {
+			fireEvent.keyDown(document, { key: 'Escape' });
+		});
+
+		expect(screen.queryByTestId('voice-hud')).toBeNull();
 	});
 });
 
