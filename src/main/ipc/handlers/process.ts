@@ -472,7 +472,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							remoteParts.push(envExports.join(' && '));
 						}
 
-						remoteParts.push('exec "$SHELL"');
+						// `-l` makes the remote shell a LOGIN shell, matching what the user gets from
+						// a plain `ssh host`. Because we pass a remote command, sshd runs it under a
+						// non-login shell, so without `-l` the login profiles never run. On macOS that
+						// means /etc/zprofile never calls /usr/libexec/path_helper, and the terminal is
+						// missing every /etc/paths + /etc/paths.d entry (/opt/homebrew/bin, TeX, etc.)
+						// while still having the ~/.zshrc additions. Local terminals already spawn with
+						// `-l -i` (see PtySpawner), so this keeps remote terminals consistent.
+						remoteParts.push('exec "$SHELL" -l');
 						sshArgs.push(remoteParts.join(' && '));
 
 						return processManager.spawn({
