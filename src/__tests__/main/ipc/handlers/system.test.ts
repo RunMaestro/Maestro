@@ -25,6 +25,7 @@ import {
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
+		on: vi.fn(),
 		removeHandler: vi.fn(),
 	},
 	dialog: {

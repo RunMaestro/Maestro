@@ -28,6 +28,7 @@ import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
+import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import type { BootstrapSettings } from '../../stores/types';
@@ -411,6 +412,16 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 				mainWindow.webContents.openDevTools();
 			}
 		}
+	});
+
+	// ============ Application Menu Handlers ============
+
+	// The renderer owns the shortcut map (bundled defaults merged with the
+	// user's remaps), so it pushes the merged bindings here on mount and on
+	// every change. The menu is rebuilt so the accelerators it displays match
+	// what is actually bound. Display only - see src/main/app-menu.ts.
+	ipcMain.on('menu:setShortcutKeys', (_event, keys: Record<string, string[]>) => {
+		setMenuShortcutKeys(keys);
 	});
 
 	// ============ Update Check Handler ============
