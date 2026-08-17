@@ -301,6 +301,27 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-a-cappella-input-device',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Microphone',
+		description:
+			'Which microphone A Cappella listens to. Defaults to the system default and applies to the next voice session',
+		keywords: [
+			'microphone',
+			'mic',
+			'input',
+			'device',
+			'audio input',
+			'a cappella',
+			'voice',
+			'headset',
+			'usb mic',
+			'select microphone',
+			'change microphone',
+		],
+	},
+	{
 		id: 'encore-a-cappella-download-set',
 		tab: 'encore',
 		tabLabel: 'Plugins',

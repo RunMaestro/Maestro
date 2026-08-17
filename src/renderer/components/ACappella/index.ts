@@ -14,5 +14,12 @@ export { VoiceHudControls, type VoiceHudControlsProps } from './VoiceHudControls
 export { VoiceIndicator, type VoiceIndicatorProps, meterFill } from './VoiceIndicator';
 export { VoiceTranscript, type VoiceTranscriptProps } from './VoiceTranscript';
 export { VoiceDevHarness, type VoiceDevHarnessProps } from './VoiceDevHarness';
+export { VoiceInputPicker, type VoiceInputPickerProps } from './VoiceInputPicker';
+export {
+	useVoiceInputDevices,
+	deviceLabel,
+	type VoiceInputDevice,
+	type VoiceInputDevicesState,
+} from './useVoiceInputDevices';
 export { useVoiceScope, type VoiceScopeDisplay } from './useVoiceScope';
 export { useVoiceSession, type VoiceSessionActions } from './useVoiceSession';

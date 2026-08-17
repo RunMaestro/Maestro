@@ -71,6 +71,8 @@ export interface VoiceAudioBridgeOptions {
 	/** Audio retained ahead of the floor opening. Clamped by the pipeline. */
 	preRollMs?: number;
 	meter?: Partial<AudioLevelMeterConfig>;
+	/** The user's chosen microphone, read at each capture start. */
+	getInputDeviceId?: () => string | undefined;
 }
 
 export class VoiceAudioBridge {
@@ -97,6 +99,7 @@ export class VoiceAudioBridge {
 			session: options.session,
 			getStt: () => options.session.getActiveStt(),
 			sendCommand: (command) => this.send(command),
+			getInputDeviceId: options.getInputDeviceId,
 			vad: options.vad,
 			preRollMs: options.preRollMs,
 			onFrame: ({ result }) => {
@@ -314,7 +317,10 @@ export class VoiceAudioBridge {
 		}
 		if (!this.pipeline.isRunning) return;
 		logger.debug('Audio host became ready mid-capture; re-requesting capture', LOG_CONTEXT);
-		this.send({ kind: 'start-capture' });
+		// Re-sent with the device, not bare: the replay has to reopen the SAME
+		// microphone the session started with, or the race it exists to fix would
+		// be traded for a session that quietly moved to the system default.
+		this.send({ kind: 'start-capture', deviceId: this.options.getInputDeviceId?.() });
 	}
 
 	private send(command: AudioHostCommand): void {

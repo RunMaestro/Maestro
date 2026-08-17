@@ -88,6 +88,38 @@ describe('with A Cappella on', () => {
 		expect(toggleVoiceInput).not.toHaveBeenCalled();
 	});
 
+	it('surfaces a provider downgrade reported by the start', async () => {
+		// The failure this guards: the composer microphone called
+		// `window.maestro.voice.start()` for its side effect and threw the result
+		// away, so a build whose speech-to-text had fallen back to the mock tier
+		// said "Listening" and explained nothing. The registry refuses to
+		// substitute silently; dropping the report here undid that at the last hop.
+		const substitution = {
+			role: 'stt' as const,
+			requestedId: 'echo-stt',
+			resolvedId: 'mock-stt',
+			reason: 'unavailable' as const,
+		};
+		vi.mocked(window.maestro.voice.start).mockResolvedValueOnce({
+			snapshot: {
+				sessionId: 'voice-1',
+				state: 'listening',
+				scope: { kind: 'agent', sessionId: 'agent-1' },
+				seq: 1,
+				startedAt: 0,
+				providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+			},
+			substitutions: [substitution],
+		} as never);
+
+		const { result } = render(true);
+		await act(async () => {
+			result.current.toggle();
+		});
+
+		expect(useVoiceSessionStore.getState().substitutions).toEqual([substitution]);
+	});
+
 	it('hard-disables the Web Speech path, so one button cannot open two microphones', () => {
 		render(true);
 		expect(webSpeechDisabled).toBe(true);

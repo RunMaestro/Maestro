@@ -453,13 +453,15 @@ describe('A Cappella IPC handlers - open-mic-settings', () => {
 // ---------------------------------------------------------------------------
 
 describe('A Cappella IPC handlers - session lifecycle', () => {
-	it('starts a conductor session and reports the mock trio with no substitutions', async () => {
+	it('starts a conductor session on the default trio with no substitutions', async () => {
 		const result = (await handlerFor('acappella:start-session')({})) as VoiceStartSessionResult;
 
 		expect(result.snapshot.state).toBe('listening');
 		expect(result.snapshot.scope).toEqual({ kind: 'conductor' });
+		// STT defaults to the microphone check rather than the text-in mock, in
+		// every build: an unconfigured install must still be able to open a device.
 		expect(result.snapshot.providerIds).toEqual({
-			stt: 'mock-stt',
+			stt: 'echo-stt',
 			tts: 'mock-tts',
 			brain: 'mock-brain',
 		});
