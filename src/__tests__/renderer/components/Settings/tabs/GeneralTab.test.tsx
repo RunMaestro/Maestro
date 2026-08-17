@@ -950,7 +950,7 @@ describe('GeneralTab', () => {
 			expect(toolCalls.closest('[data-setting-id="general-thinking-mode"]')).not.toBeNull();
 		});
 
-		it('calls setShowToolCalls when toggled (thinking on)', async () => {
+		it('calls setShowToolCalls when toggled', async () => {
 			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
@@ -963,7 +963,7 @@ describe('GeneralTab', () => {
 			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
 		});
 
-		it('toggles once when the row is activated by keyboard (thinking on)', async () => {
+		it('toggles once when the row is activated by keyboard', async () => {
 			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
@@ -978,23 +978,39 @@ describe('GeneralTab', () => {
 			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
 		});
 
-		it('ghosts out the tool-calls toggle when thinking is off', async () => {
-			// Default mock has defaultShowThinking: 'off'. Tool cells follow the
-			// thinking setting, so the switch is disabled and neither the switch nor
-			// the row can toggle it.
+		it('stays usable when the default thinking mode is off', async () => {
+			// The two settings are independent: tool-call visibility must be
+			// controllable whatever the thinking mode is, so the switch is never
+			// ghosted and both the switch and the row still toggle it.
 			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'off' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 			const toggle = screen.getByRole('switch', { name: 'Show tool calls in responses' });
-			expect(toggle).toBeDisabled();
+			expect(toggle).not.toBeDisabled();
+			expect(toggle).toBeChecked();
 			fireEvent.click(toggle);
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(false);
+
+			mockSetShowToolCalls.mockClear();
 			const section = screen
 				.getByText('Show tool calls in responses')
 				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
 			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
-			expect(mockSetShowToolCalls).not.toHaveBeenCalled();
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('reflects the off state independently of the thinking mode', async () => {
+			mockUseSettingsOverrides = { showToolCalls: false, defaultShowThinking: 'sticky' };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const toggle = screen.getByRole('switch', { name: 'Show tool calls in responses' });
+			expect(toggle).not.toBeChecked();
+			fireEvent.click(toggle);
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(true);
 		});
 	});
 

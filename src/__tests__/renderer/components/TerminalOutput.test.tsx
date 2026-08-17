@@ -2462,7 +2462,7 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('npm run test')).not.toBeInTheDocument();
 		});
 
-		it('hides tool logs when the tab has Thinking off (even with showToolCalls on)', () => {
+		it('shows tool logs when the tab has Thinking off but showToolCalls is on', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
 					text: 'Bash',
@@ -2478,9 +2478,40 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			// showToolCalls is on (beforeEach), but Thinking is off for this tab, so
-			// tool cells are part of the hidden "behind the scenes" activity.
+			// The two settings are independent: showToolCalls alone decides whether
+			// tool cells are drawn, so Thinking off must not suppress them.
 			useSettingsStore.setState({ showToolCalls: true });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Bash')).toBeInTheDocument();
+			expect(screen.getByText('npm run test')).toBeInTheDocument();
+		});
+
+		it('hides tool logs when showToolCalls is off even with Thinking sticky', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { command: 'npm run test' } } },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs,
+						isUnread: false,
+						showThinking: 'sticky',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// The other direction of the same independence: a tab that keeps its
+			// reasoning chain still honours a global "no tool cells" preference.
+			useSettingsStore.setState({ showToolCalls: false });
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
