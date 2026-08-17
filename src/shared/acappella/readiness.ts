@@ -94,10 +94,33 @@ export interface VoiceReadiness {
  * is the only thing this message is for. Lives here rather than beside the
  * resolver so the session service can format a refusal without importing the
  * disk-touching half of the gate.
+ *
+ * **One recovery, stated once.** Slots fail together far more often than
+ * separately - the three local providers share two native runtimes, so a build
+ * without them blocks speech in, speech out and routing at the same instant with
+ * the same fix. Pairing each detail with its own copy of an identical suggestion
+ * turned that into a wall of red where two thirds of the words were the same
+ * sentence three times, and a wall of red is read as "it broke" rather than as
+ * the instruction it is. When every blocking slot suggests the same action it is
+ * hoisted to the end; when they genuinely differ (a denied microphone AND a
+ * missing model) each keeps its own, because those are two problems with two
+ * different next steps.
  */
 export function readinessErrorMessage(readiness: VoiceReadiness): string {
 	if (readiness.canStartSession) return '';
-	return readiness.blocking
-		.map((slot) => [slot.detail ?? slot.slot, slot.suggestedAction].filter(Boolean).join(' '))
-		.join(' ');
+
+	const stated = readiness.blocking
+		.map((slot) => slot.suggestedAction)
+		.filter((action): action is string => Boolean(action));
+	const actions = new Set(stated);
+	// Every blocking slot must carry it, not just the ones that happen to agree: a
+	// slot with no suggestion at all must not inherit another slot's recovery by
+	// being counted as agreeing with it.
+	const shared = actions.size === 1 && stated.length === readiness.blocking.length;
+
+	const parts = readiness.blocking.map((slot) =>
+		[slot.detail ?? slot.slot, shared ? undefined : slot.suggestedAction].filter(Boolean).join(' ')
+	);
+	if (shared) parts.push([...actions][0]);
+	return parts.join(' ');
 }
