@@ -54,6 +54,7 @@ import { VoiceHudControls } from './VoiceHudControls';
 import { VoiceIndicator } from './VoiceIndicator';
 import { VoiceTranscript } from './VoiceTranscript';
 import { useVoiceScope } from './useVoiceScope';
+import { useOwnsVoiceSession } from './useOwnsVoiceSession';
 import { useVoiceSession } from './useVoiceSession';
 
 export interface VoiceHudProps {
@@ -291,8 +292,16 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	 * The dev harness stays a reason, because opting into it IS a trigger: someone
 	 * who set the storage key wants the box to type into. What changed is that it
 	 * no longer opts itself in on every developer's behalf.
+	 *
+	 * `ownsSession` is what keeps a session opened in one window out of the
+	 * others, and it gates every SESSION-derived reason: a live session, a
+	 * refusal, and a microphone problem all describe one session, which belongs
+	 * to one window. The dev harness is the only ungated reason, because it is
+	 * per-window by construction - it is opted into in the window that wants it.
 	 */
-	const visible = enabled && !dismissed && (active || devHarness || !!error || !!micIssue);
+	const ownsSession = useOwnsVoiceSession();
+	const visible =
+		enabled && !dismissed && (devHarness || (ownsSession && (active || !!error || !!micIssue)));
 
 	// Non-blocking: the HUD floats over the workspace while the user keeps typing,
 	// so it takes neither focus nor the lower layers' clicks, and it never traps

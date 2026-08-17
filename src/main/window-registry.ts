@@ -1,7 +1,8 @@
 // src/main/window-registry.ts
 
 import { EventEmitter } from 'events';
-import type { BrowserWindow } from 'electron';
+import { BrowserWindow } from 'electron';
+import type { WebContents } from 'electron';
 import { isPointInWindowBounds, type WindowPanelState } from '../shared/window-types';
 import { generateUUID } from '../shared/uuid';
 
@@ -158,6 +159,45 @@ export class WindowRegistry extends EventEmitter {
 			if (entry.isMain) return entry;
 		}
 		return undefined;
+	}
+
+	/**
+	 * The window an IPC message came from, or undefined when there is no window
+	 * behind it.
+	 *
+	 * "No window" is a real, expected answer, not a failure: the web-desktop
+	 * bridge invokes handlers with a synthetic event that has no `sender` at all
+	 * (`FAKE_EVENT` in `web-server/handlers/bridgeHandlers.ts`), and a web client
+	 * is not a window. Passing that straight to `BrowserWindow.fromWebContents`
+	 * throws, so the check is here rather than at each call site.
+	 */
+	findBySender(sender: WebContents | null | undefined): RegisteredWindow | undefined {
+		if (!sender) return undefined;
+		const browserWindow = BrowserWindow.fromWebContents(sender);
+		if (!browserWindow) return undefined;
+		for (const entry of this.windows.values()) {
+			if (entry.browserWindow === browserWindow) return entry;
+		}
+		return undefined;
+	}
+
+	/**
+	 * The window that should own a surface started without one: the focused
+	 * window, else the primary.
+	 *
+	 * For triggers that have no IPC sender to resolve - a global hotkey, a wake
+	 * word, a paired phone. The focused window is what "the window the user is
+	 * looking at" means, and falling back to the primary means such a trigger
+	 * always lands somewhere rather than nowhere.
+	 */
+	getFocusedAppWindow(): RegisteredWindow | undefined {
+		const focused = BrowserWindow.getFocusedWindow();
+		if (focused) {
+			for (const entry of this.windows.values()) {
+				if (entry.kind === 'app' && entry.browserWindow === focused) return entry;
+			}
+		}
+		return this.getPrimary();
 	}
 
 	/** Stop tracking a window (e.g. after it is closed). */

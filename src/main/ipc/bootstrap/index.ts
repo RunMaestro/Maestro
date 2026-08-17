@@ -56,6 +56,7 @@ import {
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerACappellaHandlers,
+	stopVoiceSessionForClosedWindow,
 	registerACappellaModelsHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
@@ -323,6 +324,16 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 			const windowId = deps.windowRegistry.getWindowForSession(agentSessionId);
 			return windowId ? (deps.windowRegistry.get(windowId)?.browserWindow ?? null) : null;
 		},
+		// Which window's HUD a voice session belongs to. Voice events are broadcast
+		// to every window like every other main -> renderer push, so this is what
+		// keeps a session the user opened in one window from drawing a HUD in all of
+		// them. A trigger with no window behind it (global hotkey, wake word, paired
+		// phone) lands on the focused window.
+		resolveVoiceWindowId: (sender) =>
+			(sender
+				? deps.windowRegistry.findBySender(sender)
+				: deps.windowRegistry.getFocusedAppWindow()
+			)?.id ?? null,
 		safeSend: deps.safeSend,
 		audioHostDeps: deps.acappellaAudioHostDeps,
 		// The paired-device transport rides the web server's authenticated socket,
@@ -433,6 +444,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	deps.windowRegistry.onChange((change) => {
 		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
 			saveWindowState(deps.windowStateStore, deps.windowRegistry, change.windowId);
+		}
+		// A voice session is shown by exactly one window, so closing that window
+		// would otherwise leave an open microphone with no surface anywhere.
+		if (change.type === 'removed' && change.windowId) {
+			void stopVoiceSessionForClosedWindow(change.windowId);
 		}
 	});
 

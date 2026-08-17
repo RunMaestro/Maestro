@@ -104,6 +104,22 @@ export type VoiceOrigin =
 	| { kind: 'remote'; deviceId: string; deviceName: string };
 
 /**
+ * The desktop window whose HUD owns this session, or null for none.
+ *
+ * A different axis from {@link VoiceOrigin}, which says which MICROPHONE is
+ * open: a session held by a paired phone still has to be shown on exactly one
+ * desktop window. Every main -> renderer push is broadcast to every window (see
+ * the multi-window invariant in `utils/safe-send.ts`), so without this each
+ * window rendered the same HUD and one microphone appeared to be open in all of
+ * them.
+ *
+ * Null means no window could be resolved at all - a host with no windows open,
+ * or a caller that does not scope sessions. The primary window shows those, so
+ * a session always has exactly one surface rather than none.
+ */
+export type VoiceWindowId = string | null;
+
+/**
  * Inbound, requests a session in `scope`. Outbound, announces `idle -> arming`.
  */
 export interface WakeEvent extends VoiceEventBase {
@@ -112,6 +128,12 @@ export interface WakeEvent extends VoiceEventBase {
 	scope: VoiceScope;
 	/** Absent means `local`, which is what every pre-Phase-10 producer emitted. */
 	origin?: VoiceOrigin;
+	/**
+	 * The window whose HUD owns this session. Carried on `wake` so a window knows
+	 * from the FIRST event whether the session is its own; waiting for the
+	 * catch-up snapshot would flash a HUD in every window first.
+	 */
+	windowId?: VoiceWindowId;
 }
 
 /** The floor is open and audio is being consumed. */
