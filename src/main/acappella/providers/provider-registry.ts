@@ -26,10 +26,11 @@
  *      by Whisper, routed by a model that never heard it, spoken in a different
  *      voice. The swap waits for the floor.
  *
- * The STT slot keeps its one per-build default. A packaged build gets the mock,
- * which is text-in and opens no device; a development build gets `echo-stt`,
- * which consumes real PCM and reports the speech it heard. That is not a
- * substitution and is not reported as one - nobody asked for anything.
+ * The STT slot defaults to the microphone check in EVERY build. It consumes real
+ * PCM and reports the speech it heard without transcribing it. That default used
+ * to be the mock in a packaged app, which opened no device at all, so a user with
+ * no configuration had a session that said "Listening" and could not possibly
+ * hear them - and no way to tell that apart from a broken microphone.
  */
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
@@ -111,6 +112,14 @@ export interface VoiceProviderSettings {
 	 * focused agent session. See `src/shared/acappella/announcements.ts`.
 	 */
 	speakBackgroundCompletions?: BackgroundAnnouncementSetting;
+	/**
+	 * Which microphone to open. Undefined follows the system default.
+	 *
+	 * Deliberately NOT part of {@link pipelineKey}: changing the input device is
+	 * not a provider change, and treating it as one would tear down and rebuild
+	 * a loaded Whisper model to swap a headset.
+	 */
+	inputDeviceId?: string;
 }
 
 export interface VoiceProviderRegistration<R extends VoiceProviderRole = VoiceProviderRole> {
@@ -158,21 +167,16 @@ export const MOCK_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
 /**
  * What a role resolves to when the user has picked nothing.
  *
- * Identical to {@link MOCK_PROVIDER_IDS} except for STT, where a development
- * build prefers the echo provider. Availability decides: `echo-stt` reports
- * itself unavailable in a packaged build, and an unavailable DEFAULT is silently
- * the mock rather than a substitution, because nobody requested it.
+ * Identical to {@link MOCK_PROVIDER_IDS} except for STT, which defaults to the
+ * microphone check. That default is deliberate: out of the box the one thing a
+ * user needs to establish is that their microphone reaches the app, and a
+ * default that cannot hear makes that impossible to tell from a broken device.
  */
 export const DEFAULT_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
 	stt: ECHO_STT_PROVIDER_ID,
 	tts: MOCK_PROVIDER_IDS.tts,
 	brain: MOCK_PROVIDER_IDS.brain,
 };
-
-/** Read per call, never cached: a test that sets `NODE_ENV` must be obeyed. */
-function isDevelopmentBuild(): boolean {
-	return process.env.NODE_ENV === 'development';
-}
 
 // ---------------------------------------------------------------------------
 // Catalog
@@ -219,12 +223,17 @@ registerVoiceProvider({
 registerVoiceProvider({
 	role: 'stt',
 	id: ECHO_STT_PROVIDER_ID,
-	label: 'Echo (development)',
+	// Named for what it is FOR, not for the build it came from. It answers one
+	// question - "is my microphone reaching Maestro at all?" - and the label has
+	// to say it transcribes nothing, because a row called "Echo" that produces no
+	// words reads as a broken recogniser rather than a working meter.
+	label: 'Microphone check (no transcription)',
 	tier: 'mock',
-	// Development only, and enforced here rather than by not registering it: a
-	// packaged build that finds `echo-stt` in its settings has to refuse it and
-	// SAY so, which is exactly what the unavailable path already does.
-	isAvailable: isDevelopmentBuild,
+	// Available in EVERY build, deliberately. It used to be development-only, and
+	// the result was a packaged app with no provider that consumes audio at all:
+	// the microphone was never opened, the HUD said "Listening", and there was no
+	// way to tell a dead device from a missing model from a wrong input. This is
+	// the one provider that can answer that, so it ships.
 	create: () => new EchoSttProvider(),
 });
 
@@ -429,11 +438,25 @@ function resolveRole<R extends VoiceProviderRole>(
 	}
 
 	if (registration.isAvailable && !registration.isAvailable()) {
-		// A DEFAULT this build cannot run is not news: the user asked for nothing,
-		// so it quietly becomes the mock for that role rather than a refusal for
-		// something nobody chose.
+		// A DEFAULT this build cannot run falls back to the mock rather than
+		// refusing something nobody chose - but it is REPORTED, which it did not
+		// used to be. "Nobody asked for it, so say nothing" is how a packaged build
+		// ended up on a text-only recogniser that opens no device: the session read
+		// "Listening", the microphone was never touched, and the one fact that
+		// explained it existed only in this function. Rule 2 above says the mock is
+		// selected and never substituted; landing here IS a substitution, so it
+		// travels like one.
 		if (!requestedId) {
 			const fallback = catalog[role].get(MOCK_PROVIDER_IDS[role]) as VoiceProviderRegistration<R>;
+			const message = `${role.toUpperCase()}: '${selectedId}' cannot run in this build, so this slot fell back to '${fallback.id}'.`;
+			logger.warn(message, LOG_CONTEXT);
+			substitutions.push({
+				role,
+				requestedId: selectedId,
+				resolvedId: fallback.id,
+				reason: 'unavailable',
+				message,
+			});
 			return { id: fallback.id, provider: fallback.create(createOptions) };
 		}
 		return unresolved(role, selectedId, 'unavailable', substitutions);
@@ -484,14 +507,22 @@ export function readVoiceProviderSettings(store: {
 	get: (key: string, defaultValue: unknown) => unknown;
 }): VoiceProviderSettings {
 	const stored = store.get(ACAPPELLA_SETTINGS_KEY, {}) as
-		| { providers?: unknown; pipeline?: unknown; voice?: unknown; speech?: unknown }
+		| {
+				providers?: unknown;
+				pipeline?: unknown;
+				voice?: unknown;
+				speech?: unknown;
+				audio?: unknown;
+		  }
 		| undefined;
 	const providers = (stored?.providers ?? {}) as Record<string, unknown>;
 	const voice = (stored?.voice ?? {}) as Record<string, unknown>;
 	const speech = (stored?.speech ?? {}) as Record<string, unknown>;
+	const audio = (stored?.audio ?? {}) as Record<string, unknown>;
 
 	return {
 		speakBackgroundCompletions: asAnnouncementSetting(speech.speakBackgroundCompletions),
+		inputDeviceId: asProviderId(audio.inputDeviceId),
 		stt: asProviderId(providers.stt),
 		tts: asProviderId(providers.tts),
 		brain: asProviderId(providers.brain),
@@ -553,6 +584,10 @@ export function buildProviderState(resolution: VoiceProviderResolution): {
 			label: provider.label,
 			tier: provider.tier,
 			substitutedFor: substitutionByRole.get(role)?.requestedId,
+			// Read off the resolved provider rather than inferred from its id or
+			// tier: whether a recogniser consumes PCM is its own declaration, and a
+			// list of "ids that hear" here would drift the first time one is added.
+			hearsAudio: role === 'stt' ? resolution.providers.stt.acceptsAudio : undefined,
 		};
 	});
 

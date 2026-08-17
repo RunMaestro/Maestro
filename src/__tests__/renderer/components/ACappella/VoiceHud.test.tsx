@@ -652,6 +652,58 @@ describe('VoiceHud minimize versus close', () => {
 		expect(viaEscape.stopCalls).toBe(1);
 	});
 
+	describe('a recogniser that cannot hear', () => {
+		/** Report the live providers, the way `provider-state` does mid-session. */
+		function reportStt(hearsAudio: boolean) {
+			emit(
+				event('provider-state', {
+					pipeline: 'cascade',
+					slots: [
+						{
+							role: 'stt',
+							providerId: hearsAudio ? 'echo-stt' : 'mock-stt',
+							label: 'Test STT',
+							tier: 'mock',
+							hearsAudio,
+						},
+					],
+					egressStatement: 'Nothing leaves this machine.',
+					audioLeavesMachine: false,
+				} as never)
+			);
+		}
+
+		it('says so, because "Listening" cannot', () => {
+			// The whole point: the floor IS open and the state machine is telling the
+			// truth, but a text-in recogniser opens no capture device, so speaking can
+			// never produce a transcript. Six rebuilds were spent on that gap.
+			renderHud();
+			startSession();
+			reportStt(false);
+
+			expect(screen.getByTestId('voice-hud-deaf').textContent).toContain(
+				'does not listen to the microphone'
+			);
+		});
+
+		it('stays quiet for a recogniser that does hear', () => {
+			renderHud();
+			startSession();
+			reportStt(true);
+
+			expect(screen.queryByTestId('voice-hud-deaf')).toBeNull();
+		});
+
+		it('stays quiet before the providers are known', () => {
+			// Absent is not the same as false. Warning on "not yet reported" would
+			// put the notice on screen at the start of every healthy session.
+			renderHud();
+			startSession();
+
+			expect(screen.queryByTestId('voice-hud-deaf')).toBeNull();
+		});
+	});
+
 	it('lets Escape close a HUD that is only showing a refusal', async () => {
 		// The Escape layer was registered for an active session and the dev harness
 		// only, while the widget also renders for an error - so the HUD explaining

@@ -98,6 +98,14 @@ export interface AudioPipelineOptions {
 	getStt: () => SttProvider | null;
 	/** Sends a command to the audio host window. */
 	sendCommand: (command: AudioHostCommand) => void;
+	/**
+	 * The microphone the user picked, read at each start rather than captured.
+	 *
+	 * A function because the setting can change between sessions, and a value
+	 * frozen at construction would keep opening the device the user has since
+	 * stopped choosing.
+	 */
+	getInputDeviceId?: () => string | undefined;
 	vad?: Partial<VadConfig>;
 	/** Audio retained ahead of the floor opening. Clamped to {@link MAX_PRE_ROLL_MS}. */
 	preRollMs?: number;
@@ -238,7 +246,10 @@ export class AudioPipeline {
 		if (this.running) return;
 		this.running = true;
 		this.resetRun();
-		this.options.sendCommand({ kind: 'start-capture' });
+		this.options.sendCommand({
+			kind: 'start-capture',
+			deviceId: this.options.getInputDeviceId?.(),
+		});
 	}
 
 	/**

@@ -119,6 +119,17 @@ export interface AudioDeviceInfo {
 	label: string;
 }
 
+/**
+ * The sentinel meaning "whatever the OS calls default", as opposed to a specific
+ * device id.
+ *
+ * A stored id is a fixed choice and survives that device being unplugged as a
+ * choice that can no longer be honoured; the sentinel follows the system. They
+ * are genuinely different intents, so "no preference" is a value rather than an
+ * absent field.
+ */
+export const ACAPPELLA_SYSTEM_DEFAULT_INPUT = 'system-default';
+
 export type AudioHostStatus =
 	/** The host window booted and is listening for commands. Nothing is open yet. */
 	| { kind: 'ready' }
@@ -127,6 +138,14 @@ export type AudioHostStatus =
 	| { kind: 'mic-error'; code: AudioHostErrorCode; message: string }
 	/** A device was added or removed. The current capture may still be fine. */
 	| { kind: 'device-change' }
+	/**
+	 * Every microphone this machine can offer.
+	 *
+	 * Only the audio host can answer this: `enumerateDevices` is a DOM API, and
+	 * labels stay redacted until a capture has been granted at least once, so the
+	 * list is re-published whenever devices change or capture starts.
+	 */
+	| { kind: 'input-devices'; devices: AudioDeviceInfo[] }
 	| {
 			kind: 'playback-state';
 			playing: boolean;
@@ -192,8 +211,18 @@ export function audioHostErrorToMicIssue(code: AudioHostErrorCode): MicIssue {
 export type PlaybackFormat = 'pcm16' | 'encoded';
 
 export type AudioHostCommand =
-	| { kind: 'start-capture' }
+	/**
+	 * Open the microphone. `deviceId` is the user's choice, or the
+	 * {@link ACAPPELLA_SYSTEM_DEFAULT_INPUT} sentinel / absent for the system one.
+	 *
+	 * The id is carried on the command rather than held by the host, so the device
+	 * in use is always the one the session was started with. A host that
+	 * remembered its own would keep a stale choice after a settings change.
+	 */
+	| { kind: 'start-capture'; deviceId?: string }
 	| { kind: 'stop-capture' }
+	/** Re-publish `input-devices`. Answers "what can I pick?" without capturing. */
+	| { kind: 'list-input-devices' }
 	| {
 			kind: 'play';
 			/** Scopes the chunk to a speech run so a cancelled run's late chunks are droppable. */

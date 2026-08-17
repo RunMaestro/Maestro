@@ -423,6 +423,15 @@ export interface ProviderSlotState {
 	tier: VoiceProviderTier;
 	/** Set when this slot is not the one that was requested. */
 	substitutedFor?: string;
+	/**
+	 * Whether this slot consumes microphone audio. Meaningful on `stt`.
+	 *
+	 * False for the text-in mock tier, which opens no capture device at all. It
+	 * travels because "Listening" is otherwise indistinguishable from a session
+	 * that can never hear anything: the floor is genuinely open, the state machine
+	 * is telling the truth, and the microphone was never touched.
+	 */
+	hearsAudio?: boolean;
 }
 
 /**

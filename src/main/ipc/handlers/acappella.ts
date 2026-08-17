@@ -65,6 +65,8 @@ import {
 	ACAPPELLA_AUDIO_COMMAND_CHANNEL,
 	ACAPPELLA_AUDIO_FRAME_CHANNEL,
 	ACAPPELLA_AUDIO_STATUS_CHANNEL,
+	ACAPPELLA_SYSTEM_DEFAULT_INPUT,
+	type AudioDeviceInfo,
 	type AudioFrame,
 	type AudioHostCommand,
 	type AudioHostStatus,
@@ -95,6 +97,7 @@ import { readVoiceReadiness } from './acappella-models';
 import { DEFAULT_TTS_VOLUME } from '../../../shared/acappella/voice-controls';
 import { requireACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import {
+	ACAPPELLA_SETTINGS_KEY,
 	buildProviderState,
 	pipelineKey,
 	readVoiceProviderSettings,
@@ -159,6 +162,16 @@ export const ACAPPELLA_EVENT_CHANNEL = 'acappella:event';
  */
 export const ACAPPELLA_WAKE_TEST_CHANNEL = 'acappella:wake-test';
 
+/**
+ * Push channel for the microphone list.
+ *
+ * Its own channel rather than a protocol event: the list exists with no session
+ * running (a settings panel has to draw the picker before anyone has spoken),
+ * and inventing a voice session id so Settings can populate a dropdown would put
+ * a fake session in every client's event stream.
+ */
+export const ACAPPELLA_INPUT_DEVICES_CHANNEL = 'acappella:input-devices';
+
 /** What the wake-word tuning affordance pushes while it is running. */
 export interface WakeTestEvent {
 	phraseId: string;
@@ -181,6 +194,13 @@ export interface VoiceStartSessionResult {
 export interface ACappellaHandlerDependencies {
 	settingsStore: {
 		get: (key: string, defaultValue?: unknown) => unknown;
+		/**
+		 * Persist a setting. Optional for the same reason `onDidChange` is: tests
+		 * pass a plain object. Without it the microphone choice cannot be saved, and
+		 * `acappella:set-input-device` says so rather than reporting a success that
+		 * would be forgotten on the next read.
+		 */
+		set?: (key: string, value: unknown) => void;
 		/**
 		 * Live setting changes. Optional because tests pass a plain object; without
 		 * it the voice hotkeys bind once at startup and do not follow a rebind.
@@ -283,6 +303,17 @@ let activePipeline: VoiceProviderResolution | null = null;
 let audioBridge: VoiceAudioBridge | null = null;
 
 /**
+ * The microphones the audio host last reported.
+ *
+ * Cached because only the host can enumerate them - `enumerateDevices` is a DOM
+ * API - and a settings panel that had to open a hidden window and wait for a
+ * round trip just to draw a list would either block or render empty. The host
+ * republishes on boot, on device change, and after each capture starts (which is
+ * when Chromium stops redacting the labels).
+ */
+let inputDevices: AudioDeviceInfo[] = [];
+
+/**
  * The two global voice hotkeys.
  *
  * Installed once, for the life of the app, and NOT rebuilt with the pipeline: a
@@ -378,6 +409,20 @@ function notePermissionFromStatus(status: AudioHostStatus): void {
 	if (status.kind === 'mic-error') noteCaptureFailure(status.code);
 }
 
+/**
+ * Cache the host's device list and tell every client it changed.
+ *
+ * Broadcast rather than request-only because the list changes for reasons no
+ * renderer initiated: a headset is unplugged, or a first capture finally reveals
+ * the labels Chromium had redacted. A picker that only ever pulled would keep
+ * showing a device that is now gone.
+ */
+function noteInputDevices(status: AudioHostStatus, safeSend: SafeSendFn): void {
+	if (status.kind !== 'input-devices') return;
+	inputDevices = status.devices;
+	safeSend(ACAPPELLA_INPUT_DEVICES_CHANNEL, inputDevices);
+}
+
 /** An IPC caller is a client by definition, so a bare request is a button press. */
 function parseInterruptSource(raw: unknown): InterruptSource {
 	return raw === 'voice' ? 'voice' : 'client-button';
@@ -419,7 +464,14 @@ function parseCredentialPayload(raw: unknown): { service: VoiceCredentialService
  */
 function ensureAudioBridge(service: VoiceSessionService, deps: ACappellaHandlerDependencies): void {
 	if (audioBridge || !deps.audioHostDeps) return;
-	audioBridge = createVoiceAudioBridge({ session: service, sendCommand: sendAudioHostCommand });
+	audioBridge = createVoiceAudioBridge({
+		session: service,
+		sendCommand: sendAudioHostCommand,
+		// Read at each capture start rather than captured here, so picking a
+		// different microphone takes effect on the next session without rebuilding
+		// the provider pipeline.
+		getInputDeviceId: () => readVoiceProviderSettings(deps.settingsStore).inputDeviceId,
+	});
 	// The user's volume applies from the FIRST sentence, not from the first time
 	// they touch the slider. A fresh bridge that defaulted to full output would
 	// undo a quiet setting (or a mute) every time the Encore Feature was toggled.
@@ -887,6 +939,57 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		}
 	);
 
+	/**
+	 * The microphones this machine offers, plus which one is selected.
+	 *
+	 * Serves the cache and asks the host to refresh in the background rather than
+	 * awaiting it: only a renderer can enumerate devices, so a caller that waited
+	 * would hang whenever the audio host is not open - which is most of the time,
+	 * since nothing opens it until a session starts.
+	 */
+	const wrappedInputDevices = withIpcErrorLogging(
+		handlerOpts('inputDevices'),
+		async (): Promise<{ devices: AudioDeviceInfo[]; selectedId: string }> => {
+			if (getAcappellaAudioHostWindow()) sendAudioHostCommand({ kind: 'list-input-devices' });
+			return {
+				devices: inputDevices,
+				selectedId:
+					readVoiceProviderSettings(deps.settingsStore).inputDeviceId ??
+					ACAPPELLA_SYSTEM_DEFAULT_INPUT,
+			};
+		}
+	);
+
+	/**
+	 * Choose the microphone.
+	 *
+	 * Takes effect on the NEXT capture rather than mid-utterance: swapping the
+	 * device under a live recogniser would splice two rooms into one sentence, and
+	 * the pre-roll buffer in front of it belongs to the old one.
+	 */
+	const wrappedSetInputDevice = withIpcErrorLogging(
+		handlerOpts('setInputDevice'),
+		async (rawId: unknown): Promise<boolean> => {
+			if (typeof rawId !== 'string' || !rawId) throw new Error('InvalidInputDevice');
+			const stored = (deps.settingsStore.get(ACAPPELLA_SETTINGS_KEY, {}) ?? {}) as Record<
+				string,
+				unknown
+			>;
+			const audio = (stored.audio ?? {}) as Record<string, unknown>;
+			if (!deps.settingsStore.set) throw new Error('SettingsNotWritable');
+			deps.settingsStore.set(ACAPPELLA_SETTINGS_KEY, {
+				...stored,
+				audio: {
+					...audio,
+					// The sentinel is stored as "no preference" so the setting keeps
+					// following the OS rather than pinning today's default device.
+					inputDeviceId: rawId === ACAPPELLA_SYSTEM_DEFAULT_INPUT ? undefined : rawId,
+				},
+			});
+			return true;
+		}
+	);
+
 	const wrappedLastTurn = withIpcErrorLogging(
 		handlerOpts('lastTurn'),
 		async (): Promise<TurnBreakdown | null> => lastTurn()
@@ -1111,6 +1214,12 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		return wrappedSetVolume(event, volume);
 	});
 
+	// Ungated deliberately: Voice Setup draws the microphone picker while the user
+	// is deciding whether to switch the feature on, and a picker that throws until
+	// then would make the panel look broken.
+	ipcMain.handle('acappella:input-devices', wrappedInputDevices);
+	ipcMain.handle('acappella:set-input-device', wrappedSetInputDevice);
+
 	ipcMain.handle('acappella:last-turn', async (event): Promise<TurnBreakdown | null> => {
 		requireEnabled(settingsStore);
 		return wrappedLastTurn(event);
@@ -1151,6 +1260,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		if (!isAcappellaAudioHostContents(event.sender)) return;
 		if (!status || typeof (status as AudioHostStatus).kind !== 'string') return;
 		notePermissionFromStatus(status as AudioHostStatus);
+		noteInputDevices(status as AudioHostStatus, deps.safeSend);
 		audioBridge?.handleStatus(status as AudioHostStatus);
 	});
 

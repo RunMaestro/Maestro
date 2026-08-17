@@ -317,6 +317,48 @@ export function createVoiceApi() {
 			ipcRenderer.invoke('acappella:preview-voice', text, voiceId),
 
 		/**
+		 * Every microphone this machine offers, plus the selected one.
+		 *
+		 * `selectedId` is {@link ACAPPELLA_SYSTEM_DEFAULT_INPUT} when the user has
+		 * expressed no preference, which is a real choice ("follow the OS") rather
+		 * than an absent value.
+		 *
+		 * Labels can be empty until a capture has been granted once - Chromium
+		 * redacts them - so a picker should fall back to the id and re-read when
+		 * `onInputDevices` fires.
+		 */
+		inputDevices: (): Promise<{
+			devices: Array<{ deviceId: string; label: string }>;
+			selectedId: string;
+		}> => ipcRenderer.invoke('acappella:input-devices'),
+
+		/**
+		 * Choose the microphone, persistently.
+		 *
+		 * Takes effect on the next capture, not mid-utterance: swapping the device
+		 * under a live recogniser splices two rooms into one sentence.
+		 */
+		setInputDevice: (deviceId: string): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:set-input-device', deviceId),
+
+		/**
+		 * The device list changed: one was plugged in or pulled out, or a first
+		 * capture just revealed the labels Chromium had redacted.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onInputDevices: (
+			handler: (devices: Array<{ deviceId: string; label: string }>) => void
+		): (() => void) => {
+			const wrapped = (
+				_event: Electron.IpcRendererEvent,
+				devices: Array<{ deviceId: string; label: string }>
+			) => handler(devices);
+			ipcRenderer.on('acappella:input-devices', wrapped);
+			return () => ipcRenderer.removeListener('acappella:input-devices', wrapped);
+		},
+
+		/**
 		 * Apply an output volume (0 to 1) to the assistant's voice, immediately.
 		 *
 		 * Applies only; it does NOT persist. The volume slider saves the value
