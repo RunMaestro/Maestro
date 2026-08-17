@@ -9,6 +9,10 @@
  *  - grid showing        -> Settings closes
  *  - details showing     -> back to the grid, Settings untouched
  *  - Escape twice        -> back, then Settings closes
+ *
+ * The same grid-vs-details distinction governs the header chrome, so the
+ * "Install plugin…" button's visibility is asserted here too rather than
+ * standing up a second copy of this mock scaffolding.
  */
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -144,5 +148,29 @@ describe('ExtensionsView escape routing', () => {
 
 		expect(screen.queryByTestId('extension-details-stub')).not.toBeInTheDocument();
 		expect(settingsEscape).not.toHaveBeenCalled();
+	});
+});
+
+describe('ExtensionsView install button', () => {
+	it('shows the install button on the grid', () => {
+		renderView();
+
+		expect(screen.getByTestId('extensions-install')).toBeInTheDocument();
+	});
+
+	it('hides the install button while a details pane is open', () => {
+		renderView();
+		openFirstTile();
+
+		expect(screen.queryByTestId('extensions-install')).not.toBeInTheDocument();
+	});
+
+	it('brings the install button back after going to the grid', () => {
+		renderView();
+		openFirstTile();
+
+		fireEvent.click(screen.getByTestId('details-back'));
+
+		expect(screen.getByTestId('extensions-install')).toBeInTheDocument();
 	});
 });

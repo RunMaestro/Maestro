@@ -84,15 +84,19 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Plugins
 				</h3>
-				<button
-					type="button"
-					data-testid="extensions-install"
-					onClick={() => void installPlugin()}
-					className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-				>
-					<FolderPlus className="w-3.5 h-3.5" /> Install plugin…
-				</button>
+				{/* Installing belongs to the marketplace grid, not to one plugin's
+				    details pane - showing it there reads as "install this plugin". */}
+				{!selected && (
+					<button
+						type="button"
+						data-testid="extensions-install"
+						onClick={() => void installPlugin()}
+						className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors hover:bg-white/5"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<FolderPlus className="w-3.5 h-3.5" /> Install plugin…
+					</button>
+				)}
 			</div>
 			<p className="text-xs mb-4" style={{ color: theme.colors.textDim }}>
 				Built-in Encore features and community plugins. Enable what you want; everything else stays
