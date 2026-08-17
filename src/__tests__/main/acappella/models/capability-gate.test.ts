@@ -94,6 +94,7 @@ import {
 	VOICE_SLOT_UNSATISFIED_REASONS,
 	readinessErrorMessage,
 	type VoiceReadiness,
+	type VoiceSlot,
 	type VoiceSlotReadiness,
 	type VoiceSlotUnsatisfiedReason,
 } from '../../../../shared/acappella/readiness';
@@ -572,5 +573,89 @@ describe('capability-gate', () => {
 			});
 			expect(readinessErrorMessage(readiness)).toBe('');
 		});
+
+		it('states one shared recovery once, not once per slot', () => {
+			// The real shape of a build without the native runtimes: three slots fail
+			// together with the same fix. Repeating it three times was two thirds of
+			// the message and read as a wall rather than as an instruction.
+			const action = 'Use a hosted provider or the mock tier until the local runtime ships.';
+			const message = readinessErrorMessage(
+				blockedOn(
+					(
+						[
+							{ slot: 'stt', detail: 'Speech-to-Text: whisper.cpp is not part of this build yet.' },
+							{
+								slot: 'tts',
+								detail: 'Text-to-Speech: ONNX Runtime is not part of this build yet.',
+							},
+							{
+								slot: 'brain',
+								detail: 'Conductor Brain: llama.cpp is not part of this build yet.',
+							},
+						] as const
+					).map((slot) => ({ ...slot, suggestedAction: action }))
+				)
+			);
+
+			expect(message.split(action)).toHaveLength(2); // stated exactly once
+			expect(message).toContain('whisper.cpp');
+			expect(message).toContain('ONNX Runtime');
+			expect(message).toContain('llama.cpp');
+			expect(message.endsWith(action)).toBe(true);
+		});
+
+		it('keeps recoveries per slot when they differ', () => {
+			// A denied microphone and a missing model are two problems with two
+			// different next steps; collapsing them would drop one of the fixes.
+			const message = readinessErrorMessage(
+				blockedOn([
+					{
+						slot: 'microphone',
+						detail: 'Microphone: Maestro does not have microphone access.',
+						suggestedAction: 'Grant microphone access in your system privacy settings.',
+					},
+					{
+						slot: 'stt',
+						detail: 'Speech-to-Text: Whisper Base is not installed.',
+						suggestedAction: 'Download it in Settings.',
+					},
+				])
+			);
+
+			expect(message).toContain('Grant microphone access');
+			expect(message).toContain('Download it in Settings');
+		});
+
+		it('does not lend one slot recovery to a slot that has none', () => {
+			const action = 'Download it in Settings.';
+			const message = readinessErrorMessage(
+				blockedOn([
+					{
+						slot: 'stt',
+						detail: 'Speech-to-Text: Whisper Base is not installed.',
+						suggestedAction: action,
+					},
+					{ slot: 'tts', detail: 'Text-to-Speech: something went wrong.' },
+				])
+			);
+
+			// Hoisting here would read as though the second slot were fixed by the
+			// first one's action. It stays attached to the slot that stated it.
+			expect(message).toBe(
+				`Speech-to-Text: Whisper Base is not installed. ${action} Text-to-Speech: something went wrong.`
+			);
+		});
 	});
 });
+
+/** A readiness verdict blocked on exactly these slots. */
+function blockedOn(
+	blocking: Array<Partial<VoiceSlotReadiness> & { slot: VoiceSlot }>
+): VoiceReadiness {
+	const slots = blocking.map((slot) => ({
+		providerId: 'test-provider',
+		satisfied: false as const,
+		...slot,
+	})) as VoiceSlotReadiness[];
+	return { canStartSession: false, canRunHandsFree: false, slots, blocking: slots };
+}
