@@ -166,6 +166,7 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { DurationPercentiles } from '../shared/percentiles';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
@@ -2644,13 +2645,7 @@ interface MaestroAPI {
 	};
 	// Debug Package API
 	debug: {
-		createPackage: (options?: {
-			includeLogs?: boolean;
-			includeErrors?: boolean;
-			includeSessions?: boolean;
-			includeGroupChats?: boolean;
-			includeBatchState?: boolean;
-		}) => Promise<{
+		createPackage: (options?: DebugPackageOptions) => Promise<{
 			success: boolean;
 			path?: string;
 			filesIncluded: string[];

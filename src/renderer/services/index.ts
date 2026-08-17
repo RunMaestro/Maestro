@@ -40,6 +40,9 @@ export {
 } from './systemSleep';
 export type { SleepAwareSpan } from './systemSleep';
 
+// Debug/support package service (owns the Auto Run snapshot capture)
+export { createDebugPackage, captureAutoRunSnapshots } from './debugPackage';
+
 // Wizard intent parser service
 export { parseWizardIntent, suggestsIterateIntent, suggestsNewIntent } from './wizardIntentParser';
 export type { WizardIntentResult } from './wizardIntentParser';

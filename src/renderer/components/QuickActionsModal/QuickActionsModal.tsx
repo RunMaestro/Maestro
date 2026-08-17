@@ -29,6 +29,7 @@ import type { GroupChatBusySnapshot } from '../../utils/groupChatStatus';
 import { openUrl } from '../../utils/openUrl';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import { logger } from '../../utils/logger';
+import { createDebugPackage } from '../../services/debugPackage';
 import { getActiveTabInfo } from './utils/activeTabInfo';
 import {
 	filterAndSortQuickActions,
@@ -698,7 +699,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setDebugPackageModalOpen,
 			startTour,
 			getFeedbackDraft: () => useFeedbackDraftStore.getState(),
-			createDebugPackage: () => window.maestro.debug.createPackage(),
+			createDebugPackage: () => createDebugPackage(),
 			notifyToast,
 			openUrl,
 			toggleDevtools: () => window.maestro.devtools.toggle(),
