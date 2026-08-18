@@ -22,6 +22,7 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
@@ -507,6 +508,15 @@ async function spawnClaudeAgent(
 		cliSpawnCoreDeps
 	);
 
+	// Beat WakaTime for the life of the run. CLI-spawned agents never reach the
+	// desktop's ProcessManager listener, so without this their time goes
+	// unrecorded under Maestro entirely.
+	const wakaHeartbeat = buildCliWakaTimeHeartbeat(
+		`cli:${cwd}`,
+		cwd,
+		Boolean(sshRemoteConfig?.enabled)
+	);
+
 	// SSH-wrap if a remote is configured; otherwise append prompt locally.
 	// Claude uses '-- <prompt>' positional form - the default in wrapSpawnWithSsh.
 	let spawnCommand = claudeCommand;
@@ -619,6 +629,7 @@ async function spawnClaudeAgent(
 
 		// Handle stdout - parse stream-json format
 		child.stdout?.on('data', (data: Buffer) => {
+			wakaHeartbeat?.();
 			jsonBuffer += data.toString();
 
 			// Process complete lines
@@ -900,6 +911,14 @@ async function spawnJsonLineAgent(
 
 	const agentCommand = getAgentCommand(toolType);
 
+	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
+	// WakaTime listener, so they beat from their own output stream.
+	const wakaHeartbeat = buildCliWakaTimeHeartbeat(
+		`cli:${cwd}`,
+		cwd,
+		Boolean(sshRemoteConfig?.enabled)
+	);
+
 	let spawnCommand = agentCommand;
 	let spawnArgs = localArgs;
 	let spawnCwd = cwd;
@@ -1003,6 +1022,7 @@ async function spawnJsonLineAgent(
 		};
 
 		child.stdout?.on('data', (data: Buffer) => {
+			wakaHeartbeat?.();
 			jsonBuffer += data.toString();
 			const lines = jsonBuffer.split('\n');
 			jsonBuffer = lines.pop() || '';

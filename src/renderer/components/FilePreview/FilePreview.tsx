@@ -666,20 +666,17 @@ export const FilePreview = React.memo(
 		// toast instead. http/mailto links open the same way in both builds.
 		const handleExternalLinkClick = useCallback(
 			(href: string, opts?: { ctrlKey?: boolean }) => {
-				if (/^file:\/\//.test(href)) {
-					if (isWebDesktop()) {
-						notifyToast({
-							color: 'theme',
-							title: 'Open file',
-							message: 'Available in the desktop app',
-						});
-						return;
-					}
-					// Playable media stays in Maestro's own player rather than being
-					// handed to the OS; everything else opens externally as before.
-					openFileUrl(href, (path) => onFileClick?.(path));
+				if (/^file:\/\//.test(href) && isWebDesktop()) {
+					notifyToast({
+						color: 'theme',
+						title: 'Open file',
+						message: 'Available in the desktop app',
+					});
 					return;
 				}
+				// A file:// target Maestro can render stays inside the app (preview
+				// tab or player); only OS-owned types go to the default app.
+				if (openFileUrl(href, (path) => onFileClick?.(path))) return;
 				if (/^https?:\/\/|^mailto:/.test(href)) {
 					openUrl(href, opts);
 				}

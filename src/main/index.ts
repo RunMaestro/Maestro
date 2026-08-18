@@ -171,6 +171,7 @@ import { setupAgentRunRecovery } from './agent-run/setup-recovery';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
 import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
 import { WakaTimeManager } from './wakatime-manager';
+import { setWakaTimeManager } from './wakatime-instance';
 import { MaestroCliManager } from './maestro-cli-manager';
 import {
 	createInteractiveReplayController,
@@ -308,7 +309,10 @@ if (!installationId) {
 runSettingsMigrations(store);
 
 // Initialize WakaTime heartbeat manager
-const wakatimeManager = new WakaTimeManager(store);
+const wakatimeManager = new WakaTimeManager(store, app.getVersion());
+// Publish it so Cue (which spawns agents outside the ProcessManager) shares
+// this instance's debounce and CLI-install state instead of making its own.
+setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
 
 // Auto-install WakaTime CLI on startup if enabled

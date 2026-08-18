@@ -103,6 +103,21 @@ interface MediaPlaybackStoreState {
 	 * restore button, or by the "Show Floating Media Player" command.
 	 */
 	dismissed: boolean;
+	/**
+	 * The queue came back from disk and the user has not touched the player yet.
+	 *
+	 * A restored queue is loaded but DORMANT, and the difference matters to the
+	 * Left Bar: `dismissed` plus a loaded item is also what "the user minimized
+	 * a paused track" looks like, and that state earns a header pill while a
+	 * queue nobody has asked for since launch does not. Without this, every
+	 * launch after a single MP3 opened onto media controls with nothing playing.
+	 *
+	 * Cleared by anything that means the user engaged the player this session:
+	 * opening a file, queueing one, activating a queue entry, or reopening the
+	 * widget from the command palette. The palette entry is deliberately NOT
+	 * gated on it, so a dormant queue is still reachable, just not advertised.
+	 */
+	dormant: boolean;
 	/** One-shot: start playing once the active item is ready. */
 	pendingAutoplay: boolean;
 	/**
@@ -294,6 +309,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 	history: [],
 	playing: false,
 	dismissed: false,
+	dormant: false,
 	pendingAutoplay: false,
 	toggleRequest: 0,
 	resumeTimes: {},
