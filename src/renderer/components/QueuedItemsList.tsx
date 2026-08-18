@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, memo } from 'react';
+import React, { useState, useCallback, useEffect, useRef, memo } from 'react';
 import {
 	X,
 	ChevronDown,
@@ -18,6 +18,7 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useUIStore } from '../stores/uiStore';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -100,8 +101,11 @@ export const QueuedItemsList = memo(
 		// Force Send confirmation state
 		const [forceSendConfirmId, setForceSendConfirmId] = useState<string | null>(null);
 
-		// Edit-message modal state (holds the id of the item being edited)
-		const [editItemId, setEditItemId] = useState<string | null>(null);
+		// Edit-message modal state (holds the id of the item being edited). Kept in
+		// uiStore rather than local state so the "Edit Last Queued Message"
+		// shortcut can open this modal without reaching into the transcript.
+		const editItemId = useUIStore((s) => s.editingQueuedItemId);
+		const setEditItemId = useUIStore((s) => s.setEditingQueuedItemId);
 
 		// Track which queued messages are expanded (for viewing full content)
 		const [expandedQueuedMessages, setExpandedQueuedMessages] = useState<Set<string>>(new Set());
@@ -114,6 +118,14 @@ export const QueuedItemsList = memo(
 		// Refs for confirm-button focus management in confirmation modals
 		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
 		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+
+		// A queued item can be dispatched or removed while its edit modal is open
+		// (or while this list is unmounted). Drop the id once it no longer names a
+		// row here so the modal closes instead of lingering as dead state.
+		const editItemMissing = !!editItemId && !filteredQueue.some((item) => item.id === editItemId);
+		useEffect(() => {
+			if (editItemMissing) setEditItemId(null);
+		}, [editItemMissing, setEditItemId]);
 
 		// Can only drag if we have reorder handler and more than 1 item
 		const canDrag = !!onReorderItems && filteredQueue.length > 1;

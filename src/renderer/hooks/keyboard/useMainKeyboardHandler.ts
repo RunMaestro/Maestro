@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
-import { getInitialRenameValue, moveActiveUnifiedTabToEdge } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	getInitialRenameValue,
+	moveActiveUnifiedTabToEdge,
+} from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { getTabDisplayName } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
+import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import { useUIStore } from '../../stores/uiStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -774,6 +780,34 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
+			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
+				// Open the edit modal on the newest message queued for the active AI
+				// tab. Commands are skipped: they carry no editable prompt text.
+				e.preventDefault();
+				const session = ctx.activeSession as Session | undefined;
+				const tabId = session?.activeTabId;
+				const target =
+					session && tabId
+						? [...(session.executionQueue ?? [])]
+								.reverse()
+								.find((item) => item.tabId === tabId && item.type !== 'command')
+						: undefined;
+				if (!session || !target) {
+					notifyCenterFlash({ message: 'No queued message to edit', color: 'yellow' });
+				} else {
+					// The modal renders with the transcript, so a file/terminal/browser
+					// tab on screen would swallow it. Land on the AI tab first.
+					if (
+						session.activeFileTabId ||
+						session.activeTerminalTabId ||
+						session.activeBrowserTabId ||
+						session.inputMode !== 'ai'
+					) {
+						updateSessionWith(session.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+					}
+					useUIStore.getState().setEditingQueuedItemId(target.id);
+					trackShortcut('editLastQueuedMessage');
+				}
 			} else if (ctx.isShortcut(e, 'jumpToTerminal')) {
 				e.preventDefault();
 				if (ctx.activeSession && !ctx.activeGroupChatId) {

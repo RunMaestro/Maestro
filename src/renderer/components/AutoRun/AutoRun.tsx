@@ -582,7 +582,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			tabIndex={-1}
 			onKeyDown={(e) => {
 				// CMD+E to toggle edit/preview (without Shift)
-				// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
+				// Cmd+Shift+E is left to the global handler ("Edit Last Queued Message")
 				// Skip if edit mode is locked (during Auto Run) - matches button disabled state
 				if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
 					e.preventDefault();
@@ -743,7 +743,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							tabIndex={0}
 							onKeyDown={(e) => {
 								// CMD+E to toggle edit/preview (without Shift)
-								// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
+								// Cmd+Shift+E is left to the global handler ("Edit Last Queued Message")
 								// Skip if edit mode is locked (during Auto Run) - matches button disabled state
 								if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
 									e.preventDefault();

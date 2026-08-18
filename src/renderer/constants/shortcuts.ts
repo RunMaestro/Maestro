@@ -47,7 +47,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	toggleAutoRunExpanded: {
 		id: 'toggleAutoRunExpanded',
 		label: 'Auto Run Expanded Preview',
-		keys: ['Meta', 'Shift', 'e'],
+		keys: ['Meta', 'Shift', '3'],
 	},
 	openBatchRunner: {
 		id: 'openBatchRunner',
@@ -74,6 +74,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'executionQueue',
 		label: 'View Execution Queue',
 		keys: ['Meta', 'Shift', 'x'],
+	},
+	editLastQueuedMessage: {
+		id: 'editLastQueuedMessage',
+		label: 'Edit Last Queued Message',
+		keys: ['Meta', 'Shift', 'e'],
 	},
 	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },

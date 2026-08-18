@@ -2176,23 +2176,32 @@ const MAC_ALT_CHAR_MAP: Record<string, string> = {
  * they had customized the binding themselves (any other key combo), we leave it
  * alone.
  *
- * Each entry: `shortcut id` → `{ old keys we consider "the old default", new default keys }`.
+ * Each entry: `shortcut id` → `{ every old default we recognize, new default keys }`.
+ * `fromKeys` is a LIST of old defaults because a binding can be remapped more
+ * than once over time, and a user who skipped an update still carries the
+ * oldest one.
  */
-const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[]; toKeys: string[] }> = {
+const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: string[] }> = {
 	// moveToGroup moved off Cmd+Shift+M to free that combo for openMemoryViewer.
 	moveToGroup: {
-		fromKeys: ['Meta', 'Shift', 'm'],
+		fromKeys: [['Meta', 'Shift', 'm']],
 		toKeys: ['Alt', 'Meta', 'm'],
 	},
-	// toggleAutoRunExpanded moved off Cmd+Shift+2 to free that combo for openBatchRunner.
+	// toggleAutoRunExpanded moved off Cmd+Shift+2 to free that combo for
+	// openBatchRunner, then off Cmd+Shift+E to free that combo for
+	// editLastQueuedMessage. It now sits on Cmd+Shift+3, next to the other Auto
+	// Run number bindings (Cmd+Shift+1 tab, Cmd+Shift+2 run).
 	toggleAutoRunExpanded: {
-		fromKeys: ['Meta', 'Shift', '2'],
-		toKeys: ['Meta', 'Shift', 'e'],
+		fromKeys: [
+			['Meta', 'Shift', '2'],
+			['Meta', 'Shift', 'e'],
+		],
+		toKeys: ['Meta', 'Shift', '3'],
 	},
 	// focusActiveTab moved off Opt+Cmd+F to free that combo for searchAllTabs
 	// (cross-tab message search), which reads as an escalation of Cmd+F.
 	focusActiveTab: {
-		fromKeys: ['Alt', 'Meta', 'f'],
+		fromKeys: [['Alt', 'Meta', 'f']],
 		toKeys: ['Alt', 'Meta', 'ArrowUp'],
 	},
 };
@@ -2241,7 +2250,7 @@ function migrateShortcuts(
 	// for a remapped shortcut, bump them to the NEW default. Preserve custom bindings.
 	for (const [id, remap] of Object.entries(SHORTCUT_DEFAULT_REMAPS)) {
 		const current = migrated[id];
-		if (current && keysEqual(current.keys, remap.fromKeys)) {
+		if (current && remap.fromKeys.some((from) => keysEqual(current.keys, from))) {
 			migrated[id] = { ...current, keys: remap.toKeys };
 			needsMigration = true;
 		}

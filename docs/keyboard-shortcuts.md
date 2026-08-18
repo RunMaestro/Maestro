@@ -77,7 +77,7 @@ Tips and gotchas:
 | Go to Auto Run Tab             | `Cmd+Shift+1` | `Ctrl+Shift+1` |
 | Toggle Edit/Preview (Markdown) | `Cmd+E`       | `Ctrl+E`       |
 | Run Auto Run                   | `Cmd+Shift+2` | `Ctrl+Shift+2` |
-| Auto Run Expanded Preview      | `Cmd+Shift+E` | `Ctrl+Shift+E` |
+| Auto Run Expanded Preview      | `Cmd+Shift+3` | `Ctrl+Shift+3` |
 | Insert Checkbox (Auto Run)     | `Cmd+L`       | `Ctrl+L`       |
 | View Git Diff                  | `Cmd+Shift+D` | `Ctrl+Shift+D` |
 | View Git Log                   | `Cmd+Shift+G` | `Ctrl+Shift+G` |
@@ -147,6 +147,7 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 | ------------------------ | ------------------------------------------------- |
 | Send Message             | `Enter` or `Cmd+Enter` (configurable in Settings) |
 | Multiline Input          | `Shift+Enter`                                     |
+| Edit Last Queued Message | `Cmd+Shift+E` / `Ctrl+Shift+E`                    |
 | Navigate Command History | `Up Arrow` while in input                         |
 | Slash Commands           | Type `/` to open autocomplete                     |
 | Focus Output             | `Esc` while in input                              |
@@ -315,7 +316,7 @@ When a default binding has to move to free a combo for a new action, Maestro mig
 | ------------------------- | ------------- | ------------- | -------------------------------- |
 | Focus Active Tab          | `Opt+Cmd+F`   | `Opt+Cmd+Up`  | Search Messages (All Agent Tabs) |
 | Move Session to Group     | `Cmd+Shift+M` | `Opt+Cmd+M`   | Open Memory Viewer               |
-| Auto Run Expanded Preview | `Cmd+Shift+2` | `Cmd+Shift+E` | Run Auto Run                     |
+| Auto Run Expanded Preview | `Cmd+Shift+E` | `Cmd+Shift+3` | Edit Last Queued Message         |
 
 If `Opt+Cmd+F` still focuses the active tab instead of opening cross-tab search, you had a custom binding on it: open **Settings** → **Shortcuts**, clear it from **Focus Active Tab**, and the new default takes over.
 

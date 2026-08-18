@@ -1,7 +1,9 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 
@@ -119,5 +121,70 @@ describe('QueuedItemsList drag-to-reorder', () => {
 		fireEvent.mouseUp(window);
 
 		expect(onReorderItems).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The edit-message modal is opened from two places: the pencil on a queued row,
+ * and the "Edit Last Queued Message" shortcut, which has no path into this
+ * component. Both go through `uiStore.editingQueuedItemId`, so these tests drive
+ * the store rather than the component's internals.
+ */
+describe('QueuedItemsList edit modal', () => {
+	const editable = item({ id: 'q1', text: 'a queued message' });
+
+	function renderList(queue: QueuedItem[] = [editable]) {
+		const onEditQueuedItem = vi.fn();
+		const utils = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={queue}
+					theme={mockTheme}
+					onEditQueuedItem={onEditQueuedItem}
+				/>
+			</LayerStackProvider>
+		);
+		return { onEditQueuedItem, ...utils };
+	}
+
+	beforeEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	afterEach(() => {
+		useUIStore.getState().setEditingQueuedItemId(null);
+	});
+
+	it('opens the modal for the item named by uiStore, with no click involved', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		renderList();
+
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('a queued message');
+	});
+
+	it('records the clicked row in uiStore and opens its modal', () => {
+		renderList();
+		fireEvent.click(screen.getByTitle('Edit message and images'));
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+		expect(screen.getByPlaceholderText('Message to send…')).toBeInTheDocument();
+	});
+
+	it('clears the id when the item is dispatched out of the queue', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		const { rerender } = renderList();
+
+		rerender(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[item({ id: 'q2', text: 'the next one' })]}
+					theme={mockTheme}
+					onEditQueuedItem={vi.fn()}
+				/>
+			</LayerStackProvider>
+		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
 	});
 });
