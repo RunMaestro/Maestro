@@ -505,6 +505,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false, // Verified absent in agent --help
 		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
 		supportsAdditionalDirectories: true, // Verified: --add-dir <path>, repeatable
+		supportsPromptViaStdin: true, // Verified: headless `agent -p` accepts a raw prompt on stdin
 	},
 };
 

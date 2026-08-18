@@ -164,6 +164,7 @@ describe('agent-capabilities', () => {
 			expect(capabilities).toBeDefined();
 			expect(capabilities.supportsImageInput).toBe(true);
 			expect(capabilities.supportsImageInputOnResume).toBe(true);
+			expect(capabilities.supportsPromptViaStdin).toBe(true);
 		});
 
 		it('should expose Pi capabilities backed by its documented CLI contract', () => {
