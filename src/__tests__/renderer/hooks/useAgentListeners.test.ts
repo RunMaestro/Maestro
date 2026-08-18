@@ -109,6 +109,7 @@ const mockProcess = {
 		onAgentErrorHandler = handler;
 		return mockUnsubscribeAgentError;
 	}),
+	onAuthExpired: vi.fn(() => vi.fn()),
 	onThinkingChunk: vi.fn((handler: ListenerCallback) => {
 		onThinkingChunkHandler = handler;
 		return mockUnsubscribeThinkingChunk;
@@ -1029,7 +1030,34 @@ describe('useAgentListeners', () => {
 			expect(updated?.agentErrorPaused).toBe(true);
 		});
 
-		it('opens the agent error modal', () => {
+		it('opens the agent error modal for a non-auth error', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onAgentErrorHandler?.('sess-1-ai-tab-1', { ...baseError, type: 'agent_crashed' });
+
+			// Check that the agentError modal was opened
+			const agentErrorOpen = useModalStore.getState().isOpen('agentError');
+			expect(agentErrorOpen).toBe(true);
+			const data = useModalStore.getState().getData('agentError');
+			expect(data?.sessionId).toBe('sess-1');
+		});
+
+		// auth_expired bypasses the generic error modal: the login flow runs in the
+		// re-authentication terminal so the whole fix happens in one place.
+		it('opens the reauth modal for auth_expired', () => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -1047,11 +1075,9 @@ describe('useAgentListeners', () => {
 
 			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
 
-			// Check that the agentError modal was opened
-			const agentErrorOpen = useModalStore.getState().isOpen('agentError');
-			expect(agentErrorOpen).toBe(true);
-			const data = useModalStore.getState().getData('agentError');
-			expect(data?.sessionId).toBe('sess-1');
+			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
+			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
+			expect(useModalStore.getState().getData('reauth')?.sessionId).toBe('sess-1');
 		});
 
 		it('does not open modal for session_not_found errors', () => {

@@ -645,6 +645,14 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+		onAuthExpired: (
+			callback: (payload: {
+				sessionId: string;
+				agentId: string;
+				message: string;
+				fromPipeline?: boolean;
+			}) => void
+		) => () => void;
 	};
 	feedback: {
 		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;

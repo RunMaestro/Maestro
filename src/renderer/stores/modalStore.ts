@@ -160,6 +160,16 @@ export interface AgentErrorModalData {
 	historicalError?: AgentError;
 }
 
+/** Provider re-authentication modal data */
+export interface ReauthModalData {
+	/** The agent whose provider rejected its credentials. */
+	sessionId: string;
+	/** Message from the provider, shown so the user sees what actually failed. */
+	message?: string;
+	/** True when the failure came from a Cue pipeline rather than a chat turn. */
+	fromPipeline?: boolean;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -286,6 +296,7 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
+	| 'reauth'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -376,6 +387,7 @@ export interface ModalDataMap {
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
+	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
@@ -893,6 +905,10 @@ export function getModalActions() {
 		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
 			openModal('agentError', { sessionId, historicalError: error }),
 
+		// Provider Re-authentication Modal
+		openReauthModal: (data: ReauthModalData) => openModal('reauth', data),
+		closeReauthModal: () => closeModal('reauth'),
+
 		// Worktree Modals
 		setWorktreeConfigModalOpen: (open: boolean) =>
 			open ? openModal('worktreeConfig') : closeModal('worktreeConfig'),
@@ -1057,6 +1073,7 @@ export function useModalActions() {
 	const wizardResumeModalOpen = useModalStore(selectModalOpen('wizardResume'));
 	const wizardResumeData = useModalStore(selectModalData('wizardResume'));
 	const agentErrorData = useModalStore(selectModalData('agentError'));
+	const reauthData = useModalStore(selectModalData('reauth'));
 	const worktreeConfigModalOpen = useModalStore(selectModalOpen('worktreeConfig'));
 	const createWorktreeModalOpen = useModalStore(selectModalOpen('createWorktree'));
 	const createWorktreeData = useModalStore(selectModalData('createWorktree'));
@@ -1219,6 +1236,9 @@ export function useModalActions() {
 
 		// Agent Error Modal
 		agentErrorModalSessionId: agentErrorData?.sessionId ?? null,
+
+		// Provider Re-authentication Modal
+		reauthModalData: reauthData ?? null,
 
 		// Worktree Modals
 		worktreeConfigModalOpen,

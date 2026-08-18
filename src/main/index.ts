@@ -30,6 +30,7 @@ import {
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -1092,6 +1093,18 @@ app
 					sshStore: createSshRemoteStoreAdapter(store),
 					agentConfigValues,
 				});
+
+				// Cue spawns agents outside the ProcessManager, so a failed run is the
+				// only place an expired token can surface for a pipeline. Without this
+				// the whole board goes quietly red until someone types a message.
+				reportCueAuthFailure(
+					mainWindow,
+					result,
+					storedSession.toolType,
+					storedSession.sessionSshRemoteConfig?.enabled
+						? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
+						: undefined
+				);
 
 				const historyEntry = recordCueHistoryEntry(result, {
 					id: storedSession.id,

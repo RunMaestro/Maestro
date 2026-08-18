@@ -8,6 +8,8 @@ import {
 	isBetaAgent,
 	getReadOnlyModeLabel,
 	getReadOnlyModeTooltip,
+	getAgentLoginCommand,
+	formatAgentLoginCommand,
 	AGENT_DISPLAY_NAMES,
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
@@ -146,6 +148,52 @@ describe('agentMetadata', () => {
 		it('should return read-only tooltip for other agents', () => {
 			expect(getReadOnlyModeTooltip('codex')).toContain('Read-Only');
 			expect(getReadOnlyModeTooltip('factory-droid')).toContain('Read-Only');
+		});
+	});
+	describe('getAgentLoginCommand', () => {
+		it('returns the provider login command for every non-terminal agent', () => {
+			for (const id of AGENT_IDS) {
+				if (id === 'terminal') continue;
+				const login = getAgentLoginCommand(id);
+				expect(login, `no login command for ${id}`).not.toBeNull();
+				expect(login!.binary.length).toBeGreaterThan(0);
+			}
+		});
+
+		it('returns null for the terminal agent and for unknown ids', () => {
+			expect(getAgentLoginCommand('terminal')).toBeNull();
+			expect(getAgentLoginCommand('not-an-agent')).toBeNull();
+		});
+
+		it('substitutes a configured custom binary path', () => {
+			const login = getAgentLoginCommand('claude-code', '/opt/tools/claude');
+			expect(login?.binary).toBe('/opt/tools/claude');
+			expect(login?.args).toBe('/login');
+		});
+
+		it('ignores a blank custom path', () => {
+			expect(getAgentLoginCommand('codex', '   ')?.binary).toBe('codex');
+		});
+
+		it('flags agents whose login only exists as a slash command in their TUI', () => {
+			expect(getAgentLoginCommand('factory-droid')?.followUp).toBe('/login');
+			expect(getAgentLoginCommand('claude-code')?.followUp).toBeUndefined();
+		});
+	});
+
+	describe('formatAgentLoginCommand', () => {
+		it('joins the binary and its args', () => {
+			expect(formatAgentLoginCommand({ binary: 'codex', args: 'login' })).toBe('codex login');
+		});
+
+		it('emits the bare binary when there are no args', () => {
+			expect(formatAgentLoginCommand({ binary: 'droid', args: '' })).toBe('droid');
+		});
+
+		it('quotes a path containing spaces so the shell still runs it', () => {
+			expect(formatAgentLoginCommand({ binary: '/Apps/My Tools/claude', args: '/login' })).toBe(
+				'"/Apps/My Tools/claude" /login'
+			);
 		});
 	});
 });

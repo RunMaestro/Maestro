@@ -13,12 +13,18 @@ import {
 } from '../../../../../renderer/stores/retryStore';
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
+let authExpiredHandler: ((payload: any) => void) | undefined;
 const mockUnsubscribe = vi.fn();
+const mockAuthUnsubscribe = vi.fn();
 
 const mockProcess = {
 	onAgentError: vi.fn((h: any) => {
 		handler = h;
 		return mockUnsubscribe;
+	}),
+	onAuthExpired: vi.fn((h: any) => {
+		authExpiredHandler = h;
+		return mockAuthUnsubscribe;
 	}),
 };
 
@@ -39,6 +45,7 @@ const baseError = {
 beforeEach(() => {
 	vi.clearAllMocks();
 	handler = undefined;
+	authExpiredHandler = undefined;
 	useSessionStore.setState({
 		sessions: [],
 		groups: [],
@@ -83,17 +90,73 @@ describe('useAgentErrorListener', () => {
 		useSessionStore.setState({ sessions: [session] } as any);
 
 		renderHook(() => useAgentErrorListener(makeDeps()));
-		handler!('sess-1-ai-tab-1', baseError);
+		handler!('sess-1-ai-tab-1', { ...baseError, type: 'agent_crashed' });
 
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.state).toBe('error');
-		expect(updated.agentError?.type).toBe('auth_expired');
-		expect(updated.aiTabs[0].agentError?.type).toBe('auth_expired');
+		expect(updated.agentError?.type).toBe('agent_crashed');
+		expect(updated.aiTabs[0].agentError?.type).toBe('agent_crashed');
 
 		const modal = useModalStore.getState();
 		const agentErrorEntry = modal.modals.get('agentError');
 		expect(agentErrorEntry).toBeDefined();
 		expect(agentErrorEntry?.data).toEqual({ sessionId: 'sess-1' });
+	});
+
+	// An expired token downs every agent and pipeline on the provider at once,
+	// so it skips the generic error modal and goes straight to the login flow.
+	it('routes auth_expired to the reauth modal instead of the agentError modal', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', baseError);
+
+		const modal = useModalStore.getState();
+		expect(modal.modals.get('agentError')?.open ?? false).toBe(false);
+		expect(modal.modals.get('reauth')?.data).toEqual({
+			sessionId: 'sess-1',
+			message: baseError.message,
+		});
+		// The session still carries the error so the transcript and Left Bar agree.
+		expect(useSessionStore.getState().sessions[0].agentError?.type).toBe('auth_expired');
+	});
+
+	// Cue spawns its agents outside the ProcessManager, so a pipeline auth
+	// failure arrives on its own channel - and that is the case where a silent
+	// failure costs the most.
+	it('opens the reauth modal for a pipeline auth failure', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		authExpiredHandler!({
+			sessionId: 'sess-1',
+			agentId: 'claude-code',
+			message: 'OAuth token has expired.',
+			fromPipeline: true,
+		});
+
+		expect(useModalStore.getState().modals.get('reauth')?.data).toEqual({
+			sessionId: 'sess-1',
+			message: 'OAuth token has expired.',
+			fromPipeline: true,
+		});
+	});
+
+	it('ignores a pipeline auth failure for an agent that no longer exists', () => {
+		useSessionStore.setState({ sessions: [] } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		authExpiredHandler!({
+			sessionId: 'deleted',
+			agentId: 'claude-code',
+			message: 'OAuth token has expired.',
+		});
+
+		expect(useModalStore.getState().modals.get('reauth')?.open ?? false).toBe(false);
 	});
 
 	it('clears stale agentSessionId on session_not_found', () => {

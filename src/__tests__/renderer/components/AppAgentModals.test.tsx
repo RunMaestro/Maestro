@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AppAgentModals } from '../../../renderer/components/AppModals';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { Theme, Session, AgentError } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type {
@@ -12,6 +13,15 @@ import type {
 vi.mock('../../../renderer/components/AgentErrorModal', () => ({
 	AgentErrorModal: (props: any) => (
 		<div data-testid="agent-error-modal" data-agent-name={props.agentName} />
+	),
+}));
+vi.mock('../../../renderer/components/ReauthModal', () => ({
+	ReauthModal: (props: any) => (
+		<div
+			data-testid="reauth-modal"
+			data-session-name={props.session?.name}
+			data-from-pipeline={String(!!props.fromPipeline)}
+		/>
 	),
 }));
 vi.mock('../../../renderer/components/MergeSessionModal', () => ({
@@ -113,6 +123,7 @@ const defaultProps: AppAgentModalsProps = {
 describe('AppAgentModals', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useModalStore.getState().closeModal('reauth');
 	});
 
 	it('does not render any modals when all booleans/values are default', () => {
@@ -169,6 +180,32 @@ describe('AppAgentModals', () => {
 		expect(modals.length).toBeGreaterThanOrEqual(1);
 		const groupChatModal = modals.find((m) => m.getAttribute('data-agent-name') === 'Test Agent');
 		expect(groupChatModal).toBeTruthy();
+	});
+
+	// The re-authentication modal is self-sourced from the modal store: it is
+	// opened by the agent-error listener and by Cue pipeline auth failures, which
+	// never pass through App.tsx's modal props.
+	it('renders ReauthModal when the reauth modal is opened for a known agent', () => {
+		const session = createMockSession({ id: 'auth-session', name: 'Pipeline Agent' });
+		useModalStore.getState().openModal('reauth', {
+			sessionId: 'auth-session',
+			message: 'OAuth token has expired.',
+			fromPipeline: true,
+		});
+
+		render(<AppAgentModals {...defaultProps} sessions={[session]} />);
+
+		const modal = screen.getByTestId('reauth-modal');
+		expect(modal.getAttribute('data-session-name')).toBe('Pipeline Agent');
+		expect(modal.getAttribute('data-from-pipeline')).toBe('true');
+	});
+
+	it('does not render ReauthModal when the target agent is gone', () => {
+		useModalStore.getState().openModal('reauth', { sessionId: 'deleted-session' });
+
+		render(<AppAgentModals {...defaultProps} sessions={[]} />);
+
+		expect(screen.queryByTestId('reauth-modal')).not.toBeInTheDocument();
 	});
 
 	it('renders MergeSessionModal when mergeSessionModalOpen and activeSession has activeTabId', () => {

@@ -203,6 +203,16 @@ Single SQLite database, WAL mode. Tables:
 - **`cue-output-filter.ts`** truncates per-source chain output to `SOURCE_OUTPUT_MAX_CHARS` (5000) and applies the optional `include_output_from` / `forward_output_from` filters before injecting into downstream prompts.
 - **Shell executor** uses local `bash -c <cmd>` (or remote-shell wrapping under SSH); CLI executor invokes `maestro-cli send` with a 5000ms timeout cap.
 
+## Auth expiry detection (`cue-auth-detector.ts`)
+
+Because Cue spawns its own agents (above) instead of going through the ProcessManager, none of the streaming error classification that produces `agent:error` ever sees a pipeline run. An expired provider token therefore used to take every pipeline down silently: runs kept failing in the background and the user only found out when they typed a message by hand.
+
+`reportCueAuthFailure(mainWindow, result, toolType, sshRemoteId?)` runs on the completion path in `src/main/index.ts`, just before `recordCueHistoryEntry`. It re-uses the SAME pattern bank as the interactive path (`getErrorPatterns` / `matchErrorPattern` in `src/main/parsers/error-patterns.ts`) over the head of stderr and both ends of stdout, capped at 4000 chars each.
+
+- On a match it calls `capabilitySnapshots.markAuthRequired(...)` (so the Settings -> Agents pill flips for a pipeline-only failure too) and sends `agent:authExpired` to the renderer, which opens the re-authentication modal.
+- **It prompts once per provider**, keyed by `toolType` plus SSH remote id. Expired credentials fail every run, and a busy board can fire several a minute. The key is dropped as soon as a run for that provider completes, which is the only reliable signal that new credentials took. `resetReportedAuthFailures()` is the test seam.
+- It never throws: a reporting failure must not take down the run bookkeeping that follows it.
+
 ## Telemetry
 
 Telemetry submission to `runmaestro.ai/api/v1/cue/stats` is **gated on both Encore flags** (`encoreFeatures.maestroCue` AND `encoreFeatures.usageStats`) - same predicate as `cue-stats.ts:isCueStatsEnabled`. Older app versions don't have the code path, so back-compat is automatic.
