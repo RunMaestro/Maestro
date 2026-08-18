@@ -55,6 +55,31 @@ export const MIN_HOLD_THRESHOLD_MS = 100;
 export const MAX_HOLD_THRESHOLD_MS = 2000;
 
 /**
+ * Silence after a sentence before it counts as a finished thought.
+ *
+ * On TOP of the recogniser's own 700 ms endpointing, so the default means a
+ * dispatch lands about 1.6 s after you stop making noise. It buys the pause
+ * people leave in the middle of a request: without it, "look at the auth
+ * module... and say why it fails" reached the agent as two separate jobs.
+ */
+export const DEFAULT_TURN_SETTLE_MS = 900;
+
+/** Zero is meaningful: dispatch each sentence the moment it endpoints. */
+export const MIN_TURN_SETTLE_MS = 0;
+
+/**
+ * Past this the wait stops reading as "it is still listening" and starts
+ * reading as "it is broken", whatever the person's speaking rhythm.
+ */
+export const MAX_TURN_SETTLE_MS = 3000;
+
+/** Clamp a stored settle window. Anything malformed reads as the default. */
+export function clampTurnSettleMs(value: unknown): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_TURN_SETTLE_MS;
+	return Math.min(MAX_TURN_SETTLE_MS, Math.max(MIN_TURN_SETTLE_MS, Math.round(value)));
+}
+
+/**
  * Pull a stored threshold into the usable band. Clamped, never rejected.
  *
  * Shared because two surfaces classify a press against it: the global hotkey in

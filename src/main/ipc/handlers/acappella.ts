@@ -568,6 +568,12 @@ async function buildService(
 		// service cannot derive this: it is handed a trio and never learns what was
 		// requested.
 		getProviderState: () => buildProviderState(resolution),
+		// How long a sentence is held before it counts as a finished thought. Read
+		// through the getter so tuning it lands on the next thought rather than the
+		// next session.
+		getUtteranceComposerConfig: () => ({
+			settleMs: readVoiceProviderSettings(deps.settingsStore).turnSettleMs,
+		}),
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow, deps.getWindowForSession),
 		}),

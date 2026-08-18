@@ -35,7 +35,7 @@
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
-import { clampTtsVolume } from '../../../shared/acappella/voice-controls';
+import { clampTtsVolume, clampTurnSettleMs } from '../../../shared/acappella/voice-controls';
 import {
 	summariseVoiceEgress,
 	OPENAI_REALTIME_PROVIDER_ID,
@@ -112,6 +112,14 @@ export interface VoiceProviderSettings {
 	 * focused agent session. See `src/shared/acappella/announcements.ts`.
 	 */
 	speakBackgroundCompletions?: BackgroundAnnouncementSetting;
+	/**
+	 * Silence after a sentence before it counts as a finished thought, in ms.
+	 *
+	 * On top of the recogniser's own endpointing, not instead of it. Zero
+	 * dispatches every fragment the moment it endpoints, which is what the session
+	 * did before `speech/utterance-composer.ts` existed.
+	 */
+	turnSettleMs?: number;
 	/**
 	 * Which microphone to open. Undefined follows the system default.
 	 *
@@ -513,15 +521,23 @@ export function readVoiceProviderSettings(store: {
 				voice?: unknown;
 				speech?: unknown;
 				audio?: unknown;
+				controls?: unknown;
 		  }
 		| undefined;
 	const providers = (stored?.providers ?? {}) as Record<string, unknown>;
 	const voice = (stored?.voice ?? {}) as Record<string, unknown>;
 	const speech = (stored?.speech ?? {}) as Record<string, unknown>;
 	const audio = (stored?.audio ?? {}) as Record<string, unknown>;
+	// The conversation's timing lives with the other floor controls (hold
+	// threshold, idle timeout), which is the blob the Voice Controls panel writes.
+	const controls = (stored?.controls ?? {}) as Record<string, unknown>;
 
 	return {
 		speakBackgroundCompletions: asAnnouncementSetting(speech.speakBackgroundCompletions),
+		// Clamped rather than passed through: this becomes a timer in front of every
+		// dispatch, and a hand-edited settings file holding a NaN or a 600000 would
+		// be a voice assistant that never answers.
+		turnSettleMs: clampTurnSettleMs(controls.turnSettleMs),
 		inputDeviceId: asProviderId(audio.inputDeviceId),
 		stt: asProviderId(providers.stt),
 		tts: asProviderId(providers.tts),
