@@ -75,11 +75,11 @@ export interface ComposedUtterance {
 	/** How many recogniser finals were joined. 1 means nothing was coalesced. */
 	fragments: number;
 	/**
-	 * The send phrase that ended this thought, when one did.
+	 * What ended this thought: a send phrase as configured, `'release'` for a
+	 * push-to-talk key coming up, or absent when the settle timer fired.
 	 *
-	 * Absent means the settle timer fired instead. Worth distinguishing: a client
-	 * can say "sending" the instant you ask for it, rather than after a pause that
-	 * looks like nothing happening.
+	 * Worth distinguishing: a client can say "sending" the instant you ask for it,
+	 * rather than after a pause that looks like nothing happening.
 	 */
 	sentBy?: string;
 }
@@ -110,6 +110,8 @@ export class UtteranceComposer {
 	private readonly onComposing?: (text: string) => void;
 
 	private buffer: Buffered | null = null;
+	/** Set by {@link armImmediateSettle}: the next fragment ends the thought. */
+	private immediateSettle = false;
 	private settleTimer: ReturnType<typeof setTimeout> | null = null;
 	private holdTimer: ReturnType<typeof setTimeout> | null = null;
 	private disposed = false;
@@ -166,6 +168,13 @@ export class UtteranceComposer {
 
 		this.append(fragment, confidence, durationMs);
 
+		// The user let go of the key before this fragment arrived: it is the tail of
+		// the sentence they had already finished saying.
+		if (this.immediateSettle) {
+			this.settle('release');
+			return;
+		}
+
 		// Zero settle is "compose nothing": dispatch on arrival, which is what the
 		// session did before this module existed.
 		if (this.config.settleMs === 0) {
@@ -176,6 +185,35 @@ export class UtteranceComposer {
 		this.onComposing?.(this.pending);
 		this.restartSettleTimer();
 		this.startHoldTimer();
+	}
+
+	/**
+	 * End the thought as soon as the recogniser has finished delivering it.
+	 *
+	 * For a release gesture - letting go of a push-to-talk key - where the user
+	 * has already said they are done but the words may still be in flight. The
+	 * recogniser is flushed at the same moment, and its final can land either side
+	 * of this call, so:
+	 *
+	 *   - a fragment arriving after this settles immediately, tail included;
+	 *   - if nothing arrives, what is already buffered settles now.
+	 *
+	 * Settling only the current buffer would send the sentence minus its last few
+	 * words, which is the failure a release gesture must never produce.
+	 */
+	armImmediateSettle(): void {
+		if (this.disposed) return;
+		if (this.buffer) {
+			// Nothing may be in flight at all, so the buffer must not be left waiting
+			// on a fragment that never comes. A late final still settles on arrival,
+			// as its own thought, which is the honest reading of words spoken after
+			// the user said they were finished.
+			this.settle('release');
+		}
+		// Set AFTER the settle, which clears it: the flag has to survive the flush
+		// of what was already buffered so a tail arriving afterwards is still sent
+		// on arrival rather than sitting out a settle window the user has answered.
+		this.immediateSettle = true;
 	}
 
 	/**
@@ -193,6 +231,7 @@ export class UtteranceComposer {
 	cancel(): void {
 		this.clearTimers();
 		this.buffer = null;
+		this.immediateSettle = false;
 	}
 
 	dispose(): void {
@@ -217,6 +256,7 @@ export class UtteranceComposer {
 		const buffer = this.buffer;
 		this.clearTimers();
 		this.buffer = null;
+		this.immediateSettle = false;
 		if (!buffer) return;
 
 		this.onSettled({

@@ -198,6 +198,72 @@ describe('UtteranceComposer', () => {
 		});
 	});
 
+	/**
+	 * Letting go of a push-to-talk key. The recogniser is flushed at the same
+	 * moment, and its final can land either side of the release, which is the
+	 * entire reason this is not just "settle now".
+	 */
+	describe('a release gesture', () => {
+		it('sends what is buffered without waiting for the timer', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+			composer.add('fix the auth bug', 1);
+
+			composer.armImmediateSettle();
+
+			expect(settled).toHaveLength(1);
+			expect(settled[0].text).toBe('fix the auth bug');
+			expect(settled[0].sentBy).toBe('release');
+		});
+
+		it('waits for a flushed tail that has not arrived yet', () => {
+			// The failure this exists to prevent: settling only the current buffer
+			// sends the sentence minus its last few words.
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.armImmediateSettle();
+			expect(settled).toEqual([]);
+
+			composer.add('the last few words', 1);
+
+			expect(settled).toHaveLength(1);
+			expect(settled[0].text).toBe('the last few words');
+		});
+
+		it('includes the tail with what came before it', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+			composer.add('look at the auth module', 1);
+
+			// Buffer settles on the release, then the flushed tail arrives as its own
+			// thought - the honest reading of words spoken after "I am done".
+			composer.armImmediateSettle();
+			composer.add('and the refresh path', 1);
+
+			expect(settled.map((entry) => entry.text)).toEqual([
+				'look at the auth module',
+				'and the refresh path',
+			]);
+		});
+
+		it('does nothing when nothing was ever said', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.armImmediateSettle();
+			vi.advanceTimersByTime(60_000);
+
+			expect(settled).toEqual([]);
+		});
+
+		it('is cleared by a cancel, so a closed floor cannot settle later', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.armImmediateSettle();
+			composer.cancel();
+			composer.add('spoken into a dead session', 1);
+
+			expect(settled).toEqual([]);
+		});
+	});
+
 	describe('ending a thought by decree', () => {
 		it('flush settles immediately', () => {
 			const { composer, settled } = makeComposer();

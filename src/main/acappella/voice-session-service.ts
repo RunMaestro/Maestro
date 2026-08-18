@@ -1140,6 +1140,25 @@ export class VoiceSessionService {
 	}
 
 	/**
+	 * The user says the utterance is over: send whatever has been collected.
+	 *
+	 * The hold-to-talk release, and anything else that ends dictation by decree.
+	 * The recogniser is flushed separately (`audio-bridge.endUtterance`), and that
+	 * alone is not enough: the flush produces a final, the composer BUFFERS it,
+	 * and the request would then sit waiting out a settle window the user has
+	 * already answered by letting go of the key.
+	 *
+	 * Ordering is the whole subtlety. A flushed final can arrive after this call
+	 * returns, so settling only what is buffered right now would send the sentence
+	 * minus its last few words. `armImmediateSettle()` makes the composer settle
+	 * on the NEXT fragment instead, and settles what it already holds if none
+	 * arrives.
+	 */
+	endUtteranceNow(): void {
+		this.composer.armImmediateSettle();
+	}
+
+	/**
 	 * Say one conversational line and hand the floor straight back.
 	 *
 	 * Deliberately the SAME speak path a clarification uses, rather than a second

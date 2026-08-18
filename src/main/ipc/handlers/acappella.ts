@@ -1045,9 +1045,14 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		session: floorSession,
 		getMainWindow: deps.getMainWindow,
 		getFocusedAgentSessionId: deps.getFocusedAgentSessionId ?? (() => null),
-		// The bridge owns the recogniser handle, so the endpoint hint goes through
-		// it rather than through the session service.
-		endUtterance: () => audioBridge?.endUtterance(),
+		// Two halves of one gesture, and both are needed. The bridge owns the
+		// recogniser handle, so the flush goes through it; the session owns the
+		// composer, which would otherwise buffer the resulting final and sit out a
+		// settle window the user already answered by letting go of the key.
+		endUtterance: () => {
+			audioBridge?.endUtterance();
+			getVoiceSessionService()?.endUtteranceNow();
+		},
 		// Broadcast rather than logged: a hotkey that did nothing has to say why,
 		// or the user concludes the key is broken.
 		onRefused: (info) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL + ':hotkey-refused', info),
