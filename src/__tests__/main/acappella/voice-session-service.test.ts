@@ -303,6 +303,59 @@ describe('VoiceSessionService lifecycle', () => {
 		expect(listenStart.type === 'listen-start' && listenStart.sttProviderId).toBe('fake-stt');
 	});
 
+	/**
+	 * A recogniser that hears but does not transcribe (the microphone check) is a
+	 * meter, not a voice. Routing its measurement onward sent live agents prompts
+	 * like "Echo utterance 4: 1.5s of speech." and billed the user for the reply.
+	 */
+	describe('a diagnostic recogniser', () => {
+		function deafHarness() {
+			const h = makeHarness();
+			// Same object the service holds, so the flag is read at turn time.
+			(h.stt as unknown as { transcribesSpeech: boolean }).transcribesSpeech = false;
+			return h;
+		}
+
+		it('shows the transcript but never dispatches it to an agent', async () => {
+			const deaf = deafHarness();
+			await start(deaf);
+
+			deaf.service.submitUtterance('Echo utterance 1: 1.5s of speech.');
+			// Waiting for the FLOOR TO REOPEN, not for the transcript: the transcript
+			// is emitted before routing would happen, so asserting on it would pass
+			// even with the guard removed. Reopening is the end of the whole turn.
+			await vi.waitFor(() => expect(deaf.service.getState()).toBe('listening'));
+
+			// The user still sees proof the microphone works...
+			expect(deaf.types()).toContain('final-transcript');
+			// ...and no agent is told anything.
+			expect(deaf.executor).not.toHaveBeenCalled();
+			expect(deaf.types()).not.toContain('route-decision');
+			expect(deaf.types()).not.toContain('dispatch');
+		});
+
+		it('reopens the floor, so the meter keeps working turn after turn', async () => {
+			const deaf = deafHarness();
+			await start(deaf);
+
+			deaf.service.submitUtterance('Echo utterance 1: 1.5s of speech.');
+			await vi.waitFor(() => expect(deaf.service.getState()).toBe('listening'));
+
+			expect(deaf.service.getState()).toBe('listening');
+		});
+
+		it('still routes for an ordinary recogniser', async () => {
+			// The guard is one flag; a regression that read it backwards would make
+			// every real provider silent, which is worse than the bug it fixes.
+			await start(h);
+
+			h.service.submitUtterance('do the thing');
+			await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+			expect(h.executor).toHaveBeenCalled();
+		});
+	});
+
 	it('stamps every event with the session id and a monotonic seq', async () => {
 		await start(h);
 		h.service.submitUtterance('do the thing');

@@ -992,6 +992,20 @@ export class VoiceSessionService {
 				return;
 			}
 
+			// A diagnostic recogniser's turn ENDS here, at the transcript.
+			//
+			// The microphone check hears real audio and reports how long you spoke
+			// for, which is exactly what proves the device and the capture graph
+			// work - and it is not something anyone said. Routing it onward sent a
+			// live agent prompts like "Echo utterance 4: 1.5s of speech.", which the
+			// agent then answered, at the user's expense, having been told nothing.
+			// The floor reopens so the meter keeps working turn after turn.
+			if (this.providers.stt.transcribesSpeech === false) {
+				this.transition('listening');
+				this.emitListenStart();
+				return;
+			}
+
 			this.rememberUtterance(utterance);
 
 			// "Tell me more" is not a request, so it never reaches the router or the

@@ -301,6 +301,42 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-a-cappella-diagnostics',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Voice diagnostics',
+		description:
+			'A rolling record of the voice pipeline: which engines are live, whether the microphone is producing signal, and every recent voice event. Recorded continuously, so you can speak first and read it afterwards',
+		keywords: [
+			'voice diagnostics',
+			'debug',
+			'a cappella',
+			'no transcript',
+			'not hearing',
+			'microphone not working',
+			'event log',
+			'troubleshoot',
+			'copy diagnostics',
+		],
+	},
+	{
+		id: 'encore-a-cappella-copy-diagnostics',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Copy voice diagnostics',
+		description:
+			'Copy the voice pipeline state and recent event log to the clipboard, for a bug report or a support thread',
+		keywords: [
+			'copy diagnostics',
+			'voice',
+			'a cappella',
+			'bug report',
+			'support',
+			'event log',
+			'clipboard',
+		],
+	},
+	{
 		id: 'encore-a-cappella-input-device',
 		tab: 'encore',
 		tabLabel: 'Plugins',
