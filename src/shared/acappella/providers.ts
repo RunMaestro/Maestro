@@ -83,6 +83,18 @@ export interface SttProvider extends VoiceProviderInfo {
 	 * a level meter over a transcript that is never coming.
 	 */
 	readonly acceptsAudio: boolean;
+	/**
+	 * Whether this provider's transcripts are WORDS SOMEONE SAID.
+	 *
+	 * Absent means true, which is what every real recogniser is. False is the
+	 * diagnostic case: a provider that genuinely hears audio but reports a
+	 * MEASUREMENT rather than speech (the microphone check reports how long you
+	 * talked for). That output is real, useful information - it proves the device,
+	 * the capture graph, and the endpointer all work - but nobody said it, so
+	 * routing it to an agent would send a live model a sentence no human uttered
+	 * and bill the user for the reply.
+	 */
+	readonly transcribesSpeech?: boolean;
 	/** Acquire the device or session. Throws when the provider cannot start. */
 	start(callbacks: SttCallbacks): Promise<void>;
 	/** Push one buffer of 16-bit mono PCM at `sampleRate`. */
