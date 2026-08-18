@@ -313,6 +313,52 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-a-cappella-hold-until-send',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Wait for me to say send',
+		description:
+			'Speak freely for as long as you like; nothing reaches an agent until you say a send phrase or stop talking for the configured pause',
+		keywords: [
+			'wait for me to say send',
+			'send command',
+			'hold until send',
+			'good to go',
+			'freeform',
+			'dictation',
+			'a cappella',
+			'voice',
+			'sends too early',
+		],
+	},
+	{
+		id: 'encore-a-cappella-send-hold',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Send after',
+		description:
+			'How long a held voice request waits before it sends on its own, when no send phrase was said',
+		keywords: ['send after', 'auto send', 'pause', 'timeout', 'hold', 'a cappella', 'voice'],
+	},
+	{
+		id: 'encore-a-cappella-send-phrases',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Send phrases',
+		description:
+			'The spoken phrases that end a held voice request, heard only at the end of a sentence and removed before the request is sent',
+		keywords: [
+			'send phrases',
+			'good to go',
+			"that's it",
+			'send it',
+			'go ahead',
+			'a cappella',
+			'voice',
+			'trigger word',
+		],
+	},
+	{
 		id: 'encore-a-cappella-turn-settle',
 		tab: 'encore',
 		tabLabel: 'Plugins',

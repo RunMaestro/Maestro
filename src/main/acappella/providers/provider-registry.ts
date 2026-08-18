@@ -35,7 +35,12 @@
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
-import { clampTtsVolume, clampTurnSettleMs } from '../../../shared/acappella/voice-controls';
+import {
+	clampSendHoldMs,
+	clampTtsVolume,
+	clampTurnSettleMs,
+	parseSendPhrases,
+} from '../../../shared/acappella/voice-controls';
 import {
 	summariseVoiceEgress,
 	OPENAI_REALTIME_PROVIDER_ID,
@@ -125,6 +130,12 @@ export interface VoiceProviderSettings {
 	 * utterance. See `router/conversation-buffer.ts`.
 	 */
 	conversationalMode?: boolean;
+	/** Whether a request waits for a spoken send phrase (or the long pause). */
+	holdUntilSend?: boolean;
+	/** The pause that sends a held request when no phrase was said. */
+	sendHoldMs?: number;
+	/** Phrases that mean "send it". Undefined takes the built-in set. */
+	sendPhrases?: string[];
 	/**
 	 * Which microphone to open. Undefined follows the system default.
 	 *
@@ -544,6 +555,9 @@ export function readVoiceProviderSettings(store: {
 		// be a voice assistant that never answers.
 		turnSettleMs: clampTurnSettleMs(controls.turnSettleMs),
 		conversationalMode: controls.conversationalMode === true,
+		holdUntilSend: controls.holdUntilSend === true,
+		sendHoldMs: clampSendHoldMs(controls.sendHoldMs),
+		sendPhrases: parseSendPhrases(controls.sendPhrases),
 		inputDeviceId: asProviderId(audio.inputDeviceId),
 		stt: asProviderId(providers.stt),
 		tts: asProviderId(providers.tts),
