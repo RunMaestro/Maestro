@@ -152,6 +152,7 @@ import {
 } from '../../../../main/acappella/providers/provider-registry';
 import { unresolvedProviderId } from '../../../../main/acappella/providers/unresolved';
 import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
+import { DEFAULT_TURN_SETTLE_MS } from '../../../../shared/acappella/voice-controls';
 
 describe('provider registry', () => {
 	beforeAll(() => {
@@ -489,6 +490,10 @@ describe('provider registry', () => {
 			// Clamped rather than passed through: this becomes a gain on a live
 			// output node, so an absent or nonsensical value reads as full volume.
 			volume: 1,
+			// Same reasoning, different consequence: this one becomes a timer in
+			// front of every dispatch, so an absent value reads as the default wait
+			// rather than as zero.
+			turnSettleMs: DEFAULT_TURN_SETTLE_MS,
 		});
 	});
 
@@ -504,6 +509,7 @@ describe('provider registry', () => {
 			voiceId: undefined,
 			rate: undefined,
 			volume: 1,
+			turnSettleMs: DEFAULT_TURN_SETTLE_MS,
 		});
 	});
 
