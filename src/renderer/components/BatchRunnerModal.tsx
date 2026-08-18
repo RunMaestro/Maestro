@@ -58,6 +58,7 @@ interface BatchRunnerModalProps {
 	onGo: (config: BatchRunConfig) => void | Promise<void>;
 	onSave: (prompt: string) => void;
 	initialPrompt?: string;
+	initialConfig?: Partial<BatchRunConfig>;
 	lastModifiedAt?: number;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
 	// Multi-document support
@@ -113,6 +114,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onGo,
 		onSave,
 		initialPrompt,
+		initialConfig,
 		lastModifiedAt,
 		showConfirmation,
 		folderPath,
@@ -219,7 +221,12 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		totalTaskCount,
 		hasNoTasks,
 		missingDocCount,
-	} = useSpecDrivenConfig({ presetDocuments, allDocuments, getDocumentTaskCount });
+	} = useSpecDrivenConfig({
+		presetDocuments,
+		initialConfig,
+		allDocuments,
+		getDocumentTaskCount,
+	});
 
 	// Fresh-context-per mode. Default 'task' preserves legacy behavior (one
 	// agent invocation per unchecked task). 'document' makes the agent walk
@@ -265,7 +272,11 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		handleSave,
 		isModified,
 		hasUnsavedChanges,
-	} = usePromptComposerState({ initialPrompt, showConfirmation, onSave });
+	} = usePromptComposerState({
+		initialPrompt: initialConfig?.prompt ?? initialPrompt,
+		showConfirmation,
+		onSave,
+	});
 
 	// Compute if there are unsaved configuration changes
 	// This checks if documents, loop settings, or prompt have changed from initial values

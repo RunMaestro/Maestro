@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 // Mock fs
 vi.mock('fs', () => ({
 	existsSync: vi.fn(),
+	statSync: vi.fn(),
 }));
 
 // Mock maestro-client
@@ -24,9 +25,14 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	resolveTargetSessionId: vi.fn(),
 }));
 
+vi.mock('../../../cli/services/storage', () => ({
+	getSessionById: vi.fn(),
+}));
+
 import { autoRun } from '../../../cli/commands/auto-run';
 import { withMaestroClient, resolveTargetSessionId } from '../../../cli/services/maestro-client';
-import { existsSync } from 'fs';
+import { getSessionById } from '../../../cli/services/storage';
+import { existsSync, statSync } from 'fs';
 import path from 'path';
 
 describe('auto-run command', () => {
@@ -39,6 +45,14 @@ describe('auto-run command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		vi.mocked(statSync).mockReturnValue({ isFile: () => true } as never);
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'agent-123',
+			name: 'Agent',
+			toolType: 'claude-code',
+			cwd: '/repo',
+			autoRunFolderPath: '/path/to',
+		} as never);
 	});
 
 	it('should configure auto-run with valid document paths', async () => {
@@ -61,6 +75,30 @@ describe('auto-run command', () => {
 			expect.stringContaining('Auto-run configured with 2 documents')
 		);
 		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('should send relative document paths from the agent Auto Run folder', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveTargetSessionId).mockReturnValue('agent-123');
+
+		let sentMessage: Record<string, unknown> | undefined;
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					sentMessage = msg;
+					return Promise.resolve({
+						type: 'configure_auto_run_result',
+						success: true,
+					});
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await autoRun(['/path/to/nested/doc.md'], { agent: 'agent-123' });
+
+		const docs = sentMessage!.documents as Array<{ filename: string }>;
+		expect(docs[0].filename).toBe('nested/doc.md');
 	});
 
 	it('should error with no documents', async () => {

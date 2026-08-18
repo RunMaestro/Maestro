@@ -16,6 +16,8 @@ vi.mock('fs', () => ({
 	mkdirSync: vi.fn(),
 	renameSync: vi.fn(),
 	unlinkSync: vi.fn(),
+	chmodSync: vi.fn(),
+	statSync: vi.fn(),
 }));
 
 vi.mock('os', () => ({
@@ -47,6 +49,8 @@ const mockFs = {
 	mkdirSync: fs.mkdirSync as ReturnType<typeof vi.fn>,
 	renameSync: fs.renameSync as ReturnType<typeof vi.fn>,
 	unlinkSync: fs.unlinkSync as ReturnType<typeof vi.fn>,
+	chmodSync: fs.chmodSync as ReturnType<typeof vi.fn>,
+	statSync: fs.statSync as ReturnType<typeof vi.fn>,
 };
 
 const mockOs = {
@@ -81,6 +85,8 @@ describe('cli-server-discovery', () => {
 		mockFs.mkdirSync.mockReturnValue(undefined);
 		mockFs.renameSync.mockReturnValue(undefined);
 		mockFs.unlinkSync.mockReturnValue(undefined);
+		mockFs.chmodSync.mockReturnValue(undefined);
+		mockFs.statSync.mockReturnValue({ mode: 0o700 });
 	});
 
 	afterEach(() => {
@@ -261,9 +267,11 @@ describe('cli-server-discovery', () => {
 			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
 				expectedTmp,
 				JSON.stringify(sampleInfo, null, 2),
-				'utf-8'
+				{ encoding: 'utf-8', mode: 0o600 }
 			);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedTmp, 0o600);
 			expect(mockFs.renameSync).toHaveBeenCalledWith(expectedTmp, expectedFile);
+			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedFile, 0o600);
 		});
 
 		it('should create directory if it does not exist', () => {
@@ -273,7 +281,7 @@ describe('cli-server-discovery', () => {
 
 			expect(mockFs.mkdirSync).toHaveBeenCalledWith(
 				path.join('/Users/testuser', 'Library', 'Application Support', 'maestro'),
-				{ recursive: true }
+				{ recursive: true, mode: 0o700 }
 			);
 		});
 

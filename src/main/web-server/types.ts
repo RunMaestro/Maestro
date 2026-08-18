@@ -227,6 +227,45 @@ export interface CliActivity {
 	startedAt: number;
 }
 
+/**
+ * Auto Run document configuration received from CLI/web IPC.
+ */
+export interface ConfigureAutoRunDocument {
+	filename: string;
+	resetOnCompletion?: boolean;
+}
+
+/**
+ * Auto Run configuration payload received from CLI/web IPC.
+ */
+export interface ConfigureAutoRunConfig {
+	documents: ConfigureAutoRunDocument[];
+	prompt?: string;
+	loopEnabled?: boolean;
+	maxLoops?: number;
+	saveAsPlaybook?: string;
+	launch?: boolean;
+	model?: string;
+	effort?: string;
+	worktree?: {
+		enabled: boolean;
+		path: string;
+		branchName: string;
+		baseBranch?: string;
+		createPROnCompletion: boolean;
+		prTargetBranch: string;
+	};
+}
+
+/**
+ * Response returned after forwarding an Auto Run configuration request.
+ */
+export interface ConfigureAutoRunResult {
+	success: boolean;
+	playbookId?: string;
+	error?: string;
+}
+
 // =============================================================================
 // WebSocket Client Types
 // =============================================================================
@@ -246,6 +285,7 @@ export interface WebClient {
  */
 export interface WebClientMessage {
 	type: string;
+	requestId?: string;
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
@@ -527,6 +567,10 @@ export interface TerminalTabInfo {
 }
 export type ListTerminalTabsCallback = (sessionId?: string) => Promise<TerminalTabInfo[]>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+export type ConfigureAutoRunCallback = (
+	sessionId: string,
+	config: ConfigureAutoRunConfig
+) => Promise<ConfigureAutoRunResult>;
 
 /**
  * Updates the Auto Run folder for an existing session. Mirrors what the desktop
@@ -643,31 +687,6 @@ export type InteractMovementDesignerCallback = (
 	action: ConcertoDesignerAction
 ) => Promise<ConcertoDesignerActionResult>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
-export type ConfigureAutoRunCallback = (
-	sessionId: string,
-	config: {
-		documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
-		prompt?: string;
-		loopEnabled?: boolean;
-		maxLoops?: number;
-		saveAsPlaybook?: string;
-		launch?: boolean;
-		/**
-		 * Per-run model/effort override (CLI `--model` / `--effort`). Wins over the
-		 * session's configured model for this run's spawns only; never written back
-		 * to the session. Absent means "use the agent default".
-		 */
-		model?: string;
-		effort?: string;
-		worktree?: {
-			enabled: boolean;
-			path: string;
-			branchName: string;
-			createPROnCompletion: boolean;
-			prTargetBranch: string;
-		};
-	}
-) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 
 /**
  * Callback type for fetching current theme.

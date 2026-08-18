@@ -535,6 +535,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// the BatchRunnerModal opens with all freshly generated docs pre-selected.
 	const batchRunnerData = useModalStore(selectModalData('batchRunner'));
 	const batchRunnerPresetDocuments = batchRunnerData?.presetDocuments;
+	const initialBatchRunConfig = batchRunnerData?.initialConfig;
 
 	// Snooze modals subscribe to the modal store directly rather than taking
 	// open/close props - they need no state from App.tsx beyond the theme.
@@ -765,6 +766,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					lastModifiedAt={activeSession.batchRunnerPromptModifiedAt}
 					showConfirmation={showConfirmation}
 					folderPath={activeSession.autoRunFolderPath}
+					initialConfig={initialBatchRunConfig}
 					presetDocuments={batchRunnerPresetDocuments}
 					allDocuments={autoRunDocumentList}
 					documentTree={autoRunDocumentTree}
