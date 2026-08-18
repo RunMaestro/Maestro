@@ -213,6 +213,7 @@ function makeHarness(
 		focusTarget?: VoiceFocusTarget;
 		getBackgroundAnnouncementSetting?: () => BackgroundAnnouncementSetting | undefined;
 		bargeInGuardMs?: number;
+		getUtteranceComposerConfig?: () => { settleMs?: number; maxHoldMs?: number };
 	} = {}
 ): Harness {
 	const stt = new FakeStt();
@@ -242,6 +243,9 @@ function makeHarness(
 		// speech starts, so leaving it on would make every barge-in assertion here a
 		// race against the wall clock; it has its own tests below.
 		bargeInGuardMs: overrides.bargeInGuardMs ?? 0,
+		// Off unless a test asks: `FakeStt` is text-in, so the composer is bypassed
+		// for every existing test here, which is the production rule too.
+		getUtteranceComposerConfig: overrides.getUtteranceComposerConfig,
 	});
 
 	const events: VoiceEvent[] = [];
@@ -301,6 +305,64 @@ describe('VoiceSessionService lifecycle', () => {
 
 		const listenStart = h.events[1];
 		expect(listenStart.type === 'listen-start' && listenStart.sttProviderId).toBe('fake-stt');
+	});
+
+	/**
+	 * A pause mid-sentence is not the end of a request. Before the composer, the
+	 * 700 ms endpoint in `audio/vad.ts` turned one thought into two dispatches and
+	 * the agent answered half a sentence.
+	 */
+	describe('assembling one thought from several fragments', () => {
+		/** A recogniser that listens to a room, which is what triggers composing. */
+		function listeningHarness(settleMs: number) {
+			const h = makeHarness({ getUtteranceComposerConfig: () => ({ settleMs }) });
+			(h.stt as unknown as { acceptsAudio: boolean }).acceptsAudio = true;
+			return h;
+		}
+
+		/** A recogniser final, bypassing the fake provider's own partial timing. */
+		function final(h: Harness, text: string) {
+			(h.stt.callbacks as { onFinal: (t: string, c: number) => void }).onFinal(text, 0.9);
+		}
+
+		it('dispatches ONE request for a sentence said in two halves', async () => {
+			const h2 = listeningHarness(40);
+			await start(h2);
+
+			final(h2, 'look at the auth module');
+			final(h2, 'and say why the refresh is failing');
+			await vi.waitFor(() => expect(h2.types()).toContain('dispatch'));
+
+			expect(h2.executor).toHaveBeenCalledTimes(1);
+			const finals = h2.events.filter((e) => e.type === 'final-transcript');
+			expect(finals).toHaveLength(1);
+			expect(finals[0].type === 'final-transcript' && finals[0].text).toBe(
+				'look at the auth module and say why the refresh is failing'
+			);
+		});
+
+		it('leaves a text-in provider alone, since its utterance was already whole', async () => {
+			// `FakeStt` is text-in. Someone who typed a message and pressed send has
+			// delimited it themselves; holding it would be latency for nothing.
+			await start(h);
+
+			h.service.submitUtterance('do the thing');
+			await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+			expect(h.executor).toHaveBeenCalledTimes(1);
+		});
+
+		it('drops a half-collected thought when the floor closes', async () => {
+			// Otherwise it settles into a session nobody is in.
+			const h2 = listeningHarness(10_000);
+			await start(h2);
+
+			final(h2, 'half a sentence');
+			await h2.service.stopSession('user');
+			await new Promise((resolve) => setTimeout(resolve, 30));
+
+			expect(h2.executor).not.toHaveBeenCalled();
+		});
 	});
 
 	/**

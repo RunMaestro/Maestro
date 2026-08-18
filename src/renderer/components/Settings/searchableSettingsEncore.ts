@@ -294,6 +294,27 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-a-cappella-turn-settle',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Finish my thought',
+		description:
+			'Extra silence to wait before a spoken request is sent, so a pause in the middle of a sentence does not become two separate requests to an agent',
+		keywords: [
+			'finish my thought',
+			'settle',
+			'pause',
+			'too fast',
+			'sends too early',
+			'cuts me off',
+			'a cappella',
+			'voice',
+			'turn',
+			'endpoint',
+			'wait before sending',
+		],
+	},
+	{
 		id: 'encore-a-cappella-diagnostics',
 		tab: 'encore',
 		tabLabel: 'Plugins',

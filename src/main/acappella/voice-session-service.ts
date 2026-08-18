@@ -65,6 +65,7 @@ import { BackgroundAnnouncer, type BackgroundCompletion } from './speech/backgro
 import { BargeInController } from './speech/barge-in';
 import { ConversationalTranslator } from './speech/conversational-translator';
 import { DetailBuffer, detectDrillDownIntent } from './speech/drill-down';
+import { UtteranceComposer, type UtteranceComposerConfig } from './speech/utterance-composer';
 import { SpeechScheduler, type SpeechRunResult } from './speech/speech-scheduler';
 
 const LOG_CONTEXT = 'ACappella';
@@ -174,6 +175,14 @@ export interface VoiceSessionServiceOptions {
 	getSpeechOptions?: () => { voiceId?: string; rate?: number };
 	/** Utterances retained for `VoiceRouteContext.recentUtterances`. */
 	utteranceHistoryLimit?: number;
+	/**
+	 * How long a settled fragment is held before it counts as a finished thought.
+	 *
+	 * A getter, not a value, so tuning it applies to the NEXT THOUGHT rather than
+	 * the next session - a person who finds it too eager notices mid-conversation.
+	 * See `speech/utterance-composer.ts` for the trade it makes.
+	 */
+	getUtteranceComposerConfig?: () => Partial<UtteranceComposerConfig>;
 	/**
 	 * The live tap on a dispatched agent's output.
 	 *
@@ -310,6 +319,8 @@ export class VoiceSessionService {
 	 */
 	private readonly translator: ConversationalTranslator;
 	private readonly detail = new DetailBuffer();
+	/** Assembles the fragments of one thought. See `speech/utterance-composer.ts`. */
+	private readonly composer: UtteranceComposer;
 	private readonly announcer: BackgroundAnnouncer;
 	private readonly bargeIn: BargeInController;
 
@@ -422,6 +433,23 @@ export class VoiceSessionService {
 			getSetting: () => options.getBackgroundAnnouncementSetting?.(),
 			getForegroundAgentSessionId: () => this.streamTarget?.agentSessionId ?? null,
 		});
+		this.composer = new UtteranceComposer({
+			// Read through the getter so a settings change takes effect on the next
+			// thought rather than on the next session: a person who finds it too
+			// eager will tune it mid-conversation, which is when they notice.
+			...options.getUtteranceComposerConfig?.(),
+			onSettled: ({ text, confidence, durationMs }) => {
+				// The floor can close between the last fragment and the settle. Every
+				// path that closes it cancels the composer, so this is belt and braces
+				// rather than a known race - but a fragment dispatched into a dead
+				// session is exactly the bug this component exists to prevent.
+				if (this.state !== 'listening') return;
+				void this.runTurn(text, confidence, durationMs);
+			},
+			// A growing partial, so the transcript does not blank between the halves
+			// of one sentence and make a composing session look like a stalled one.
+			onComposing: (text) => this.emit('partial-transcript', { text, stability: 0.95 }),
+		});
 		this.bargeIn = new BargeInController({
 			// Both default to no-ops: the audio pipeline ducks on a candidate frame
 			// and the audio bridge flushes on a non-complete `speak-end`, so a host
@@ -525,6 +553,8 @@ export class VoiceSessionService {
 		this.seq = 0;
 		this.startedAt = Date.now();
 		this.recentUtterances = [];
+		// Anything half-said before this session began belongs to the last one.
+		this.composer.cancel();
 		this.activeUtteranceId = null;
 		this.pendingClarification = null;
 		this.lastDecision = null;
@@ -602,6 +632,9 @@ export class VoiceSessionService {
 	private async runStopSession(reason: VoiceStopReason): Promise<void> {
 		this.turn += 1;
 		this.cancelSpeech();
+		// A half-collected thought belongs to the session that is ending. Letting it
+		// settle afterwards would dispatch a fragment into a session nobody is in.
+		this.composer.cancel();
 
 		try {
 			await this.providers.stt.stop();
@@ -960,7 +993,14 @@ export class VoiceSessionService {
 			},
 			onFinal: (text, confidence, durationMs) => {
 				if (this.state !== 'listening') return;
-				void this.runTurn(text, confidence, durationMs);
+				// Composed only for a recogniser that listens to a room. A text-in
+				// provider's utterance was already delimited by whoever typed it and
+				// pressed send, so holding it would be latency in exchange for nothing.
+				if (!this.providers.stt.acceptsAudio) {
+					void this.runTurn(text, confidence, durationMs);
+					return;
+				}
+				this.composer.add(text, confidence, durationMs);
 			},
 			onError: (error) => {
 				this.failFromProvider(error, this.providers.stt.id);

@@ -24,6 +24,8 @@ import type { RosterAgent } from '../../../../shared/acappella/protocol';
 import {
 	FALLBACK_STOP_PHRASE,
 	MAX_HOLD_THRESHOLD_MS,
+	MAX_TURN_SETTLE_MS,
+	MIN_TURN_SETTLE_MS,
 	MIN_HOLD_THRESHOLD_MS,
 } from '../../../../shared/acappella/voice-controls';
 import {
@@ -404,6 +406,35 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 						/>
 						<span className="text-xs tabular-nums opacity-70">{controls.holdThresholdMs} ms</span>
 					</div>
+
+					<div className="flex items-center gap-3" data-setting-id="encore-a-cappella-turn-settle">
+						<label className="text-xs opacity-70 w-28" htmlFor="acappella-turn-settle">
+							Finish my thought
+						</label>
+						<input
+							id="acappella-turn-settle"
+							type="range"
+							min={MIN_TURN_SETTLE_MS}
+							max={MAX_TURN_SETTLE_MS}
+							step={50}
+							disabled={!enabled}
+							value={controls.turnSettleMs}
+							onChange={(event) =>
+								void controls.update({ turnSettleMs: Number(event.target.value) })
+							}
+							className="flex-1"
+						/>
+						<span className="text-xs tabular-nums opacity-70">
+							{controls.turnSettleMs === 0 ? 'off' : `${controls.turnSettleMs} ms`}
+						</span>
+					</div>
+
+					<p className="text-[11px] opacity-55">
+						Extra silence to wait before sending, so a pause in the middle of a request does not
+						become two. It is added to the recogniser&apos;s own endpointing, so the default sends
+						about 1.6 seconds after you stop talking. Set it to off to send each sentence the moment
+						it lands.
+					</p>
 				</SectionCard>
 			</div>
 		</>

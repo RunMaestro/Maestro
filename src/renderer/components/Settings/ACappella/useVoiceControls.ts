@@ -18,6 +18,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import {
 	DEFAULT_HOLD_THRESHOLD_MS,
+	DEFAULT_TURN_SETTLE_MS,
+	clampTurnSettleMs,
 	DEFAULT_IDLE_TIMEOUT_MS,
 	DEFAULT_STOP_PHRASE,
 	DEFAULT_WAKE_DEBOUNCE_MS,
@@ -54,6 +56,8 @@ export interface VoiceControlSettings {
 	stopWordEnabled: boolean;
 	/** Below this a hotkey press is a tap; above it, a hold. */
 	holdThresholdMs: number;
+	/** Silence after a sentence before it counts as a finished thought. */
+	turnSettleMs: number;
 	/** Listening silence that closes the session. Seconds in the UI, ms on disk. */
 	idleTimeoutSeconds: number;
 }
@@ -67,6 +71,7 @@ export const DEFAULT_VOICE_CONTROLS: VoiceControlSettings = {
 	stopPhrase: DEFAULT_STOP_PHRASE,
 	stopWordEnabled: true,
 	holdThresholdMs: DEFAULT_HOLD_THRESHOLD_MS,
+	turnSettleMs: DEFAULT_TURN_SETTLE_MS,
 	idleTimeoutSeconds: DEFAULT_IDLE_TIMEOUT_SECONDS,
 };
 
@@ -118,6 +123,7 @@ export function readVoiceControls(
 		stopPhrase: asString(raw.stopPhrase, DEFAULT_VOICE_CONTROLS.stopPhrase),
 		stopWordEnabled: raw.stopWordEnabled !== false,
 		holdThresholdMs: asNumber(raw.holdThresholdMs, DEFAULT_VOICE_CONTROLS.holdThresholdMs),
+		turnSettleMs: clampTurnSettleMs(raw.turnSettleMs),
 		// Stored in milliseconds because that is what `FloorControlConfig` speaks;
 		// shown in seconds because that is what people speak.
 		idleTimeoutSeconds: Math.round(asNumber(raw.idleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS) / 1000),
@@ -166,6 +172,7 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 				stopPhrase: next.stopPhrase,
 				stopWordEnabled: next.stopWordEnabled,
 				holdThresholdMs: next.holdThresholdMs,
+				turnSettleMs: next.turnSettleMs,
 				idleTimeoutMs: Math.max(0, Math.round(next.idleTimeoutSeconds * 1000)),
 			},
 		});
