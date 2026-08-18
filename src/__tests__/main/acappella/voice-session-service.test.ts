@@ -484,6 +484,20 @@ describe('VoiceSessionService lifecycle', () => {
 			expect(h.executor).toHaveBeenCalledTimes(1);
 		});
 
+		it('sends on a release without waiting out the hold', async () => {
+			// Letting go of a push-to-talk key. The recogniser flush is a separate
+			// call; without `endUtteranceNow` the resulting final would be buffered
+			// and sit out a settle window the user already answered.
+			const h2 = listeningHarness(30_000);
+			await start(h2);
+
+			final(h2, 'fix the auth bug');
+			h2.service.endUtteranceNow();
+			await vi.waitFor(() => expect(h2.types()).toContain('dispatch'));
+
+			expect(h2.executor).toHaveBeenCalledTimes(1);
+		});
+
 		it('drops a half-collected thought when the floor closes', async () => {
 			// Otherwise it settles into a session nobody is in.
 			const h2 = listeningHarness(10_000);
