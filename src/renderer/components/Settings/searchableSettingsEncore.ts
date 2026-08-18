@@ -301,6 +301,25 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-a-cappella-conversational-mode',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Talk it through first',
+		description:
+			'The Conductor answers you instead of sending every sentence to an agent, and only hands work over once you have described something doable',
+		keywords: [
+			'talk it through',
+			'conversational',
+			'chat mode',
+			'back and forth',
+			'conductor',
+			'a cappella',
+			'voice',
+			'discuss',
+			'do not send every sentence',
+		],
+	},
+	{
 		id: 'encore-a-cappella-turn-settle',
 		tab: 'encore',
 		tabLabel: 'Plugins',

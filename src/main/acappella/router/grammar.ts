@@ -30,7 +30,10 @@
 
 import type { RosterAgent } from '../../../shared/acappella/protocol';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
-import { ROUTE_DECISION_JSON_SCHEMA } from '../../../shared/acappella/route-decision';
+import {
+	isConversationalReply,
+	ROUTE_DECISION_JSON_SCHEMA,
+} from '../../../shared/acappella/route-decision';
 
 // ---------------------------------------------------------------------------
 // The node tree
@@ -319,7 +322,10 @@ export function validateRouteDecision(
 	const result = grammar.validate(JSON.parse(JSON.stringify(decision)) as unknown);
 	const errors = [...result.errors];
 
-	if (decision.tabAction === 'recall') {
+	// A conversational reply reaches no agent, so its tab fields are decoration:
+	// the model still has to emit `tabAction` to satisfy the grammar, and holding
+	// it to a tab id nobody will read would reject a perfectly good spoken line.
+	if (decision.tabAction === 'recall' && !isConversationalReply(decision)) {
 		const targetId = typeof decision.target === 'string' ? null : decision.target.sessionId;
 		const agent = roster.find((candidate) => candidate.sessionId === targetId);
 		if (!decision.tabId) {

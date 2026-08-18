@@ -73,6 +73,16 @@ export const MIN_TURN_SETTLE_MS = 0;
  */
 export const MAX_TURN_SETTLE_MS = 3000;
 
+/**
+ * Whether the Conductor talks with you before dispatching, by default.
+ *
+ * Off, because it changes what a spoken sentence MEANS: in command mode "run the
+ * tests" runs the tests, and in conversational mode it might be answered instead.
+ * Turning that on for everyone who already had a working command interface would
+ * break it in the name of improving it.
+ */
+export const DEFAULT_CONVERSATIONAL_MODE = false;
+
 /** Clamp a stored settle window. Anything malformed reads as the default. */
 export function clampTurnSettleMs(value: unknown): number {
 	if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_TURN_SETTLE_MS;

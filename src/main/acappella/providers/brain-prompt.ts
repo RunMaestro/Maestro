@@ -63,6 +63,13 @@ export const ROUTE_SYSTEM_PROMPT = [
 	'- "tabAction" is "current" (use the active tab), "new" (open a fresh tab), or "recall" (go back to an existing tab, and then "tabId" is required and must come from that agent\'s tabs).',
 	'- "prompt" is what the agent should receive: the request itself, with the routing words removed. Keep the user\'s own wording.',
 	'- "confidence" is 0 to 1. Be honest: a guess is 0.4, hearing an agent name by name is 0.9.',
+	'',
+	'Talking versus sending (only when the conversation section below says you may reply):',
+	'- "reply" is one short spoken line back to the user. Setting it means you are TALKING: no agent is contacted, and the floor stays with the user.',
+	'- Reply while the user is still thinking out loud, describing a problem, or has said something that is not yet a doable task.',
+	'- Do NOT reply once one concrete, doable thing has been stated. Send it instead. An agent can work out the details; your job is to notice that there is a job.',
+	'- When you send after a conversation, "prompt" is the distilled request - a sentence or two in the user\'s own words, not a transcript of the discussion.',
+	'- Keep a reply to one or two sentences. It is spoken aloud, not read.',
 ].join('\n');
 
 /**
@@ -135,6 +142,22 @@ export function buildRouteUserPrompt(input: string, context: VoiceRouteContext):
 	if (recent.length > 0) {
 		lines.push('', 'Earlier in this conversation:');
 		for (const utterance of recent.slice(-5)) lines.push(`- ${utterance}`);
+	}
+
+	const conversation = context.conversation ?? [];
+	if (conversation.length > 0) {
+		lines.push('', 'The conversation so far:');
+		for (const turn of conversation) {
+			lines.push(`${turn.role === 'user' ? 'User' : 'You'}: ${turn.text}`);
+		}
+	}
+
+	if (context.conversational) {
+		lines.push(
+			'',
+			'You may answer with "reply" instead of dispatching. Use it while the user is still working out what they want.',
+			'Send the request the moment one concrete, doable thing has been stated - do not keep asking for detail an agent could work out for itself.'
+		);
 	}
 
 	if (context.clarification) {
@@ -246,6 +269,7 @@ export function parseRouteDecision(
 		// filled in: if the user answers, the answer routes; if the turn is
 		// abandoned, nothing was dispatched.
 		clarify: asSpokenLine(parsed?.clarify),
+		reply: asSpokenLine(parsed?.reply),
 	};
 }
 
