@@ -152,7 +152,10 @@ import {
 } from '../../../../main/acappella/providers/provider-registry';
 import { unresolvedProviderId } from '../../../../main/acappella/providers/unresolved';
 import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
-import { DEFAULT_TURN_SETTLE_MS } from '../../../../shared/acappella/voice-controls';
+import {
+	DEFAULT_SEND_HOLD_MS,
+	DEFAULT_TURN_SETTLE_MS,
+} from '../../../../shared/acappella/voice-controls';
 
 describe('provider registry', () => {
 	beforeAll(() => {
@@ -497,6 +500,11 @@ describe('provider registry', () => {
 			// Off unless explicitly stored: conversational mode changes what a
 			// spoken sentence means, so it is never on by inference.
 			conversationalMode: false,
+			holdUntilSend: false,
+			sendHoldMs: DEFAULT_SEND_HOLD_MS,
+			// Absent takes the built-in phrases; a stored empty string is a
+			// deliberate "no spoken send", so the two stay distinguishable.
+			sendPhrases: undefined,
 		});
 	});
 
@@ -514,6 +522,11 @@ describe('provider registry', () => {
 			volume: 1,
 			turnSettleMs: DEFAULT_TURN_SETTLE_MS,
 			conversationalMode: false,
+			holdUntilSend: false,
+			sendHoldMs: DEFAULT_SEND_HOLD_MS,
+			// Absent takes the built-in phrases; a stored empty string is a
+			// deliberate "no spoken send", so the two stay distinguishable.
+			sendPhrases: undefined,
 		});
 	});
 

@@ -74,6 +74,68 @@ export const MIN_TURN_SETTLE_MS = 0;
 export const MAX_TURN_SETTLE_MS = 3000;
 
 /**
+ * Phrases that mean "I am finished, send it", matched at the END of a turn.
+ *
+ * Here rather than beside the matcher in `main/acappella/speech/send-phrase.ts`
+ * because the settings panel seeds its input from this list, and the renderer
+ * cannot import from the main process.
+ */
+export const DEFAULT_SEND_PHRASES = [
+	'good to go',
+	"that's it",
+	'send it',
+	'go ahead',
+	'make it so',
+] as const;
+
+/**
+ * Whether a spoken request waits for you to say you are done.
+ *
+ * Off by default: it changes when a request goes from "about a second after you
+ * stop" to "when you say so, or after {@link DEFAULT_SEND_HOLD_MS}", and someone
+ * who has been using voice as a command interface would experience that as their
+ * requests no longer sending.
+ */
+export const DEFAULT_HOLD_UNTIL_SEND = false;
+
+/**
+ * The pause that sends a held request when no send phrase was said.
+ *
+ * A backstop, not the mechanism. It is long because in hold mode the phrase is
+ * how you finish, and a short timer here would take the pauses back out of the
+ * thinking-out-loud this mode exists to allow.
+ */
+export const DEFAULT_SEND_HOLD_MS = 30_000;
+
+/** Short enough to still be a backstop rather than a second settle window. */
+export const MIN_SEND_HOLD_MS = 5_000;
+
+/** Two minutes of held speech is a monologue, and the cap that ends it. */
+export const MAX_SEND_HOLD_MS = 120_000;
+
+/** Clamp a stored hold. Anything malformed reads as the default. */
+export function clampSendHoldMs(value: unknown): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SEND_HOLD_MS;
+	return Math.min(MAX_SEND_HOLD_MS, Math.max(MIN_SEND_HOLD_MS, Math.round(value)));
+}
+
+/**
+ * Read a stored send-phrase list.
+ *
+ * Comma-separated in the settings blob, because that is how someone types three
+ * short phrases. An empty list is meaningful - it turns the spoken send off and
+ * leaves the pause as the only way a held request goes - so an absent value and
+ * an empty one are deliberately different: absent takes the defaults.
+ */
+export function parseSendPhrases(value: unknown): string[] | undefined {
+	if (typeof value !== 'string') return undefined;
+	return value
+		.split(',')
+		.map((phrase) => phrase.trim())
+		.filter((phrase) => phrase.length > 0);
+}
+
+/**
  * Whether the Conductor talks with you before dispatching, by default.
  *
  * Off, because it changes what a spoken sentence MEANS: in command mode "run the

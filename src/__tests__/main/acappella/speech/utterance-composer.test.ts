@@ -16,12 +16,15 @@ import {
 
 const SETTLE = 900;
 
-function makeComposer(overrides: { settleMs?: number; maxHoldMs?: number } = {}) {
+function makeComposer(
+	overrides: { settleMs?: number; maxHoldMs?: number; sendPhrases?: readonly string[] } = {}
+) {
 	const settled: ComposedUtterance[] = [];
 	const composing: string[] = [];
 	const composer = new UtteranceComposer({
 		settleMs: overrides.settleMs ?? SETTLE,
 		maxHoldMs: overrides.maxHoldMs ?? 30_000,
+		sendPhrases: overrides.sendPhrases,
 		onSettled: (utterance) => settled.push(utterance),
 		onComposing: (text) => composing.push(text),
 	});
@@ -118,6 +121,83 @@ describe('UtteranceComposer', () => {
 		expect(settled).toHaveLength(1);
 	});
 
+	/**
+	 * The spoken Enter key. A settle timer is a guess at when someone stopped
+	 * talking; a phrase is them saying so, which is why the timer becomes a
+	 * backstop rather than the mechanism once these exist.
+	 */
+	describe('a send phrase ends dictation immediately', () => {
+		it('sends without waiting for the settle timer', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.add('fix the auth bug, good to go', 1);
+
+			// No timer advanced: the whole point is not waiting.
+			expect(settled).toHaveLength(1);
+			expect(settled[0].sentBy).toBe('good to go');
+		});
+
+		it('strips the phrase, so the agent gets the request and not the signal', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.add('fix the auth bug, good to go', 1);
+
+			expect(settled[0].text).toBe('fix the auth bug');
+		});
+
+		it('sends everything buffered when the phrase is a turn of its own', () => {
+			// The way it is actually said: you talk, you pause, then you say it.
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.add('look at the auth module', 1);
+			composer.add('and say why the refresh fails', 1);
+			composer.add("that's it", 1);
+
+			expect(settled).toHaveLength(1);
+			expect(settled[0].text).toBe('look at the auth module and say why the refresh fails');
+			expect(settled[0].fragments).toBe(2);
+		});
+
+		it('ignores the signal when there is no request to send', () => {
+			// A send phrase with an empty buffer would otherwise dispatch an empty
+			// prompt, which is worse than doing nothing.
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.add('good to go', 1);
+
+			expect(settled).toEqual([]);
+			expect(composer.composing).toBe(false);
+		});
+
+		it('does not fire on a phrase said mid-sentence', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.add("that's it exactly, the auth module is the problem", 1);
+
+			expect(settled).toEqual([]);
+			expect(composer.composing).toBe(true);
+		});
+
+		it('leaves the timer as the backstop when nothing is said', () => {
+			// Forgetting the phrase must not mean the request never goes.
+			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+
+			composer.add('fix the auth bug', 1);
+			vi.advanceTimersByTime(30_000);
+
+			expect(settled).toHaveLength(1);
+			expect(settled[0].sentBy).toBeUndefined();
+		});
+
+		it('can be switched off entirely', () => {
+			const { composer, settled } = makeComposer({ settleMs: 30_000, sendPhrases: [] });
+
+			composer.add('fix the auth bug, good to go', 1);
+
+			expect(settled).toEqual([]);
+		});
+	});
+
 	describe('ending a thought by decree', () => {
 		it('flush settles immediately', () => {
 			const { composer, settled } = makeComposer();
@@ -164,18 +244,34 @@ describe('UtteranceComposer', () => {
 		expect(settled.length).toBeGreaterThan(0);
 	});
 
+	it('never lets the cap undercut the wait it is backstopping', () => {
+		// A 30 s hold under a 30 s cap fires the cap first and splits the thought,
+		// because the cap starts on the first fragment while the settle restarts on
+		// every one.
+		const { composer, settled } = makeComposer({ settleMs: 30_000, maxHoldMs: 30_000 });
+
+		composer.add('still talking', 1);
+		vi.advanceTimersByTime(29_000);
+		composer.add('and still going', 1);
+		vi.advanceTimersByTime(29_000);
+
+		expect(settled).toEqual([]);
+		expect(composer.composing).toBe(true);
+	});
+
 	it('does not restart the cap on every fragment', () => {
 		// Restarting it would make the backstop unreachable in exactly the case it
-		// exists for - continuous fragments.
-		const { composer, settled } = makeComposer({ maxHoldMs: 1_000 });
+		// exists for - continuous fragments. Gaps are shorter than the settle, so
+		// the settle keeps restarting and only the cap can end this.
+		const { composer, settled } = makeComposer({ settleMs: 200, maxHoldMs: 800 });
 
-		composer.add('a', 1);
-		vi.advanceTimersByTime(600);
-		composer.add('b', 1);
-		vi.advanceTimersByTime(500);
+		for (let i = 0; i < 6; i += 1) {
+			composer.add('still going', 1);
+			vi.advanceTimersByTime(150);
+		}
 
 		expect(settled).toHaveLength(1);
-		expect(settled[0].text).toBe('a b');
+		expect(settled[0].fragments).toBeGreaterThan(1);
 	});
 
 	it('starts a fresh thought after one settles', () => {

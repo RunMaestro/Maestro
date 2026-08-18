@@ -571,9 +571,16 @@ async function buildService(
 		// How long a sentence is held before it counts as a finished thought. Read
 		// through the getter so tuning it lands on the next thought rather than the
 		// next session.
-		getUtteranceComposerConfig: () => ({
-			settleMs: readVoiceProviderSettings(deps.settingsStore).turnSettleMs,
-		}),
+		getUtteranceComposerConfig: () => {
+			const settings = readVoiceProviderSettings(deps.settingsStore);
+			return {
+				// Hold mode swaps the short "did they stop talking" guess for a long
+				// backstop, because in that mode the send phrase is how a request
+				// finishes and the timer only catches the times you forget to say it.
+				settleMs: settings.holdUntilSend ? settings.sendHoldMs : settings.turnSettleMs,
+				sendPhrases: settings.sendPhrases,
+			};
+		},
 		// Read per turn, so switching modes applies to the next thing said rather
 		// than to the next session.
 		getConversationalMode: () =>
