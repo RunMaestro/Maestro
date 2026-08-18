@@ -574,6 +574,10 @@ async function buildService(
 		getUtteranceComposerConfig: () => ({
 			settleMs: readVoiceProviderSettings(deps.settingsStore).turnSettleMs,
 		}),
+		// Read per turn, so switching modes applies to the next thing said rather
+		// than to the next session.
+		getConversationalMode: () =>
+			readVoiceProviderSettings(deps.settingsStore).conversationalMode === true,
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow, deps.getWindowForSession),
 		}),

@@ -120,7 +120,10 @@ class FakeBrain implements BrainProvider {
 	/** When set, `route()` parks here, so a test can act while the brain thinks. */
 	routeGate: Promise<void> | null = null;
 
-	async route(_input: string, _context: VoiceRouteContext): Promise<RouteDecision> {
+	/** Every context the brain was routed with, so a test can read the conversation. */
+	contexts: VoiceRouteContext[] = [];
+	async route(_input: string, context: VoiceRouteContext): Promise<RouteDecision> {
+		this.contexts.push(context);
 		if (this.routeGate) await this.routeGate;
 		if (this.routeError) throw this.routeError;
 		return this.decision;
@@ -214,6 +217,7 @@ function makeHarness(
 		getBackgroundAnnouncementSetting?: () => BackgroundAnnouncementSetting | undefined;
 		bargeInGuardMs?: number;
 		getUtteranceComposerConfig?: () => { settleMs?: number; maxHoldMs?: number };
+		getConversationalMode?: () => boolean;
 	} = {}
 ): Harness {
 	const stt = new FakeStt();
@@ -246,6 +250,9 @@ function makeHarness(
 		// Off unless a test asks: `FakeStt` is text-in, so the composer is bypassed
 		// for every existing test here, which is the production rule too.
 		getUtteranceComposerConfig: overrides.getUtteranceComposerConfig,
+		// Off unless a test asks, which is the shipped default: every utterance is
+		// a command until someone turns conversation on.
+		getConversationalMode: overrides.getConversationalMode,
 	});
 
 	const events: VoiceEvent[] = [];
@@ -305,6 +312,131 @@ describe('VoiceSessionService lifecycle', () => {
 
 		const listenStart = h.events[1];
 		expect(listenStart.type === 'listen-start' && listenStart.sttProviderId).toBe('fake-stt');
+	});
+
+	/**
+	 * Conversational mode: the Conductor answers instead of dispatching, until a
+	 * doable thing has been described. Off by default, because it changes what a
+	 * spoken sentence means.
+	 */
+	describe('talking it through before dispatching', () => {
+		function chatHarness() {
+			return makeHarness({ getConversationalMode: () => true });
+		}
+
+		it('speaks a reply and touches no agent', async () => {
+			const chat = chatHarness();
+			chat.brain.decision = {
+				target: 'conductor',
+				tabAction: 'current',
+				prompt: '',
+				confidence: 0.3,
+				reply: 'Is that failing on every load, or only the second?',
+			};
+			await start(chat);
+
+			chat.service.submitUtterance('the token refresh keeps breaking');
+			await vi.waitFor(() => expect(chat.types()).toContain('speak-start'));
+
+			expect(chat.executor).not.toHaveBeenCalled();
+			expect(chat.types()).not.toContain('dispatch');
+		});
+
+		it('hands the floor straight back, so the exchange continues', async () => {
+			const chat = chatHarness();
+			chat.brain.decision = {
+				target: 'conductor',
+				tabAction: 'current',
+				prompt: '',
+				confidence: 0.3,
+				reply: 'Which repository is that in?',
+			};
+			await start(chat);
+
+			chat.service.submitUtterance('something is wrong with auth');
+			await vi.waitFor(() => expect(chat.service.getState()).toBe('listening'));
+
+			expect(chat.service.getState()).toBe('listening');
+		});
+
+		it('shows the Brain what has already been said', async () => {
+			// Without the history the second sentence is routed on its own, which is
+			// how a two-word answer becomes a tab called "the second one".
+			const chat = chatHarness();
+			chat.brain.decision = {
+				target: 'conductor',
+				tabAction: 'current',
+				prompt: '',
+				confidence: 0.3,
+				reply: 'Every load, or the second?',
+			};
+			await start(chat);
+
+			chat.service.submitUtterance('the refresh keeps failing');
+			await vi.waitFor(() => expect(chat.service.getState()).toBe('listening'));
+			chat.service.submitUtterance('the second one');
+			await vi.waitFor(() => expect(chat.brain.contexts.length).toBeGreaterThan(1));
+
+			const latest = chat.brain.contexts[chat.brain.contexts.length - 1];
+			expect(latest.conversational).toBe(true);
+			expect(latest.conversation?.map((turn) => turn.text)).toEqual([
+				'the refresh keeps failing',
+				'Every load, or the second?',
+				'the second one',
+			]);
+		});
+
+		it('dispatches once the Brain stops replying', async () => {
+			const chat = chatHarness();
+			chat.brain.decision = {
+				target: 'conductor',
+				tabAction: 'current',
+				prompt: '',
+				confidence: 0.3,
+				reply: 'Which part is failing?',
+			};
+			await start(chat);
+			chat.service.submitUtterance('auth is broken');
+			await vi.waitFor(() => expect(chat.service.getState()).toBe('listening'));
+
+			// The Brain decides there is a task now.
+			chat.brain.decision = {
+				target: 'conductor',
+				tabAction: 'current',
+				prompt: 'Fix the token refresh on the second load.',
+				confidence: 0.9,
+			};
+			chat.service.submitUtterance('the token refresh on the second load');
+			await vi.waitFor(() => expect(chat.types()).toContain('dispatch'));
+
+			expect(chat.executor).toHaveBeenCalledTimes(1);
+		});
+
+		it('forgets the discussion once it has been sent', async () => {
+			// Otherwise the next request arrives wearing the last one's context.
+			const chat = chatHarness();
+			await start(chat);
+
+			chat.service.submitUtterance('run the tests');
+			await vi.waitFor(() => expect(chat.types()).toContain('dispatch'));
+			chat.service.submitUtterance('now the other thing');
+			await vi.waitFor(() => expect(chat.brain.contexts.length).toBeGreaterThan(1));
+
+			const latest = chat.brain.contexts[chat.brain.contexts.length - 1];
+			expect(latest.conversation?.map((turn) => turn.text)).toEqual(['now the other thing']);
+		});
+
+		it('routes every utterance when the mode is off', async () => {
+			// The shipped default, and the behaviour anyone already using voice has.
+			await start(h);
+
+			h.service.submitUtterance('run the tests');
+			await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+			expect(h.executor).toHaveBeenCalledTimes(1);
+			expect(h.brain.contexts[0].conversational).toBe(false);
+			expect(h.brain.contexts[0].conversation).toBeUndefined();
+		});
 	});
 
 	/**

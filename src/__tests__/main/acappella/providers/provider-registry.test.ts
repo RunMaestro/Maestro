@@ -494,6 +494,9 @@ describe('provider registry', () => {
 			// front of every dispatch, so an absent value reads as the default wait
 			// rather than as zero.
 			turnSettleMs: DEFAULT_TURN_SETTLE_MS,
+			// Off unless explicitly stored: conversational mode changes what a
+			// spoken sentence means, so it is never on by inference.
+			conversationalMode: false,
 		});
 	});
 
@@ -510,6 +513,7 @@ describe('provider registry', () => {
 			rate: undefined,
 			volume: 1,
 			turnSettleMs: DEFAULT_TURN_SETTLE_MS,
+			conversationalMode: false,
 		});
 	});
 
