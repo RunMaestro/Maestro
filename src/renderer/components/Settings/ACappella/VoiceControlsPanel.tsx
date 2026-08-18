@@ -407,6 +407,29 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 						<span className="text-xs tabular-nums opacity-70">{controls.holdThresholdMs} ms</span>
 					</div>
 
+					<div
+						className="flex items-start justify-between gap-3"
+						data-setting-id="encore-a-cappella-conversational-mode"
+					>
+						<div className="min-w-0">
+							<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
+								Talk it through first
+							</div>
+							<p className="text-xs opacity-70 mt-0.5">
+								The Conductor answers you instead of sending every sentence to an agent, and only
+								hands work over once you have described something doable. Off, each sentence is a
+								command.
+							</p>
+						</div>
+						<ToggleSwitch
+							theme={theme}
+							checked={controls.conversationalMode}
+							disabled={!enabled}
+							ariaLabel="Talk it through first"
+							onChange={(checked) => void controls.update({ conversationalMode: checked })}
+						/>
+					</div>
+
 					<div className="flex items-center gap-3" data-setting-id="encore-a-cappella-turn-settle">
 						<label className="text-xs opacity-70 w-28" htmlFor="acappella-turn-settle">
 							Finish my thought

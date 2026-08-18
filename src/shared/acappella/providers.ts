@@ -148,6 +148,22 @@ export interface VoiceRouteContext {
 	 * unchanged decision.
 	 */
 	retryNotes?: string[];
+	/**
+	 * The exchange so far, when the Conductor is talking rather than dispatching.
+	 *
+	 * Oldest first, both halves. Present only in conversational mode; its absence
+	 * is what keeps command mode a single-utterance decision. See
+	 * `router/conversation-buffer.ts`.
+	 */
+	conversation?: ReadonlyArray<{ role: 'user' | 'conductor'; text: string }>;
+	/**
+	 * Whether the Conductor is allowed to reply instead of dispatching this turn.
+	 *
+	 * Carried explicitly rather than inferred from `conversation` being non-empty,
+	 * because the first turn of a conversation has no history yet and is exactly
+	 * the turn where the choice matters most.
+	 */
+	conversational?: boolean;
 }
 
 export interface VoiceConverseContext {

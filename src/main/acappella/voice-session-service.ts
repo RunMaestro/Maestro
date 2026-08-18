@@ -31,7 +31,11 @@ import type {
 	WakeSource,
 } from '../../shared/acappella/protocol';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
-import { isClarification, routeTargetSessionId } from '../../shared/acappella/route-decision';
+import {
+	isClarification,
+	isConversationalReply,
+	routeTargetSessionId,
+} from '../../shared/acappella/route-decision';
 import { isCorrectionUtterance, planCorrection } from './router/conductor-router';
 import type {
 	SttCallbacks,
@@ -66,6 +70,7 @@ import { BargeInController } from './speech/barge-in';
 import { ConversationalTranslator } from './speech/conversational-translator';
 import { DetailBuffer, detectDrillDownIntent } from './speech/drill-down';
 import { UtteranceComposer, type UtteranceComposerConfig } from './speech/utterance-composer';
+import { ConversationBuffer } from './router/conversation-buffer';
 import { SpeechScheduler, type SpeechRunResult } from './speech/speech-scheduler';
 
 const LOG_CONTEXT = 'ACappella';
@@ -183,6 +188,14 @@ export interface VoiceSessionServiceOptions {
 	 * See `speech/utterance-composer.ts` for the trade it makes.
 	 */
 	getUtteranceComposerConfig?: () => Partial<UtteranceComposerConfig>;
+	/**
+	 * Whether the Conductor may talk with the user instead of dispatching.
+	 *
+	 * A getter, read per turn, so switching it applies to the next thing said
+	 * rather than to the next session. Absent means command mode: every utterance
+	 * is routed, which is what A Cappella did before conversation existed.
+	 */
+	getConversationalMode?: () => boolean;
 	/**
 	 * The live tap on a dispatched agent's output.
 	 *
@@ -321,6 +334,10 @@ export class VoiceSessionService {
 	private readonly detail = new DetailBuffer();
 	/** Assembles the fragments of one thought. See `speech/utterance-composer.ts`. */
 	private readonly composer: UtteranceComposer;
+	/** What has been said while a task takes shape. See `router/conversation-buffer.ts`. */
+	private readonly conversation = new ConversationBuffer();
+	/** Whether the Conductor may talk back rather than dispatch. Read per turn. */
+	private readonly conversationalMode: () => boolean;
 	private readonly announcer: BackgroundAnnouncer;
 	private readonly bargeIn: BargeInController;
 
@@ -433,6 +450,7 @@ export class VoiceSessionService {
 			getSetting: () => options.getBackgroundAnnouncementSetting?.(),
 			getForegroundAgentSessionId: () => this.streamTarget?.agentSessionId ?? null,
 		});
+		this.conversationalMode = () => options.getConversationalMode?.() ?? false;
 		this.composer = new UtteranceComposer({
 			// Read through the getter so a settings change takes effect on the next
 			// thought rather than on the next session: a person who finds it too
@@ -555,6 +573,7 @@ export class VoiceSessionService {
 		this.recentUtterances = [];
 		// Anything half-said before this session began belongs to the last one.
 		this.composer.cancel();
+		this.conversation.clear();
 		this.activeUtteranceId = null;
 		this.pendingClarification = null;
 		this.lastDecision = null;
@@ -635,6 +654,8 @@ export class VoiceSessionService {
 		// A half-collected thought belongs to the session that is ending. Letting it
 		// settle afterwards would dispatch a fragment into a session nobody is in.
 		this.composer.cancel();
+		// So does an unfinished discussion: the next session starts a new one.
+		this.conversation.clear();
 
 		try {
 			await this.providers.stt.stop();
@@ -1047,6 +1068,9 @@ export class VoiceSessionService {
 			}
 
 			this.rememberUtterance(utterance);
+			// Before routing, so the Brain sees this turn as part of the exchange
+			// rather than as a sentence with the exchange sitting behind it.
+			if (this.conversationalMode()) this.conversation.add('user', utterance);
 
 			// "Tell me more" is not a request, so it never reaches the router or the
 			// agent: it is served from the real output of the last turn, which makes
@@ -1094,6 +1118,13 @@ export class VoiceSessionService {
 				return;
 			}
 
+			// Talking, not sending. The floor comes straight back, so the next thing
+			// said continues the same exchange rather than starting a new one.
+			if (isConversationalReply(decision)) {
+				await this.speakConversationalReply(decision.reply ?? '', turn);
+				return;
+			}
+
 			this.transition('dispatching');
 			await this.dispatch(decision, roster, turn);
 		} catch (error) {
@@ -1105,6 +1136,38 @@ export class VoiceSessionService {
 				return;
 			}
 			this.closeFloorOnUnexpectedError(error as Error, 'acappella.runTurn');
+		}
+	}
+
+	/**
+	 * Say one conversational line and hand the floor straight back.
+	 *
+	 * Deliberately the SAME speak path a clarification uses, rather than a second
+	 * one: what differs between the two is why the Conductor is talking, not how
+	 * the words reach the room. A parallel path would be a second place for the
+	 * barge-in guard, the volume, and the voice to drift.
+	 */
+	private async speakConversationalReply(reply: string, turn: number): Promise<void> {
+		const line = reply.trim();
+		if (!line) {
+			// A reply with nothing in it would strand the session in `routing` with
+			// the microphone shut. Treat it as a turn that produced nothing and give
+			// the floor back.
+			this.transition('listening');
+			this.emitListenStart();
+			return;
+		}
+
+		// Recorded before it is spoken: speech can be interrupted, and what the
+		// Conductor MEANT to say is still what the user heard it start saying.
+		this.conversation.add('conductor', line);
+
+		this.transition('speaking');
+		try {
+			await this.speak(line, turn);
+		} catch (error) {
+			if (isVoiceProviderError(error)) this.failFromProvider(error, error.providerId);
+			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.speakConversationalReply');
 		}
 	}
 
@@ -1140,6 +1203,10 @@ export class VoiceSessionService {
 		// Remembered so "no, the other one" has something to move, and so the HUD
 		// can show where the last thing went.
 		this.lastDispatch = { decision, result };
+		// The discussion that produced this request is finished. Carrying it into
+		// the next one is how "now do the same for the other repo" arrives wearing
+		// the last job's context and becomes a second copy of it.
+		this.conversation.clear();
 		this.emit('dispatch', result);
 		// Follow the tab from here, so the reply is spoken as it is written rather
 		// than after it is finished.
@@ -1618,12 +1685,19 @@ export class VoiceSessionService {
 		const clarification = this.pendingClarification ?? undefined;
 		this.pendingClarification = null;
 
+		const conversational = this.conversationalMode();
 		return {
 			roster,
 			scope,
 			activeAgentSessionId: scope.kind === 'agent' ? scope.sessionId : null,
 			recentUtterances: [...this.recentUtterances],
 			clarification,
+			conversational,
+			// Only in conversational mode: in command mode an empty array and an
+			// absent one mean the same thing to the Brain, and sending the field
+			// anyway would put a section in the prompt describing a conversation
+			// that is not happening.
+			conversation: conversational ? this.conversation.history : undefined,
 		};
 	}
 

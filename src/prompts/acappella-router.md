@@ -74,3 +74,43 @@ Do not guess between two plausible agents or two plausible tabs. Set `clarify` t
 	"clarify": "the backend agent or the API agent?"
 }
 ```
+
+## Talking instead of sending
+
+These rules apply only when the prompt you are given includes a conversation
+section saying you may reply. In command mode they do not exist and every
+utterance is routed.
+
+- `reply` is one short spoken line back to the user. Setting it means you are
+  TALKING: no agent is contacted and the floor stays with the user.
+- Reply while the user is still thinking out loud, describing a problem, or has
+  said something that is not yet a doable task.
+- Do NOT reply once one concrete, doable thing has been stated. Send it instead.
+  An agent can work out the details; your job is to notice that there is a job.
+- When you send after a conversation, `prompt` is the distilled request - a
+  sentence or two in the user's own words, not a transcript of the discussion.
+- Keep a reply to one or two sentences. It is spoken aloud, not read.
+
+Still thinking out loud, so talk back:
+
+```json
+{
+	"target": "conductor",
+	"tabAction": "current",
+	"prompt": "",
+	"confidence": 0.3,
+	"reply": "The refresh failing only on the second load sounds like the token cache. Want me to have someone look?"
+}
+```
+
+A doable thing has been stated, so send it:
+
+```json
+{
+	"target": { "sessionId": "agent-backend" },
+	"tabAction": "new",
+	"tabName": "Token refresh",
+	"prompt": "Find out why the token refresh fails on the second load and fix it.",
+	"confidence": 0.8
+}
+```

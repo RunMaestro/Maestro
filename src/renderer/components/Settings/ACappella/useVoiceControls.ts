@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import {
 	DEFAULT_HOLD_THRESHOLD_MS,
+	DEFAULT_CONVERSATIONAL_MODE,
 	DEFAULT_TURN_SETTLE_MS,
 	clampTurnSettleMs,
 	DEFAULT_IDLE_TIMEOUT_MS,
@@ -58,6 +59,8 @@ export interface VoiceControlSettings {
 	holdThresholdMs: number;
 	/** Silence after a sentence before it counts as a finished thought. */
 	turnSettleMs: number;
+	/** Whether the Conductor talks with you before dispatching anything. */
+	conversationalMode: boolean;
 	/** Listening silence that closes the session. Seconds in the UI, ms on disk. */
 	idleTimeoutSeconds: number;
 }
@@ -72,6 +75,7 @@ export const DEFAULT_VOICE_CONTROLS: VoiceControlSettings = {
 	stopWordEnabled: true,
 	holdThresholdMs: DEFAULT_HOLD_THRESHOLD_MS,
 	turnSettleMs: DEFAULT_TURN_SETTLE_MS,
+	conversationalMode: DEFAULT_CONVERSATIONAL_MODE,
 	idleTimeoutSeconds: DEFAULT_IDLE_TIMEOUT_SECONDS,
 };
 
@@ -124,6 +128,7 @@ export function readVoiceControls(
 		stopWordEnabled: raw.stopWordEnabled !== false,
 		holdThresholdMs: asNumber(raw.holdThresholdMs, DEFAULT_VOICE_CONTROLS.holdThresholdMs),
 		turnSettleMs: clampTurnSettleMs(raw.turnSettleMs),
+		conversationalMode: raw.conversationalMode === true,
 		// Stored in milliseconds because that is what `FloorControlConfig` speaks;
 		// shown in seconds because that is what people speak.
 		idleTimeoutSeconds: Math.round(asNumber(raw.idleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS) / 1000),
@@ -173,6 +178,7 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 				stopWordEnabled: next.stopWordEnabled,
 				holdThresholdMs: next.holdThresholdMs,
 				turnSettleMs: next.turnSettleMs,
+				conversationalMode: next.conversationalMode,
 				idleTimeoutMs: Math.max(0, Math.round(next.idleTimeoutSeconds * 1000)),
 			},
 		});

@@ -44,6 +44,23 @@ export interface RouteDecision {
 	 * {@link isClarification} is checked before dispatch, never after.
 	 */
 	clarify?: string;
+	/**
+	 * When set, this turn is CONVERSATION, not a request: one spoken line back,
+	 * the floor stays open, and no agent is touched.
+	 *
+	 * The difference from {@link clarify} is what the Conductor is missing.
+	 * `clarify` means "I know you asked for something and I need one fact before I
+	 * can send it" - there is a pending request, and it is re-routed once you
+	 * answer. `reply` means there is no request yet: you are thinking out loud,
+	 * and it is talking with you until a task exists. A clarification resolves in
+	 * one exchange; a conversation can run for as many as it takes.
+	 *
+	 * Both are optional fields with a guard rather than a discriminated union for
+	 * the reason given above: the grammar the local model is constrained by
+	 * compiles from this schema, and a `oneOf` over the whole object is far more
+	 * grammar surface than one more optional string.
+	 */
+	reply?: string;
 }
 
 /**
@@ -54,6 +71,26 @@ export interface RouteDecision {
  */
 export function isClarification(decision: RouteDecision): boolean {
 	return typeof decision.clarify === 'string' && decision.clarify.trim().length > 0;
+}
+
+/**
+ * True when the decision is conversation rather than an instruction.
+ *
+ * Checked before dispatch, alongside {@link isClarification}: between them they
+ * are the only two ways a turn ends without an agent hearing anything.
+ */
+export function isConversationalReply(decision: RouteDecision): boolean {
+	return typeof decision.reply === 'string' && decision.reply.trim().length > 0;
+}
+
+/**
+ * True when the decision does not reach an agent at all.
+ *
+ * One predicate for the two non-dispatch outcomes, so a caller that only wants
+ * to know "does this go to an agent" cannot check one and forget the other.
+ */
+export function holdsTheFloor(decision: RouteDecision): boolean {
+	return isClarification(decision) || isConversationalReply(decision);
 }
 
 /** True when the decision targets the conductor rather than a specific agent. */
@@ -94,6 +131,7 @@ export const ROUTE_DECISION_JSON_SCHEMA = {
 		prompt: { type: 'string' },
 		confidence: { type: 'number', minimum: 0, maximum: 1 },
 		clarify: { type: 'string' },
+		reply: { type: 'string' },
 	},
 	required: ['target', 'tabAction', 'prompt', 'confidence'],
 	additionalProperties: false,

@@ -121,6 +121,11 @@ export interface VoiceProviderSettings {
 	 */
 	turnSettleMs?: number;
 	/**
+	 * Whether the Conductor may talk with the user instead of dispatching every
+	 * utterance. See `router/conversation-buffer.ts`.
+	 */
+	conversationalMode?: boolean;
+	/**
 	 * Which microphone to open. Undefined follows the system default.
 	 *
 	 * Deliberately NOT part of {@link pipelineKey}: changing the input device is
@@ -538,6 +543,7 @@ export function readVoiceProviderSettings(store: {
 		// dispatch, and a hand-edited settings file holding a NaN or a 600000 would
 		// be a voice assistant that never answers.
 		turnSettleMs: clampTurnSettleMs(controls.turnSettleMs),
+		conversationalMode: controls.conversationalMode === true,
 		inputDeviceId: asProviderId(audio.inputDeviceId),
 		stt: asProviderId(providers.stt),
 		tts: asProviderId(providers.tts),
