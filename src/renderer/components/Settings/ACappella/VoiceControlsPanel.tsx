@@ -24,7 +24,9 @@ import type { RosterAgent } from '../../../../shared/acappella/protocol';
 import {
 	FALLBACK_STOP_PHRASE,
 	MAX_HOLD_THRESHOLD_MS,
+	MAX_SEND_HOLD_MS,
 	MAX_TURN_SETTLE_MS,
+	MIN_SEND_HOLD_MS,
 	MIN_TURN_SETTLE_MS,
 	MIN_HOLD_THRESHOLD_MS,
 } from '../../../../shared/acappella/voice-controls';
@@ -429,6 +431,77 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 							onChange={(checked) => void controls.update({ conversationalMode: checked })}
 						/>
 					</div>
+
+					<div
+						className="flex items-start justify-between gap-3"
+						data-setting-id="encore-a-cappella-hold-until-send"
+					>
+						<div className="min-w-0">
+							<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
+								Wait for me to say send
+							</div>
+							<p className="text-xs opacity-70 mt-0.5">
+								Speak for as long as you like. Nothing goes to an agent until you say one of the
+								send phrases below, or you stop talking for the pause below.
+							</p>
+						</div>
+						<ToggleSwitch
+							theme={theme}
+							checked={controls.holdUntilSend}
+							disabled={!enabled}
+							ariaLabel="Wait for me to say send"
+							onChange={(checked) => void controls.update({ holdUntilSend: checked })}
+						/>
+					</div>
+
+					{controls.holdUntilSend && (
+						<>
+							<div
+								className="flex items-center gap-3"
+								data-setting-id="encore-a-cappella-send-hold"
+							>
+								<label className="text-xs opacity-70 w-28" htmlFor="acappella-send-hold">
+									Send after
+								</label>
+								<input
+									id="acappella-send-hold"
+									type="range"
+									min={MIN_SEND_HOLD_MS}
+									max={MAX_SEND_HOLD_MS}
+									step={5_000}
+									disabled={!enabled}
+									value={controls.sendHoldMs}
+									onChange={(event) =>
+										void controls.update({ sendHoldMs: Number(event.target.value) })
+									}
+									className="flex-1"
+								/>
+								<span className="text-xs tabular-nums opacity-70">
+									{Math.round(controls.sendHoldMs / 1000)}s
+								</span>
+							</div>
+
+							<label className="block text-xs opacity-70" htmlFor="acappella-send-phrases">
+								Send phrases
+							</label>
+							<input
+								id="acappella-send-phrases"
+								data-setting-id="encore-a-cappella-send-phrases"
+								type="text"
+								disabled={!enabled}
+								value={controls.sendPhrases}
+								onChange={(event) => void controls.update({ sendPhrases: event.target.value })}
+								placeholder="good to go, that's it, send it"
+								className="w-full rounded border bg-transparent px-2 py-1 text-xs outline-none"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+							<p className="text-[11px] opacity-55">
+								Comma separated, and only heard at the END of a sentence - so &quot;that&apos;s it
+								exactly, now fix the tests&quot; keeps listening. The phrase is removed before the
+								request is sent. Leave this empty to send only on the pause.
+							</p>
+						</>
+					)}
 
 					<div className="flex items-center gap-3" data-setting-id="encore-a-cappella-turn-settle">
 						<label className="text-xs opacity-70 w-28" htmlFor="acappella-turn-settle">

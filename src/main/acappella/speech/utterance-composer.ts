@@ -21,6 +21,8 @@
  * it can be tested against fake timers rather than against a microphone.
  */
 
+import { DEFAULT_SEND_PHRASES, matchSendPhrase } from './send-phrase';
+
 /** How long to wait, and the backstop that stops it waiting forever. */
 export interface UtteranceComposerConfig {
 	/**
@@ -40,11 +42,21 @@ export interface UtteranceComposerConfig {
 	 * sentence rather than close to one.
 	 */
 	maxHoldMs: number;
+	/**
+	 * Phrases that end dictation immediately, said at the END of a turn.
+	 *
+	 * A voice request has no Enter key, and {@link settleMs} is a guess at when
+	 * someone stopped talking. A phrase removes the guess: the pause becomes a
+	 * backstop for the times you forget to say it, rather than the mechanism.
+	 * Empty disables them. See `speech/send-phrase.ts`.
+	 */
+	sendPhrases: readonly string[];
 }
 
 export const DEFAULT_UTTERANCE_COMPOSER_CONFIG: UtteranceComposerConfig = {
 	settleMs: 900,
 	maxHoldMs: 30_000,
+	sendPhrases: DEFAULT_SEND_PHRASES,
 };
 
 /** One assembled thought, with the parts it was built from. */
@@ -62,6 +74,14 @@ export interface ComposedUtterance {
 	durationMs?: number;
 	/** How many recogniser finals were joined. 1 means nothing was coalesced. */
 	fragments: number;
+	/**
+	 * The send phrase that ended this thought, when one did.
+	 *
+	 * Absent means the settle timer fired instead. Worth distinguishing: a client
+	 * can say "sending" the instant you ask for it, rather than after a pause that
+	 * looks like nothing happening.
+	 */
+	sentBy?: string;
 }
 
 export interface UtteranceComposerOptions extends Partial<UtteranceComposerConfig> {
@@ -95,9 +115,17 @@ export class UtteranceComposer {
 	private disposed = false;
 
 	constructor(options: UtteranceComposerOptions) {
+		const settleMs = Math.max(0, options.settleMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.settleMs);
+		const maxHoldMs = Math.max(0, options.maxHoldMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.maxHoldMs);
 		this.config = {
-			settleMs: Math.max(0, options.settleMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.settleMs),
-			maxHoldMs: Math.max(0, options.maxHoldMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.maxHoldMs),
+			settleMs,
+			// The cap can never be tighter than the wait it is backstopping. A 30 s
+			// hold under a 30 s cap fires the cap first and splits the thought - the
+			// exact failure the hold exists to prevent - because the cap starts on the
+			// first fragment while the settle restarts on every one. The multiple is
+			// slack for the fragments themselves, not a tuned number.
+			maxHoldMs: maxHoldMs === 0 ? 0 : Math.max(maxHoldMs, settleMs * 4),
+			sendPhrases: options.sendPhrases ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.sendPhrases,
 		};
 		this.onSettled = options.onSettled;
 		this.onComposing = options.onComposing;
@@ -116,20 +144,27 @@ export class UtteranceComposer {
 	/** Take one recogniser final. It may or may not be the whole thought. */
 	add(text: string, confidence: number, durationMs?: number): void {
 		if (this.disposed) return;
-		const fragment = text.trim();
+		let fragment = text.trim();
 		// An empty final is the recogniser reporting silence. Joining it would put a
 		// stray space in the prompt and restart the clock for nothing.
 		if (!fragment) return;
 
-		if (!this.buffer) {
-			this.buffer = { parts: [], confidence, durationMs: 0, sawDuration: false };
+		// "fix the auth bug, good to go" is a request and a send signal in one
+		// breath. The signal is removed before the rest is buffered, because what
+		// survives here becomes the prompt an agent receives.
+		const send = matchSendPhrase(fragment, this.config.sendPhrases);
+		if (send) {
+			fragment = send.text.trim();
+			if (fragment) this.append(fragment, confidence, durationMs);
+			// Said with nothing buffered and nothing else in the sentence, this is a
+			// send signal for a request that does not exist. Dispatching an empty
+			// prompt would be worse than ignoring it.
+			if (!this.buffer) return;
+			this.settle(send.phrase);
+			return;
 		}
-		this.buffer.parts.push(fragment);
-		this.buffer.confidence = Math.min(this.buffer.confidence, confidence);
-		if (typeof durationMs === 'number') {
-			this.buffer.durationMs += durationMs;
-			this.buffer.sawDuration = true;
-		}
+
+		this.append(fragment, confidence, durationMs);
 
 		// Zero settle is "compose nothing": dispatch on arrival, which is what the
 		// session did before this module existed.
@@ -165,7 +200,20 @@ export class UtteranceComposer {
 		this.cancel();
 	}
 
-	private settle(): void {
+	/** Add one fragment to the buffer, creating it when this is the first. */
+	private append(fragment: string, confidence: number, durationMs?: number): void {
+		if (!this.buffer) {
+			this.buffer = { parts: [], confidence, durationMs: 0, sawDuration: false };
+		}
+		this.buffer.parts.push(fragment);
+		this.buffer.confidence = Math.min(this.buffer.confidence, confidence);
+		if (typeof durationMs === 'number') {
+			this.buffer.durationMs += durationMs;
+			this.buffer.sawDuration = true;
+		}
+	}
+
+	private settle(sentBy?: string): void {
 		const buffer = this.buffer;
 		this.clearTimers();
 		this.buffer = null;
@@ -176,6 +224,7 @@ export class UtteranceComposer {
 			confidence: buffer.confidence,
 			durationMs: buffer.sawDuration ? buffer.durationMs : undefined,
 			fragments: buffer.parts.length,
+			sentBy,
 		});
 	}
 
