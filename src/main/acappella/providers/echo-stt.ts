@@ -80,6 +80,12 @@ export class EchoSttProvider implements SttProvider {
 	readonly tier = 'mock' as const;
 	readonly sampleRate = ACAPPELLA_AUDIO_SAMPLE_RATE;
 	readonly acceptsAudio = true;
+	/**
+	 * It hears, but it does not transcribe. The session service reads this and
+	 * stops the turn after the transcript rather than routing a measurement into
+	 * somebody's agent.
+	 */
+	readonly transcribesSpeech = false;
 
 	private readonly vad: VoiceActivityDetector;
 	private readonly partialIntervalMs: number;

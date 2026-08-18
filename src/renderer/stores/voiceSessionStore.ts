@@ -31,6 +31,7 @@ import type { VoiceProviderSubstitution } from '../../shared/acappella/providers
 import type { RouteDecision } from '../../shared/acappella/route-decision';
 import { isContiguousVoiceSeq } from '../../shared/acappella/protocol';
 import type { VoiceSessionState } from '../../shared/acappella/session-state';
+import { useVoiceDiagnosticsStore } from './voiceDiagnosticsStore';
 
 // ============================================================================
 // Types
@@ -305,6 +306,10 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 
 	applyEvent: (event) =>
 		set((prev) => {
+			// Recorded before the projection, so an event that this reducer decides to
+			// ignore is still visible to anyone asking why nothing happened.
+			useVoiceDiagnosticsStore.getState().record(event);
+
 			// A different session id means the previous one ended, however it
 			// ended: start the projection over rather than interleaving two
 			// conversations in one transcript.

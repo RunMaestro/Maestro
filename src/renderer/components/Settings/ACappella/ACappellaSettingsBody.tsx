@@ -13,6 +13,7 @@
 import type { Theme } from '../../../types';
 import { PairedDevicesPanel } from './PairedDevicesPanel';
 import { VoiceControlsPanel } from './VoiceControlsPanel';
+import { VoiceDiagnosticsCard } from './VoiceDiagnosticsCard';
 import { VoiceModelsPage } from './VoiceModelsPage';
 import { VoiceOutputPanel } from './VoiceOutputPanel';
 import { VoiceProvidersPanel } from './VoiceProvidersPanel';
@@ -32,6 +33,7 @@ export function ACappellaSettingsBody({ theme, enabled }: ACappellaSettingsBodyP
 			{enabled && <VoiceControlsPanel theme={theme} enabled={enabled} />}
 			{enabled && <VoiceOutputPanel theme={theme} enabled={enabled} />}
 			{enabled && <PairedDevicesPanel theme={theme} enabled={enabled} />}
+			{enabled && <VoiceDiagnosticsCard theme={theme} />}
 			<VoiceModelsPage theme={theme} enabled={enabled} />
 		</div>
 	);
