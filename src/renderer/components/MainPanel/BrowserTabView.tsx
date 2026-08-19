@@ -21,6 +21,7 @@ import {
 	X,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { HoverTooltip } from '../ui/HoverTooltip';
 import type { BrowserTab, Theme } from '../../types';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
@@ -1009,22 +1010,31 @@ export const BrowserTabView = React.memo(
 						>
 							<ExternalLink className="w-4 h-4" />
 						</button>
-						<button
-							type="button"
-							onClick={handleToggleHiddenFromAgent}
-							className="flex items-center justify-center w-8 h-8 rounded transition-colors"
-							style={{
-								color: tab.hiddenFromAgent ? theme.colors.warning : theme.colors.textDim,
-							}}
-							title={
-								tab.hiddenFromAgent
-									? 'Hidden from agents - click to expose this tab to coworking agents'
-									: 'Visible to agents - click to hide this tab from coworking agents'
+						<HoverTooltip
+							theme={theme}
+							label={
+								tab.hiddenFromAgent ? 'Hidden from coworking agents' : 'Visible to coworking agents'
 							}
-							aria-pressed={tab.hiddenFromAgent === true}
+							shortcut={tab.hiddenFromAgent ? 'Click to show' : 'Click to hide'}
 						>
-							{tab.hiddenFromAgent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-						</button>
+							<button
+								type="button"
+								onClick={handleToggleHiddenFromAgent}
+								className="flex items-center justify-center w-8 h-8 rounded transition-colors"
+								style={{
+									color: tab.hiddenFromAgent ? theme.colors.warning : theme.colors.textDim,
+								}}
+								aria-label={
+									tab.hiddenFromAgent
+										? 'Hidden from coworking agents - click to show'
+										: 'Visible to coworking agents - click to hide'
+								}
+								aria-pressed={tab.hiddenFromAgent === true}
+								data-testid="browser-tab-hidden-from-agent"
+							>
+								{tab.hiddenFromAgent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+							</button>
+						</HoverTooltip>
 						<button
 							type="button"
 							onClick={handleClearSessionData}
