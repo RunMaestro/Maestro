@@ -114,6 +114,7 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
 | Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
 | Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
