@@ -921,6 +921,42 @@ The `send` command always outputs JSON (no `--json` flag needed).
 
 Commands for interacting with the running Maestro desktop app. These are especially useful for AI agents to trigger UI updates after creating or modifying files.
 
+#### Open a Maestro Surface (Modal or Dashboard)
+
+Bring up one of Maestro's modals or dashboards in the running app, optionally on a specific tab. This is how an agent answers "where do I see X?" by _showing_ you rather than describing a menu path.
+
+```bash
+# Every openable surface, with its tabs and hotkey
+maestro-cli open --list
+
+# Open Maestro Cue
+maestro-cli open cue
+
+# Deep-link to a tab
+maestro-cli open cue --tab scheduled
+maestro-cli open settings --tab shortcuts
+maestro-cli open usage-dashboard --tab cue
+```
+
+| Flag              | Description                                             |
+| ----------------- | ------------------------------------------------------- |
+| `-t, --tab <tab>` | Deep-link to a tab within the surface                   |
+| `--list`          | List every openable surface, its tabs, and its shortcut |
+| `--json`          | Output as JSON (for scripting)                          |
+
+Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` value matches either the tab id (`scheduled`) or its label (`"Scheduled Tasks"`).
+
+On success the command also prints how to reach that surface by hand:
+
+```
+Opened Maestro Cue (scheduled tab) in Maestro.
+You can also reach Maestro Cue yourself: press Alt+Q, or open the command palette and search "Maestro Cue", or click the lightning-bolt icon in the Left Bar footer.
+```
+
+That second line is the point: an agent should relay it, so opening a surface for you teaches you the hotkey instead of making you ask again next time.
+
+Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Director's Notes, the Usage Dashboard) refuse to open and say so in a toast rather than silently doing nothing or turning your setting back on.
+
 #### Open a File
 
 Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties). Pass `--agent <id>` to target an explicit agent - the file must live inside that agent's `cwd`. Pass `--no-switch` to skip switching the Maestro UI to the resulting agent/tab.
@@ -1316,6 +1352,77 @@ maestro-cli cue list --json
 ```
 
 Shows each subscription's name, event type, agent, enabled status, and last trigger time.
+
+### Scheduling Tasks
+
+`cue schedule` is the command surface for anything time-driven: a one-shot reminder, a daily job, or a repeating check. It writes straight to the agent's `.maestro/cue.yaml`, so it works with the desktop app closed, and everything it creates shows up in the app under **Maestro Cue → Scheduled Tasks** (`maestro-cli open cue --tab scheduled`).
+
+```bash
+# One-shot, relative
+maestro-cli cue schedule --in 20m --agent "Cyber Stocks" --prompt "Check the deploy status."
+
+# One-shot, absolute (local wall clock or ISO-8601 with an offset)
+maestro-cli cue schedule --at "2026-08-20 16:00" --agent Pedsidian --notify --sticky --message "Push the rc branch"
+
+# Every weekday at 9am
+maestro-cli cue schedule --daily-at 09:00 --days mon,tue,wed,thu,fri --agent Pedsidian --prompt "Draft the standup notes."
+
+# Twice a day, every day
+maestro-cli cue schedule --daily-at 09:00,17:30 --agent Neema --prompt "Sweep the inbox."
+
+# Every 30 minutes
+maestro-cli cue schedule --every 30m --agent "ODIN Market" --prompt "Poll the market feed."
+```
+
+Inspect and edit what is scheduled:
+
+```bash
+# Everything, across every agent
+maestro-cli cue schedule --list
+
+# Only the repeating daily jobs, as JSON
+maestro-cli cue schedule --list --kind daily --json
+
+# Move a task's fire time (pass the timing flag that matches its kind)
+maestro-cli cue schedule --reschedule standup --daily-at 09:15
+
+# Stop it firing without deleting it, then bring it back
+maestro-cli cue schedule --pause standup
+maestro-cli cue schedule --resume standup
+
+# Delete it
+maestro-cli cue schedule --cancel standup
+```
+
+| Flag                       | Description                                                              |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `--in <duration>`          | One-shot, relative (`30s`, `20m`, `2h`, `1d`)                            |
+| `--at <timestamp>`         | One-shot, absolute (ISO-8601 with offset, or `"YYYY-MM-DD HH:MM"` local) |
+| `--daily-at <times>`       | Repeating at `HH:MM` times, comma separated                              |
+| `--days <days>`            | Restrict `--daily-at` to certain days (`mon,tue,...`)                    |
+| `--every <duration>`       | Repeating on an interval (1 minute to 7 days)                            |
+| `--list`                   | List scheduled tasks across agents                                       |
+| `--kind <kind>`            | Filter `--list`: `once`, `daily`, `interval`, `all`                      |
+| `--reschedule <name>`      | Change when an existing task fires                                       |
+| `--pause` / `--resume`     | Flip `enabled` without deleting the task                                 |
+| `--cancel <name>`          | Delete a task                                                            |
+| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes the other modes)            |
+| `-p, --prompt <text>`      | Prompt to send when the task fires                                       |
+| `--notify` / `--sticky`    | Also raise a toast; `--sticky` keeps it up until dismissed               |
+| `-m, --message <text>`     | Toast body (defaults to the label, then the prompt)                      |
+| `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                   |
+| `-l, --label <text>`       | Human-readable label shown in the app                                    |
+| `--pipeline <name>`        | Pipeline to file the task under (default: `Tasks`)                       |
+| `--grace-minutes <n>`      | One-shot only: how late a missed fire may still run (default 360)        |
+| `--keep-on-failure`        | One-shot only: keep the task on disk after a failed run                  |
+| `--json`                   | Output as JSON (for scripting)                                           |
+
+Notes:
+
+- `--in`, `--at`, `--daily-at`, and `--every` are mutually exclusive: a task fires once, on a daily clock, or on an interval.
+- A task with both `--prompt` and `--notify` becomes two subscriptions sharing one fire time (`<name>-prompt` and `<name>-notify`).
+- `--agent` is a hard scope on `--cancel`, `--reschedule`, `--pause`, and `--resume`. When one name exists on two agents the command refuses to guess and lists the candidates.
+- One-shot tasks delete themselves from the YAML after they fire. Repeating tasks stay until you cancel them.
 
 ### Triggering a Subscription
 

@@ -29,7 +29,29 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 | `task.pending`        | Pending `- [ ]` tasks detected in watched files                      | `watch`                                                                                             |
 | `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                         | -                                                                                                   |
 
-### One-Time Scheduled Tasks
+### Scheduled Tasks (one-shot and repeating)
+
+Every clock-driven subscription - `time.once`, `time.scheduled`, and `time.heartbeat` - is a **Scheduled Task**. They share one authoring surface (`maestro-cli cue schedule`) and one management surface in the app (**Maestro Cue → Scheduled Tasks**, reachable with `maestro-cli open cue --tab scheduled`), where the user can re-time, pause, resume, or cancel anything you created. Pick the event from how the user phrased the repetition:
+
+| They said…                                        | Kind       | Event            | Flags                                        |
+| ------------------------------------------------- | ---------- | ---------------- | -------------------------------------------- |
+| "in 20 minutes", "at 4pm", "tomorrow at 9"        | `once`     | `time.once`      | `--in <dur>` or `--at "<timestamp>"`         |
+| "every weekday at 9am", "at 09:00 and 17:30"      | `daily`    | `time.scheduled` | `--daily-at <HH:MM>[,…]` `[--days mon,tue…]` |
+| "every 30 minutes", "hourly", "a few times a day" | `interval` | `time.heartbeat` | `--every <dur>`                              |
+
+Managing what already exists (all of these accept `--agent` to scope, and require it when one name exists on two agents):
+
+```bash
+{{MAESTRO_CLI_PATH}} cue schedule --list [--kind once|daily|interval] [--json]
+{{MAESTRO_CLI_PATH}} cue schedule --reschedule <name> --daily-at 09:15   # timing flag must match the task's kind
+{{MAESTRO_CLI_PATH}} cue schedule --pause <name>                          # stops firing, keeps the task
+{{MAESTRO_CLI_PATH}} cue schedule --resume <name>
+{{MAESTRO_CLI_PATH}} cue schedule --cancel <name>                         # deletes it
+```
+
+**"Stop doing that" usually means `--pause`, not `--cancel`.** Ask which they meant when it is ambiguous - a cancel is unrecoverable, a pause is one command to undo.
+
+The rest of this section covers `time.once` specifically, since it has semantics the repeating events do not (self-destruct, grace window).
 
 `time.once` is the subsystem you should reach for **any time a user asks for a one-off action tied to a clock**. Phrases like "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch", or "schedule a 1h check-in" all map to `time.once` - not to `time.heartbeat`, not to `time.scheduled`, and definitely not to hand-rolled `setTimeout` shims in a prompt.
 
@@ -109,7 +131,7 @@ Resolves to a `time.once` subscription whose `fire_at` is 20 minutes from now (i
 {{MAESTRO_CLI_PATH}} cue schedule --cancel tasks-once-push-rc-reminder
 ```
 
-`--list` only shows enabled, unfired `time.once` subs (completed/expired ones have already self-destructed). `--cancel` deletes the sub from cue.yaml in place.
+`--list` covers every scheduled task - one-shot and repeating, enabled and paused. Fired one-shots are already gone (they self-destruct), so anything `once` still listed is genuinely pending. `--cancel` deletes the sub from cue.yaml in place; `--pause` keeps it and only clears `enabled`.
 
 ### Pipelines vs. Chains (READ THIS FIRST)
 
@@ -342,7 +364,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 5. **For Command nodes (shell scripts or `maestro-cli` calls inside a pipeline)** - see the **Command Nodes** section above for the full schema. The keyword is `action: command` plus a `command:` block; there is no separate top-level YAML key, no `event: command` type, and no separate node graph.
 6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.
 7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` - the engine reloads automatically when the file changes.
-8. For one-off / scheduled tasks (any natural-language request that maps to "do X at a specific time, once"), use `{{MAESTRO_CLI_PATH}} cue schedule` - see the **One-Time Scheduled Tasks** section. Never hand-write `time.once` subscriptions; let the CLI generate them.
+8. For anything clock-driven - one-off ("do X at 4pm") or repeating ("every weekday at 9am", "every 30 minutes") - use `{{MAESTRO_CLI_PATH}} cue schedule` - see the **Scheduled Tasks** section. Never hand-write `time.once`, `time.scheduled`, or `time.heartbeat` subscriptions; let the CLI generate them, and point the user at Maestro Cue → Scheduled Tasks to manage them.
 
 ### Multi-Root Pipelines (agents in different project roots)
 

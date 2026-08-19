@@ -7,11 +7,22 @@
  */
 
 import { memo } from 'react';
-import { X, Zap, HelpCircle, LayoutDashboard, GitFork, Activity, Archive } from 'lucide-react';
+import {
+	X,
+	Zap,
+	HelpCircle,
+	LayoutDashboard,
+	GitFork,
+	Activity,
+	Archive,
+	AlarmClock,
+} from 'lucide-react';
 import type { Theme } from '../../types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 
-export type CueModalTab = 'dashboard' | 'pipeline' | 'activity' | 'backup';
+/** Tab ids. Kept in sync with the `cue` entry in `shared/uiSurfaces.ts`, which
+ *  is what `maestro-cli open cue --tab <id>` deep-links against. */
+export type CueModalTab = 'dashboard' | 'scheduled' | 'pipeline' | 'activity' | 'backup';
 
 const TABS: ReadonlyArray<{
 	id: CueModalTab;
@@ -19,6 +30,7 @@ const TABS: ReadonlyArray<{
 	icon: typeof LayoutDashboard;
 }> = [
 	{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+	{ id: 'scheduled', label: 'Scheduled Tasks', icon: AlarmClock },
 	{ id: 'pipeline', label: 'Pipeline Editor', icon: GitFork },
 	{ id: 'activity', label: 'Activity Log', icon: Activity },
 	{ id: 'backup', label: 'Backup', icon: Archive },

@@ -541,6 +541,20 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to a remote request to open one of the app's modals /
+		 * dashboards (from `maestro-cli open`). `surface` is a `UiSurface.id`
+		 * and `tab` (when present) has already been validated against it in
+		 * the main process.
+		 */
+		onRemoteOpenModal: (
+			callback: (params: { surface: string; tab?: string }) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: { surface: string; tab?: string }) => callback(params);
+			ipcRenderer.on('remote:openModal', handler);
+			return () => ipcRenderer.removeListener('remote:openModal', handler);
+		},
+
+		/**
 		 * Subscribe to remote refresh file tree from web interface
 		 */
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void): (() => void) => {

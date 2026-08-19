@@ -141,6 +141,10 @@ subscriptions:
 
 ---
 
+<Note>
+`time.scheduled` and `time.heartbeat` subscriptions are also **Scheduled Tasks**: they appear in the Cue modal's Scheduled Tasks tab and can be created, re-timed, paused, and cancelled with `maestro-cli cue schedule --daily-at` / `--every`, without hand-editing YAML.
+</Note>
+
 ## time.once
 
 Fires exactly once at a specific wall-clock moment, then deletes itself from `cue.yaml`. This is the subsystem to reach for when a user says "in 20 minutes do X", "tomorrow at 9am email me a summary", "remind me at 4pm to push the rc branch", or "schedule a 1h check-in" - anything that maps to a single action tied to a clock.
@@ -214,12 +218,20 @@ maestro-cli cue schedule --in 20m --agent <agent-id> --prompt "Check the deploy 
 # Schedule via absolute timestamp + notify-only
 maestro-cli cue schedule --at "2026-05-22 16:00" --agent <agent-id> --notify --sticky --message "Push rc branch"
 
-# List every pending one-time task across agents
+# List every scheduled task across agents (one-shot and repeating)
 maestro-cli cue schedule --list
+
+# Only the one-shots
+maestro-cli cue schedule --list --kind once
+
+# Move the fire time
+maestro-cli cue schedule --reschedule tasks-once-push-rc-reminder --at "2026-05-22 18:00"
 
 # Cancel a pending task by sub name
 maestro-cli cue schedule --cancel tasks-once-push-rc-reminder
 ```
+
+The same tasks are listed and editable in the app under **Maestro Cue → Scheduled Tasks** (`maestro-cli open cue --tab scheduled`). The tab and the CLI share one module, so neither can drift from the YAML.
 
 ---
 
