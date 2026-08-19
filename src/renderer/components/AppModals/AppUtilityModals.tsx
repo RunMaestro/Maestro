@@ -26,6 +26,7 @@ import { FileSearchModal } from '../FileSearchModal';
 import { CrossTabSearchModal } from '../CrossTabSearchModal';
 import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
+import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -541,6 +542,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozeTabOpen = useModalStore(selectModalOpen('snoozeTab'));
 	const snoozeTabData = useModalStore(selectModalData('snoozeTab'));
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
+	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
+	// and option lists itself, so all it needs from here is the theme.
+	const modelEffortOpen = useModalStore(selectModalOpen('modelEffort'));
+	const modelEffortData = useModalStore(selectModalData('modelEffort'));
+	const closeModelEffort = useCallback(
+		() => useModalStore.getState().closeModal('modelEffort'),
+		[]
+	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
@@ -882,6 +891,11 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						closeSnoozeTab();
 					}}
 				/>
+			)}
+
+			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}
+			{modelEffortOpen && modelEffortData && (
+				<ModelEffortModal theme={theme} tabId={modelEffortData.tabId} onClose={closeModelEffort} />
 			)}
 
 			{/* --- SNOOZED TABS (list across all agents) --- */}

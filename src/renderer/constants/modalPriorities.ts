@@ -63,6 +63,12 @@ export const MODAL_PRIORITIES = {
 	/** Terminal tab startup command configuration modal */
 	TERMINAL_STARTUP_COMMAND: 873,
 
+	/**
+	 * Keyboard-only model/effort picker for the active AI tab. Sits with the
+	 * other per-tab dialogs: it retunes one tab and nothing else.
+	 */
+	MODEL_EFFORT: 872,
+
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
 

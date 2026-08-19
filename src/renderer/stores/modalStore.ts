@@ -129,6 +129,15 @@ export interface SnoozeTabModalData {
 	tabLabel: string;
 }
 
+/**
+ * Model & effort modal data. Only the tab id travels: the modal resolves the
+ * agent, the option lists, and the tab > session > agent-default ladder from
+ * the stores itself, so an opener can't hand it a stale snapshot.
+ */
+export interface ModelEffortModalData {
+	tabId: string;
+}
+
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
 	sessionId: string;
@@ -300,6 +309,7 @@ export type ModalId =
 	| 'renameTab'
 	| 'terminalStartupCommand'
 	| 'snoozeTab'
+	| 'modelEffort'
 	| 'snoozedTabs'
 	// Group Management
 	| 'renameGroup'
@@ -378,6 +388,7 @@ export interface ModalDataMap {
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
+	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
