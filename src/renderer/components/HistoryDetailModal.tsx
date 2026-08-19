@@ -33,6 +33,7 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
+import { HoverTooltip } from './ui/HoverTooltip';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -283,7 +284,7 @@ export function HistoryDetailModal({
 									title={
 										entry.success
 											? entry.validated
-												? 'Task completed successfully and human-validated'
+												? 'Task completed successfully, and you marked it as checked'
 												: 'Task completed successfully'
 											: 'Task failed'
 									}
@@ -427,25 +428,34 @@ export function HistoryDetailModal({
 
 							{/* Validated toggle for AUTO and CUE entries */}
 							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success && onUpdate && (
-								<button
-									onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
-									className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
-									style={{
-										backgroundColor: entry.validated
-											? theme.colors.success + '20'
-											: theme.colors.bgActivity,
-										color: entry.validated ? theme.colors.success : theme.colors.textDim,
-										border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
-									}}
-									title={entry.validated ? 'Mark as not validated' : 'Mark as human-validated'}
+								<HoverTooltip
+									theme={theme}
+									maxWidth={260}
+									label={
+										entry.validated
+											? 'Clear the mark that says you checked this entry yourself.'
+											: 'Mark that you checked this entry yourself. Entirely optional, and only a bookmark for your own review pass - it changes nothing about the run.'
+									}
 								>
-									{entry.validated ? (
-										<DoubleCheck className="w-3 h-3" />
-									) : (
-										<Check className="w-3 h-3" />
-									)}
-									Validated
-								</button>
+									<button
+										onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
+										className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
+										style={{
+											backgroundColor: entry.validated
+												? theme.colors.success + '20'
+												: theme.colors.bgActivity,
+											color: entry.validated ? theme.colors.success : theme.colors.textDim,
+											border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
+										}}
+									>
+										{entry.validated ? (
+											<DoubleCheck className="w-3 h-3" />
+										) : (
+											<Check className="w-3 h-3" />
+										)}
+										Validated
+									</button>
+								</HoverTooltip>
 							)}
 
 							{/* Timestamp - right-justified (last element pushes to the right edge) */}

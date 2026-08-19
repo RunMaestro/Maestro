@@ -100,7 +100,9 @@ The detail view shows:
 
 ## Validating Entries
 
-The **Validated** flag helps you track which Auto Run tasks have been human-reviewed.
+The **Validated** flag is a bookmark for your own review pass: it records which Auto Run and Cue entries you have gone through and double-checked yourself.
+
+It is entirely optional, and it does nothing beyond marking. Toggling it does not re-run the task, change the entry, gate anything downstream, or tell the agent anything. If you never want to review your history entry by entry, you can ignore the flag completely. It exists for the case where you do: an overnight Auto Run leaves a stack of entries, and this is how you keep your place while working through them.
 
 ![Toggling Validated Status](./screenshots/history-3.png)
 
@@ -121,7 +123,7 @@ Validated entries show a **checkmark icon** (✓✓) in the list view, making it
 4. Click **Next** to review the next entry
 5. Repeat until all entries are validated
 
-This ensures human oversight of automated work while maintaining the full context needed to continue any task.
+The flag only appears on successful AUTO and CUE entries, since those are the ones that ran without you watching. Your own chat turns are not marked.
 
 ## Resuming Sessions
 

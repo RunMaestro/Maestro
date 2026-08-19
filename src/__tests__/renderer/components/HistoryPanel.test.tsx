@@ -409,7 +409,9 @@ describe('HistoryPanel', () => {
 
 			await waitFor(() => {
 				// Find the success indicator with validated title
-				const indicator = screen.getByTitle('Task completed successfully and human-validated');
+				const indicator = screen.getByTitle(
+					'Task completed successfully, and you marked it as checked'
+				);
 				expect(indicator).toBeInTheDocument();
 				// Should contain an SVG with two polylines (double check)
 				const svg = indicator.querySelector('svg');
