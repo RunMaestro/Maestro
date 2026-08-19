@@ -818,6 +818,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									logs: [...tab.logs, newEntry],
 									state: 'busy' as const,
 									thinkingStartTime: Date.now(),
+									// Codify the provider for this turn. The spawn below reads the
+									// session's provider as it stands right now, and changing the
+									// provider while this turn runs must not retarget it - so record
+									// who owns the turn and let late events resolve back to this
+									// provider instead of whatever the agent is configured with by
+									// the time they land.
+									turnProvider: s.toolType,
 									// Mark this tab as awaiting session ID so we can assign it correctly
 									// when the session ID comes back (prevents cross-tab assignment)
 									awaitingSessionId: isNewSession ? true : tab.awaitingSessionId,

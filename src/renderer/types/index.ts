@@ -526,6 +526,25 @@ export interface OnboardingStats {
 	averageTasksPerPhase: number; // Average tasks per document
 }
 
+/**
+ * A tab's parked state for one provider it is not currently using.
+ *
+ * `agentSessionId` is a provider-specific resume token (`--resume <id>` for
+ * Claude, `resume <id>` for Codex, `--session <id>` for OpenCode), so a single
+ * slot goes invalid the moment the agent's provider changes. Parking the old
+ * provider's values here - instead of discarding them - is what lets a user
+ * switch away and back and land on the same conversation. Token counts and the
+ * per-tab model are parked alongside it because they are equally
+ * provider-specific: blending two providers' usage produces a meaningless
+ * total, and a Claude model name means nothing to Codex.
+ */
+export interface ProviderTabSession {
+	agentSessionId: string | null;
+	usageStats?: UsageStats;
+	customModel?: string;
+	customEffort?: string;
+}
+
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
@@ -561,6 +580,25 @@ export interface AITab {
 	autoSendOnActivate?: boolean; // When true, automatically send inputValue when tab becomes active
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
+	/**
+	 * Parked per-provider state for every provider this tab is NOT currently
+	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
+	 * `customModel` / `customEffort` as they always have, so this map never holds
+	 * an entry for `session.toolType`. Changing the agent's provider swaps the
+	 * live values with this map's entry rather than clearing them.
+	 */
+	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
+	/**
+	 * The provider that owns the turn most recently sent from this tab, captured
+	 * at send time. Settings are codified when the user hits send, so a provider
+	 * change made while a turn is in flight must not retarget that turn: the
+	 * agent process keeps running under the old provider, and its session ID,
+	 * usage, and exit events still belong to it when they land. Async handlers
+	 * must resolve the owning provider through `resolveTurnProvider()` rather
+	 * than reading the live `session.toolType`, or one provider's data gets
+	 * written into another's slot. Undefined on a tab that has never sent.
+	 */
+	turnProvider?: ToolType;
 }
 
 // A single "thinking item" - one busy tab within a session.
