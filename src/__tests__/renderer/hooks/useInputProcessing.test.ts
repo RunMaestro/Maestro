@@ -2311,21 +2311,27 @@ describe('useInputProcessing', () => {
 		});
 	});
 
-	// Cross-agent @mention dispatch. `onCrossAgentMentions` fires the consult and
-	// returns whether the SOURCE agent's own send should be suppressed (true when
-	// the message leads with an `@agent` mention, so only the consulted agent(s)
-	// answer). When suppressed the hook records the user's bubble but must not
-	// dispatch/spawn locally; otherwise the normal send proceeds unchanged.
+	// Cross-agent @mention dispatch. `onPlanCrossAgentMentions` RESOLVES the
+	// mentioned agents (it sends nothing) and reports whether the SOURCE agent's
+	// own send should be suppressed - true when the message leads with an `@agent`
+	// mention, so only the consulted agent(s) answer. The consult itself fires via
+	// `onDispatchCrossAgentMentions`, and only when this message dispatches now: a
+	// message that lands in the execution queue carries `crossAgentMention` and is
+	// consulted at dequeue time instead.
 	describe('cross-agent @mention dispatch', () => {
-		it('suppresses the local send when the mention handler returns true', async () => {
-			const onCrossAgentMentions = vi.fn().mockReturnValue(true);
+		it('suppresses the local send when the plan says the message is addressed elsewhere', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
 			const session = createMockSession({ state: 'idle' });
 			const deps = createDeps({
 				activeSession: session,
 				activeSessionId: session.id,
 				sessionsRef: { current: [session] },
 				inputValue: '@Backend does this look right?',
-				onCrossAgentMentions,
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2333,9 +2339,17 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			// The consult fired with the message, source session, and its active tab.
-			expect(onCrossAgentMentions).toHaveBeenCalledTimes(1);
-			expect(onCrossAgentMentions).toHaveBeenCalledWith(
+			// The mentions resolved against the message, source session, and its active tab...
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
+				'@Backend does this look right?',
+				session,
+				session.activeTabId
+			);
+			// ...and the consult fired: there is no local turn for it to wait behind.
+			expect(onDispatchCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onDispatchCrossAgentMentions).toHaveBeenCalledWith(
+				{ targetSessionIds: ['backend'], suppressLocal: true },
 				'@Backend does this look right?',
 				session,
 				session.activeTabId
@@ -2368,17 +2382,21 @@ describe('useInputProcessing', () => {
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 		});
 
-		it('proceeds with the local send when the mention handler returns false', async () => {
+		it('proceeds with the local send when the plan does not suppress it', async () => {
 			// A trailing mention (`... to @Backend?`) does not suppress: the source
 			// agent answers too, so the normal spawn path must run.
-			const onCrossAgentMentions = vi.fn().mockReturnValue(false);
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: false });
+			const onDispatchCrossAgentMentions = vi.fn();
 			const session = createMockSession({ state: 'idle' });
 			const deps = createDeps({
 				activeSession: session,
 				activeSessionId: session.id,
 				sessionsRef: { current: [session] },
 				inputValue: 'does this look right to @Backend?',
-				onCrossAgentMentions,
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2386,21 +2404,63 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			expect(onCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			// The agent is idle, so this message dispatches now - and so does the consult.
+			expect(onDispatchCrossAgentMentions).toHaveBeenCalledTimes(1);
 			// Not suppressed: the message dispatches to the source agent as usual.
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});
 
-		it('does not fire the consult on an override send (queued replay / force-send)', async () => {
-			// Cross-agent dispatch is gated on a real input-box submit
+		it('defers the consult when the message is queued behind a busy agent', async () => {
+			// The bug this guards: the consult used to fire the moment the user hit
+			// send, so the mentioned agent started answering a question that was
+			// still sitting in the queue behind other work.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: false });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'busy' });
+			session.aiTabs[0].state = 'busy';
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: 'once that lands, ask @Backend to review',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Resolved, but NOT consulted: that happens when the item is dispatched.
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+
+			// The queued item carries the pending consult so the dequeue can fire it.
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			const queued = updated.executionQueue[updated.executionQueue.length - 1];
+			expect(queued.text).toBe('once that lands, ask @Backend to review');
+			expect(queued.crossAgentMention).toBe(true);
+		});
+
+		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {
+			// Cross-agent resolution is gated on a real input-box submit
 			// (`overrideInputValue === undefined`) so a queued replay never re-consults.
-			const onCrossAgentMentions = vi.fn().mockReturnValue(true);
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
 			const session = createMockSession({ state: 'idle' });
 			const deps = createDeps({
 				activeSession: session,
 				activeSessionId: session.id,
 				sessionsRef: { current: [session] },
-				onCrossAgentMentions,
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
 			});
 			const { result } = renderHook(() => useInputProcessing(deps));
 
@@ -2408,7 +2468,8 @@ describe('useInputProcessing', () => {
 				await result.current.processInput('@Backend replayed message');
 			});
 
-			expect(onCrossAgentMentions).not.toHaveBeenCalled();
+			expect(onPlanCrossAgentMentions).not.toHaveBeenCalled();
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
 			// The override message dispatches normally (not suppressed).
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});

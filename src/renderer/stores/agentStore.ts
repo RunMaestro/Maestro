@@ -44,6 +44,7 @@ import { maybeReturnToPrimary } from './failoverStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
+import { dispatchCrossAgentMentionsForMessage } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
 import { logger } from '../utils/logger';
 
@@ -375,12 +376,21 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
 
+		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message
+		// becomes this agent's turn - not when the user typed it. Deferring is the
+		// whole point: consulting at submit time pulls the mentioned agent into a
+		// question that is still sitting behind other queued work.
+		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+			dispatchCrossAgentMentionsForMessage(item.text, session, targetTab.id);
+		}
+
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
 		// tab so it matches the error listener's tab) so it can be auto-resent if
 		// this turn fails with a transient upstream error. We record the item with
 		// its tabId pinned to the resolved target - `item.tabId` may be undefined
-		// when the item fell back to the active tab.
-		noteDispatch(sessionId, { ...item, tabId: targetTab.id }, deps);
+		// when the item fell back to the active tab. `crossAgentMention` is dropped:
+		// the consult just fired, and an auto-retry of this turn must not re-fire it.
+		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
 		// Provider Failover: lazy fail-back probe. If this agent has sat on a backup
 		// endpoint past its dwell time, move it back to the primary now so THIS turn

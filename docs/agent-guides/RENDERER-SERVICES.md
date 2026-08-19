@@ -156,6 +156,20 @@ Surfaces that consume the mode: `InputArea` (reads the store once, derives `isCo
 
 ---
 
+### crossAgentMentions.ts (~115 lines)
+
+Resolve and dispatch `@agent` mentions. Deliberately two steps, because WHEN a consult fires is part of the contract:
+
+- `planCrossAgentMentions(message, sourceSessionId)` - resolve the mentioned agents. Sends nothing. Returns `null` when the message mentions no other agent, and `suppressLocal: true` when it LEADS with an `@agent` mention (the source agent must not answer).
+- `dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId)` - fire the consults for an already-resolved plan.
+- `dispatchCrossAgentMentionsForMessage(message, sourceSession, sourceTabId)` - plan + dispatch, for callers holding only the raw text.
+
+**A queued message must not consult at submit time.** A message sent while the agent is busy goes to the execution queue; dispatching its mention immediately pulls the other agent into a question that is still several messages deep in the queue. So `useInputProcessing` PLANS at submit (it needs `suppressLocal` to decide whether to send locally at all), stamps `crossAgentMention: true` on the `QueuedItem`, and `agentStore.processQueuedItem` dispatches when the item becomes the agent's turn. `noteDispatch` strips the flag so an Agent Resilience retry cannot re-consult, and `handleEditQueueItem` recomputes it against the edited text.
+
+Module-level functions, not a hook: the queue drain runs outside React. The send itself is `sendCrossAgentRequest` in `hooks/agent/useCrossAgentDispatch.ts`, also module-level, sharing one `pendingRequests` tracker with the hook that subscribes to the response chunks.
+
+---
+
 ### contextGroomer.ts (~430 lines)
 
 Manages merging multiple conversation contexts across agents.

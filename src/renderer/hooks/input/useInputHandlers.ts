@@ -44,10 +44,10 @@ import {
 	type SpawnBackgroundSynopsisFn,
 } from '../agent/useCrossAgentDispatch';
 import {
-	resolveMentionedTargetSessionIds,
-	buildKnownMentionNameSet,
-} from './useAgentMentionCompletion';
-import { messageStartsWithAgentMention } from '../../../shared/crossAgentContext';
+	planCrossAgentMentions,
+	dispatchCrossAgentMentions,
+	type CrossAgentMentionPlan,
+} from '../../services/crossAgentMentions';
 import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPatterns';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import {
@@ -587,50 +587,22 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// ====================================================================
 
 	// Cross-agent @mention dispatch (Phase 03). Mounted here (a singleton hook)
-	// so the response-chunk subscription is set up once. resolveMentionedTargetSessionIds
-	// reuses the same agent/group resolution the `@` picker uses, so a typed
-	// `@name` dispatches identically to one chosen from the popover.
-	const { sendCrossAgentRequest } = useCrossAgentDispatch(spawnBackgroundSynopsis);
-	// Returns `true` when the source agent's own send should be SUPPRESSED - i.e.
-	// the message is addressed at the mentioned agent(s), so only they answer.
-	// That is the case when the message leads with an `@agent` mention and at
-	// least one target resolves. A trailing mention (`hey @Backend, thoughts?`)
-	// or a leading `@file` mention returns false, so the source agent answers too.
-	const handleCrossAgentMentions = useCallback(
-		(message: string, sourceSession: Session, sourceTabId: string): boolean => {
-			const { sessions: allSessions, groups: allGroups } = useSessionStore.getState();
-			const targetSessionIds = resolveMentionedTargetSessionIds(
-				message,
-				allSessions,
-				allGroups,
-				sourceSession.id
-			).filter((id) => id !== sourceSession.id); // Self-mention guard (defend at dispatch).
-			if (targetSessionIds.length === 0) return false;
+	// so the response-chunk subscription is set up once. The planning/dispatch
+	// pair itself lives in services/crossAgentMentions so the queue drain can
+	// fire a deferred consult from outside React.
+	useCrossAgentDispatch(spawnBackgroundSynopsis);
 
-			// Roster for the leading-mention check below, so a message that leads with
-			// a file-shaped agent name (`@RunMaestro.ai fix this`) suppresses the local
-			// send just like a bare `@Codex` does.
-			const knownMentionNames = buildKnownMentionNameSet(allSessions, allGroups, sourceSession.id);
-
-			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
-			const sourceLogs = sourceTab?.logs ?? [];
-			for (const targetSessionId of targetSessionIds) {
-				sendCrossAgentRequest({
-					sourceSessionId: sourceSession.id,
-					sourceAgentName: sourceSession.name,
-					sourceTabId,
-					targetSessionId,
-					userPrompt: message,
-					sourceLogs,
-					// The source agent's working directory: the consulted agent is told it
-					// may READ files here to answer (see cross-agent-router prompt).
-					sourceCwd: sourceSession.cwd,
-				});
-			}
-
-			return messageStartsWithAgentMention(message, knownMentionNames);
-		},
-		[sendCrossAgentRequest]
+	// Resolve a message's mentions WITHOUT consulting anyone yet. The send path
+	// decides when to fire: immediately for a message that dispatches now, or at
+	// dequeue time for one that lands in the execution queue. `suppressLocal` on
+	// the returned plan means the message leads with an `@agent` mention, so only
+	// the mentioned agent(s) answer; a trailing mention (`hey @Backend,
+	// thoughts?`) or a leading `@file` mention leaves it false and the source
+	// agent answers too.
+	const handleCrossAgentMentionPlan = useCallback(
+		(message: string, sourceSession: Session): CrossAgentMentionPlan | null =>
+			planCrossAgentMentions(message, sourceSession.id),
+		[]
 	);
 
 	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
@@ -660,7 +632,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onSkillsCommand: handleSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
-		onCrossAgentMentions: handleCrossAgentMentions,
+		onPlanCrossAgentMentions: handleCrossAgentMentionPlan,
+		onDispatchCrossAgentMentions: dispatchCrossAgentMentions,
 	});
 
 	// processInputRef - maintained for access in memoized callbacks without stale closures

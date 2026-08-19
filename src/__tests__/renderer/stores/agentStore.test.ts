@@ -13,6 +13,7 @@ import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore'
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
 import { resetStores } from '../../helpers';
 
 // ============================================================================
@@ -110,6 +111,12 @@ vi.mock('../../../renderer/services/git', () => ({
 // Mock substituteTemplateVariables - pass through the template as-is for simplicity
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((template: string) => template),
+}));
+
+// Mock the cross-agent consult so the deferred-mention dispatch is observable
+// without standing up the whole @mention resolution + IPC pipeline.
+vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+	dispatchCrossAgentMentionsForMessage: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -1264,6 +1271,78 @@ describe('agentStore', () => {
 					agentSessionId: 'existing-conv-id',
 				})
 			);
+		});
+
+		// A queued message that @mentions another agent must consult that agent HERE,
+		// as the message becomes this agent's turn - not when the user typed it into
+		// a queue that was several messages deep.
+		it('fires the deferred cross-agent consult when the item carries one', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'now ask @Backend to review',
+				crossAgentMention: true,
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledTimes(1);
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				'now ask @Backend to review',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1'
+			);
+			// The local turn still runs: a trailing mention does not suppress it.
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not consult anyone for an item without a pending mention', async () => {
+			// Queued items from Auto Run, Cue, and the CLI never planned a consult.
+			// An `@` in their text must not turn into one at dispatch time.
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'email ops@example.com' });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).not.toHaveBeenCalled();
 		});
 
 		it('prepends system prompt for new sessions (no agentSessionId)', async () => {

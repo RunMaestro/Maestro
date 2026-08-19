@@ -370,6 +370,11 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	// This message `@mentions` another agent, and that consult has NOT fired yet.
+	// It fires when the item is dispatched (agentStore.processQueuedItem), so the
+	// mentioned agent is pulled in at the moment the message becomes the agent's
+	// turn - not when the user typed it into a queue that was minutes deep.
+	crossAgentMention?: boolean;
 }
 
 export interface WorkLogItem {

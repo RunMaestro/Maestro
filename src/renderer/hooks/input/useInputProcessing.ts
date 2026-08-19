@@ -19,6 +19,7 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { SHELL_COMMAND_PREFIX, stripShellCommandEscape } from '../../utils/shellCommandInput';
 import { runShellCommand } from '../../services/shellCommand';
 import { gitService } from '../../services/git';
+import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
 import { resolveForceParallel } from '../../stores/settingsStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
@@ -124,17 +125,34 @@ export interface UseInputProcessingDeps {
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
 	/**
-	 * Cross-agent `@mention` dispatch (Phase 03). Called at user-submit time for
-	 * a regular AI message; resolves any `@target` mentions and fires a
-	 * non-blocking consultation to each. No-op when the message has no mentions.
-	 * Only invoked for direct input-box submits (not queued replays / force-sends).
+	 * Cross-agent `@mention` resolution (Phase 03). Called at user-submit time
+	 * for a regular AI message; resolves any `@target` mentions WITHOUT sending
+	 * anything. Returns `null` when the message mentions no other agent. Only
+	 * invoked for direct input-box submits (not queued replays / force-sends).
 	 *
-	 * Returns `true` when the source agent's own send should be SUPPRESSED - the
-	 * message leads with an `@agent` mention, so it is addressed only at the
-	 * consulted agent(s). The caller then records the user's bubble but does not
-	 * dispatch to the source agent.
+	 * `suppressLocal` on the returned plan means the source agent's own send must
+	 * be SUPPRESSED: the message leads with an `@agent` mention, so it is
+	 * addressed only at the consulted agent(s), and the caller records the user's
+	 * bubble without dispatching locally.
 	 */
-	onCrossAgentMentions?: (message: string, sourceSession: Session, sourceTabId: string) => boolean;
+	onPlanCrossAgentMentions?: (
+		message: string,
+		sourceSession: Session,
+		sourceTabId: string
+	) => CrossAgentMentionPlan | null;
+	/**
+	 * Fire the consults for a plan. Called only when this message is dispatching
+	 * NOW. A message that goes to the execution queue instead carries
+	 * `crossAgentMention` and is consulted at dequeue time
+	 * (`agentStore.processQueuedItem`), so the mentioned agent is not pulled in
+	 * ahead of the message that mentions it.
+	 */
+	onDispatchCrossAgentMentions?: (
+		plan: CrossAgentMentionPlan,
+		message: string,
+		sourceSession: Session,
+		sourceTabId: string
+	) => void;
 }
 
 /**
@@ -205,7 +223,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
-		onCrossAgentMentions,
+		onPlanCrossAgentMentions,
+		onDispatchCrossAgentMentions,
 	} = deps;
 
 	// Ref for the processInput function so external code can access the latest version
@@ -584,27 +603,39 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			// Cross-agent @mention dispatch (Phase 03). Fire-and-forget: resolves any
-			// `@target` mentions in this message and consults each target agent
-			// without blocking the source chat. The original message still posts to
-			// the source agent below (the `@target` text stays in it, so the source
-			// agent sees the user pinged another agent). Gated on `overrideInputValue
-			// === undefined` so it fires exactly once, on a real input-box submit -
-			// not on queued replays / force-sends, which pass an override value.
-			if (currentMode === 'ai' && overrideInputValue === undefined && onCrossAgentMentions) {
+			// Cross-agent @mentions (Phase 03). RESOLVE ONLY - nothing is consulted
+			// here. Which agents this message pings is needed now (a leading mention
+			// suppresses the local send), but the consult itself must not fire until
+			// this message is actually dispatched: a message sent while the agent is
+			// busy goes to the execution queue, and pulling the mentioned agent in at
+			// submit time would have it answering a question the user has not asked
+			// yet. A queued message carries the intent as `crossAgentMention` and is
+			// consulted at dequeue time instead (agentStore.processQueuedItem).
+			//
+			// Gated on `overrideInputValue === undefined` so it resolves exactly once,
+			// on a real input-box submit - not on queued replays / force-sends, which
+			// pass an override value.
+			const mentionSourceTabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
+			const crossAgentMentionPlan =
+				currentMode === 'ai' && overrideInputValue === undefined && onPlanCrossAgentMentions
+					? onPlanCrossAgentMentions(effectiveInputValue, activeSession, mentionSourceTabId)
+					: null;
+
+			if (crossAgentMentionPlan) {
 				const sourceTab = resolveTargetTab(activeSession);
-				const suppressLocal = onCrossAgentMentions(
-					effectiveInputValue,
-					activeSession,
-					sourceTab?.id || activeSession.activeTabId
-				);
 
 				// The message leads with an `@agent` mention, so it is addressed only at
-				// the consulted agent(s). Record the user's bubble (so the streamed
-				// cross-agent replies have an anchor and the user sees what they asked),
-				// then STOP: do not queue or dispatch to the source agent, do not mark it
-				// busy. The consult already fired above.
-				if (suppressLocal) {
+				// the consulted agent(s) - there is no local turn for it to queue behind,
+				// so consult now. Record the user's bubble (so the streamed cross-agent
+				// replies have an anchor and the user sees what they asked), then STOP:
+				// do not queue or dispatch to the source agent, do not mark it busy.
+				if (crossAgentMentionPlan.suppressLocal) {
+					onDispatchCrossAgentMentions?.(
+						crossAgentMentionPlan,
+						effectiveInputValue,
+						activeSession,
+						mentionSourceTabId
+					);
 					const mentionOnlyEntry = {
 						id: generateId(),
 						timestamp: Date.now(),
@@ -799,6 +830,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								: 'New'),
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
+						// Consult the mentioned agent(s) when this item is dispatched, not
+						// now: see the mention-resolution block above.
+						...(crossAgentMentionPlan && { crossAgentMention: true }),
 					};
 
 					// Add to queue - will be processed when:
@@ -842,6 +876,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 					return;
 				}
+			}
+
+			// This message dispatches now, so its consults fire now too - just before
+			// the source agent's own turn, matching the order the user sees.
+			if (crossAgentMentionPlan) {
+				onDispatchCrossAgentMentions?.(
+					crossAgentMentionPlan,
+					effectiveInputValue,
+					activeSession,
+					mentionSourceTabId
+				);
 			}
 
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
@@ -1616,7 +1661,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			flushBatchedUpdates,
 			onHistoryCommand,
 			onWizardCommand,
-			onCrossAgentMentions,
+			onPlanCrossAgentMentions,
+			onDispatchCrossAgentMentions,
 			isWizardActive,
 		]
 	);

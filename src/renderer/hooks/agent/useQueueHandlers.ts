@@ -15,6 +15,7 @@ import type { QueuedItem, SessionState } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { applyQueuedItemDispatch, getQueueBusyContext } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -125,13 +126,19 @@ export function useQueueHandlers({
 
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: { text: string; images: string[] }) => {
+			// Re-resolve the pending consult against the EDITED text: the user may
+			// have added or removed an `@agent` mention, and the item's stale flag
+			// would otherwise consult the wrong agent (or nobody) when it dispatches.
+			const crossAgentMention = !!planCrossAgentMentions(patch.text, sessionId);
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					return {
 						...s,
 						executionQueue: s.executionQueue.map((item) =>
-							item.id === itemId ? { ...item, text: patch.text, images: patch.images } : item
+							item.id === itemId
+								? { ...item, text: patch.text, images: patch.images, crossAgentMention }
+								: item
 						),
 					};
 				})
