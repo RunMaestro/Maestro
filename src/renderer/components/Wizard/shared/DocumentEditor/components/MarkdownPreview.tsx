@@ -4,7 +4,11 @@ import type { Components } from 'react-markdown';
 import type { PluggableList } from 'unified';
 import type { Theme } from '../../../../../types';
 import { REMARK_GFM_PLUGINS } from '../../../../../utils/markdownConfig';
+import { remarkAlert } from '../../../../Markdown/remarkAlert';
 import { REHYPE_PLUGINS } from '../constants';
+
+/** GFM + GitHub `[!NOTE]`-style callouts, matching the chat and file-preview stacks. */
+const REMARK_PLUGINS: PluggableList = [...REMARK_GFM_PLUGINS, remarkAlert];
 
 interface MarkdownPreviewProps {
 	content: string;
@@ -48,7 +52,7 @@ export function MarkdownPreview({
 			<style>{proseStyles}</style>
 			<div className="prose prose-sm max-w-none">
 				<ReactMarkdown
-					remarkPlugins={REMARK_GFM_PLUGINS}
+					remarkPlugins={REMARK_PLUGINS}
 					rehypePlugins={REHYPE_PLUGINS as PluggableList}
 					components={markdownComponents}
 				>

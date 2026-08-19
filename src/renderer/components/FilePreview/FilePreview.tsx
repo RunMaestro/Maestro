@@ -45,6 +45,7 @@ import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLin
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
+import { remarkAlert } from '../Markdown/remarkAlert';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -639,6 +640,9 @@ export const FilePreview = React.memo(
 		const remarkPlugins = useMemo(
 			() => [
 				...REMARK_GFM_PLUGINS,
+				// GitHub `[!NOTE]`-style callouts. Runs right after GFM, matching the
+				// chat stack, so the marker is still the head of a single text node.
+				remarkAlert,
 				remarkFrontmatter,
 				remarkFrontmatterTable,
 				remarkHighlight,
