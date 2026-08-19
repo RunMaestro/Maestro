@@ -7,7 +7,7 @@ import {
 import { initialState } from '../../../../../renderer/components/Wizard/WizardContext/reducer';
 
 describe('WizardContext persistence helpers', () => {
-	it('serializes every session override needed after wizard resume', () => {
+	it('serializes resumable non-secret session overrides', () => {
 		const serializable = buildSerializableWizardState({
 			...initialState,
 			currentStep: 'directory-selection',
@@ -42,7 +42,6 @@ describe('WizardContext persistence helpers', () => {
 				isGitRepo: true,
 				customPath: 'C:/Cursor/agent.cmd',
 				customArgs: '--header "X-Test: one"',
-				customEnvVars: { CURSOR_API_KEY: 'secret' },
 				agentConfigValues: {
 					model: 'gpt-5.3-codex',
 					reasoningEffort: 'high',
@@ -60,6 +59,7 @@ describe('WizardContext persistence helpers', () => {
 		);
 		expect(serializable).not.toHaveProperty('isOpen');
 		expect(serializable).not.toHaveProperty('isGeneratingDocuments');
+		expect(serializable).not.toHaveProperty('customEnvVars');
 	});
 
 	it('accepts saved object state but only loads states past the first step', () => {

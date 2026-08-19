@@ -915,7 +915,7 @@ async function spawnJsonLineAgent(
 		def,
 		preOverrideArgs,
 		overrides,
-		readOnlyMode
+		effectiveReadOnly
 	);
 
 	// Pass only the user-level env (no agent defaults) so shell-provided values
@@ -925,7 +925,7 @@ async function spawnJsonLineAgent(
 		def?.defaultEnvVars,
 		def?.batchModeEnvVars,
 		userCustomEnvVars,
-		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
+		effectiveReadOnly ? def?.readOnlyEnvOverrides : undefined
 	);
 
 	// System prompt delivery for JSON-line agents:

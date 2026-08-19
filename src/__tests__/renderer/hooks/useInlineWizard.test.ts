@@ -599,7 +599,7 @@ describe('useInlineWizard', () => {
 			expect(mockSendWizardMessage).toHaveBeenCalledWith(
 				expect.any(Object),
 				'Inspect this',
-				expect.any(Array),
+				[],
 				undefined,
 				images
 			);

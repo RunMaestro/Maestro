@@ -77,6 +77,20 @@ describe('CursorCliOutputParser', () => {
 		expect(parser.parseJsonLine(FINAL_ASSISTANT_FLUSH_LINE)).toBeNull();
 	});
 
+	it('resets duplicate-flush tracking when a reused parser receives a new init event', () => {
+		const parser = new CursorCliOutputParser();
+
+		expect(parser.parseJsonLine(PARTIAL_ASSISTANT_LINE)?.type).toBe('text');
+		expect(parser.parseJsonLine(INIT_LINE)?.type).toBe('init');
+		expect(parser.parseJsonLine(FINAL_ASSISTANT_FLUSH_LINE)).toEqual(
+			expect.objectContaining({
+				type: 'text',
+				text: 'READY',
+				isPartial: true,
+			})
+		);
+	});
+
 	it('skips buffered pre-tool assistant flushes identified by model_call_id', () => {
 		const parser = new CursorCliOutputParser();
 		const event = parser.parseJsonLine(

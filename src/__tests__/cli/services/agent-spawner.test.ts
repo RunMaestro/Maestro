@@ -1774,6 +1774,29 @@ Some text with [x] in it that's not a checkbox
 			await expect(resultPromise).resolves.toMatchObject({ success: true, response: 'written' });
 		});
 
+		it('lets explicit Cursor full permission override the legacy read-only flag', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'write the files', undefined, {
+				readOnlyMode: true,
+				permissionMode: 'full',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--force');
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"written","session_id":"cursor-full-legacy-conflict"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toMatchObject({ success: true, response: 'written' });
+		});
+
 		it('should run cursor-cli read-only with --mode plan and without --force', async () => {
 			const resultPromise = spawnAgent('cursor-cli', '/project', 'look around', undefined, {
 				readOnlyMode: true,

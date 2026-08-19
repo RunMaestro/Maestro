@@ -86,6 +86,9 @@ export class CursorCliOutputParser implements AgentOutputParser {
 		const msg = parsed as CursorRawMessage;
 
 		if (msg.type === 'system' && msg.subtype === 'init') {
+			// Registry consumers such as Cue may reuse a parser instance across
+			// sessions. An init event establishes a fresh stream boundary.
+			this.sawAssistantPartialOutput = false;
 			return {
 				type: 'init',
 				sessionId: msg.session_id,

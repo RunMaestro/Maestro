@@ -92,6 +92,8 @@ export function useAgentConfigurationPanel({
 	const handleOpenConfig = useCallback(
 		async (agentId: string) => {
 			const requestId = ++configLoadRequestRef.current;
+			setLoadingModels(false);
+			setAvailableModels([]);
 			setSelectedAgent(agentId);
 			const config = await window.maestro.agents.getConfig(agentId);
 			if (requestId !== configLoadRequestRef.current) return;

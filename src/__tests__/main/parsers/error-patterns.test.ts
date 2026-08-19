@@ -22,6 +22,7 @@ import {
 const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
 const OPENCODE_ERROR_PATTERNS = getErrorPatterns('opencode');
 const CODEX_ERROR_PATTERNS = getErrorPatterns('codex');
+const CURSOR_CLI_ERROR_PATTERNS = getErrorPatterns('cursor-cli');
 
 describe('error-patterns', () => {
 	describe('CLAUDE_ERROR_PATTERNS', () => {
@@ -224,6 +225,23 @@ describe('error-patterns', () => {
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('session_not_found');
 			});
+		});
+	});
+
+	describe('CURSOR_CLI_ERROR_PATTERNS', () => {
+		it('matches contextual HTTP 429 failures', () => {
+			expect(matchErrorPattern(CURSOR_CLI_ERROR_PATTERNS, 'HTTP 429 from Cursor API')?.type).toBe(
+				'rate_limited'
+			);
+			expect(
+				matchErrorPattern(CURSOR_CLI_ERROR_PATTERNS, 'Request failed with status code 429')?.type
+			).toBe('rate_limited');
+		});
+
+		it('does not treat a bare 429 identifier as a rate-limit failure', () => {
+			expect(
+				matchErrorPattern(CURSOR_CLI_ERROR_PATTERNS, 'Build artifact 429 was written successfully')
+			).toBeNull();
 		});
 	});
 

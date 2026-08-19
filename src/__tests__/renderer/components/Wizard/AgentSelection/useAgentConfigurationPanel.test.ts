@@ -4,6 +4,58 @@ import type { AgentConfig } from '../../../../../renderer/types';
 import { useAgentConfigurationPanel } from '../../../../../renderer/components/Wizard/screens/AgentSelectionScreen/hooks/useAgentConfigurationPanel';
 
 describe('useAgentConfigurationPanel', () => {
+	it('clears stale model loading when switching to an agent without model selection', async () => {
+		const cursorModels = Promise.withResolvers<string[]>();
+		Object.assign(window.maestro.agents, {
+			getConfig: vi.fn().mockResolvedValue({}),
+			getModels: vi.fn(() => cursorModels.promise),
+			getMaestroPDetectedPath: vi.fn().mockResolvedValue(undefined),
+			setCustomPath: vi.fn(),
+			setConfig: vi.fn(),
+		});
+
+		const agents = [
+			{ id: 'cursor-cli', capabilities: { supportsModelSelection: true } },
+			{ id: 'claude-code', capabilities: { supportsModelSelection: false } },
+		] as unknown as AgentConfig[];
+		const { result } = renderHook(() =>
+			useAgentConfigurationPanel({
+				detectedAgents: agents,
+				sshRemoteConfig: undefined,
+				configuringAgentId: null,
+				setConfiguringAgentId: vi.fn(),
+				setSelectedAgent: vi.fn(),
+				setWizardCustomPath: vi.fn(),
+				setWizardCustomArgs: vi.fn(),
+				setWizardCustomEnvVars: vi.fn(),
+				setWizardAgentConfigValues: vi.fn(),
+				setWizardSessionSshRemoteConfig: vi.fn(),
+				customPath: '',
+				customEnvVars: {},
+				refreshAgentDetection: vi.fn().mockResolvedValue(undefined),
+				showConfigView: vi.fn(),
+				showGridView: vi.fn(),
+				announce: vi.fn(),
+			})
+		);
+
+		let cursorLoad!: Promise<void>;
+		await act(async () => {
+			cursorLoad = result.current.handleOpenConfig('cursor-cli');
+			await Promise.resolve();
+		});
+		expect(result.current.loadingModels).toBe(true);
+
+		await act(async () => result.current.handleOpenConfig('claude-code'));
+		expect(result.current.loadingModels).toBe(false);
+		expect(result.current.availableModels).toEqual([]);
+
+		cursorModels.resolve(['stale-model']);
+		await act(async () => cursorLoad);
+		expect(result.current.loadingModels).toBe(false);
+		expect(result.current.availableModels).toEqual([]);
+	});
+
 	it('ignores a stale provider config load after another agent is selected', async () => {
 		const cursorConfig = Promise.withResolvers<Record<string, unknown>>();
 		const claudeConfig = Promise.withResolvers<Record<string, unknown>>();

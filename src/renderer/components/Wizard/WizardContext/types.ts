@@ -126,7 +126,6 @@ export interface SerializableWizardState {
 	directoryPath: string;
 	customPath?: string;
 	customArgs?: string;
-	customEnvVars?: Record<string, string>;
 	agentConfigValues?: Record<string, unknown>;
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';

@@ -1377,7 +1377,7 @@ const CURSOR_CLI_ERROR_PATTERNS: AgentErrorPatterns = {
 	],
 	rate_limited: [
 		{
-			pattern: /rate limit|too many requests|\b429\b|quota exceeded/i,
+			pattern: /rate limit|too many requests|http\s*429|status(?:\s+code)?\s*429|quota exceeded/i,
 			message: 'Cursor rate limit exceeded. Please wait and try again.',
 			recoverable: true,
 		},

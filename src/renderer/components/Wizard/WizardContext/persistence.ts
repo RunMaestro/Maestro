@@ -10,7 +10,6 @@ export function buildSerializableWizardState(state: WizardState): SerializableWi
 		agentName: state.agentName,
 		customPath: state.customPath,
 		customArgs: state.customArgs,
-		customEnvVars: state.customEnvVars,
 		agentConfigValues: state.agentConfigValues,
 		enableMaestroP: state.enableMaestroP,
 		maestroPMode: state.maestroPMode,

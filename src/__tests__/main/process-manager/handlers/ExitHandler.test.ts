@@ -201,6 +201,7 @@ describe('ExitHandler', () => {
 
 			await exitHandler.handleExit('test-session', 0);
 
+			expect(mockParser.parseJsonLine).toHaveBeenCalledTimes(1);
 			expect(mockParser.parseJsonLine).toHaveBeenCalledWith(resultJson);
 			expect(mockParser.isResultMessage).toHaveBeenCalled();
 			expect(dataEvents).toContain('Auth Bug Fix');
@@ -525,6 +526,25 @@ describe('ExitHandler', () => {
 			expect(dataEvents).toContain('Partial response text');
 		});
 
+		it('preserves streamedText after an unclassified non-zero exit', async () => {
+			const parser = createMockOutputParser();
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				outputParser: parser,
+				streamedText: 'Useful response before an unusual exit',
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 17);
+
+			expect(parser.detectErrorFromExit).toHaveBeenCalled();
+			expect(dataEvents).toContain('Useful response before an unusual exit');
+		});
+
 		it('should not emit streamedText when result was already emitted', async () => {
 			const proc = createMockProcess({
 				isStreamJsonMode: true,
@@ -687,7 +707,7 @@ describe('ExitHandler', () => {
 			expect(exitEvents).toEqual([{ sessionId: 'unknown-session', code: 1 }]);
 		});
 
-		it('should not delete a newer process registered under the same sessionId', async () => {
+		it('should not emit stale output or delete a newer process registered under the same sessionId', async () => {
 			const exitingProcess = createMockProcess({ pid: 11111, dataBuffer: 'old tail' });
 			const replacementProcess = createMockProcess({ pid: 22222, dataBuffer: 'new output' });
 			processes.set('test-session', replacementProcess);
@@ -700,7 +720,7 @@ describe('ExitHandler', () => {
 
 			expect(processes.get('test-session')).toBe(replacementProcess);
 			expect(replacementProcess.dataBuffer).toBe('new output');
-			expect(dataEvents).toEqual(['old tail']);
+			expect(dataEvents).toEqual([]);
 			expect(exitEvents).toEqual([]);
 		});
 	});
