@@ -73,9 +73,9 @@ describe('StaticRoutes', () => {
 
 	describe('Route Registration', () => {
 		it('should register all static routes', () => {
-			// 10 routes: /, /health, manifest.json, sw.js, token root, token root/,
-			// /desktop, /desktop/, session/:id, /:token
-			expect(mockFastify.get).toHaveBeenCalledTimes(10);
+			// 12 routes: /, /health, manifest.json, sw.js, token root, token root/,
+			// /desktop, /desktop/, /acappella, /acappella/, session/:id, /:token
+			expect(mockFastify.get).toHaveBeenCalledTimes(12);
 		});
 
 		it('should register routes with correct paths', () => {
@@ -87,6 +87,8 @@ describe('StaticRoutes', () => {
 			expect(mockFastify.routes.has(`GET:/${securityToken}/`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/desktop`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/desktop/`)).toBe(true);
+			expect(mockFastify.routes.has(`GET:/${securityToken}/acappella`)).toBe(true);
+			expect(mockFastify.routes.has(`GET:/${securityToken}/acappella/`)).toBe(true);
 			expect(mockFastify.routes.has(`GET:/${securityToken}/session/:sessionId`)).toBe(true);
 			expect(mockFastify.routes.has('GET:/:token')).toBe(true);
 		});
@@ -265,6 +267,58 @@ describe('StaticRoutes', () => {
 			} finally {
 				rmSync(tempRoot, { recursive: true, force: true });
 			}
+		});
+	});
+
+	describe('GET /$TOKEN/acappella (reference client)', () => {
+		it('serves the reference client page with its assets repointed', async () => {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-static-routes-'));
+			const tempDesktopPath = path.join(tempRoot, 'web-desktop');
+			const clientDir = path.join(tempDesktopPath, 'acappella-client');
+
+			mkdirSync(clientDir, { recursive: true });
+
+			try {
+				// Vite emits `../assets/` for a page one directory down from the bundle
+				// root, which is why the desktop index's `./assets/` rewrite alone was
+				// not enough.
+				writeFileSync(
+					path.join(clientDir, 'index.html'),
+					'<!doctype html><html><head><script type="module" src="../assets/acappella-client.js"></script></head><body></body></html>',
+					'utf8'
+				);
+
+				const freshRoutes = new StaticRoutes(securityToken, webAssetsPath, tempDesktopPath);
+				const freshFastify = createMockFastify();
+				freshRoutes.registerRoutes(freshFastify as any);
+
+				const route = freshFastify.getRoute('GET', `/${securityToken}/acappella`);
+				const reply = createMockReply();
+				await route!.handler({}, reply);
+
+				expect(reply.type).toHaveBeenCalledWith('text/html');
+				expect(reply.send).toHaveBeenCalledWith(
+					expect.stringContaining(`/${securityToken}/desktop/assets/acappella-client.js`)
+				);
+				// No config injection: the reference client pairs with a code like any
+				// other device, and handing it the token would skip the one flow it
+				// exists to exercise.
+				expect(reply.send).not.toHaveBeenCalledWith(expect.stringContaining('__MAESTRO_CONFIG__'));
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		});
+
+		it('returns 503 when the bundle has not been built', async () => {
+			const noDesktopRoutes = new StaticRoutes(securityToken, webAssetsPath, null);
+			const noDesktopFastify = createMockFastify();
+			noDesktopRoutes.registerRoutes(noDesktopFastify as any);
+
+			const route = noDesktopFastify.getRoute('GET', `/${securityToken}/acappella`);
+			const reply = createMockReply();
+			await route!.handler({}, reply);
+
+			expect(reply.code).toHaveBeenCalledWith(503);
 		});
 	});
 });

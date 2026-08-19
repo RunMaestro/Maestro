@@ -35,16 +35,17 @@
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
 		"build:renderer": "vite build",
-		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
-		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
-		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win",
-		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
+		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux && npm run verify:native-packaging",
+		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac && npm run verify:native-packaging",
+		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win && npm run verify:native-packaging",
+		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux && npm run verify:native-packaging",
+		"verify:native-packaging": "node scripts/verify-native-packaging.mjs",
 		"start": "electron .",
 		"clean": "rm -rf dist release node_modules/.vite",
 		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
 		"postinstall": "patch-package && node scripts/ensure-electron.mjs && electron-rebuild -f -w node-pty,better-sqlite3",
-		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",
+		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit && tsc -p tsconfig.scripts.json",
 		"lint:eslint": "eslint src/ && eslint -c eslint.dashes.config.mjs src/__tests__ scripts",
 		"format": "prettier --write \"src/**/*.{ts,tsx}\"",
 		"format:all": "prettier --write .",
@@ -57,6 +58,8 @@
 		"test:e2e": "bun run build:main && bun run build:renderer && playwright test",
 		"test:e2e:ui": "bun run build:main && bun run build:renderer && playwright test --ui",
 		"test:e2e:headed": "bun run build:main && bun run build:renderer && playwright test --headed",
+		"acappella:eval": "node scripts/acappella-routing-eval.mjs",
+		"acappella:latency": "node scripts/acappella-speech-latency.mjs",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
@@ -95,7 +98,11 @@
 			"node_modules/@napi-rs/keyring/**/*",
 			"node_modules/@napi-rs/keyring-*/*",
 			"node_modules/bindings/**/*",
-			"node_modules/file-uri-to-path/**/*"
+			"node_modules/file-uri-to-path/**/*",
+			"node_modules/node-llama-cpp/**/*",
+			"node_modules/@node-llama-cpp/**/*",
+			"node_modules/smart-whisper/build/**/*",
+			"node_modules/onnxruntime-node/bin/**/*"
 		],
 		"mac": {
 			"category": "public.app-category.developer-tools",
@@ -104,6 +111,9 @@
 			"notarize": false,
 			"entitlements": "build/entitlements.mac.plist",
 			"entitlementsInherit": "build/entitlements.mac.plist",
+			"extendInfo": {
+				"NSMicrophoneUsageDescription": "Maestro uses the microphone for A Cappella, its voice control feature, so you can speak to your agents. Your audio is processed on this machine when you select local speech providers, and is sent to a hosted provider only if you choose one."
+			},
 			"target": [
 				"dmg",
 				"zip"

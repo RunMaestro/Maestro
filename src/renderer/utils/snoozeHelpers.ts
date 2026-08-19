@@ -21,7 +21,13 @@ import {
 	UnifiedTabRef,
 } from '../types';
 import { generateId } from './ids';
-import { closeTab, getRepairedUnifiedTabOrder, ensureInUnifiedTabOrder } from './tabHelpers';
+import {
+	aiTabFocusFields,
+	closeTab,
+	focusAiTabInSession,
+	getRepairedUnifiedTabOrder,
+	ensureInUnifiedTabOrder,
+} from './tabHelpers';
 
 /** Result of snoozing a tab. */
 export interface SnoozeTabResult {
@@ -178,11 +184,10 @@ export function wakeSnoozedTab(
 				aiTabs: session.aiTabs.map((t) =>
 					t.id === existing.id ? { ...t, hasUnread: true, logs: [...t.logs, returnLog] } : t
 				),
-				activeTabId: existing.id,
-				activeFileTabId: null,
-				activeBrowserTabId: null,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
+				// The shared patch, not a hand-rolled copy of it: this one was missing
+				// `activeGroupId: null`, so a tab woken while a tiled group was active
+				// kept the group on screen and the wake appeared to do nothing.
+				...aiTabFocusFields(existing.id),
 				unifiedTabOrder: ensureInUnifiedTabOrder(session.unifiedTabOrder || [], 'ai', existing.id),
 			},
 			entry,
@@ -329,6 +334,52 @@ export function buildSnoozeHistoryRecord(
 		resolvedAt: Date.now(),
 		resolution,
 	};
+}
+
+/** What landing on a tab actually took. */
+export interface FocusAiTabOutcome {
+	session: Session;
+	/** The tab landed on, or null when nothing by that id could be found. */
+	tabId: string | null;
+	action: 'focused' | 'woke' | 'reopened' | 'missing';
+}
+
+/**
+ * Land on an AI tab wherever it currently lives: open, snoozed, or closed.
+ *
+ * `focusAiTabInSession` already reveals a hidden consult tab and restores one
+ * from the closed-tab history, but it cannot see a snooze - a snoozed tab is
+ * removed from `aiTabs` entirely, so to that function it simply does not exist,
+ * and a jump would silently land on "whatever is active" instead. This wraps it
+ * with the wake, which is the piece that lives on this side of the
+ * tabHelpers/snoozeHelpers boundary.
+ *
+ * Used by every deep jump that may target a put-away conversation, including
+ * A Cappella's spoken recall ("back to the auth thing"). The returned `action`
+ * is what lets a caller say something true about what happened rather than
+ * assuming it focused something.
+ */
+export function focusAiTabWithSnooze(session: Session, tabId: string): FocusAiTabOutcome {
+	if (session.aiTabs?.some((tab) => tab.id === tabId)) {
+		return { session: focusAiTabInSession(session, tabId), tabId, action: 'focused' };
+	}
+
+	const snooze = session.snoozedTabs?.find((entry) => entry.tab.id === tabId);
+	if (snooze) {
+		// 'unsnoozed' rather than 'woke': the user pulled it back early by asking
+		// for it, and the snooze history should read that way.
+		const woken = wakeSnoozedTab(session, snooze.id, 'unsnoozed');
+		if (woken) return { session: woken.session, tabId: woken.tabId, action: 'woke' };
+	}
+
+	const closed = session.unifiedClosedTabHistory?.some(
+		(entry) => entry.type === 'ai' && entry.tab.id === tabId
+	);
+	if (closed) {
+		return { session: focusAiTabInSession(session, tabId), tabId, action: 'reopened' };
+	}
+
+	return { session, tabId: null, action: 'missing' };
 }
 
 /**

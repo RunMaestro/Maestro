@@ -28,6 +28,9 @@ export type { UseLongPressOptions, UseLongPressReturn } from './useLongPress';
 export { useKeyboardVisibility } from './useKeyboardVisibility';
 export type { UseKeyboardVisibilityReturn } from './useKeyboardVisibility';
 
+// OS "reduce motion" preference, live (animated surfaces that stay on screen)
+export { usePrefersReducedMotion } from './usePrefersReducedMotion';
+
 // Voice-to-text via the Web Speech API (touch AI input dictation)
 export { useVoiceInput, isSpeechRecognitionSupported, getSpeechRecognition } from './useVoiceInput';
 export type { UseVoiceInputOptions, UseVoiceInputReturn } from './useVoiceInput';

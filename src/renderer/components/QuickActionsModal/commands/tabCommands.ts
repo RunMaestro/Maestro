@@ -3,6 +3,7 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { getTabDisplayName } from '../../../utils/tabHelpers';
 import { useModalStore } from '../../../stores/modalStore';
+import { resolveActiveTabRef } from '../../../utils/panelLayout';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -43,6 +44,7 @@ interface BuildTabCommandsArgs {
 		toggleMarkdownMode?: QuickAction['shortcut'];
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
+		openModelEffort?: QuickAction['shortcut'];
 	};
 	tabShortcuts?: Record<string, QuickAction['shortcut']>;
 	toggleInputMode: () => void;
@@ -312,6 +314,24 @@ export function buildTabCommands({
 			action: () => {
 				onCloseCurrentTab();
 				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	// Retune the active AI tab's model and reasoning effort. AI-only: file,
+	// terminal, and browser tabs have no model to change. Resolved through
+	// resolveActiveTabRef so a focused pane in a tiled group is retuned rather
+	// than the standalone tab hidden behind it.
+	const modelEffortRef = activeSession ? resolveActiveTabRef(activeSession) : null;
+	if (modelEffortRef?.type === 'ai') {
+		commands.push({
+			id: 'changeModelEffort',
+			label: 'Change Tabs Model and Effort',
+			subtext: 'Pick a model and effort level with the arrow keys',
+			shortcut: shortcuts.openModelEffort,
+			action: () => {
+				setQuickActionOpen(false);
+				useModalStore.getState().openModal('modelEffort', { tabId: modelEffortRef.id });
 			},
 		});
 	}

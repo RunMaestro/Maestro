@@ -1,0 +1,351 @@
+/**
+ * A Cappella capability gate - may voice mode run, and if not, exactly why.
+ *
+ * This module answers one question with a structured verdict rather than a
+ * boolean, because a boolean is what produces the two failure modes A Cappella
+ * cannot ship with:
+ *
+ *   1. **Silent substitution.** "Local Whisper is missing, so use the cloud one"
+ *      spends the user's money and ships their microphone to a service they did
+ *      not choose. There is no code path in this file that can do that: a slot is
+ *      satisfied by the provider it was configured with or it is UNSATISFIED. It
+ *      never resolves to a different provider, and it never returns a provider at
+ *      all - it returns a verdict. Choosing providers is the registry's job, and
+ *      the registry's only fallback is the mock.
+ *   2. **A disabled button with no explanation.** "Voice mode unavailable" with
+ *      no reason is indistinguishable from a bug. Every unsatisfied slot carries
+ *      a reason code, a sentence naming the missing piece, and a suggested action.
+ *
+ * The wake word is reported but does not block a session. Hands-free means
+ * something is always listening, and that is a real capability with a real
+ * requirement; click-to-talk is not, and refusing to open a session the user
+ * explicitly asked for because an optional always-on model is missing would be
+ * the gate getting in the way rather than doing its job.
+ */
+
+import { OPENWAKEWORD_BASE_ID, getVoiceModel } from '../../../shared/acappella/model-catalog';
+import {
+	credentialLabel,
+	voiceProviderRequirement,
+	type VoiceCredentialService,
+	type VoiceProviderRequirement,
+} from '../../../shared/acappella/provider-catalog';
+import type { NativeRuntimeId } from '../../../shared/acappella/native-runtimes';
+import { hasCredential } from '../providers/credentials';
+import type { MicPermission } from '../../../shared/acappella/protocol';
+import type {
+	VoiceReadiness,
+	VoiceSlot,
+	VoiceSlotReadiness,
+} from '../../../shared/acappella/readiness';
+import { getMicPermission } from '../permissions/mic-permission';
+import {
+	knownNativeRuntimeUnavailability,
+	type NativeRuntimeUnavailable,
+} from '../runtime/native-loader';
+import { DEFAULT_PROVIDER_IDS, type VoiceProviderSettings } from '../providers/provider-registry';
+import { getStatus, type ModelStatus } from './model-store';
+
+/**
+ * Provider ids for the local tier.
+ *
+ * Re-exported from the shared catalog rather than re-declared: the requirement
+ * table, the registry's registrations, and the settings panel all have to spell
+ * a provider id the same way, and three literals in three files is three chances
+ * for a slot the gate blocks and the panel says is fine.
+ */
+export { LOCAL_PROVIDER_IDS } from '../../../shared/acappella/provider-catalog';
+
+/** The wake word slot has one implementation and it is always local. */
+export const WAKE_WORD_PROVIDER_ID = 'openwakeword-local';
+
+/**
+ * The microphone slot's "provider" id.
+ *
+ * The device is not a provider and there is nothing to choose here, but the slot
+ * carries an id so the structure stays uniform for every consumer that renders
+ * `slots` and `blocking` generically.
+ */
+export const MICROPHONE_PROVIDER_ID = 'system-microphone';
+
+/**
+ * What a provider needs before it can run.
+ *
+ * Every entry comes from the shared catalog except the wake word, which has no
+ * provider slot of its own to be selected in and so is stated here.
+ *
+ * A local provider needs BOTH its model and its native runtime, and the runtime
+ * is checked first: a llama.cpp binary that will not load on this machine is not
+ * fixed by downloading another gigabyte, so telling the user to download is the
+ * wrong instruction even though the model may also be missing.
+ */
+function requirementFor(providerId: string): VoiceProviderRequirement {
+	if (providerId === WAKE_WORD_PROVIDER_ID) {
+		return { kind: 'model', modelId: OPENWAKEWORD_BASE_ID, runtimeId: 'onnx' };
+	}
+	return voiceProviderRequirement(providerId);
+}
+
+/**
+ * Slot order, which is also the order Voice Setup renders and errors list them.
+ *
+ * The microphone comes first because it is the one requirement that is true
+ * regardless of which providers are configured, and because a user who reads
+ * "microphone access denied" first does not need to read the rest.
+ */
+const SLOT_ORDER: VoiceSlot[] = ['microphone', 'stt', 'tts', 'brain', 'wake-word'];
+
+const SLOT_LABELS: Record<VoiceSlot, string> = {
+	microphone: 'Microphone',
+	stt: 'Speech-to-Text',
+	tts: 'Text-to-Speech',
+	brain: 'Conductor Brain',
+	'wake-word': 'Wake word',
+};
+
+export interface ResolveVoiceReadinessOptions {
+	/** The persisted provider selection. Omitted roles take the build default. */
+	settings?: VoiceProviderSettings;
+	/**
+	 * Whether hands-free is switched on. When off, the wake word slot is still
+	 * REPORTED (Voice Setup shows what it would need) but nothing is downloaded
+	 * or required on its account.
+	 */
+	handsFreeEnabled?: boolean;
+	/**
+	 * Whether a service's API key is stored. Defaults to the OS keychain.
+	 *
+	 * A boolean, not the key: the gate has no business holding a credential, and a
+	 * seam that returned one would put keys in every test fixture that configures
+	 * a hosted provider.
+	 */
+	hasApiKey?: (service: VoiceCredentialService) => boolean;
+	/**
+	 * Optional reachability probe for cloud providers, keyed by provider id.
+	 * Absent means "assume reachable": a gate that reported every cloud provider
+	 * unreachable because nobody wired a probe would be worse than one that lets
+	 * the provider's own start() report the truth.
+	 */
+	probeProvider?: (providerId: string) => Promise<boolean> | boolean;
+	/** Injected for tests. Defaults to the real model store. */
+	readModelStatus?: (modelId: string) => Promise<ModelStatus>;
+	/**
+	 * The microphone permission. Defaults to the real OS query, which never
+	 * prompts: readiness is resolved on every Settings render, and a gate that
+	 * could raise a TCC dialog would turn drawing a panel into asking for the
+	 * microphone.
+	 */
+	readMicPermission?: () => MicPermission;
+	/**
+	 * Why a native runtime will not load, or null when it will. Defaults to the
+	 * loader's answer: a remembered failure if there is one, otherwise the facts
+	 * knowable from the registry alone (not a dependency of this build, no binary
+	 * for this platform). It deliberately does NOT attempt a load, because
+	 * dlopen'ing an inference engine to draw a settings panel is exactly the
+	 * startup cost the lazy loader exists to avoid.
+	 */
+	readRuntimeFailure?: (runtimeId: NativeRuntimeId) => NativeRuntimeUnavailable | null;
+}
+
+/**
+ * Resolve the readiness of all four slots.
+ *
+ * Every branch either satisfies the slot with the provider that was ASKED for or
+ * marks it unsatisfied. There is deliberately no `else` that reaches for a
+ * different provider.
+ */
+export async function resolveVoiceReadiness(
+	options: ResolveVoiceReadinessOptions = {}
+): Promise<VoiceReadiness> {
+	const settings = options.settings ?? {};
+	const readModelStatus = options.readModelStatus ?? getStatus;
+
+	const slots: VoiceSlotReadiness[] = [];
+	for (const slot of SLOT_ORDER) {
+		if (slot === 'microphone') {
+			slots.push(resolveMicrophone(options));
+			continue;
+		}
+		const providerId = providerForSlot(slot, settings);
+		slots.push(await resolveSlot(slot, providerId, options, readModelStatus));
+	}
+
+	const wakeWord = slots.find((slot) => slot.slot === 'wake-word');
+	// A session needs a microphone, speech in, speech out, and routing. The wake
+	// word is a hands-free capability, not a precondition for talking.
+	const blocking = slots.filter((slot) => slot.slot !== 'wake-word' && !slot.satisfied);
+
+	return {
+		canStartSession: blocking.length === 0,
+		canRunHandsFree: blocking.length === 0 && (wakeWord?.satisfied ?? false),
+		slots,
+		blocking,
+	};
+}
+
+function providerForSlot(slot: VoiceSlot, settings: VoiceProviderSettings): string {
+	if (slot === 'wake-word') return WAKE_WORD_PROVIDER_ID;
+	if (slot === 'microphone') return MICROPHONE_PROVIDER_ID;
+	return settings[slot] ?? DEFAULT_PROVIDER_IDS[slot];
+}
+
+/**
+ * The microphone slot.
+ *
+ * Only `denied` and `restricted` block. `not-determined` and `unknown` are the
+ * states of a machine that has never been asked, and blocking on them would mean
+ * a first-run user is told voice is unavailable BEFORE the app has done the one
+ * thing that would make it available. The ask happens at session start, in
+ * `requestMicPermission()`, which is the moment the user asked for a microphone.
+ */
+function resolveMicrophone(options: ResolveVoiceReadinessOptions): VoiceSlotReadiness {
+	const readPermission = options.readMicPermission ?? (() => getMicPermission().state);
+	const permission = readPermission();
+	const base = {
+		slot: 'microphone' as const,
+		providerId: MICROPHONE_PROVIDER_ID,
+		micPermission: permission,
+	};
+
+	if (permission === 'denied') {
+		return {
+			...base,
+			satisfied: false,
+			reason: 'mic-permission-denied',
+			// Named as a permission, never as "voice unavailable": a user with every
+			// model on disk and a denied microphone has a one-checkbox problem, and
+			// this sentence is the difference between fixing it and filing a bug.
+			detail: 'Microphone: Maestro does not have microphone access.',
+			suggestedAction: 'Grant microphone access to Maestro in your system privacy settings.',
+		};
+	}
+
+	if (permission === 'restricted') {
+		return {
+			...base,
+			satisfied: false,
+			reason: 'mic-permission-restricted',
+			detail: 'Microphone: access is blocked by a system policy.',
+			// No privacy-pane link here on purpose. The user cannot change this one,
+			// so sending them to a checkbox they are not allowed to tick is a dead end.
+			suggestedAction: 'A device policy controls this. Ask whoever manages this machine.',
+		};
+	}
+
+	return { ...base, satisfied: true };
+}
+
+/**
+ * A native runtime that will not load, as a slot verdict. Null when it will.
+ *
+ * "Will not load" rather than "has already failed": a runtime that is not part
+ * of this build, or has no binary for this platform, is unusable before anything
+ * tries it, and a gate that waited for an attempt would call the slot ready
+ * right up until the session died in the provider's `start()`.
+ */
+function runtimeFailureFor(
+	slot: VoiceSlot,
+	providerId: string,
+	runtimeId: NativeRuntimeId,
+	options: ResolveVoiceReadinessOptions
+): VoiceSlotReadiness | null {
+	const read = options.readRuntimeFailure ?? knownNativeRuntimeUnavailability;
+	const failure = read(runtimeId);
+	if (!failure) return null;
+
+	return {
+		slot,
+		providerId,
+		satisfied: false,
+		reason: 'runtime-unavailable',
+		detail: `${SLOT_LABELS[slot]}: ${failure.message}`,
+		suggestedAction: failure.suggestedAction,
+	};
+}
+
+async function resolveSlot(
+	slot: VoiceSlot,
+	providerId: string,
+	options: ResolveVoiceReadinessOptions,
+	readModelStatus: (modelId: string) => Promise<ModelStatus>
+): Promise<VoiceSlotReadiness> {
+	const label = SLOT_LABELS[slot];
+	const requirement = requirementFor(providerId);
+
+	if (requirement.kind === 'none') {
+		return { slot, providerId, satisfied: true };
+	}
+
+	if (requirement.kind === 'model') {
+		// Runtime before model. A binary that will not load on this machine is not
+		// repaired by a download, and "download 1.1 GB" is the wrong instruction to
+		// give someone whose real problem is a missing redistributable.
+		if (requirement.runtimeId) {
+			const runtimeVerdict = runtimeFailureFor(slot, providerId, requirement.runtimeId, options);
+			if (runtimeVerdict) return runtimeVerdict;
+		}
+
+		const model = getVoiceModel(requirement.modelId);
+		const modelName = model?.displayName ?? requirement.modelId;
+		const status = await readModelStatus(requirement.modelId);
+
+		if (status.status === 'installed') {
+			return { slot, providerId, satisfied: true, requiredModelId: requirement.modelId };
+		}
+		if (status.status === 'corrupt') {
+			return {
+				slot,
+				providerId,
+				satisfied: false,
+				reason: 'model-corrupt',
+				requiredModelId: requirement.modelId,
+				detail: `${label}: ${modelName} is installed but failed verification${
+					status.detail ? ` (${status.detail})` : ''
+				}.`,
+				suggestedAction: 'Re-verify or re-download it in Settings > Plugins > A Cappella > Models.',
+			};
+		}
+		return {
+			slot,
+			providerId,
+			satisfied: false,
+			reason: 'model-not-installed',
+			requiredModelId: requirement.modelId,
+			detail: `${label}: ${modelName} is not installed.`,
+			suggestedAction: 'Download it in Settings > Plugins > A Cappella > Voice Setup.',
+		};
+	}
+
+	const readKey = options.hasApiKey ?? hasCredential;
+	if (!readKey(requirement.service)) {
+		return {
+			slot,
+			providerId,
+			satisfied: false,
+			reason: 'api-key-missing',
+			detail: `${label}: ${providerId} needs a ${credentialLabel(requirement.service)} API key.`,
+			// Naming the alternative matters: the honest recovery for "no key" is
+			// often "use the local model instead", and the gate is the only place
+			// that knows both options exist.
+			suggestedAction: `Add the key in Settings, or switch ${label} to a local model.`,
+		};
+	}
+
+	const reachable = (await options.probeProvider?.(providerId)) ?? true;
+	if (!reachable) {
+		return {
+			slot,
+			providerId,
+			satisfied: false,
+			reason: 'provider-unreachable',
+			detail: `${label}: ${providerId} could not be reached.`,
+			suggestedAction: `Check your connection, or switch ${label} to a local model.`,
+		};
+	}
+
+	return { slot, providerId, satisfied: true };
+}
+
+// Re-exported so a caller that already has the gate does not need a second
+// import for the one-line formatting of its verdict.
+export { readinessErrorMessage } from '../../../shared/acappella/readiness';

@@ -681,6 +681,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					useModalStore.getState().cyclePromptComposer();
 					trackShortcut('openPromptComposer');
 				}
+			} else if (ctx.isShortcut(e, 'openModelEffort')) {
+				e.preventDefault();
+				// AI-only: a file, terminal, or browser tab has no model to retune.
+				// Resolved through resolveActiveTabRef so a focused pane in a tiled
+				// group is retuned rather than the standalone tab hidden behind it.
+				const modelEffortRef = activeSession ? resolveActiveTabRef(activeSession) : null;
+				if (modelEffortRef?.type === 'ai') {
+					useModalStore.getState().openModal('modelEffort', { tabId: modelEffortRef.id });
+					trackShortcut('openModelEffort');
+				}
 			} else if (ctx.isShortcut(e, 'openWizard')) {
 				e.preventDefault();
 				ctx.openWizardModal();

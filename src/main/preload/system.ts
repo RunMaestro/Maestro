@@ -6,6 +6,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
+import type { GlobalHotkeyStatus } from '../../shared/global-hotkeys';
 import type { ParsedDeepLink, ShellInfo, UpdateStatus } from '../../shared/types';
 export type { ShellInfo, UpdateStatus } from '../../shared/types';
 
@@ -225,10 +226,13 @@ export function createAppApi() {
 		/**
 		 * Listen for global hotkey registration failures (e.g. another app already
 		 * owns the combo). Renderer should surface this to the user so they pick a
-		 * different key.
+		 * different key. The payload names the failing hotkey id, because Maestro
+		 * registers several and "a global hotkey failed" is not actionable.
 		 */
-		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void): (() => void) => {
-			const handler = (_: unknown, keys: string[]) => callback(keys);
+		onGlobalHotkeyRegistrationFailed: (
+			callback: (status: GlobalHotkeyStatus) => void
+		): (() => void) => {
+			const handler = (_: unknown, status: GlobalHotkeyStatus) => callback(status);
 			ipcRenderer.on('globalHotkey:registrationFailed', handler);
 			return () => ipcRenderer.removeListener('globalHotkey:registrationFailed', handler);
 		},

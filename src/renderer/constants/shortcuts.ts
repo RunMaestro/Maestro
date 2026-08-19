@@ -1,3 +1,9 @@
+import {
+	VOICE_AGENT_HOTKEY_ID,
+	VOICE_CONDUCTOR_HOTKEY_ID,
+	defaultGlobalHotkeyKeys,
+	globalHotkeyLabel,
+} from '../../shared/global-hotkeys';
 import type { Shortcut } from '../types';
 
 export const DEFAULT_SHORTCUTS = {
@@ -96,6 +102,11 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'p'],
 	},
 	openWizard: { id: 'openWizard', label: 'New Agent Wizard', keys: ['Meta', 'Shift', 'n'] },
+	openModelEffort: {
+		id: 'openModelEffort',
+		label: 'Change Tabs Model and Effort',
+		keys: ['Alt', 'Meta', '.'],
+	},
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
 	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
@@ -356,6 +367,28 @@ export const TAB_SHORTCUTS = {
 	goToTab8: { id: 'goToTab8', label: 'Go to Tab 8', keys: ['Meta', '8'] },
 	goToTab9: { id: 'goToTab9', label: 'Go to Tab 9', keys: ['Meta', '9'] },
 	goToLastTab: { id: 'goToLastTab', label: 'Go to Last Tab', keys: ['Meta', '0'] },
+	/**
+	 * The two A Cappella hotkeys. They live here so the Shortcuts tab can rebind
+	 * them like any other key, but they are SYSTEM-WIDE: the main process
+	 * registers them through the global hotkey registry, so they fire from any
+	 * application rather than only inside Maestro. Nothing in the renderer's
+	 * keyboard handler matches these ids, and nothing should - a second, in-app
+	 * handler would fire alongside the global one.
+	 *
+	 * Ids, labels, and defaults all come from `shared/global-hotkeys.ts`, which is
+	 * what main reads too: a hotkey the Settings list and the registry spelled
+	 * differently would be rebindable and inert.
+	 */
+	[VOICE_CONDUCTOR_HOTKEY_ID]: {
+		id: VOICE_CONDUCTOR_HOTKEY_ID,
+		label: `${globalHotkeyLabel(VOICE_CONDUCTOR_HOTKEY_ID)} (Global)`,
+		keys: defaultGlobalHotkeyKeys(VOICE_CONDUCTOR_HOTKEY_ID),
+	},
+	[VOICE_AGENT_HOTKEY_ID]: {
+		id: VOICE_AGENT_HOTKEY_ID,
+		label: `${globalHotkeyLabel(VOICE_AGENT_HOTKEY_ID)} (Global)`,
+		keys: defaultGlobalHotkeyKeys(VOICE_AGENT_HOTKEY_ID),
+	},
 } satisfies Record<string, Shortcut>;
 
 /**

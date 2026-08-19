@@ -234,6 +234,7 @@ const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	plugins: false,
 	concerto: false,
 	groupsPlus: false,
+	aCappella: false,
 };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
@@ -616,6 +617,11 @@ export type SettingsStore = SettingsStoreState & SettingsStoreActions;
 /** Shared renderer selector for every Groups+ surface. */
 export const selectGroupsPlusEnabled = (state: SettingsStore) =>
 	state.encoreFeatures.groupsPlus === true;
+
+/** Shared renderer selector for every A Cappella surface (HUD, dev harness,
+ * Voice Setup). One owner so the voice gate cannot drift between them. */
+export const selectACappellaEnabled = (state: SettingsStore) =>
+	state.encoreFeatures.aCappella === true;
 
 // ============================================================================
 // Auto Run watchdog helpers

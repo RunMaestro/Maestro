@@ -192,6 +192,9 @@ import type { AggregatedContributions as PluginContributions } from '../shared/p
 import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
+import type { VoiceApi } from '../main/preload/acappella';
+import type { VoiceSelfTestResponse } from '../main/preload/debug';
+import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 
 interface MaestroAPI {
@@ -432,6 +435,19 @@ interface MaestroAPI {
 		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteNewTab: (callback: (sessionId: string, responseChannel: string) => void) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
+		/** Land on one AI tab, waking or reopening it if that is what it takes. */
+		onRemoteFocusAiTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteFocusAiTabResponse: (
+			responseChannel: string,
+			result: {
+				ok: boolean;
+				tabId?: string;
+				action?: 'focused' | 'woke' | 'reopened';
+				reason?: string;
+			}
+		) => void;
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string) => void
@@ -1959,7 +1975,9 @@ interface MaestroAPI {
 				groupId?: string;
 			}) => void
 		) => () => void;
-		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
+		onGlobalHotkeyRegistrationFailed: (
+			callback: (status: import('../shared/global-hotkeys').GlobalHotkeyStatus) => void
+		) => () => void;
 	};
 	platform: string;
 	/** Resolved on-disk maestro-cli.js path (dev vs packaged), or null. */
@@ -2740,6 +2758,14 @@ interface MaestroAPI {
 				error?: string;
 			}) => void
 		) => () => void;
+		/**
+		 * A Cappella voice self-test. Loads each native runtime, runs a trivial
+		 * operation, and reports per-runtime pass/fail with timings. Loads no model
+		 * and opens no device, so it is safe to run before anything is downloaded.
+		 *
+		 * `success` is "the self-test ran", `report.passed` is "the runtimes work".
+		 */
+		voiceSelfTest: () => Promise<VoiceSelfTestResponse>;
 	};
 	// Sync API (custom storage location)
 	sync: {
@@ -4423,6 +4449,23 @@ interface MaestroAPI {
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
 	};
+
+	/**
+	 * A Cappella Voice API. The session itself is headless and lives in the main
+	 * process, so this window is one client among several (the iPhone is another)
+	 * and holds no authoritative state: render from the `onEvent` stream.
+	 *
+	 * Every channel except `stop` rejects with 'ACappellaDisabled' when the
+	 * Encore flag is off.
+	 */
+	voice: VoiceApi;
+
+	/**
+	 * A Cappella audio host control link. Only the hidden audio window
+	 * (`?acappellaAudio`) uses this: main answers PCM frames from that
+	 * webContents alone, so calling it from the app window sends into a void.
+	 */
+	voiceAudioHost: VoiceAudioHostApi;
 }
 
 declare global {

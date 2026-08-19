@@ -17,18 +17,40 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Agent IDs & Metadata
 
-| Function / Constant       | File                           | Signature                                 | Process | Purpose                                                                                                                                                  |
-| ------------------------- | ------------------------------ | ----------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_IDS`               | `src/shared/agentIds.ts`       | `readonly string[]`                       | Both    | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                  |
-| `AgentId`                 | `src/shared/agentIds.ts`       | Type derived from `AGENT_IDS`             | Both    | Union type of all valid agent IDs.                                                                                                                       |
-| `isValidAgentId`          | `src/shared/agentIds.ts`       | `(id: string) => id is AgentId`           | Both    | Type guard for agent ID validation.                                                                                                                      |
-| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                 | Both    | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.   |
-| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => string`  | Both    | Get display name, falls back to raw id.                                                                                                                  |
-| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`  | `ReadonlySet<AgentId>`                    | Both    | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use. |
-| `isBetaAgent`             | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => boolean` | Both    | Check if an agent is in beta.                                                                                                                            |
-| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts` | `Partial<Record<AgentId, number>>`        | Both    | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                      |
-| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts` | `number` (200000)                         | Both    | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                             |
-| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts` | `ReadonlySet<AgentId>`                    | Both    | Agents with combined input+output context windows (currently: codex).                                                                                    |
+| Function / Constant       | File                                | Signature                                                                 | Process  | Purpose                                                                                                                                                  |
+| ------------------------- | ----------------------------------- | ------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_IDS`               | `src/shared/agentIds.ts`            | `readonly string[]`                                                       | Both     | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                  |
+| `AgentId`                 | `src/shared/agentIds.ts`            | Type derived from `AGENT_IDS`                                             | Both     | Union type of all valid agent IDs.                                                                                                                       |
+| `isValidAgentId`          | `src/shared/agentIds.ts`            | `(id: string) => id is AgentId`                                           | Both     | Type guard for agent ID validation.                                                                                                                      |
+| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`       | `Record<AgentId, string>`                                                 | Both     | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.   |
+| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => string`                                  | Both     | Get display name, falls back to raw id.                                                                                                                  |
+| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`       | `ReadonlySet<AgentId>`                                                    | Both     | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use. |
+| `isBetaAgent`             | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => boolean`                                 | Both     | Check if an agent is in beta.                                                                                                                            |
+| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts`      | `Partial<Record<AgentId, number>>`                                        | Both     | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                      |
+| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts`      | `number` (200000)                                                         | Both     | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                             |
+| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts`      | `ReadonlySet<AgentId>`                                                    | Both     | Agents with combined input+output context windows (currently: codex).                                                                                    |
+| `getModelFamily`          | `src/renderer/utils/modelFamily.ts` | `(modelId: string) => string`                                             | Renderer | Vendor label for a model id ('Claude', 'OpenAI', 'Gemini', ... else 'Other'). Reads the last segment of a provider-qualified id. Display aid only.       |
+| `groupModelsByFamily`     | `src/renderer/utils/modelFamily.ts` | `(models: string[]) => Array<{family: string \| null; models: string[]}>` | Renderer | Group a model catalog by vendor for a picker. Returns one unlabelled group when everything shares a family, so no lone header appears.                   |
+
+---
+
+## Model & Effort Options (Renderer)
+
+An agent's model list, effort levels, and agent-level defaults are fetched
+through one hook, and the tab > session > agent-default ladder is applied by one
+resolver. Both live in `src/renderer/hooks/agent/useAgentModelEffortOptions.ts`
+and are shared by the composer pills (`ModelEffortPills`) and the keyboard-only
+picker (`ModelEffortModal`), so the two surfaces cannot disagree about what an
+agent offers or what a tab is currently running.
+
+| Function                     | Signature                                                                | Purpose                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `useAgentModelEffortOptions` | `(agentId?: string) => { models, efforts, defaultModel, defaultEffort }` | Fetches all four with a stale guard. Probes BOTH `effort` and `reasoningEffort` config keys, since agents split between them. |
+| `resolveModelEffort`         | `(tab, session, { defaultModel, defaultEffort }) => { model, effort }`   | Applies tab override > session override > agent default > empty. Do NOT re-derive this ladder inline - it drifts.             |
+
+Effort options are agent-scoped, not model-scoped: the underlying CLIs expose a
+single list per agent, and a model with no reasoning budget just ignores the
+flag. Don't invent per-model effort lists without a data source for them.
 
 ---
 
@@ -383,6 +405,35 @@ UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - d
 | `getAllFilePaths(nodes, basePath?)`     | `(TreeNode[], string?) => string[]`          | Convenience: all file paths.                                  |
 | `getAllFolderPaths(nodes, basePath?)`   | `(TreeNode[], string?) => string[]`          | Convenience: all folder paths.                                |
 | `buildFileIndex(nodes, basePath?)`      | `(TreeNode[], string?) => FilePathEntry[]`   | Build flat index with `{ relativePath, filename }`.           |
+
+---
+
+## A Cappella Encore Flag (`src/shared/acappella/feature-flag.ts` - Both)
+
+The ONE reader of the `encoreFeatures.aCappella` flag. Do NOT hand-roll
+`flags.aCappella === true` at a new call site: the surfaces that gate on it are
+not one system (IPC handlers, the hotkey installation, the WebSocket signaling
+adapter, the transport, the debug-package collector), they each control a real
+resource - a microphone, a global shortcut, a Bonjour advert - and a surface that
+disagrees with the rest leaves one of those running behind a switch the user
+believes is off. Five byte-identical copies had already accumulated.
+
+| Function / Constant              | Signature                   | Purpose                                                                                                                      |
+| -------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `isACappellaEnabled(store)`      | `(EncoreFlagStore) => bool` | True only for the literal `true`. A hand-edited `"true"` or `1` reads as OFF, which is the safe direction for a mic feature. |
+| `requireACappellaEnabled(store)` | `(EncoreFlagStore) => void` | Throw `ACappellaDisabled` unless the flag is on. What a gated IPC handler calls.                                             |
+| `ACAPPELLA_DISABLED_ERROR`       | `'ACappellaDisabled'`       | The stable error string the renderer maps. Not prose - a sentence here would be a wire contract.                             |
+| `EncoreFlagStore`                | `{ get(key, default?) }`    | The narrow store slice this needs, so an electron-store or a plain object both satisfy it.                                   |
+
+**Turning the flag off is a teardown, not just a gate.**
+`shutdownACappellaForDisable()` in `src/main/ipc/handlers/acappella.ts` is what
+`main/index.ts` runs from its `encoreFeatures` watcher: it stops the session,
+drops the audio bridge, disposes the inference pipeline (which is also what lets
+reclaim-disk delete model files on Windows), and calls
+`ACappellaTransport.standDown()` for the advert and the connected phones. It
+deliberately does NOT dispose the transport or the hotkey installation - both are
+built once per process, so tearing them down would mean switching the feature
+back on did nothing until the next restart.
 
 ---
 

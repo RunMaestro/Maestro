@@ -356,6 +356,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							)}
 						{gitPillMenu}
 					</div>
+
+					{/* No voice microphone here. The composer's Send column owns that
+					    button, and a second microphone in the header was the same action
+					    twice on one screen. Everything the header menu offered lives in
+					    the command palette (`voiceCommands.ts`): talk to this agent, talk
+					    to the Conductor, show the HUD, toggle the transcript, end the
+					    session. */}
 				</div>
 
 				{/* Git Status Widget - compact mode handled via CSS container queries */}
