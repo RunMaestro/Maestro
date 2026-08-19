@@ -420,7 +420,18 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			}
 
 			if (!isSessionNotFound && !willAutoRetry) {
-				openModal('agentError', { sessionId: actualSessionId });
+				// An expired token is not a per-turn error: it takes every agent and
+				// every Cue pipeline on that provider down at once, and the generic
+				// error modal only offered to hand the user a terminal. Go straight to
+				// the re-authentication terminal so the fix happens here.
+				if (agentError.type === 'auth_expired') {
+					openModal('reauth', {
+						sessionId: actualSessionId,
+						message: agentError.message,
+					});
+				} else {
+					openModal('agentError', { sessionId: actualSessionId });
+				}
 			}
 		});
 
@@ -434,4 +445,26 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		deps.pauseBatchOnErrorRef,
 		ownedGate,
 	]);
+
+	// Auth expiry raised outside the streaming path (Cue pipeline runs). Those
+	// agents are spawned by Cue itself, so they never reach `agent:error` - and
+	// an unattended pipeline is exactly the case where a silent auth failure
+	// costs the most, so it gets the same modal a chat turn would raise.
+	useEffect(() => {
+		return window.maestro.process.onAuthExpired((payload) => {
+			const { openModal } = useModalStore.getState();
+			const session = useSessionStore.getState().sessions.find((s) => s.id === payload.sessionId);
+			if (!session) {
+				logger.warn('[onAuthExpired] No session for auth-expired notice', undefined, payload);
+				return;
+			}
+
+			logger.info('[onAuthExpired] Provider credentials expired', undefined, payload);
+			openModal('reauth', {
+				sessionId: payload.sessionId,
+				message: payload.message,
+				fromPipeline: payload.fromPipeline,
+			});
+		});
+	}, []);
 }

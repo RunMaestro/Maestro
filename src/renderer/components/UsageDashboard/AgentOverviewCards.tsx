@@ -8,14 +8,24 @@
  * Worktree children render with a dashed accent border, a "WT" badge,
  * and their checked-out branch, so a parent and its worktrees are
  * visually distinguishable at a glance.
+ *
+ * A fuzzy filter above the grid narrows the cards live as the user types,
+ * matching on the agent name (with or without its leading emoji) and on a
+ * worktree's branch name.
  */
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
+import { stripLeadingEmojis } from '../../../shared/emojiUtils';
 // Token/cost for an agent lives in the Agent Detail modal (double-click a card),
 // not on the card itself - four stats made the tile too crowded to scan.
 import { formatAgeShort } from '../../../shared/formatters';
+import { fuzzyMatchWithScore } from '../../utils/search';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { EscCloseButton } from '../ui/EscCloseButton';
 import { Sparkline } from './Sparkline';
 import {
 	AGENT_OVERVIEW_SORT_OPTIONS,
@@ -295,6 +305,35 @@ interface AgentOverviewCardsProps {
 	onShowAgentDetails?: (session: Session) => void;
 }
 
+/**
+ * Fuzzy-score a session against the filter query. Returns `null` when the
+ * session doesn't match at all.
+ *
+ * Three haystacks are tried and the best score wins:
+ *   - the raw name, so an emoji-prefixed agent still matches on its emoji;
+ *   - the name with leading emojis stripped, so "ag" matches "🕵️ Agent OSINT"
+ *     from the first real letter (the raw name would force the query to skip
+ *     past the emoji, which kills the prefix bonus);
+ *   - a worktree's branch, discounted so a name match always outranks it.
+ */
+function scoreSessionForFilter(session: Session, query: string): number | null {
+	const nameScore = fuzzyMatchWithScore(session.name, query);
+	const strippedName = stripLeadingEmojis(session.name);
+	const strippedScore =
+		strippedName === session.name ? nameScore : fuzzyMatchWithScore(strippedName, query);
+
+	let best = -1;
+	if (nameScore.matches) best = Math.max(best, nameScore.score);
+	if (strippedScore.matches) best = Math.max(best, strippedScore.score);
+
+	if (session.worktreeBranch) {
+		const branchScore = fuzzyMatchWithScore(session.worktreeBranch, query);
+		if (branchScore.matches) best = Math.max(best, branchScore.score / 2);
+	}
+
+	return best < 0 ? null : best;
+}
+
 export const AgentOverviewCards = memo(function AgentOverviewCards({
 	sessions,
 	data,
@@ -303,6 +342,24 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	onShowAgentDetails,
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
+	const [filterQuery, setFilterQuery] = useState('');
+	const filterInputRef = useRef<HTMLInputElement>(null);
+
+	const clearFilter = useCallback(() => {
+		setFilterQuery('');
+		filterInputRef.current?.focus();
+	}, []);
+
+	// While the filter holds text, it owns Escape: the key clears the box
+	// instead of closing the whole dashboard. The layer stack handles Escape on
+	// a capture-phase window listener, so an input-local key handler can never
+	// win - this has to be a real layer that outranks USAGE_DASHBOARD.
+	useModalLayer(MODAL_PRIORITIES.USAGE_DASHBOARD_AGENT_FILTER, undefined, clearFilter, {
+		enabled: filterQuery.length > 0,
+		focusTrap: 'none',
+		blocksLowerLayers: false,
+		capturesFocus: false,
+	});
 
 	// Terminal sessions aren't "agents". Exclude them so the card row
 	// matches the agent count shown elsewhere in the dashboard. Default sort
@@ -313,66 +370,138 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 		return sortAgentOverviewSessions(sessions, data, sortMode);
 	}, [sessions, data, sortMode]);
 
+	// Live fuzzy filter. With the default Name sort we re-rank by match score so
+	// the best hit lands first; an explicit sort (Queries, Tabs, ...) is the
+	// user's stated order and survives filtering untouched.
+	const filteredSessions = useMemo(() => {
+		const query = filterQuery.trim();
+		if (!query) return activeSessions;
+
+		const scored = activeSessions
+			.map((session) => ({ session, score: scoreSessionForFilter(session, query) }))
+			.filter((entry): entry is { session: Session; score: number } => entry.score !== null);
+
+		if (sortMode === 'name') {
+			scored.sort((a, b) => b.score - a.score);
+		}
+		return scored.map((entry) => entry.session);
+	}, [activeSessions, filterQuery, sortMode]);
+
 	if (activeSessions.length === 0) return null;
 
 	return (
 		<div className="flex flex-col gap-3">
-			<div className="flex items-center justify-end gap-2">
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
-					Sort by:
-				</span>
-				<div
-					className="flex rounded overflow-hidden border"
-					style={{ borderColor: theme.colors.border }}
-					role="radiogroup"
-					aria-label="Sort agents"
-					data-testid="agent-overview-sort"
-				>
-					{AGENT_OVERVIEW_SORT_OPTIONS.map((opt, i) => {
-						const isActive = sortMode === opt.value;
-						return (
-							<button
-								key={opt.value}
-								type="button"
-								onClick={() => setSortMode(opt.value)}
-								className="px-2 py-1 text-xs transition-colors"
-								style={{
-									backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
-									color: isActive ? theme.colors.accent : theme.colors.textDim,
-									borderLeft: i === 0 ? undefined : `1px solid ${theme.colors.border}`,
-								}}
-								aria-pressed={isActive}
-								data-testid={`agent-overview-sort-${opt.value}`}
-							>
-								{opt.label}
-							</button>
-						);
-					})}
+			<div className="flex items-center justify-between gap-3 flex-wrap">
+				<div className="flex items-center gap-2 min-w-0">
+					<div className="relative flex items-center" style={{ width: 260, maxWidth: '100%' }}>
+						<Search
+							className="absolute left-2 w-3.5 h-3.5 pointer-events-none"
+							style={{ color: filterQuery ? theme.colors.accent : theme.colors.textDim }}
+							aria-hidden="true"
+						/>
+						<input
+							ref={filterInputRef}
+							type="text"
+							value={filterQuery}
+							onChange={(e) => setFilterQuery(e.target.value)}
+							placeholder="Filter agents..."
+							className="w-full rounded border bg-transparent outline-none text-xs py-1 pl-7"
+							style={{
+								borderColor: filterQuery ? theme.colors.accent : theme.colors.border,
+								color: theme.colors.textMain,
+								paddingRight: filterQuery ? 52 : 8,
+							}}
+							aria-label="Filter agents"
+							data-testid="agent-overview-filter-input"
+						/>
+						{filterQuery && (
+							<EscCloseButton
+								theme={theme}
+								variant="adornment"
+								label="Clear filter (Esc)"
+								onClose={clearFilter}
+								testId="agent-overview-filter-clear"
+							/>
+						)}
+					</div>
+					{filterQuery && (
+						<span
+							className="text-xs tabular-nums whitespace-nowrap"
+							style={{ color: theme.colors.textDim }}
+							data-testid="agent-overview-filter-count"
+						>
+							{filteredSessions.length} of {activeSessions.length}
+						</span>
+					)}
+				</div>
+				<div className="flex items-center gap-2">
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						Sort by:
+					</span>
+					<div
+						className="flex rounded overflow-hidden border"
+						style={{ borderColor: theme.colors.border }}
+						role="radiogroup"
+						aria-label="Sort agents"
+						data-testid="agent-overview-sort"
+					>
+						{AGENT_OVERVIEW_SORT_OPTIONS.map((opt, i) => {
+							const isActive = sortMode === opt.value;
+							return (
+								<button
+									key={opt.value}
+									type="button"
+									onClick={() => setSortMode(opt.value)}
+									className="px-2 py-1 text-xs transition-colors"
+									style={{
+										backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
+										color: isActive ? theme.colors.accent : theme.colors.textDim,
+										borderLeft: i === 0 ? undefined : `1px solid ${theme.colors.border}`,
+									}}
+									aria-pressed={isActive}
+									data-testid={`agent-overview-sort-${opt.value}`}
+								>
+									{opt.label}
+								</button>
+							);
+						})}
+					</div>
 				</div>
 			</div>
-			<div
-				className="grid gap-3"
-				style={{
-					gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-				}}
-				data-testid="agent-overview-cards"
-				role="region"
-				aria-label="Active agents overview"
-			>
-				{activeSessions.map((session, index) => (
-					<AgentCard
-						key={session.id}
-						session={session}
-						data={data}
-						theme={theme}
-						animationIndex={index}
-						isSelected={isSessionHighlighted(session, activeFilterKey)}
-						visibleSessions={activeSessions}
-						highlightedStat={sortMode === 'name' ? null : sortMode}
-						onShowDetails={onShowAgentDetails}
-					/>
-				))}
-			</div>
+			{filteredSessions.length === 0 ? (
+				<div
+					className="py-8 text-center text-sm"
+					style={{ color: theme.colors.textDim }}
+					data-testid="agent-overview-no-matches"
+					role="status"
+				>
+					No agents match &ldquo;{filterQuery.trim()}&rdquo;
+				</div>
+			) : (
+				<div
+					className="grid gap-3"
+					style={{
+						gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+					}}
+					data-testid="agent-overview-cards"
+					role="region"
+					aria-label="Active agents overview"
+				>
+					{filteredSessions.map((session, index) => (
+						<AgentCard
+							key={session.id}
+							session={session}
+							data={data}
+							theme={theme}
+							animationIndex={index}
+							isSelected={isSessionHighlighted(session, activeFilterKey)}
+							visibleSessions={activeSessions}
+							highlightedStat={sortMode === 'name' ? null : sortMode}
+							onShowDetails={onShowAgentDetails}
+						/>
+					))}
+				</div>
+			)}
 		</div>
 	);
 });

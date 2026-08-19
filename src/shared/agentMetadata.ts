@@ -150,22 +150,67 @@ export function isBetaAgent(agentId: AgentId | string): boolean {
 }
 
 /**
- * CLI login commands for re-authenticating an agent on a remote host.
- * Used by StdoutHandler when auth expires over SSH so the user is told to run
- * that agent's own login command rather than a hardcoded "claude login".
- * Partial: agents without a known CLI login command (API-key-only, etc.) are
- * omitted and get a generic "SSH into the remote to re-authenticate" message.
+ * How a provider's CLI is re-authenticated.
+ *
+ * `binary` + `args` form the shell command Maestro runs in the reauthentication
+ * terminal. Some providers have no login subcommand and only expose the flow as
+ * a slash command inside their TUI - those set `followUp`, which the UI shows as
+ * "then type /auth" instead of pretending a one-liner exists.
  */
-export const AGENT_LOGIN_COMMANDS: Partial<Record<AgentId, string>> = {
-	'claude-code': 'claude login',
-	codex: 'codex login',
-	'copilot-cli': 'gh auth login',
-	grok: 'grok login',
+export interface AgentLoginCommand {
+	/** Binary to run. Replaced by the agent's custom path when one is configured. */
+	binary: string;
+	/** Arguments appended after the binary. Empty when the bare binary is the flow. */
+	args: string;
+	/** Slash command the user must type once the TUI is up, when `args` can't do it. */
+	followUp?: string;
+}
+
+/**
+ * Re-authentication command per agent. `null` means the agent has no login flow
+ * of its own (the Terminal agent is a plain shell).
+ *
+ * Keyed by AgentId so adding a new agent forces a decision here.
+ */
+const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
+	terminal: null,
+	'claude-code': { binary: 'claude', args: '/login' },
+	codex: { binary: 'codex', args: 'login' },
+	'gemini-cli': { binary: 'gemini', args: '', followUp: '/auth' },
+	'qwen3-coder': { binary: 'qwen3-coder', args: '', followUp: '/auth' },
+	opencode: { binary: 'opencode', args: 'auth login' },
+	'factory-droid': { binary: 'droid', args: '', followUp: '/login' },
+	'copilot-cli': { binary: 'copilot', args: 'login' },
+	grok: { binary: 'grok', args: 'login' },
+	hermes: null,
+	pi: null,
+	omp: null,
 };
 
 /**
- * Return the CLI login command for an agent, if one is known.
+ * Get the re-authentication command for an agent, or null when the agent has
+ * none (unknown ids included - we never guess a command to run in a shell).
+ *
+ * @param agentId - The agent to authenticate.
+ * @param customPath - The agent's configured binary path, when the user set one.
+ *   Substituted for the default binary name so a non-PATH install still works.
  */
-export function getAgentLoginCommand(agentId: AgentId | string): string | undefined {
-	return AGENT_LOGIN_COMMANDS[agentId as AgentId];
+export function getAgentLoginCommand(
+	agentId: AgentId | string,
+	customPath?: string
+): AgentLoginCommand | null {
+	if (!Object.prototype.hasOwnProperty.call(AGENT_LOGIN_COMMANDS, agentId)) return null;
+	const entry = AGENT_LOGIN_COMMANDS[agentId as AgentId];
+	if (!entry) return null;
+	const binary = customPath?.trim() || entry.binary;
+	return binary === entry.binary ? entry : { ...entry, binary };
+}
+
+/**
+ * Render an {@link AgentLoginCommand} as the single line typed into a shell.
+ * Quotes a custom binary path so a directory with spaces still runs.
+ */
+export function formatAgentLoginCommand(login: AgentLoginCommand): string {
+	const binary = /[\s"']/.test(login.binary) ? `"${login.binary}"` : login.binary;
+	return login.args ? `${binary} ${login.args}` : binary;
 }

@@ -26,6 +26,9 @@ export const MODAL_PRIORITIES = {
 	/** Quit confirmation modal - highest priority, blocks app quit */
 	QUIT_CONFIRM: 1020,
 
+	/** Provider re-authentication terminal - above the agent error modal it replaces */
+	REAUTH: 1015,
+
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
@@ -252,9 +255,14 @@ export const MODAL_PRIORITIES = {
 
 	/** AgentRun ledger dashboard modal */
 	AGENT_RUN_DASHBOARD: 542,
+	/** Agent card fuzzy filter in the Usage Dashboard's Agents tab. Registered
+	 *  only while the box holds text, so Escape clears the filter before it
+	 *  closes the dashboard. Sits below the detail sub-modal: with both open,
+	 *  Escape dismisses the sub-modal first. */
+	USAGE_DASHBOARD_AGENT_FILTER: 541,
 
 	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
-	USAGE_DASHBOARD_AGENT_DETAIL: 541,
+	USAGE_DASHBOARD_AGENT_DETAIL: 542,
 
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,

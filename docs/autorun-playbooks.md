@@ -252,7 +252,7 @@ For editing complex Auto Run documents, use the **Expanded Editor** - a fullscre
 **To open the Expanded Editor:**
 
 - Click the **expand icon** (↗️) in the top-right corner of the Auto Run panel
-- Or press `Cmd+Shift+E` (Mac) / `Ctrl+Shift+E` (Windows/Linux) to toggle - works from anywhere in the interface, even when the Auto Run panel is closed
+- Or press `Cmd+Shift+3` (Mac) / `Ctrl+Shift+3` (Windows/Linux) to toggle - works from anywhere in the interface, even when the Auto Run panel is closed
 - Or open the Command Palette (`Cmd+K`) and pick **Auto Run Expanded Preview**
 
 ![Expanded Auto Run Editor](./screenshots/autorun-expanded.png)
@@ -267,7 +267,7 @@ The Expanded Editor provides:
 
 Click **Collapse** or press `Esc` to return to the sidebar panel view.
 
-> **Maestro Pro Tip - a scratch pad from anywhere:** Because `Cmd+Shift+E` and the Command Palette open the Expanded Editor from anywhere (the Auto Run panel doesn't need to be open), it doubles as an always-available scratch pad. Keep a throwaway document in your Auto Run folder and, as ideas surface mid-session, pop open the editor and jot down tasks you want to kick off later. When you wrap up your interactive work, run that document to dispatch the whole batch at once.
+> **Maestro Pro Tip - a scratch pad from anywhere:** Because `Cmd+Shift+3` and the Command Palette open the Expanded Editor from anywhere (the Auto Run panel doesn't need to be open), it doubles as an always-available scratch pad. Keep a throwaway document in your Auto Run folder and, as ideas surface mid-session, pop open the editor and jot down tasks you want to kick off later. When you wrap up your interactive work, run that document to dispatch the whole batch at once.
 
 ## Saving Documents
 

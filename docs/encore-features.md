@@ -22,7 +22,7 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** t
 | [Usage Dashboard](./usage-dashboard) | `Opt+Cmd+U` / `Alt+Ctrl+U`     | Comprehensive analytics for tracking AI usage patterns                                           |
 | [Maestro Symphony](./symphony)       | `Cmd+Shift+Y` / `Ctrl+Shift+Y` | Contribute to open source by donating AI tokens                                                  |
 | [Concerto](./concerto)               | Agent-driven                   | Agents compose live native views: in-app Movement panels and always-on-top Cadenza HUD cards     |
-| [Maestro Cue](./maestro-cue)         | `Cmd+Shift+E` / `Ctrl+Shift+E` | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking |
+| [Maestro Cue](./maestro-cue)         | `Opt+Q` / `Alt+Q`              | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking |
 
 ## For Developers
 

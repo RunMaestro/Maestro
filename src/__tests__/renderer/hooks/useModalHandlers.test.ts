@@ -799,7 +799,7 @@ describe('useModalHandlers', () => {
 			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 
-		it('handleAuthenticateAfterError calls agent store, clears modal, and focuses input', () => {
+		it('handleAuthenticateAfterError calls agent store and swaps in the reauth modal', () => {
 			const mockAuth = vi.fn();
 			vi.spyOn(useAgentStore, 'getState').mockReturnValue({
 				...useAgentStore.getState(),
@@ -815,11 +815,12 @@ describe('useModalHandlers', () => {
 
 			expect(mockAuth).toHaveBeenCalledWith('session-1');
 			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
-
-			act(() => {
-				vi.advanceTimersByTime(10);
+			// The login now happens inside Maestro, so the error modal hands off to the
+			// re-authentication terminal instead of returning focus to the composer.
+			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
+			expect(useModalStore.getState().getData('reauth')).toMatchObject({
+				sessionId: 'session-1',
 			});
-			expect(inputRef.current!.focus).toHaveBeenCalled();
 		});
 	});
 

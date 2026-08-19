@@ -337,6 +337,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				// active and paused.
 				pendingAutoplay: true,
 				dismissed: false,
+				dormant: false,
 				// Switching items unmounts the outgoing player, which pauses it. Only
 				// one element is ever mounted, so overlapping audio is structurally
 				// impossible rather than something we have to remember to prevent.
@@ -369,7 +370,13 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			// one the user is on, so queueing behind it must not yank the player
 			// away from it.
 			if (state.activeItemId) {
-				return { items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId) };
+				// Queueing counts as engaging the player, so a restored queue stops
+				// being dormant here: otherwise adding to a queue whose widget is
+				// hidden would produce no visible response anywhere in the app.
+				return {
+					items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId),
+					dormant: false,
+				};
 			}
 
 			// Idle player: there is no widget on screen, so a pure append would
@@ -380,6 +387,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstAddedId),
 				activeItemId: firstAddedId,
 				dismissed: false,
+				dormant: false,
 			};
 		});
 		if (added > 0) persistQueue();
@@ -394,9 +402,10 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 			if (state.activeItemId === itemId) {
 				// Already active. Honor a fresh autoplay request and un-hide, but do
 				// not restart something mid-listen.
-				if (!autoplay && !state.dismissed) return state;
+				if (!autoplay && !state.dismissed && !state.dormant) return state;
 				return {
 					dismissed: false,
+					dormant: false,
 					pendingAutoplay: state.pendingAutoplay || autoplay,
 				};
 			}
@@ -405,6 +414,7 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 				...historyForActiveChange(state, itemId),
 				playing: false,
 				dismissed: false,
+				dormant: false,
 				pendingAutoplay: autoplay,
 			};
 		});
@@ -486,7 +496,10 @@ export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get
 
 	dismiss: () => set((state) => (state.dismissed ? state : { dismissed: true })),
 
-	restore: () => set((state) => (state.dismissed ? { dismissed: false } : state)),
+	restore: () =>
+		set((state) =>
+			state.dismissed || state.dormant ? { dismissed: false, dormant: false } : state
+		),
 
 	setFloatGeometry: (kind, rect) => {
 		set((state) => {
@@ -536,9 +549,26 @@ export function getMediaPlaybackActions() {
 	};
 }
 
-/** Whether a hidden player could be brought back right now. */
+/**
+ * Whether a hidden player could be brought back right now.
+ *
+ * True for a dormant restored queue as well, so the command palette can always
+ * reopen one. The header pill uses the stricter check below.
+ */
 export function selectCanRestoreFloatingPlayer(state: MediaPlaybackStoreState): boolean {
 	return state.dismissed && state.activeItemId !== null;
+}
+
+/**
+ * Whether the Left Bar header should show the minimized player.
+ *
+ * Stricter than `selectCanRestoreFloatingPlayer` by exactly one condition: the
+ * pill is passive chrome the user did not ask for, so it has to be earned by
+ * engaging the player this session. Restoring a queue from disk does not earn
+ * it, which is why a fresh launch is quiet even with ten files still queued.
+ */
+export function selectShowNowPlayingIndicator(state: MediaPlaybackStoreState): boolean {
+	return !state.dormant && selectCanRestoreFloatingPlayer(state);
 }
 
 /** The loaded item, or null when the player is idle. */

@@ -49,7 +49,11 @@ AGENT_DISPLAY_NAMES: Record<AgentId, string>  // Human-readable names
 BETA_AGENTS: ReadonlySet<AgentId>              // Agents showing "(Beta)" badge
 getAgentDisplayName(agentId): string           // Get name with fallback
 isBetaAgent(agentId): boolean                  // Check beta status
+getAgentLoginCommand(agentId, customPath?)     // Re-auth command, or null
+formatAgentLoginCommand(login): string         // Render it as a shell line
 ```
+
+**Re-authentication commands** are keyed by `AgentId`, so adding an agent forces a decision about how it logs in. An entry carries `binary` + `args` (the line Maestro types into the re-authentication terminal) and an optional `followUp` for providers whose login only exists as a slash command inside their TUI (`gemini-cli`, `qwen3-coder`, `factory-droid`). `null` means the agent has no login flow of its own. `getAgentLoginCommand` returns `null` for unknown ids rather than guessing, because the result is executed in a shell. The consumer is `ReauthModal` (`src/renderer/components/ReauthModal.tsx`); do not hand-roll a second login-command table.
 
 ### Context Windows (`src/shared/agentConstants.ts`)
 

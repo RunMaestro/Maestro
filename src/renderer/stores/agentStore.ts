@@ -317,11 +317,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) return;
 
+		// The login itself runs in the re-authentication modal (opened by the
+		// caller), so this only has to clear the error and select the agent whose
+		// provider failed - switching the agent into terminal mode would leave the
+		// user in a shell they never asked for once the modal closes.
 		get().clearAgentError(sessionId);
-
-		// Switch to terminal mode for re-auth (clear activeFileTabId to prevent orphaned file preview)
 		useSessionStore.getState().setActiveSessionId(sessionId);
-		updateSession(sessionId, (s) => ({ ...s, inputMode: 'terminal', activeFileTabId: null }));
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {

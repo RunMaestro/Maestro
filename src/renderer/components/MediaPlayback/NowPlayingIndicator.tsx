@@ -3,7 +3,7 @@ import { Maximize2, Pause, Play } from 'lucide-react';
 
 import {
 	selectActiveMediaItem,
-	selectCanRestoreFloatingPlayer,
+	selectShowNowPlayingIndicator,
 	useMediaPlaybackStore,
 } from '../../stores/mediaPlaybackStore';
 import type { Theme } from '../../types';
@@ -35,13 +35,15 @@ interface NowPlayingIndicatorProps {
  *
  * Shown only while the player is minimized (with the widget on screen it would
  * be a second copy of its own transport), and it disappears when the player is
- * closed or the queue empties.
+ * closed or the queue empties. A queue restored from disk does NOT bring it
+ * back: media controls at launch, with nothing playing and no file the user
+ * opened this session, are chrome nobody asked for.
  */
 export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 	theme,
 	compact = false,
 }: NowPlayingIndicatorProps) {
-	const minimized = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
+	const minimized = useMediaPlaybackStore(selectShowNowPlayingIndicator);
 	const active = useMediaPlaybackStore(selectActiveMediaItem);
 	const playing = useMediaPlaybackStore((s) => s.playing);
 	const restore = useMediaPlaybackStore((s) => s.restore);

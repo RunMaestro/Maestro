@@ -2156,10 +2156,13 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		// The play queue outlives a restart so a half-listened playlist is still
-		// there tomorrow. It comes back hidden and paused: restoring what was
-		// queued should not start a podcast at launch, and the Left Bar's
-		// now-playing indicator is what advertises that it is loaded. Recently
-		// played is NOT restored - it is per-session by design.
+		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
+		// what was queued should not start a podcast at launch, and it should not
+		// put media controls in the Left Bar header either, since the user has not
+		// played anything yet. The command palette's "Show Floating Media Player"
+		// is what reaches a dormant queue, and the first thing the user opens or
+		// queues wakes it. Recently played is NOT restored - it is per-session by
+		// design.
 		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined) {
 			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
 			const items = sanitizeMediaItems(stored?.items);
@@ -2173,6 +2176,7 @@ export async function loadAllSettings(): Promise<void> {
 					resumeTimes: sanitizeMediaTimes(stored?.resumeTimes, ids),
 					durations: sanitizeMediaTimes(stored?.durations, ids),
 					dismissed: true,
+					dormant: true,
 					playing: false,
 					pendingAutoplay: false,
 				});

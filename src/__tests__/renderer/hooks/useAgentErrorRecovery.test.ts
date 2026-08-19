@@ -12,7 +12,7 @@ const baseError: AgentError = {
 };
 
 describe('useAgentErrorRecovery', () => {
-	it('creates claude-code auth actions with terminal guidance and new session', () => {
+	it('creates claude-code auth actions naming the login command, plus new session', () => {
 		const onAuthenticate = vi.fn();
 		const onNewSession = vi.fn();
 
@@ -29,7 +29,10 @@ describe('useAgentErrorRecovery', () => {
 		const [authAction, newSessionAction] = result.current.recoveryActions;
 
 		expect(authAction.id).toBe('authenticate');
-		expect(authAction.label).toBe('Use Terminal');
+		expect(authAction.label).toBe('Re-authenticate');
+		// The login runs inside Maestro now, so the description names the command
+		// rather than telling the user to go find a terminal.
+		expect(authAction.description).toBe('Run "claude /login" here');
 		expect(authAction.primary).toBe(true);
 		expect(newSessionAction.id).toBe('new-session');
 

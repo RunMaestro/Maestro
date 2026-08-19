@@ -3,6 +3,7 @@ import {
 	flushMediaQueuePersist,
 	selectActiveMediaItem,
 	selectCanRestoreFloatingPlayer,
+	selectShowNowPlayingIndicator,
 	useMediaPlaybackStore,
 	MEDIA_HISTORY_LIMIT,
 	MEDIA_QUEUE_LIMIT,
@@ -37,6 +38,7 @@ function reset() {
 		history: [],
 		playing: false,
 		dismissed: false,
+		dormant: false,
 		pendingAutoplay: false,
 		toggleRequest: 0,
 		resumeTimes: {},
@@ -257,6 +259,36 @@ describe('mediaPlaybackStore', () => {
 			initial.dismiss();
 			initial.restore();
 			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('wakes a dormant queue on the first thing the user opens or queues', () => {
+			const dormant = () => useMediaPlaybackStore.getState().dormant;
+
+			initial.openMedia(request());
+			useMediaPlaybackStore.setState({ dormant: true });
+			initial.openMedia(request({ path: '/files/b.mp3', name: 'b.mp3' }));
+			expect(dormant()).toBe(false);
+
+			useMediaPlaybackStore.setState({ dormant: true });
+			initial.enqueueMedia([request({ path: '/files/c.mp3', name: 'c.mp3' })]);
+			expect(dormant()).toBe(false);
+
+			useMediaPlaybackStore.setState({ dormant: true });
+			initial.setActiveItem(idOf(request()));
+			expect(dormant()).toBe(false);
+		});
+
+		it('selectShowNowPlayingIndicator hides the header pill for a dormant queue', () => {
+			// The state a restart lands in: loaded, hidden, untouched. The palette
+			// can still reach it; the Left Bar must not advertise it.
+			initial.openMedia(request());
+			useMediaPlaybackStore.setState({ dismissed: true, dormant: true, playing: false });
+			expect(selectCanRestoreFloatingPlayer(useMediaPlaybackStore.getState())).toBe(true);
+			expect(selectShowNowPlayingIndicator(useMediaPlaybackStore.getState())).toBe(false);
+
+			initial.restore();
+			useMediaPlaybackStore.setState({ dismissed: true });
+			expect(selectShowNowPlayingIndicator(useMediaPlaybackStore.getState())).toBe(true);
 		});
 
 		it('selectCanRestoreFloatingPlayer needs both a dismissal and loaded media', () => {

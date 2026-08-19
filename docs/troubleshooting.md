@@ -97,6 +97,15 @@ Each error modal shows:
 - Collapsible JSON details for debugging
 - Recovery action buttons specific to the error type
 
+### Expired Provider Credentials
+
+An expired token is handled differently from the errors above, because it takes down every agent AND every Cue pipeline on that provider at once. Instead of the generic error modal, Maestro opens a re-authentication dialog with a terminal embedded in it and runs the provider's own login command for you (`claude /login`, `codex login`, `opencode auth login`, and so on). Finish the login in that terminal and click Done. The agent keeps its view and its transcript.
+
+Two details worth knowing:
+
+- **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on.
+- **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
+
 ## Debug Package
 
 If you encounter deep-seated issues that are difficult to diagnose, Maestro can generate a **Debug Package** - a compressed bundle of diagnostic information that you can safely share when reporting bugs.

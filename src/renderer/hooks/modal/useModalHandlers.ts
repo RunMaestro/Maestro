@@ -432,14 +432,14 @@ export function useModalHandlers(
 		[inputRef]
 	);
 
-	const handleAuthenticateAfterError = useCallback(
-		(sessionId: string) => {
-			useAgentStore.getState().authenticateAfterError(sessionId);
-			getModalActions().setAgentErrorModalSessionId(null);
-			setTimeout(() => inputRef.current?.focus(), 0);
-		},
-		[inputRef]
-	);
+	// Hand off to the re-authentication terminal rather than the bare terminal
+	// tab: the login flow finishes inside the modal, so the user never has to
+	// remember the provider's login command.
+	const handleAuthenticateAfterError = useCallback((sessionId: string) => {
+		useAgentStore.getState().authenticateAfterError(sessionId);
+		getModalActions().setAgentErrorModalSessionId(null);
+		getModalActions().openReauthModal({ sessionId });
+	}, []);
 
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
 	// otherwise fall back to live session error
