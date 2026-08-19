@@ -59,7 +59,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 ### Analytics & Visualization
 
-- 📊 **Usage Dashboard** - Comprehensive analytics for tracking AI usage patterns across all sessions. View aggregated statistics with multiple time ranges (day, week, month, year, all time), compare agent performance, analyze user vs. Auto Run activity distribution, and explore activity heatmaps. Includes CSV export, real-time updates, and configurable colorblind-friendly palettes. Access via `Opt+Cmd+U` (macOS) / `Alt+Ctrl+U` (Windows/Linux) or the Command K menu.
+- 📊 **Usage Dashboard** - Comprehensive analytics for tracking AI usage patterns across all sessions. View aggregated statistics with multiple time ranges (day, week, month, year, all time), compare agent performance, analyze user vs. Auto Run activity distribution, and explore activity heatmaps. Fuzzy-filter your agents, then click any one to drill into its stats and see the breakdown per AI tab. Includes CSV export, real-time updates, and configurable colorblind-friendly palettes. Access via `Opt+Cmd+U` (macOS) / `Alt+Ctrl+U` (Windows/Linux) or the Command K menu.
 - 🕸️ **Document Graph** - Visual knowledge graph of your markdown documentation. Automatically discovers internal `[[wiki-links]]` and `[markdown](links)`, visualizes document relationships with interactive nodes and edges. Toggle between force-directed and hierarchical layouts, search/filter documents, navigate via keyboard, and track external link references. Includes mini-map, legend, and pagination for large directories. Access from the File Explorer context menu or Command K menu.
 
 #### Keyboard Shortcuts for Analytics Features
@@ -72,6 +72,8 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 | Move between sections      | Tab / Shift+Tab          |
 | Jump to first/last section | Home / End               |
 | Close dashboard            | Escape                   |
+
+On the Agents tab, Escape clears the agent filter first when it holds text, so filtering never costs you the dashboard.
 
 **Document Graph** (Command K → "Document Graph"):
 

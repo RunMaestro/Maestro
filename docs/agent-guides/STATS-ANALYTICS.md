@@ -49,10 +49,12 @@ Tracks individual AI query/response cycles:
 | `start_time`   | INTEGER NOT NULL | Unix timestamp (ms)             |
 | `duration`     | INTEGER NOT NULL | Duration in ms                  |
 | `project_path` | TEXT             | Normalized project path         |
-| `tab_id`       | TEXT             | Tab identifier                  |
+| `tab_id`       | TEXT             | AI tab that issued the query    |
 | `is_remote`    | INTEGER          | SSH remote flag (added in v2)   |
 
 **Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
+
+Note there is deliberately **no index on `tab_id` and no aggregation that groups by it**. The one consumer, the Usage Dashboard's per-tab breakdown (`UsageDashboard/TabBreakdown.tsx`), groups client-side over the rows `AgentDetailModal` has already fetched for a single agent via `getStats('all', { sessionId })`. That set is one agent's events, not the whole table, so it stays cheap and needs no new IPC. Reach for a real index only if something ever needs to query by tab across all agents.
 
 #### `auto_run_sessions` (Migration v1)
 
