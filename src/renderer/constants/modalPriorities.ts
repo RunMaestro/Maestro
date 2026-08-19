@@ -253,8 +253,8 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
-	/** AgentRun ledger dashboard modal */
-	AGENT_RUN_DASHBOARD: 542,
+	/** AgentRun ledger dashboard modal - above the Usage Dashboard and its sub-modals */
+	AGENT_RUN_DASHBOARD: 543,
 	/** Agent card fuzzy filter in the Usage Dashboard's Agents tab. Registered
 	 *  only while the box holds text, so Escape clears the filter before it
 	 *  closes the dashboard. Sits below the detail sub-modal: with both open,

@@ -2636,9 +2636,9 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(emitted.message).not.toContain('claude login');
 		});
 
-		it('uses claude login for claude-code even when the pattern message is generic', () => {
+		it('uses the claude login command even when the pattern message is generic', () => {
 			// Pattern-58 style message: no login command in the text. The
-			// agentId map must still produce "claude login" so Claude SSH
+			// agentId map must still produce "claude /login" so Claude SSH
 			// users keep actionable guidance.
 			const mockParser = mockAuthParser(
 				'claude-code',
@@ -2664,20 +2664,20 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(errorSpy).toHaveBeenCalledTimes(1);
 			const emitted = errorSpy.mock.calls[0][1];
 			expect(emitted.message).toBe(
-				'Authentication failed on remote host "build-box". SSH into the remote and run "claude login" to re-authenticate.'
+				'Authentication failed on remote host "build-box". SSH into the remote and run "claude /login" to re-authenticate.'
 			);
-			expect(emitted.message).toContain('claude login');
+			expect(emitted.message).toContain('claude /login');
 		});
 
 		it('omits a login command for agents without a known CLI login', () => {
 			const mockParser = mockAuthParser(
-				'opencode',
+				'hermes',
 				'Authentication required. Please configure your credentials.'
 			);
 
 			const { handler, sessionId, emitter } = createTestContext({
 				isStreamJsonMode: true,
-				toolType: 'opencode',
+				toolType: 'hermes',
 				outputParser: mockParser as any,
 				sshRemoteId: 'remote-1',
 				sshRemoteHost: 'build-box',
@@ -2696,8 +2696,33 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(emitted.message).toBe(
 				'Authentication failed on remote host "build-box". SSH into the remote to re-authenticate.'
 			);
-			expect(emitted.message).not.toContain('claude login');
+			expect(emitted.message).not.toContain('claude /login');
 			expect(emitted.message).not.toContain('grok login');
+		});
+
+		it('names the TUI slash command for agents whose login is not a one-liner', () => {
+			const mockParser = mockAuthParser('factory-droid', 'Authentication failed.');
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'factory-droid',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+			});
+
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({ type: 'error', message: 'authentication failed' }) + '\n'
+			);
+
+			const emitted = errorSpy.mock.calls[0][1];
+			expect(emitted.message).toBe(
+				'Authentication failed on remote host "build-box". SSH into the remote and run "droid" then type "/login" to re-authenticate.'
+			);
 		});
 	});
 
