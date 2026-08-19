@@ -713,7 +713,7 @@ export class StdoutHandler {
 			const resultText = managedProcess.streamedText || '';
 			if (resultText) {
 				managedProcess.resultEmitted = true;
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 			}
 		}
 
@@ -788,7 +788,7 @@ export class StdoutHandler {
 					hasEventText: !!event.text,
 					hasStreamedText: !!managedProcess.streamedText,
 				});
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 			} else if (sessionId.includes('-synopsis-')) {
 				logger.warn(
 					'[ProcessManager] Synopsis result is empty - no text to emit',

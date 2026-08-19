@@ -259,7 +259,7 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, payload);
 
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer', proc);
 			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-123');
 			expect(proc.jsonBuffer).toBe('');
 		});
@@ -302,7 +302,7 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, chunkOne.slice(25) + chunkTwo);
 
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer', proc);
 			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-456');
 			expect(proc.jsonBuffer).toBe('');
 		});
@@ -364,7 +364,7 @@ describe('StdoutHandler', () => {
 
 			expect(proc.jsonBufferCorrupted).toBe(false);
 			expect(proc.emittedToolCallIds?.size).toBe(0);
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Recovered');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Recovered', proc);
 			expect(proc.jsonBuffer).toBe('');
 		});
 
@@ -393,7 +393,12 @@ describe('StdoutHandler', () => {
 				sessionId,
 				'Authenticating...'
 			);
-			expect(bufferManager.emitDataBuffered).toHaveBeenNthCalledWith(2, sessionId, 'Final answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenNthCalledWith(
+				2,
+				sessionId,
+				'Final answer',
+				proc
+			);
 			expect(proc.jsonBuffer).toBe('');
 		});
 
@@ -855,7 +860,7 @@ describe('StdoutHandler', () => {
 			});
 
 			expect(proc.resultEmitted).toBe(true);
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'the answer');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'the answer', proc);
 		});
 
 		it('should extract session_id and emit session-id event', () => {
@@ -1097,7 +1102,8 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(1);
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
 				sessionId,
-				'{"confidence":55,"ready":false,"message":"README.md"}'
+				'{"confidence":55,"ready":false,"message":"README.md"}',
+				proc
 			);
 		});
 	});
@@ -2506,7 +2512,8 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(proc.streamedText).toBe('{"confidence":40,"ready":false,"message":"hi"}');
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
 				sessionId,
-				'{"confidence":40,"ready":false,"message":"hi"}'
+				'{"confidence":40,"ready":false,"message":"hi"}',
+				proc
 			);
 		});
 
@@ -2677,7 +2684,7 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(sessionSpy).toHaveBeenCalledWith(sessionId, 'cursor-session-1');
 			expect(proc.streamedText).toBe('READY');
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledOnce();
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'READY');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'READY', proc);
 		});
 	});
 
