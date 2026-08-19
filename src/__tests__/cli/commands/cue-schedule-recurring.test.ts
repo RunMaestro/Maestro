@@ -164,7 +164,7 @@ describe('cue schedule (recurring + edit)', () => {
 		await cueSchedule({ every: '30m', agent: 'Alpha', prompt: 'tick', name: 'ticker' });
 
 		await expect(cueSchedule({ reschedule: 'ticker', in: '5m' })).rejects.toThrow('process.exit');
-		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('is a interval task'));
+		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('is an interval task'));
 		expect(readSubs(projectRoot)[0].interval_minutes).toBe(30);
 	});
 

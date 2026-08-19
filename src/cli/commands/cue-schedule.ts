@@ -354,7 +354,7 @@ async function runReschedule(options: CueScheduleOptions): Promise<void> {
 	const patch: ScheduledTaskUpdateInput = {};
 	if (timing.kind !== task.kind) {
 		errorOut(
-			`'${name}' is a ${task.kind} task; pass the matching timing flag (${timingFlagsFor(task.kind)}) to reschedule it.`,
+			`'${name}' is ${task.kind === 'interval' ? 'an' : 'a'} ${task.kind} task; pass the matching timing flag (${timingFlagsFor(task.kind)}) to reschedule it.`,
 			options,
 			'KIND_MISMATCH'
 		);
