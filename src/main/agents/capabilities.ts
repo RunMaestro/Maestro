@@ -469,6 +469,44 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
 	},
+
+	/**
+	 * Cursor CLI - Cursor Agent command-line interface
+	 *
+	 * Capabilities verified against Cursor CLI 2026.07.16-899851b and live
+	 * stream-json output. The primary CLI command is `agent` (the native Windows
+	 * installer also exposes `cursor-agent`). Headless mode uses -p/--print with
+	 * partial stream JSON: system/init, thinking, assistant, tool_call, and result.
+	 */
+	'cursor-cli': {
+		supportsResume: true, // Verified: --resume <chatId>
+		supportsReadOnlyMode: true, // Verified: --mode plan / --plan
+		supportsJsonOutput: true, // Verified: --output-format stream-json
+		supportsSessionId: true, // Verified: session_id on init and result events
+		supportsImageInput: true, // Official headless docs: include saved image file paths in the prompt
+		supportsImageInputOnResume: true, // Resume accepts the same prompt-based file references
+		supportsSlashCommands: false, // Conservative default: not verified in headless mode
+		supportsSessionStorage: false, // Deferred: sessions live in ~/.cursor/chats/ as SQLite store.db
+		supportsCostTracking: false, // Verified absent: usage reports token counts only
+		supportsUsageStats: true, // Verified: result.usage with inputTokens/outputTokens/cacheReadTokens
+		supportsBatchMode: true, // Verified: -p/--print headless mode
+		requiresPromptToStart: true, // Verified: headless runs require -p; no interactive PTY integration
+		supportsStreaming: true, // Verified: --stream-partial-output emits thinking and assistant text deltas
+		supportsResultMessages: true, // Verified: type=result with subtype=success
+		supportsModelSelection: true, // Verified: --model flag; agent models / --list-models
+		supportsStreamJsonInput: false, // Conservative default: no --input-format stream-json equivalent
+		supportsThinkingDisplay: true, // Verified: type=thinking subtype=delta events
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: false, // No session storage integration yet
+		supportsWizard: true, // stream-json text/thinking events carry structured wizard replies
+		supportsGroupChatModeration: false, // Conservative: moderation flow not yet exercised
+		usesJsonLineOutput: true, // Verified: stream-json is JSONL (one JSON object per line)
+		usesCombinedContextWindow: false, // Conservative default: gauge math unverified
+		supportsAppendSystemPrompt: false, // Verified absent in agent --help
+		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
+		supportsAdditionalDirectories: true, // Verified: --add-dir <path>, repeatable
+		supportsPromptViaStdin: true, // Verified: headless `agent -p` accepts a raw prompt on stdin
+	},
 };
 
 /**

@@ -23,6 +23,7 @@ interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
+	processStreamJsonLine: (sessionId: string, managedProcess: ManagedProcess, line: string) => void;
 }
 
 /**
@@ -33,11 +34,13 @@ export class ExitHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
+	private processStreamJsonLine: ExitHandlerDependencies['processStreamJsonLine'];
 
 	constructor(deps: ExitHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
+		this.processStreamJsonLine = deps.processStreamJsonLine;
 	}
 
 	/**
@@ -60,6 +63,14 @@ export class ExitHandler {
 		}
 
 		const { isBatchMode, isStreamJsonMode, outputParser, toolType } = managedProcess;
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Stale process exited after session re-spawn, suppressing exit side effects',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
 
 		// Flush any remaining buffered data before exit
 		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
@@ -87,6 +98,21 @@ export class ExitHandler {
 			});
 		}
 
+		// Route an unterminated final JSON record through the same pipeline used
+		// for newline-delimited events before provider shutdown reconciliation.
+		// Copilot may report its session ID only in this record, and the shutdown
+		// wait needs that ID to recover the authoritative disk-side final state.
+		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
+			const remainingLine = managedProcess.jsonBuffer.trim();
+			managedProcess.jsonBuffer = '';
+			logger.debug('[ProcessManager] Processing remaining jsonBuffer at exit', 'ProcessManager', {
+				sessionId,
+				remainingLineLength: remainingLine.length,
+				remainingLinePreview: remainingLine.substring(0, 200),
+			});
+			this.processStreamJsonLine(sessionId, managedProcess, remainingLine);
+		}
+
 		// Copilot CLI: wait for the on-disk shutdown marker before emitting
 		// `exit`. Copilot can keep working in subagent processes after our
 		// parent process closes, and `session.shutdown` is only ever
@@ -99,14 +125,12 @@ export class ExitHandler {
 		// with (not the stale planning narration our parent saw last).
 		await this.awaitCopilotShutdown(sessionId, managedProcess);
 
-		// The main guard. `awaitCopilotShutdown` is the only suspension point in
-		// this method, so it is the only place a replacement can claim the session
-		// id mid-flight, and this is the earliest point the question can be asked
-		// for everything downstream. (That method has awaits of its OWN and emits
-		// from inside them, so it carries a second check at its emit site - this
-		// one runs after it has already returned.) Every step below emits
+		// Re-check after the only suspension point in this method. A replacement
+		// can claim the session while Copilot shutdown reconciliation is waiting.
+		// (That method has awaits of its own and emits from inside them, so it
+		// carries another check at its emit site.) Every step below emits
 		// into shared per-session state (batch-mode result text, the stream-json
-		// remainder, the streamedText fallback, usage, agent-error, query-complete,
+		// fallback, usage, agent-error, query-complete,
 		// the final flush, exit), so a guard placed any lower silently lets some of
 		// this process's output land in the successor's turn.
 		if (this.isSuperseded(sessionId, managedProcess)) {
@@ -121,48 +145,6 @@ export class ExitHandler {
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
 			this.handleBatchModeExit(sessionId, managedProcess);
-		}
-
-		// Handle stream-json mode: process any remaining jsonBuffer content
-		// The jsonBuffer may contain the last line if it didn't end with \n.
-		// Without this, short-lived processes (tab-naming, batch ops) can lose
-		// their result message if it's the last line without a trailing newline.
-		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
-			const remainingLine = managedProcess.jsonBuffer.trim();
-			managedProcess.jsonBuffer = '';
-			logger.debug('[ProcessManager] Processing remaining jsonBuffer at exit', 'ProcessManager', {
-				sessionId,
-				remainingLineLength: remainingLine.length,
-				remainingLinePreview: remainingLine.substring(0, 200),
-			});
-			try {
-				const event = outputParser.parseJsonLine(remainingLine);
-				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
-					managedProcess.resultEmitted = true;
-					const resultText = event.text || managedProcess.streamedText || '';
-					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
-					}
-				}
-			} catch {
-				// If parsing fails, emit the raw line as data
-				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
-			}
-		}
-
-		// Handle stream-json mode: emit accumulated streamed text if no result was emitted
-		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit
-		if (isStreamJsonMode && !managedProcess.resultEmitted && managedProcess.streamedText) {
-			managedProcess.resultEmitted = true;
-			logger.debug(
-				'[ProcessManager] Emitting streamed text at exit (no result event)',
-				'ProcessManager',
-				{
-					sessionId,
-					streamedTextLength: managedProcess.streamedText.length,
-				}
-			);
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -186,6 +168,27 @@ export class ExitHandler {
 				});
 				this.emitter.emit('agent-error', sessionId, agentError);
 			}
+		}
+
+		// Some stream-json agents don't send explicit result events. Preserve their
+		// accumulated response when exit processing found no classified failure.
+		if (
+			isStreamJsonMode &&
+			!managedProcess.errorEmitted &&
+			!managedProcess.resultEmitted &&
+			!managedProcess.interrupted &&
+			managedProcess.streamedText
+		) {
+			managedProcess.resultEmitted = true;
+			logger.debug(
+				'[ProcessManager] Emitting streamed text at exit (no result event)',
+				'ProcessManager',
+				{
+					sessionId,
+					streamedTextLength: managedProcess.streamedText.length,
+				}
+			);
+			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
 		// Check for SSH-specific errors at exit (only when running via SSH remote)

@@ -62,6 +62,7 @@ import { PiOutputParser } from './pi-output-parser';
 import { QwenOutputParser } from './qwen-output-parser';
 import { OmpOutputParser } from './omp-output-parser';
 import { GrokOutputParser } from './grok-output-parser';
+import { CursorCliOutputParser } from './cursor-cli-output-parser';
 import {
 	registerOutputParser,
 	clearParserRegistry,
@@ -79,6 +80,7 @@ export { PiOutputParser } from './pi-output-parser';
 export { QwenOutputParser } from './qwen-output-parser';
 export { OmpOutputParser } from './omp-output-parser';
 export { GrokOutputParser } from './grok-output-parser';
+export { CursorCliOutputParser } from './cursor-cli-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
 
@@ -100,6 +102,7 @@ export function initializeOutputParsers(): void {
 	registerOutputParser(new QwenOutputParser());
 	registerOutputParser(new OmpOutputParser());
 	registerOutputParser(new GrokOutputParser());
+	registerOutputParser(new CursorCliOutputParser());
 
 	// Log registered parsers for debugging
 	const registeredParsers = getAllOutputParsers().map((p) => p.agentId);

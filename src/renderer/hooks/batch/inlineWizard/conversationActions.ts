@@ -228,6 +228,7 @@ export function useInlineWizardConversationActions({
 				logger.warn('[useInlineWizard] Already waiting for response, ignoring duplicate send');
 				return;
 			}
+			const previousConversationHistory = currentState?.conversationHistory || [];
 
 			const userMessage = {
 				id: generateMessageId(),
@@ -301,10 +302,13 @@ export function useInlineWizardConversationActions({
 			}
 
 			try {
-				const currentState = tabStatesRef.current.get(tabId);
-				const currentHistory = currentState?.conversationHistory || [];
-
-				const result = await sendWizardMessage(session, content, currentHistory, callbacks);
+				const result = await sendWizardMessage(
+					session,
+					content,
+					previousConversationHistory,
+					callbacks,
+					images
+				);
 
 				if (result.success && result.response) {
 					const assistantMessage = {

@@ -25,6 +25,7 @@ import {
 	checkCustomPath,
 	findAllBinaryPaths,
 	getExpandedEnv,
+	validateAgentBinaryIdentity,
 } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
@@ -166,10 +167,19 @@ export class AgentDetector {
 			const customPath = this.customPaths[agentDef.id];
 			let detection: { exists: boolean; path?: string };
 			let resolvedCustomPath: string | undefined;
+			const validateIdentity = (candidatePath: string) =>
+				validateAgentBinaryIdentity(agentDef.id, candidatePath);
 
 			// If user has specified a custom path, check that first
 			if (customPath) {
 				detection = await checkCustomPath(customPath);
+				if (detection.exists && detection.path && !(await validateIdentity(detection.path))) {
+					logger.warn(
+						`Agent "${agentDef.name}" custom path has the wrong executable identity: ${customPath}`,
+						LOG_CONTEXT
+					);
+					detection = { exists: false };
+				}
 				if (detection.exists) {
 					resolvedCustomPath = detection.path || customPath;
 					logger.info(
@@ -179,7 +189,7 @@ export class AgentDetector {
 				} else {
 					logger.warn(`Agent "${agentDef.name}" custom path not valid: ${customPath}`, LOG_CONTEXT);
 					// Fall back to PATH detection
-					detection = await checkBinaryExists(agentDef.binaryName);
+					detection = await checkBinaryExists(agentDef.binaryName, validateIdentity);
 					if (detection.exists) {
 						logger.info(
 							`Agent "${agentDef.name}" found in PATH at: ${detection.path}`,
@@ -188,7 +198,7 @@ export class AgentDetector {
 					}
 				}
 			} else {
-				detection = await checkBinaryExists(agentDef.binaryName);
+				detection = await checkBinaryExists(agentDef.binaryName, validateIdentity);
 
 				if (detection.exists) {
 					logger.info(`Agent "${agentDef.name}" found at: ${detection.path}`, LOG_CONTEXT);
@@ -209,7 +219,9 @@ export class AgentDetector {
 			let allPaths: string[] | undefined;
 			if (detection.exists && agentDef.binaryName !== 'bash') {
 				try {
-					const found = await findAllBinaryPaths(agentDef.binaryName);
+					const candidates = await findAllBinaryPaths(agentDef.binaryName);
+					const identityMatches = await Promise.all(candidates.map(validateIdentity));
+					const found = candidates.filter((_, index) => identityMatches[index]);
 					// Always include the active path (custom or detected) so the
 					// chooser reflects what is currently in use, even if it isn't
 					// one of the auto-probed locations. Compared by canonical path, not
@@ -663,6 +675,48 @@ export class AgentDetector {
 					return [];
 				}
 
+				case 'cursor-cli': {
+					// Cursor Agent CLI: `agent --list-models` or `agent models`.
+					// Lines look like: "auto - Auto (default)" or "gpt-5.3-codex - Codex 5.3"
+					const parseCursorModels = (stdout: string): string[] => {
+						const models: string[] = [];
+						for (const line of stdout.split('\n')) {
+							const match = line.match(/^(\S+)\s+-/);
+							if (match && !models.includes(match[1])) {
+								models.push(match[1]);
+							}
+						}
+						return models;
+					};
+
+					const listResult = await execFileNoThrow(command, ['--list-models'], undefined, env);
+					if (listResult.exitCode === 0) {
+						const models = parseCursorModels(listResult.stdout);
+						if (models.length > 0) {
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from \`agent --list-models\``,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					}
+
+					const modelsResult = await execFileNoThrow(command, ['models'], undefined, env);
+					if (modelsResult.exitCode === 0) {
+						const models = parseCursorModels(modelsResult.stdout);
+						if (models.length > 0) {
+							logger.info(
+								`Discovered ${models.length} models for ${agentId} from \`agent models\``,
+								LOG_CONTEXT,
+								{ models }
+							);
+							return models;
+						}
+					}
+					return [];
+				}
+
 				default:
 					// For agents without model discovery implemented, return empty array
 					logger.debug(`No model discovery implemented for ${agentId}`, LOG_CONTEXT);
@@ -839,6 +893,16 @@ export class AgentDetector {
 						// `grok models` CLI fallback). Empty string = use grok's default
 						// model. When discovery returns nothing (fresh install, CLI
 						// unavailable), fall through to the static options below.
+						const models = await this.discoverModels(agentId);
+						if (models.length > 0) {
+							return ['', ...models];
+						}
+					}
+					break;
+				}
+
+				case 'cursor-cli': {
+					if (optionKey === 'model') {
 						const models = await this.discoverModels(agentId);
 						if (models.length > 0) {
 							return ['', ...models];

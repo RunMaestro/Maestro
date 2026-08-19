@@ -1834,6 +1834,15 @@ describe('useWizardHandlers', () => {
 						selectedAgent: 'claude-code',
 						availableAgents: [],
 						agentName: 'My Project',
+						customPath: '/opt/cursor/agent',
+						customArgs: '--header "X-Test: one"',
+						customEnvVars: { CURSOR_API_KEY: 'key' },
+						agentConfigValues: {
+							model: 'gpt-5.3-codex',
+							reasoningEffort: 'high',
+							providerPath: '/providers/cursor',
+							contextWindow: 300000,
+						},
 						directoryPath: '/projects/my-app',
 						isGitRepo: false,
 						detectedAgentPath: null,
@@ -1875,6 +1884,13 @@ describe('useWizardHandlers', () => {
 			expect(newSession.cwd).toBe('/projects/my-app');
 			expect(newSession.autoRunFolderPath).toBe('/projects/my-app/.maestro/playbooks');
 			expect(newSession.autoRunSelectedFile).toBe('phase-1');
+			expect(newSession.customPath).toBe('/opt/cursor/agent');
+			expect(newSession.customArgs).toBe('--header "X-Test: one"');
+			expect(newSession.customEnvVars).toEqual({ CURSOR_API_KEY: 'key' });
+			expect(newSession.customModel).toBe('gpt-5.3-codex');
+			expect(newSession.customEffort).toBe('high');
+			expect(newSession.customProviderPath).toBe('/providers/cursor');
+			expect(newSession.customContextWindow).toBe(300000);
 
 			// Should have been set as active
 			expect(useSessionStore.getState().activeSessionId).toBe(newSession.id);

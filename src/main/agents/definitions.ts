@@ -839,6 +839,64 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			},
 		],
 	},
+	{
+		id: 'cursor-cli',
+		name: 'Cursor CLI',
+		binaryName: 'agent',
+		command: 'agent',
+		args: [],
+		requiresPty: false, // Headless batch mode (-p) works over plain pipes
+		// -p and --trust are batch requirements even in read-only mode, so they
+		// live in the prefix. Standard mode keeps Cursor's default approval
+		// contract; only explicit full access adds --force.
+		// Batch: agent -p --trust --workspace <dir> [--force for full] --output-format stream-json --stream-partial-output [--mode plan] [--resume <id>] [prompt via argv/stdin]
+		batchModePrefix: ['-p', '--trust'],
+		jsonOutputArgs: ['--output-format', 'stream-json', '--stream-partial-output'],
+		// Desktop callers may still use a positional prompt; local CLI-service
+		// Cursor spawns intentionally select raw stdin instead.
+		promptArgs: (prompt: string) => [prompt],
+		imagePromptBuilder: (imagePaths: string[]) =>
+			imagePaths.length > 0
+				? `Use these attached images as context:\n${imagePaths.join('\n')}\n\n`
+				: '',
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--mode', 'plan'],
+		readOnlyCliEnforced: true, // CLI enforces read-only via --mode plan
+		yoloModeArgs: ['--force'],
+		workingDirArgs: (dir: string) => ['--workspace', dir],
+		// --add-dir adds an additional workspace root (read + write), repeatable.
+		additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+		modelArgs: (modelId: string) => {
+			const trimmed = modelId.trim();
+			return trimmed ? ['--model', trimmed] : [];
+		},
+		configOptions: [
+			{
+				key: 'model',
+				type: 'select',
+				label: 'Model',
+				description:
+					'Model to use (see `agent models`). Leave empty for the account default (auto).',
+				dynamic: true,
+				options: ['', 'auto'],
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model.',
+				default: 200000,
+			},
+		],
+	},
 ];
 
 /**
