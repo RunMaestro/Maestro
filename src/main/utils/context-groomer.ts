@@ -233,7 +233,14 @@ export async function groomContext(
 	});
 	const resolvedArgs = configResolution.args;
 	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
-	const resolvedCommand = sessionCustomPath || agent.command;
+	// Prefer the absolute path the detector resolved over the static `command`
+	// field from the agent definition. `agent.command` is a bare name like
+	// `claude`, which is not spawnable on Windows: the npm install leaves a
+	// `claude.cmd` shim in %APPDATA%\npm and there is no bare `claude` on PATH,
+	// so spawn() fails with ENOENT. Every other spawn site already resolves
+	// `agent.path || agent.command`; the fallback keeps working on platforms
+	// where the bare command is already on PATH and `path` is unset.
+	const resolvedCommand = sessionCustomPath || agent.path || agent.command;
 
 	// Create a promise that collects the response
 	return new Promise<GroomContextResult>((resolve, reject) => {
