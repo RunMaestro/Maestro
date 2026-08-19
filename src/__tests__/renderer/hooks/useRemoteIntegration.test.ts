@@ -177,6 +177,11 @@ describe('useRemoteIntegration', () => {
 		onRemoteSetSetting: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		// Added with `maestro-cli open`: the hook subscribes to this on mount, so
+		// leaving it out makes every test in this file throw before it asserts.
+		onRemoteOpenModal: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
 		sendRemoteSetSettingResponse: vi.fn(),
 		onRemoteCreateSession: vi.fn().mockImplementation(() => {
 			return () => {};
