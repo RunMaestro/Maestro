@@ -26,6 +26,8 @@ import {
 import { buildTabGroupCommands } from '../../../../../renderer/components/QuickActionsModal/commands/tabGroupCommands';
 import { buildSupportCommands } from '../../../../../renderer/components/QuickActionsModal/commands/supportCommands';
 import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
+import { createMockAITab } from '../../../../helpers/mockTab';
+import { useModalStore } from '../../../../../renderer/stores/modalStore';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -697,5 +699,82 @@ describe('agent-switch window scoping', () => {
 		expect(focusWindow).toHaveBeenCalledWith('win-3');
 		expect(setActiveSessionId).not.toHaveBeenCalled();
 		expect(revealJumpTarget).not.toHaveBeenCalled();
+	});
+	it('offers the model/effort picker for an AI tab and targets the focused pane', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
+			activeTabId: 'tab-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai' as const,
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		};
+
+		const command = buildTabCommands(args).find((a) => a.id === 'changeModelEffort');
+		expect(command?.label).toBe('Change Tabs Model and Effort');
+		command!.action();
+		expect(useModalStore.getState().modals.get('modelEffort')).toMatchObject({
+			open: true,
+			data: { tabId: 'tab-1' },
+		});
+
+		// A tiled group owns the panel: the focused pane wins over the standalone
+		// tab hidden behind it.
+		useModalStore.getState().closeModal('modelEffort');
+		const group = createGroupFromTabRefs([
+			{ type: 'ai', id: 'tab-2' },
+			{ type: 'ai', id: 'tab-1' },
+		]);
+		const grouped = createMockSession({
+			...session,
+			tabGroups: [group],
+			activeGroupId: group.id,
+		});
+		buildTabCommands({ ...args, activeSession: grouped })
+			.find((a) => a.id === 'changeModelEffort')!
+			.action();
+		expect(useModalStore.getState().modals.get('modelEffort')?.data).toMatchObject({
+			tabId: 'tab-2',
+		});
+	});
+
+	it('hides the model/effort picker when the active tab is not an AI tab', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			inputMode: 'terminal',
+			activeTerminalTabId: 'term-1',
+		});
+
+		const ids = buildTabCommands({
+			activeSession: session,
+			isAiMode: false,
+			activeTabInfo: {
+				isTerminalMode: true,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'terminal',
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).map((a) => a.id);
+
+		expect(ids).not.toContain('changeModelEffort');
 	});
 });

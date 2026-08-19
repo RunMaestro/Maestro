@@ -699,6 +699,18 @@ You can always rename tabs manually:
 - Or double-click the tab name to edit it directly
 - Manual names take precedence over automatic naming
 
+### Changing a Tab's Model and Effort
+
+Every AI tab can run a different model and a different reasoning effort from the rest of the agent. The pills under the composer set both with the mouse; `Opt+Cmd+.` / `Alt+Ctrl+.` does it without one.
+
+The dialog puts the two knobs on two axes: **Up/Down** walks the model list, **Left/Right** walks the effort scale, **Enter** applies both, and **Escape** leaves the tab exactly as it was. Nothing is written until you press Enter, so browsing the list costs nothing.
+
+- Which models and effort levels appear depends on the agent. A multi-provider CLI (Copilot-CLI, for example) lists its catalog grouped by vendor, so Claude, OpenAI, Gemini and the rest each get their own short section.
+- `(default)` clears the tab's override and falls back to the agent's own setting.
+- Not every model honors effort. Agents that expose the knob pass it through, and a model that has no reasoning budget ignores it.
+
+You can also reach it from Quick Actions (`Cmd+K` / `Ctrl+K`) as **Change Tabs Model and Effort**. It applies to AI tabs only.
+
 ### Snoozing Tabs
 
 Snooze hides an AI tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to conversations: park work you can't act on yet without closing it or letting it clutter the tab bar.

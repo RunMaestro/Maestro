@@ -104,6 +104,11 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'p'],
 	},
 	openWizard: { id: 'openWizard', label: 'New Agent Wizard', keys: ['Meta', 'Shift', 'n'] },
+	openModelEffort: {
+		id: 'openModelEffort',
+		label: 'Change Tabs Model and Effort',
+		keys: ['Alt', 'Meta', '.'],
+	},
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
 	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
