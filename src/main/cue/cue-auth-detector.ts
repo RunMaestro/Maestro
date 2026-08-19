@@ -56,36 +56,20 @@ export function detectCueAuthFailure(result: CueRunResult, toolType: ToolType): 
 }
 
 /**
- * Providers already reported as needing a login, keyed by agent (and remote).
- *
- * Expired credentials fail EVERY run on that provider, and a busy board can
- * fire several a minute - without this, a user who dismisses the modal to
- * finish a thought gets it thrown back at them on the next tick. An entry is
- * dropped as soon as a run for that provider succeeds, which is the only
- * reliable signal that the new credentials took.
- */
-const reportedProviders = new Set<string>();
-
-function providerKey(toolType: ToolType, sshRemoteId?: string): string {
-	return sshRemoteId ? `${toolType}@${sshRemoteId}` : toolType;
-}
-
-/** Test seam: forget which providers have already been reported. */
-export function resetReportedAuthFailures(): void {
-	reportedProviders.clear();
-}
-
-/**
  * Classify a finished Cue run and, when its provider rejected the stored
- * credentials, mark the agent's capability snapshot and ask the renderer to
- * open the re-authentication terminal.
+ * credentials, mark the agent's capability snapshot and tell the renderer which
+ * agent is blocked.
+ *
+ * Deliberately does NOT deduplicate. Every blocked agent must be reported, even
+ * when thirty of them share one expired token: the renderer's auth-outage store
+ * groups them into a SINGLE prompt, and it can only resume an agent's queued
+ * work if it was told that agent is blocked. An earlier version suppressed the
+ * second and later reports here, which quietly made those agents unresumable.
  *
  * Never throws: this runs on the Cue completion path, where a reporting failure
  * must not take down the run bookkeeping that follows it.
  *
- * @returns true when this call raised the prompt. A repeat failure on an
- *   already-reported provider returns false: the prompt is already up (or was
- *   deliberately dismissed), and re-raising it would fight the user.
+ * @returns true when the run failed on expired credentials.
  */
 export function reportCueAuthFailure(
 	mainWindow: BrowserWindow | null,
@@ -93,8 +77,6 @@ export function reportCueAuthFailure(
 	toolType: ToolType,
 	sshRemoteId?: string
 ): boolean {
-	const key = providerKey(toolType, sshRemoteId);
-
 	let message: string | null = null;
 	try {
 		message = detectCueAuthFailure(result, toolType);
@@ -102,16 +84,7 @@ export function reportCueAuthFailure(
 		logger.warn('Failed to classify Cue run for auth expiry', 'Cue', err);
 		return false;
 	}
-
-	if (!message) {
-		// A run that got through means the credentials work again, so the next
-		// expiry is allowed to prompt.
-		if (result.status === 'completed') reportedProviders.delete(key);
-		return false;
-	}
-
-	if (reportedProviders.has(key)) return false;
-	reportedProviders.add(key);
+	if (!message) return false;
 
 	logger.warn(
 		`[CUE] "${result.subscriptionName}" failed on expired ${toolType} credentials - prompting for re-authentication`,
@@ -129,6 +102,7 @@ export function reportCueAuthFailure(
 		mainWindow.webContents.send('agent:authExpired', {
 			sessionId: result.sessionId,
 			agentId: toolType,
+			sshRemoteId,
 			message,
 			fromPipeline: true,
 		});

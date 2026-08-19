@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AppAgentModals } from '../../../renderer/components/AppModals';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
 import type { Theme, Session, AgentError } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type {
@@ -20,7 +21,7 @@ vi.mock('../../../renderer/components/ReauthModal', () => ({
 		<div
 			data-testid="reauth-modal"
 			data-session-name={props.session?.name}
-			data-from-pipeline={String(!!props.fromPipeline)}
+			data-blocked={String(props.outage?.blocked?.length ?? 0)}
 		/>
 	),
 }));
@@ -124,6 +125,7 @@ describe('AppAgentModals', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		useModalStore.getState().closeModal('reauth');
+		useAuthOutageStore.setState({ outages: {} });
 	});
 
 	it('does not render any modals when all booleans/values are default', () => {
@@ -185,23 +187,31 @@ describe('AppAgentModals', () => {
 	// The re-authentication modal is self-sourced from the modal store: it is
 	// opened by the agent-error listener and by Cue pipeline auth failures, which
 	// never pass through App.tsx's modal props.
-	it('renders ReauthModal when the reauth modal is opened for a known agent', () => {
+	it('renders ReauthModal for the provider outage, hosted by a blocked agent', () => {
 		const session = createMockSession({ id: 'auth-session', name: 'Pipeline Agent' });
-		useModalStore.getState().openModal('reauth', {
-			sessionId: 'auth-session',
-			message: 'OAuth token has expired.',
-			fromPipeline: true,
+		useAuthOutageStore.setState({
+			outages: {
+				'claude-code': {
+					providerKey: 'claude-code',
+					toolType: 'claude-code',
+					message: 'OAuth token has expired.',
+					startedAt: 1,
+					blocked: [{ sessionId: 'auth-session', tabIds: ['tab-1'] }],
+					fromPipeline: true,
+				},
+			},
 		});
+		useModalStore.getState().openModal('reauth', { providerKey: 'claude-code' });
 
 		render(<AppAgentModals {...defaultProps} sessions={[session]} />);
 
 		const modal = screen.getByTestId('reauth-modal');
+		expect(modal.getAttribute('data-blocked')).toBe('1');
 		expect(modal.getAttribute('data-session-name')).toBe('Pipeline Agent');
-		expect(modal.getAttribute('data-from-pipeline')).toBe('true');
 	});
 
-	it('does not render ReauthModal when the target agent is gone', () => {
-		useModalStore.getState().openModal('reauth', { sessionId: 'deleted-session' });
+	it('does not render ReauthModal when the outage is gone', () => {
+		useModalStore.getState().openModal('reauth', { providerKey: 'claude-code' });
 
 		render(<AppAgentModals {...defaultProps} sessions={[]} />);
 

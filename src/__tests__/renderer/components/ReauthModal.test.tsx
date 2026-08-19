@@ -13,9 +13,31 @@ import React from 'react';
 import { render as rtlRender, screen, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ReauthModal } from '../../../renderer/components/ReauthModal';
+import type { AuthOutage } from '../../../renderer/stores/authOutageStore';
+import { providerAuthKey } from '../../../shared/providerAuthIdentity';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
+
+/**
+ * The dialog is scoped to a PROVIDER outage, not to the agent that failed
+ * first, so every render needs one. Defaults to a single blocked agent, which
+ * is the common case; tests that care about the blast radius pass their own
+ * `blocked` roster.
+ */
+function createOutage(overrides: Partial<AuthOutage> = {}): AuthOutage {
+	const toolType = overrides.toolType ?? 'claude-code';
+	return {
+		providerKey: providerAuthKey(toolType),
+		toolType,
+		message: '',
+		startedAt: 0,
+		blocked: [{ sessionId: 'sess-1', tabIds: [] }],
+		fromPipeline: false,
+		...overrides,
+	};
+}
 
 /** Modal registers itself with the layer stack, so it needs the provider. */
 const render = (ui: React.ReactElement) => rtlRender(<LayerStackProvider>{ui}</LayerStackProvider>);
@@ -68,7 +90,8 @@ async function flushSpawn() {
 describe('ReauthModal', () => {
 	it('spawns one login shell and types the provider login command into it', async () => {
 		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage({ toolType: 'claude-code' });
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 
 		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
@@ -84,7 +107,8 @@ describe('ReauthModal', () => {
 	// from claiming this shell's exit as one of its own terminal tabs.
 	it('uses a PTY key that cannot collide with a terminal tab', async () => {
 		const session = createMockSession({ id: 'sess-1' });
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage();
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 
 		const ptySessionId: string = mockSpawnTerminalTab.mock.calls[0][0].sessionId;
@@ -95,8 +119,9 @@ describe('ReauthModal', () => {
 
 	it('kills the login shell when the modal unmounts', async () => {
 		const session = createMockSession({ id: 'sess-1' });
+		const outage = createOutage();
 		const { unmount } = render(
-			<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />
+			<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />
 		);
 		await flushSpawn();
 		const ptySessionId: string = mockSpawnTerminalTab.mock.calls[0][0].sessionId;
@@ -114,7 +139,8 @@ describe('ReauthModal', () => {
 			remoteCwd: '/srv/project',
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		} as any);
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage();
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 
 		expect(mockSpawnTerminalTab.mock.calls[0][0].sessionSshRemoteConfig).toMatchObject({
@@ -126,7 +152,8 @@ describe('ReauthModal', () => {
 
 	it('shows the TUI follow-up for an agent whose login is a slash command', async () => {
 		const session = createMockSession({ id: 'sess-1', toolType: 'factory-droid' });
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage({ toolType: 'factory-droid' });
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 
 		expect(screen.getByText(/then type \/login/)).toBeInTheDocument();
@@ -137,7 +164,8 @@ describe('ReauthModal', () => {
 	// guessing a command to run would be worse than saying so.
 	it('does not spawn anything for an agent with no login command', async () => {
 		const session = createMockSession({ id: 'sess-1', toolType: 'terminal' });
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage({ toolType: 'terminal' });
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 
 		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
@@ -148,7 +176,8 @@ describe('ReauthModal', () => {
 	it('reports a failed spawn instead of waiting on a shell that never started', async () => {
 		mockSpawnTerminalTab.mockResolvedValue({ pid: 0, success: false });
 		const session = createMockSession({ id: 'sess-1' });
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage();
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 
 		expect(mockWrite).not.toHaveBeenCalled();
@@ -164,7 +193,8 @@ describe('ReauthModal', () => {
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		} as any);
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage();
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 
 		await waitFor(() => {
@@ -174,7 +204,8 @@ describe('ReauthModal', () => {
 
 	it('reports the login session ending when its shell exits', async () => {
 		const session = createMockSession({ id: 'sess-1' });
-		render(<ReauthModal theme={mockTheme} session={session} onClose={vi.fn()} />);
+		const outage = createOutage();
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
 		await flushSpawn();
 		const ptySessionId: string = mockSpawnTerminalTab.mock.calls[0][0].sessionId;
 
@@ -188,18 +219,36 @@ describe('ReauthModal', () => {
 
 	it('says a pipeline was the thing that hit the expired credentials', async () => {
 		const session = createMockSession({ id: 'sess-1', name: 'Nightly Triage' });
+		const outage = createOutage({ message: 'OAuth token has expired.', fromPipeline: true });
+		render(<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />);
+		await flushSpawn();
+
+		expect(screen.getByText(/taking Cue pipelines down with it/)).toBeInTheDocument();
+		expect(screen.getByText('OAuth token has expired.')).toBeInTheDocument();
+	});
+
+	// The dialog is scoped to the provider, so it has to describe the whole blast
+	// radius: one expired token stops every agent sharing that credential store,
+	// and one login releases all of them.
+	it('names every blocked agent and offers to resume them together', async () => {
+		const sessions = [
+			createMockSession({ id: 'sess-1', name: 'Nightly Triage' }),
+			createMockSession({ id: 'sess-2', name: 'Doc Sweep' }),
+		];
+		useSessionStore.setState({ sessions });
+		const outage = createOutage({
+			blocked: [
+				{ sessionId: 'sess-1', tabIds: ['tab-1'] },
+				{ sessionId: 'sess-2', tabIds: [] },
+			],
+		});
 		render(
-			<ReauthModal
-				theme={mockTheme}
-				session={session}
-				message="OAuth token has expired."
-				fromPipeline
-				onClose={vi.fn()}
-			/>
+			<ReauthModal theme={mockTheme} outage={outage} session={sessions[0]} onClose={vi.fn()} />
 		);
 		await flushSpawn();
 
-		expect(screen.getByText(/while running a Cue pipeline/)).toBeInTheDocument();
-		expect(screen.getByText('OAuth token has expired.')).toBeInTheDocument();
+		expect(screen.getByText('Nightly Triage, Doc Sweep')).toBeInTheDocument();
+		expect(screen.getByText(/All 2 agents on this provider are stopped/)).toBeInTheDocument();
+		expect(screen.getByTestId('reauth-resume').textContent).toBe('Resume 2 Agents');
 	});
 });

@@ -11,6 +11,7 @@ import {
 	cancelRetry,
 	registerBatchResumer,
 } from '../../../../../renderer/stores/retryStore';
+import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
 let authExpiredHandler: ((payload: any) => void) | undefined;
@@ -54,6 +55,7 @@ beforeEach(() => {
 		removedWorktreePaths: new Set(),
 	});
 	useModalStore.getState().closeAll();
+	useAuthOutageStore.setState({ outages: {} });
 	useRetryStore.setState({ retries: {}, outages: {} });
 	(window as any).maestro = { ...((window as any).maestro || {}), process: mockProcess };
 });
@@ -115,18 +117,73 @@ describe('useAgentErrorListener', () => {
 
 		const modal = useModalStore.getState();
 		expect(modal.modals.get('agentError')?.open ?? false).toBe(false);
-		expect(modal.modals.get('reauth')?.data).toEqual({
-			sessionId: 'sess-1',
-			message: baseError.message,
-		});
+		// Addressed by provider, not by agent - one login fixes every agent on it.
+		expect(modal.modals.get('reauth')?.data).toEqual({ providerKey: 'claude-code' });
 		// The session still carries the error so the transcript and Left Bar agree.
 		expect(useSessionStore.getState().sessions[0].agentError?.type).toBe('auth_expired');
+		// The failing tab is recorded now so the resume can replay exactly it.
+		expect(useAuthOutageStore.getState().outages['claude-code'].blocked).toEqual([
+			{ sessionId: 'sess-1', tabIds: ['tab-1'] },
+		]);
+	});
+
+	// The whole point of the provider scope: 30 agents on one expired token is
+	// one problem with one fix, not 30 dialogs.
+	it('raises ONE prompt for many agents sharing an expired provider', () => {
+		const sessions = Array.from({ length: 30 }, (_, i) =>
+			createMockSession({
+				id: `sess-${i}`,
+				toolType: 'claude-code',
+				aiTabs: [createMockAITab({ id: `tab-${i}` })],
+				activeTabId: `tab-${i}`,
+			})
+		);
+		useSessionStore.setState({ sessions } as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		let opens = 0;
+		const unsub = useModalStore.subscribe((state, prev) => {
+			if (state.modals.get('reauth') !== prev.modals.get('reauth')) opens++;
+		});
+		sessions.forEach((s, i) => handler!(`${s.id}-ai-tab-${i}`, baseError));
+		unsub();
+
+		expect(opens).toBe(1);
+		// ...but every one of them is on the roster, or its queued work could
+		// never be resumed.
+		expect(useAuthOutageStore.getState().outages['claude-code'].blocked).toHaveLength(30);
+	});
+
+	it('keeps a different provider on its own prompt', () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'sess-claude',
+					toolType: 'claude-code',
+					aiTabs: [createMockAITab({ id: 'tab-1' })],
+					activeTabId: 'tab-1',
+				}),
+				createMockSession({
+					id: 'sess-codex',
+					toolType: 'codex',
+					aiTabs: [createMockAITab({ id: 'tab-2' })],
+					activeTabId: 'tab-2',
+				}),
+			],
+		} as any);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-claude-ai-tab-1', baseError);
+		handler!('sess-codex-ai-tab-2', baseError);
+
+		const outages = useAuthOutageStore.getState().outages;
+		expect(Object.keys(outages).sort()).toEqual(['claude-code', 'codex']);
 	});
 
 	// Cue spawns its agents outside the ProcessManager, so a pipeline auth
 	// failure arrives on its own channel - and that is the case where a silent
 	// failure costs the most.
-	it('opens the reauth modal for a pipeline auth failure', () => {
+	it('folds a pipeline auth failure into the same provider outage', () => {
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
 		useSessionStore.setState({ sessions: [session] } as any);
@@ -140,10 +197,12 @@ describe('useAgentErrorListener', () => {
 		});
 
 		expect(useModalStore.getState().modals.get('reauth')?.data).toEqual({
-			sessionId: 'sess-1',
-			message: 'OAuth token has expired.',
-			fromPipeline: true,
+			providerKey: 'claude-code',
 		});
+		const outage = useAuthOutageStore.getState().outages['claude-code'];
+		expect(outage.fromPipeline).toBe(true);
+		// A pipeline run owns no AI tab, so there is no turn to replay for it.
+		expect(outage.blocked).toEqual([{ sessionId: 'sess-1', tabIds: [] }]);
 	});
 
 	it('ignores a pipeline auth failure for an agent that no longer exists', () => {
