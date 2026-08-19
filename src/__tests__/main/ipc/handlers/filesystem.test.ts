@@ -1070,7 +1070,10 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 			const result = await handler!({}, 'https://example.com/image.jpg');
 
-			expect(global.fetch).toHaveBeenCalledWith('https://example.com/image.jpg');
+			expect(global.fetch).toHaveBeenCalledWith(
+				'https://example.com/image.jpg',
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
+			);
 			expect(result).toMatch(/^data:image\/jpeg;base64,/);
 		});
 
@@ -1200,7 +1203,10 @@ describe('filesystem handlers', () => {
 				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 				const result = await handler!({}, 'https://cdn.example.com/image.png');
 
-				expect(global.fetch).toHaveBeenCalledWith('https://cdn.example.com/image.png');
+				expect(global.fetch).toHaveBeenCalledWith(
+					'https://cdn.example.com/image.png',
+					expect.objectContaining({ signal: expect.any(AbortSignal) })
+				);
 				expect(result).toMatch(/^data:image\/png;base64,/);
 			});
 		});

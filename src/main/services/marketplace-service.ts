@@ -18,6 +18,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import type {
 	MarketplaceManifest,
 	MarketplaceCache,
@@ -32,6 +33,14 @@ import { captureException } from '../utils/sentry';
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Request budget for marketplace downloads. These are playbook markdown and
+ * assets pulled from GitHub raw on a user-initiated action, so the user is
+ * waiting on them: a stalled socket must surface as an error, not a spinner
+ * that never resolves.
+ */
+const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
 const LOG_CONTEXT = '[Marketplace]';
 
 export function getCacheFilePath(app: App): string {
@@ -205,7 +214,7 @@ function isCacheValid(cache: MarketplaceCache): boolean {
 async function fetchManifest(): Promise<MarketplaceManifest> {
 	logger.info('Fetching manifest from GitHub', LOG_CONTEXT);
 	try {
-		const response = await fetch(MANIFEST_URL);
+		const response = await fetchWithTimeout(MANIFEST_URL, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			throw new MarketplaceFetchError(
 				`Failed to fetch manifest: ${response.status} ${response.statusText}`
@@ -244,7 +253,7 @@ async function fetchDocument(playbookPath: string, filename: string): Promise<st
 	}
 	const url = `${GITHUB_RAW_BASE}/${playbookPath}/${filename}.md`;
 	try {
-		const response = await fetch(url);
+		const response = await fetchWithTimeout(url, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			if (response.status === 404) {
 				throw new MarketplaceFetchError(`Document not found: ${filename}`, { status: 404 });
@@ -282,7 +291,7 @@ async function fetchAsset(playbookPath: string, assetFilename: string): Promise<
 	}
 	const url = `${GITHUB_RAW_BASE}/${playbookPath}/assets/${assetFilename}`;
 	try {
-		const response = await fetch(url);
+		const response = await fetchWithTimeout(url, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			if (response.status === 404) {
 				throw new MarketplaceFetchError(`Asset not found: ${assetFilename}`, { status: 404 });
@@ -316,7 +325,7 @@ async function fetchReadme(playbookPath: string): Promise<string | null> {
 		}
 	}
 	const url = `${GITHUB_RAW_BASE}/${playbookPath}/README.md`;
-	const response = await fetch(url);
+	const response = await fetchWithTimeout(url, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 	if (!response.ok) {
 		if (response.status === 404) return null;
 		throw new MarketplaceFetchError(
