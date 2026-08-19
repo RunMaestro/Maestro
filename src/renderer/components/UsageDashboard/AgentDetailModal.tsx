@@ -15,7 +15,7 @@
 
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { Session, Theme } from '../../types';
-import type { StatsAggregation } from '../../../shared/stats-types';
+import type { QueryEvent, StatsAggregation } from '../../../shared/stats-types';
 import { formatDurationHuman, formatNumber, formatRelativeTime } from '../../../shared/formatters';
 import { Modal } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -23,6 +23,7 @@ import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { computePercentiles } from '../../../shared/percentiles';
 import { logger } from '../../utils/logger';
 import { Sparkline } from './Sparkline';
+import { TabBreakdown } from './TabBreakdown';
 
 interface AgentDetailModalProps {
 	session: Session;
@@ -31,14 +32,6 @@ interface AgentDetailModalProps {
 	/** All visible agent sessions - used to surface worktree relationships. */
 	allSessions: Session[];
 	onClose: () => void;
-}
-
-interface QueryEvent {
-	id: string;
-	sessionId: string;
-	source: 'user' | 'auto';
-	startTime: number;
-	duration: number;
 }
 
 interface AutoRunSessionRow {
@@ -154,7 +147,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 			title={headerLabel}
 			priority={MODAL_PRIORITIES.USAGE_DASHBOARD_AGENT_DETAIL}
 			onClose={onClose}
-			width={720}
+			width={860}
 			maxHeight="85vh"
 			closeOnBackdropClick={true}
 			testId="agent-detail-modal"
@@ -216,7 +209,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 								backgroundColor: theme.colors.bgMain,
 							}}
 						>
-							<Sparkline data={fullSparkline} color={theme.colors.accent} width={680} height={64} />
+							<Sparkline data={fullSparkline} color={theme.colors.accent} width={820} height={64} />
 							<div
 								className="flex justify-between mt-1 text-[10px]"
 								style={{ color: theme.colors.textDim }}
@@ -269,6 +262,14 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 							Loading…
 						</div>
 					)}
+				</section>
+
+				{/* Per-tab breakdown - the same query events, grouped by the tab that
+				    issued them. Sits above Auto Run because "which tab was this" is
+				    the more common follow-up question than batch-run totals. */}
+				<section>
+					<SectionHeading theme={theme}>Tabs</SectionHeading>
+					<TabBreakdown session={session} theme={theme} events={events} />
 				</section>
 
 				{/* Auto Run summary */}
