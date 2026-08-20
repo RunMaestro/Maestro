@@ -34,6 +34,10 @@ import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import {
+	normalizeComposerCommandMode,
+	type ComposerCommandMode,
+} from '../../utils/shellCommandInput';
+import {
 	FILE_TREE_SINGLE_MIME,
 	FILE_TREE_MULTI_MIME,
 } from '../../components/FileExplorerPanel/types';
@@ -253,10 +257,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return isAiModeRef.current ? s.aiValue : s.terminalValue;
 	}, []);
 
-	// Command mode only exists for the AI composer; the terminal is already a
-	// shell, so it reports false there rather than double-routing.
+	// The bang ladder only exists for the AI composer; the terminal is already a
+	// shell, so it reports 'off' there rather than double-routing.
 	const getCommandMode = useCallback(
-		() => isAiModeRef.current && useComposerInputStore.getState().aiCommandMode,
+		(): ComposerCommandMode =>
+			isAiModeRef.current ? useComposerInputStore.getState().aiCommandMode : 'off',
 		[]
 	);
 
@@ -356,7 +361,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	useEffect(() => {
 		if (!activeTab || didHydrateAiInputRef.current) return;
 		setAiValue(activeTab.inputValue ?? '');
-		setAiCommandMode(activeTab.commandMode === true);
+		setAiCommandMode(normalizeComposerCommandMode(activeTab.commandMode));
 		didHydrateAiInputRef.current = true;
 	}, [activeTab?.id, setAiValue, setAiCommandMode]);
 
@@ -389,7 +394,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					.sessions.find((s) => s.id === activeSession?.id)
 					?.aiTabs?.find((t) => t.id === activeTab.id) ?? activeTab;
 			setAiValue(storedTab.inputValue ?? '');
-			setAiCommandMode(storedTab.commandMode === true);
+			setAiCommandMode(normalizeComposerCommandMode(storedTab.commandMode));
 			prevActiveTabIdRef.current = activeTab.id;
 
 			// Clear hasUnread indicator on newly active tab
@@ -445,9 +450,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		return activeSessionInputMode === 'terminal' ? s.terminalValue : s.aiValue;
 	});
 	// Same gating trick for the mode flag: a stable `false` unless the dropdown
-	// is open, so toggling command mode doesn't re-render this hook either.
+	// is open, so toggling command mode doesn't re-render this hook either. Only
+	// the 'shell' rung completes - AI command mode's draft is prose.
 	const tabCompletionCommandMode = useComposerInputStore((s) =>
-		tabCompletionOpen ? s.aiCommandMode : false
+		tabCompletionOpen ? s.aiCommandMode === 'shell' : false
 	);
 	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionInput, 50);
 	const tabCompletionSuggestions = useMemo(() => {
@@ -646,16 +652,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
 
-			// Command mode is a shell prompt: the draft is piped to `sh`, never to
-			// the agent, so a staged image has nothing that could consume it. Say so
-			// rather than silently swallowing the paste - an image that vanishes with
-			// no feedback reads as a broken paste.
-			if (!isGroupChatActive && getCommandMode()) {
+			// Neither command rung has anywhere to put an image: one pipes the draft
+			// to `sh`, the other asks the model for a command line. Say so rather
+			// than silently swallowing the paste - an image that vanishes with no
+			// feedback reads as a broken paste.
+			if (!isGroupChatActive && getCommandMode() !== 'off') {
 				e.preventDefault();
 				notifyCenterFlash({
 					message: 'Images are not supported in command mode',
 					color: 'yellow',
-					detail: 'Press Esc to go back to the agent',
+					detail: 'Press Esc to step back toward the agent',
 				});
 				return;
 			}
@@ -741,13 +747,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const isGroupChatActive = !!activeGroupChatId;
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
-			// Command mode has no agent to hand attachments (or @mentions) to - the
-			// draft goes straight to a shell. Drop is a no-op there.
-			if (!isGroupChatActive && getCommandMode()) {
+			// Neither command rung has an agent to hand attachments (or @mentions)
+			// to - the draft goes to a shell or to a one-shot command request. Drop
+			// is a no-op there.
+			if (!isGroupChatActive && getCommandMode() !== 'off') {
 				notifyCenterFlash({
 					message: 'Attachments are not supported in command mode',
 					color: 'yellow',
-					detail: 'Press Esc to go back to the agent',
+					detail: 'Press Esc to step back toward the agent',
 				});
 				return;
 			}

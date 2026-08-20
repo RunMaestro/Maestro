@@ -62,7 +62,6 @@ import {
 	isBinaryExtension,
 	formatFileSize,
 	countMarkdownTasks,
-	toggleTaskCheckboxAtLine,
 	extractHeadings,
 	isReadableTextPreview,
 	isCodeFile,
@@ -93,8 +92,8 @@ import {
 	domGetTopLineByAttr,
 	domScrollToLineByAttr,
 } from './lineSync';
-import { rehypeSourceLine } from './rehypeSourceLine';
-import { TaskCheckbox } from './TaskCheckbox';
+import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
+import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
@@ -756,27 +755,12 @@ export const FilePreview = React.memo(
 				enableBionifyReadingMode: effectiveBionifyReadingMode,
 				bionifyIntensity,
 				bionifyAlgorithm,
+				// Clickable task checkboxes, paired with `rehypeSourceLine` above.
+				// A preview with nowhere to save to stays read-only.
+				onTaskToggle: onSave ? handleToggleTask : undefined,
 			});
 			return {
 				...components,
-				// GFM task checkboxes. `rehypeSourceLine` stamps each one with the
-				// line its `- [ ]` marker lives on, which is what lets a click edit
-				// the file. Everything else (raw HTML inputs passed through by
-				// rehype-raw) stays inert - a preview is not a form.
-				input: ({ node: _node, type, checked, ...props }: any) => {
-					const line = Number(props['data-source-line']);
-					if (type === 'checkbox' && onSave && Number.isFinite(line)) {
-						return (
-							<TaskCheckbox
-								line={line}
-								checked={!!checked}
-								theme={theme}
-								onToggle={handleToggleTask}
-							/>
-						);
-					}
-					return <input type={type} checked={checked} disabled readOnly {...props} />;
-				},
 				img: ({ src, alt, ...props }: any) => {
 					// Check if this image came from file tree (set by remarkFileLinks)
 					const isFromTree = props['data-maestro-from-tree'] === 'true';

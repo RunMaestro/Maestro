@@ -2,15 +2,19 @@ import { startTransition, useCallback } from 'react';
 import type React from 'react';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT, resizeTextareaToContent } from '../utils/textareaSizing';
 import { getAtMentionTrigger, shouldOpenSlashCommand } from '../utils/inputTriggers';
-import { detectCommandModeEntry } from '../../../utils/shellCommandInput';
+import {
+	detectCommandModeEntry,
+	nextComposerCommandMode,
+	type ComposerCommandMode,
+} from '../../../utils/shellCommandInput';
 
 interface UseInputAreaTextChangeArgs {
 	isTerminalMode: boolean;
 	slashCommandOpen: boolean;
-	/** Whether the AI composer is already in command mode. */
-	isCommandMode: boolean;
-	/** Enter/leave command mode (the `!` gesture). */
-	setCommandMode: (commandMode: boolean) => void;
+	/** Which rung of the bang ladder the AI composer is already on. */
+	commandMode: ComposerCommandMode;
+	/** Climb a rung of the bang ladder (the `!` gesture). */
+	setCommandMode: (commandMode: ComposerCommandMode) => void;
 	/** Live draft as of before this edit, used to detect the entry gesture. */
 	getPreviousValue: () => string;
 	/**
@@ -31,7 +35,7 @@ interface UseInputAreaTextChangeArgs {
 export function useInputAreaTextChange({
 	isTerminalMode,
 	slashCommandOpen,
-	isCommandMode,
+	commandMode,
 	setCommandMode,
 	getPreviousValue,
 	keystrokeResizeScheduledRef,
@@ -48,17 +52,22 @@ export function useInputAreaTextChange({
 			let value = e.target.value;
 			const cursorPosition = e.target.selectionStart || 0;
 
-			// The `!` gesture: typing (or pasting) a bang into an empty AI composer
-			// switches into command mode and is consumed - the character never lands
-			// in the text. Read the previous value BEFORE setInputValue below, since
-			// that is what makes "the composer was empty" true.
-			let nowInCommandMode = isCommandMode;
-			if (!isTerminalMode && !isCommandMode) {
-				const body = detectCommandModeEntry(getPreviousValue(), value);
-				if (body !== null) {
-					value = body;
-					nowInCommandMode = true;
-					setCommandMode(true);
+			// The `!` gesture: typing (or pasting) a bang into an EMPTY AI composer
+			// climbs one rung of the bang ladder (agent -> shell -> AI command) and
+			// is consumed - the character never lands in the text. Read the previous
+			// value BEFORE setInputValue below, since that is what makes "the
+			// composer was empty" true. There is no rung above AI command, so a bang
+			// typed there stays as text.
+			let nowInCommandMode = commandMode;
+			if (!isTerminalMode) {
+				const nextMode = nextComposerCommandMode(commandMode);
+				if (nextMode) {
+					const body = detectCommandModeEntry(getPreviousValue(), value);
+					if (body !== null) {
+						value = body;
+						nowInCommandMode = nextMode;
+						setCommandMode(nextMode);
+					}
 				}
 			}
 
@@ -68,7 +77,7 @@ export function useInputAreaTextChange({
 				// Slash commands are agent commands. In command mode a leading `/` is
 				// an absolute path (`/usr/bin/env`, `/etc`), so the popover must stay
 				// shut - and close if the `!` gesture just switched modes under it.
-				if (!nowInCommandMode && shouldOpenSlashCommand(value)) {
+				if (nowInCommandMode === 'off' && shouldOpenSlashCommand(value)) {
 					if (!slashCommandOpen) {
 						setSelectedSlashCommandIndex(0);
 					}
@@ -89,7 +98,8 @@ export function useInputAreaTextChange({
 					// ordinary shell text (an scp target, an email in a commit message),
 					// so suppress the popover - and close it if the `!` gesture is what
 					// just switched modes out from under an open one.
-					const trigger = nowInCommandMode ? null : getAtMentionTrigger(value, cursorPosition);
+					const trigger =
+						nowInCommandMode === 'off' ? getAtMentionTrigger(value, cursorPosition) : null;
 					if (trigger) {
 						setAtMentionOpen(true);
 						setAtMentionFilter(trigger.filter);
@@ -124,7 +134,7 @@ export function useInputAreaTextChange({
 		},
 		[
 			isTerminalMode,
-			isCommandMode,
+			commandMode,
 			setCommandMode,
 			getPreviousValue,
 			keystrokeResizeScheduledRef,

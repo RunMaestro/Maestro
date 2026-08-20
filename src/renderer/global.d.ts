@@ -3411,6 +3411,27 @@ interface MaestroAPI {
 		}) => Promise<string | null>;
 	};
 
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: {
+		suggest: (config: {
+			request: string;
+			agentType: string;
+			cwd: string;
+			isGitRepo?: boolean;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			sshRemoteName?: string;
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {

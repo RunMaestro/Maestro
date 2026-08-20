@@ -299,6 +299,17 @@ Adding a new dashboard grid means shaping data into `EntityTileStat[]` and passi
 
 It deliberately lives under `UsageDashboard/` rather than in `renderer/widgets/`: widgets are barred from importing from `UsageDashboard/`, and this tile is an entity summary (many stats, one subject) rather than the widget library's `StatCard` (one headline metric).
 
+### Turn Attribution Pills (`<TurnSettingPills>`)
+
+Each assistant message in the AI transcript carries a centered footer row naming the configuration that produced it: the Claude token-source pill (`claude -p` / `TUI Wrapper`, from `getTokenSourcePill()`), then the model and effort the turn was SENT with. `src/renderer/components/ui/TurnSettingPills.tsx` renders the model/effort half - static badges that mirror the composer's interactive `ModelEffortPills` (Sparkles + accent for model, Gauge + warning for effort), because a finished turn's configuration is a fact, not a control.
+
+The values come from `LogEntry.turnModel` / `turnEffort`, copied in `useBatchedSessionUpdates` from the tab's send-time stamp (`AITab.turnModel` / `turnEffort`, written by `codifyTurnSettings()` in `utils/providerTabSessions.ts`). Read the stamp, never the live tab or agent value: settings are codified at send, so a model change made while a turn streams applies to the next message and must not relabel the response already running. An unset value means the agent's own default applied, and that pill is omitted rather than labeled with a guess.
+
+Two traps when touching this row:
+
+- `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
+- `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
+
 ### Text Selection in Modals
 
 **Rule:** any modal (or modal subtree) whose primary purpose is _clicking_ - buttons, tabs, list rows, cards, graph nodes, filter chips, toggles, dropdowns - must have `select-none` on its root container. The dashboard-style modals (Cue, Usage Dashboard, Symphony, Playbook Exchange, Settings, Director's Notes list) are all click-driven; native browser drag-to-select highlighting fires accidentally during normal interactions (clicking a tab, dragging a graph node, double-clicking a card) and looks broken.
@@ -969,6 +980,44 @@ component map is `createMarkdownComponents()` in `utils/markdownConfig.ts`, whic
 keystroke-memoized preview, FilePreview's tier selection + from-tree image
 resolution, the Wizard DocumentEditor) consume `createMarkdownComponents()`
 directly rather than the shell, but share the same leaf implementation.
+
+#### Clickable task checkboxes
+
+react-markdown renders every GFM checkbox `disabled`, so a rendered preview is
+read-only by default even though the prose styles give the box a pointer cursor.
+Three pieces make one clickable, and they are shared - do NOT rebuild any of
+them per surface:
+
+- `rehypeSourceLine` (`components/Markdown/rehypeSourceLine.ts`) in the caller's
+  rehype plugins. It stamps each box with the 1-based line its `- [ ]` marker
+  lives on. The box itself is synthesized during mdast -> hast and carries no
+  position, so it inherits its list item's line.
+- `onTaskToggle: (line) => Promise<boolean>` passed to
+  `createMarkdownComponents()`. It swaps in `<TaskCheckbox>`
+  (`components/Markdown/components/TaskCheckbox.tsx`), which owns the optimistic
+  flip; resolve `false` and the box reverts. Omit the option and the read-only
+  behavior is unchanged.
+- `toggleTaskCheckboxAtLine()` (`utils/markdownTasks.ts`) to rewrite the source.
+  It preserves indentation, bullet style, and CRLF endings, and returns `null`
+  for a line with no task marker so a stale render cannot corrupt the file.
+
+Do NOT count checkboxes in the DOM and map them onto the Nth task line: that
+drifts the moment a `- [ ]` appears inside a code fence. The file preview and
+the Auto Run panel both ride this path; Auto Run drops the callback while a
+document is locked by a running Auto Run, matching its disabled editor.
+
+#### Alert callouts
+
+`[!NOTE]`-style callouts need a plugin AND a blockquote renderer. `remarkAlert`
+(`components/Markdown/remarkAlert.ts`) tags the blockquote with
+`markdown-alert-<type>`; `alertTypeFromClassName()` reads it back and the
+blockquote delegates to `<AlertCallout>`. `<Markdown>` wires both automatically
+(`alerts: true`); surfaces that assemble their own remark stack must push
+`remarkAlert` right after GFM and before `remark-breaks`, or the marker stays
+literal text. Labels, accents, and icon geometry live in
+`components/Markdown/alertMeta.ts` so the React callout and the File Preview
+Fast tier (which emits HTML strings via `markdownFast/alertTagger.ts`) cannot
+drift.
 
 Separate engines, intentionally not part of `<Markdown>`: `MarkdownPreviewFast`
 (markdown-it, virtualized for 64KB+ files) and `MobileMarkdownRenderer` (web

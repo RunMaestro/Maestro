@@ -12,6 +12,7 @@ import {
 	switchTabProvider,
 	resolveTurnProvider,
 	updateProviderSlot,
+	codifyTurnSettings,
 } from '../../../renderer/utils/providerTabSessions';
 import type { AITab, Session } from '../../../renderer/types';
 import type { ToolType } from '../../../shared/types';
@@ -31,8 +32,8 @@ function makeTab(overrides: Partial<AITab> = {}): AITab {
 	} as AITab;
 }
 
-function makeSession(toolType: ToolType): Session {
-	return { id: 'session-1', toolType } as Session;
+function makeSession(toolType: ToolType, overrides: Partial<Session> = {}): Session {
+	return { id: 'session-1', toolType, ...overrides } as Session;
 }
 
 describe('switchTabProvider', () => {
@@ -162,6 +163,39 @@ describe('updateProviderSlot', () => {
 			agentSessionId: 'claude-abc',
 			customModel: 'opus',
 			usageStats: { inputTokens: 3 },
+		});
+	});
+});
+
+describe('codifyTurnSettings', () => {
+	it('freezes the provider, model, and effort a turn is sent with', () => {
+		const tab = makeTab({ customModel: 'opus', customEffort: 'xhigh' });
+		const session = makeSession('claude-code', { customModel: 'sonnet', customEffort: 'low' });
+
+		expect(codifyTurnSettings(tab, session)).toEqual({
+			turnProvider: 'claude-code',
+			turnModel: 'opus',
+			turnEffort: 'xhigh',
+		});
+	});
+
+	it('falls back to the agent-level overrides when the tab has none', () => {
+		const session = makeSession('codex', { customModel: 'gpt-5', customEffort: 'medium' });
+
+		expect(codifyTurnSettings(makeTab(), session)).toEqual({
+			turnProvider: 'codex',
+			turnModel: 'gpt-5',
+			turnEffort: 'medium',
+		});
+	});
+
+	it('leaves model and effort undefined when the agent default applies', () => {
+		// Undefined is meaningful: consumers render no pill rather than labeling
+		// the turn with a model name nobody chose.
+		expect(codifyTurnSettings(makeTab(), makeSession('claude-code'))).toEqual({
+			turnProvider: 'claude-code',
+			turnModel: undefined,
+			turnEffort: undefined,
 		});
 	});
 });

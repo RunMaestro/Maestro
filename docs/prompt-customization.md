@@ -32,7 +32,7 @@ Prompts are organized by the feature they control:
 | **Auto Run**      | Auto Run behavior - the default execution prompt and synopsis generation                                                                                   |
 | **Group Chat**    | Group chat sessions - moderator system/synthesis prompts, participant behavior, and participant request formatting                                         |
 | **Context**       | Context window management - grooming (trimming), transferring between sessions, and summarization                                                          |
-| **Commands**      | Built-in commands - image-only message handling and git commit message generation                                                                          |
+| **Commands**      | Built-in commands - image-only message handling, git commit message generation, and AI command mode                                                        |
 | **System**        | Core system behavior - the Maestro system prompt injected into agents, tab naming, Director's Notes, and feedback                                          |
 | **Includes**      | Reusable fragments (filenames begin with `_`) referenced from other prompts via `{{INCLUDE:name}}` or `{{REF:name}}` - never sent to an agent on their own |
 

@@ -195,6 +195,27 @@ The Command Terminal - and the AI chat while in [command mode](./general-usage#c
 
 In git repositories, filter buttons appear in the dropdown header allowing you to filter by type (All, History, Branches, Tags, Files). Use `Tab`/`Shift+Tab` to cycle through filters or click directly.
 
+## Command Mode (AI Terminal)
+
+`!` in an empty AI composer climbs one rung of the [command mode](./general-usage#command-mode) ladder; `Esc` climbs back down. The composer never loses focus.
+
+| Action                         | Key                                       |
+| ------------------------------ | ----------------------------------------- |
+| Enter command mode             | `!` (empty composer)                      |
+| Enter AI command mode          | `!` again (empty command line)            |
+| Step back one rung             | `Esc` or `Backspace` (empty command line) |
+| Run the command / ask for one  | `Enter`                                   |
+| Send a message starting with ! | `\!` (the backslash is removed on send)   |
+
+When AI command mode proposes a command, the card owns the keyboard until you answer it:
+
+| Action             | Key                |
+| ------------------ | ------------------ |
+| Run the command    | `Y`                |
+| Decline it         | `N` or `Esc`       |
+| Move Run / Cancel  | `Left/Right Arrow` |
+| Take the selection | `Enter`            |
+
 ## @ File Mentions (AI Terminal)
 
 In AI mode, use `@` to reference files in your prompts:

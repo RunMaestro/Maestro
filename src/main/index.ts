@@ -82,6 +82,7 @@ import {
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
+	registerAiCommandHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCueHandlers,
@@ -1746,6 +1747,14 @@ function setupIpcHandlers() {
 
 	// Register tab naming handlers for automatic tab naming
 	registerTabNamingHandlers({
+		getProcessManager: () => processManager,
+		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
+		settingsStore: store,
+	});
+
+	// Register AI command mode handlers (plain-English request -> command line)
+	registerAiCommandHandlers({
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,

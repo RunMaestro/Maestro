@@ -46,6 +46,11 @@ export interface UseAutoRunMarkdownParams {
 	enableBionifyReadingMode?: boolean;
 	bionifyIntensity?: number;
 	bionifyAlgorithm?: string;
+	/**
+	 * Enables clickable task checkboxes in the preview. Receives the 1-based
+	 * source line of the task; resolves false when the write did not happen.
+	 */
+	onTaskToggle?: (sourceLine: number) => Promise<boolean>;
 }
 
 export interface UseAutoRunMarkdownReturn {
@@ -73,6 +78,7 @@ export function useAutoRunMarkdown({
 	enableBionifyReadingMode = false,
 	bionifyIntensity,
 	bionifyAlgorithm,
+	onTaskToggle,
 }: UseAutoRunMarkdownParams): UseAutoRunMarkdownReturn {
 	// 1. Memoize prose CSS styles - only regenerate when theme changes
 	const proseStyles = useMemo(() => generateAutoRunProseStyles(theme), [theme]);
@@ -187,6 +193,7 @@ export function useAutoRunMarkdown({
 			enableBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
+			onTaskToggle,
 		});
 
 		// Add custom image renderer for AttachmentImage
@@ -212,6 +219,7 @@ export function useAutoRunMarkdown({
 		enableBionifyReadingMode,
 		bionifyIntensity,
 		bionifyAlgorithm,
+		onTaskToggle,
 	]);
 
 	// 10. Search-highlighted components - only used in preview mode with active search
@@ -238,6 +246,7 @@ export function useAutoRunMarkdown({
 				currentMatchIndex,
 				onMatchRendered: handleMatchRendered,
 			},
+			onTaskToggle,
 		});
 
 		return {
@@ -264,6 +273,7 @@ export function useAutoRunMarkdown({
 		totalMatches,
 		currentMatchIndex,
 		handleMatchRendered,
+		onTaskToggle,
 	]);
 
 	// 11. Use search-highlighted components when available, otherwise use base components
