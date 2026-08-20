@@ -252,6 +252,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
+	'delete',
 ] as const;
 
 export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];

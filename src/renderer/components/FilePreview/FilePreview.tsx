@@ -33,6 +33,7 @@ import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboa
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { requestFileDeletion } from '../../services/fileDeletion';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
@@ -819,6 +820,13 @@ export const FilePreview = React.memo(
 		const headerIconClass = 'w-4 h-4';
 		const headerBtnClass =
 			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
+
+		// Delete the previewed file. Shared with the command palette's
+		// "File: Delete" entry, so both raise the same confirmation.
+		const handleDeleteFile = useCallback(() => {
+			if (!file?.path) return;
+			requestFileDeletion({ path: file.path, sshRemoteId });
+		}, [file?.path, sshRemoteId]);
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1659,6 +1667,7 @@ export const FilePreview = React.memo(
 					wordWrap={fileEditWordWrap}
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
+					onDelete={handleDeleteFile}
 				/>
 
 				{/* File changed on disk banner */}
