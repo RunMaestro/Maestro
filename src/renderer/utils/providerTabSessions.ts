@@ -80,6 +80,27 @@ export function resolveTurnProvider(tab: AITab | undefined, session: Session): T
 }
 
 /**
+ * The tab fields that codify a turn's configuration at send time.
+ *
+ * Spread this into the tab patch that marks the tab busy, so every send path
+ * freezes the same three values: the provider that owns the turn, and the model
+ * and effort it runs under. Resolution order matches what the spawn call
+ * actually passes to the agent (tab override, then agent override); a value
+ * left undefined means the agent's own default applies, and consumers render
+ * nothing rather than inventing a label.
+ */
+export function codifyTurnSettings(
+	tab: AITab | undefined,
+	session: Session
+): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort'> {
+	return {
+		turnProvider: session.toolType,
+		turnModel: tab?.customModel ?? session.customModel,
+		turnEffort: tab?.customEffort ?? session.customEffort,
+	};
+}
+
+/**
  * Apply an update to whichever slot belongs to `owningProvider` - the live
  * fields when it is the session's current provider, the parked entry otherwise.
  *

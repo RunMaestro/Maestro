@@ -1,4 +1,7 @@
 import type { Theme } from '../../../constants/themes';
+import { ALERT_TYPES } from '../../Markdown/remarkAlert';
+import { alertAccent, alertTint } from '../../Markdown/alertMeta';
+import { ALERT_TITLE_CLASS } from './alertTagger';
 
 /** CSS class name applied to each rendered block by the component. */
 export const FAST_BLOCK_CLASS = 'markdown-fast-block';
@@ -22,6 +25,27 @@ export const FAST_BLOCK_CLASS = 'markdown-fast-block';
  * CSS without re-running the parse pipeline. Heading/code sizes stay in `em`
  * and follow it.
  */
+/**
+ * Callout rules for the blockquotes `alertTagger` tagged. The Rich path styles
+ * these inline in `<AlertCallout>`; the Fast path emits plain HTML, so the
+ * accent, tint, and header color arrive through CSS instead. Both read the same
+ * `alertMeta` palette, so the two tiers stay in step.
+ */
+function generateAlertCss(theme: Theme): string {
+	const base = `
+		.${FAST_BLOCK_CLASS} .markdown-alert { border-radius: 6px; padding: 8px 12px; margin: 0.5em 0; color: ${theme.colors.textMain}; font-style: normal; }
+		.${FAST_BLOCK_CLASS} .${ALERT_TITLE_CLASS} { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 0.85em; margin-bottom: 4px; }
+		.${FAST_BLOCK_CLASS} .${ALERT_TITLE_CLASS} svg { flex-shrink: 0; }
+		.${FAST_BLOCK_CLASS} .markdown-alert > :last-child { margin-bottom: 0; }
+	`;
+	const perType = ALERT_TYPES.map(
+		(type) => `
+		.${FAST_BLOCK_CLASS} .markdown-alert-${type} { border-left: 4px solid ${alertAccent(type, theme)}; background: ${alertTint(type, theme)}; }
+		.${FAST_BLOCK_CLASS} .markdown-alert-${type} .${ALERT_TITLE_CLASS} { color: ${alertAccent(type, theme)}; }`
+	).join('');
+	return base + perType;
+}
+
 export function generateProseCss(theme: Theme): string {
 	const c = theme.colors;
 	return `
@@ -48,5 +72,6 @@ export function generateProseCss(theme: Theme): string {
 		.${FAST_BLOCK_CLASS} strong { font-weight: bold; }
 		.${FAST_BLOCK_CLASS} em { font-style: italic; }
 		.${FAST_BLOCK_CLASS} img { display: block; max-width: 100%; height: auto; }
+		${generateAlertCss(theme)}
 	`;
 }

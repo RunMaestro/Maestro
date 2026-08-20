@@ -237,6 +237,58 @@ describe('ClaudePlanUsage - case-variant dedup', () => {
 	});
 });
 
+describe('ClaudePlanUsage - exhausted account', () => {
+	// The panel an account renders once its weekly limit is gone: no reset row
+	// under the idle session, and a second weekly window named after the
+	// current premium tier rather than Sonnet.
+	function seedExhausted(): void {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 0 },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+	}
+
+	it('renders all three bars when the session window carries no reset time', () => {
+		seedExhausted();
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
+		expect(values).toEqual(['0', '100', '36']);
+		expect(screen.getByText('reset unknown')).toBeInTheDocument();
+	});
+
+	it('labels the second weekly window with the name the panel reported', () => {
+		seedExhausted();
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByText('Week (Fable)')).toBeInTheDocument();
+		expect(screen.queryByText('Week (Sonnet only)')).toBeNull();
+	});
+
+	it('falls back to the legacy label for snapshots cached before labels existed', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 0, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByText('Week (Sonnet only)')).toBeInTheDocument();
+	});
+});
+
 describe('ClaudePlanUsage - unauthenticated row', () => {
 	it('renders the "run /login" CTA in place of bars when authState is unauthenticated', () => {
 		seedSnapshots({

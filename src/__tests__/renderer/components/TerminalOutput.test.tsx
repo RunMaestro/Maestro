@@ -3624,6 +3624,138 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('model / effort pill rendering', () => {
+		it('labels each response with the model and effort its turn was sent with', () => {
+			// The point of the pills: the user switched configuration mid-conversation,
+			// so each response has to say which one produced it.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by opus',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-2',
+					text: 'answered by sonnet',
+					source: 'stdout',
+					turnModel: 'sonnet',
+					turnEffort: 'low',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.getByText('sonnet')).toBeInTheDocument();
+			expect(screen.getByText('low')).toBeInTheDocument();
+		});
+
+		it('renders on non-Claude agents, which have no token-source pill', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					turnModel: 'gpt-5',
+					turnEffort: 'medium',
+				}),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('gpt-5')).toBeInTheDocument();
+			expect(screen.getByText('medium')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
+		it('omits a pill whose value is unset, meaning the agent default applied', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout', turnModel: 'opus' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pills on user messages', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('keeps the pills when a system banner leads the response group', () => {
+			// Same collapse trap the token-source pill hit: the combined entry is
+			// built from `[0]`, which here is the banner and carries no stamp.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'banner',
+					text: 'Adaptive Mode: switched from API Limits to Time Limits.',
+					source: 'system',
+				}),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'streamed response',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'xhigh',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('xhigh');
+		});
+	});
+
 	describe('progressive transcript rendering (#1342)', () => {
 		// Switching to an agent with a long transcript used to mount every entry in
 		// one synchronous commit, freezing the UI for seconds on the PREVIOUS agent's

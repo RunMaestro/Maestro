@@ -30,6 +30,7 @@ import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
+import { TurnSettingPills } from '../../ui/TurnSettingPills';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
@@ -848,33 +849,41 @@ export const LogItem = memo(
 					)}
 					{/* Cross-agent attribution now lives in the header at the TOP of the
 					    bubble (CrossAgentResponseHeader); no bottom pill is rendered here. */}
-					{/* Mode pill - shows which CLI captured this Claude turn (TUI Wrapper =
-					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
-					    session has Dynamic Mode enabled (auto-switching between the two).
+					{/* Turn attribution pills, centered in the message footer. The mode pill
+					    shows which CLI captured this Claude turn (TUI Wrapper = maestro-p,
+					    claude -p = claude --print; a "Dynamic " prefix means the session
+					    auto-switches between the two). The model and effort pills name the
+					    configuration the turn was SENT with, so a conversation that changed
+					    model or effort partway through still says who answered what.
 					    Suppressed on cross-agent entries so the attribution pill above
 					    replaces it. */}
 					{!crossAgent &&
-						isClaudeCode &&
 						log.source !== 'user' &&
-						(() => {
-							const { label, title } = getTokenSourcePill({
-								mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
-								adaptive: isAdaptiveMode,
-							});
-							return (
-								<span
-									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										opacity: 0.7,
-									}}
-									title={title}
-								>
-									{label}
-								</span>
-							);
-						})()}
+						(isClaudeCode || log.turnModel || log.turnEffort) && (
+							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
+								{isClaudeCode &&
+									(() => {
+										const { label, title } = getTokenSourcePill({
+											mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+											adaptive: isAdaptiveMode,
+										});
+										return (
+											<span
+												className="text-[10px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+												style={{
+													backgroundColor: `${theme.colors.accent}20`,
+													color: theme.colors.accent,
+													opacity: 0.7,
+												}}
+												title={title}
+											>
+												{label}
+											</span>
+										);
+									})()}
+								<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
+							</div>
+						)}
 					{/* Jump to top of this message - bottom left corner */}
 					<JumpToMessageTopButton
 						scrollContainerRef={scrollContainerRef}

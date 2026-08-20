@@ -40,6 +40,7 @@ import {
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
+	registerAiCommandHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
@@ -485,6 +486,15 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register tab naming handlers for automatic tab naming
 	registerTabNamingHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+	});
+
+	// AI Command handlers (plain-English request -> one shell command line).
+	// Same dependency shape as tab naming: both spawn a short-lived agent turn.
+	registerAiCommandHandlers({
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,

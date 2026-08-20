@@ -58,13 +58,25 @@ export interface EmitResultOptions {
 // Older callers can omit `auth_state` entirely; readers MUST treat its
 // absence as `'authenticated'` so on-disk snapshots written before this
 // field existed keep deserializing into the live UI.
+//
+// `resets_at` is OPTIONAL per window: claude paints no "Resets ..." row for a
+// window with nothing running in it (an idle 0% session), and a snapshot that
+// reports real percentages with one reset time missing beats no snapshot at
+// all - which is what an exhausted account used to get. Readers must render
+// the percentage regardless and simply omit the reset caption.
+//
+// `week_sonnet_only.label` carries the live name of that bucket. The field
+// name is historical: Anthropic has renamed the window from "Sonnet only" to
+// "Opus" to "Fable" without changing what it means (the separately-metered
+// premium-model weekly limit), so the wire key stays put for on-disk
+// compatibility and the label says what the panel actually showed.
 export interface StatusSnapshot {
 	type: 'status';
 	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
-	session: { percent: number; resets_at: string };
-	week_all_models: { percent: number; resets_at: string };
-	week_sonnet_only: { percent: number; resets_at: string };
+	session: { percent: number; resets_at?: string };
+	week_all_models: { percent: number; resets_at?: string };
+	week_sonnet_only: { percent: number; resets_at?: string; label?: string };
 }
 
 export class JsonEmitter {

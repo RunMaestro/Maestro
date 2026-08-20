@@ -79,8 +79,8 @@ function Composer({
 	setCommandMode,
 	inputValue,
 }: {
-	commandMode: boolean;
-	setCommandMode: (v: boolean) => void;
+	commandMode: 'off' | 'shell' | 'ai';
+	setCommandMode: (v: 'off' | 'shell' | 'ai') => void;
 	inputValue: string;
 }) {
 	const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -127,7 +127,7 @@ describe('Escape out of command mode (real DOM)', () => {
 	function setup(inputValue = '') {
 		const setCommandMode = vi.fn();
 		const utils = render(
-			<Composer commandMode setCommandMode={setCommandMode} inputValue={inputValue} />
+			<Composer commandMode="shell" setCommandMode={setCommandMode} inputValue={inputValue} />
 		);
 		const composer = utils.getByLabelText('composer') as HTMLTextAreaElement;
 		act(() => composer.focus());
@@ -140,7 +140,7 @@ describe('Escape out of command mode (real DOM)', () => {
 
 		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true });
 
-		expect(setCommandMode).toHaveBeenCalledWith(false);
+		expect(setCommandMode).toHaveBeenCalledWith('off');
 		// The assertion that matters: the next keystroke goes to the composer.
 		expect(document.activeElement).toBe(composer);
 	});
@@ -152,7 +152,7 @@ describe('Escape out of command mode (real DOM)', () => {
 
 		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true });
 
-		expect(setCommandMode).toHaveBeenCalledWith(false);
+		expect(setCommandMode).toHaveBeenCalledWith('off');
 		expect(document.activeElement).toBe(composer);
 	});
 
@@ -161,7 +161,7 @@ describe('Escape out of command mode (real DOM)', () => {
 		// ordinary chat draft, and this fix must not disable it.
 		const setCommandMode = vi.fn();
 		const { getByLabelText, getByTestId } = render(
-			<Composer commandMode={false} setCommandMode={setCommandMode} inputValue="" />
+			<Composer commandMode="off" setCommandMode={setCommandMode} inputValue="" />
 		);
 		const composer = getByLabelText('composer') as HTMLTextAreaElement;
 		act(() => composer.focus());

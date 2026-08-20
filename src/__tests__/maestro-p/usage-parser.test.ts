@@ -95,6 +95,16 @@ describe('parseUsage / fixtures', () => {
 	it('parses a cursor-addressed glued panel with no newlines, isolating the final repaint', () => {
 		runFixture('usage-glued-no-newlines');
 	});
+
+	// Real capture from an account that had burned its entire weekly limit
+	// (2026-08-19). It carries BOTH regressions that made such an account
+	// invisible in the dashboard: the settled paint has no "Resets" row under
+	// the idle 0% session (the parser used to return null for the whole panel),
+	// and the second weekly window is named "(Fable)" rather than
+	// "(Sonnet only)" (the header regex used to miss it and report 0%).
+	it('parses an exhausted account whose session row has no Resets and whose second week is "(Fable)"', () => {
+		runFixture('usage-exhausted-fable-no-session-reset');
+	});
 });
 
 describe('parseUsage / behavioral guards', () => {
@@ -117,7 +127,7 @@ describe('parseUsage / behavioral guards', () => {
 		expect(parseUsage(raw, nowIso, configDir)).toBeNull();
 	});
 
-	it('returns null when the session resets line is missing entirely', () => {
+	it('keeps the snapshot and omits resets_at when the session resets line is missing entirely', () => {
 		const raw = [
 			'Current session',
 			'23% used',
@@ -130,7 +140,55 @@ describe('parseUsage / behavioral guards', () => {
 			'12% used',
 			'Resets May 22 at 6pm (America/Chicago)',
 		].join('\n');
-		expect(parseUsage(raw, nowIso, configDir)).toBeNull();
+		const result = parseUsage(raw, nowIso, configDir);
+		expect(result?.session).toEqual({ percent: 23 });
+		expect(result?.week_all_models.percent).toBe(58);
+		expect(result?.week_sonnet_only.percent).toBe(12);
+	});
+
+	it('reports the second weekly window under whatever model name the panel used', () => {
+		const raw = [
+			'Current session',
+			'23% used',
+			'Resets 6pm (America/Chicago)',
+			'',
+			'Current week (all models)',
+			'58% used',
+			'Resets May 22 at 6pm (America/Chicago)',
+			'',
+			'Current week (Opus)',
+			'12% used',
+			'Resets May 22 at 6pm (America/Chicago)',
+		].join('\n');
+		const result = parseUsage(raw, nowIso, configDir);
+		expect(result?.week_sonnet_only).toEqual({
+			percent: 12,
+			resets_at: '2026-05-22T23:00:00.000Z',
+			label: 'Opus',
+		});
+	});
+
+	it('does not mistake a repeated all-models header for the second weekly window', () => {
+		const raw = [
+			'Current session',
+			'23% used',
+			'Resets 6pm (America/Chicago)',
+			'',
+			'Current week (all models)',
+			'58% used',
+			'Resets May 22 at 6pm (America/Chicago)',
+			'',
+			'Current week (all models)',
+			'99% used',
+			'Resets May 22 at 6pm (America/Chicago)',
+		].join('\n');
+		const result = parseUsage(raw, nowIso, configDir);
+		expect(result?.week_all_models.percent).toBe(58);
+		// Placeholder, not the duplicate header's 99%.
+		expect(result?.week_sonnet_only).toEqual({
+			percent: 0,
+			resets_at: '2026-05-22T23:00:00.000Z',
+		});
 	});
 
 	it('returns null when the week_all_models section is missing', () => {
@@ -201,7 +259,7 @@ describe('parseUsage / behavioral guards', () => {
 		expect(parseUsage(raw, nowIso, configDir)).toBeNull();
 	});
 
-	it('handles bogus IANA zone gracefully by rejecting the section', () => {
+	it('handles a bogus IANA zone by dropping that reset time, not the whole panel', () => {
 		const raw = [
 			'Current session',
 			'23% used',
@@ -211,8 +269,9 @@ describe('parseUsage / behavioral guards', () => {
 			'58% used',
 			'Resets May 22 at 6pm (America/Chicago)',
 		].join('\n');
-		// Bogus zone -> session parse returns null -> top-level null
-		expect(parseUsage(raw, nowIso, configDir)).toBeNull();
+		const result = parseUsage(raw, nowIso, configDir);
+		expect(result?.session).toEqual({ percent: 23 });
+		expect(result?.week_all_models.resets_at).toBe('2026-05-22T23:00:00.000Z');
 	});
 
 	it('does NOT inline-scan Sonnet for a polluted bare reset spec (would lock onto prior section)', () => {

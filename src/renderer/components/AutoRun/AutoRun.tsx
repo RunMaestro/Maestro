@@ -11,10 +11,14 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeSlug from 'rehype-slug';
+import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
 // Module-level constant - react-markdown re-parses the document if rehypePlugins
 // changes by reference, so the array must be hoisted out of render.
-const REHYPE_PLUGINS = [rehypeSlug];
+// rehypeSourceLine runs first so it reads the original source positions before
+// any later plugin rewrites the tree. It stamps each task checkbox with the line
+// its `- [ ]` marker lives on, which is what makes the box clickable.
+const REHYPE_PLUGINS = [rehypeSourceLine, rehypeSlug];
 
 // Memoized ReactMarkdown wrapper. AutoRunInner re-renders on every keystroke in
 // the AI input (input state lives in App.tsx and cascades down), and ReactMarkdown
@@ -56,6 +60,7 @@ import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
 import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
+import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
@@ -65,6 +70,7 @@ import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 
 // Inner implementation component
@@ -357,6 +363,60 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onShowFlash,
 	]);
 
+	// Latest content, read by the preview's checkbox handler. Keeping it in a ref
+	// leaves the toggle callback reference-stable, so the memoized markdown
+	// components (and the parse behind them) survive every content change.
+	const localContentRef = useRef(localContent);
+	useEffect(() => {
+		localContentRef.current = localContent;
+	}, [localContent]);
+
+	// Tick a task off straight from the rendered preview. Preview is a first-class
+	// way to work a playbook, so checking a box must not require a trip through
+	// edit mode. Resolves false when nothing was written, which reverts the box.
+	const handleToggleTask = useCallback(
+		async (line: number): Promise<boolean> => {
+			if (!folderPath || !selectedFile) return false;
+
+			const result = toggleTaskCheckboxAtLine(localContentRef.current, line);
+			// No task marker on that line: the render is out of step with the
+			// source. Leave the document alone rather than rewriting the wrong line.
+			if (!result) return false;
+
+			pushUndoState();
+			setLocalContent(result.content);
+			lastUndoSnapshotRef.current = result.content;
+
+			try {
+				await window.maestro.autorun.writeDoc(
+					folderPath,
+					selectedFile + '.md',
+					result.content,
+					sshRemoteId
+				);
+				setSavedContent(result.content);
+				return true;
+			} catch (err) {
+				logger.error('Failed to save toggled task:', undefined, err);
+				notifyToast({
+					color: 'red',
+					title: 'Could not save task',
+					message: err instanceof Error ? err.message : String(err),
+				});
+				return false;
+			}
+		},
+		[
+			folderPath,
+			selectedFile,
+			sshRemoteId,
+			setLocalContent,
+			setSavedContent,
+			pushUndoState,
+			lastUndoSnapshotRef,
+		]
+	);
+
 	// Image handling hook (attachments, paste, upload, lightbox)
 	const {
 		attachmentsList,
@@ -578,6 +638,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
+			// Locked documents belong to the running Auto Run - leave their
+			// checkboxes read-only, matching the disabled editor.
+			onTaskToggle: isLocked ? undefined : handleToggleTask,
 		});
 
 	// Keep the document selector badge in sync with the bottom-panel counter.

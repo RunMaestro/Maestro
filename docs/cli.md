@@ -579,11 +579,28 @@ maestro-cli tab close <tab-id>
 maestro-cli tab rename <tab-id> "Docs"
 maestro-cli tab star <tab-id>
 maestro-cli tab unstar <tab-id>
+
+# Flag a tab for the human with the unread dot, or clear it
+maestro-cli tab unread <tab-id>
+maestro-cli tab read <tab-id>
+
+# Turn the tab's History synopsis on or off
+maestro-cli tab save-to-history <tab-id> false
+
+# Move a tab in the tab bar (0-based index, or "first" / "last")
+maestro-cli tab move <tab-id> first
+maestro-cli tab move <tab-id> 2
+
+# Pin an agent to the Bookmarks section at the top of the Left Bar
+maestro-cli bookmark <agent-id>
+maestro-cli unbookmark <agent-id>
 ```
 
 Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`).
 
 An agent running inside Maestro gets its **own** tab ID in its system prompt (the `Tab ID` line under Session Information, from the `{{TAB_ID}}` variable), so you can just tell it "close this tab" or "rename this tab to Docs" and it will act on the right one. Every other entry in `session list` is a different live conversation, so agents are instructed never to guess a tab ID from that list.
+
+Bookmark, unread, star, and save-to-history are explicit set operations rather than toggles, so re-running a script lands on the same state either way. Read the current values back with `maestro-cli show agent <id> --json` (field `bookmarked`) and `maestro-cli session list --json` (field `starred`). `bookmark` also has a flag form, `maestro-cli update-agent <id> --bookmark true`, for when you are already changing other agent settings in the same call.
 
 ### Listing Resources
 

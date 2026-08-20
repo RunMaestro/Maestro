@@ -43,6 +43,9 @@ export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';
 
 export { WorktreePill } from './WorktreePill';
 
+export { TurnSettingPills } from './TurnSettingPills';
+export type { TurnSettingPillsProps } from './TurnSettingPills';
+
 export { HoverTooltip } from './HoverTooltip';
 export type { HoverTooltipProps } from './HoverTooltip';
 

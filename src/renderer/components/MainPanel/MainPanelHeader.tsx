@@ -742,7 +742,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 																			className="text-[10px] mt-0.5 text-right"
 																			style={{ color: theme.colors.textDim, opacity: 0.7 }}
 																		>
-																			Resets {formatFutureTime(window.resetsAt)}
+																			{window.resetsAt
+																				? `Resets ${formatFutureTime(window.resetsAt)}`
+																				: 'Reset time unknown'}
 																		</div>
 																	</div>
 																);

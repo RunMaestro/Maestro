@@ -1584,9 +1584,9 @@ interface MaestroAPI {
 					sampledAt: string;
 					configDirKey: string;
 					authState?: 'authenticated' | 'unauthenticated';
-					session: { percent: number; resetsAt: string };
-					weekAllModels: { percent: number; resetsAt: string };
-					weekSonnetOnly: { percent: number; resetsAt: string };
+					session: { percent: number; resetsAt?: string };
+					weekAllModels: { percent: number; resetsAt?: string };
+					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}
 			>
 		>;
@@ -3876,6 +3876,27 @@ interface MaestroAPI {
 		// running as an orphan). Main retires anything scoped to that tab, e.g. an
 		// armed dispatch callback that would otherwise time out an hour later.
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
+	};
+
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: {
+		suggest: (config: {
+			request: string;
+			agentType: string;
+			cwd: string;
+			isGitRepo?: boolean;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			sshRemoteName?: string;
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; command?: string; error?: string }>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

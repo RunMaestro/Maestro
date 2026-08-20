@@ -26,11 +26,20 @@ interface InputTextareaProps {
 	theme: Theme;
 	isTerminalMode: boolean;
 	/**
-	 * True while an AI-mode draft is in command mode (starts with `!`). Derived
-	 * once by InputArea, which also uses it to gate Tab completion, so both
+	 * True while an AI-mode draft is a literal shell command line. Derived once
+	 * by InputArea, which also uses it to gate Tab completion, so both
 	 * affordances can never disagree about whether this is a shell line.
 	 */
 	isCommandModeDraft: boolean;
+	/** True while an AI-mode draft is an AI command request (prose, not a line). */
+	isAiCommandDraft: boolean;
+	/**
+	 * True while a suggestion is in flight or a proposal is awaiting an answer.
+	 * The textarea goes read-only rather than unmounting: the caret has to stay
+	 * here, because Enter / arrows / Escape all answer the card from this
+	 * element's keydown handler.
+	 */
+	awaitingAiCommand: boolean;
 	inputValue: string;
 	spellCheckEnabled: boolean;
 	inputRef: React.RefObject<HTMLTextAreaElement>;
@@ -75,6 +84,8 @@ export const InputTextarea = memo(function InputTextarea({
 	theme,
 	isTerminalMode,
 	isCommandModeDraft,
+	isAiCommandDraft,
+	awaitingAiCommand,
 	inputValue,
 	spellCheckEnabled,
 	inputRef,
@@ -215,7 +226,8 @@ export const InputTextarea = memo(function InputTextarea({
 	});
 
 	// Command mode borrows the terminal composer's `$` affordance so the switch
-	// is visible before you hit Enter.
+	// is visible before you hit Enter. AI command mode deliberately does not: its
+	// draft is a sentence, and a `$` in front of one promises a shell line.
 	const showShellPrefix = isTerminalMode || isCommandModeDraft;
 
 	return (
@@ -292,11 +304,18 @@ export const InputTextarea = memo(function InputTextarea({
 				placeholder={
 					isTerminalMode
 						? 'Run shell command...'
-						: isCommandModeDraft
-							? 'Run shell command... (Esc to go back to the agent)'
-							: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
+						: awaitingAiCommand
+							? 'Enter runs it - arrows choose - Esc cancels'
+							: isAiCommandDraft
+								? 'Describe what you want to accomplish... (Esc for Command Mode)'
+								: isCommandModeDraft
+									? 'Run shell command... (! for AI Command, Esc for the agent)'
+									: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
 				}
 				value={inputValue}
+				// Read-only, not disabled: a disabled textarea cannot hold focus, and
+				// every key that answers the proposal is read from this element.
+				readOnly={awaitingAiCommand}
 				spellCheck={spellCheckEnabled}
 				onFocus={onInputFocus}
 				onBlur={() => {
