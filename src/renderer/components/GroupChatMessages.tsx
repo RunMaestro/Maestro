@@ -52,6 +52,13 @@ interface GroupChatMessagesProps {
 	ghCliAvailable?: boolean;
 	/** Callback to publish a message as a GitHub Gist */
 	onPublishGist?: (text: string, messageId?: string) => void;
+	/**
+	 * When Find is open, raise virtualizer overscan so off-screen messages stay
+	 * in the DOM long enough for match counting/highlight to see them.
+	 */
+	searchActive?: boolean;
+	/** Optional external ref to the scroll container (used by group Find). */
+	scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 /** Handle exposed via ref for scrolling to messages */
@@ -74,10 +81,21 @@ export const GroupChatMessages = memo(
 			onOpenLightbox,
 			ghCliAvailable,
 			onPublishGist,
+			searchActive = false,
+			scrollContainerRef: externalScrollRef,
 		},
 		ref
 	) {
 		const containerRef = useRef<HTMLDivElement>(null);
+		const setContainerRef = useCallback(
+			(el: HTMLDivElement | null) => {
+				containerRef.current = el;
+				if (externalScrollRef) {
+					(externalScrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+				}
+			},
+			[externalScrollRef]
+		);
 		const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
 		const hasVirtualTypingIndicator = state !== 'idle' && messages.length > 0;
 		const virtualItemCount = messages.length + (hasVirtualTypingIndicator ? 1 : 0);
@@ -102,7 +120,7 @@ export const GroupChatMessages = memo(
 				index === messages.length
 					? 'typing-indicator'
 					: `${messages[index]?.timestamp ?? 'message'}-${index}`,
-			overscan: 5,
+			overscan: searchActive ? Math.max(messages.length, 50) : 5,
 			initialRect: { width: 900, height: 700 },
 		});
 		const virtualMessages = virtualizer.getVirtualItems();
@@ -264,7 +282,7 @@ export const GroupChatMessages = memo(
 
 		return (
 			<div
-				ref={containerRef}
+				ref={setContainerRef}
 				tabIndex={0}
 				role="region"
 				aria-label="Group chat messages"

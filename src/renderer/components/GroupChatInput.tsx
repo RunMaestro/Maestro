@@ -39,6 +39,7 @@ import { logger } from '../utils/logger';
 import { useDebouncedCallback } from '../hooks/utils/useThrottle';
 import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
+import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -286,10 +287,18 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			if (e.metaKey || e.ctrlKey) {
 				// Cmd+F: open transcript Find (group chat has no TerminalOutput to catch this).
 				// Alt must be excluded: Opt+Cmd+F is cross-tab search and is not available here.
+				// stopPropagation means the window handler never runs, so refocus here when
+				// the bar is already open.
 				if (e.key === 'f' && !e.shiftKey && !e.altKey) {
 					e.preventDefault();
 					e.stopPropagation();
-					useUIStore.getState().setOutputSearchOpen(groupChatOutputSearchKey(groupChatId), true);
+					const key = groupChatOutputSearchKey(groupChatId);
+					const ui = useUIStore.getState();
+					if (ui.outputSearchByKey[key]?.open) {
+						document.querySelector<HTMLInputElement>(OUTPUT_SEARCH_INPUT_SELECTOR)?.focus();
+					} else {
+						ui.setOutputSearchOpen(key, true);
+					}
 					return;
 				}
 				// Cmd+R: Toggle read-only mode

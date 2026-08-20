@@ -14,6 +14,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 
@@ -446,7 +447,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.key.toLowerCase() === 'f'
 			) {
 				e.preventDefault();
-				document.querySelector<HTMLInputElement>('.terminal-output input')?.focus();
+				document.querySelector<HTMLInputElement>(OUTPUT_SEARCH_INPUT_SELECTOR)?.focus();
 				return;
 			}
 
