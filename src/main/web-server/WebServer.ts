@@ -1017,7 +1017,7 @@ export class WebServer {
 			) => this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt, sourceAgentId),
 			// Cue pipeline-layout mutations operate directly on the
 			// main-process layout file via the mutation primitives - no
-			// renderer round-trip needed. The Pipeline Editor (when open)
+			// renderer round-trip needed. The Pipeline Graph (when open)
 			// keeps its own in-memory state, so CLI edits made while the
 			// editor is open will be overwritten on the editor's next
 			// save. The CLI surface documents this; we don't gate here.

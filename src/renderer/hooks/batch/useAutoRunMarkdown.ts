@@ -19,6 +19,7 @@ import React from 'react';
 import { openUrl } from '../../utils/openUrl';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
+import { useStableCallback } from '../utils/useStableCallback';
 
 export interface UseAutoRunMarkdownParams {
 	theme: Theme;
@@ -174,6 +175,19 @@ export function useAutoRunMarkdown({
 		return plugins;
 	}, [fileTree, fileTreeIndices, homeDir]);
 
+	// 9. Task toggling, pinned to one identity. A toggle handler naturally closes
+	// over the document content, so it is reborn on every edit - and rebuilding
+	// the component map below remounts the whole rendered document, throwing away
+	// the reader's scroll position. Stabilizing here means no caller can cause
+	// that by writing an ordinary useCallback.
+	const stableTaskToggle = useStableCallback(
+		(sourceLine: number): Promise<boolean> =>
+			onTaskToggle ? onTaskToggle(sourceLine) : Promise.resolve(false)
+	);
+	// Presence still has to reach the factory: passing nothing keeps checkboxes
+	// read-only, which is how a locked document stays locked.
+	const taskToggle = onTaskToggle ? stableTaskToggle : undefined;
+
 	// 9. Base markdown components - stable unless theme, folderPath, or callbacks change
 	// Separated from search highlighting to prevent rebuilds on every search state change
 	const baseMarkdownComponents = useMemo(() => {
@@ -193,7 +207,7 @@ export function useAutoRunMarkdown({
 			enableBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
-			onTaskToggle,
+			onTaskToggle: taskToggle,
 		});
 
 		// Add custom image renderer for AttachmentImage
@@ -219,7 +233,7 @@ export function useAutoRunMarkdown({
 		enableBionifyReadingMode,
 		bionifyIntensity,
 		bionifyAlgorithm,
-		onTaskToggle,
+		taskToggle,
 	]);
 
 	// 10. Search-highlighted components - only used in preview mode with active search
@@ -246,7 +260,7 @@ export function useAutoRunMarkdown({
 				currentMatchIndex,
 				onMatchRendered: handleMatchRendered,
 			},
-			onTaskToggle,
+			onTaskToggle: taskToggle,
 		});
 
 		return {
@@ -273,7 +287,7 @@ export function useAutoRunMarkdown({
 		totalMatches,
 		currentMatchIndex,
 		handleMatchRendered,
-		onTaskToggle,
+		taskToggle,
 	]);
 
 	// 11. Use search-highlighted components when available, otherwise use base components

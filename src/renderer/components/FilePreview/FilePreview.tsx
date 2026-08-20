@@ -94,6 +94,7 @@ import {
 	domScrollToLineByAttr,
 } from './lineSync';
 import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
+import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 
@@ -734,6 +735,12 @@ export const FilePreview = React.memo(
 			[file, onSave, hasChanges, sshRemoteId]
 		);
 
+		// Pinned to one identity before it reaches the component map below. The
+		// handler closes over `file`, so it is reborn every time the content
+		// changes - and rebuilding that map remounts the whole rendered document,
+		// which throws away the reader's scroll position mid-click.
+		const stableToggleTask = useStableCallback(handleToggleTask);
+
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
@@ -758,7 +765,7 @@ export const FilePreview = React.memo(
 				bionifyAlgorithm,
 				// Clickable task checkboxes, paired with `rehypeSourceLine` above.
 				// A preview with nowhere to save to stays read-only.
-				onTaskToggle: onSave ? handleToggleTask : undefined,
+				onTaskToggle: onSave ? stableToggleTask : undefined,
 			});
 			return {
 				...components,
@@ -799,15 +806,17 @@ export const FilePreview = React.memo(
 				// Fixes MAESTRO-8Q
 				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
+			// `file.path` only: depending on the whole object would rebuild this map
+			// (and remount the rendered document) on every content change.
 		}, [
 			onFileClick,
 			theme,
 			cwd,
-			file,
+			file?.path,
 			showRemoteImages,
 			sshRemoteId,
 			onSave,
-			handleToggleTask,
+			stableToggleTask,
 			effectiveBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,

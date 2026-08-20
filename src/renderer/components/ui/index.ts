@@ -25,6 +25,9 @@ export type { RadioGroupProps, RadioOption } from './RadioGroup';
 export { SegmentedControl } from './SegmentedControl';
 export type { SegmentedControlProps, SegmentedOption } from './SegmentedControl';
 
+export { SortableTh } from './SortableTh';
+export type { SortableThProps } from './SortableTh';
+
 export { Spinner } from './Spinner';
 export type { SpinnerProps } from './Spinner';
 

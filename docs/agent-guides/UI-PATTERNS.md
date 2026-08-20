@@ -291,6 +291,40 @@ It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `ro
 
 **This is not `<RadioGroup>`.** That primitive renders the same semantics as stacked, description-carrying list rows for settings panes. `SegmentedControl` is the compact toolbar form for short labels where vertical space is scarce. Pick by layout, and do not add a `variant` prop to either one to cover the other.
 
+### Sortable Table Headers (`<SortableTh>` + `useTableSort`)
+
+A table whose column headers sort it needs two pieces, and both live in shared code: `useTableSort()` (`src/renderer/hooks/ui/useTableSort.ts`) for the state, `<SortableTh>` (`src/renderer/components/ui/SortableTh.tsx`) for the header cell.
+
+```tsx
+const { sortKey, direction, isDescending, toggleSort } = useTableSort<TaskSortKey>('next', {
+	// Text columns read best A-Z, magnitude columns biggest-first.
+	defaultDirectionFor: (key) => (key === 'occurrences' ? 'desc' : 'asc'),
+});
+
+<SortableTh
+	columnKey="next"
+	label="Next"
+	sortKey={sortKey}
+	direction={direction}
+	onSort={toggleSort}
+	theme={theme}
+	align="right"
+	title="Sort by time until the next fire"
+	className="pb-2 font-medium text-right"
+	testId="scheduled-tasks-sort-next"
+/>;
+```
+
+The hook owns the one rule every hand-rolled copy gets subtly different: clicking the **active** column flips its direction, clicking a **different** column jumps to that column's own default direction. Inheriting the previous column's direction is the bug worth avoiding - going from "Next ascending" to "Occurrences ascending" silently shows the least-used rows first, which reads as broken data rather than as a sort.
+
+The component owns three things:
+
+- **A real `<button>` as the click target.** A `<th role="button" onClick>` announces as a button but has no tab stop and no Enter/Space handling, so it is unreachable by keyboard. `role` grants the semantics without granting the behavior.
+- **`aria-sort` on the `<th>`**, never on the inner control, and only the active column carries a direction.
+- **A stable indicator slot.** The caret is always laid out and merely transparent when inactive, so switching columns doesn't reflow the header row.
+
+Callers keep their own comparator and own padding/border classes via `className` / `style`. One nuance worth copying: rows whose sort value is genuinely unknown (a Cue interval task has no projected next fire) should be pinned last in **both** directions rather than flowing through the comparator - "unknown" is not "the largest value", and flipping the sort must not promote rows that have nothing to compare.
+
 ### Entity Tiles in the Usage Dashboard (`<EntityTile>`)
 
 The Usage Dashboard's card grids (the agent grid in `AgentOverviewCards`, the per-tab grid in `TabBreakdown`) all render the same tile: status dot, truncating title, badges, corner age, optional subtitle, a row of labeled stats, and a corner sparkline. That chrome lives once in `src/renderer/components/UsageDashboard/EntityTile.tsx` - border states (default / dashed / hovered / selected), the staggered `card-enter` animation, the clickable-button affordance, and the highlighted-stat accent coloring.
@@ -1005,6 +1039,17 @@ Do NOT count checkboxes in the DOM and map them onto the Nth task line: that
 drifts the moment a `- [ ]` appears inside a code fence. The file preview and
 the Auto Run panel both ride this path; Auto Run drops the callback while a
 document is locked by a running Auto Run, matching its disabled editor.
+
+**The toggle handler MUST have a stable identity.** `createMarkdownComponents()`
+returns a map of freshly-created component functions, so anything that rebuilds
+that map hands React a NEW component TYPE for every element and it unmounts and
+remounts the whole rendered document - throwing away the reader's scroll
+position, restarting images, and re-running Mermaid. A toggle handler naturally
+closes over the document content, so an ordinary `useCallback` is reborn on
+every edit and does exactly that. Wrap it in `useStableCallback()`
+(`hooks/utils/useStableCallback.ts`) and keep the component memo's dependencies
+off the content (depend on `file.path`, not `file`). `useAutoRunMarkdown` does
+the wrapping internally, so its callers cannot get this wrong.
 
 #### Alert callouts
 

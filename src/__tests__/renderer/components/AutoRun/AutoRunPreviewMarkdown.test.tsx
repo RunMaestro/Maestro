@@ -146,3 +146,52 @@ describe('Auto Run preview task checkboxes', () => {
 		expect(writeDoc).not.toHaveBeenCalled();
 	});
 });
+
+/**
+ * Ticking a box must not move the page.
+ *
+ * `createMarkdownComponents()` returns a map of freshly-created component
+ * functions, so rebuilding it hands React a NEW component TYPE for every
+ * element and it unmounts and remounts the entire rendered document. The
+ * scroll container survives, its contents do not, so the reader is thrown back
+ * to the top of a long playbook on every click. The toggle handler closes over
+ * the document content, which is exactly the kind of dependency that rebuilds
+ * that map.
+ *
+ * jsdom has no layout engine, so asserting on `scrollTop` would pass either
+ * way. Asserting that the DOM nodes SURVIVE the toggle is the real invariant -
+ * a preserved node cannot have had its scroll position reset.
+ */
+describe('Auto Run preview stability across a toggle', () => {
+	it('keeps the rendered document mounted when a task is ticked', async () => {
+		const { container } = renderPreview('# Doc\n\n- [ ] first\n- [ ] second\n');
+
+		const headingBefore = container.querySelector('h1');
+		const listBefore = container.querySelector('ul');
+		expect(headingBefore).not.toBeNull();
+
+		fireEvent.click(container.querySelectorAll('input[type="checkbox"]')[0]);
+		await waitFor(() => expect(writeDoc).toHaveBeenCalled());
+
+		expect(container.querySelector('h1')).toBe(headingBefore);
+		expect(container.querySelector('ul')).toBe(listBefore);
+	});
+
+	it('survives several toggles in a row', async () => {
+		const { container } = renderPreview('# Doc\n\n- [ ] first\n- [ ] second\n');
+		const headingBefore = container.querySelector('h1');
+
+		fireEvent.click(container.querySelectorAll('input[type="checkbox"]')[0]);
+		await waitFor(() => expect(writeDoc).toHaveBeenCalledTimes(1));
+		fireEvent.click(container.querySelectorAll('input[type="checkbox"]')[1]);
+		await waitFor(() => expect(writeDoc).toHaveBeenCalledTimes(2));
+
+		expect(container.querySelector('h1')).toBe(headingBefore);
+		expect(writeDoc).toHaveBeenLastCalledWith(
+			'/test/folder',
+			'doc.md',
+			'# Doc\n\n- [x] first\n- [x] second\n',
+			undefined
+		);
+	});
+});

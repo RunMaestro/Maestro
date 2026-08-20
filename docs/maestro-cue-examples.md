@@ -8,7 +8,7 @@ Complete, copy-paste-ready `.maestro/cue.yaml` configurations for common workflo
 
 ## Pipeline Grouping
 
-Group related automations under a single pipeline - multiple trigger lines appear as one pipeline in the Pipeline Editor instead of cluttering the dropdown.
+Group related automations under a single pipeline - multiple trigger lines appear as one pipeline in the Pipeline Graph instead of cluttering the dropdown.
 
 ```yaml
 # Pipeline: Monitoring (color: #06b6d4)

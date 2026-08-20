@@ -50,7 +50,8 @@ export interface UiSurface {
 export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 	{ id: 'dashboard', label: 'Dashboard' },
 	{ id: 'scheduled', label: 'Scheduled Tasks' },
-	{ id: 'pipeline', label: 'Pipeline Editor' },
+	{ id: 'pipeline', label: 'Pipeline Graph' },
+	{ id: 'pipeline-list', label: 'Pipeline List' },
 	{ id: 'activity', label: 'Activity Log' },
 	{ id: 'backup', label: 'Backup' },
 ];

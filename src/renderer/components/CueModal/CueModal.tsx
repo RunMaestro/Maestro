@@ -32,6 +32,7 @@ import { useCueToggle } from '../../hooks/cue/useCueToggle';
 import { CueModalHeader, type CueModalTab } from './CueModalHeader';
 import { CueDashboard } from './CueDashboard';
 import { ActivityLog } from './ActivityLog';
+import { PipelineListTab } from './PipelineListTab';
 import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
@@ -168,6 +169,13 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		nonce: string;
 	} | null>(null);
 
+	// Jump to the graph tab with a specific pipeline pre-selected. The nonce is
+	// what lets the editor re-apply the same target on a repeat click.
+	const handleViewInGraph = useCallback((pipelineId: string | null) => {
+		setPendingPipelineId({ id: pipelineId, nonce: generateId() });
+		setActiveTab('pipeline');
+	}, []);
+
 	const handleViewInPipeline = useCallback(
 		(session: CueSessionStatus) => {
 			// Find the pipeline by session-membership, not by color. Multiple
@@ -182,10 +190,9 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						node.data.sessionId === session.sessionId
 				)
 			);
-			setPendingPipelineId({ id: pipeline?.id ?? null, nonce: generateId() });
-			setActiveTab('pipeline');
+			handleViewInGraph(pipeline?.id ?? null);
 		},
-		[dashboardPipelines]
+		[dashboardPipelines, handleViewInGraph]
 	);
 
 	const handleRemoveCue = useCallback(
@@ -255,6 +262,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		'dashboard',
 		'scheduled',
 		'pipeline',
+		'pipeline-list',
 		'activity',
 		'backup',
 	]);
@@ -367,6 +375,19 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								active
 								agents={scheduledTaskAgents}
 								defaultAgentId={activeSessionId ?? undefined}
+							/>
+						) : activeTab === 'pipeline-list' ? (
+							<PipelineListTab
+								theme={theme}
+								pipelines={dashboardPipelines}
+								graphSessions={graphSessions}
+								activeRuns={activeRuns}
+								activityLog={activityLog}
+								loading={loading || graphInitialLoading}
+								error={error || graphError}
+								onRetry={handleRetry}
+								onViewInGraph={handleViewInGraph}
+								onTriggerSubscription={triggerSubscription}
 							/>
 						) : activeTab === 'activity' ? (
 							<div className="flex-1 min-h-0 px-5 py-4 select-text">

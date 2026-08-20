@@ -17,7 +17,7 @@ import {
 	type IncomingTriggerEdgeInfo,
 	type IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
-import { getTriggerConfigSummary } from '../../components/CuePipelineEditor/utils/pipelineGraph';
+import { getTriggerConfigSummary } from '../../../shared/cue-pipeline-summary';
 import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
 
 export type {

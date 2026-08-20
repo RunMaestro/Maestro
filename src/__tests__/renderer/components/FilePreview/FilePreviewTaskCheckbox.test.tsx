@@ -119,3 +119,54 @@ describe('FilePreview task checkboxes', () => {
 		expect(onSave).not.toHaveBeenCalled();
 	});
 });
+
+/**
+ * Ticking a box must not move the page.
+ *
+ * `createMarkdownComponents()` returns a map of freshly-created component
+ * functions, so rebuilding it hands React a NEW component TYPE for every
+ * element and it unmounts and remounts the entire rendered document. The
+ * scroll container survives, its contents do not, so the reader is thrown back
+ * to the top of a long file on every click. Both the toggle handler and the
+ * memo's old `file` dependency changed whenever the content did, which is
+ * exactly what rebuilt that map.
+ *
+ * jsdom has no layout engine, so asserting on `scrollTop` would pass either
+ * way. Asserting that the DOM nodes SURVIVE the toggle is the real invariant -
+ * a preserved node cannot have had its scroll position reset.
+ */
+describe('FilePreview stability across a task toggle', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('keeps the rendered document mounted when a task is ticked', async () => {
+		const onSave = vi.fn().mockResolvedValue(true);
+		const { container, rerender } = render(
+			<LayerStackProvider>
+				<FilePreview {...defaultProps} onSave={onSave} />
+			</LayerStackProvider>
+		);
+
+		const headingBefore = container.querySelector('h1');
+		const listBefore = container.querySelector('ul');
+		expect(headingBefore).not.toBeNull();
+
+		fireEvent.click(boxes()[0]);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+
+		// The tab re-reads the file after the write and hands down a NEW file
+		// object. That is the render the old dependency list tore the document
+		// down on, so the assertion only means something after it.
+		const saved = onSave.mock.calls[0][1] as string;
+		rerender(
+			<LayerStackProvider>
+				<FilePreview {...defaultProps} file={{ ...taskFile, content: saved }} onSave={onSave} />
+			</LayerStackProvider>
+		);
+
+		expect(container.querySelector('h1')).toBe(headingBefore);
+		expect(container.querySelector('ul')).toBe(listBefore);
+		expect(boxes().map((b) => b.checked)).toEqual([true, true]);
+	});
+});

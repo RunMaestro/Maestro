@@ -1,0 +1,275 @@
+/**
+ * Tests for PipelineListTab - the Cue Pipeline List tab.
+ *
+ * Covers what the list promises the user: a prose description of each
+ * pipeline, a health badge, search + filter + sort, and the two row actions.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, within } from '@testing-library/react';
+import { PipelineListTab } from '../../../../renderer/components/CueModal/PipelineListTab';
+import type { Theme } from '../../../../renderer/types';
+import type { CuePipeline, PipelineNode } from '../../../../shared/cue-pipeline-types';
+import type { CueRunResult } from '../../../../shared/cue/contracts';
+
+const theme = {
+	colors: {
+		border: '#333',
+		textMain: '#fff',
+		textDim: '#888',
+		bgActivity: '#111',
+		bgMain: '#222',
+		accent: '#06b6d4',
+		error: '#ff0000',
+		warning: '#eab308',
+		success: '#22c55e',
+	},
+} as unknown as Theme;
+
+function trigger(id: string, subscriptionName: string, extras: Record<string, unknown> = {}) {
+	return {
+		id,
+		type: 'trigger',
+		position: { x: 0, y: 0 },
+		data: {
+			eventType: 'time.scheduled',
+			label: 'Scheduled',
+			config: { schedule_times: ['09:00'] },
+			subscriptionName,
+			...extras,
+		},
+	} as PipelineNode;
+}
+
+function agent(id: string, sessionName: string) {
+	return {
+		id,
+		type: 'agent',
+		position: { x: 0, y: 0 },
+		// inputPrompt is what keeps the fixture VALID - validatePipelines flags a
+		// trigger-fed agent with no prompt, which would mask every other status.
+		data: {
+			sessionId: `${sessionName}-id`,
+			sessionName,
+			toolType: 'claude-code',
+			inputPrompt: 'go',
+		},
+	} as PipelineNode;
+}
+
+function makePipeline(name: string, id = name, color = '#06b6d4'): CuePipeline {
+	return {
+		id,
+		name,
+		color,
+		nodes: [trigger(`${id}-t`, name), agent(`${id}-a`, 'rc')],
+		edges: [{ id: `${id}-e`, source: `${id}-t`, target: `${id}-a`, mode: 'pass' }],
+	};
+}
+
+function makeRun(overrides: Partial<CueRunResult> = {}): CueRunResult {
+	return {
+		runId: 'r1',
+		sessionId: 's1',
+		sessionName: 'rc',
+		subscriptionName: 'Daily Digest',
+		event: { type: 'time.scheduled', payload: {} },
+		status: 'completed',
+		stdout: '',
+		stderr: '',
+		exitCode: 0,
+		durationMs: 12_000,
+		startedAt: '2026-08-20T09:00:00.000Z',
+		endedAt: '2026-08-20T09:00:12.000Z',
+		...overrides,
+	} as CueRunResult;
+}
+
+const onViewInGraph = vi.fn();
+const onTriggerSubscription = vi.fn();
+const onRetry = vi.fn();
+
+function renderList(overrides: Partial<React.ComponentProps<typeof PipelineListTab>> = {}) {
+	return render(
+		<PipelineListTab
+			theme={theme}
+			pipelines={[makePipeline('Daily Digest')]}
+			graphSessions={[]}
+			activeRuns={[]}
+			activityLog={[]}
+			loading={false}
+			error={null}
+			onRetry={onRetry}
+			onViewInGraph={onViewInGraph}
+			onTriggerSubscription={onTriggerSubscription}
+			{...overrides}
+		/>
+	);
+}
+
+beforeEach(() => {
+	vi.clearAllMocks();
+});
+
+describe('PipelineListTab', () => {
+	it('describes each pipeline in prose, not just by name', () => {
+		renderList();
+		expect(screen.getByText('Daily Digest')).toBeInTheDocument();
+		expect(screen.getByText('Scheduled (09:00) → rc')).toBeInTheDocument();
+	});
+
+	it('shows a health badge derived from the run history', () => {
+		renderList({ activityLog: [makeRun({ status: 'failed', exitCode: 1 })] });
+		expect(screen.getByText('Failing')).toBeInTheDocument();
+	});
+
+	it('shows Running while a run is in flight', () => {
+		renderList({ activeRuns: [makeRun({ status: 'running' })] });
+		// Scoped to the row - the filter bar also has a "Running" segment.
+		const row = screen.getByTestId('pipeline-list-row-Daily Digest');
+		expect(within(row).getByText('Running')).toBeInTheDocument();
+		expect(within(row).getByText('1 run in flight')).toBeInTheDocument();
+	});
+
+	it('reports a pipeline whose subscriptions are all switched off as disabled', () => {
+		renderList({
+			graphSessions: [
+				{
+					sessionId: 's1',
+					sessionName: 'rc',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Daily Digest',
+							event: 'time.scheduled',
+							enabled: false,
+							prompt: 'go',
+							schedule_times: ['09:00'],
+						},
+					],
+				},
+			] as never,
+		});
+		expect(screen.getByText('Disabled')).toBeInTheDocument();
+	});
+
+	it('surfaces config validation errors on the row', () => {
+		// A pipeline with a trigger but no agent fails validatePipelines.
+		const broken: CuePipeline = {
+			id: 'broken',
+			name: 'Broken',
+			color: '#ef4444',
+			nodes: [trigger('bt', 'Broken')],
+			edges: [],
+		};
+		renderList({ pipelines: [broken] });
+		expect(screen.getByText('Needs attention')).toBeInTheDocument();
+		expect(screen.getByText(/needs at least one agent or command/)).toBeInTheDocument();
+	});
+
+	it('filters by search text', () => {
+		renderList({ pipelines: [makePipeline('Daily Digest'), makePipeline('Cyber Stocks')] });
+		fireEvent.change(screen.getByPlaceholderText('Search pipelines...'), {
+			target: { value: 'cyber' },
+		});
+		expect(screen.getByText('Cyber Stocks')).toBeInTheDocument();
+		expect(screen.queryByText('Daily Digest')).not.toBeInTheDocument();
+	});
+
+	it('filters by health status', () => {
+		const broken: CuePipeline = {
+			id: 'broken',
+			name: 'Broken',
+			color: '#ef4444',
+			nodes: [trigger('bt', 'Broken')],
+			edges: [],
+		};
+		renderList({ pipelines: [makePipeline('Daily Digest'), broken] });
+		fireEvent.click(
+			within(screen.getByTestId('pipeline-list-filter')).getByTestId(
+				'pipeline-list-filter-attention'
+			)
+		);
+		expect(screen.getByText('Broken')).toBeInTheDocument();
+		expect(screen.queryByText('Daily Digest')).not.toBeInTheDocument();
+	});
+
+	// The default sort exists so the rows a human must act on are not buried
+	// under a couple dozen healthy ones.
+	it('sorts problems above healthy pipelines by default', () => {
+		const broken: CuePipeline = {
+			id: 'broken',
+			name: 'Zebra Broken',
+			color: '#ef4444',
+			nodes: [trigger('bt', 'Zebra Broken')],
+			edges: [],
+		};
+		renderList({
+			pipelines: [makePipeline('Alpha Healthy'), broken],
+			activityLog: [makeRun({ subscriptionName: 'Alpha Healthy' })],
+		});
+		const rows = screen.getAllByTestId(/^pipeline-list-row-/);
+		expect(rows[0]).toHaveAttribute('data-testid', 'pipeline-list-row-broken');
+	});
+
+	it('Run now fires every trigger subscription in the pipeline', () => {
+		const multi: CuePipeline = {
+			id: 'multi',
+			name: 'Multi',
+			color: '#06b6d4',
+			nodes: [
+				trigger('t1', 'Multi'),
+				trigger('t2', 'Multi-chain-2', { eventType: 'app.startup', config: {} }),
+				agent('a1', 'rc'),
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 't2', target: 'a1', mode: 'pass' },
+			],
+		};
+		renderList({ pipelines: [multi] });
+		fireEvent.click(screen.getByText('Run now'));
+		expect(onTriggerSubscription).toHaveBeenCalledTimes(2);
+		expect(onTriggerSubscription).toHaveBeenCalledWith('Multi');
+		expect(onTriggerSubscription).toHaveBeenCalledWith('Multi-chain-2');
+	});
+
+	// Never-saved pipelines have no subscription on disk, so there is nothing
+	// the engine could fire - the button must not offer a no-op.
+	it('hides Run now when no trigger has a subscription name', () => {
+		const unsaved: CuePipeline = {
+			id: 'unsaved',
+			name: 'Unsaved',
+			color: '#06b6d4',
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'app.startup', label: 'Startup', config: {} },
+				} as PipelineNode,
+				agent('a1', 'rc'),
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+		};
+		renderList({ pipelines: [unsaved] });
+		expect(screen.queryByText('Run now')).not.toBeInTheDocument();
+	});
+
+	it('Graph jumps to the graph tab with this pipeline selected', () => {
+		renderList();
+		fireEvent.click(screen.getByText('Graph'));
+		expect(onViewInGraph).toHaveBeenCalledWith('Daily Digest');
+	});
+
+	it('renders an empty state that points at the graph tab', () => {
+		renderList({ pipelines: [] });
+		expect(screen.getByText(/No pipelines yet/)).toBeInTheDocument();
+	});
+
+	it('offers a retry when the fetch failed', () => {
+		renderList({ error: 'boom' });
+		fireEvent.click(screen.getByText('Retry'));
+		expect(onRetry).toHaveBeenCalledOnce();
+	});
+});

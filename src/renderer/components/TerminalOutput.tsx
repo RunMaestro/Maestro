@@ -1345,6 +1345,15 @@ const LogItemComponent = memo(
 			prevProps.log.turnEffort === nextProps.log.turnEffort &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
+			// A command card's whole header is driven by these, and none of them
+			// touch `text`. A command that prints NOTHING (`!true`, `!mkdir foo`)
+			// changes only these fields when it exits, so without them the card is
+			// frozen mid-run: still spinning, still offering Stop, and still hiding
+			// the delete button, which is gated on the command having finished.
+			prevProps.log.shellCommand?.status === nextProps.log.shellCommand?.status &&
+			prevProps.log.shellCommand?.exitCode === nextProps.log.shellCommand?.exitCode &&
+			prevProps.log.shellCommand?.durationMs === nextProps.log.shellCommand?.durationMs &&
+			prevProps.log.shellCommand?.truncated === nextProps.log.shellCommand?.truncated &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

@@ -16,13 +16,24 @@ import {
 	Activity,
 	Archive,
 	AlarmClock,
+	ListChecks,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 
 /** Tab ids. Kept in sync with the `cue` entry in `shared/uiSurfaces.ts`, which
- *  is what `maestro-cli open cue --tab <id>` deep-links against. */
-export type CueModalTab = 'dashboard' | 'scheduled' | 'pipeline' | 'activity' | 'backup';
+ *  is what `maestro-cli open cue --tab <id>` deep-links against.
+ *
+ *  `pipeline` is the graph canvas. Its id predates the "Pipeline Graph" label
+ *  and is deliberately unchanged: saved deep links, `maestro-cli open cue
+ *  --tab pipeline`, and the YAML editor's nav button all address it by id. */
+export type CueModalTab =
+	| 'dashboard'
+	| 'scheduled'
+	| 'pipeline'
+	| 'pipeline-list'
+	| 'activity'
+	| 'backup';
 
 const TABS: ReadonlyArray<{
 	id: CueModalTab;
@@ -31,7 +42,8 @@ const TABS: ReadonlyArray<{
 }> = [
 	{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
 	{ id: 'scheduled', label: 'Scheduled Tasks', icon: AlarmClock },
-	{ id: 'pipeline', label: 'Pipeline Editor', icon: GitFork },
+	{ id: 'pipeline', label: 'Pipeline Graph', icon: GitFork },
+	{ id: 'pipeline-list', label: 'Pipeline List', icon: ListChecks },
 	{ id: 'activity', label: 'Activity Log', icon: Activity },
 	{ id: 'backup', label: 'Backup', icon: Archive },
 ];

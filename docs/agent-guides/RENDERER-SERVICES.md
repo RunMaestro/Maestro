@@ -123,6 +123,8 @@ Rendered by `components/ShellCommandCard.tsx`, anchored by `LogEntry.shellComman
 - It must **never** call `claude.deleteMessagePair` - the agent was bypassed entirely, so there is no pair in its session to delete.
 - Delete is hidden while the command is still **running**. Removing a live card would orphan the process: output keeps streaming into an entry that no longer exists, with no Stop button left to reach it. Stop first, then delete.
 
+Because that gate reads `shellCommand.status`, `LogItem`'s memo comparator in `TerminalOutput.tsx` must compare the `shellCommand` fields (`status`, `exitCode`, `durationMs`, `truncated`) and not just `log.text`. A command that prints NOTHING (`!true`, `!mkdir foo`) changes only those fields when it exits, so comparing text alone froze the card mid-run: spinner up, Stop still offered, delete still hidden.
+
 The recall-history rule lives in the pure reducer `hooks/tabs/internal/deleteShellCommandLog.ts`: the bang-prefixed `aiCommandHistory` entry is pruned **only when no card anywhere in the agent still shows that command**. The two lists have different scopes - cards are per tab, `aiCommandHistory` is per agent and deduplicated - so pruning unconditionally would strip `!ls` from up-arrow recall while two other `ls` cards sit on screen.
 
 ### Command mode is STATE, not a text prefix
