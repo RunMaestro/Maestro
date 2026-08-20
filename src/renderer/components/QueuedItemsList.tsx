@@ -120,9 +120,14 @@ export const QueuedItemsList = memo(
 		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
 
 		// A queued item can be dispatched or removed while its edit modal is open
-		// (or while this list is unmounted). Drop the id once it no longer names a
-		// row here so the modal closes instead of lingering as dead state.
-		const editItemMissing = !!editItemId && !filteredQueue.some((item) => item.id === editItemId);
+		// (or while this list is unmounted). Drop the id once the item leaves the
+		// queue so the modal closes instead of lingering as dead state.
+		//
+		// This checks the WHOLE queue, not this tab's slice: "Edit Last Queued
+		// Message" can target a message on another tab and switch to it, and
+		// clearing on the filtered list would race that switch and cancel the open.
+		// Not being on this tab means "not visible yet", not "gone".
+		const editItemMissing = !!editItemId && !executionQueue.some((item) => item.id === editItemId);
 		useEffect(() => {
 			if (editItemMissing) setEditItemId(null);
 		}, [editItemMissing, setEditItemId]);
