@@ -176,6 +176,33 @@ expect(modal.parentElement).toBe(document.body);
 React context flows through portals, so `useModalLayer` registration, Escape
 handling, and theming are unaffected by the relocation.
 
+### Modals Launched From Inside Settings (`launchFromSettings`)
+
+The Settings modal renders at `z-[9999]`, above every other modal surface. A
+control inside Settings that opens a SEPARATE top-level modal (Extensions ->
+"Open Pianola", a plugin's contributed `modal` panel) therefore opens it
+_behind_ Settings: the click appears to do nothing until the user closes
+Settings and finds the modal waiting underneath.
+
+Route those launchers through `launchFromSettings()` in
+`src/renderer/utils/launchFromSettings.ts`:
+
+```tsx
+onClick={() => launchFromSettings(() => getModalActions().setPianolaModalOpen(true))}
+```
+
+It closes Settings and then runs the launcher, in that order. Keeping the order
+in one helper matters: a launcher that itself deep-links back into Settings (a
+different tab, say) has to win over the close.
+
+Use it only for launchers that open a separate top-level modal. Inline settings
+controls, confirmations, and pickers that are meant to stack ON TOP of Settings
+must not use it.
+
+Because jsdom has no layout engine, a test cannot observe the occlusion. Assert
+the store state instead: `isOpen('settings')` is `false` and the launched modal
+is open.
+
 ### Resizable Textareas
 
 Any textarea with a native `resize-y` grip should remember the height the user drags it to. A size someone picked by hand is a preference, so snapping back to the default on the next open (or the next app launch) is a bug, not a reset.
@@ -464,6 +491,51 @@ Users can rebind `DEFAULT_SHORTCUTS` and `TAB_SHORTCUTS` via the ShortcutEditor 
 ```tsx
 const { shortcuts, setShortcuts, tabShortcuts, setTabShortcuts } = useSettings();
 ```
+
+### Arrow Navigation Over a List or Grid (`useListNavigation`)
+
+`useListNavigation()` in `src/renderer/hooks/keyboard/useListNavigation.ts` owns
+arrow/vim/page/Enter navigation for every list-shaped surface (command palette,
+tab switcher, git log, history). Do NOT hand-roll another
+`selectedIndex` + keydown switch.
+
+Pass `columns` to navigate a 2-D **grid** instead: left/right step one tile,
+up/down jump a full row. `columns` of 1 (the default) is exactly the old list
+behavior, and left/right stay inert there because other things own those keys
+(text carets, tree expand/collapse).
+
+For a responsive grid, feed it the MEASURED column count from
+`useGridColumnCount(ref, itemCount)` (`src/renderer/hooks/ui/useGridColumnCount.ts`),
+which reads the resolved `grid-template-columns` and re-measures on reflow. A
+hard-coded row width silently walks to the wrong tile the moment an `auto-fill`
+grid drops to two columns.
+
+```tsx
+const gridRef = useRef<HTMLDivElement>(null);
+const columns = useGridColumnCount(gridRef, items.length);
+const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
+	listLength: items.length,
+	columns,
+	onSelect: (i) => open(items[i]),
+});
+```
+
+Wire the result up as a **roving tabindex**: the active item gets `tabIndex={0}`
+and every other item `tabIndex={-1}`, with `onKeyDown` on the container. Tab then
+crosses the whole grid in one press while the arrows walk it, which is the
+standard composite-widget contract. Keep the items native `<button>`s so Space
+activates them; Enter is handled by the hook, whose `preventDefault` suppresses
+the button's own activation so the item opens exactly once.
+
+Two things the Extensions grid (`Settings/Extensions/`) gets right and a new
+grid should copy:
+
+- **Own the active index ABOVE the grid** when the grid unmounts for a detail
+  view, and restore focus to that item on the way back. Otherwise Escape drops
+  the user on the first tile and they lose their place.
+- **Move DOM focus only when focus is already inside the grid.** An effect that
+  focuses on every index change steals the caret out of the search box the
+  moment filtering changes the list.
 
 ### Keyboard Mastery Gamification
 
@@ -1355,6 +1427,28 @@ Two things to preserve when touching this:
   in a pane also moves `focusedPaneId`, so a derived effect would yank the caret into
   the AI input mid-drag and break text selection in the conversation. Keyboard-only
   keeps the focus steal tied to explicit user intent.
+
+### Creating a tab straight into a tile - `tileNewTab`
+
+`tileNewTab(session, kind, defaults, zone?)` in `src/renderer/hooks/tabs/tileNewTab.ts`
+creates an AI / file / terminal / browser tab and drops it into a pane beside whatever
+is on screen, in one session update. It is what the command palette's **Tile New ...
+Below** family calls (`commands/tileCommands.ts`), and it is the entry point for any
+future surface that wants "split the view and put a new X here" without a drag.
+
+It reuses the drag path's primitives rather than re-deriving layout: a live group is
+extended with `tileTabIntoGroup` on its FOCUSED pane (not the whole grid), and an
+untiled view is paired via `createGroupFromDrop`. `canTileNewTab(session)` reports
+whether there is anything on screen to tile against, so a caller can hide the
+affordance instead of offering a no-op.
+
+The one rule to preserve: **the new tab must be minted non-activating.** Every ordinary
+new-tab path (`createTab`, `addTerminalTab`, `handleNewBrowserTab`, `handleNewFileTab`)
+clears `activeGroupId` and claims the panel, because a standalone tab has to or the
+group would keep winning render precedence. Here that is backwards - it would tear
+down the group being built - so `createTab`/`addTerminalTab` are called with
+`activate: false` and the file/browser tabs are appended without touching any
+`active*TabId`. The tiling call at the end is what sets focus and activates the group.
 
 ---
 

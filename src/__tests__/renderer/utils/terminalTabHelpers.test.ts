@@ -184,6 +184,29 @@ describe('addTerminalTab', () => {
 		expect(updated.unifiedTabOrder).toContainEqual({ type: 'terminal', id: 'new-tab' });
 	});
 
+	it('touches no active-tab id and keeps the group when activate is false', () => {
+		// The tile-below path mints a terminal that goes straight into a pane.
+		// Activating it would clear the very group the caller is about to build,
+		// and pointing activeTerminalTabId at a tiled tab would leave the single
+		// view aimed at a tab it does not own.
+		const session = createMockSession({
+			activeGroupId: 'g1',
+			activeTerminalTabId: 'old-tab',
+			activeFileTabId: 'f1',
+			activeBrowserTabId: 'b1',
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new-tab' }), {
+			activate: false,
+		});
+		expect(updated.activeGroupId).toBe('g1');
+		expect(updated.activeTerminalTabId).toBe('old-tab');
+		expect(updated.activeFileTabId).toBe('f1');
+		expect(updated.activeBrowserTabId).toBe('b1');
+		// The tab is still created and ordered, just not focused.
+		expect(updated.terminalTabs).toHaveLength(1);
+		expect(updated.unifiedTabOrder).toContainEqual({ type: 'terminal', id: 'new-tab' });
+	});
+
 	it('mints a coworkingId starting at 1 and increments the session counter', () => {
 		const session = createMockSession();
 		const tab = createMockTerminalTab({ id: 'new-tab' });

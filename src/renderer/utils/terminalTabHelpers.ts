@@ -184,9 +184,20 @@ export function nextTerminalCoworkingId(session: Session): {
  *
  * @param session - The Maestro session to add the tab to
  * @param tab - The TerminalTab to add (created via createTerminalTab)
- * @returns New session with the tab added and set as active
+ * @param options.activate - When false, the tab is added and ordered but no
+ *   active-tab id changes and `activeGroupId` is left alone. Used by the
+ *   tile-below commands, which mint a terminal that goes straight into a pane:
+ *   activating it would clear the very group the caller is about to build, and
+ *   pointing `activeTerminalTabId` at a tiled tab would leave the single view
+ *   aimed at a tab it does not own.
+ * @returns New session with the tab added (and, by default, set as active)
  */
-export function addTerminalTab(session: Session, tab: TerminalTab): Session {
+export function addTerminalTab(
+	session: Session,
+	tab: TerminalTab,
+	options: { activate?: boolean } = {}
+): Session {
+	const { activate = true } = options;
 	// Mint the base id + bumped counter from the shared source, then let an
 	// explicit tab.coworkingId (e.g. a restored tab) win if it's higher so we
 	// never hand out a duplicate term:N.
@@ -200,14 +211,18 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 	return {
 		...session,
 		terminalTabs: [...(session.terminalTabs || []), tabWithCoworkingId],
-		activeTerminalTabId: tab.id,
-		activeFileTabId: null,
-		activeBrowserTabId: null,
-		// A newly-created standalone terminal takes over the panel, so it must leave
-		// any active tiled group (mirrors selectTerminalTab). Without this the group
-		// stays active, TiledLayout keeps publishing pane rects, and a tiled browser
-		// overlay bleeds over the terminal view (its webview sits above at z-index 2).
-		activeGroupId: null,
+		...(activate
+			? {
+					activeTerminalTabId: tab.id,
+					activeFileTabId: null,
+					activeBrowserTabId: null,
+					// A newly-created standalone terminal takes over the panel, so it must leave
+					// any active tiled group (mirrors selectTerminalTab). Without this the group
+					// stays active, TiledLayout keeps publishing pane rects, and a tiled browser
+					// overlay bleeds over the terminal view (its webview sits above at z-index 2).
+					activeGroupId: null,
+				}
+			: {}),
 		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, newTabRef),
 		// Bump strictly past the larger of the bumped counter and the chosen id so
 		// we never hand out the same id twice within a session.

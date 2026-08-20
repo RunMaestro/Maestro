@@ -711,6 +711,64 @@ The dialog puts the two knobs on two axes: **Up/Down** walks the model list, **L
 
 You can also reach it from Quick Actions (`Cmd+K` / `Ctrl+K`) as **Change Tabs Model and Effort**. It applies to AI tabs only.
 
+### Tiling Tabs
+
+Tiling splits the Main Panel so several tabs are on screen at once: an agent conversation above a terminal, a file next to the browser, two chats side by side. Any tab type can be tiled with any other, and a tiled set behaves like one tab in the tab bar.
+
+**Creating a tile from the keyboard**
+
+The fastest route is Quick Actions (`Cmd+K` / `Ctrl+K`). Type `tile` to see the whole family:
+
+| Command                     | Result                                                |
+| --------------------------- | ----------------------------------------------------- |
+| **Tile New AI Chat Below**  | New AI chat takes the bottom half of the current view |
+| **Tile New Browser Below**  | New browser tab takes the bottom half                 |
+| **Tile New File Below**     | New blank file tab takes the bottom half              |
+| **Tile New Terminal Below** | New terminal takes the bottom half                    |
+
+Each one creates the tab and places it in a single step, so you never have to open a tab and then drag it into position. The tab you were looking at keeps the top half, and the new pane takes focus, so you can start typing in it right away.
+
+If a tile is already on screen, the split happens inside the pane you are working in rather than under the whole grid. That is what lets you build a layout one command at a time: tile a terminal under your chat, click into the terminal, then tile a browser under that.
+
+**Creating a tile by dragging**
+
+Drag a tab from the tab bar onto the content area of the tab that is showing. The pane lights up in four regions - drag toward the edge you want the tab to land on, and release. A left or right drop puts the panes side by side, a top or bottom drop stacks them.
+
+**Working inside a tile**
+
+- Drag the divider between two panes to resize them.
+- Click any pane to focus it. The focused pane shows a highlight ring, and it is the pane your typing goes to.
+- Drag one pane onto the middle of another to swap their positions, or onto an edge to re-slice the layout.
+
+**The group chip**
+
+A tiled set appears in the tab bar as a single chip, in the position of the first tab that went into it. It navigates, numbers, reorders, and drags like any other tab, so `Cmd+1`, Next/Previous Tab, and dragging it along the bar all treat the whole layout as one item.
+
+New groups are named after the tab you tiled against, as **Group: Some Tab**. The chip carries a grid glyph until you give it an icon.
+
+Hover the chip to reveal its menu:
+
+| Menu item                        | What it does                                                                                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Rename group**                 | Edit the name inline on the chip. `Enter` commits, `Esc` cancels. Submitting a blank name restores the automatic one rather than leaving the chip unlabeled. |
+| **Change icon**                  | Opens the emoji picker. The chosen emoji replaces the grid glyph on the chip.                                                                                |
+| **Break apart**                  | Returns every pane to the tab bar as an individual tab, in the chip's old position rather than at the end.                                                   |
+| **Move to First / Move to Last** | Jumps the chip to either end of the tab bar, the keyboard counterpart to dragging it.                                                                        |
+
+**Double-click the chip** to rename it without opening the menu.
+
+Renaming and breaking apart are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group** and **Break Apart Tab Group**, which act on the group currently showing. Break apart asks for confirmation first. Nothing is closed either way - the panes become ordinary tabs again and you can tile them whenever you like.
+
+<Note>
+**Change icon** lives on the chip menu only, and the picker has no "no icon" entry - once a group has an emoji, the way back to the plain grid glyph is to break the group apart and tile it again.
+</Note>
+
+The icon and name belong to the group, so they survive reordering, resizing, and moving panes around inside it. They do not outlive the group itself: closing a pane so only one is left dissolves the group automatically, and the survivor returns to the tab bar under its own name. Breaking a group apart discards the name and icon the same way, so re-tiling those tabs gives you a fresh **Group:** name to rename again.
+
+One exception is undo. If you close a pane and reopen it with `Cmd+Shift+T` / `Ctrl+Shift+T`, Maestro puts it back in the tile it came from - on the same side of the same neighbor - and rebuilds the group with its original name and icon if the group had since dissolved.
+
+See [Pane Shortcuts](./keyboard-shortcuts#pane-shortcuts-tiled-tabs) for moving focus between panes, splitting, maximizing, and rebalancing from the keyboard.
+
 ### Snoozing Tabs
 
 Snooze hides an AI tab until a moment you choose, then brings it back with a notification you have to dismiss. It's the email-snooze idea applied to conversations: park work you can't act on yet without closing it or letting it clutter the tab bar.

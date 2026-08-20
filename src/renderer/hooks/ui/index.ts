@@ -29,6 +29,9 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Live CSS-grid column count (for arrow navigation over a responsive grid)
+export { useGridColumnCount } from './useGridColumnCount';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
 

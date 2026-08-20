@@ -142,6 +142,36 @@ The Tab Switcher provides fuzzy search across all open tabs with quick navigatio
 
 The bulk close operations (Close All, Close Others, Close Left, Close Right) are also available via the [Tab Menu](./context-management#tab-close-operations) hover overlay and Quick Actions (`Cmd+K`).
 
+### Pane Shortcuts (Tiled Tabs)
+
+These act on the tiled set showing in the Main Panel. See [Tiling Tabs](./general-usage#tiling-tabs) for what tiling is and how to create one.
+
+| Action                    | macOS              | Windows/Linux      |
+| ------------------------- | ------------------ | ------------------ |
+| Focus Pane Left           | `Ctrl+Cmd+Left`    | `Ctrl+Win+Left`    |
+| Focus Pane Right          | `Ctrl+Cmd+Right`   | `Ctrl+Win+Right`   |
+| Focus Pane Up             | `Ctrl+Cmd+Up`      | `Ctrl+Win+Up`      |
+| Focus Pane Down           | `Ctrl+Cmd+Down`    | `Ctrl+Win+Down`    |
+| Focus Previous Pane       | `Opt+[`            | `Alt+[`            |
+| Focus Next Pane           | `Opt+]`            | `Alt+]`            |
+| Split Pane (Side by Side) | `Ctrl+Cmd+D`       | `Ctrl+Win+D`       |
+| Split Pane (Stacked)      | `Ctrl+Cmd+Shift+D` | `Ctrl+Win+Shift+D` |
+| Maximize / Restore Pane   | `Ctrl+Cmd+Z`       | `Ctrl+Win+Z`       |
+| Rebalance Panes           | `Ctrl+Cmd+=`       | `Ctrl+Win+=`       |
+| Close Focused Pane        | `Ctrl+Cmd+W`       | `Ctrl+Win+W`       |
+
+<Note>
+The pane family deliberately requires **both** Ctrl and Cmd so it can never collide with the plain-Cmd equivalents (`Cmd+W` closes a tab, `Ctrl+Cmd+W` closes a pane). On Windows and Linux the second modifier is the Windows / Super key.
+</Note>
+
+Focus arrows move to the pane nearest in that direction and stop at the edge of the layout. The previous/next pair cycles through every pane in order and wraps around, which is the reliable way through an uneven grid.
+
+Maximize expands the focused pane to fill the panel and hides the rest; press it again to restore the layout. Rebalance resets every split to equal sizes after you have dragged dividers around.
+
+Closing a pane returns its tab to the tab bar rather than closing it. When only one pane is left the group dissolves and that tab goes back to the bar too.
+
+To create a tile without a drag, run **Tile New AI Chat / Browser / File / Terminal Below** from Quick Actions (`Cmd+K` / `Ctrl+K`) - type `tile` to see all four.
+
 ## Input & Output
 
 | Action                   | Key                                               |
