@@ -58,7 +58,7 @@ interface GroupChatMessagesProps {
 	 */
 	searchActive?: boolean;
 	/** Optional external ref to the scroll container (used by group Find). */
-	scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
+	scrollContainerRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
 /** Handle exposed via ref for scrolling to messages */
@@ -86,12 +86,12 @@ export const GroupChatMessages = memo(
 		},
 		ref
 	) {
-		const containerRef = useRef<HTMLDivElement>(null);
+		const containerRef = useRef<HTMLDivElement | null>(null);
 		const setContainerRef = useCallback(
 			(el: HTMLDivElement | null) => {
 				containerRef.current = el;
 				if (externalScrollRef) {
-					(externalScrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+					externalScrollRef.current = el;
 				}
 			},
 			[externalScrollRef]
