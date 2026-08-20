@@ -63,6 +63,9 @@ export type { CalendarPickerProps } from './CalendarPicker';
 export { EscCloseButton } from './EscCloseButton';
 export type { EscCloseButtonProps } from './EscCloseButton';
 
+export { Keycap, KeycapHint } from './Keycap';
+export type { KeycapProps, KeycapHintProps, KeycapTone } from './Keycap';
+
 export { CopyIconButton } from './CopyIconButton';
 export type { CopyIconButtonProps } from './CopyIconButton';
 

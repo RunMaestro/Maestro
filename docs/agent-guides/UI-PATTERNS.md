@@ -430,6 +430,29 @@ Two traps when touching this row:
 - `collapsedLogs` in `TerminalOutput` merges consecutive non-user entries into one rendered entry built from `[0]`. A group can lead with a system banner that carries no stamp, so the merge lifts `turnModel` / `turnEffort` from the first grouped entry that has them - the same fix `renderStyle` needed.
 - `LogItem`'s memo comparator lists every field that affects rendering. A new pill field that is not in that list will not repaint when it changes.
 
+### Keycaps (`<Keycap>` / `<KeycapHint>`)
+
+`src/renderer/components/ui/Keycap.tsx` draws a keyboard key as a physical key - a face, a border, and a lip along the bottom edge - rather than as a glyph in a dim caption. `Keycap` is the cap alone; `KeycapHint` is one or more caps beside the action they perform (`[↑][↓] Model`).
+
+Two props are the reason it exists rather than another hand-rolled `<kbd>`:
+
+- **`pressed`** collapses the lip and sinks the cap by exactly the lip's height, so a surface that already listens for the key can echo the real keypress on screen. Drive it from a short timer, not from `keyup`: a held key repeats without ever sending `keyup`, so a cap released on `keyup` stays stuck down.
+- **`onClick`** turns the hint into the control. A surface showing `↵ Apply` and `esc Cancel` needs no separate button row, and the pointer-only user (remote desktop, tablet) clicks the same key the keyboard user presses - which is how it satisfies [Every Modal Needs a Graphical Exit](#every-modal-needs-a-graphical-exit-escclosebutton).
+
+The hover wash is drawn from `theme.colors.border`, not a fixed white overlay, so it stays visible on light themes. Glyph choice is the caller's: pass `'↑'`, `'↵'`, `'esc'`, or `formatShortcutKeys()` output.
+
+### The Two-Axis Console (`ModelEffortModal`)
+
+`src/renderer/components/ModelEffortModal.tsx` is the reference for a surface where **the shape of the control is the explanation of the control**. Both axes are live at once - Up/Down walks the model, Left/Right walks the effort - so it is deliberately NOT a `<Modal>`: dialog chrome would add a focus ring and invite tabbing between panes, which is the interaction the design is trying to remove. It portals a blurred scrim and floats the composition on it, registering with `useModalLayer` for Escape and priority.
+
+Three ideas worth reusing:
+
+- **A wheel, not a list.** Rows are absolutely positioned by `transform` and keyed by model id, so a row that survives a step animates to its new slot instead of being repainted in place. The wrap radius is capped at `floor((count - 1) / 2)`, which is what lets a short catalog wrap without the same model appearing in two slots at once.
+- **The end-fade and the depth falloff are one decision.** A `maskImage` fades the wheel's ends; the outermost `WHEEL_DEPTH` entry has to survive that fade with something still legible. Deepening the wheel past what the mask lets through buys dead air, not rows - that is why the radius is 2.
+- **Ordered scales get a level meter; unordered sets do not.** Effort bars ramp with the level and fill up to the selection, so the scale reads without reading a word. Model has no order, so it gets none. The `(default)` stop sits off the scale behind a hairline and carries no bar - which is also why the row aligns `items-start` with a fixed-height bar slot, rather than `items-end` on a baseline the default stop does not have.
+
+Anything with an inline `transition` must carry a class the reduced-motion block can name (`.maestro-wheel-row`, `.maestro-effort-stop`, `.maestro-keycap`); the blanket `.transition-*` reset in `index.css` only matches Tailwind's utility classes.
+
 ### Text Selection in Modals
 
 **Rule:** any modal (or modal subtree) whose primary purpose is _clicking_ - buttons, tabs, list rows, cards, graph nodes, filter chips, toggles, dropdowns - must have `select-none` on its root container. The dashboard-style modals (Cue, Usage Dashboard, Symphony, Playbook Exchange, Settings, Director's Notes list) are all click-driven; native browser drag-to-select highlighting fires accidentally during normal interactions (clicking a tab, dragging a graph node, double-clicking a card) and looks broken.
